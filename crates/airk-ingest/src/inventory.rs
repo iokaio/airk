@@ -10,7 +10,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub const POLICY_VERSION: &str = "airk-eligibility-v1";
+pub const POLICY_VERSION: &str = "airk-eligibility-v2";
 
 #[derive(Clone, Copy)]
 pub struct InventoryLimits {
@@ -73,6 +73,27 @@ pub fn scan_roots(
     cached: Option<&Inventory>,
     limits: InventoryLimits,
 ) -> Result<Inventory> {
+    scan_roots_with_policy(
+        root,
+        data_dir,
+        previous,
+        roots,
+        cached,
+        limits,
+        super::ScanLimits::default(),
+    )
+}
+
+pub fn scan_roots_with_policy(
+    root: &Path,
+    data_dir: &Path,
+    previous: &Snapshot,
+    roots: &BTreeMap<String, String>,
+    cached: Option<&Inventory>,
+    limits: InventoryLimits,
+    policy: super::ScanLimits,
+) -> Result<Inventory> {
+    policy.validate()?;
     let root = root.canonicalize().context("resolve workspace root")?;
     ensure!(
         root.to_string_lossy() == previous.root,
@@ -135,21 +156,25 @@ pub fn scan_roots(
             if entry
                 .path()
                 .symlink_metadata()
-                .is_ok_and(|metadata| metadata.len() > super::MAX_FILE_BYTES as u64)
+                .is_ok_and(|metadata| metadata.len() > policy.file_bytes as u64)
             {
                 result.excluded += 1;
                 continue;
             }
             // Avoid exceeding the total read budget by a per-file read.
-            if read_bytes.saturating_add(super::MAX_FILE_BYTES + 1) > limits.read_bytes {
+            if read_bytes.saturating_add(policy.file_bytes + 1) > limits.read_bytes {
                 result.complete = false;
                 result.budget_exhausted = true;
                 break 'sources;
             }
             // A failed read may already have consumed bytes. Reserve the maximum
             // before starting and reclaim unused allowance only on success.
-            read_bytes += super::MAX_FILE_BYTES + 1;
-            let bytes = match super::read_source(&source_root, entry.path()) {
+            read_bytes += policy.file_bytes + 1;
+            let bytes = match super::read_source_with_budget(
+                &source_root,
+                entry.path(),
+                policy.file_bytes + 1,
+            ) {
                 Ok(bytes) => bytes,
                 Err(_) => {
                     result.unreadable += 1;
@@ -157,8 +182,8 @@ pub fn scan_roots(
                     continue;
                 }
             };
-            read_bytes -= super::MAX_FILE_BYTES + 1 - bytes.len();
-            if bytes.len() > super::MAX_FILE_BYTES {
+            read_bytes -= policy.file_bytes + 1 - bytes.len();
+            if bytes.len() > policy.file_bytes {
                 result.excluded += 1;
                 continue;
             }

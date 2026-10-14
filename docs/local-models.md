@@ -2,6 +2,8 @@
 
 AIRK provides persistent lexical retrieval without a model. Vector and hybrid retrieval are optional and entirely local. A missing model is explicitly **not ready**, with no remote fallback or fabricated hash vectors.
 
+The [CPU transformer adapter](onnx-models.md) executes deliberately provisioned ONNX models using tract and a local BERT WordPiece tokenizer. A pinned Apache-2.0 MiniLM recipe, real-model retrieval test and independent ONNX Runtime numerical comparison are provided. Schema 2 binds weights, tokenizer, license, context and pooling into one revision identity. The schema 1 word-vector adapter below remains compatible with existing assets.
+
 The initial embedding adapter averages recognized pretrained word vectors and L2-normalizes the result. It then indexes/searches squared Euclidean distance with Microsoft's DiskANN algorithms and AIRK's disk file provider. This supports deliberately supplied word-vector models; it is not transformer inference, compiler resolution, or evidence of general semantic understanding. Word order, negation, programming-language meaning and unknown identifiers are important limitations. Measure quality for the selected vocabulary and corpus.
 
 ## Provision assets
@@ -49,4 +51,4 @@ The kernel caps hits, response text bytes and vector candidate work. Filtering b
 
 Automated tests use original synthetic vectors and compare reopened disk-backed search with a bounded exact distance oracle. The deterministic 200-vector fixture requires at least 90% recall@10. Tests cover nonfinite/dimension rejection, corruption, immutable reopen, model digest failure, lexical/vector citation binding and source rename behavior. Synthetic recall establishes algorithm/provider integration; it does not qualify a production model's semantic quality.
 
-Before claiming model/corpus performance, record model source/license, exact asset digest/specification, held-out queries, relevance judgments, recall/ranking, cold/warm latency, process RSS, index bytes and file/physical-disk I/O separately. Cross-platform, power-loss and larger-than-memory claims require their own evidence. Index construction streams retained artifacts into the disk components, while the explicitly provisioned vocabulary remains memory-resident within its asset bound. Transformer/ONNX inference is not implemented by this adapter.
+Before claiming model/corpus performance, record model source/license, exact asset digest/specification, held-out queries, relevance judgments, recall/ranking, cold/warm latency, process RSS, index bytes and file/physical-disk I/O separately. Cross-platform, power-loss and larger-than-memory claims require their own evidence. Index construction streams retained artifacts into the disk components, while the explicitly provisioned vocabulary remains memory-resident within its asset bound. Use schema 2 for [transformer/ONNX inference](onnx-models.md).

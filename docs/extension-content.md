@@ -26,9 +26,13 @@ Use three short examples beside the overview:
 | “What timeout does this design require?” | Document requirement/date/quantity candidates with the original page, paragraph, table row, worksheet cell or slide | Inspect the original wording, header context and ambiguity; a cue is not an inferred obligation or proof of compliance. |
 | “What changed since this answer's evidence?” | Indexed generation and source hashes, coverage/status, explicit indexing controls | Recognize evidence from a retained revision and update the index after edits. |
 
-Explain code relationships as syntax candidates unless an optional source/build-bound SCIP producer supplied an assertion. Describe vector search by its implemented local model/provider and tested limits; retain a clear not-ready state when a model has not been provisioned. Never advertise a planned backend as active.
+Explain code relationships as syntax candidates unless an optional source/build-bound SCIP or live LSP provider supplied an assertion. Ctags declarations remain syntax evidence. The CLI can deliberately run these separately provisioned local providers; the extension has no automatic provider invocation or dedicated provider-setup UI. LSP call edges require actual call-hierarchy evidence, and selected symbol queries do not establish complete resolution.
+
+Describe optional local vector search using either digest-bound static word vectors or the implemented CPU ONNX transformer/WordPiece adapter. Link the [pinned model recipe and numerical qualification](onnx-models.md). State that the small real-model fixture does not qualify production semantic quality, and retain a clear not-ready state without provisioned assets. AIRK's runtime does not download models or fall back to remote inference.
 
 Show a requirements-table example: **Requirements!B14** contains “The API must respond in at most 200 ms,” beside **A14: REQ-9**. AIRK preserves the worksheet, row, addresses and header mapping with the requirement candidate. DOCX tables similarly retain table/row/column context. State that spreadsheet formulas are not evaluated and cached values may be stale; merged cells and candidate headers remain labeled. Link [document indexing](document-indexing.md) for the extraction contract.
+
+Explain explicit local OCR as a native CLI option: separately provisioned Tesseract and local language assets recognize selected PDF pages (with Poppler) or PNG/JPEG/BMP images, preserving the original source hash, page and executable/model provenance. Recognition and reading order can be wrong; unselected pages remain unknown. Native text-layer indexing does not automatically invoke OCR, and the extension does not offer an OCR configuration command.
 
 ## First-use sequence
 
@@ -66,7 +70,7 @@ Use **“Preview configuration”** and **“Verify AIRK connection”** accurat
 | Status item and coverage details | Active folder/collection, current versus eligible files, scan time/completeness, stale/missing/failed counts and pending unsaved edits. Unknown stays unknown; zero eligible files is not 100%. Clicking requests indexing. |
 | Controls | Index/reindex, mode, pause/resume, status, coverage, storage, collections, agent setup, connection verification and output. Describe automatic versus explicit actions. |
 | Storage and collection maintenance | Selected data directory, derived bytes, collection identity and removal consequences. Source files are preserved. Changing storage must explain whether it rebuilds or migrates. |
-| Usage report | Locally recorded aggregate activity/performance and recording health, with signed context estimates only where a comparable baseline exists. State unknown/disabled/partial windows. Provider billing and full prompt usage are unobserved. |
+| Usage report | Locally recorded aggregate activity/performance and recording health, measured stages/logical growth and supported host CPU/resource counters. Overlapping or unavailable counters stay unknown. Signed context estimates require a comparable baseline; optional client/session imports, local tokenizer calibration and supplied price scenarios retain provenance labels. State unknown/disabled/partial windows. Provider billing and full prompt usage are unobserved. |
 | Output and failures | Bounded diagnostics with actionable failure states, skipped extraction and last successful revision. Never substitute an error for a success notification. |
 
 Do not promise an unimplemented command or setting. Keep this specification, the actual command inventory and the shipped listing synchronized during release review.
@@ -80,3 +84,7 @@ Before publication, add genuine screenshots from the packaged extension using on
 ## Limits shown near installation
 
 State the tested host matrix and current capacity bounds, model readiness, source-read-only behavior, derived-state privacy, remote-host requirement, unsupported browser-only use, signing/publication status and extraction limitations. Link [formats](formats.md), [operations](operations.md), [security](../SECURITY.md) and the [release checklist](release-checklist-0.1.0.md). Clearly separate local runtime behavior from the selected agent's network behavior.
+
+The listing may describe configured native ingestion bounds, shared logical quotas and available-drive checks, while keeping the editor's soft storage setting distinct. Current defaults are 16 MiB/source, 64 MiB eligible source, 128 MiB extracted text and 10,000 files. Raising limits is explicit and does not itself establish scale performance. Remote editor hosts require an actual test on supplied infrastructure; a matching package and local helper test alone do not qualify SSH, WSL, Containers or Codespaces.
+
+Helper upgrade copy should explain that cached paths include the actual helper version and digest, so replacing the extension directory preserves existing agent commands. New trusted helper bytes use a new path; regenerate agent configuration when adopting them. The native integration suite exercises two supplied real helpers, verifies each reported version and digest, replaces the extension directory, and probes both the old cached command and the new one. This is helper lifecycle evidence, not a remote-host qualification.

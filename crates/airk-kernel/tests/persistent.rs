@@ -129,10 +129,19 @@ fn missing_model_and_missing_persistent_generation_fail_explicitly() -> Result<(
     let directory = data.path().join("collections/default");
     let store = airk_store::FileStore::new(&directory);
     let revision = store.persistent_revision()?.expect("component metadata");
-    fs::rename(
-        directory.join("generations").join(revision.revision),
-        directory.join("hidden-fixture-generation"),
-    )?;
+    assert!(!kernel.search(&query("needle"))?.hits.is_empty());
+    // Windows protects mapped index files from directory renames. The closed
+    // manifest can still disappear: a cached reader must fail just like a new one.
+    let generation = directory.join("generations").join(revision.revision);
+    let manifest = generation.join("manifest.json");
+    let hidden_manifest = directory.join("hidden-fixture-manifest.json");
+    fs::rename(&manifest, &hidden_manifest)?;
+    assert!(kernel.search(&query("needle")).is_err());
+    assert!(kernel.status().is_err());
+    fs::rename(hidden_manifest, manifest)?;
+    drop(kernel); // Release mapped handles before testing a wholly missing directory.
+    fs::rename(generation, directory.join("hidden-fixture-generation"))?;
+    let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
     assert!(
         kernel.search(&query("needle")).is_err(),
         "missing persistent files cannot silently use a memory fallback"

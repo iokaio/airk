@@ -96,17 +96,17 @@ AIRK's minimum supported macOS versions have not been selected. Before release, 
 
 ## CI candidates and release work still required
 
-The current [CI workflow](../.github/workflows/ci.yml) explicitly builds and tests Apple Silicon on `macos-15` and Intel on `macos-15-intel`, then uploads verified native ZIPs and matching platform VSIX packages with notices, manifests and SHA-256 checksums. These are unsigned candidates, retained for seven days. No Apple credentials are required. See [CI artifacts and spending controls](ci-and-builds.md). Hosted runs have not been observed from this checkout; actual macOS results remain to be collected.
+The current [CI workflow](../.github/workflows/ci.yml) explicitly builds and tests Apple Silicon on `macos-15` and Intel on `macos-15-intel`, then uploads verified native ZIPs and matching platform VSIX packages with notices, manifests and SHA-256 checksums. These are unsigned candidates, retained for seven days. No Apple credentials are required. See [CI artifacts and spending controls](ci-and-builds.md). Check the candidate's actual CI run for both architecture results; hosted checks do not qualify signing, installed services or the full editor/client matrix.
 
 For macOS delivery:
 
 1. Collect successful hosted results and native candidates for both architectures.
 2. Test actual MCP client links, Unicode/case-sensitive paths, file locking, SQLite WAL transactions/migration, collection isolation and state on a user-selected drive.
 3. Review the generated candidate's dependency notices and checksums before releasing. Users should not need a compiler or Docker to install a release.
-4. For signed distribution, use the maintainer's Developer ID identity and Apple notarization workflow. This is separate from building locally from source; no signing credentials or publication are part of the scaffold. See [Apple's Developer ID guidance](https://developer.apple.com/help/account/certificates/create-developer-id-certificates/).
+4. For signed distribution, use the maintainer's existing Developer ID identity and [native signing/notarization tools](native-signing.md). The public certificate alone cannot sign; the original Mac must supply its matching private key and an existing notarytool profile. Signing creates a fresh artifact copy and does not publish it. See [Apple's Developer ID guidance](https://developer.apple.com/help/account/certificates/create-developer-id-certificates/).
 5. Review the generated Mac VSIX and verify clean installation on its intended architecture. CI bundles the matching helper in each platform package; local packaging needs Node/npm for the pinned extension build tools. See [extension deployment](extension-deployment.md).
 
-DiskANN now uses AIRK's portable disk provider; local embeddings use explicitly provisioned static word vectors. Their disk-I/O, locking, memory-mapping, CPU and model behavior must still be qualified on both Mac architectures. Windows tests do not establish that compatibility. Transformer/ONNX inference and representative semantic quality remain separate follow-ups; see [local models](local-models.md) and the [release checklist](release-checklist-0.1.0.md).
+DiskANN uses AIRK's portable disk provider; local embeddings support explicitly provisioned static word vectors and CPU ONNX transformer inference. Their disk-I/O, locking, memory-mapping, CPU and model behavior must still be qualified on both Mac architectures. Windows tests do not establish that compatibility or representative semantic quality; see [local models](local-models.md), [ONNX qualification](onnx-models.md) and the [release checklist](release-checklist-0.1.0.md).
 
 ## Troubleshooting
 

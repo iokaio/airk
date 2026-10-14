@@ -202,6 +202,34 @@ impl Queue {
         Ok(job)
     }
 
+    /// Read only registered bindings; never discover or register arbitrary roots.
+    pub fn list(&self) -> Result<Vec<ScheduledJob>> {
+        crate::quota::ensure_current_root(&self.directory)?;
+        if !self.directory.join("scheduler.sqlite3").exists() {
+            return Ok(Vec::new());
+        }
+        let db = self.open_read()?;
+        // Event routing needs bindings and policy, never retained index reports.
+        // The legacy-width projection also works before a writer upgrades scans.
+        let jobs = db
+            .prepare(
+                "SELECT collection,root,revision,completed,running,paused,blocked,
+            full_revision,manual_revision,first_pending,last_event,last_completed,error,NULL
+            FROM jobs ORDER BY collection LIMIT 1025",
+            )?
+            .query_map([], decode)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        ensure!(jobs.len() <= 1024, "scheduler registration limit exceeded");
+        for job in &jobs {
+            crate::validate_collection(&job.collection)?;
+            ensure!(
+                job.root.len() <= 32768,
+                "scheduler root exceeds path budget"
+            );
+        }
+        Ok(jobs)
+    }
+
     /// Event requests increment revisions. Explicit clicks can join the current
     /// pending pass; a newly requested full rebuild never joins an incremental pass.
     pub fn enqueue(

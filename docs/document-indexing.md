@@ -35,6 +35,32 @@ Formula text and cached values are separate fields. A cached value can be stale,
 
 Row metadata carries at most 32 cells; individual cell facts retain their own coordinate/evidence. Text and metadata truncation are explicit. All row/cell/prose facts share the file's 10,000-fact bound, so a large workbook can exceed it even with fewer than 10,000 rows. See [format limits](formats.md). The table layout follows [WordprocessingML tables](https://learn.microsoft.com/en-us/office/open-xml/word/working-with-wordprocessingml-tables) and [SpreadsheetML shared strings](https://learn.microsoft.com/en-us/office/open-xml/spreadsheet/working-with-the-shared-string-table); these are stored document structures, not inferred requirements semantics.
 
+## Explicit local OCR
+
+Native discovery still uses PDF text layers and never invokes OCR automatically. For a scanned PDF or a single PNG/JPEG/BMP image, use `airk ocr scans/requirements.pdf --request /indexes/ocr.json` with explicitly provisioned local Tesseract, language assets and, for PDF input, Poppler `pdftoppm`:
+
+~~~json
+{
+  "tesseract": {"program": "/usr/bin/tesseract", "args": [], "timeout_ms": 120000},
+  "pdf_renderer": {"program": "/usr/bin/pdftoppm", "args": [], "timeout_ms": 30000},
+  "tessdata_dir": "/usr/share/tesseract-ocr/5/tessdata",
+  "language": "eng",
+  "first_page": 2,
+  "last_page": 5,
+  "dpi": 150
+}
+~~~
+
+For raster input, set `pdf_renderer` to `null` and both page numbers to 1. Executables and model directories must be explicit absolute paths; provider argument lists must be empty. Language names select 1–8 existing local `.traineddata` files, without download or network fallback. Temporary source/raster copies are private and cleaned up; original files are read-only. The published artifact keeps the original source SHA-256 and original page numbers. Its extraction method binds a provenance digest; retained `parse_status` contains the full JSON provenance, including executable/model digests, selected pages, DPI and recognition limitations. Derived prose facts carry an `ocr-derived` basis.
+
+OCR covers only the selected pages, at most 32 per operation within pages 1–512. Unselected pages remain unknown; a later OCR operation replaces that artifact's selected extraction. Raster dimensions are checked before invocation (maximum 16 million pixels), and PDF pages are rendered individually with a 2,400-pixel maximum dimension. Renderer stdout is capped at 16 MiB per page, recognized text at 1 MiB per page/4 MiB per document, and stderr at 64 KiB. The selected Tesseract timeout bounds the combined subprocess work, at most 120 seconds; each renderer also respects its own timeout. Whole child jobs/groups are terminated on failure. Executable/model hashing and filesystem cleanup are outside that process timer.
+
+Recognition, spelling, layout and reading order can be wrong. AIRK does not recover table geometry from OCR text or infer missing cells. An empty/malformed/failed result does not replace a published revision. Unchanged ordinary indexing can reuse the retained OCR artifact; changed sources and full native reindexing require explicitly requesting OCR again. Models and provider binaries are not bundled or globally installed by AIRK. The invocation follows [Tesseract's local command-line interface](https://tesseract-ocr.github.io/tessdoc/Command-Line-Usage.html).
+
+The Windows original-bitmap fixture was exercised with installed Tesseract `5.4.0.20240606` (executable SHA-256 `babb405f4366b480d02cd8ff2bac8d497170f6c1711ce6f3d5d8bf0fb7fa6ed9`) and `eng.traineddata` SHA-256 `7d4322bd2a7749724879683fc3912cb542f19906c83bcc1a52132556427170b2`. It verifies numeric text, original page/source identity and retained model provenance; it is not an OCR accuracy benchmark. Set `AIRK_TEST_TESSERACT` and `AIRK_TEST_TESSDATA` to exercise the opt-in Rust test, or use [the public CLI smoke](../scripts/check-local-providers.py), which also supports a two-page image-only PDF when `--pdftoppm` is supplied.
+
+The final Linux helper also passed that public CLI smoke as an unprivileged user in a network-disabled Debian container, using Tesseract `5.3.0-2` and Poppler `22.12.0-2+deb12u3`. The original image-only PDF selects page 2 and checks recognized numeric text, original page/source identity, unchanged-index reuse and read-only originals. Executable SHA-256 values were `1e8c7ce7f27d2d1c902fb648efed443483f2a8fc7b60c48a5d3b61d647a2649e` for Tesseract and `eaac98d4d950f4a25adfe55254c6cc7299429a07370181b5acfd87ac6db42f13` for `pdftoppm`; the English model digest matches the Windows fixture above. This qualifies the exercised local adapter paths, not arbitrary page layouts, fonts, languages or OCR accuracy.
+
 ## Metadata and interpretation
 
 Facts have their existing name/kind/syntax_kind/citation fields plus optional `document` metadata. It records parser_version (`document-cues/1`), basis (explicit heading/date text or heuristic candidate), heading_path, requirement_id, modality, requirement_type, dates, quantities and truncation flags. Requirement types are numeric, qualitative, mixed or functional. A “may” cue is treated as permissive wording only in requirement context; a month name inside a recognized date does not become modality.

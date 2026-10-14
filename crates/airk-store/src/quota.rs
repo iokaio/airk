@@ -80,6 +80,7 @@ pub struct QuotaStatus {
     pub collections: BTreeMap<String, CollectionQuota>,
     pub active_reservations: usize,
     pub accounting: &'static str,
+    pub physical_capacity: crate::capacity::Capacity,
 }
 
 #[derive(Clone)]
@@ -333,12 +334,18 @@ impl Quota {
     }
     pub fn reserve(&self, collection: &str, bytes: u64) -> Result<Reservation> {
         crate::validate_collection(collection)?;
-        self.reserve_before(collection, bytes, None)
+        self.reserve_before(collection, bytes, None, false)
+    }
+    /// Choose and reserve available headroom under the same ledger lock. A
+    /// status/read followed by reserve can race independent accounting writers.
+    pub fn reserve_available(&self, collection: &str, maximum: u64) -> Result<Reservation> {
+        crate::validate_collection(collection)?;
+        self.reserve_before(collection, maximum, None, true)
     }
     /// Shared scheduler/control databases have no user collection identity.
     /// Root reservations expose charge accounting only, not collection writers.
     pub fn reserve_root(&self, bytes: u64) -> Result<Reservation> {
-        self.reserve_before("", bytes, None)
+        self.reserve_before("", bytes, None, false)
     }
     /// Caller holds lifecycle EX, so no participating allocation can race this
     /// check. Recovery markers retain that exclusion after a crashed relocation.
@@ -387,6 +394,7 @@ impl Quota {
                     .checked_add(maximum_duration)
                     .context("quota deadline overflow")?,
             ),
+            false,
         )
     }
     fn reserve_before(
@@ -394,6 +402,7 @@ impl Quota {
         collection: &str,
         bytes: u64,
         deadline: Option<Instant>,
+        available: bool,
     ) -> Result<Reservation> {
         if !collection.is_empty() {
             crate::validate_collection(collection)?;
@@ -411,6 +420,22 @@ impl Quota {
             "quota reservation count exhausted"
         );
         let report = self.measure(&policy, &records, deadline)?;
+        let existing = report.collections.get(collection);
+        let allocated = existing.map_or(Ok(0), |item| {
+            checked_add(item.used_bytes, item.reserved_bytes)
+        })?;
+        let bytes = if available {
+            bytes
+                .min(
+                    policy
+                        .root_bytes
+                        .saturating_sub(checked_add(report.used_bytes, report.reserved_bytes)?),
+                )
+                .min(policy.limit(collection).saturating_sub(allocated))
+        } else {
+            bytes
+        };
+        ensure!(bytes > 0, "storage quota has no available headroom");
         ensure!(
             checked_add(
                 checked_add(report.used_bytes, report.reserved_bytes)?,
@@ -418,15 +443,20 @@ impl Quota {
             )? <= policy.root_bytes,
             "root storage quota exhausted"
         );
-        let existing = report.collections.get(collection);
-        let allocated = existing.map_or(Ok(0), |item| {
-            checked_add(item.used_bytes, item.reserved_bytes)
-        })?;
         ensure!(
             collection.is_empty() || checked_add(allocated, bytes)? <= policy.limit(collection),
             "collection storage quota exhausted"
         );
         within_deadline(deadline)?;
+        if !collection.is_empty() {
+            let target = self.root.join("collections").join(collection);
+            if target.is_dir() {
+                crate::capacity::ensure_same_filesystem(&self.root, &target)?;
+            }
+        }
+        // Reserve logical allowance independently of disk size. Only the small
+        // ledger record is written here; each charge checks its proposed growth.
+        crate::capacity::require_growth(&self.root, RECORD_MAX)?;
         let mut record_file = tempfile::Builder::new()
             .prefix("r-")
             .tempfile_in(self.root.join(".quota/reservations"))?;
@@ -584,6 +614,7 @@ impl Quota {
             collections: BTreeMap::new(),
             active_reservations: records.len(),
             accounting: "logical managed file lengths plus full outstanding reservations; quota control metadata excluded",
+            physical_capacity: crate::capacity::probe(&self.root)?,
         };
         let mut pending = vec![self.root.clone()];
         let mut visited = 0usize;
@@ -606,6 +637,13 @@ impl Quota {
                     "quota inventory contains linked state"
                 );
                 if entry.file_type()?.is_dir() {
+                    // Optional accounting retains its bounded logical inventory;
+                    // per-directory volume queries would consume its entire short
+                    // deadline on Windows. Its actual collection target is checked
+                    // once below, and quota writers validate their destination.
+                    if deadline.is_none() {
+                        crate::capacity::ensure_same_filesystem(&self.root, &path)?;
+                    }
                     pending.push(path);
                     continue;
                 }
@@ -679,6 +717,7 @@ impl Reservation {
     /// Charge before issuing any externally implemented provider write. Charges
     /// are never refunded; failed writes cannot accidentally create extra credit.
     pub fn charge(&self, bytes: u64) -> Result<()> {
+        crate::capacity::require_growth(&self.0.quota.root, bytes)?;
         self.0
             .charged
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |prior| {
@@ -733,6 +772,7 @@ impl Reservation {
             unlinked(&current)?;
             ensure!(current.is_dir(), "quota target parent is not a directory");
         }
+        crate::capacity::ensure_same_filesystem(&self.0.quota.root, &current)?;
         if path.exists() {
             unlinked(path)?;
         }
@@ -977,6 +1017,25 @@ mod tests {
             default_collection_bytes: collection_bytes,
             collections: BTreeMap::new(),
         }
+    }
+
+    #[test]
+    fn available_reservation_accounts_for_growth_and_other_live_writers() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let quota = Quota::open(root.path())?;
+        quota.configure(policy(100, 80))?;
+        let before = quota.status()?;
+        let other = quota.reserve("fixture", 20)?;
+        fs::create_dir_all(root.path().join("collections/fixture"))?;
+        fs::write(root.path().join("collections/fixture/existing"), [0; 10])?;
+        assert_eq!(before.reserved_bytes, 0);
+        let remaining = quota.reserve_available("fixture", 100)?;
+        assert_eq!(remaining.0.limit, 50);
+        assert!(quota.reserve_available("fixture", 1).is_err());
+        drop(remaining);
+        drop(other);
+        assert_eq!(quota.reserve_available("fixture", 15)?.0.limit, 15);
+        Ok(())
     }
 
     #[test]

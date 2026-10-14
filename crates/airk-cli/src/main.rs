@@ -25,6 +25,17 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Extract explicit local OCR pages using a bounded provider request JSON.
+    Ocr {
+        path: String,
+        #[arg(long)]
+        request: PathBuf,
+    },
+    /// Manage an explicit per-user native indexing service for this data root.
+    Service {
+        #[command(subcommand)]
+        action: ServiceCommand,
+    },
     /// Relocate an explicitly selected data root while keeping old managed state.
     Storage {
         #[command(subcommand)]
@@ -148,7 +159,7 @@ enum Command {
     Mcp,
     /// Inspect format and extraction quality for an indexed file.
     Info { path: String },
-    /// Retrieve a file's native syntax/document outline.
+    /// Retrieve a file's native and imported code/document outline.
     Outline {
         path: String,
         #[arg(long, default_value_t = 50)]
@@ -156,7 +167,7 @@ enum Command {
         #[arg(long, default_value_t = 8192)]
         max_bytes: usize,
     },
-    /// Find exact native syntax definitions.
+    /// Find exact native syntax and imported provider definitions.
     Symbol {
         name: String,
         #[arg(long)]
@@ -217,6 +228,16 @@ enum ScheduleCommand {
 }
 
 #[derive(Subcommand)]
+enum ServiceCommand {
+    Plan,
+    Install,
+    Status,
+    Start,
+    Stop,
+    Uninstall,
+}
+
+#[derive(Subcommand)]
 enum StorageCommand {
     /// Inspect the copy and required quota headroom without moving data.
     Plan { destination: PathBuf },
@@ -230,7 +251,7 @@ enum StorageCommand {
 enum UsageCommand {
     /// Import one bounded content-free client/session measurement JSON (at most 16 KiB).
     Import { file: PathBuf },
-    /// Count comparable logical JSON samples with an explicit local byte-BPE definition.
+    /// Count comparable logical JSON samples with a digest-bound offline tokenizer.
     Calibrate {
         #[arg(long)]
         tokenizer: PathBuf,
@@ -292,6 +313,7 @@ impl Command {
             | Self::Mcp
             | Self::Host
             | Self::Schedule { .. }
+            | Self::Service { .. }
             | Self::Storage { .. } => return None,
             Self::Collections {
                 action: CollectionCommand::Quota { .. },
@@ -301,7 +323,7 @@ impl Command {
                 scheduled: true, ..
             } => return None,
             Self::Coverage { .. } => UsageOperation::Coverage,
-            Self::Analysis { .. } | Self::Collections { .. } | Self::Init => {
+            Self::Analysis { .. } | Self::Ocr { .. } | Self::Collections { .. } | Self::Init => {
                 UsageOperation::CollectionMaintenance
             }
             Self::Setup { .. } | Self::Index { full: false, .. } => UsageOperation::Index,
@@ -371,6 +393,16 @@ impl OutputRecorder<'_> {
 
 #[derive(Subcommand)]
 enum AnalysisCommand {
+    /// Run an explicitly configured local LSP against an isolated indexed source copy.
+    Lsp {
+        #[arg(long)]
+        request: PathBuf,
+    },
+    /// Run Universal Ctags against explicit indexed paths in an isolated copy.
+    Ctags {
+        #[arg(long)]
+        request: PathBuf,
+    },
     /// Print manifest BEFORE running producer; keep it outside indexed sources.
     Prepare {
         #[arg(long)]
@@ -390,6 +422,11 @@ enum AnalysisCommand {
 
 #[derive(Subcommand)]
 enum CollectionCommand {
+    /// Inspect or explicitly replace collection ingestion bounds.
+    Limits {
+        #[command(subcommand)]
+        action: LimitsCommand,
+    },
     /// Inspect or explicitly replace the quota policy shared by this data root.
     Quota {
         #[command(subcommand)]
@@ -408,6 +445,15 @@ enum CollectionCommand {
     Prune {
         #[arg(long)]
         apply: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum LimitsCommand {
+    Show,
+    /// Read a ScanLimits JSON object; quotas still constrain publication.
+    Set {
+        file: PathBuf,
     },
 }
 
@@ -523,6 +569,9 @@ fn client_config(kernel: &Kernel, client: SetupClient) -> anyhow::Result<String>
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    if matches!(cli.command, Command::Service { .. }) && cli.data_dir.is_none() {
+        anyhow::bail!("service lifecycle requires explicit --data-dir");
+    }
     // Recovery must run before Kernel opens the intentionally frozen old root.
     if let Command::Storage { action } = &cli.command {
         let source = cli
@@ -558,6 +607,20 @@ async fn main() -> anyhow::Result<()> {
     };
     let result = async { match cli.command {
         Command::Storage { .. } => unreachable!("handled before opening kernel"),
+        Command::Service { action } => {
+            let manager = airk_kernel::service::ServiceManager::for_kernel(&kernel)?;
+            match action {
+                ServiceCommand::Plan => print_json(&manager.plan()?),
+                ServiceCommand::Status => print_json(&manager.status()?),
+                ServiceCommand::Install => {
+                    kernel.schedule_enqueue(false)?;
+                    print_json(&manager.install()?)
+                }
+                ServiceCommand::Start => print_json(&manager.start()?),
+                ServiceCommand::Stop => print_json(&manager.stop()?),
+                ServiceCommand::Uninstall => print_json(&manager.uninstall()?),
+            }
+        },
         Command::Schedule { action } => match action {
             ScheduleCommand::Enqueue { full } => print_json(&kernel.schedule_enqueue(full)?),
             ScheduleCommand::Status => print_json(&kernel.schedule_status()?),
@@ -568,7 +631,14 @@ async fn main() -> anyhow::Result<()> {
                 print_json(&serde_json::json!({"forgotten":true,"collection":kernel.collection()}))
             }
             ScheduleCommand::Run { watch, poll_ms } => {
+                let mut watcher = if watch { Some(airk_kernel::watcher::NativeWatcher::new(&kernel)?) } else { None };
                 loop {
+                    if let Some(watcher) = &mut watcher {
+                        let events = watcher.poll()?;
+                        if !events.queued_collections.is_empty() || !events.errors.is_empty() || events.recovering_dropped_events {
+                            print_json(&events)?;
+                        }
+                    }
                     let worker = kernel.clone();
                     let outcome = tokio::task::spawn_blocking(move || worker.run_scheduled_once()).await??;
                     if !watch || matches!(outcome.state, "indexed" | "failed") { print_json(&outcome)?; }
@@ -625,7 +695,19 @@ async fn main() -> anyhow::Result<()> {
             UsageCommand::Clear => print_json(&kernel.clear_usage()?),
         },
         Command::Coverage { refresh } => recorder.print(&kernel.coverage(refresh)?),
+        Command::Ocr { path, request } => {
+            let request = serde_json::from_slice(&airk_kernel::usage::read_usage_input(&request,65_536)?)?;
+            recorder.print(&kernel.extract_ocr(&path,&request)?)
+        },
         Command::Analysis { action } => match action {
+            AnalysisCommand::Lsp { request } => {
+                let request = serde_json::from_slice(&airk_kernel::usage::read_usage_input(&request,65_536)?)?;
+                recorder.print(&kernel.run_provider("lsp",&request)?)
+            }
+            AnalysisCommand::Ctags { request } => {
+                let request = serde_json::from_slice(&airk_kernel::usage::read_usage_input(&request,65_536)?)?;
+                recorder.print(&kernel.run_provider("ctags",&request)?)
+            }
             AnalysisCommand::Prepare {
                 producer,
                 producer_version,
@@ -673,6 +755,13 @@ async fn main() -> anyhow::Result<()> {
             max_bytes,
         })?),
         Command::Collections { action } => match action {
+            CollectionCommand::Limits { action } => match action {
+                LimitsCommand::Show => recorder.print(&kernel.scan_limits()?),
+                LimitsCommand::Set { file } => {
+                    let limits = serde_json::from_slice(&airk_kernel::usage::read_usage_input(&file,16_384)?)?;
+                    recorder.print(&kernel.configure_scan_limits(limits)?)
+                }
+            },
             CollectionCommand::Quota { action } => match action {
                 QuotaCommand::Status => print_json(&kernel.quota_status()?),
                 QuotaCommand::Policy => print_json(&kernel.quota_policy()?),

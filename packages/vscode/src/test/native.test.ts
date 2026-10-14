@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { NativeWriteQueue, prepareHelper, probeMcp, runJson } from '../native';
+import { NativeWriteQueue, prepareHelper, probeMcp, runJson, runText } from '../native';
 import { IndexReport, LaunchSpec, collectionId } from '../model';
 import { Coverage } from '../coverage';
 
@@ -30,6 +30,51 @@ test('native writer queue isolates data directories and collections', async () =
         assert.deepEqual(calls, ['first', 'storage', 'collection']);
     } finally { release(); await Promise.all([first, same]); }
     assert.equal(calls.at(-1), 'same', 'The same native writer must wait even through a path spelling alias');
+});
+
+// Keep ordinary adapter tests on AIRK_TEST_BINARY; only this test needs an old helper.
+// AIRK_TEST_UPGRADE_BINARY remains supported for earlier qualification commands.
+const previousHelperBinary = process.env.AIRK_TEST_PREVIOUS_BINARY || process.env.AIRK_TEST_BINARY;
+const upgradedHelperBinary = process.env.AIRK_TEST_PREVIOUS_BINARY ? process.env.AIRK_TEST_BINARY : process.env.AIRK_TEST_UPGRADE_BINARY;
+test('cached old helper survives extension replacement and a changed trusted helper uses a new path',
+    { skip: !previousHelperBinary || !upgradedHelperBinary }, async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'airk-helper-upgrade-'));
+    try {
+        const oldBinary = path.resolve(previousHelperBinary!);
+        const newBinary = path.resolve(upgradedHelperBinary!);
+        const oldBytes = await fs.readFile(oldBinary), newBytes = await fs.readFile(newBinary);
+        const oldDigest = createHash('sha256').update(oldBytes).digest('hex');
+        const newDigest = createHash('sha256').update(newBytes).digest('hex');
+        assert.notEqual(oldDigest, newDigest, 'Supply two real helpers with different digests for this upgrade boundary');
+        const oldVersion = (await runText(oldBinary, ['--version'])).trim().match(/^airk (\S+)$/)?.[1];
+        const newVersion = (await runText(newBinary, ['--version'])).trim().match(/^airk (\S+)$/)?.[1];
+        assert.ok(oldVersion); assert.ok(newVersion); // Versions come from actual binaries, never fabricated manifests.
+        const extension = path.join(directory, 'extension'), storage = path.join(directory, 'storage');
+        const executable = process.platform === 'win32' ? 'airk.exe' : 'airk';
+        const installFixture = async (bytes: Buffer, digest: string, version: string) => {
+            const native = path.join(extension, 'native'); await fs.mkdir(native, { recursive: true });
+            await fs.writeFile(path.join(native, executable), bytes);
+            await fs.writeFile(path.join(native, 'manifest.json'), JSON.stringify({ version,
+                vsix_target: `${process.platform}-${process.arch}`, payload: { [executable]: digest } }));
+        };
+        await installFixture(oldBytes, oldDigest, oldVersion);
+        const oldCached = await prepareHelper(extension, storage, oldVersion);
+        const root = path.join(directory, 'workspace'); await fs.mkdir(root);
+        await fs.writeFile(path.join(root, 'fixture.rs'), 'fn helper_upgrade_fixture() {}\n');
+        const oldAgent: LaunchSpec = { command: oldCached, root, dataDir: path.join(directory, 'state'), collection: 'upgrade-fixture', name: 'Old agent configuration' };
+        await runJson(oldAgent, 'index');
+        await fs.rename(extension, path.join(directory, 'replaced-extension'));
+        assert.equal((await runText(oldCached, ['--version'])).trim(), `airk ${oldVersion}`);
+        assert.equal((await probeMcp(oldAgent)).tools.length, 14);
+        await installFixture(newBytes, newDigest, newVersion);
+        const newCached = await prepareHelper(extension, storage, newVersion);
+        assert.notEqual(newCached, oldCached);
+        assert.equal(await prepareHelper(extension, storage, newVersion), newCached);
+        assert.equal(createHash('sha256').update(await fs.readFile(oldCached)).digest('hex'), oldDigest);
+        assert.equal((await runText(newCached, ['--version'])).trim(), `airk ${newVersion}`);
+        assert.equal((await probeMcp(oldAgent)).tools.length, 14, 'Existing agent command still works after replacement');
+        assert.equal((await probeMcp({ ...oldAgent, command: newCached })).tools.length, 14);
+    } finally { await removeFixture(directory, 'airk-helper-upgrade-'); }
 });
 
 test('bundled helper rejects mismatched platforms and tampered bytes before execution', async () => {

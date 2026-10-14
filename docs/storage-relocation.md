@@ -4,7 +4,7 @@ Relocation copies one managed data root into a new directory, verifies its conte
 
 ## Operator flow
 
-Stop foreground scheduler workers and disconnect MCP/editor clients that hold cached generations. Use an explicit old `--data-dir` for every command:
+Stop foreground scheduler workers, stop/uninstall any [per-user service](native-scheduler.md#explicit-per-user-installation) for the old root, and disconnect MCP/editor clients that hold cached generations. Use an explicit old `--data-dir` for every command:
 
 ~~~console
 airk --data-dir /old/state storage plan /new/state
@@ -14,9 +14,11 @@ airk --data-dir /old/state storage recover
 
 `plan` validates boundaries, takes maintenance leases, hashes managed files and reports file bytes plus conservative copy headroom. It does not copy the index or retire the old root. The destination must not already exist, its parent must exist, and neither data root may contain the other. Relocation requires at least one collection with SQLite revision metadata; index legacy JSON-only collections first.
 
+The plan includes separate `source_capacity` and `destination_capacity` OS free-space observations. Destination free space must cover the conservative copy headroom plus 16 MiB of safety space; when both roots share a filesystem, the retained source is already part of its used space. Copying rechecks physical capacity before each file and metadata publication. External writers can consume free space after a check, so this preflight does not reserve physical disk blocks or replace copy verification/recovery.
+
 `relocate` repeats those checks before writing a durable recovery receipt. It requires quota headroom for the destination copy and temporary replacements. Both root and per-collection policies apply. The destination must not contain any registered primary or additional source root. A data directory inside a workspace is supported through normal data-directory exclusion; relocation adds `*` to a managed `.airkignore` in both data roots so the retained old index cannot become source input after configuration changes.
 
-After successful activation, configure the extension, CLI and MCP clients to use the returned destination. AIRK refuses ordinary operations against the retired root and reports its recorded destination. It never silently redirects or rebinds a collection. The old payload is retained for deliberate operator inspection and later cleanup; relocation does not delete it.
+After successful activation, configure the extension, CLI and MCP clients to use the returned destination and explicitly reinstall a per-user service if wanted. AIRK refuses ordinary operations against the retired root and reports its recorded destination. It never silently redirects or rebinds a collection. The old payload is retained for deliberate operator inspection and later cleanup; relocation does not delete it.
 
 ## Copy and recovery contract
 

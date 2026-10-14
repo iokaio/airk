@@ -6,7 +6,7 @@ Local code and document evidence for coding agents. AIRK indexes files and retur
 
 [Document indexing](docs/document-indexing.md) specializes headings, dates, requirements, numeric bounds/units, qualitative cues and design/architecture/feature/decision language for Markdown, text and extracted documents. DOCX tables and XLSX worksheets retain row/cell evidence and original locations. These are cited evidence candidates, with category-filtered retrieval through MCP and the CLI.
 
-This is an independent, runnable open-source beta. Munarium, VCP and local reference files inform the design; their implementations are not dependencies. Persistent Tantivy lexical indexes, SQLite exact facts and an independent disk file provider for Microsoft DiskANN publish coherent revisions. Optional [local word-vector models](docs/local-models.md) enable vector and hybrid retrieval. AIRK does not download models or use remote inference; model/corpus semantic quality remains to be qualified.
+This is an independent, runnable open-source beta. Munarium, VCP and local reference files inform the design; their implementations are not dependencies. Persistent Tantivy lexical indexes, SQLite exact facts and an independent disk file provider for Microsoft DiskANN publish coherent revisions. Optional [local models](docs/local-models.md), including [CPU ONNX transformer inference](docs/onnx-models.md), enable vector and hybrid retrieval. AIRK does not download models or use remote inference; model quality must be evaluated for the intended corpus.
 
 [Code facts and relationships](docs/code-facts-and-relationships.md) add scopes, signatures, written types, call/framework candidates and optional source/build-bound SCIP imports. Fourteen read-only MCP tools expose bounded evidence with explicit syntax versus producer provenance. Native indexing needs no external compiler/indexer installation.
 
@@ -69,7 +69,7 @@ See the [format matrix](docs/formats.md) for exact limits. Optional manifest-bou
 
 ## Storage and maintenance
 
-[Local usage and estimated savings](docs/usage-reporting.md) records bounded daily aggregates without query/source text, including serialized response bytes, latency, indexing reuse, measured index stages and logical disk growth. CLI reports support JSON, CSV and Markdown; the extension displays the selected collection's report. Optional commands import content-free client/session and paired-task measurements, calibrate explicitly supplied local byte-BPE tokenizers, and apply dated user-supplied input-price scenarios. These remain separate from native request totals and full-source context estimates. Imported client counters are self-reported, hypothetical price equivalents are not billed savings, and provider-tokenizer compatibility requires qualification. Nonempty reports remain partial because historical recording loss cannot be certified; CPU and physical I/O counters remain unknown.
+[Local usage and estimated savings](docs/usage-reporting.md) records bounded daily aggregates without query/source text, including response bytes, latency, indexing reuse, index stages, logical disk growth and supported OS CPU/I/O/RSS counters. JSON, CSV and Markdown reports preserve missing and overlapping measurements. Optional commands import content-free client/session and paired-task measurements, calibrate digest-bound BPE/WordPiece/Unigram/WordLevel pipelines with explicit framing, and apply supplied input-price scenarios. Imported counters remain self-reported and hypothetical price equivalents are not verified bills. Reports remain partial because historical recording loss cannot be certified; Windows transfer bytes are distinct from OS storage I/O and hardware physical I/O.
 
 ~~~console
 airk --data-dir /path/to/airk-state collections list
@@ -82,7 +82,7 @@ On Windows use a path such as D:/indexes/airk. Pruning previews obsolete immutab
 
 Indexing streams one artifact at a time into content-addressed source/extraction storage. Compact inventories, immutable exact-fact catalogs and retrieval generations preserve revision identity without loading all source text for each request. [Source aliases](docs/source-roots.md) add independent folders to one collection; their original locations are pinned with each revision. Shared logical-byte quotas cover participating writers, including temporary builds and retained generations. Explicit relocation copies and verifies a data root before activating it, retaining the old managed state.
 
-The initial limits remain 1 MiB per source file, 4 MiB of extracted text per document, 64 MiB of eligible source, 128 MiB of extracted text per collection and 10,000 indexed files pending large-repository qualification. Ignore rules and common secret/build exclusions apply; indexes themselves contain source text. Read [SECURITY.md](SECURITY.md).
+Default [ingestion limits](docs/ingestion-limits.md) are 16 MiB per source file, 4 MiB extracted text per document, 64 MiB eligible source, 128 MiB extracted text per collection and 10,000 files. Collection policies explicitly permit larger workloads within validated ceilings and storage quotas; [scale qualification](docs/scale-qualification.md) records measured profiles. Ignore rules and common secret/build exclusions apply; indexes themselves contain source text. Read [SECURITY.md](SECURITY.md).
 
 ## Code organization
 

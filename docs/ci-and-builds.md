@@ -45,8 +45,8 @@ Use Python 3.9+ locally. Output is under ignored `artifacts/native/<target>/`. R
 - Push builds run for `main` and `v*` tags; other branch pushes run through their pull requests. Manual dispatch remains available. There is no schedule.
 - New commits cancel an older run for the same branch or pull request.
 - At most two native matrix jobs run together, plus the container job.
-- Native jobs have a 45-minute limit; the container job has a 30-minute limit.
-- Candidate artifacts expire after seven days. Compiler outputs and intermediate staging directories are not uploaded; no persistent build cache is created.
+- Native and container jobs have 90-minute limits to accommodate clean compiler, debug-test and optimized ONNX-runtime builds. Timings remain subject to runner capacity.
+- Candidate artifacts expire after seven days. Compiler outputs and intermediate staging directories are not uploaded. Docker BuildKit keeps local dependency/target caches for repeated builds; generated distributions are copied out of cache mounts and verified normally.
 - Jobs have read-only repository permissions and do not receive publishing or signing credentials. Fork contributions use `pull_request`, not a privileged `pull_request_target` build.
 
 Concurrency and time limits bound work per run; they do not impose a monthly spending cap. All four native builds still run for every admitted code change. Documentation-only changes also run CI so repository checks remain required.
@@ -69,4 +69,6 @@ Under repository **Settings → Actions → General**, require approval for work
 | VS Code Marketplace publishing | Implemented manual workflow uses VSCE 4.0.0 OIDC trusted publishing and the `vscode-marketplace` GitHub environment restricted to main. Configure the Marketplace publisher's trust policy first; no PAT secret/fallback is consumed. |
 | GitHub Release or GHCR publication | Usually GitHub's automatic token with scoped `contents: write` or `packages: write` in a separate publishing job; no personal token needed for same-repository publication. |
 
-Signing variable/secret names above remain suggestions, not implemented workflow inputs. Do not create them for unsigned CI. The implemented manual Marketplace workflow requests its publishing identity only after successful candidate builds and explicit dispatch with publishing enabled. See [release workflow](release-workflow.md), [extension deployment](extension-deployment.md) and [macOS build instructions](macos-build.md).
+Signing variable/secret names above remain suggestions, not hosted workflow inputs. [Native signing tooling](native-signing.md) now supports explicit existing Windows store identities and Apple Developer ID/keychain profiles, with digest-bound receipts and optional notarization. Do not create signing secrets for unsigned CI. Marketplace publication requires successful candidate builds and an explicit publishing dispatch. See [release workflow](release-workflow.md), [extension deployment](extension-deployment.md) and [macOS build instructions](macos-build.md).
+
+The separate [Extended qualification workflow](../.github/workflows/qualification.yml) is manual only. It measures a configurable original corpus on Windows/Linux, runs process-kill recovery, and optionally downloads the pinned public CPython corpus or MiniLM model. It uploads numeric reports only, never source trees, model assets or index state. This longer workflow is separate from required PR checks and is not automatically started by a code change. macOS signing/installed-service qualification continues on the owner's Mac with its existing private key.

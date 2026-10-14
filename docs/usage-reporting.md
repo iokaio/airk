@@ -72,7 +72,21 @@ Client labels default to CLI or unknown MCP. `AIRK_CLIENT` can declare a known f
 
 Latency boundaries are 1 ms, 5 ms, 20 ms, 100 ms, 500 ms, 2 s and 16 s, followed by overflow. Exact percentiles are not reported. Cache outcomes remain unknown unless measured; adapters do not infer cache hits from latency.
 
-Actual native scheduler index/reindex jobs are recorded once with the fixed `native_scheduler` client family, including extraction reuse and failures on an existing managed collection. The label is independent of `AIRK_CLIENT`; a worker serving another collection records against the job root/collection. `index --scheduled` callers and joined waiters add no second indexing observation. Idle/busy polls and coverage reconciliation are not index work. Scheduler accounting measures the serialized logical index report, excluding queue/watch transport envelopes. Jobs that fail before a valid scoped kernel/managed ledger exists remain visible in the queue, without inventing a usage scope. Native queue timing/event metrics remain available through `airk schedule status`. CPU time and physical I/O counters are explicitly unknown; logical file sizes do not represent disk allocation or actual bytes read. Disk-growth history counts only observations with complete before/after inventories and excludes usage files/locks; retained old index generations contribute to those logical sizes.
+Actual native scheduler index/reindex jobs are recorded once with the fixed `native_scheduler` client family, including reuse and failures on an existing managed collection. A worker serving another collection records against the job root/collection. Scheduled callers and joined waiters add no duplicate observations. Idle/busy polls and coverage reconciliation are not index work. Jobs that fail before a valid scoped kernel/ledger exists remain visible in the queue without inventing a usage scope. Queue metrics remain available through `airk schedule status`. Disk-growth history requires complete before/after inventories and excludes usage files/locks; retained generations contribute to logical sizes.
+
+## Process resources
+
+CLI/MCP/native-job spans sample the current process before work and before usage persistence. Supported counters have explicit measurement coverage in each operation and in the combined `resources` report. Missing counters are absent, never implicit zeros. Windows/Linux/macOS CPU counters include process threads, but not separately spawned provider processes. Background work may contribute to process-wide deltas; overlapping AIRK spans suppress counter attribution for all affected intervals to avoid double counting. Peak RSS is the largest observed process-lifetime high-water mark, not summed per-request memory.
+
+| Host | CPU/RSS | I/O semantics |
+|---|---|---|
+| Windows | `GetProcessTimes`, `GetProcessMemoryInfo` | `GetProcessIoCounters` read/write transfer bytes include other devices and are not physical disk bytes |
+| Linux | `getrusage` | `/proc/self/io` separates syscall bytes, OS storage read/write bytes and cancelled writes; these are not hardware-device telemetry |
+| macOS | `getrusage` | `proc_pid_rusage` v2 disk-I/O counters; runtime qualification requires the Mac host |
+
+Old retained reports deserialize with no resource samples. Counter totals use decimal strings and include their sample counts. Counter resets, unsupported probes and failed probes remain unknown. The compatibility `physical_io_bytes` field stays null rather than relabeling transfer counters. Best-effort usage admission can drop observations on large or busy data roots; independent scale measurements capture child-process counters without assuming ledger completeness. Disabled usage does not probe or persist these counters.
+
+OS definitions: [Microsoft IO_COUNTERS](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-io_counters), [Linux proc I/O documentation](https://docs.kernel.org/filesystems/proc.html), [Apple resource definitions](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/sys/resource.h).
 
 ## Honest estimates
 
@@ -139,7 +153,24 @@ Supplemental imports keep daily aggregates, at most 16 strata per UTC day and 25
 
 `usage calibrate` reads two comparable logical-result JSON files, at most 256 KiB of UTF-8 each, and a local tokenizer definition up to 1 MiB. Without `--record` it only prints a transient calculation. With `--record` it retains aggregate counts, content kind and tokenizer/model identities, never the files' names, content or hashes. `--generation` is the explicitly supplied generation of the comparable samples. Supply independent held-out samples for each content family being evaluated; one successful sample does not establish general accuracy.
 
-The implemented tokenizer is `utf8-byte-bpe/1`: all 256 byte symbols are implicit, followed by at most 8,192 ranked merges of hexadecimal byte strings. Each merge must combine earlier symbols into at most 256 bytes. The lowest-ranked available pair merges first, with leftmost ties. There is no hidden normalization, regex pretokenization, special-token handling or chat framing. This is exact for the supplied definition; it does **not** claim compatibility with arbitrary provider tokenizers. Model-specific adapters for other tokenizer algorithms require separate implementation and qualification.
+Schema 1 supports `utf8-byte-bpe/1`: all 256 byte symbols are implicit, followed by at most 8,192 ranked merges of hexadecimal byte strings. Each merge combines prior symbols into at most 256 bytes. Lowest rank wins, with leftmost ties. This compatibility format has no normalization, pretokenization, special tokens or chat framing.
+
+Schema 2 uses the offline Hugging Face `tokenizers/0.23.2` pipeline, supporting BPE, WordPiece, Unigram and WordLevel plus the supplied normalizer, pretokenizer and postprocessor. The sibling tokenizer JSON is limited to 32 MiB and SHA-256 verified. Padding and truncation are disabled so the entire measurement is counted; stochastic BPE dropout is rejected. Prefix/suffix framing is explicit, at most 16 KiB combined. Special-token handling is explicit. The definition fingerprint binds the manifest, tokenizer digest, framing and runtime version; incompatible definitions stay separate. This counts the specified local contract and does not infer provider chat compatibility.
+
+```json
+{
+  "schema": 2,
+  "model_revision_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "tokenizer_file": "tokenizer.json",
+  "tokenizer_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "add_special_tokens": true,
+  "framing": {"prefix": "Document evidence:\n", "suffix": "\nEnd of evidence."}
+}
+```
+
+Replace the fictional digests with those of the exact model/tokenizer being measured. `scripts/check-tokenizer-calibration.py` compares 12 fixed original multilingual/code/document cases with an independent Python pipeline, including inputs beyond the inference window. These test exact counting and byte-heuristic error, not representative client billing or causal task savings.
+
+Schema 2 admits explicitly supported stages with at most 32 stages, depth four and 16 children per sequence. Opaque precompiled normalizers, regex/expanding replacements and templates that duplicate an input sequence are rejected before loading. A conservative per-input expansion estimate must fit 4 MiB of intermediate work; some inputs below the 256 KiB source limit can therefore be refused. Standard BERT/MiniLM pipelines are covered by fixtures. These are admission bounds, not a hard process-RSS or wall-clock guarantee. Unused decoder, padding and truncation configurations are removed before loading the counting pipeline.
 
 ```json
 {

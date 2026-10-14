@@ -22,6 +22,8 @@ pub struct CoverageReport {
     pub inventory_revision: u64,
     pub scanned_at_unix_ms: u64,
     pub policy_version: String,
+    #[serde(default)]
+    pub scan_limits: airk_ingest::ScanLimits,
     pub extractor_version: String,
     pub scan_complete: bool,
     #[serde(default)]
@@ -62,6 +64,7 @@ impl Kernel {
     ) -> Result<CoverageReport> {
         let snapshot = self.load_optional()?;
         let configured_roots = self.configured_roots()?;
+        let scan_limits = self.scan_limits()?;
         let generation = snapshot.as_ref().map_or(0, |snapshot| snapshot.generation);
         let filename = self.store.directory().join("coverage.json");
         let cached = fs::File::open(&filename)
@@ -80,6 +83,7 @@ impl Kernel {
                     && cache.report.policy_version == POLICY_VERSION
                     && cache.report.extractor_version == EXTRACTOR_VERSION
                     && cache.roots == configured_roots
+                    && cache.report.scan_limits == scan_limits
             });
         if !refresh && let Some(cache) = &cached {
             let mut report = cache.report.clone();
@@ -99,6 +103,7 @@ impl Kernel {
                 .map_or(0, |cache| cache.report.inventory_revision),
             scanned_at_unix_ms: 0,
             policy_version: POLICY_VERSION.into(),
+            scan_limits,
             extractor_version: EXTRACTOR_VERSION.into(),
             scan_complete: false,
             source_configuration_pending: snapshot
@@ -131,13 +136,14 @@ impl Kernel {
             );
         }
         let previous = snapshot.unwrap_or_else(|| self.empty_snapshot());
-        let inventory = airk_ingest::inventory::scan_roots(
+        let inventory = airk_ingest::inventory::scan_roots_with_policy(
             &self.root,
             &self.data_root,
             &previous,
             &configured_roots,
             cached.as_ref().map(|cache| &cache.inventory),
             limits,
+            scan_limits,
         )?;
         report.inventory_revision = report
             .inventory_revision
@@ -177,9 +183,9 @@ impl Kernel {
                 None => report.missing += 1,
             }
         }
-        if successful_bytes > airk_ingest::MAX_CORPUS_BYTES
-            || successful_files > airk_ingest::MAX_FILES
-            || extracted_bytes > airk_ingest::MAX_EXTRACTED_CORPUS_BYTES
+        if successful_bytes > scan_limits.corpus_bytes
+            || successful_files > scan_limits.files
+            || extracted_bytes > scan_limits.extracted_bytes
         {
             report.capacity_blocked = report.stale + report.missing;
         }
@@ -201,6 +207,7 @@ impl Kernel {
         if latest.as_ref().map_or(0, |snapshot| snapshot.generation) != generation
             || latest.is_some() != report.indexed
             || self.configured_roots()? != configured_roots
+            || self.scan_limits()? != scan_limits
         {
             report.scan_complete = false;
         }

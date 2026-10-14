@@ -95,7 +95,9 @@ fn multi_root_coverage_shares_budgets_and_failed_scan_retains_previous_evidence(
         true,
         InventoryLimits {
             candidates: 3,
-            read_bytes: 4 * 1024 * 1024,
+            // Exercise the shared entry budget, allowing a bounded read at the
+            // current per-file ceiling before the second root exhausts entries.
+            read_bytes: 2 * airk_ingest::MAX_FILE_BYTES,
             duration: Duration::from_secs(5),
         },
     )?;

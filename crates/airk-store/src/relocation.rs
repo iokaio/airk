@@ -53,6 +53,8 @@ pub struct RelocationPlan {
     pub required_copy_headroom: u64,
     pub collections: Vec<String>,
     pub old_state_retained: bool,
+    pub source_capacity: crate::capacity::Capacity,
+    pub destination_capacity: crate::capacity::Capacity,
 }
 #[derive(Debug, Serialize)]
 pub struct RelocationResult {
@@ -383,6 +385,9 @@ pub fn plan(source: &Path, destination: &Path) -> Result<RelocationPlan> {
     let manifest = inventory(&source, &destination)?;
     let (bytes, headroom, copied) = copy_requirements(&manifest)?;
     crate::quota::Quota::open(&source)?.relocation_capacity(headroom, &copied)?;
+    let source_capacity = crate::capacity::probe(&source)?;
+    let destination_capacity = crate::capacity::probe(&destination)?;
+    destination_capacity.require_growth(headroom)?;
     Ok(RelocationPlan {
         source,
         destination,
@@ -391,6 +396,8 @@ pub fn plan(source: &Path, destination: &Path) -> Result<RelocationPlan> {
         required_copy_headroom: headroom,
         collections: names,
         old_state_retained: true,
+        source_capacity,
+        destination_capacity,
     })
 }
 fn atomic_json(path: &Path, value: &impl Serialize) -> Result<()> {
@@ -399,6 +406,7 @@ fn atomic_json(path: &Path, value: &impl Serialize) -> Result<()> {
     }
     let parent = path.parent().context("marker parent missing")?;
     plain(parent)?;
+    crate::capacity::require_growth(parent, serde_json::to_vec(value)?.len() as u64)?;
     let mut temporary = tempfile::Builder::new()
         .prefix(".relocation-marker-")
         .tempfile_in(parent)?;
@@ -439,6 +447,7 @@ pub fn relocate(source: &Path, destination: &Path) -> Result<RelocationResult> {
     let manifest = inventory(&source, &destination)?;
     let (_, headroom, copied) = copy_requirements(&manifest)?;
     crate::quota::Quota::open(&source)?.relocation_capacity(headroom, &copied)?;
+    crate::capacity::require_growth(&destination, headroom)?;
     let bytes = serde_json::to_vec(&manifest)?;
     let marker = Marker {
         schema: 1,
@@ -540,6 +549,7 @@ fn finish(marker: &Marker, manifest: &Manifest) -> Result<RelocationResult> {
             continue;
         }
         let parent = target.parent().context("copy target parent missing")?;
+        crate::capacity::ensure_same_filesystem(destination, parent)?;
         let prefix = format!(".relocation-copy-{}-", marker.transaction);
         // A previous interrupted attempt can leave only our specifically named
         // temporary in this verified, transaction-owned destination directory.
@@ -557,6 +567,7 @@ fn finish(marker: &Marker, manifest: &Manifest) -> Result<RelocationResult> {
         let mut output = tempfile::Builder::new()
             .prefix(&prefix)
             .tempfile_in(parent)?;
+        crate::capacity::require_growth(parent, entry.bytes)?;
         let mut input = File::open(&source)?;
         let length = std::io::copy(&mut (&mut input).take(entry.bytes), &mut output)?;
         let mut trailing = [0u8; 1];

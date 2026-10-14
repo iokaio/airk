@@ -8,6 +8,17 @@ import subprocess
 import urllib.error
 import urllib.request
 
+# The published subcrate inherits its workspace license but omits repository.
+# Its .cargo_vcs_info.json pins this parent repository and crates/rsqlite-vfs path.
+REPOSITORY_OVERRIDES = {("rsqlite-vfs", "0.1.1"): "https://github.com/Spxg/sqlite-wasm-rs"}
+# Older Cargo omitted VCS metadata. Every distributed payload file (1,389 i686;
+# 1,418 x86_64) matches Git blob hashes at this exact publication commit, whose
+# architecture manifests identify version 0.4.0 and the MIT/Apache-2.0 choice.
+REVISION_OVERRIDES = {
+    ("winapi-i686-pc-windows-gnu", "0.4.0"): "9497609ef44cc9bcd16cd2411c0ee6ccaf5483aa",
+    ("winapi-x86_64-pc-windows-gnu", "0.4.0"): "9497609ef44cc9bcd16cd2411c0ee6ccaf5483aa",
+}
+
 
 def fetch(package):
     source = Path(package["manifest_path"]).parent
@@ -17,13 +28,14 @@ def fetch(package):
     if candidates and package["name"] != "tree-sitter":
         return None
     vcs_path = source / ".cargo_vcs_info.json"
-    if not vcs_path.is_file() or not package.get("repository"):
+    repository = package.get("repository") or REPOSITORY_OVERRIDES.get((package["name"], package["version"]))
+    revision_override = REVISION_OVERRIDES.get((package["name"], package["version"]))
+    if (not vcs_path.is_file() and not revision_override) or not repository:
         print("No pinned upstream revision for " + package["name"] + "; retain publisher declaration for release review")
         return {"name": package["name"], "version": package["version"], "revision": None,
                 "repository": package.get("repository"), "files": [], "missing_text": True}
-    vcs = json.loads(vcs_path.read_text(encoding="utf-8"))
-    revision = vcs["git"]["sha1"]
-    repository = package["repository"].removesuffix("/").removesuffix(".git")
+    revision = json.loads(vcs_path.read_text(encoding="utf-8"))["git"]["sha1"] if vcs_path.is_file() else revision_override
+    repository = repository.removesuffix("/").removesuffix(".git")
     if not repository.startswith("https://github.com/"):
         print("Manual license retrieval needed for " + package["name"])
         return {"name": package["name"], "version": package["version"], "revision": revision,
@@ -58,7 +70,7 @@ def fetch(package):
 
 
 def main():
-    metadata = json.loads(subprocess.check_output(["cargo", "metadata", "--locked", "--format-version", "1"], text=True))
+    metadata = json.loads(subprocess.check_output(["cargo", "metadata", "--locked", "--format-version", "1"], text=True, encoding="utf-8"))
     members = set(metadata["workspace_members"])
     packages = [p for p in metadata["packages"] if p["id"] not in members]
     with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:

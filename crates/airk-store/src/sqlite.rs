@@ -209,10 +209,12 @@ pub(super) fn save_catalog(
 ) -> Result<()> {
     ensure!(snapshot.storage_format == 1, "compact catalog required");
     if let Some(reservation) = reservation {
-        let mut database =
-            reservation.open_private_sqlite(directory.join("catalog.sqlite"), maximum)?;
-        save_connection(database.connection_mut(), snapshot, Some(revision), source)?;
-        return database.finish();
+        let mut database = reservation
+            .open_private_sqlite(directory.join("catalog.sqlite"), maximum)
+            .with_context(|| format!("admit private fact catalog with {maximum}-byte quota cap"))?;
+        save_connection(database.connection_mut(), snapshot, Some(revision), source)
+            .with_context(|| format!("build private fact catalog with {maximum}-byte quota cap; previous generation retained"))?;
+        return database.finish().context("finish private fact catalog");
     }
     save_inner(directory, snapshot, Some(revision), source, true)?;
     std::fs::rename(
@@ -253,21 +255,20 @@ fn header(snapshot: &Snapshot, revision: &str) -> PersistentRevision {
     }
 }
 
-pub(super) fn publish_catalog(
-    directory: &Path,
-    snapshot: &Snapshot,
-    revision: &str,
-    reservation: Option<&crate::quota::Reservation>,
-) -> Result<()> {
+pub(super) fn catalog_page_budget(reserved: u64, physical: u64, pointer: u64) -> Result<u64> {
+    // SQLite's maximum representable page count is a format limit, not an
+    // application catalog ceiling. Logical policy and observed capacity govern
+    // every smaller admission.
+    let maximum =
+        (reserved.min(physical).saturating_sub(pointer) / 4096).min(u64::from(u32::MAX) - 1) * 4096;
     ensure!(
-        snapshot.storage_format == 1 && crate::blobs::valid_digest(revision),
-        "invalid compact catalog publication"
+        maximum >= 16_384,
+        "private catalog admission exhausted: {reserved} reserved bytes and {physical} physical growth bytes remain, {pointer} needed for active pointer publication"
     );
-    let target = directory
-        .join("generations")
-        .join(revision)
-        .join("catalog.sqlite");
-    ensure!(target.is_file(), "prepared immutable catalog missing");
+    Ok(maximum)
+}
+
+pub(super) fn pointer_budget(directory: &Path) -> Result<(u64, u64)> {
     let (page_size, pages) = if directory.join("index.sqlite3").exists() {
         let conn = connect_root(directory, false)?;
         let page_size: u32 = conn.query_row("PRAGMA page_size", [], |r| r.get(0))?;
@@ -298,22 +299,54 @@ pub(super) fn publish_catalog(
     // WAL frames use a 24-byte header; allow 32 for conservative framing. The
     // shared-memory index uses 32 KiB per roughly 4096 frames (8 bytes/frame),
     // plus headers and allocation rounding. Existing WAL frames matter too.
+    // Reserve the full SHM allocation: a reader can close and remove sidecars
+    // between admission and publication, requiring their recreation.
     let existing_frames = file_bytes("index.sqlite3-wal")? / (page_size + 24);
     let shared_growth = existing_frames
         .checked_add(maximum)
         .and_then(|frames| frames.checked_mul(8))
         .and_then(|bytes| bytes.checked_add(65_536))
-        .context("pointer shared-memory bound overflow")?
-        .saturating_sub(file_bytes("index.sqlite3-shm")?);
+        .context("pointer shared-memory bound overflow")?;
     let allowance = maximum
         .checked_mul(page_size + 32)
         .and_then(|value| value.checked_add(database_growth))
         .and_then(|value| value.checked_add(shared_growth))
         .and_then(|value| value.checked_add(32))
         .context("pointer journal bound overflow")?;
+    Ok((maximum, allowance))
+}
+
+pub(super) fn publish_catalog(
+    directory: &Path,
+    snapshot: &Snapshot,
+    revision: &str,
+    reservation: Option<&crate::quota::Reservation>,
+) -> Result<()> {
+    ensure!(
+        snapshot.storage_format == 1 && crate::blobs::valid_digest(revision),
+        "invalid compact catalog publication"
+    );
+    let target = directory
+        .join("generations")
+        .join(revision)
+        .join("catalog.sqlite");
+    ensure!(target.is_file(), "prepared immutable catalog missing");
+    let (maximum, allowance) = pointer_budget(directory)?;
     if let Some(reservation) = reservation {
-        reservation.charge(allowance)?;
+        reservation.charge(allowance).with_context(|| {
+            format!("admit active catalog pointer with {allowance}-byte main/WAL/SHM allowance")
+        })?;
     }
+    publish_pointer(directory, snapshot, revision, maximum)
+        .with_context(|| format!("publish active catalog pointer with {maximum}-page cap and {allowance}-byte write allowance"))
+}
+
+fn publish_pointer(
+    directory: &Path,
+    snapshot: &Snapshot,
+    revision: &str,
+    maximum: u64,
+) -> Result<()> {
     let mut conn = connect_root(directory, true)?;
     conn.execute_batch(&format!(
         "PRAGMA max_page_count={maximum}; PRAGMA cache_spill=OFF; PRAGMA temp_store=MEMORY;"
@@ -685,6 +718,128 @@ impl FileStore {
 mod tests {
     use super::*;
     use crate::FileStore;
+
+    #[test]
+    fn catalog_admission_leaves_pointer_room_with_smaller_physical_capacity() -> Result<()> {
+        let logical = 4 * 1024 * 1024 * 1024;
+        let physical = 112 * 1024 * 1024; // 128 MiB volume after safety headroom.
+        let pointer = 1_200_123;
+        let maximum = catalog_page_budget(logical, physical, pointer)?;
+        assert!(maximum + pointer <= physical);
+        assert!(physical - maximum - pointer < 4096);
+        assert_eq!(catalog_page_budget(32_768, u64::MAX, 16_384)?, 16_384);
+        assert!(catalog_page_budget(logical, pointer + 16_383, pointer).is_err());
+        assert!(catalog_page_budget(pointer + 16_383, physical, pointer).is_err());
+        assert!(
+            catalog_page_budget(8 * 1024 * 1024 * 1024, u64::MAX, pointer)?
+                > 4 * 1024 * 1024 * 1024
+        );
+        assert_eq!(
+            catalog_page_budget(u64::MAX, u64::MAX, 0)?,
+            (u64::from(u32::MAX) - 1) * 4096
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn catalog_quota_accounts_for_repeated_long_citations_without_json_multiplier() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let directory = root.path().join("collections/default");
+        let store = FileStore::new(&directory);
+        let _writer = store.lock()?;
+        let previous = Snapshot::empty("fixture".into());
+        store.save_with_components(&previous, &"a".repeat(64))?;
+        let path = format!("{}fixture.rs", "long_component/".repeat(100));
+        let artifact = Artifact {
+            path: path.clone(),
+            content_hash: "b".repeat(64),
+            bytes: 2000,
+            chunks: Vec::new(),
+            language: "rust".into(),
+            extraction_method: "fixture".into(),
+            parse_status: "parsed".into(),
+            retained: None,
+            facts: (1..=1000)
+                .map(|line| Fact {
+                    name: format!("item{line}"),
+                    kind: "definition".into(),
+                    syntax_kind: "function".into(),
+                    start_line: line,
+                    end_line: line,
+                    location: DocumentLocation::Lines {
+                        start: line,
+                        end: line,
+                    },
+                    document: None,
+                    code: None,
+                })
+                .collect(),
+        };
+        let artifact_bytes = serde_json::to_vec(&artifact)?.len() as u64;
+        let mut source = Snapshot::empty("fixture".into());
+        source.artifacts.insert(path.clone(), artifact.clone());
+        let mut snapshot = source.clone();
+        snapshot.storage_format = 1;
+        snapshot.generation = 1;
+        snapshot
+            .artifacts
+            .insert(path, store.retain_artifact(&artifact, None)?);
+        let old_estimate =
+            artifact_bytes * 3 + serde_json::to_vec(&snapshot)?.len() as u64 * 3 + 1024 * 1024;
+        let quota = crate::quota::Quota::open(root.path())?;
+        {
+            let reservation = quota.reserve("default", old_estimate)?;
+            let staging = reservation.staging_directory()?;
+            let error = store
+                .prepare_catalog(
+                    &staging,
+                    &snapshot,
+                    &"c".repeat(64),
+                    &source,
+                    Some(&reservation),
+                    old_estimate,
+                )
+                .expect_err("repeated long citation/index keys exceed the former JSON multiplier");
+            assert!(format!("{error:#}").contains("private fact catalog"));
+            assert_eq!(store.persistent_revision()?.unwrap().generation, 0);
+        }
+        let reservation = quota.reserve("default", 32 * 1024 * 1024)?;
+        let before = reservation.remaining();
+        let (_, pointer_allowance) = pointer_budget(&directory)?;
+        let maximum = store.catalog_budget(&reservation)?;
+        assert_eq!(
+            reservation.remaining(),
+            before,
+            "planning does not charge the pointer twice"
+        );
+        assert!(maximum + pointer_allowance <= before);
+        let staging = reservation.staging_directory()?;
+        let revision = "d".repeat(64);
+        store.prepare_catalog(
+            &staging,
+            &snapshot,
+            &revision,
+            &source,
+            Some(&reservation),
+            maximum,
+        )?;
+        let bytes = std::fs::metadata(staging.join("catalog.sqlite"))?.len();
+        assert!(bytes > old_estimate && bytes <= maximum);
+        let conn = Connection::open_with_flags(
+            staging.join("catalog.sqlite"),
+            OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )?;
+        assert_eq!(
+            conn.query_row("SELECT count(*) FROM facts", [], |r| r.get::<_, i64>(0))?,
+            1000
+        );
+        drop(conn);
+        std::fs::create_dir_all(directory.join("generations"))?;
+        std::fs::rename(&staging, directory.join("generations").join(&revision))?;
+        store.publish_catalog(&snapshot, &revision, Some(&reservation))?;
+        assert_eq!(store.persistent_revision()?.unwrap().generation, 1);
+        Ok(())
+    }
 
     #[test]
     fn wal_readers_keep_one_revision_while_another_writer_publishes() -> Result<()> {

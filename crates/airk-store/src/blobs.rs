@@ -219,7 +219,7 @@ impl FileStore {
         let bytes = read_verified(
             &object_path(self.directory(), "sources", &entry.content_hash)?,
             &entry.content_hash,
-            1_048_576,
+            16_777_216,
         )?;
         ensure!(
             bytes.len() == entry.bytes,

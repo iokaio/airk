@@ -48,6 +48,34 @@ Raw index bytes are capped at 64 MiB for digest identity and decoded one top-lev
 
 Import transactionally publishes a new generation with source inventory, native/imported facts, edges and manifest. Reindexing conservatively drops the entire imported provider domain after any indexed source/inventory/extractor change or declared build-input change, including inputs omitted by native extraction. Unchanged indexing retains imports and avoids rewriting SQLite. Queries describe the published revision, not unsaved buffers or automatically checked live files. Declared inputs are a producer contract, not proof of complete compiler/environment capture. This initial slice retains one imported provider domain per collection.
 
+## Explicit live LSP and Universal Ctags
+
+`airk analysis lsp --request /indexes/lsp.json` runs an explicitly selected local language server. `airk analysis ctags --request /indexes/ctags.json` runs Universal Ctags with JSON support. Both publish one replacement imported provider domain alongside unchanged native facts. They require a current index and a single owner root; aliased multi-root collections are rejected. Nothing downloads or installs a provider automatically.
+
+The request uses the same shape for either adapter. Keep it outside indexed sources:
+
+~~~json
+{
+  "command": {"program": "/opt/providers/rust-analyzer", "args": [], "timeout_ms": 120000},
+  "producer": "rust-analyzer",
+  "producer_version": "explicitly provisioned version",
+  "build_inputs": ["Cargo.toml", "Cargo.lock"],
+  "paths": ["src/lib.rs"]
+}
+~~~
+
+The executable must be an absolute path. Identity includes its SHA-256 digest; the supplied name/version remain declared metadata, and LSP `serverInfo` is recorded when present. Declare configuration, dependencies, effective compiler flags and environment fingerprints as build inputs, as for SCIP. Sources and declared inputs are copied into a private temporary workspace after hash verification. Providers receive this copy, and original sources/build inputs are checked again before publication. Results with modified copied sources, external/unindexed locations, invalid ranges or stale bindings reject the entire transaction. This is a trusted-local-executable boundary, not an operating-system security sandbox.
+
+The LSP 3.17 client initializes, opens selected documents, requests document symbols and queries advertised references, definition, type-definition, implementation and incoming/outgoing call-hierarchy capabilities at symbol selection positions. UTF-8/UTF-16/UTF-32 coordinates are checked against retained bytes. Call edges come only from explicit call-hierarchy results; ordinary references stay references. Missing capabilities are reported as unknown. Document-symbol queries do not enumerate every expression, generated dependency, dynamic target or unsaved buffer. For Rust Analyzer, AIRK waits for its reported quiescent initialization state and records health; initialization readiness is explicitly unknown for other servers. The client rejects edits and execute-command requests. Rust Analyzer receives disabled build-script, procedural-macro and sysroot-discovery settings, while Cargo runs offline; this intentionally limits standard-library/macro evidence and prevents automatic toolchain/dependency provisioning. Other servers may ignore these settings and remain explicitly trusted local programs.
+
+Universal Ctags is invoked with `--options=NONE`, controlled JSON/stdout flags and explicit paths, so user/project Ctags option files are not loaded. Its declarations retain provider line/end coordinates and selected scopes/signatures. These are syntax declarations, without fabricated resolved references or call edges. Extra Ctags arguments are rejected; LSP arguments are passed as individual arguments without a shell.
+
+Limits are explicit: 1–64 selected paths, at most 10,000 indexed files/64 MiB source copies plus at most 64 MiB declared build inputs, 256 LSP document symbols, 2,048 LSP requests, 10,000 retained facts/edges, 4 MiB per LSP frame, 32 MiB cumulative LSP responses, 16 MiB retained/JSON Ctags output and 64 KiB stderr. These copy limits remain independent of larger configured collection indexing limits. Each run has a selected 100–120,000 ms process budget. Windows Job Objects or Unix process groups terminate descendants before pipe-reader cleanup; buffers reject excess output. Provider-created files and memory are not a security sandbox quota. Declared build inputs do not prove complete environment capture. Source/build changes conservatively invalidate the provider domain on reindexing.
+
+Protocol references: [LSP 3.17 specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/) and [Universal Ctags JSON output](https://docs.ctags.io/en/stable/man/ctags-json-output.5.html). External tools retain their own licenses and are not bundled in AIRK releases.
+
+Windows qualification exercised Rust Analyzer `0.3.3081-standalone` (official 2026-10-12 release, executable SHA-256 `e6d6975ba5d95754546b2785bcb3ac620483695f7c338592ca3034f6de413efd`) on an original two-function Rust project, including references and call hierarchy. Universal Ctags 6.1.0 (executable SHA-256 `26e45e93eced1d75635ed9a94e95fc7074b1d3717572d854c5b95067e1b861d8`) returned its declarations without resolved edges. These small fixtures establish the exercised adapters, not broad producer/language accuracy. [The public CLI smoke](../scripts/check-local-providers.py) accepts explicit local provider paths and additionally checks publication, stale-source rejection, invalidation and source preservation.
+
 ## Storage and migration
 
 Each collection owns `index.sqlite3` with the active revision/component pointer. New generations contain compact digest-bound inventories and immutable `catalog.sqlite3` exact facts/relationships; source text and extractions live in content-addressed objects. Queries pin the published generation and read individual artifacts. Legacy whole-snapshot SQLite and `snapshot.json` remain readable and migrate on successful publication. Corrupt/unsupported state fails closed.
@@ -64,4 +92,4 @@ Legacy retained payloads retain a 512 MiB cap. New private catalogs use a reserv
 python scripts/benchmark-code.py --binary target/release/airk --files 256 --output artifacts/code-benchmark.json
 ~~~
 
-The checked Windows build and each native CI target run a 64-file smoke and retain measurements. Rust integration tests cover migration, rollback, shared readers/writers, isolation, duplicate names, Unicode/ranges, stale/unbound imports and source/build invalidation. Live LSP/Ctags adapters, particular external producer qualification, broader framework/version packs, dependency-specific invalidation, held-out precision/recall and paired agent tasks remain follow-ups. No Atlas, StakGraph, Munarium or VCP implementation is included.
+The checked Windows build and each native CI target run a 64-file smoke and retain measurements. Rust integration tests cover migration, rollback, shared readers/writers, isolation, duplicate names, Unicode/ranges, stale/unbound imports and source/build invalidation. Provider tests additionally cover framing, bounded processes and original source-copy fixtures; optional real-provider tests use `AIRK_TEST_LSP` and `AIRK_TEST_CTAGS`. Broad external producer/project qualification, broader framework/version packs, dependency-specific invalidation, held-out precision/recall and paired agent tasks remain follow-ups. No Atlas, StakGraph, Munarium or VCP implementation is included.
