@@ -423,19 +423,41 @@ fn removed_and_rebuilt_collection_cannot_reuse_old_worker_candidates() -> anyhow
 fn non_utf8_roots_cannot_share_a_lossy_collection_identity() -> anyhow::Result<()> {
     use std::os::unix::ffi::OsStringExt;
     let parent = tempfile::tempdir()?;
-    for suffix in [0x80, 0x81] {
-        let root = parent
+    let data = parent.path().join("state");
+    let roots = [0x80, 0x81].map(|suffix| {
+        parent
             .path()
-            .join(std::ffi::OsString::from_vec(vec![b'w', suffix]));
-        fs::create_dir(&root)?;
-        let result = Kernel::open(&root, None);
-        assert!(result.is_err());
+            .join(std::ffi::OsString::from_vec(vec![b'w', suffix]))
+    });
+    assert_ne!(roots[0], roots[1]);
+    assert_eq!(roots[0].to_string_lossy(), roots[1].to_string_lossy());
+    for root in roots {
+        // Some Unix filesystems (including the hosted Mac's volume) reject
+        // these names themselves. Exercise AIRK's failure path in either case,
+        // rather than requiring the filesystem to accept an invalid name.
+        let filesystem_rejected_encoding = match fs::create_dir(&root) {
+            Ok(()) => false,
+            Err(error) if error.raw_os_error() == Some(libc::EILSEQ) => true,
+            Err(error) => return Err(error.into()),
+        };
+        let error = Kernel::open(&root, Some(data.clone()))
+            .err()
+            .expect("an invalid root must never acquire a collection identity");
+        if filesystem_rejected_encoding {
+            assert_eq!(error.to_string(), "resolve workspace root");
+            let cause = error
+                .downcast_ref::<std::io::Error>()
+                .expect("filesystem root resolution error");
+            assert!(matches!(
+                cause.raw_os_error(),
+                Some(libc::EILSEQ | libc::ENOENT)
+            ));
+        } else {
+            assert!(error.to_string().contains("non-UTF-8 workspace root"));
+        }
         assert!(
-            result
-                .err()
-                .expect("root encoding error")
-                .to_string()
-                .contains("non-UTF-8 workspace root")
+            !data.exists(),
+            "a rejected root must not create managed state"
         );
     }
     Ok(())

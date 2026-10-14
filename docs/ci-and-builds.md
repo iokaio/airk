@@ -44,9 +44,10 @@ Use Python 3.9+ locally. Output is under ignored `artifacts/native/<target>/`. R
 
 - Push builds run for `main` and `v*` tags; other branch pushes run through their pull requests. Manual dispatch remains available. There is no schedule.
 - New commits cancel an older run for the same branch or pull request.
-- At most two native matrix jobs run together, plus the container job.
+- All four native matrix jobs may run together, plus the container job, so one platform does not wait for another platform's build. Each native compiler still uses two workers to bound memory pressure.
+- A pinned official cache action retains Cargo registry/git dependencies and explicitly selected compiler output directories. Keys isolate OS, target, compiler/workflow configuration and dependency manifests; compatible older dependency graphs can supply reusable outputs. Incremental compilation is disabled to keep caches smaller. Every check and build still runs after restoration, and Cargo determines which outputs need rebuilding. Cache misses or eviction cause ordinary fresh builds. Local models, corpora, index state and candidate staging directories are outside the cache paths.
 - Native and container jobs have 90-minute limits to accommodate clean compiler, debug-test and optimized ONNX-runtime builds. Timings remain subject to runner capacity.
-- Candidate artifacts expire after seven days. Compiler outputs and intermediate staging directories are not uploaded. Docker BuildKit keeps local dependency/target caches for repeated builds; generated distributions are copied out of cache mounts and verified normally.
+- Candidate artifacts expire after seven days and exclude compiler outputs and intermediate staging directories. Compiler caches are separate from downloadable candidates. Docker BuildKit keeps local dependency/target caches for repeated builds within a job; generated distributions are copied out of cache mounts and verified normally.
 - Jobs have read-only repository permissions and do not receive publishing or signing credentials. Fork contributions use `pull_request`, not a privileged `pull_request_target` build.
 
 Concurrency and time limits bound work per run; they do not impose a monthly spending cap. All four native builds still run for every admitted code change. Documentation-only changes also run CI so repository checks remain required.
