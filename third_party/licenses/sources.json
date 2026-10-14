@@ -8,6 +8,98 @@
     "missing_text": true
   },
   {
+    "name": "datasketches",
+    "version": "0.2.0",
+    "revision": "fdb38b85d22e6549ab283bf3b9b133659267d19f",
+    "repository": "https://github.com/apache/datasketches-rust",
+    "files": [
+      {
+        "file": "LICENSE",
+        "url": "https://raw.githubusercontent.com/apache/datasketches-rust/fdb38b85d22e6549ab283bf3b9b133659267d19f/LICENSE",
+        "sha256": "2a93522cc3e0d15510a70e0e7aaf33dc6a1588c39ca4a5c60c4b0121ed25eaf4"
+      }
+    ],
+    "missing_text": false
+  },
+  {
+    "name": "diskann",
+    "version": "0.59.0",
+    "revision": "c84530e57c0305a2502c35770301ce5667f265f7",
+    "repository": "https://github.com/microsoft/DiskANN",
+    "files": [
+      {
+        "file": "LICENSE.txt",
+        "url": "https://raw.githubusercontent.com/microsoft/DiskANN/c84530e57c0305a2502c35770301ce5667f265f7/LICENSE.txt",
+        "sha256": "7c77a44a8acd9b41fdc209864a8016b3d430b5d0e09309818d5b7444336df744"
+      }
+    ],
+    "missing_text": false
+  },
+  {
+    "name": "diskann-utils",
+    "version": "0.59.0",
+    "revision": "c84530e57c0305a2502c35770301ce5667f265f7",
+    "repository": "https://github.com/microsoft/DiskANN",
+    "files": [
+      {
+        "file": "LICENSE.txt",
+        "url": "https://raw.githubusercontent.com/microsoft/DiskANN/c84530e57c0305a2502c35770301ce5667f265f7/LICENSE.txt",
+        "sha256": "7c77a44a8acd9b41fdc209864a8016b3d430b5d0e09309818d5b7444336df744"
+      }
+    ],
+    "missing_text": false
+  },
+  {
+    "name": "diskann-vector",
+    "version": "0.59.0",
+    "revision": "c84530e57c0305a2502c35770301ce5667f265f7",
+    "repository": "https://github.com/microsoft/DiskANN",
+    "files": [
+      {
+        "file": "LICENSE.txt",
+        "url": "https://raw.githubusercontent.com/microsoft/DiskANN/c84530e57c0305a2502c35770301ce5667f265f7/LICENSE.txt",
+        "sha256": "7c77a44a8acd9b41fdc209864a8016b3d430b5d0e09309818d5b7444336df744"
+      }
+    ],
+    "missing_text": false
+  },
+  {
+    "name": "diskann-wide",
+    "version": "0.59.0",
+    "revision": "c84530e57c0305a2502c35770301ce5667f265f7",
+    "repository": "https://github.com/microsoft/DiskANN",
+    "files": [
+      {
+        "file": "LICENSE.txt",
+        "url": "https://raw.githubusercontent.com/microsoft/DiskANN/c84530e57c0305a2502c35770301ce5667f265f7/LICENSE.txt",
+        "sha256": "7c77a44a8acd9b41fdc209864a8016b3d430b5d0e09309818d5b7444336df744"
+      }
+    ],
+    "missing_text": false
+  },
+  {
+    "name": "htmlescape",
+    "version": "0.3.1",
+    "revision": null,
+    "repository": "https://github.com/veddan/rust-htmlescape",
+    "files": [],
+    "missing_text": true
+  },
+  {
+    "name": "ownedbytes",
+    "version": "0.9.0",
+    "revision": "c6e77d27c605cb3cea1a933fa7d68632aeb7865e",
+    "repository": "https://github.com/quickwit-oss/tantivy",
+    "files": [
+      {
+        "file": "LICENSE",
+        "url": "https://raw.githubusercontent.com/quickwit-oss/tantivy/c6e77d27c605cb3cea1a933fa7d68632aeb7865e/LICENSE",
+        "sha256": "acacd14bebbffdb30d62443c282fb4da3e81915a9f69c63d5d745a029f44de8a"
+      }
+    ],
+    "missing_text": false
+  },
+  {
     "name": "pdf-extract",
     "version": "0.12.1",
     "revision": "47b792ba04c5f3b6e478072b2efb8e1a2a06ec7e",
@@ -17,11 +109,31 @@
   },
   {
     "name": "r-efi",
+    "version": "5.3.0",
+    "revision": "97b55bed1c2c91dcbf787674849f05337ff80b33",
+    "repository": "https://github.com/r-efi/r-efi",
+    "files": [
+      {
+        "file": "AUTHORS",
+        "url": "https://raw.githubusercontent.com/r-efi/r-efi/97b55bed1c2c91dcbf787674849f05337ff80b33/AUTHORS",
+        "sha256": "ff92bed461f50338dd703a9ba9aee496a425957873df1d91192776e4bdf5dda7"
+      }
+    ],
+    "missing_text": false
+  },
+  {
+    "name": "r-efi",
     "version": "6.0.0",
     "revision": "7e1b0322d31d625f81a5656096330934f9cd835d",
     "repository": "https://github.com/r-efi/r-efi",
-    "files": [],
-    "missing_text": true
+    "files": [
+      {
+        "file": "AUTHORS",
+        "url": "https://raw.githubusercontent.com/r-efi/r-efi/7e1b0322d31d625f81a5656096330934f9cd835d/AUTHORS",
+        "sha256": "d027e91dbc9cdbb2f1190068e498bd6b61cff022b6a032b191021ba658d96111"
+      }
+    ],
+    "missing_text": false
   },
   {
     "name": "rmcp",
@@ -47,6 +159,112 @@
         "file": "LICENSE",
         "url": "https://raw.githubusercontent.com/modelcontextprotocol/rust-sdk/51ccb42993d6eb5075399672ce7a0c21a0e55eea/LICENSE",
         "sha256": "0382b0057770ca05e9c350a50aa3b1c1fea84da0bc81d723bf00b9aa841be58a"
+      }
+    ],
+    "missing_text": false
+  },
+  {
+    "name": "rsqlite-vfs",
+    "version": "0.1.1",
+    "revision": null,
+    "repository": null,
+    "files": [],
+    "missing_text": true
+  },
+  {
+    "name": "tantivy-bitpacker",
+    "version": "0.10.0",
+    "revision": "9e63fc508153ef770f9ff980c8fa2f11e8e2e6db",
+    "repository": "https://github.com/quickwit-oss/tantivy",
+    "files": [
+      {
+        "file": "LICENSE",
+        "url": "https://raw.githubusercontent.com/quickwit-oss/tantivy/9e63fc508153ef770f9ff980c8fa2f11e8e2e6db/LICENSE",
+        "sha256": "acacd14bebbffdb30d62443c282fb4da3e81915a9f69c63d5d745a029f44de8a"
+      }
+    ],
+    "missing_text": false
+  },
+  {
+    "name": "tantivy-columnar",
+    "version": "0.7.0",
+    "revision": "9e63fc508153ef770f9ff980c8fa2f11e8e2e6db",
+    "repository": "https://github.com/quickwit-oss/tantivy",
+    "files": [
+      {
+        "file": "LICENSE",
+        "url": "https://raw.githubusercontent.com/quickwit-oss/tantivy/9e63fc508153ef770f9ff980c8fa2f11e8e2e6db/LICENSE",
+        "sha256": "acacd14bebbffdb30d62443c282fb4da3e81915a9f69c63d5d745a029f44de8a"
+      }
+    ],
+    "missing_text": false
+  },
+  {
+    "name": "tantivy-common",
+    "version": "0.11.0",
+    "revision": "9e63fc508153ef770f9ff980c8fa2f11e8e2e6db",
+    "repository": "https://github.com/quickwit-oss/tantivy",
+    "files": [
+      {
+        "file": "LICENSE",
+        "url": "https://raw.githubusercontent.com/quickwit-oss/tantivy/9e63fc508153ef770f9ff980c8fa2f11e8e2e6db/LICENSE",
+        "sha256": "acacd14bebbffdb30d62443c282fb4da3e81915a9f69c63d5d745a029f44de8a"
+      }
+    ],
+    "missing_text": false
+  },
+  {
+    "name": "tantivy-query-grammar",
+    "version": "0.26.0",
+    "revision": "9e63fc508153ef770f9ff980c8fa2f11e8e2e6db",
+    "repository": "https://github.com/quickwit-oss/tantivy",
+    "files": [
+      {
+        "file": "LICENSE",
+        "url": "https://raw.githubusercontent.com/quickwit-oss/tantivy/9e63fc508153ef770f9ff980c8fa2f11e8e2e6db/LICENSE",
+        "sha256": "acacd14bebbffdb30d62443c282fb4da3e81915a9f69c63d5d745a029f44de8a"
+      }
+    ],
+    "missing_text": false
+  },
+  {
+    "name": "tantivy-sstable",
+    "version": "0.7.0",
+    "revision": "9e63fc508153ef770f9ff980c8fa2f11e8e2e6db",
+    "repository": "https://github.com/quickwit-oss/tantivy",
+    "files": [
+      {
+        "file": "LICENSE",
+        "url": "https://raw.githubusercontent.com/quickwit-oss/tantivy/9e63fc508153ef770f9ff980c8fa2f11e8e2e6db/LICENSE",
+        "sha256": "acacd14bebbffdb30d62443c282fb4da3e81915a9f69c63d5d745a029f44de8a"
+      }
+    ],
+    "missing_text": false
+  },
+  {
+    "name": "tantivy-stacker",
+    "version": "0.7.0",
+    "revision": "9e63fc508153ef770f9ff980c8fa2f11e8e2e6db",
+    "repository": "https://github.com/quickwit-oss/tantivy",
+    "files": [
+      {
+        "file": "LICENSE",
+        "url": "https://raw.githubusercontent.com/quickwit-oss/tantivy/9e63fc508153ef770f9ff980c8fa2f11e8e2e6db/LICENSE",
+        "sha256": "acacd14bebbffdb30d62443c282fb4da3e81915a9f69c63d5d745a029f44de8a"
+      }
+    ],
+    "missing_text": false
+  },
+  {
+    "name": "tantivy-tokenizer-api",
+    "version": "0.7.0",
+    "revision": "9e63fc508153ef770f9ff980c8fa2f11e8e2e6db",
+    "repository": "https://github.com/quickwit-oss/tantivy",
+    "files": [
+      {
+        "file": "LICENSE",
+        "url": "https://raw.githubusercontent.com/quickwit-oss/tantivy/9e63fc508153ef770f9ff980c8fa2f11e8e2e6db/LICENSE",
+        "sha256": "acacd14bebbffdb30d62443c282fb4da3e81915a9f69c63d5d745a029f44de8a"
       }
     ],
     "missing_text": false
@@ -140,8 +358,14 @@
     "version": "0.5.0",
     "revision": "10fe0054734eec83049514ea2e718b2a56acd0c9",
     "repository": "https://github.com/tree-sitter-grammars/tree-sitter-lua",
-    "files": [],
-    "missing_text": true
+    "files": [
+      {
+        "file": "LICENSE.md",
+        "url": "https://raw.githubusercontent.com/tree-sitter-grammars/tree-sitter-lua/10fe0054734eec83049514ea2e718b2a56acd0c9/LICENSE.md",
+        "sha256": "9a32b02e4c917b1ce6b5e79d8ea81e25cefd7f27d89c7235f2afb262c06cf32e"
+      }
+    ],
+    "missing_text": false
   },
   {
     "name": "tree-sitter-ruby",
@@ -204,6 +428,22 @@
     "version": "0.1.1",
     "revision": "55d193e28c9a5909be02a5b1f91fd3f76b076747",
     "repository": "https://github.com/jrmuizel/type1-encoding-parser",
+    "files": [],
+    "missing_text": true
+  },
+  {
+    "name": "winapi-i686-pc-windows-gnu",
+    "version": "0.4.0",
+    "revision": null,
+    "repository": "https://github.com/retep998/winapi-rs",
+    "files": [],
+    "missing_text": true
+  },
+  {
+    "name": "winapi-x86_64-pc-windows-gnu",
+    "version": "0.4.0",
+    "revision": null,
+    "repository": "https://github.com/retep998/winapi-rs",
     "files": [],
     "missing_text": true
   }

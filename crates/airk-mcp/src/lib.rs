@@ -2,6 +2,7 @@
 //! MCP owns schemas and transport only; every operation goes through the kernel.
 use airk_core::RelationshipQuery;
 use airk_core::SearchQuery;
+use airk_core::usage::{ClientFamily, ResponseRepresentation, UsageOperation};
 use airk_kernel::{FactQuery, Kernel};
 use rmcp::{
     ServerHandler, ServiceExt,
@@ -14,14 +15,27 @@ use serde::{Deserialize, Serialize};
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SearchArgs {
-    /// Lexical terms that must all match. Not a natural-language semantic query or regex.
+    /// Lexical AND terms by default; vector/hybrid modes use the provisioned local model.
     pub query: String,
+    /// Retrieval mode; lexical is the default. Vector/hybrid need a local model.
+    pub mode: Option<SearchMode>,
+    /// Opt into the locally provisioned embedding model and disk-backed graph.
+    #[serde(default)]
+    pub semantic: bool,
     /// Optional literal collection-relative path prefix, not a glob.
     pub path_prefix: Option<String>,
     #[serde(default = "default_limit")]
     pub limit: usize,
     #[serde(default = "default_budget")]
     pub max_bytes: usize,
+}
+
+#[derive(Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchMode {
+    Lexical,
+    Vector,
+    Hybrid,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
@@ -116,7 +130,7 @@ pub struct DocumentFactArgs {
     pub name: Option<String>,
     /// Optional indexed language/profile label from airk_file_info.
     pub language: Option<String>,
-    /// Exact category: requirement, date, architecture, design, feature, decision, acceptance, section, table, key or element.
+    /// Exact category: requirement, date, architecture, design, feature, decision, acceptance, section, table, table_row, table_cell, key or element.
     pub kind: Option<String>,
     #[serde(default = "default_limit")]
     pub limit: usize,
@@ -224,7 +238,12 @@ impl AirkServer {
     )]
     async fn code_facts(&self, Parameters(args): Parameters<CodeFactArgs>) -> CallToolResult {
         let kernel = self.kernel.clone();
+        let span = self
+            .kernel
+            .usage_span(UsageOperation::CodeFacts, ClientFamily::Unknown);
         render(
+            &self.kernel,
+            span,
             tokio::task::spawn_blocking(move || {
                 kernel.code_facts(&FactQuery {
                     path_prefix: args.path_prefix,
@@ -256,7 +275,12 @@ impl AirkServer {
         Parameters(args): Parameters<RelationshipArgs>,
     ) -> CallToolResult {
         let kernel = self.kernel.clone();
+        let span = self
+            .kernel
+            .usage_span(UsageOperation::Relationships, ClientFamily::Unknown);
         render(
+            &self.kernel,
+            span,
             tokio::task::spawn_blocking(move || {
                 kernel.relationships(&RelationshipQuery {
                     symbol: args.symbol,
@@ -274,7 +298,7 @@ impl AirkServer {
 
     #[tool(
         name = "airk_search",
-        description = "Find code implementations or repository documentation by AND lexical terms. Use short identifiers/keywords, not semantic questions or regex. Returns bounded indexed evidence, paths, locations and hashes. Narrow with a literal path prefix when truncated.",
+        description = "Find code or documentation with mode=lexical (default AND terms), vector (local static word-vector similarity) or hybrid (rank fusion from one indexed revision). Vector/hybrid require an explicitly provisioned local model and disk-backed graph, with no network fallback. semantic=true is a compatibility alias for vector; omit mode with that alias. Returns bounded indexed evidence, paths, locations and hashes.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -283,16 +307,32 @@ impl AirkServer {
     )]
     async fn search(&self, Parameters(args): Parameters<SearchArgs>) -> CallToolResult {
         let kernel = self.kernel.clone();
+        let span = self
+            .kernel
+            .usage_span(UsageOperation::Search, ClientFamily::Unknown);
         let result = tokio::task::spawn_blocking(move || {
-            kernel.search(&SearchQuery {
+            anyhow::ensure!(
+                !args.semantic || args.mode.is_none(),
+                "choose mode or semantic, not both"
+            );
+            let query = SearchQuery {
                 text: args.query,
                 path_prefix: args.path_prefix,
                 limit: args.limit,
                 max_bytes: args.max_bytes,
-            })
+            };
+            match args.mode.unwrap_or(if args.semantic {
+                SearchMode::Vector
+            } else {
+                SearchMode::Lexical
+            }) {
+                SearchMode::Lexical => kernel.search(&query),
+                SearchMode::Vector => kernel.semantic_search(&query),
+                SearchMode::Hybrid => kernel.hybrid_search(&query),
+            }
         })
         .await;
-        render(result)
+        render(&self.kernel, span, result)
     }
 
     #[tool(
@@ -306,7 +346,12 @@ impl AirkServer {
     )]
     async fn read_file(&self, Parameters(args): Parameters<ReadArgs>) -> CallToolResult {
         let kernel = self.kernel.clone();
+        let span = self
+            .kernel
+            .usage_span(UsageOperation::ReadFile, ClientFamily::Unknown);
         render(
+            &self.kernel,
+            span,
             tokio::task::spawn_blocking(move || {
                 kernel.read_file(&args.path, args.start_line, args.end_line, args.max_bytes)
             })
@@ -325,7 +370,12 @@ impl AirkServer {
     )]
     async fn list_files(&self, Parameters(args): Parameters<ListArgs>) -> CallToolResult {
         let kernel = self.kernel.clone();
+        let span = self
+            .kernel
+            .usage_span(UsageOperation::ListFiles, ClientFamily::Unknown);
         render(
+            &self.kernel,
+            span,
             tokio::task::spawn_blocking(move || {
                 kernel.list_files(&args.prefix, args.limit, args.max_bytes)
             })
@@ -344,7 +394,14 @@ impl AirkServer {
     )]
     async fn status(&self) -> CallToolResult {
         let kernel = self.kernel.clone();
-        render(tokio::task::spawn_blocking(move || kernel.status()).await)
+        let span = self
+            .kernel
+            .usage_span(UsageOperation::Status, ClientFamily::Unknown);
+        render(
+            &self.kernel,
+            span,
+            tokio::task::spawn_blocking(move || kernel.status()).await,
+        )
     }
 
     #[tool(
@@ -358,7 +415,14 @@ impl AirkServer {
     )]
     async fn file_info(&self, Parameters(args): Parameters<PathArgs>) -> CallToolResult {
         let kernel = self.kernel.clone();
-        render(tokio::task::spawn_blocking(move || kernel.file_info(&args.path)).await)
+        let span = self
+            .kernel
+            .usage_span(UsageOperation::FileInfo, ClientFamily::Unknown);
+        render(
+            &self.kernel,
+            span,
+            tokio::task::spawn_blocking(move || kernel.file_info(&args.path)).await,
+        )
     }
 
     #[tool(
@@ -372,7 +436,12 @@ impl AirkServer {
     )]
     async fn outline(&self, Parameters(args): Parameters<OutlineArgs>) -> CallToolResult {
         let kernel = self.kernel.clone();
+        let span = self
+            .kernel
+            .usage_span(UsageOperation::Outline, ClientFamily::Unknown);
         render(
+            &self.kernel,
+            span,
             tokio::task::spawn_blocking(move || {
                 kernel.outline(&args.path, args.limit, args.max_bytes)
             })
@@ -391,7 +460,12 @@ impl AirkServer {
     )]
     async fn symbols(&self, Parameters(args): Parameters<FactArgs>) -> CallToolResult {
         let kernel = self.kernel.clone();
+        let span = self
+            .kernel
+            .usage_span(UsageOperation::Symbols, ClientFamily::Unknown);
         render(
+            &self.kernel,
+            span,
             tokio::task::spawn_blocking(move || {
                 kernel.facts(&args.query(Some("definition"), true, false))
             })
@@ -410,7 +484,12 @@ impl AirkServer {
     )]
     async fn imports(&self, Parameters(args): Parameters<FactArgs>) -> CallToolResult {
         let kernel = self.kernel.clone();
+        let span = self
+            .kernel
+            .usage_span(UsageOperation::Imports, ClientFamily::Unknown);
         render(
+            &self.kernel,
+            span,
             tokio::task::spawn_blocking(move || {
                 kernel.facts(&args.query(Some("import"), false, false))
             })
@@ -432,7 +511,12 @@ impl AirkServer {
         Parameters(args): Parameters<DocumentFactArgs>,
     ) -> CallToolResult {
         let kernel = self.kernel.clone();
+        let span = self
+            .kernel
+            .usage_span(UsageOperation::DocumentFacts, ClientFamily::Unknown);
         render(
+            &self.kernel,
+            span,
             tokio::task::spawn_blocking(move || {
                 kernel.facts(&FactQuery {
                     path_prefix: args.path_prefix,
@@ -461,7 +545,12 @@ impl AirkServer {
     )]
     async fn references(&self, Parameters(args): Parameters<ReferenceArgs>) -> CallToolResult {
         let kernel = self.kernel.clone();
+        let span = self
+            .kernel
+            .usage_span(UsageOperation::References, ClientFamily::Unknown);
         render(
+            &self.kernel,
+            span,
             tokio::task::spawn_blocking(move || {
                 kernel.references(&args.name, &args.path_prefix, args.limit, args.max_bytes)
             })
@@ -480,7 +569,12 @@ impl AirkServer {
     )]
     async fn context(&self, Parameters(args): Parameters<ContextArgs>) -> CallToolResult {
         let kernel = self.kernel.clone();
+        let span = self
+            .kernel
+            .usage_span(UsageOperation::Context, ClientFamily::Unknown);
         render(
+            &self.kernel,
+            span,
             tokio::task::spawn_blocking(move || {
                 kernel.context(
                     &args.path,
@@ -503,33 +597,64 @@ impl AirkServer {
             open_world_hint = false
         )
     )]
-    fn capabilities(&self) -> String {
-        serde_json::json!({
+    fn capabilities(&self) -> CallToolResult {
+        let span = self
+            .kernel
+            .usage_span(UsageOperation::Capabilities, ClientFamily::Unknown);
+        let value = serde_json::json!({
             "code": ["rust","python","javascript/jsx","typescript/tsx","go","java","c","cpp","csharp","ruby","php","bash","powershell","lua","swift","kotlin","sql"],
             "structured": ["markdown","json","yaml","toml","html","css","xml","svg","csv","tsv","ini","dockerfile"],
-            "documents": ["UTF-8 text","text-layer PDF","DOCX main-body paragraphs/tables","PPTX slide text in presentation order"],
+            "documents": ["UTF-8 text","text-layer PDF","DOCX main-body paragraphs/tables with original row locations","XLSX worksheet cells and row facts","PPTX slide text in presentation order"],
             "fallback": "UTF-8 lexical retrieval for all other extensions",
             "document_cues": ["English requirement/modality and design/architecture/feature/decision candidates", "heading context", "ISO and English calendar dates; numeric slash dates retain unknown locale", "written numeric bounds/ranges/units; no unit conversion"],
             "exact_fact_backend": "embedded SQLite; legacy JSON migrates at next successful index",
             "code_evidence": ["syntax scopes/signatures/written parameters and return types", "syntax call, inheritance, containment and import candidates", "versioned structural framework cues"],
             "optional_analysis": "Explicit source/build/digest-bound SCIP import for TS/JS, Rust and C#; producer assertions, not AIRK compiler certification. Invalidated conservatively during reindexing.",
             "relationship_limits": {"hops":3,"results":100,"payload_bytes":65536,"traversal_ms":250,"visited_symbols":100},
-            "limitations": ["No native type/name resolution","No resolved caller graph","No live LSP or Ctags adapter","No OCR","No legacy binary Office formats","No SVG rendering","No embedded code parsing in HTML/Vue/Svelte","No automatic source freshness detection","No semantic embeddings yet"]
-        }).to_string()
+            "local_usage": "Content-free local aggregates are enabled by default; AIRK_USAGE_MODE=disabled opts out. Use CLI usage report/configure/clear; estimates are counterfactual context, never provider bills.",
+            "search_modes": ["lexical", "vector", "hybrid"],
+            "semantic_search": "Vector/hybrid modes use approximate local static word-vector similarity, require an explicitly provisioned local model and a matching generation, and have no network fallback. semantic=true aliases vector.",
+            "limitations": ["No native type/name resolution","No resolved caller graph","No live LSP or Ctags adapter","No OCR","No legacy binary Office formats","No SVG rendering","No embedded code parsing in HTML/Vue/Svelte"]
+        });
+        render(&self.kernel, span, Ok(Ok(value)))
     }
 }
 
 fn render<T: Serialize>(
+    kernel: &Kernel,
+    span: airk_kernel::usage::RequestSpan,
     result: Result<anyhow::Result<T>, tokio::task::JoinError>,
 ) -> CallToolResult {
-    match result {
-        Ok(Ok(value)) => match serde_json::to_string(&value) {
+    let mut logical = result
+        .as_ref()
+        .ok()
+        .and_then(|r| r.as_ref().ok())
+        .and_then(|value| serde_json::to_value(value).ok());
+    if let Some(object) = logical.as_mut().and_then(serde_json::Value::as_object_mut)
+        && let Some(id) = span.request_id()
+    {
+        object.insert("request_id".into(), id.into());
+    }
+    let rendered = match result {
+        Ok(Ok(value)) => match logical
+            .as_ref()
+            .map_or_else(|| serde_json::to_string(&value), serde_json::to_string)
+        {
             Ok(text) => CallToolResult::success(vec![ContentBlock::text(text)]),
             Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),
         },
         Ok(Err(error)) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),
         Err(_) => CallToolResult::error(vec![ContentBlock::text("retrieval worker failed")]),
-    }
+    };
+    let bytes = serde_json::to_vec(&rendered).map_or(0, |v| v.len());
+    kernel.finish_usage(
+        span,
+        logical.as_ref(),
+        bytes,
+        rendered.is_error.unwrap_or(false),
+        ResponseRepresentation::McpToolResultJson,
+    );
+    rendered
 }
 
 #[tool_handler(router = self.tool_router)]
@@ -547,4 +672,33 @@ pub async fn serve(kernel: Kernel) -> anyhow::Result<()> {
         .await?;
     service.waiting().await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn search_schema_preserves_lexical_default_and_bounds_modes() {
+        let default: SearchArgs =
+            serde_json::from_value(serde_json::json!({"query":"fixture"})).unwrap();
+        assert!(default.mode.is_none());
+        assert!(!default.semantic);
+        let hybrid: SearchArgs =
+            serde_json::from_value(serde_json::json!({"query":"fixture", "mode":"hybrid"}))
+                .unwrap();
+        assert!(matches!(hybrid.mode, Some(SearchMode::Hybrid)));
+        assert!(
+            serde_json::from_value::<SearchArgs>(
+                serde_json::json!({"query":"fixture", "mode":"remote"})
+            )
+            .is_err()
+        );
+        assert!(
+            serde_json::from_value::<SearchArgs>(
+                serde_json::json!({"query":"fixture", "collection":"other"})
+            )
+            .is_err()
+        );
+    }
 }

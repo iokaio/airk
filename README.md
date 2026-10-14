@@ -4,9 +4,9 @@
 
 Local code and document evidence for coding agents. AIRK indexes files and returns bounded facts and passages with source paths, hashes and original locations. The agent supplies the reasoning. Runtime storage uses memory and local disk.
 
-[Document indexing](docs/document-indexing.md) specializes headings, dates, requirements, numeric bounds/units, qualitative cues and design/architecture/feature/decision language for Markdown, text and extracted PDF/DOCX/PPTX content. These are cited evidence candidates, with category-filtered retrieval through MCP and the CLI.
+[Document indexing](docs/document-indexing.md) specializes headings, dates, requirements, numeric bounds/units, qualitative cues and design/architecture/feature/decision language for Markdown, text and extracted documents. DOCX tables and XLSX worksheets retain row/cell evidence and original locations. These are cited evidence candidates, with category-filtered retrieval through MCP and the CLI.
 
-This is an independent, runnable open-source scaffold. Munarium, VCP and local reference files inform the design; their implementations are not dependencies. DiskANN with a real disk provider is the selected final vector architecture. The current working slice uses embedded SQLite for revision state, exact facts and relationships, plus an in-memory lexical index; local embeddings and DiskANN integration are still to implement.
+This is an independent, runnable open-source beta. Munarium, VCP and local reference files inform the design; their implementations are not dependencies. Persistent Tantivy lexical indexes, SQLite exact facts and an independent disk file provider for Microsoft DiskANN publish coherent revisions. Optional [local word-vector models](docs/local-models.md) enable vector and hybrid retrieval. AIRK does not download models or use remote inference; model/corpus semantic quality remains to be qualified.
 
 [Code facts and relationships](docs/code-facts-and-relationships.md) add scopes, signatures, written types, call/framework candidates and optional source/build-bound SCIP imports. Fourteen read-only MCP tools expose bounded evidence with explicit syntax versus producer provenance. Native indexing needs no external compiler/indexer installation.
 
@@ -22,7 +22,7 @@ For a local Windows app and extension build:
 pwsh -NoProfile -File scripts/build-windows.ps1
 ~~~
 
-Add `-OpenReview` to install the generated VSIX in an isolated editor profile. The extension provides indexing presets, pause/resume, storage selection, collection maintenance, scoped VS Code MCP registration and guided agent setup. See [Windows build/review instructions](docs/windows-local-build.md) and [extension behavior and limits](docs/vscode-extension.md).
+Add `-OpenReview` to install the generated VSIX in an isolated editor profile. The extension provides measured workspace coverage, click-to-index, indexing presets, persistent pause/resume, storage selection, generation trimming, local usage reports, scoped VS Code MCP registration and guided agent setup. See [Windows build/review instructions](docs/windows-local-build.md) and [extension behavior and limits](docs/vscode-extension.md).
 
 ~~~console
 cargo install --path crates/airk-cli --locked
@@ -37,6 +37,8 @@ airk symbol authenticate --collection project-a
 airk outline src/auth.py --collection project-a
 airk refs authenticate --collection project-a
 airk index . --collection project-a
+airk coverage --refresh --collection project-a
+airk usage report --collection project-a
 ~~~
 
 Setup indexes the workspace and prints client-specific configuration using actual absolute paths. It never overwrites client settings. Use --client codex for TOML, --client vscode or cursor for editor configurations, and other supported formats listed in [agent integration](docs/agent-integration.md). Commands return JSON; MCP uses stdio and needs no Python bridge, port, service account or API key.
@@ -55,28 +57,32 @@ docker exec airk airk --root /workspaces/project-b --data-dir /data --collection
 
 The default mounts the tiny public [example workspaces](examples/workspaces). Set AIRK_WORKSPACES to the absolute parent directory of your intended workspaces before startup. Source mounts are read-only. A named volume retains all collection indexes, runtime networking is disabled and no ports are exposed.
 
-Configure each workspace's agent with its own root and collection, using [the Docker MCP example](examples/mcp/docker.json). The client launches a stdio worker using docker exec inside the existing container. This scaffold has one container host and multiple scoped worker processes; a shared daemon cache is future work. No public image or released package is advertised yet.
+Configure each workspace's agent with its own root and collection, using [the Docker MCP example](examples/mcp/docker.json). The client launches a stdio worker using docker exec inside the existing container. Workers share immutable disk generations and retain separate caches. The [native scheduler](docs/native-scheduler.md) coordinates submitted indexing jobs across workers sharing a data root; no system service is automatically installed. No public image or released package is advertised yet.
 
 ## Implemented retrieval
 
-Twelve read-only MCP tools provide search, file listing, bounded reads, file metadata, context, outlines, native syntax definitions/imports, structured document facts, textual identifier occurrences, status and capability inspection.
+Fourteen read-only MCP tools provide search, file listing, bounded reads, file metadata, context, outlines, native syntax definitions/imports, structured document facts, code facts/relationships, textual identifier occurrences, status and capability inspection.
 
-Native grammar profiles cover Rust, Python, JavaScript/JSX, TypeScript/TSX, Go, Java, C/C++, C#, Ruby, PHP, Bash, PowerShell, Lua, Swift, Kotlin and SQL. Structured adapters cover Markdown, JSON/YAML/TOML, HTML/CSS, XML/SVG, CSV/TSV, INI-style configuration and Dockerfiles. Native extraction supports text-layer PDF, DOCX body paragraphs/table cells and PPTX slide text in presentation order. Other UTF-8 files retain lexical retrieval without an extension allowlist.
+Native grammar profiles cover Rust, Python, JavaScript/JSX, TypeScript/TSX, Go, Java, C/C++, C#, Ruby, PHP, Bash, PowerShell, Lua, Swift, Kotlin and SQL. Structured adapters cover Markdown, JSON/YAML/TOML, HTML/CSS, XML/SVG, CSV/TSV, INI-style configuration and Dockerfiles. Native extraction supports text-layer PDF, DOCX paragraphs and structured tables, XLSX stored worksheet rows/cells, and PPTX slide text in presentation order. Spreadsheet formulas are retained with any stored result; AIRK does not calculate formulas. Other UTF-8 files retain lexical retrieval without an extension allowlist.
 
-See the [format matrix](docs/formats.md) for exact limits. Optional manifest-bound SCIP imports provide producer reference/implementation assertions; native compiler resolution, resolved caller graphs, OCR, full framework analysis, embedded languages and machine-wide scheduling remain open. The extension coalesces filesystem edits and schedules indexing. An original-corpus correctness/measurement smoke is included; large-repository performance and practical token savings remain unqualified.
+See the [format matrix](docs/formats.md) for exact limits. Optional manifest-bound SCIP imports provide producer reference/implementation assertions; native compiler resolution, resolved caller graphs, OCR, full framework analysis and embedded languages remain outside the implemented slice. The extension coalesces filesystem edits and submits durable native indexing requests. Original-fixture correctness and DiskANN recall checks are included; large-repository performance, production semantic quality and practical token savings remain unqualified.
 
 ## Storage and maintenance
 
-[Local usage and estimated savings](docs/usage-reporting.md) now has code contracts and tested report/estimation helpers. The plan defaults to local aggregate counters without query/source text, tracks performance and indexing reuse, and separates counterfactual context reduction from actual agent/provider billing. Persistent recording and user-facing reports are the next implementation increments.
+[Local usage and estimated savings](docs/usage-reporting.md) records bounded daily aggregates without query/source text, including serialized response bytes, latency, indexing reuse, measured index stages and logical disk growth. CLI reports support JSON, CSV and Markdown; the extension displays the selected collection's report. Optional commands import content-free client/session and paired-task measurements, calibrate explicitly supplied local byte-BPE tokenizers, and apply dated user-supplied input-price scenarios. These remain separate from native request totals and full-source context estimates. Imported client counters are self-reported, hypothetical price equivalents are not billed savings, and provider-tokenizer compatibility requires qualification. Nonempty reports remain partial because historical recording loss cannot be certified; CPU and physical I/O counters remain unknown.
 
 ~~~console
 airk --data-dir /path/to/airk-state collections list
+airk --data-dir /path/to/airk-state --collection project-a collections prune
+airk --data-dir /path/to/airk-state --collection project-a collections prune --apply
 airk --data-dir /path/to/airk-state collections remove obsolete-project
 ~~~
 
-On Windows use a path such as D:/indexes/airk. Removal deletes only a named, validated managed collection, preserving its source workspace. Disconnect workers for that collection before removal. See [collections](docs/collections.md) and [operations](docs/operations.md).
+On Windows use a path such as D:/indexes/airk. Pruning previews obsolete immutable generations and protects active or leased evidence. Removal deletes only a named, validated managed collection, preserving its source workspace; active native readers prevent removal. Disconnect workers for that collection first. See [collections](docs/collections.md) and [operations](docs/operations.md).
 
-The initial limits are 1 MiB per source file, 4 MiB of extracted text per document, 64 MiB of eligible source and 10,000 indexed files. This is a bootstrap capacity, not the intended large-repository scale. Ignore rules and common secret/build exclusions apply; indexes themselves contain source text. Read [SECURITY.md](SECURITY.md).
+Indexing streams one artifact at a time into content-addressed source/extraction storage. Compact inventories, immutable exact-fact catalogs and retrieval generations preserve revision identity without loading all source text for each request. [Source aliases](docs/source-roots.md) add independent folders to one collection; their original locations are pinned with each revision. Shared logical-byte quotas cover participating writers, including temporary builds and retained generations. Explicit relocation copies and verifies a data root before activating it, retaining the old managed state.
+
+The initial limits remain 1 MiB per source file, 4 MiB of extracted text per document, 64 MiB of eligible source, 128 MiB of extracted text per collection and 10,000 indexed files pending large-repository qualification. Ignore rules and common secret/build exclusions apply; indexes themselves contain source text. Read [SECURITY.md](SECURITY.md).
 
 ## Code organization
 
@@ -84,8 +90,8 @@ The initial limits are 1 MiB per source file, 4 MiB of extracted text per docume
 crates/
   airk-core/       Artifact, fact, query, citation and provider contracts
   airk-ingest/     Discovery, hashing, native grammars and document adapters
-  airk-store/      Memory/disk snapshots, writer locks and collection maintenance
-  airk-retrieval/  Lexical candidates, response budgets and future DiskANN adapter
+  airk-store/      SQLite state, durable queues/usage, locks and collection retention
+  airk-retrieval/  Persistent Tantivy, disk-backed DiskANN, local vectors and budgets
   airk-kernel/     Shared collection-scoped application services
   airk-mcp/        Read-only schemas and official SDK stdio transport
   airk-cli/        Binary, client setup and collection operations
@@ -98,6 +104,8 @@ third_party/      Pinned dependency license records; no imported project source
 ~~~
 
 Start with the [documentation index](docs/README.md), [architecture](docs/architecture.md) and [roadmap](docs/roadmap.md). The optional [VS Code extension preview](docs/vscode-extension.md) implements native installation, client setup, configurable storage, indexing schedules and collection maintenance. It is not signed or published to Marketplace.
+
+Review the [illustrated extension content guide](docs/extension-content.md), [manual build/publishing workflow and PR rules](docs/release-workflow.md), and [0.1.0 release checklist](docs/release-checklist-0.1.0.md) before preparing a public candidate.
 
 ## Contributing and license
 

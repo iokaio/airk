@@ -2,6 +2,8 @@
 
 The [CI workflow](../.github/workflows/ci.yml) uses standard GitHub-hosted runners. No self-hosted machine, Docker account, Azure account, Apple account, custom repository secret or repository variable is needed for the current builds. GitHub supplies the job token and artifact-upload authorization automatically. Repository Actions must be enabled and permitted to use the pinned official actions.
 
+Main now requires PRs and the stable `Required checks` / `signed-off` gates. For manual builds and optional Marketplace publication, use **Actions → Extension release** with an explicit version/channel and `publish` false/true. The [release workflow guide](release-workflow.md) describes the live PR policy, artifact verification and external Marketplace trusted-publisher prerequisite. The publishing job is separate from these read-only build jobs.
+
 ## Build matrix
 
 | Product | GitHub runner | Rust target |
@@ -14,6 +16,8 @@ The [CI workflow](../.github/workflows/ci.yml) uses standard GitHub-hosted runne
 These are standard labels from [GitHub's runner documentation](https://docs.github.com/en/actions/reference/runners/github-hosted-runners). Each job compiles and runs tests on its native architecture; it does not rely on cross-compilation from Windows. Windows/Linux ARM64 packages are future coverage. Runner OS versions do not establish the oldest OS that AIRK supports.
 
 Jobs install the repository-pinned Rust compiler/components, Python 3.11 and Node.js 24.15.0. They restore the checked-in npm lock with dependency scripts disabled, check formatting and clippy, run workspace and packaging tests, check repository hygiene, and build the release CLI with the locked Cargo graph. They compile/test the extension and its actual native MCP adapter, then verify a matching platform VSIX. A separate Linux job builds and smoke-tests the one-container arrangement. No image is published.
+
+Each native job also runs public CLI checks for DOCX/XLSX table facts, source aliases and quota/relocation rollback, and optional usage imports/calibration/price scenarios. These use original temporary fixtures and the exact release helper that is packaged. The VSIX includes the original listing illustrations as digest-verified assets.
 
 ## Downloadable candidates
 
@@ -55,14 +59,14 @@ In the owning account or organization's **Billing and licensing → Budgets and 
 
 Under repository **Settings → Actions → General**, require approval for workflows from outside collaborators according to the project's contribution policy. Repository workflow edits and runner-label changes should receive review. Neither approval rules nor YAML timeouts replace the billing budget.
 
-## Optional future credentials
+## Optional distribution credentials
 
 | Future operation | Possible configuration; not required or consumed today |
 |---|---|
 | Windows signing using VCP's Azure OIDC pattern | Variables `AZURE_SIGNING_CLIENT_ID`, `AZURE_SIGNING_TENANT_ID`, `AZURE_SIGNING_SUBSCRIPTION_ID`; AIRK-specific federated identity, signing permissions and protected environment. No Azure client secret is needed with OIDC. |
 | macOS Developer ID signing | Suggested secrets `MACOS_CERTIFICATE_P12` (base64 certificate), `MACOS_CERTIFICATE_PASSWORD`; requires the maintainer's Apple signing identity. |
 | macOS notarization using an App Store Connect API key | Suggested secret `APPLE_API_PRIVATE_KEY`; key ID and issuer ID as configuration. Only needed if notarization is implemented. |
-| VS Code Marketplace publishing | Publisher access and a supported authentication method; a narrowly scoped `VSCE_PAT` is an optional token route. Prefer the currently documented Entra/workload identity approach for automation. |
+| VS Code Marketplace publishing | Implemented manual workflow uses VSCE 4.0.0 OIDC trusted publishing and the `vscode-marketplace` GitHub environment restricted to main. Configure the Marketplace publisher's trust policy first; no PAT secret/fallback is consumed. |
 | GitHub Release or GHCR publication | Usually GitHub's automatic token with scoped `contents: write` or `packages: write` in a separate publishing job; no personal token needed for same-repository publication. |
 
-Suggested names are not implemented workflow inputs. Do not create these secrets for unsigned CI. Separate reviewed release workflows and protected environments should consume credentials only when publication/signing is deliberately added. See [extension deployment](extension-deployment.md) and [macOS build instructions](macos-build.md).
+Signing variable/secret names above remain suggestions, not implemented workflow inputs. Do not create them for unsigned CI. The implemented manual Marketplace workflow requests its publishing identity only after successful candidate builds and explicit dispatch with publishing enabled. See [release workflow](release-workflow.md), [extension deployment](extension-deployment.md) and [macOS build instructions](macos-build.md).

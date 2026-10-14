@@ -13,7 +13,7 @@ export async function run(): Promise<void> {
     const extension = vscode.extensions.getExtension('iokaio.airk'); assert.ok(extension, 'Packaged extension discovered');
     const api = await extension.activate();
     const commands = await vscode.commands.getCommands(true);
-    for (const name of ['airk.index', 'airk.reindex', 'airk.chooseStorage', 'airk.collections', 'airk.setupAgent', 'airk.verifyMcp']) {
+    for (const name of ['airk.index', 'airk.reindex', 'airk.chooseStorage', 'airk.collections', 'airk.setupAgent', 'airk.verifyMcp', 'airk.status', 'airk.usage']) {
         assert.ok(commands.includes(name), name);
     }
     await vscode.commands.executeCommand('airk.pause');
@@ -24,7 +24,12 @@ export async function run(): Promise<void> {
     const args = definitions[0].args;
     const spec: LaunchSpec = { command: definitions[0].command, root: args[args.indexOf('--root') + 1],
         dataDir: args[args.indexOf('--data-dir') + 1], collection: args[args.indexOf('--collection') + 1], name: 'Editor fixture' };
-    await vscode.commands.executeCommand('airk.index');
+    // Both refresh coverage and indexing publish collection metadata. Exercise
+    // simultaneous commands against the packaged native helper on a fresh root.
+    await Promise.all([
+        vscode.commands.executeCommand('airk.status'),
+        vscode.commands.executeCommand('airk.index')
+    ]);
     const status = await runJson<{ generation: number; collection: string; files: number }>(spec, 'status');
     assert.equal(status.collection, spec.collection); assert.ok(status.files >= 2, 'Fixture sources indexed');
     const symbols = await runJson<{ facts: unknown[] }>(spec, 'symbol', ['authenticate']); assert.equal(symbols.facts.length, 1);

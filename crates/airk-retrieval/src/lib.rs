@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Small-corpus baseline. Replace candidate generation with Tantivy behind this boundary.
+//! Local persistent candidate engines and bounded evidence responses.
+pub mod bounded;
+pub mod persistent;
+pub mod vector;
 use airk_core::{Citation, Hit, SearchQuery, SearchResponse, Snapshot};
 use anyhow::{Result, ensure};
 use std::collections::{BTreeMap, BTreeSet};

@@ -6,6 +6,14 @@ on:
     tags: ['v*']
   pull_request:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      channel:
+        type: string
+        default: preview
+      expected_version:
+        type: string
+        default: ''
 permissions:
   contents: read
 concurrency:
@@ -51,6 +59,10 @@ jobs:
           package-manager-cache: false
       - name: Restore locked extension build tools
         run: npm ci --ignore-scripts --no-audit --no-fund --prefix packages/vscode
+      - name: Check release version when requested
+        env:
+          AIRK_EXPECTED_VERSION: ${{ inputs.expected_version }}
+        run: node -e "const p=require('./packages/vscode/package.json'); const v=process.env.AIRK_EXPECTED_VERSION; if(v && p.version!==v) throw Error('Requested version differs from package.json')"
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --locked --target ${{ matrix.target }} -- -D warnings
       - run: cargo test --workspace --locked --target ${{ matrix.target }}
@@ -64,6 +76,12 @@ jobs:
         run: cargo build --release --locked -p airk-cli --target ${{ matrix.target }}
       - name: Bounded code indexing correctness and measurement smoke
         run: python scripts/benchmark-code.py --binary target/${{ matrix.target }}/release/${{ matrix.executable }} --files 64 --output artifacts/benchmarks/${{ matrix.target }}.json
+      - name: DOCX and XLSX table indexing through the public CLI
+        run: python scripts/check-document-tables.py --binary target/${{ matrix.target }}/release/${{ matrix.executable }}
+      - name: Source aliases and storage quota lifecycle through the public CLI
+        run: python scripts/check-storage-lifecycle.py --binary target/${{ matrix.target }}/release/${{ matrix.executable }}
+      - name: Validate usage imports and calibration
+        run: python scripts/check-usage-inputs.py --binary target/${{ matrix.target }}/release/${{ matrix.executable }}
       - name: Extension contracts and real native MCP adapter
         env:
           AIRK_TEST_BINARY: ${{ github.workspace }}/target/${{ matrix.target }}/release/${{ matrix.executable }}
@@ -71,7 +89,10 @@ jobs:
       - name: Package and verify allowlisted native payload
         run: python scripts/package-native.py --target ${{ matrix.target }}
       - name: Package and verify platform VSIX
-        run: python scripts/package-extension.py --target ${{ matrix.target }}
+        env:
+          AIRK_CHANNEL: ${{ inputs.channel || 'preview' }}
+        shell: pwsh
+        run: python scripts/package-extension.py --target ${{ matrix.target }} --channel $env:AIRK_CHANNEL
       - name: Retain native candidate and checksums
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -105,6 +126,20 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.11'
+      - name: Test Linux container build stage
+        run: docker build --target test -t airk:local-test .
       - run: docker compose build
       - name: One-container collection smoke test
         run: python scripts/check-container.py --image airk:dev
+  required:
+    name: Required checks
+    if: ${{ always() }}
+    needs: [native, container]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every platform and container check
+        env:
+          AIRK_NATIVE_RESULT: ${{ needs.native.result }}
+          AIRK_CONTAINER_RESULT: ${{ needs.container.result }}
+        run: test "$AIRK_NATIVE_RESULT" = success && test "$AIRK_CONTAINER_RESULT" = success

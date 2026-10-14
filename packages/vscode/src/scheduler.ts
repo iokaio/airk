@@ -5,11 +5,13 @@ export interface Options { mode: IndexMode; quietMs: number; idleMs: number; max
 export interface Clock { now(): number; set(fn: () => void, ms: number): unknown; clear(timer: unknown): void }
 const systemClock: Clock = { now: () => Date.now(), set: (fn, ms) => setTimeout(fn, ms), clear: timer => clearTimeout(timer as NodeJS.Timeout) };
 export class CapacityError extends Error {}
-type State = 'queued' | 'indexing' | 'current' | 'partial' | 'failed' | 'capacity-limited';
+export class PausedError extends Error {}
+type State = 'queued' | 'indexing' | 'current' | 'partial' | 'failed' | 'capacity-limited' | 'paused';
 interface Waiter { revision: number; resolve(): void; reject(error: unknown): void }
 interface Job {
     spec: LaunchSpec; revision: number; completed: number; first: number; last: number;
     ended: number; manual: boolean; full: boolean; blocked: boolean; state: State; waiters: Waiter[];
+    runningRevision?: number; runningFull?: boolean;
 }
 
 /** Batches UI events; the native kernel remains the sole index writer/publisher. */
@@ -52,11 +54,16 @@ export class Scheduler {
                 manual: false, full: false, blocked: false, state: 'queued', waiters: [] };
             this.jobs.set(spec.collection, job);
         }
+        // Repeated explicit clicks share the existing up-to-date pass. Filesystem
+        // events still advance the revision, including while a write is running.
+        const coalesced = manual && job.revision > job.completed && (!full || job.full || job.runningFull);
         if (job.revision === job.completed) { job.first = now; }
-        job.spec = spec; job.revision++; job.last = now;
+        job.spec = spec;
+        if (!coalesced) { job.revision++; job.last = now; }
         const capacityBlocked = job.blocked && job.state === 'capacity-limited' && !manual;
         if (!capacityBlocked) { job.blocked = false; }
-        job.manual ||= manual; job.full ||= full;
+        const alreadyRunning = job.runningRevision === job.revision;
+        job.manual ||= manual && !alreadyRunning; job.full ||= full && !alreadyRunning;
         if (job.state !== 'indexing' && !capacityBlocked) { job.state = 'queued'; }
         const promise = manual ? new Promise<void>((resolve, reject) => job!.waiters.push({ revision: job!.revision, resolve, reject })) : Promise.resolve();
         this.schedule();
@@ -85,6 +92,7 @@ export class Scheduler {
         if (this.stopped) { return; }
         this.busy = true;
         const revision = job.revision, full = job.full, automatic = !job.manual;
+        job.runningRevision = revision; job.runningFull = full;
         job.manual = false; job.full = false; job.state = 'indexing'; this.changed();
         try {
             const report = await this.run(job.spec, full, automatic);
@@ -94,11 +102,11 @@ export class Scheduler {
             job.waiters = job.waiters.filter(w => w.revision > revision);
             if (job.revision > revision) { job.first = job.last; }
         } catch (error) {
-            job.blocked = true; job.state = error instanceof CapacityError ? 'capacity-limited' : 'failed';
+            job.blocked = true; job.state = error instanceof CapacityError ? 'capacity-limited' : error instanceof PausedError ? 'paused' : 'failed';
             for (const waiter of job.waiters.filter(w => w.revision <= revision)) { waiter.reject(error); }
             job.waiters = job.waiters.filter(w => w.revision > revision);
             this.failed(job.spec, error);
-        } finally { this.busy = false; job.ended = this.clock.now(); this.schedule(); }
+        } finally { this.busy = false; job.runningRevision = undefined; job.runningFull = undefined; job.ended = this.clock.now(); this.schedule(); }
     }
     dispose(): void {
         this.stopped = true;

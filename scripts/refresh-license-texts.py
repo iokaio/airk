@@ -16,15 +16,26 @@ def fetch(package):
     # A bundled Unicode subcomponent license is not the main Tree-sitter license.
     if candidates and package["name"] != "tree-sitter":
         return None
-    vcs = json.loads((source / ".cargo_vcs_info.json").read_text(encoding="utf-8"))
+    vcs_path = source / ".cargo_vcs_info.json"
+    if not vcs_path.is_file() or not package.get("repository"):
+        print("No pinned upstream revision for " + package["name"] + "; retain publisher declaration for release review")
+        return {"name": package["name"], "version": package["version"], "revision": None,
+                "repository": package.get("repository"), "files": [], "missing_text": True}
+    vcs = json.loads(vcs_path.read_text(encoding="utf-8"))
     revision = vcs["git"]["sha1"]
     repository = package["repository"].removesuffix("/").removesuffix(".git")
     if not repository.startswith("https://github.com/"):
-        raise ValueError("Manual license retrieval needed for " + package["name"])
+        print("Manual license retrieval needed for " + package["name"])
+        return {"name": package["name"], "version": package["version"], "revision": revision,
+                "repository": repository, "files": [], "missing_text": True}
     base = repository.replace("https://github.com/", "https://raw.githubusercontent.com/") + "/" + revision + "/"
     directory = Path("third_party/licenses") / (package["name"] + "-" + package["version"])
     retrieved = []
-    for filename in ("LICENSE", "LICENSE.txt", "LICENSE-MIT", "LICENSE-APACHE", "COPYING"):
+    filenames = ["LICENSE", "LICENSE.txt", "LICENSE.md", "LICENSE-MIT", "LICENSE-APACHE", "COPYING"]
+    # r-efi's pinned AUTHORS file contains its MIT permission text and copyright notices.
+    if package["name"] == "r-efi":
+        filenames.append("AUTHORS")
+    for filename in filenames:
         url = base + filename
         try:
             with urllib.request.urlopen(url, timeout=20) as response:
@@ -55,6 +66,14 @@ def main():
     inventory.sort(key=lambda record: (record["name"], record["version"]))
     destination = Path("third_party/licenses/sources.json")
     destination.parent.mkdir(parents=True, exist_ok=True)
+    # Preserve previously pinned legal records even when a package leaves the graph.
+    prior = {(record["name"], record["version"]): record for record in
+             json.loads(destination.read_text(encoding="utf-8"))} if destination.exists() else {}
+    for record in inventory:
+        key = (record["name"], record["version"])
+        if record["files"] or not prior.get(key, {}).get("files"):
+            prior[key] = record
+    inventory = sorted(prior.values(), key=lambda record: (record["name"], record["version"]))
     destination.write_text(json.dumps(inventory, indent=2) + "\n", encoding="utf-8")
 
 

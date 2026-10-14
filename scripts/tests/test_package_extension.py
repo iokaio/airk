@@ -42,7 +42,8 @@ class VsixContracts(unittest.TestCase):
                 package.verify_vsix(archive, expected, "airk")
 
     def test_path_escape_refused(self):
-        for name in ("../private", "/private", "native/../../private", "C:/private", "native\\private"):
+        for name in ("../private", "/private", "native/../../private", "C:/private", "native\\private",
+                     "native/./airk", "native//airk", "", "native/airk/"):
             with self.assertRaises(ValueError):
                 package.safe_name(name)
 

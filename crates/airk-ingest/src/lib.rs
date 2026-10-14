@@ -3,36 +3,108 @@
 use airk_core::{Artifact, Chunk, DocumentLocation, EXTRACTOR_VERSION, Snapshot};
 use anyhow::{Context, Result, ensure};
 use ignore::WalkBuilder;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, fs::File, io::Read, path::Path};
 
 pub const MAX_FILE_BYTES: usize = 1_048_576;
 pub const MAX_CORPUS_BYTES: usize = 67_108_864;
+pub const MAX_EXTRACTED_CORPUS_BYTES: usize = 134_217_728;
 pub const MAX_FILES: usize = 10_000;
+pub const MAX_DISCOVERY_ENTRIES: usize = 100_000;
+pub const MAX_SCAN_READ_BYTES: usize = 268_435_456;
 mod documents;
+pub mod inventory;
 mod prose;
 pub mod semantic;
+mod spreadsheets;
 pub mod syntax;
+mod tables;
 
-#[derive(Default, Debug, Serialize)]
+#[derive(Default, Debug, Serialize, Deserialize)]
 pub struct IndexReport {
+    #[serde(default)]
+    pub scan_extract_us: u64,
+    #[serde(default)]
+    pub publish_us: u64,
     pub generation: u64,
     pub collection: String,
     pub indexed: usize,
     pub reused: usize,
     pub removed: usize,
+    pub source_bytes: usize,
+    pub skipped_truncated: usize,
     pub skipped: Vec<SkippedFile>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct SkippedFile {
     pub path: String,
     pub reason: String,
 }
 
 pub fn scan(root: &Path, data_dir: &Path, previous: &Snapshot) -> Result<(Snapshot, IndexReport)> {
+    scan_with_limits(
+        root,
+        data_dir,
+        previous,
+        MAX_DISCOVERY_ENTRIES,
+        MAX_SCAN_READ_BYTES,
+    )
+}
+
+fn scan_with_limits(
+    root: &Path,
+    data_dir: &Path,
+    previous: &Snapshot,
+    max_entries: usize,
+    max_read_bytes: usize,
+) -> Result<(Snapshot, IndexReport)> {
+    scan_streaming_with_limits(
+        root,
+        data_dir,
+        previous,
+        &previous.roots,
+        max_entries,
+        max_read_bytes,
+        |artifact, _| Ok(artifact.clone()),
+    )
+}
+
+/// Emit one bounded artifact and its original source bytes at a time. The callback
+/// may retain payloads and return compact inventory metadata instead of source text.
+pub fn scan_streaming(
+    root: &Path,
+    data_dir: &Path,
+    previous: &Snapshot,
+    roots: &BTreeMap<String, String>,
+    emit: impl FnMut(&Artifact, &[u8]) -> Result<Artifact>,
+) -> Result<(Snapshot, IndexReport)> {
+    scan_streaming_with_limits(
+        root,
+        data_dir,
+        previous,
+        roots,
+        MAX_DISCOVERY_ENTRIES,
+        MAX_SCAN_READ_BYTES,
+        emit,
+    )
+}
+
+fn scan_streaming_with_limits(
+    root: &Path,
+    data_dir: &Path,
+    previous: &Snapshot,
+    roots: &BTreeMap<String, String>,
+    max_entries: usize,
+    max_read_bytes: usize,
+    mut emit: impl FnMut(&Artifact, &[u8]) -> Result<Artifact>,
+) -> Result<(Snapshot, IndexReport)> {
     let root = root.canonicalize().context("resolve workspace root")?;
+    ensure!(
+        root.to_string_lossy() == previous.root,
+        "workspace root identity changed; collection binding must be preserved"
+    );
     let data_dir = data_dir.canonicalize().context("resolve index directory")?;
     let mut report = IndexReport {
         collection: previous.collection.clone(),
@@ -40,17 +112,25 @@ pub fn scan(root: &Path, data_dir: &Path, previous: &Snapshot) -> Result<(Snapsh
     };
     let mut artifacts = BTreeMap::new();
     let mut total_bytes = 0usize;
-    let walker = WalkBuilder::new(&root)
-        .require_git(false)
-        .hidden(false)
-        .follow_links(false)
-        .add_custom_ignore_filename(".airkignore")
-        .filter_entry(move |entry| {
-            let name = entry.file_name().to_string_lossy();
-            entry.depth() == 0 || (!excluded(&name) && !entry.path().starts_with(&data_dir))
-        })
-        .build();
-    for entry in walker {
+    let mut extracted_bytes = 0usize;
+    let mut read_bytes = 0usize;
+    let mut sources = vec![(String::new(), root.clone())];
+    for (alias, value) in roots {
+        let source = Path::new(value).canonicalize()?;
+        ensure!(
+            source.to_str() == Some(value.as_str()),
+            "additional source root identity changed"
+        );
+        sources.push((format!("@{alias}/"), source));
+    }
+    let walker = sources.iter().flat_map(|(prefix, source)| {
+        discovery(source, &data_dir).map(move |entry| (prefix, source, entry))
+    });
+    for (visited, (prefix, source, entry)) in walker.enumerate() {
+        ensure!(
+            visited < max_entries,
+            "workspace discovery entry budget exhausted; previous generation retained"
+        );
         let entry = entry.context("workspace discovery failed; previous generation retained")?;
         let Some(kind) = entry.file_type() else {
             continue;
@@ -60,46 +140,42 @@ pub fn scan(root: &Path, data_dir: &Path, previous: &Snapshot) -> Result<(Snapsh
         }
         let path = entry
             .path()
-            .strip_prefix(&root)?
+            .strip_prefix(source)?
             .to_str()
             .context("non-UTF-8 source path is unsupported")?
             .replace('\\', "/");
+        let path = format!("{prefix}{path}");
         if path.len() > 4096 {
-            report.skipped.push(SkippedFile {
+            report.skip(SkippedFile {
                 path,
                 reason: "path exceeds 4096 bytes".into(),
             });
             continue;
         }
-        // Recheck links and containment before opening; do not intentionally follow links.
-        ensure!(
-            !entry.path().symlink_metadata()?.file_type().is_symlink(),
-            "source changed to symlink during scan"
-        );
-        ensure!(
-            entry.path().canonicalize()?.starts_with(&root),
-            "source escaped workspace"
-        );
-        let mut bytes = Vec::new();
-        File::open(entry.path())?
-            .take((MAX_FILE_BYTES + 1) as u64)
-            .read_to_end(&mut bytes)?;
-        if bytes.len() > MAX_FILE_BYTES {
-            report.skipped.push(SkippedFile {
+        // Exclusions still consume discovery budget, but known oversized files
+        // need no source read. Recheck identity/size inside the bounded reader.
+        let source_size = entry.path().symlink_metadata()?.len();
+        if source_size > MAX_FILE_BYTES as u64 {
+            report.skip(SkippedFile {
                 path,
                 reason: "file exceeds 1 MiB".into(),
             });
             continue;
         }
-        total_bytes += bytes.len();
+        let remaining = max_read_bytes.saturating_sub(read_bytes);
         ensure!(
-            total_bytes <= MAX_CORPUS_BYTES,
-            "corpus exceeds 64 MiB scaffold limit; previous generation retained"
+            source_size <= remaining as u64,
+            "workspace raw source read budget exhausted; previous generation retained"
         );
-        ensure!(
-            artifacts.len() < MAX_FILES,
-            "corpus exceeds 10000 files; previous generation retained"
-        );
+        let bytes = read_source_with_budget(source, entry.path(), remaining)?;
+        read_bytes += bytes.len();
+        if bytes.len() > MAX_FILE_BYTES {
+            report.skip(SkippedFile {
+                path,
+                reason: "file exceeds 1 MiB".into(),
+            });
+            continue;
+        }
         let content_hash = format!("{:x}", Sha256::digest(&bytes));
         let artifact = match previous.artifacts.get(&path) {
             Some(old)
@@ -113,7 +189,7 @@ pub fn scan(root: &Path, data_dir: &Path, previous: &Snapshot) -> Result<(Snapsh
                 let extracted = match documents::extract(&path, &bytes) {
                     Ok(extracted) => extracted,
                     Err(error) => {
-                        report.skipped.push(SkippedFile {
+                        report.skip(SkippedFile {
                             path,
                             reason: error.to_string(),
                         });
@@ -123,16 +199,39 @@ pub fn scan(root: &Path, data_dir: &Path, previous: &Snapshot) -> Result<(Snapsh
                 report.indexed += 1;
                 Artifact {
                     path: path.clone(),
-                    content_hash,
+                    content_hash: content_hash.clone(),
                     bytes: bytes.len(),
                     chunks: extracted.chunks,
                     language: extracted.language,
                     extraction_method: extracted.method,
                     parse_status: extracted.parse_status,
                     facts: extracted.facts,
+                    retained: None,
                 }
             }
         };
+        // Unsupported binary sources do not consume eligible corpus capacity.
+        total_bytes += bytes.len();
+        extracted_bytes = extracted_bytes
+            .checked_add(artifact.extracted_bytes())
+            .context("extracted corpus byte count overflow")?;
+        ensure!(
+            extracted_bytes <= MAX_EXTRACTED_CORPUS_BYTES,
+            "extracted corpus exceeds 128 MiB scaffold limit; previous generation retained"
+        );
+        ensure!(
+            total_bytes <= MAX_CORPUS_BYTES,
+            "corpus exceeds 64 MiB scaffold limit; previous generation retained"
+        );
+        ensure!(
+            artifacts.len() < MAX_FILES,
+            "corpus exceeds 10000 files; previous generation retained"
+        );
+        let artifact = emit(&artifact, &bytes)?;
+        ensure!(
+            artifact.path == path && artifact.content_hash == content_hash,
+            "retention changed artifact identity"
+        );
         artifacts.insert(path, artifact);
     }
     report.removed = previous
@@ -140,8 +239,10 @@ pub fn scan(root: &Path, data_dir: &Path, previous: &Snapshot) -> Result<(Snapsh
         .keys()
         .filter(|path| !artifacts.contains_key(*path))
         .count();
-    let changed =
-        report.indexed > 0 || report.removed > 0 || previous.extractor_version != EXTRACTOR_VERSION;
+    let changed = report.indexed > 0
+        || report.removed > 0
+        || previous.extractor_version != EXTRACTOR_VERSION
+        || previous.roots != *roots;
     report.generation = if changed {
         previous
             .generation
@@ -152,6 +253,8 @@ pub fn scan(root: &Path, data_dir: &Path, previous: &Snapshot) -> Result<(Snapsh
     };
     let mut next = Snapshot::empty(previous.root.clone());
     next.collection = previous.collection.clone();
+    next.roots = roots.clone();
+    next.storage_format = previous.storage_format;
     next.generation = report.generation;
     next.artifacts = artifacts;
     if !changed && let Some(manifest) = &previous.analysis {
@@ -167,7 +270,69 @@ pub fn scan(root: &Path, data_dir: &Path, previous: &Snapshot) -> Result<(Snapsh
             report.generation = next.generation;
         }
     }
+    report.source_bytes = total_bytes;
     Ok((next, report))
+}
+
+impl IndexReport {
+    fn skip(&mut self, file: SkippedFile) {
+        // Bound diagnostic payloads even when a tree contains many unsupported files.
+        if self.skipped.len() < 1000 {
+            self.skipped.push(file);
+        } else {
+            self.skipped_truncated += 1;
+        }
+    }
+}
+
+fn discovery(root: &Path, data_dir: &Path) -> ignore::Walk {
+    let data_dir = data_dir.to_path_buf();
+    WalkBuilder::new(root)
+        .require_git(false)
+        .hidden(false)
+        .follow_links(false)
+        .add_custom_ignore_filename(".airkignore")
+        .filter_entry(move |entry| {
+            let name = entry.file_name().to_string_lossy();
+            entry.depth() == 0 || (!excluded(&name) && !entry.path().starts_with(&data_dir))
+        })
+        .build()
+}
+
+fn read_source(root: &Path, path: &Path) -> Result<Vec<u8>> {
+    read_source_with_budget(root, path, MAX_FILE_BYTES + 1)
+}
+
+fn read_source_with_budget(root: &Path, path: &Path, remaining: usize) -> Result<Vec<u8>> {
+    let before = path.symlink_metadata()?;
+    ensure!(
+        before.is_file() && !before.file_type().is_symlink(),
+        "source changed to symlink or non-file during scan"
+    );
+    ensure!(
+        path.canonicalize()?.starts_with(root),
+        "source escaped workspace"
+    );
+    let mut bytes = Vec::new();
+    File::open(path)?
+        .take((MAX_FILE_BYTES + 1).min(remaining) as u64)
+        .read_to_end(&mut bytes)?;
+    let after = path.symlink_metadata()?;
+    ensure!(
+        after.is_file()
+            && !after.file_type().is_symlink()
+            && path.canonicalize()?.starts_with(root),
+        "source changed during scan"
+    );
+    ensure!(
+        before.len() == after.len() && before.modified()? == after.modified()?,
+        "source changed during scan; retry indexing"
+    );
+    ensure!(
+        bytes.len() as u64 == before.len() || bytes.len() > MAX_FILE_BYTES,
+        "workspace raw source read budget exhausted; previous generation retained"
+    );
+    Ok(bytes)
 }
 
 fn excluded(name: &str) -> bool {
@@ -203,4 +368,51 @@ pub fn chunk(text: &str) -> Vec<Chunk> {
             },
         })
         .collect()
+}
+
+#[cfg(test)]
+mod scan_budget_tests {
+    use super::*;
+
+    #[test]
+    fn unsupported_sources_consume_raw_read_budget_without_partial_success() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let data = tempfile::tempdir()?;
+        std::fs::write(root.path().join("one.bin"), [0, 0])?;
+        std::fs::write(root.path().join("two.bin"), [0, 0])?;
+        let mut previous =
+            Snapshot::empty(root.path().canonicalize()?.to_string_lossy().into_owned());
+        previous.generation = 7;
+        let error = scan_with_limits(root.path(), data.path(), &previous, 100, 3)
+            .expect_err("raw read budget");
+        assert!(error.to_string().contains("raw source read budget"));
+        let (snapshot, report) = scan_with_limits(root.path(), data.path(), &previous, 100, 4)?;
+        assert_eq!(snapshot.generation, 7);
+        assert_eq!(report.skipped.len(), 2);
+        assert_eq!(
+            report.source_bytes, 0,
+            "eligible byte accounting stays independent"
+        );
+        File::create(root.path().join("oversized.bin"))?.set_len((MAX_FILE_BYTES + 1) as u64)?;
+        let (_, report) = scan_with_limits(root.path(), data.path(), &previous, 100, 4)?;
+        assert_eq!(
+            report.skipped.len(),
+            3,
+            "known oversized sources require no read budget"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn directory_only_trees_consume_discovery_budget() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let data = tempfile::tempdir()?;
+        std::fs::create_dir_all(root.path().join("one/two/three"))?;
+        let previous = Snapshot::empty(root.path().canonicalize()?.to_string_lossy().into_owned());
+        let error = scan_with_limits(root.path(), data.path(), &previous, 2, 0)
+            .expect_err("directory budget");
+        assert!(error.to_string().contains("discovery entry budget"));
+        assert!(scan_with_limits(root.path(), data.path(), &previous, 4, 0).is_ok());
+        Ok(())
+    }
 }

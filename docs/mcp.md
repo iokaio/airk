@@ -10,7 +10,7 @@ Multiple agents can launch independent stdio connections against the same root/d
 
 | Tool | Main inputs | Result |
 |---|---|---|
-| airk_search | query; path_prefix, limit, max_bytes | AND lexical evidence, original locations and truncation |
+| airk_search | query; mode, path_prefix, limit, max_bytes | Lexical, local vector or hybrid evidence, original locations and truncation |
 | airk_read_file | path, start_line, end_line; max_bytes | Inclusive indexed line range |
 | airk_list_files | prefix, limit, max_bytes | Indexed paths only |
 | airk_status | none | Collection generation/counts/extractor |
@@ -27,13 +27,17 @@ Multiple agents can launch independent stdio connections against the same root/d
 
 Defaults are 10 results and 8192 payload bytes; bounds are 1–100 and 1–65536. Context radius defaults to 5 lines each way and cannot exceed 100. Unknown arguments are rejected. Results use one JSON text block; metadata/framing adds bytes beyond payload budgets. Errors return tool errors, not misleading empty hits.
 
-Document fact metadata is included in the fact payload budget alongside names/paths; envelope/citation framing remains additional. The optional exact kind filter selects categories such as requirement, date, architecture, design, feature, decision or acceptance. See [document indexing](document-indexing.md) for candidate semantics, normalized dates, units, heading context and bounds.
+`airk_search.mode` accepts `lexical` (the default AND-term retrieval), `vector` (approximate similarity using the explicitly provisioned local static word-vector model), or `hybrid` (bounded reciprocal-rank fusion of both branches from one pinned generation). Vector/hybrid modes fail explicitly if the matching model/index is unavailable; they do not download models or fall back to a cloud provider. `semantic: true` is a compatibility alias for vector and cannot be combined with an explicit mode. Similarity is not complete language understanding, answer generation, resolved references or a relevance guarantee.
+
+Successful result objects can include an opaque `request_id` for optional local usefulness feedback. [Usage reporting](usage-reporting.md) defaults to content-free daily aggregates and measures the serialized tool-result envelope once per outer call. `AIRK_USAGE_MODE=disabled` opts out. Recording failures never change tool success/error results; reports, feedback and recording controls remain CLI/extension maintenance operations and add no MCP tools.
+
+Document fact metadata is included in the fact payload budget alongside names/paths; envelope/citation framing remains additional. The optional exact kind filter selects categories such as requirement, date, architecture, design, feature, decision, acceptance, table_row or table_cell. See [document indexing](document-indexing.md) for candidate semantics, normalized dates, units, heading context and bounds.
 
 The fourteen-tool inventory is shared across clients. Code details count toward fact budgets. Relationship budgets count serialized edges/citations, with 1–3 hops, 100 visited symbols and a 250 ms traversal/SQLite instruction deadline. Native targets remain unresolved; imported SCIP references/implementations are producer assertions and references are not calls. [Code storage and import contracts](code-facts-and-relationships.md) describe identities, coverage, binding and conservative invalidation.
 
 ## Provenance and limits
 
-Text source locations use 1-based inclusive source lines. PDF locations cite pages, DOCX cites main-body paragraph blocks, PPTX cites presentation-order slides. For extracted documents, start_line/end_line are normalized extracted-text coordinates. Consult file_info.line_basis and cite the original location. Read/context ranges cannot cross multiple original document locations.
+Text source locations use 1-based inclusive source lines. PDF locations cite pages, DOCX cites main-body paragraph blocks or table rows, XLSX cites worksheet rows, and PPTX cites presentation-order slides. For extracted documents, start_line/end_line are normalized extracted-text coordinates. Consult file_info.line_basis and cite the original location. Read/context ranges cannot cross multiple original document locations.
 
 A grammar-derived definition is a syntax fact, not runtime behavior or a resolved reference. Partial syntax is exposed in file_info; declarations containing parse errors are suppressed. Textual references can include strings, comments and definitions. Search is not answer generation.
 

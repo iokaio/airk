@@ -5,6 +5,20 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { LaunchSpec, launchArgs } from './model';
 
+/** Serialize this extension host's writers; native locks still arbitrate other processes. */
+export class NativeWriteQueue {
+    private tails = new Map<string, Promise<void>>();
+    run<T>(spec: LaunchSpec, operation: () => Promise<T>): Promise<T> {
+        const directory = path.resolve(spec.dataDir);
+        const key = JSON.stringify([process.platform === 'win32' ? directory.toLowerCase() : directory, spec.collection]);
+        const result = (this.tails.get(key) ?? Promise.resolve()).then(operation);
+        const tail = result.then(() => undefined, () => undefined);
+        this.tails.set(key, tail);
+        void tail.then(() => { if (this.tails.get(key) === tail) { this.tails.delete(key); } });
+        return result;
+    }
+}
+
 export async function prepareHelper(extensionPath: string, storage: string, version: string): Promise<string> {
     const executable = process.platform === 'win32' ? 'airk.exe' : 'airk';
     const native = path.join(extensionPath, 'native');
@@ -40,7 +54,7 @@ export async function prepareHelper(extensionPath: string, storage: string, vers
 
 export function runText(command: string, args: string[], cwd?: string): Promise<string> {
     return new Promise((resolve, reject) => {
-        execFile(command, args, { cwd, windowsHide: true, maxBuffer: 16 * 1024 * 1024, timeout: 300000 }, (error, stdout, stderr) => {
+        execFile(command, args, { cwd, env: { ...process.env, AIRK_CLIENT: 'vscode' }, windowsHide: true, maxBuffer: 16 * 1024 * 1024, timeout: 300000 }, (error, stdout, stderr) => {
             if (error) { reject(new Error(stderr.trim() || error.message)); }
             else { resolve(stdout); }
         });
@@ -54,7 +68,7 @@ export async function runJson<T>(spec: LaunchSpec, command: string, extra: strin
 /** Real bounded stdio initialization/tool-list/status probe, independent of any coding agent. */
 export function probeMcp(spec: LaunchSpec): Promise<{ tools: string[]; status: unknown }> {
     return new Promise((resolve, reject) => {
-        const child = spawn(spec.command, launchArgs(spec), { cwd: spec.root, windowsHide: true, stdio: 'pipe' });
+        const child = spawn(spec.command, launchArgs(spec), { cwd: spec.root, env: { ...process.env, AIRK_CLIENT: 'vscode' }, windowsHide: true, stdio: 'pipe' });
         let buffer = '', stderr = '', total = 0, done = false;
         const requests = new Map<number, { resolve(value: any): void; reject(error: Error): void }>();
         const finish = (error?: Error, result?: { tools: string[]; status: unknown }) => {

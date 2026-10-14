@@ -84,3 +84,24 @@ test('closed collections lose queued work without deleting source or starting a 
     await scheduler.request(spec); scheduler.forget(spec.collection); await clock.advance(1000);
     assert.equal(count, 0); assert.equal(scheduler.states().length, 0); scheduler.dispose();
 });
+
+test('repeated Index Now clicks share an in-flight pass while edits queue another pass', async () => {
+    const clock = new FakeClock(); let calls = 0; let release!: (value: IndexReport) => void;
+    const scheduler = new Scheduler(options, async () => { calls++; return new Promise<IndexReport>(resolve => { release = resolve; }); }, () => {}, () => {}, clock);
+    const first = scheduler.request(spec, true); await clock.advance(0);
+    const clicks = Array.from({ length: 50 }, () => scheduler.request(spec, true));
+    release(report); await flush(); await Promise.all([first, ...clicks]); await clock.advance(1000);
+    assert.equal(calls, 1);
+    const next = scheduler.request(spec, true); await clock.advance(0);
+    await scheduler.request(spec); const changedClick = scheduler.request(spec, true);
+    release(report); await flush(); await next; await clock.advance(0);
+    assert.equal(calls, 3); release(report); await flush(); await changedClick; scheduler.dispose();
+});
+
+test('a full rebuild requested during an incremental pass remains a distinct pass', async () => {
+    const clock = new FakeClock(); const modes: boolean[] = []; let release!: (value: IndexReport) => void;
+    const scheduler = new Scheduler(options, async (_spec, full) => { modes.push(full); return new Promise<IndexReport>(resolve => { release = resolve; }); }, () => {}, () => {}, clock);
+    const first = scheduler.request(spec, true); await clock.advance(0);
+    const full = scheduler.request(spec, true, true); release(report); await flush(); await first;
+    await clock.advance(0); assert.deepEqual(modes, [false, true]); release(report); await flush(); await full; scheduler.dispose();
+});

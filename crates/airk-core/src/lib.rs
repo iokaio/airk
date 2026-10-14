@@ -8,7 +8,7 @@ pub mod usage;
 pub use code::*;
 
 pub const SCHEMA_VERSION: u32 = 3;
-pub const EXTRACTOR_VERSION: &str = "native-facts/4";
+pub const EXTRACTOR_VERSION: &str = "native-facts/7";
 pub const MAX_RESPONSE_BYTES: usize = 65_536;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -30,6 +30,39 @@ pub struct Artifact {
     pub extraction_method: String,
     pub parse_status: String,
     pub facts: Vec<Fact>,
+    /// Immutable content-addressed payload for a compact on-disk inventory entry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retained: Option<ArtifactRef>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ArtifactRef {
+    pub object: String,
+    #[serde(default)]
+    pub object_bytes: usize,
+    pub raw_source: bool,
+    pub chunks: usize,
+    pub extracted_bytes: usize,
+    pub facts: usize,
+}
+
+impl Artifact {
+    pub fn chunk_count(&self) -> usize {
+        self.retained
+            .as_ref()
+            .map_or(self.chunks.len(), |r| r.chunks)
+    }
+    pub fn extracted_bytes(&self) -> usize {
+        self.retained.as_ref().map_or_else(
+            || self.chunks.iter().map(|c| c.text.len()).sum(),
+            |r| r.extracted_bytes,
+        )
+    }
+}
+
+/// Load one retained artifact; implementations must preserve inventory binding.
+pub trait ArtifactSource {
+    fn load_artifact(&self, path: &str) -> anyhow::Result<Artifact>;
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -39,6 +72,18 @@ pub struct Snapshot {
     pub root: String,
     pub collection: String,
     pub generation: u64,
+    /// Zero denotes the legacy whole-snapshot format; one is a compact blob catalog.
+    #[serde(default)]
+    pub storage_format: u32,
+    /// Additional source aliases bound to this exact published revision.
+    /// Paths from these roots use `@alias/relative/path`; the primary root stays unprefixed.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub roots: BTreeMap<String, String>,
+    /// New revisions require their immutable lexical/vector components to exist.
+    #[serde(default)]
+    pub persistent_indexes: bool,
+    #[serde(default)]
+    pub embedding_model: Option<String>,
     pub artifacts: BTreeMap<String, Artifact>,
     #[serde(default)]
     pub analysis: Option<AnalysisManifest>,
@@ -56,11 +101,24 @@ impl Snapshot {
             root,
             collection: "default".into(),
             generation: 0,
+            storage_format: 0,
+            roots: BTreeMap::new(),
+            persistent_indexes: false,
+            embedding_model: None,
             artifacts: BTreeMap::new(),
             analysis: None,
             imported_facts: Vec::new(),
             imported_relationships: Vec::new(),
         }
+    }
+}
+
+impl ArtifactSource for Snapshot {
+    fn load_artifact(&self, path: &str) -> anyhow::Result<Artifact> {
+        self.artifacts
+            .get(path)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("artifact is not in indexed inventory"))
     }
 }
 
@@ -135,6 +193,8 @@ pub enum DocumentLocation {
     Page { number: usize },
     Block { number: usize },
     Slide { number: usize },
+    TableRow { table: usize, row: usize },
+    WorksheetRow { sheet: String, row: usize },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -164,6 +224,41 @@ pub struct DocumentEvidence {
     pub quantities: Vec<DocumentQuantity>,
     pub details_truncated: bool,
     pub statement_truncated: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub table: Option<TableEvidence>,
+}
+
+/// Written table structure. Header candidates and stored formula results are not inferred truth.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct TableEvidence {
+    pub table: Option<usize>,
+    pub sheet: Option<String>,
+    pub row: usize,
+    pub header_basis: String,
+    /// True only for an explicitly declared header row, never an inferred candidate.
+    #[serde(default)]
+    pub is_header: bool,
+    /// Propagated header labels were bounded; original cell values remain source evidence.
+    #[serde(default)]
+    pub headers_truncated: bool,
+    pub hidden: bool,
+    pub cells: Vec<TableCellEvidence>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct TableCellEvidence {
+    pub column: usize,
+    pub address: Option<String>,
+    pub header: Option<String>,
+    pub value: String,
+    pub value_type: String,
+    pub formula: Option<String>,
+    pub cached_value: bool,
+    pub merged_range: Option<String>,
+    pub column_span: usize,
+    pub vertical_merge: Option<String>,
+    pub number_format: Option<String>,
+    pub normalized_value: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

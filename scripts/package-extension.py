@@ -3,7 +3,7 @@
 import argparse
 import hashlib
 import json
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 import shutil
 import stat
 import subprocess
@@ -14,7 +14,8 @@ ROOT = Path(__file__).resolve().parent.parent
 EXTENSION = ROOT / "packages" / "vscode"
 TARGETS = {"x86_64-pc-windows-msvc": "win32-x64", "x86_64-unknown-linux-gnu": "linux-x64",
            "aarch64-apple-darwin": "darwin-arm64", "x86_64-apple-darwin": "darwin-x64"}
-MODULES = ("extension.js", "model.js", "native.js", "scheduler.js")
+MODULES = ("extension.js", "model.js", "native.js", "scheduler.js", "coverage.js")
+ILLUSTRATIONS = ("local-evidence.png", "index-to-context.png")
 
 
 def digest(data):
@@ -22,14 +23,16 @@ def digest(data):
 
 
 def safe_name(name):
-    parts = PurePosixPath(name).parts
-    if not parts or name.startswith("/") or "\\" in name or ":" in name or any(p in (".", "..") for p in parts):
+    parts = name.split("/")
+    if not name or "\\" in name or ":" in name or any(p in ("", ".", "..") for p in parts):
         raise ValueError("Unsafe archive path: " + name)
 
 
 def verify_vsix(archive, expected, executable, platform=None, version=None, pre_release=None, display_name=None):
     with zipfile.ZipFile(archive) as zipped:
         files = [item for item in zipped.infolist() if not item.is_dir()]
+        if len(files) > 15_000 or sum(item.file_size for item in files) > 1_073_741_824:
+            raise ValueError("VSIX inventory exceeds verification budget")
         names = [item.filename for item in files]
         if len(names) != len(set(names)):
             raise ValueError("Duplicate VSIX archive entry")
@@ -57,7 +60,7 @@ def verify_vsix(archive, expected, executable, platform=None, version=None, pre_
             flag = next((element.get("Value") for element in metadata.iter()
                          if element.tag.rsplit("}", 1)[-1] == "Property"
                          and element.get("Id") == "Microsoft.VisualStudio.Code.PreRelease"), None)
-            if flag != ("true" if pre_release else "false"):
+            if (pre_release and flag != "true") or (not pre_release and flag not in (None, "false")):
                 raise ValueError("VSIX pre-release flag differs")
         if display_name is not None:
             label = next((element.text for element in metadata.iter()
@@ -71,6 +74,7 @@ def main():
     parser.add_argument("--target", choices=TARGETS, required=True)
     parser.add_argument("--native-dir", type=Path)
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--channel", choices=("preview", "stable"), default="preview")
     args = parser.parse_args()
     native = (args.native_dir or ROOT / "artifacts" / "native" / args.target / "publish").resolve()
     output = (args.output or ROOT / "artifacts" / "extension" / args.target).resolve()
@@ -79,6 +83,7 @@ def main():
         raise SystemExit("Native input and fresh extension output must be inside artifacts/")
     manifest = json.loads((native / "manifest.json").read_text(encoding="utf-8"))
     package = json.loads((EXTENSION / "package.json").read_text(encoding="utf-8"))
+    pre_release = args.channel == "preview"
     if manifest["target"] != args.target or manifest["vsix_target"] != TARGETS[args.target] or manifest["version"] != package["version"]:
         raise SystemExit("Native candidate and extension version/platform differ")
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
@@ -118,16 +123,25 @@ def main():
     for key in ("scripts", "devDependencies"):
         package.pop(key, None)
     (stage / "package.json").write_text(json.dumps(package, indent=2) + "\n", encoding="utf-8")
-    shutil.copyfile(EXTENSION / "README.md", stage / "README.md")
+    listing = (EXTENSION / "README.md").read_text(encoding="utf-8")
+    (stage / "images").mkdir()
+    for name in ILLUSTRATIONS:
+        source = ROOT / "docs" / "images" / name
+        if source.is_symlink() or not source.is_file() or source.stat().st_size > 2_097_152:
+            raise SystemExit("Invalid or oversized extension illustration: " + name)
+        shutil.copyfile(source, stage / "images" / name)
+        listing = listing.replace("https://raw.githubusercontent.com/iokaio/airk/main/docs/images/" + name,
+                                  "images/" + name)
+    (stage / "README.md").write_text(listing, encoding="utf-8")
     for name in ("LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"):
         shutil.copyfile(ROOT / name, stage / name)
     expected = {file.relative_to(stage).as_posix(): digest(file.read_bytes()) for file in stage.rglob("*") if file.is_file()}
     vsix = publish / ("airk-" + package["version"] + "-" + TARGETS[args.target] + ".vsix")
-    subprocess.run(["node", str(EXTENSION / "scripts" / "package.cjs"), str(stage), TARGETS[args.target], str(vsix)], cwd=ROOT, check=True)
-    verify_vsix(vsix, expected, executable, TARGETS[args.target], package["version"], True, package["displayName"])
+    subprocess.run(["node", str(EXTENSION / "scripts" / "package.cjs"), str(stage), TARGETS[args.target], str(vsix), args.channel], cwd=ROOT, check=True)
+    verify_vsix(vsix, expected, executable, TARGETS[args.target], package["version"], pre_release, package["displayName"])
     receipt = {"schema": "airk-extension-candidate/1", "version": package["version"], "commit": commit,
                "extension_id": package["publisher"] + "." + package["name"],
-               "display_name": package["displayName"], "pre_release": True,
+               "display_name": package["displayName"], "pre_release": pre_release,
                "platform": TARGETS[args.target], "native_archive_sha256": manifest["archive_sha256"],
                "native_manifest_sha256": digest((native / "manifest.json").read_bytes()),
                "npm_lock_sha256": digest((EXTENSION / "package-lock.json").read_bytes()),
