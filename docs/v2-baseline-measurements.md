@@ -39,7 +39,16 @@ The completed move run began with 302 files / 20,088 source bytes. Its path/cont
 
 Initial native scan/extraction took 2,483,178 microseconds and publication took 12,249,624 microseconds. The unchanged scan reused all 302 files without a new generation. Moving 300 files produced generation 4 with 300 indexed, 300 removed and two reused; native scan/extraction took 1,855,996 microseconds and publication 11,579,164 microseconds. This is the current path-bound extraction behavior, not content-move reuse. Retained logical state after the two edits was 1,764,343 and 2,442,993 bytes.
 
-The 200-edit small-corpus receipt is recorded below when the complete run passes; an incomplete run must not be represented as a retention qualification.
+The supplemental small-corpus run completed **200 successful edit publications**, reaching generation 201 before its three-file move. It began with five files / 293 source bytes, path/content inventory SHA-256 `c6b20ea63456d1a22634ef23ae31b87995c83204924e60ad953db31eb96e1475`, using the same binary digest and machine. Every edit indexed one file and reused four. Retained logical bytes grew from 182,926 after the first edit to 12,257,049 after the 200th. No pruning policy was enabled; this is an accumulation baseline, not a bounded-retention qualification.
+
+| Supplemental observation | Samples | p50 | p95 |
+|---|---:|---:|---:|
+| Cold-worker metadata | 5 | 46.200 ms | 47.588 ms |
+| Warm-worker metadata | 100 | 42.656 ms | 45.308 ms |
+| MCP initialization | 5 | 16.721 ms | 19.138 ms |
+| Single-file edit CLI wall time | 200 | 1,465.714 ms | 2,492.389 ms |
+
+The two campaigns overlapped and used uncontrolled background load. Their different file counts and retention lengths make them separate workload observations, not a controlled scaling comparison. Both completed correctness checks. The final harness also retains each edit's native index receipt and captures the machine/binary identity before the run; those additive reporting fields were introduced after the long campaigns began. The reported long-campaign values above are the actual completed measurements, not reconstructed stage counters.
 
 ## Structural baseline and outstanding measurement work
 

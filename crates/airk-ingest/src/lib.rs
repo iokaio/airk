@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, fs::File, io::Read, path::Path};
 
+pub mod adapters;
+
 pub const MAX_FILE_BYTES: usize = 16_777_216;
 pub const MAX_CORPUS_BYTES: usize = 67_108_864;
 pub const MAX_EXTRACTED_CORPUS_BYTES: usize = 134_217_728;
