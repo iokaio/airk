@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Local persistent candidate engines and bounded evidence responses.
 pub mod bounded;
+pub mod model;
+mod onnx;
 pub mod persistent;
 pub mod vector;
 use airk_core::{Citation, Hit, SearchQuery, SearchResponse, Snapshot};

@@ -10,6 +10,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 pub mod blobs;
+pub mod capacity;
 pub mod quota;
 pub mod relocation;
 pub mod retention;
@@ -100,6 +101,16 @@ impl FileStore {
         maximum: u64,
     ) -> Result<()> {
         sqlite::save_catalog(directory, snapshot, revision, source, reservation, maximum)
+    }
+    /// Admit the private catalog from remaining reserved bytes, leaving the
+    /// active pointer's main-file, WAL and shared-memory growth uncharged until
+    /// publication. Call after all other generation components have been written,
+    /// while holding the collection writer lock.
+    pub fn catalog_budget(&self, reservation: &quota::Reservation) -> Result<u64> {
+        let (_, pointer_bytes) = sqlite::pointer_budget(&self.directory)?;
+        let available = reservation.remaining();
+        let physical = capacity::probe(&self.directory)?.available_growth_bytes;
+        sqlite::catalog_page_budget(available, physical, pointer_bytes)
     }
     pub fn publish_catalog(
         &self,

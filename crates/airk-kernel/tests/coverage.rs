@@ -101,7 +101,7 @@ fn empty_incomplete_and_capacity_limited_inventories_never_claim_full_coverage()
     assert!(partial.budget_exhausted);
     assert_eq!(partial.percent, None);
     // Oversized but individually eligible sources must stay in the denominator.
-    let mut bytes = vec![b'x'; airk_ingest::MAX_FILE_BYTES];
+    let mut bytes = vec![b'x'; 1_048_576];
     bytes[..2].copy_from_slice(b"//");
     for index in 0..65 {
         fs::write(root.path().join(format!("{index}.rs")), &bytes)?;

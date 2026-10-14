@@ -225,6 +225,83 @@ pub struct IndexWork {
     pub publish_us: Option<u64>,
 }
 
+/// OS counter semantics are deliberately distinct: transfer bytes are not disk I/O.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum ResourceCounter {
+    ProcessCpuUs,
+    WindowsReadTransferBytes,
+    WindowsWriteTransferBytes,
+    LinuxReadSyscallBytes,
+    LinuxWriteSyscallBytes,
+    OsStorageReadBytes,
+    OsStorageWriteBytes,
+    LinuxCancelledWriteBytes,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ResourceMeasurement {
+    /// Process-wide deltas are suppressed when AIRK request intervals overlap.
+    pub overlapped: bool,
+    pub counters: BTreeMap<ResourceCounter, u64>,
+    /// Process lifetime high-water mark, not memory allocated by this request.
+    pub peak_rss_bytes: Option<u64>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ResourceTotal {
+    pub samples: u64,
+    #[serde(with = "wide_u128")]
+    pub value: u128,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ResourceSummary {
+    pub intervals: u64,
+    pub overlapped_intervals: u64,
+    pub counters: BTreeMap<ResourceCounter, ResourceTotal>,
+    pub peak_rss_bytes: Option<u64>,
+}
+
+impl ResourceSummary {
+    fn observe(&mut self, sample: &ResourceMeasurement) {
+        self.intervals += 1;
+        self.overlapped_intervals += u64::from(sample.overlapped);
+        if !sample.overlapped {
+            for (key, value) in &sample.counters {
+                let total = self.counters.entry(*key).or_default();
+                total.samples += 1;
+                total.value += u128::from(*value);
+            }
+        }
+        self.peak_rss_bytes = self.peak_rss_bytes.max(sample.peak_rss_bytes);
+    }
+
+    pub fn merge(&mut self, source: &Self) -> Result<()> {
+        self.intervals = self
+            .intervals
+            .checked_add(source.intervals)
+            .ok_or_else(|| anyhow::anyhow!("resource interval overflow"))?;
+        self.overlapped_intervals = self
+            .overlapped_intervals
+            .checked_add(source.overlapped_intervals)
+            .ok_or_else(|| anyhow::anyhow!("resource interval overflow"))?;
+        for (key, value) in &source.counters {
+            let target = self.counters.entry(*key).or_default();
+            target.samples = target
+                .samples
+                .checked_add(value.samples)
+                .ok_or_else(|| anyhow::anyhow!("resource sample overflow"))?;
+            target.value = target
+                .value
+                .checked_add(value.value)
+                .ok_or_else(|| anyhow::anyhow!("resource counter overflow"))?;
+        }
+        self.peak_rss_bytes = self.peak_rss_bytes.max(source.peak_rss_bytes);
+        Ok(())
+    }
+}
+
 /// A transient completed-request observation. Detailed persistence is opt-in.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UsageObservation {
@@ -247,6 +324,8 @@ pub struct UsageObservation {
     pub response_utf8_bytes: Option<u64>,
     pub baseline: Option<ContextBaseline>,
     pub index_work: Option<IndexWork>,
+    #[serde(default)]
+    pub resources: Option<ResourceMeasurement>,
 }
 
 /// Local recorder: callers must handle failure without failing retrieval.
@@ -403,6 +482,7 @@ impl UsageReport {
         );
         for (key, source) in &other.operations {
             let target = self.operations.entry(*key).or_default();
+            target.resources.merge(&source.resources)?;
             add!(
                 target,
                 source,
@@ -498,10 +578,15 @@ pub struct OperationSummary {
     pub returned_utf8_bytes: u128,
     pub measured_responses: u64,
     pub index_work: IndexSummary,
+    #[serde(default)]
+    pub resources: ResourceSummary,
 }
 
 impl OperationSummary {
     fn observe(&mut self, event: &UsageObservation) {
+        if let Some(resources) = &event.resources {
+            self.resources.observe(resources);
+        }
         self.calls += 1;
         match event.outcome {
             UsageOutcome::Success => self.successful += 1,
@@ -696,6 +781,10 @@ pub enum MeasurementProvenance {
 #[serde(rename_all = "snake_case")]
 pub enum TokenizerAlgorithm {
     Utf8ByteBpeV1,
+    HuggingFaceBpe,
+    HuggingFaceWordPiece,
+    HuggingFaceUnigram,
+    HuggingFaceWordLevel,
     ClientReported,
 }
 
@@ -852,7 +941,7 @@ impl SupplementalMeasurement {
                 );
                 ensure!(
                     (self.provenance == MeasurementProvenance::LocalTokenizer)
-                        == (tokens.tokenizer.algorithm == TokenizerAlgorithm::Utf8ByteBpeV1),
+                        == (tokens.tokenizer.algorithm != TokenizerAlgorithm::ClientReported),
                     "local-tokenizer identity is reserved for local counting"
                 );
             }

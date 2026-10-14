@@ -23,6 +23,7 @@ pub struct RequestSpan {
     enabled: bool,
     event_id: [u8; 16],
     disk_before: Option<u64>,
+    resources: Option<crate::resources::ResourceSpan>,
 }
 
 impl RequestSpan {
@@ -44,9 +45,11 @@ pub struct UsageView {
     pub history: Vec<UsageReport>,
     pub supplemental: Vec<SupplementalBucket>,
     pub price_scenario: Option<Value>,
-    /// No portable process CPU or per-operation physical I/O counter is available here.
+    /// Measured exclusive intervals only; see sample counts in resources.
     pub process_cpu_us: Option<u64>,
+    /// Hardware physical I/O is not inferred from process transfer counters.
     pub physical_io_bytes: Option<u64>,
+    pub resources: ResourceSummary,
     pub health: RecordingHealth,
     pub process_dropped_observations: u64,
     pub notice: &'static str,
@@ -128,6 +131,14 @@ impl crate::Kernel {
         } else {
             "partial"
         };
+        let mut resources = ResourceSummary::default();
+        for operation in report.operations.values() {
+            resources.merge(&operation.resources)?;
+        }
+        let process_cpu_us = resources
+            .counters
+            .get(&ResourceCounter::ProcessCpuUs)
+            .and_then(|total| u64::try_from(total.value).ok());
         Ok(UsageView {
             policy,
             status,
@@ -135,8 +146,9 @@ impl crate::Kernel {
             history: stored.buckets,
             supplemental: stored.supplemental,
             price_scenario: None,
-            process_cpu_us: None,
+            process_cpu_us,
             physical_io_bytes: None,
+            resources,
             health: stored.health,
             process_dropped_observations: DROPPED.load(Ordering::Relaxed),
             notice: "Local content-free daily aggregates. UTC day windows; partial-day filtering is unavailable. Unknown recording loss is not zero. Estimates describe full-source counterfactual context, not provider tokens or billed savings. Wide totals are decimal strings.",
@@ -183,6 +195,7 @@ impl crate::Kernel {
             store,
             enabled,
             event_id: new_event_id(),
+            resources: enabled.then(crate::resources::ResourceSpan::start),
             disk_before: if enabled
                 && matches!(operation, UsageOperation::Index | UsageOperation::Reindex)
             {
@@ -206,6 +219,7 @@ impl crate::Kernel {
         if !span.enabled {
             return;
         }
+        let resources = span.resources.map(crate::resources::ResourceSpan::finish);
         let result = (|| -> Result<()> {
             let mut store = span.store;
             // First indexing creates managed state only after the operation succeeded.
@@ -285,6 +299,7 @@ impl crate::Kernel {
                 },
                 baseline: None,
                 index_work: None,
+                resources,
             };
             if matches!(
                 span.operation,
@@ -516,6 +531,10 @@ pub fn render_report(view: &UsageView, format: &str) -> Result<String> {
                     serde_json::to_string(bucket)?.replace('"', "\"\"")
                 ));
             }
+            text.push_str(&format!(
+                "resources,,,,,,,\"{}\"\n",
+                serde_json::to_string(&view.resources)?.replace('"', "\"\"")
+            ));
             if let Some(scenario) = &view.price_scenario {
                 text.push_str(&format!(
                     "price_scenario,,,,,,,\"{}\"\n",
@@ -540,6 +559,13 @@ pub fn render_report(view: &UsageView, format: &str) -> Result<String> {
             }
             for (kind, comparison) in &view.report.comparisons {
                 text.push_str(&format!("\n{} counterfactual: {} nominal tokens of context reduction (signed; {} compared calls).\n", serde_json::to_string(kind)?, comparison.token_estimate.nominal_reduction, comparison.compared_calls));
+            }
+            text.push_str(&format!("\nProcess resources: {} sampled intervals, {} overlapping intervals excluded from counter attribution; peak process RSS: {:?} bytes. Process deltas include background threads. OS storage bytes and transfer bytes are distinct; hardware physical I/O remains unknown.\n", view.resources.intervals, view.resources.overlapped_intervals, view.resources.peak_rss_bytes));
+            for (counter, total) in &view.resources.counters {
+                text.push_str(&format!(
+                    "\n{:?}: {} across {} measured intervals.\n",
+                    counter, total.value, total.samples
+                ));
             }
             for bucket in &view.supplemental {
                 for summary in &bucket.summaries {
@@ -664,8 +690,7 @@ impl crate::Kernel {
                 "usage recording is disabled"
             );
         }
-        let definition = read_usage_input(request.tokenizer, 1_048_576)?;
-        let tokenizer = LocalByteBpe::parse(&definition)?;
+        let tokenizer = crate::tokenization::LocalTokenizer::open(request.tokenizer)?;
         let baseline = String::from_utf8(read_usage_input(request.baseline, 262_144)?)?;
         let returned = String::from_utf8(read_usage_input(request.returned, 262_144)?)?;
         // The explicit inputs are logical JSON results; framing cannot be silently mixed.
@@ -688,7 +713,7 @@ impl crate::Kernel {
                 baseline_utf8_bytes: baseline.len() as u64,
                 returned_utf8_bytes: returned.len() as u64,
                 tokens: Some(TokenMeasurement {
-                    tokenizer: tokenizer.identity.clone(),
+                    tokenizer: tokenizer.identity().clone(),
                     baseline_tokens: tokenizer.count(&baseline)?,
                     returned_tokens: tokenizer.count(&returned)?,
                 }),
@@ -704,7 +729,7 @@ impl crate::Kernel {
             None
         };
         Ok(
-            serde_json::json!({"summary":summary,"recording":recording,"notice":"Exact counts for the supplied utf8-byte-bpe/1 definition, without pretokenization, special tokens or chat framing. User-supplied logical JSON samples; their same-generation comparability is not independently verified. No source text or sample hash is retained. This is not provider token usage."}),
+            serde_json::json!({"summary":summary,"recording":recording,"tokenization":tokenizer.description(),"notice":"Exact counts for the digest-bound local tokenizer and explicit framing, with truncation and padding disabled. User-supplied logical JSON samples; same-generation comparability and provider framing compatibility require independent verification. No source text or sample hash is retained. This is not provider token usage."}),
         )
     }
 
@@ -764,13 +789,13 @@ struct ByteBpeDefinition {
     merges: Vec<[String; 2]>,
 }
 
-struct LocalByteBpe {
-    identity: TokenizerIdentity,
+pub(crate) struct LocalByteBpe {
+    pub(crate) identity: TokenizerIdentity,
     ranks: std::collections::BTreeMap<(Vec<u8>, Vec<u8>), usize>,
 }
 
 impl LocalByteBpe {
-    fn parse(bytes: &[u8]) -> Result<Self> {
+    pub(crate) fn parse(bytes: &[u8]) -> Result<Self> {
         let definition: ByteBpeDefinition = serde_json::from_slice(bytes)?;
         ensure!(
             definition.schema == 1 && definition.merges.len() <= 8192,
@@ -817,7 +842,7 @@ impl LocalByteBpe {
         })
     }
 
-    fn count(&self, text: &str) -> Result<u64> {
+    pub(crate) fn count(&self, text: &str) -> Result<u64> {
         use std::{cmp::Reverse, collections::BinaryHeap};
         ensure!(text.len() <= 262_144, "tokenizer text exceeds bound");
         let mut symbols: Vec<Vec<u8>> = text.bytes().map(|b| vec![b]).collect();

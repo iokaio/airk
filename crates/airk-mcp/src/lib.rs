@@ -499,7 +499,7 @@ impl AirkServer {
 
     #[tool(
         name = "airk_document_facts",
-        description = "Find repository requirements, dates, features, architecture/design/decision language, headings, configuration keys and asset facts. Filter by exact kind, language/profile, literal path prefix or statement/name substring. Prose cues include heading context, written bounds/units and modality; they are evidence candidates, not inferred obligations. PDF/DOCX/PPTX retain original locations; no OCR/rendering.",
+        description = "Find repository requirements, dates, features, architecture/design/decision language, headings, configuration keys and asset facts. Filter by exact kind, language/profile, literal path prefix or statement/name substring. Prose cues include heading context, written bounds/units and modality; they are evidence candidates, not inferred obligations. Documents retain original locations; explicitly published local OCR evidence carries its own provenance and recognition limitations.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -590,7 +590,7 @@ impl AirkServer {
 
     #[tool(
         name = "airk_capabilities",
-        description = "Check supported code/document formats and retrieval limitations when planning repository exploration. Works before indexing. Reveals syntax/text fallbacks, missing semantic resolution and unsupported OCR/rendering; does not indicate collection readiness.",
+        description = "Check native formats, explicitly provisioned local model/OCR/code-provider adapters and their limits before planning exploration. Works before indexing. Reports available capabilities, not whether optional providers or this collection are ready.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -609,12 +609,13 @@ impl AirkServer {
             "document_cues": ["English requirement/modality and design/architecture/feature/decision candidates", "heading context", "ISO and English calendar dates; numeric slash dates retain unknown locale", "written numeric bounds/ranges/units; no unit conversion"],
             "exact_fact_backend": "embedded SQLite; legacy JSON migrates at next successful index",
             "code_evidence": ["syntax scopes/signatures/written parameters and return types", "syntax call, inheritance, containment and import candidates", "versioned structural framework cues"],
-            "optional_analysis": "Explicit source/build/digest-bound SCIP import for TS/JS, Rust and C#; producer assertions, not AIRK compiler certification. Invalidated conservatively during reindexing.",
+            "optional_analysis": "Explicit source/build/digest-bound SCIP imports and local LSP/Ctags execution through the CLI. LSP queries advertised document symbols, references, definitions, types, implementations and call hierarchy against private source copies. Ctags supplies syntax declarations only. Provider assertions are not AIRK compiler certification or complete resolution; source/build changes invalidate the imported domain.",
+            "optional_ocr": "Explicit CLI-only Tesseract OCR with local traineddata and optional Poppler pdftoppm for selected PDF pages; PNG/JPEG/BMP also supported. Bounded local processes preserve original source hashes/page locations and executable/model provenance. Recognition may be wrong; no automatic OCR or model download.",
             "relationship_limits": {"hops":3,"results":100,"payload_bytes":65536,"traversal_ms":250,"visited_symbols":100},
-            "local_usage": "Content-free local aggregates are enabled by default; AIRK_USAGE_MODE=disabled opts out. Use CLI usage report/configure/clear; estimates are counterfactual context, never provider bills.",
+            "local_usage": "Content-free local aggregates are enabled by default; AIRK_USAGE_MODE=disabled opts out. CLI reports include measured stages, logical disk growth and process CPU where the host supports it; physical I/O remains unknown. Optional client/session imports, local tokenizer calibration and user-supplied price scenarios stay labeled; estimates are counterfactual context, never provider bills.",
             "search_modes": ["lexical", "vector", "hybrid"],
-            "semantic_search": "Vector/hybrid modes use approximate local static word-vector similarity, require an explicitly provisioned local model and a matching generation, and have no network fallback. semantic=true aliases vector.",
-            "limitations": ["No native type/name resolution","No resolved caller graph","No live LSP or Ctags adapter","No OCR","No legacy binary Office formats","No SVG rendering","No embedded code parsing in HTML/Vue/Svelte"]
+            "semantic_search": "Vector/hybrid modes support explicitly provisioned local static word vectors or schema-2 CPU ONNX transformer models with a local BERT WordPiece tokenizer. Assets/specification bind the indexed generation. DiskANN retrieval remains approximate; no network fallback or automatic download. Small real-model tests do not establish production corpus quality. semantic=true aliases vector.",
+            "limitations": ["No universal native type/name resolution or complete caller graph","Optional providers/models require deliberate local provisioning and qualification","LSP evidence queries selected symbol positions; external/unindexed locations are rejected","OCR covers selected pages and may misrecognize layout/text","No legacy binary Office formats","No SVG rendering","No embedded code parsing in HTML/Vue/Svelte"]
         });
         render(&self.kernel, span, Ok(Ok(value)))
     }

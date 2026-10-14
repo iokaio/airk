@@ -7,11 +7,17 @@ use airk_core::{
 pub use airk_core::{FactQuery, RelationshipQuery};
 use airk_ingest::IndexReport;
 
+pub mod analysis;
 pub mod coverage;
+pub mod limits;
+mod resources;
 pub mod roots;
 pub mod scheduler;
+pub mod service;
 pub mod storage;
+mod tokenization;
 pub mod usage;
+pub mod watcher;
 use airk_retrieval::{
     LexicalIndex,
     persistent::{self, PersistentIndex},
@@ -74,7 +80,7 @@ fn managed_data_path(path: PathBuf) -> Result<PathBuf> {
 }
 
 enum CachedBackend {
-    Persistent(PersistentIndex),
+    Persistent(Box<PersistentIndex>),
     Legacy(LexicalIndex),
 }
 
@@ -287,11 +293,12 @@ impl Kernel {
         let roots = self.configured_roots()?;
         let reservation = self.publication_reservation()?;
         let scan_started = std::time::Instant::now();
-        let (mut snapshot, mut report) = airk_ingest::scan_streaming(
+        let (mut snapshot, mut report) = airk_ingest::scan_streaming_with_budgets(
             &self.root,
             &self.data_root,
             &previous,
             &roots,
+            self.scan_limits()?,
             |artifact, bytes| {
                 self.store
                     .retain_artifact_with_budget(artifact, Some(bytes), Some(&reservation))
@@ -411,7 +418,7 @@ impl Kernel {
                 let (revision, index) = self.pin_revision(revision)?;
                 *cache = Some(CachedIndex {
                     revision: revision.revision.clone(),
-                    index: CachedBackend::Persistent(index),
+                    index: CachedBackend::Persistent(Box::new(index)),
                 });
             }
             if let CachedBackend::Persistent(index) =
@@ -434,10 +441,10 @@ impl Kernel {
             *cache = Some(CachedIndex {
                 revision,
                 index: if snapshot.persistent_indexes {
-                    CachedBackend::Persistent(PersistentIndex::open(
+                    CachedBackend::Persistent(Box::new(PersistentIndex::open(
                         self.store.directory(),
                         &snapshot,
-                    )?)
+                    )?))
                 } else {
                     CachedBackend::Legacy(LexicalIndex::build(&snapshot))
                 },
@@ -450,22 +457,42 @@ impl Kernel {
     }
 
     pub fn semantic_search(&self, query: &SearchQuery) -> Result<SearchResponse> {
-        query.validate()?;
-        let revision = self
-            .persistent_revision()?
-            .context("semantic retrieval not ready: reindex with a provisioned local model")?;
-        self.pin_revision(revision)
-            .context("semantic retrieval not ready: reindex with a provisioned local model")?
-            .1
-            .semantic_search(query)
+        self.vector_search(query, false)
     }
 
     pub fn hybrid_search(&self, query: &SearchQuery) -> Result<SearchResponse> {
+        self.vector_search(query, true)
+    }
+
+    fn vector_search(&self, query: &SearchQuery, hybrid: bool) -> Result<SearchResponse> {
         query.validate()?;
         let revision = self
             .persistent_revision()?
-            .context("hybrid retrieval not ready: reindex with a provisioned local model")?;
-        self.pin_revision(revision)?.1.hybrid_search(query)
+            .context("vector retrieval not ready: reindex with a provisioned local model")?;
+        let mut cache = self
+            .cache
+            .lock()
+            .map_err(|_| anyhow::anyhow!("index cache poisoned"))?;
+        if cache
+            .as_ref()
+            .is_none_or(|cached| cached.revision != revision.revision)
+        {
+            let (revision, index) = self.pin_revision(revision)?;
+            *cache = Some(CachedIndex {
+                revision: revision.revision,
+                index: CachedBackend::Persistent(Box::new(index)),
+            });
+        }
+        let CachedBackend::Persistent(index) =
+            &cache.as_ref().context("index cache unavailable")?.index
+        else {
+            anyhow::bail!("persistent cache identity mismatch");
+        };
+        if hybrid {
+            index.hybrid_search(query)
+        } else {
+            index.semantic_search(query)
+        }
     }
 
     /// A writer may publish and prune between the metadata read and lease open.
@@ -501,11 +528,7 @@ impl Kernel {
     fn configured_model(&self) -> Result<Option<String>> {
         let directory = self.data_root.join("models/local");
         if directory.exists() {
-            Ok(Some(
-                airk_retrieval::vector::LocalModel::open(&directory)?
-                    .manifest
-                    .sha256,
-            ))
+            Ok(Some(airk_retrieval::model::inspect(&directory)?.identity))
         } else {
             Ok(None)
         }
@@ -524,34 +547,9 @@ impl Kernel {
 
     fn publication_reservation(&self) -> Result<airk_store::quota::Reservation> {
         let quota = airk_store::quota::Quota::open(&self.data_root)?;
-        let policy = quota.policy()?;
-        let status = quota.status()?;
-        let root_available = status
-            .root_limit_bytes
-            .saturating_sub(status.used_bytes)
-            .saturating_sub(status.reserved_bytes);
-        let collection_available = status.collections.get(&self.collection).map_or_else(
-            || {
-                policy
-                    .collections
-                    .get(&self.collection)
-                    .copied()
-                    .unwrap_or(policy.default_collection_bytes)
-            },
-            |item| {
-                item.limit_bytes
-                    .saturating_sub(item.used_bytes)
-                    .saturating_sub(item.reserved_bytes)
-            },
-        );
         // The reservation includes temporary and retained bytes together. Each
         // provider charges before writes; exhausting it leaves the active pin intact.
-        quota.reserve(
-            &self.collection,
-            root_available
-                .min(collection_available)
-                .min(4 * 1024 * 1024 * 1024),
-        )
+        quota.reserve_available(&self.collection, u64::MAX)
     }
 
     fn publish(
@@ -577,21 +575,6 @@ impl Kernel {
         let charge_reservation = reservation.clone();
         let charge: airk_retrieval::bounded::Charge =
             Arc::new(move |bytes| charge_reservation.charge(bytes));
-        let inventory_bytes = serde_json::to_vec(snapshot)?.len() as u64;
-        let artifact_bytes = snapshot
-            .artifacts
-            .values()
-            .filter_map(|a| a.retained.as_ref())
-            .try_fold(0u64, |sum, retained| {
-                sum.checked_add(retained.object_bytes as u64)
-                    .context("catalog byte estimate overflow")
-            })?;
-        let database_budget = artifact_bytes
-            .saturating_mul(3)
-            .saturating_add(inventory_bytes.saturating_mul(3))
-            .saturating_add(1024 * 1024)
-            .min(1024 * 1024 * 1024)
-            .min(reservation.remaining() / 2);
         persistent::prepare_streaming(
             self.store.directory(),
             snapshot,
@@ -600,6 +583,10 @@ impl Kernel {
             Some(charge),
             Some(&staging),
             |directory| {
+                // Fact rows repeat citation/index keys and add derived edges;
+                // their size cannot be inferred from compact artifact JSON.
+                // All other generation writes are complete at this point.
+                let database_budget = self.store.catalog_budget(reservation)?;
                 self.store.prepare_catalog(
                     directory,
                     snapshot,
@@ -884,11 +871,16 @@ impl Kernel {
 
     /// Prepare binding before the external producer runs; outputs JSON through CLI.
     fn verify_source_inventory(&self, snapshot: &Snapshot) -> Result<Snapshot> {
-        let (current, _) = airk_ingest::scan_streaming(
+        ensure!(
+            self.configured_roots()? == snapshot.roots,
+            "index pending source root changes before preparing or publishing provider analysis"
+        );
+        let (current, _) = airk_ingest::scan_streaming_with_budgets(
             &self.root,
             &self.data_root,
             snapshot,
             &snapshot.roots,
+            self.scan_limits()?,
             |artifact, _| {
                 // Verification needs identities, never a second in-memory corpus.
                 let mut metadata = artifact.clone();

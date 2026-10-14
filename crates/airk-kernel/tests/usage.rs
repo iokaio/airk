@@ -30,6 +30,7 @@ fn observation(id: u8) -> UsageObservation {
             unique_sources: 2,
         }),
         index_work: None,
+        resources: None,
     }
 }
 
@@ -43,6 +44,61 @@ fn supplied_session() -> SessionMeasurement {
         elapsed_ms: Some(1000),
         tool_round_trips: None,
     }
+}
+
+#[test]
+fn resource_aggregation_keeps_unknown_overlap_and_high_water_semantics() -> anyhow::Result<()> {
+    let mut first = observation(201);
+    first.resources = Some(ResourceMeasurement {
+        overlapped: false,
+        counters: [
+            (ResourceCounter::ProcessCpuUs, 40),
+            (ResourceCounter::OsStorageReadBytes, 4096),
+        ]
+        .into(),
+        peak_rss_bytes: Some(9000),
+    });
+    let mut second = observation(202);
+    second.resources = Some(ResourceMeasurement {
+        overlapped: true,
+        counters: [(ResourceCounter::ProcessCpuUs, 999)].into(),
+        peak_rss_bytes: Some(8000),
+    });
+    let mut report = summarize(
+        &first.scope,
+        0,
+        1000,
+        [&first, &second],
+        ByteTokenHeuristic::default(),
+    )?;
+    let old = observation(203);
+    report.merge(&summarize(
+        &old.scope,
+        0,
+        1000,
+        [&old],
+        ByteTokenHeuristic::default(),
+    )?)?;
+    let summary = &report.operations[&UsageOperation::Search];
+    assert_eq!(summary.calls, 3);
+    assert_eq!(summary.resources.intervals, 2);
+    assert_eq!(summary.resources.overlapped_intervals, 1);
+    assert_eq!(
+        summary.resources.counters[&ResourceCounter::ProcessCpuUs].value,
+        40
+    );
+    assert_eq!(
+        summary.resources.counters[&ResourceCounter::ProcessCpuUs].samples,
+        1
+    );
+    assert!(
+        !summary
+            .resources
+            .counters
+            .contains_key(&ResourceCounter::OsStorageWriteBytes)
+    );
+    assert_eq!(summary.resources.peak_rss_bytes, Some(9000));
+    Ok(())
 }
 
 fn supplemental(id: u8) -> SupplementalMeasurement {

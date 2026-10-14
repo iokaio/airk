@@ -34,6 +34,11 @@ tantivy = { version = "=0.26.2", default-features = false, features = ["mmap", "
 diskann = { version = "=0.59.0", default-features = false }
 diskann-vector = "=0.59.0"
 futures = "0.3"
+notify = "=8.2.0"
+tract-onnx = { version = "=0.23.8", default-features = false }
+tokenizers = { version = "=0.23.2", default-features = false, features = ["fancy-regex"] }
+libc = "=0.2.190"
+windows-sys = "=0.61.2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std", "signal", "time"] }
 
 [profile.release]

@@ -2,8 +2,9 @@
 //! Immutable Tantivy/DiskANN components, selected by the complete revision digest.
 use crate::{
     bounded::{BoundedDirectory, BudgetWriter, Charge},
+    model::EmbeddingModel,
     terms, truncate_utf8,
-    vector::{DiskIndex, LocalModel},
+    vector::DiskIndex,
 };
 use airk_core::{ArtifactSource, Citation, Hit, SearchQuery, SearchResponse, Snapshot};
 use anyhow::{Context, Result, ensure};
@@ -11,8 +12,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File},
-    io::Write,
+    io::{Read, Write},
     path::{Path, PathBuf},
+    sync::Mutex,
 };
 use tantivy::{
     Index, IndexReader, Order, ReloadPolicy, TantivyDocument, Term,
@@ -22,6 +24,15 @@ use tantivy::{
 };
 
 const ENGINE: &str = "tantivy-0.26.2/diskann-0.59.0/airk-file-1/generation-3";
+
+fn read_manifest(directory: &Path) -> Result<ReadManifest> {
+    let file = File::open(directory.join("manifest.json"))?;
+    ensure!(file.metadata()?.len() <= 16_384, "oversized index manifest");
+    let mut bytes = Vec::new();
+    file.take(16_385).read_to_end(&mut bytes)?;
+    ensure!(bytes.len() <= 16_384, "oversized index manifest");
+    Ok(serde_json::from_slice(&bytes)?)
+}
 
 #[derive(Serialize)]
 pub struct Manifest {
@@ -156,9 +167,9 @@ pub fn prepare_streaming(
         tantivy::IndexSettings::default(),
     )?;
     let mut writer = index.writer_with_num_threads::<TantivyDocument>(1, 20_000_000)?;
-    let model = model_directory.map(LocalModel::open).transpose()?;
+    let model = model_directory.map(EmbeddingModel::open).transpose()?;
     ensure!(
-        snapshot.embedding_model.as_ref() == model.as_ref().map(|model| &model.manifest.sha256),
+        snapshot.embedding_model.as_deref() == model.as_ref().map(EmbeddingModel::identity),
         "model identity changed while preparing components"
     );
     let mut graph = model
@@ -166,7 +177,7 @@ pub fn prepare_streaming(
         .map(|model| {
             DiskIndex::create_with_budget(
                 &staging.path().join("vectors.bin"),
-                model.manifest.dimensions,
+                model.dimensions(),
                 charge.clone(),
             )
         })
@@ -214,16 +225,20 @@ pub fn prepare_streaming(
     }
     if let Some(model_directory) = model_directory {
         fs::create_dir(staging.path().join("model"))?;
-        for name in ["model.json", "vocabulary.json"] {
+        for name in model
+            .as_ref()
+            .context("model adapter missing")?
+            .asset_names()
+        {
             let destination = staging.path().join("model").join(name);
             let mut input = File::open(model_directory.join(name))?;
             let mut output = BudgetWriter::new(File::create(destination)?, charge.clone());
             std::io::copy(&mut input, &mut output)?;
             output.get_ref().sync_all()?;
         }
-        let copied = LocalModel::open(&staging.path().join("model"))?;
+        let copied = crate::model::inspect(&staging.path().join("model"))?;
         ensure!(
-            Some(&copied.manifest.sha256) == model.as_ref().map(|model| &model.manifest.sha256),
+            Some(copied.identity.as_str()) == model.as_ref().map(EmbeddingModel::identity),
             "model changed while building revision"
         );
     }
@@ -235,8 +250,8 @@ pub fn prepare_streaming(
         collection: snapshot.collection.clone(),
         chunks: ordinal as usize,
         vectors,
-        model_sha256: model.map(|m| m.manifest.sha256),
-        embedding: "local-word-vectors/mean/l2-normalized; squared-l2; no transformer or resolved-language claim",
+        model_sha256: model.as_ref().map(|m| m.identity().to_owned()),
+        embedding: model.as_ref().map_or("none", EmbeddingModel::specification),
     };
     let mut inventory = BudgetWriter::new(
         File::create(staging.path().join("inventory.json"))?,
@@ -245,14 +260,18 @@ pub fn prepare_streaming(
     serde_json::to_writer(&mut inventory, snapshot)?;
     inventory.get_ref().sync_all()?;
     drop(inventory);
-    prepare_catalog(staging.path())?;
+    let manifest_bytes = serde_json::to_vec(&manifest)?;
+    ensure!(manifest_bytes.len() <= 16_384, "oversized index manifest");
     let mut file = BudgetWriter::new(
         File::create(staging.path().join("manifest.json"))?,
         charge.clone(),
     );
-    serde_json::to_writer(&mut file, &manifest)?;
+    file.write_all(&manifest_bytes)?;
     file.get_ref().sync_all()?;
     drop(file);
+    // The catalog can consume the remaining generation quota: every other
+    // nonempty component has already been written and charged.
+    prepare_catalog(staging.path())?;
     // Windows cannot rename directories containing open OS lease handles.
     let lease_path = reader_lease_path(base, &manifest.revision)?;
     fs::create_dir_all(lease_path.parent().context("lease parent missing")?)?;
@@ -275,6 +294,7 @@ pub fn prepare_streaming(
 }
 
 pub struct PersistentIndex {
+    model: Mutex<Option<EmbeddingModel>>,
     _lease: File,
     reader: IndexReader,
     fields: Fields,
@@ -308,9 +328,7 @@ impl PersistentIndex {
         let directory = base.join("generations").join(revision);
         let lease = File::open(reader_lease_path(base, revision)?)?;
         lease.lock_shared()?;
-        let file = File::open(directory.join("manifest.json"))?;
-        ensure!(file.metadata()?.len() <= 16_384, "oversized index manifest");
-        let manifest: ReadManifest = serde_json::from_reader(file)?;
+        let manifest = read_manifest(&directory)?;
         ensure!(
             manifest.schema == 1
                 && manifest.engine == ENGINE
@@ -343,6 +361,7 @@ impl PersistentIndex {
             ensure!(manifest.vectors == 0, "vectors are missing a model binding");
         }
         Ok(Self {
+            model: Mutex::new(None),
             _lease: lease,
             reader,
             fields,
@@ -356,6 +375,7 @@ impl PersistentIndex {
 
     pub fn search(&self, query: &SearchQuery) -> Result<SearchResponse> {
         query.validate()?;
+        self.verify_retained_manifest()?;
         let query_terms = terms(&query.text);
         ensure!(
             !query_terms.is_empty(),
@@ -406,18 +426,27 @@ impl PersistentIndex {
 
     pub fn semantic_search(&self, query: &SearchQuery) -> Result<SearchResponse> {
         query.validate()?;
+        self.verify_retained_manifest()?;
         ensure!(
             self.model_sha256.is_some(),
             "semantic retrieval not ready: provision a local model and reindex"
         );
-        let model = LocalModel::open(&self.directory.join("model"))?;
+        let mut cached = self
+            .model
+            .lock()
+            .map_err(|_| anyhow::anyhow!("local model cache poisoned"))?;
+        if cached.is_none() {
+            *cached = Some(EmbeddingModel::open(&self.directory.join("model"))?);
+        }
+        let model = cached.as_ref().context("local model unavailable")?;
         ensure!(
-            Some(&model.manifest.sha256) == self.model_sha256.as_ref(),
+            Some(model.identity()) == self.model_sha256.as_deref(),
             "generation model identity mismatch"
         );
         let vector = model
             .embed_text(&query.text)?
             .context("semantic retrieval not ready: no recognized model tokens")?;
+        drop(cached);
         let graph = DiskIndex::open(&self.directory.join("vectors.bin"))?;
         let candidates = graph.search(&vector, (query.limit * 4).clamp(64, 1000))?;
         let incomplete = candidates.len() < self.vectors;
@@ -486,6 +515,25 @@ impl PersistentIndex {
         let mut response = self.bound(ranked.into_iter().map(|(_, hit)| hit).collect(), query);
         response.truncated |= incomplete;
         Ok(response)
+    }
+
+    // Cached/mapped handles can outlive a removed or replaced directory. Keep
+    // failure reporting consistent with fresh readers without reloading a model.
+    fn verify_retained_manifest(&self) -> Result<()> {
+        let manifest = read_manifest(&self.directory)?;
+        ensure!(
+            manifest.schema == 1
+                && manifest.engine == ENGINE
+                && Some(manifest.revision.as_str())
+                    == self.directory.file_name().and_then(|name| name.to_str())
+                && manifest.generation == self.generation
+                && manifest.collection == self.collection
+                && manifest.chunks as u64 == self.reader.searcher().num_docs()
+                && manifest.vectors == self.vectors
+                && manifest.model_sha256 == self.model_sha256,
+            "cached generation manifest identity mismatch"
+        );
+        Ok(())
     }
 
     fn read_hit(&self, address: tantivy::DocAddress) -> Result<Hit> {

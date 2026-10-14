@@ -186,7 +186,7 @@ pub fn extract(path: &str, bytes: &[u8]) -> Result<Extracted> {
     }
 }
 
-fn from_blocks(
+pub(crate) fn from_blocks(
     language: &str,
     method: &str,
     blocks: Vec<(String, DocumentLocation)>,

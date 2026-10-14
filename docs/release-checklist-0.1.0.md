@@ -45,6 +45,10 @@ git diff --check
 - [ ] Run `python scripts/check-document-tables.py --binary <candidate-helper>` against the exact native candidate; verify DOCX/XLSX facts, coordinates, hashes, budgets and failure/reindex behavior.
 - [ ] Run `python scripts/check-storage-lifecycle.py --binary <candidate-helper>` for aliases, pinned origins, quota rollback, relocation and source-preserving pruning/removal.
 - [ ] Run `python scripts/check-usage-inputs.py --binary <candidate-helper>` for optional input validation, replay, calibration, price scenarios and disabled recording.
+- [ ] Run the manual **Extended qualification** workflow on the candidate, with the 16,384-file fixture and optional pinned CPython/model inputs. Retain numeric reports; inspect correctness gates separately from timing. Follow [scale qualification](scale-qualification.md).
+- [ ] Run `check-publication-faults.py` on the candidate and inspect surviving generation, citation hash and actual content. Dedicated tmpfs exhaustion tests full-volume admission/recovery; separately qualify mid-write ENOSPC and physical power loss.
+- [ ] Run `check-transformer-model.py` with deliberately provisioned pinned assets and `qualify-local-model.py` against an independent runtime. Small known-query/vector agreement is not production retrieval relevance.
+- [ ] Run `check-local-providers.py` against explicitly selected real LSP, Universal Ctags and OCR binaries/models, including original PDF page selection. Record executable/model digests and partial provider capabilities.
 - [ ] Run installed-editor tests against the **packaged** helper and extension, including clean profile and upgrade.
 - [ ] Validate YAML/action references with actionlint and inspect workflow permissions, triggers and artifact identity checks.
 
@@ -64,6 +68,8 @@ Fill every cell with a result and evidence link; `pending` is the initial state.
 - [ ] Test WSL, SSH and dev-container hosts where advertised. Verify the helper and data directory reside on the workspace host. Browser-only use must fail clearly.
 - [ ] Record minimum supported OS/editor versions based on real tests. Confirm the manifest's editor engine is available on every tested host.
 - [ ] Review Windows signing, macOS signing/notarization and Linux executable permissions; label unsigned artifacts honestly.
+- [ ] Continue [the Mac signing handoff](native-signing.md) on the owner's original Mac with the matching private key. Verify Developer ID team `5PX7D99PXA`, certificate expiry, hardened runtime, timestamp, notarization acceptance and final package hashes. A public `.cer` file alone cannot sign.
+- [ ] Exercise `check-user-service.py --allow-user-service-fixture` only on an approved isolated login session. Verify actual install/background indexing/native edit/start/stop/uninstall and cleanup on each supported OS; Windows success does not qualify launchd/systemd.
 
 ## 4. Discovery, extraction and citations
 
@@ -76,8 +82,9 @@ Fill every cell with a result and evidence link; `pending` is the initial state.
 - [ ] Check XLSX workbook/sheet order, original row/cell addresses, shared/inline strings, hidden/sparse rows, merged ranges and requirements spread across columns. Test malformed/out-of-range references and shared-string/header amplification limits.
 - [ ] Verify XLSX stored formulas never execute or read external files; missing/stale caches stay labeled. Test both Excel date epochs, the fictitious 1900 leap day and raw custom/ambiguous number formats.
 - [ ] Verify corrupt/oversized archives, missing parts, external relationships, XML declarations/entities and extraction limits fail with bounded diagnostics.
-- [ ] Confirm no OCR claim for image-only documents without an implemented/qualified OCR adapter.
+- [ ] Check explicit local Tesseract/Poppler OCR, page/image limits, raw-source digest, retained page citations, trained-data/runtime provenance, corpus-limit rollback and unchanged originals. OCR-derived text remains fallible and labeled; ordinary indexing must not launch OCR implicitly.
 - [ ] Validate SCIP producer/root/source/build binding, digest/coordinate validation, changed build-input invalidation and native-versus-imported provenance.
+- [ ] Validate live LSP UTF-8/16/32 positions, advertised capabilities and references/definitions/call hierarchy against a real provider; test Ctags definitions without upgrading syntax to resolved evidence. Reject pending source aliases and stale private input copies before publication.
 
 ## 5. Retrieval, storage and DiskANN
 
@@ -94,6 +101,7 @@ Fill every cell with a result and evidence link; `pending` is the initial state.
 - [ ] Exhaust root and collection quotas during source retention, lexical/vector builds, model copies, SQLite publication and accounting. Preserve the last published revision, release abandoned reservations, and keep read-only scheduler status available at capacity.
 - [ ] Preview and perform relocation with all clients stopped; verify hashes, collection/source identities, source preservation, rejection at the old root and recovery after interrupted copy/activation. Record filesystem free-space requirements separately from logical-byte quotas.
 - [ ] Qualify a representative large repository with measured RSS, disk I/O and latency before claiming scalable operation or relaxing safety caps.
+- [ ] Review collection-bound `collections limits` policy, coverage invalidation and rollback at every configured budget. Explicit higher limits are implementation maxima, not a supported workload guarantee. Verify retained old roots/generations and concurrent writers fit physical capacity.
 
 ## 6. Scheduling, coverage and maintenance
 
@@ -104,6 +112,7 @@ Fill every cell with a result and evidence link; `pending` is the initial state.
 - [ ] Test active-folder selection and multi-root totals; clicking coverage queues indexing through the scheduler. Status refresh must not restart MCP connections.
 - [ ] Verify index storage changes, soft/hard budget labels, collection inspection, source-preserving removal and refusal while registered writers/readers are active.
 - [ ] Test retention/pruning, abandoned generations, safe storage migration if offered, and explicit behavior where migration is not implemented.
+- [ ] Exercise native event overflow, burst coalescing, ignored/private-state changes, alias replacement and periodic recovery. Check per-user service ownership receipts and refuse modification/removal of foreign definitions.
 
 ## 7. Usage reports and user value
 
@@ -114,6 +123,8 @@ Fill every cell with a result and evidence link; `pending` is the initial state.
 - [ ] Compare normalized same-revision full returned sources with serialized responses, including metadata/framing. Empty/error/index/report calls receive no fabricated savings credit.
 - [ ] Keep byte-based token estimates, optional user-supplied monetary scenarios and actual provider measurements visibly distinct. No unsupported billing/task-success claim.
 - [ ] Validate client/session and paired-task imports, scope/replay bounds, explicit provenance and missing cache splits. Verify local byte-BPE calibration stores counts and tokenizer identity without retaining sample text; use held-out samples before any accuracy claim.
+- [ ] Verify schema-2 BPE/WordPiece/Unigram/WordLevel pipelines, bounded intermediate expansion, model/tokenizer/framing identity, and no inference truncation/padding. Compare independent counts on held-out logical samples; provider message framing and causal task/billing savings require their own evidence.
+- [ ] Check native process CPU/RSS and OS-specific I/O labels, overlapping-span suppression and sample coverage. Windows transfer bytes and Linux syscall bytes are not physical disk traffic; child providers and incomplete usage histories need separate measurements.
 
 ## 8. Agent and extension experience
 

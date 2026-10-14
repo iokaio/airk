@@ -7,15 +7,72 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, fs::File, io::Read, path::Path};
 
-pub const MAX_FILE_BYTES: usize = 1_048_576;
+pub const MAX_FILE_BYTES: usize = 16_777_216;
 pub const MAX_CORPUS_BYTES: usize = 67_108_864;
 pub const MAX_EXTRACTED_CORPUS_BYTES: usize = 134_217_728;
 pub const MAX_FILES: usize = 10_000;
 pub const MAX_DISCOVERY_ENTRIES: usize = 100_000;
 pub const MAX_SCAN_READ_BYTES: usize = 268_435_456;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScanLimits {
+    pub file_bytes: usize,
+    pub corpus_bytes: usize,
+    pub extracted_bytes: usize,
+    pub files: usize,
+    pub discovery_entries: usize,
+    pub read_bytes: usize,
+}
+
+impl Default for ScanLimits {
+    fn default() -> Self {
+        Self {
+            file_bytes: MAX_FILE_BYTES,
+            corpus_bytes: MAX_CORPUS_BYTES,
+            extracted_bytes: MAX_EXTRACTED_CORPUS_BYTES,
+            files: MAX_FILES,
+            discovery_entries: MAX_DISCOVERY_ENTRIES,
+            read_bytes: MAX_SCAN_READ_BYTES,
+        }
+    }
+}
+
+impl ScanLimits {
+    pub fn validate(self) -> Result<()> {
+        ensure!(
+            (1..=MAX_FILE_BYTES).contains(&self.file_bytes),
+            "file limit must be 1..16 MiB"
+        );
+        ensure!(
+            (1..=64 * 1024 * 1024 * 1024usize).contains(&self.corpus_bytes),
+            "corpus limit must be 1 byte..64 GiB"
+        );
+        ensure!(
+            (1..=128 * 1024 * 1024 * 1024usize).contains(&self.extracted_bytes),
+            "extracted limit must be 1 byte..128 GiB"
+        );
+        ensure!(
+            (1..=1_000_000).contains(&self.files),
+            "file count limit must be 1..1000000"
+        );
+        ensure!(
+            (1..=10_000_000).contains(&self.discovery_entries),
+            "discovery limit must be 1..10000000"
+        );
+        ensure!(
+            (1..=128 * 1024 * 1024 * 1024usize).contains(&self.read_bytes),
+            "read limit must be 1 byte..128 GiB"
+        );
+        Ok(())
+    }
+}
 mod documents;
 pub mod inventory;
+pub mod ocr;
 mod prose;
+mod provider_process;
+pub mod providers;
 pub mod semantic;
 mod spreadsheets;
 pub mod syntax;
@@ -98,6 +155,40 @@ fn scan_streaming_with_limits(
     roots: &BTreeMap<String, String>,
     max_entries: usize,
     max_read_bytes: usize,
+    emit: impl FnMut(&Artifact, &[u8]) -> Result<Artifact>,
+) -> Result<(Snapshot, IndexReport)> {
+    scan_streaming_configured(
+        root,
+        data_dir,
+        previous,
+        roots,
+        ScanLimits {
+            discovery_entries: max_entries,
+            read_bytes: max_read_bytes,
+            ..ScanLimits::default()
+        },
+        emit,
+    )
+}
+
+pub fn scan_streaming_with_budgets(
+    root: &Path,
+    data_dir: &Path,
+    previous: &Snapshot,
+    roots: &BTreeMap<String, String>,
+    limits: ScanLimits,
+    emit: impl FnMut(&Artifact, &[u8]) -> Result<Artifact>,
+) -> Result<(Snapshot, IndexReport)> {
+    limits.validate()?;
+    scan_streaming_configured(root, data_dir, previous, roots, limits, emit)
+}
+
+fn scan_streaming_configured(
+    root: &Path,
+    data_dir: &Path,
+    previous: &Snapshot,
+    roots: &BTreeMap<String, String>,
+    limits: ScanLimits,
     mut emit: impl FnMut(&Artifact, &[u8]) -> Result<Artifact>,
 ) -> Result<(Snapshot, IndexReport)> {
     let root = root.canonicalize().context("resolve workspace root")?;
@@ -128,7 +219,7 @@ fn scan_streaming_with_limits(
     });
     for (visited, (prefix, source, entry)) in walker.enumerate() {
         ensure!(
-            visited < max_entries,
+            visited < limits.discovery_entries,
             "workspace discovery entry budget exhausted; previous generation retained"
         );
         let entry = entry.context("workspace discovery failed; previous generation retained")?;
@@ -155,24 +246,24 @@ fn scan_streaming_with_limits(
         // Exclusions still consume discovery budget, but known oversized files
         // need no source read. Recheck identity/size inside the bounded reader.
         let source_size = entry.path().symlink_metadata()?.len();
-        if source_size > MAX_FILE_BYTES as u64 {
+        if source_size > limits.file_bytes as u64 {
             report.skip(SkippedFile {
                 path,
-                reason: "file exceeds 1 MiB".into(),
+                reason: format!("file exceeds {} byte configured limit", limits.file_bytes),
             });
             continue;
         }
-        let remaining = max_read_bytes.saturating_sub(read_bytes);
+        let remaining = limits.read_bytes.saturating_sub(read_bytes);
         ensure!(
             source_size <= remaining as u64,
             "workspace raw source read budget exhausted; previous generation retained"
         );
         let bytes = read_source_with_budget(source, entry.path(), remaining)?;
         read_bytes += bytes.len();
-        if bytes.len() > MAX_FILE_BYTES {
+        if bytes.len() > limits.file_bytes {
             report.skip(SkippedFile {
                 path,
-                reason: "file exceeds 1 MiB".into(),
+                reason: format!("file exceeds {} byte configured limit", limits.file_bytes),
             });
             continue;
         }
@@ -216,16 +307,16 @@ fn scan_streaming_with_limits(
             .checked_add(artifact.extracted_bytes())
             .context("extracted corpus byte count overflow")?;
         ensure!(
-            extracted_bytes <= MAX_EXTRACTED_CORPUS_BYTES,
-            "extracted corpus exceeds 128 MiB scaffold limit; previous generation retained"
+            extracted_bytes <= limits.extracted_bytes,
+            "extracted corpus exceeds configured byte limit; previous generation retained"
         );
         ensure!(
-            total_bytes <= MAX_CORPUS_BYTES,
-            "corpus exceeds 64 MiB scaffold limit; previous generation retained"
+            total_bytes <= limits.corpus_bytes,
+            "corpus exceeds configured byte limit; previous generation retained"
         );
         ensure!(
-            artifacts.len() < MAX_FILES,
-            "corpus exceeds 10000 files; previous generation retained"
+            artifacts.len() < limits.files,
+            "corpus exceeds configured file count; previous generation retained"
         );
         let artifact = emit(&artifact, &bytes)?;
         ensure!(
@@ -301,6 +392,34 @@ fn discovery(root: &Path, data_dir: &Path) -> ignore::Walk {
 
 fn read_source(root: &Path, path: &Path) -> Result<Vec<u8>> {
     read_source_with_budget(root, path, MAX_FILE_BYTES + 1)
+}
+
+/// Explicit extraction still respects normal ignore rules and source boundaries.
+pub fn read_selected_source(root: &Path, data_dir: &Path, relative: &str) -> Result<Vec<u8>> {
+    semantic::validate_path(relative)?;
+    let root = root.canonicalize()?;
+    let data_dir = data_dir.canonicalize()?;
+    let expected = root.join(relative);
+    for (visited, entry) in discovery(&root, &data_dir).enumerate() {
+        ensure!(
+            visited < MAX_DISCOVERY_ENTRIES,
+            "selected source discovery budget exhausted"
+        );
+        let entry = entry?;
+        if entry.path() == expected {
+            ensure!(
+                entry.file_type().is_some_and(|kind| kind.is_file()),
+                "selected source is not a regular file"
+            );
+            let bytes = read_source(&root, &expected)?;
+            ensure!(
+                bytes.len() <= MAX_FILE_BYTES,
+                "selected source exceeds file limit"
+            );
+            return Ok(bytes);
+        }
+    }
+    anyhow::bail!("selected source is missing or excluded by source discovery policy")
 }
 
 fn read_source_with_budget(root: &Path, path: &Path, remaining: usize) -> Result<Vec<u8>> {

@@ -86,6 +86,20 @@
     "missing_text": true
   },
   {
+    "name": "nom-language",
+    "version": "0.1.0",
+    "revision": "2cec1b3e4c9ccac62c902d60c00de6d1549ccbe1",
+    "repository": "https://github.com/rust-bakery/nom",
+    "files": [
+      {
+        "file": "LICENSE",
+        "url": "https://raw.githubusercontent.com/rust-bakery/nom/2cec1b3e4c9ccac62c902d60c00de6d1549ccbe1/LICENSE",
+        "sha256": "4dbda04344456f09a7a588140455413a9ac59b6b26a1ef7cdf9c800c012d87f0"
+      }
+    ],
+    "missing_text": false
+  },
+  {
     "name": "ownedbytes",
     "version": "0.9.0",
     "revision": "c6e77d27c605cb3cea1a933fa7d68632aeb7865e",
@@ -166,10 +180,16 @@
   {
     "name": "rsqlite-vfs",
     "version": "0.1.1",
-    "revision": null,
-    "repository": null,
-    "files": [],
-    "missing_text": true
+    "revision": "1bb309784f25c401ddf95131dcde4c4cdad7aee7",
+    "repository": "https://github.com/Spxg/sqlite-wasm-rs",
+    "files": [
+      {
+        "file": "LICENSE",
+        "url": "https://raw.githubusercontent.com/Spxg/sqlite-wasm-rs/1bb309784f25c401ddf95131dcde4c4cdad7aee7/LICENSE",
+        "sha256": "e1c1975c3474cce31722836f101a40ffaf1cc784e4d2f38ce3e77b9712934e78"
+      }
+    ],
+    "missing_text": false
   },
   {
     "name": "tantivy-bitpacker",
@@ -265,6 +285,30 @@
         "file": "LICENSE",
         "url": "https://raw.githubusercontent.com/quickwit-oss/tantivy/9e63fc508153ef770f9ff980c8fa2f11e8e2e6db/LICENSE",
         "sha256": "acacd14bebbffdb30d62443c282fb4da3e81915a9f69c63d5d745a029f44de8a"
+      }
+    ],
+    "missing_text": false
+  },
+  {
+    "name": "tract-extra",
+    "version": "0.23.8",
+    "revision": "248335349c0f59a5772d737480b8b39250097374",
+    "repository": "https://github.com/sonos/tract",
+    "files": [
+      {
+        "file": "LICENSE",
+        "url": "https://raw.githubusercontent.com/sonos/tract/248335349c0f59a5772d737480b8b39250097374/LICENSE",
+        "sha256": "f7ef673bf046d823dcd775bdd0768432bd8855f81d0e5e1290a0a48c42e2dca3"
+      },
+      {
+        "file": "LICENSE-MIT",
+        "url": "https://raw.githubusercontent.com/sonos/tract/248335349c0f59a5772d737480b8b39250097374/LICENSE-MIT",
+        "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+      },
+      {
+        "file": "LICENSE-APACHE",
+        "url": "https://raw.githubusercontent.com/sonos/tract/248335349c0f59a5772d737480b8b39250097374/LICENSE-APACHE",
+        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
       }
     ],
     "missing_text": false
@@ -434,17 +478,39 @@
   {
     "name": "winapi-i686-pc-windows-gnu",
     "version": "0.4.0",
-    "revision": null,
+    "revision": "9497609ef44cc9bcd16cd2411c0ee6ccaf5483aa",
     "repository": "https://github.com/retep998/winapi-rs",
-    "files": [],
-    "missing_text": true
+    "files": [
+      {
+        "file": "LICENSE-MIT",
+        "url": "https://raw.githubusercontent.com/retep998/winapi-rs/9497609ef44cc9bcd16cd2411c0ee6ccaf5483aa/LICENSE-MIT",
+        "sha256": "5b19674a1db628a475850a131956ed49521b744e3dda8f5a94141f9aba681219"
+      },
+      {
+        "file": "LICENSE-APACHE",
+        "url": "https://raw.githubusercontent.com/retep998/winapi-rs/9497609ef44cc9bcd16cd2411c0ee6ccaf5483aa/LICENSE-APACHE",
+        "sha256": "b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1"
+      }
+    ],
+    "missing_text": false
   },
   {
     "name": "winapi-x86_64-pc-windows-gnu",
     "version": "0.4.0",
-    "revision": null,
+    "revision": "9497609ef44cc9bcd16cd2411c0ee6ccaf5483aa",
     "repository": "https://github.com/retep998/winapi-rs",
-    "files": [],
-    "missing_text": true
+    "files": [
+      {
+        "file": "LICENSE-MIT",
+        "url": "https://raw.githubusercontent.com/retep998/winapi-rs/9497609ef44cc9bcd16cd2411c0ee6ccaf5483aa/LICENSE-MIT",
+        "sha256": "5b19674a1db628a475850a131956ed49521b744e3dda8f5a94141f9aba681219"
+      },
+      {
+        "file": "LICENSE-APACHE",
+        "url": "https://raw.githubusercontent.com/retep998/winapi-rs/9497609ef44cc9bcd16cd2411c0ee6ccaf5483aa/LICENSE-APACHE",
+        "sha256": "b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1"
+      }
+    ],
+    "missing_text": false
   }
 ]

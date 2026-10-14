@@ -2,6 +2,7 @@
 """Package an already-built host binary; never archive the checkout or index state."""
 import argparse
 import hashlib
+import importlib.util
 import json
 from pathlib import Path
 import shutil
@@ -24,7 +25,7 @@ def sha256(path):
 
 
 def capture(*command):
-    return subprocess.check_output(command, cwd=ROOT, text=True).strip()
+    return subprocess.check_output(command, cwd=ROOT, text=True, encoding="utf-8").strip()
 
 
 def inventory(stage):
@@ -64,6 +65,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target", choices=TARGETS, required=True)
     parser.add_argument("--output", type=Path, help="Fresh directory inside ignored artifacts/; defaults to artifacts/native/<target>")
+    parser.add_argument("--signed-dir", type=Path, help="Fresh sign-native.py artifact copy and receipt, verified again on this OS")
+    parser.add_argument("--signtool", default="signtool")
     args = parser.parse_args()
     compiler = capture("rustc", "-vV")
     if "host: " + args.target not in compiler.splitlines():
@@ -74,6 +77,13 @@ def main():
     binary = ROOT / "target" / args.target / "release" / executable
     if capture(str(binary), "--version") != "airk " + version:
         raise SystemExit("Built executable and package version differ")
+    signing = None
+    if args.signed_dir:
+        specification = importlib.util.spec_from_file_location("airk_signing",ROOT/"scripts/sign-native.py")
+        signer = importlib.util.module_from_spec(specification)
+        specification.loader.exec_module(signer)
+        binary, signing = signer.read_verified(args.signed_dir.resolve(strict=True),binary,args.target,
+                                               capture("git","rev-parse","HEAD"),sha256(ROOT/"Cargo.lock"),args.signtool)
     output = (args.output or ROOT / "artifacts" / "native" / args.target).resolve()
     if not output.is_relative_to((ROOT / "artifacts").resolve()) or output == (ROOT / "artifacts").resolve():
         raise SystemExit("Candidate output must be a fresh subdirectory of artifacts/")
@@ -110,7 +120,7 @@ def main():
         "toolchain_file_sha256": sha256(ROOT / "rust-toolchain.toml"),
         "rustc": compiler, "cargo": capture("cargo", "--version"),
         "archive": archive.name, "archive_sha256": sha256(archive),
-        "payload": files, "signed_distribution": False,
+        "payload": files, "signed_distribution": signing is not None, "signing": signing,
         "qualification": "native CLI candidate; installed editor and oldest OS not qualified",
     }
     (publish / "manifest.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")

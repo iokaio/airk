@@ -39,7 +39,7 @@ def main():
     args = parser.parse_args()
     metadata = json.loads(subprocess.check_output([
         "cargo", "metadata", "--format-version", "1", "--locked"
-    ], text=True))
+    ], text=True, encoding="utf-8"))
     workspace_ids = set(metadata["workspace_members"])
     pinned_path=Path("third_party/licenses/sources.json")
     if pinned_path.exists():

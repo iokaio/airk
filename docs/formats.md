@@ -45,7 +45,7 @@ These are initial grammar profiles, not complete compiler/type-system semantics.
 | XLSX | Worksheet rows/cells, shared/inline rich strings, header candidates, requirement/date/quantity cues, stored formula results and merge markers | Original worksheet name, row and cell addresses; formulas never evaluated |
 | PPTX | OOXML slide text, title placeholders and shared prose candidates; relationship order | Original presentation-order slide number; title context isolated per slide |
 
-PDF scans, image-only slides, OCR, encrypted documents requiring passwords, legacy DOC/PPT/XLS, XLSB/XLSM, ODT, EPUB and RTF decoding are not currently implemented. DOCX headers/footers/comments/embedded objects and PPTX notes/charts/image contents are not extracted. XLSX charts, drawings, comments, pivot caches and embedded objects are not extracted. SVG path geometry is retrievable source but is not interpreted as visual meaning. Titles/descriptions remain searchable XML source text.
+Explicit local OCR supports selected PDF pages and PNG/JPEG/BMP inputs using provisioned Tesseract models and, for PDFs, Poppler. It is not run automatically and does not promise table/layout reconstruction. Image-only slides, encrypted documents requiring passwords, legacy DOC/PPT/XLS, XLSB/XLSM, ODT, EPUB and RTF decoding are not implemented. DOCX headers/footers/comments/embedded objects and PPTX notes/charts/image contents are not extracted. XLSX charts, drawings, comments, pivot caches and embedded objects are not extracted. SVG path geometry is retrievable source but is not interpreted as visual meaning.
 
 OOXML entries are read in memory, not unpacked to the filesystem. External slide/worksheet relationships and XML document type declarations are refused; unused external links are never followed. Extraction skips are explicit, rather than replacement-character text pretending to be evidence. Spreadsheet formulas and cached results are labeled separately; caches can be stale or absent. AIRK does not launch Office, recalculate formulas or fetch linked workbooks.
 
@@ -53,9 +53,9 @@ OOXML entries are read in memory, not unpacked to the filesystem. External slide
 
 ## Current safety limits
 
-- Source file: 1 MiB; extracted text/XML part: 4 MiB.
-- Corpus: 64 MiB of eligible source and 128 MiB of extracted text, 10,000 indexed files.
-- Index scan: 100,000 visited non-ignored entries (including directories) and 256 MiB of actual source reads, including unsupported files. Known oversized files are skipped before reading. Exhausting either budget fails the whole pass and preserves the previous generation.
+- Source file: configurable up to 16 MiB; extracted text/XML part: 4 MiB.
+- Default corpus: 64 MiB eligible source, 128 MiB extracted text and 10,000 files. [Persisted collection limits](ingestion-limits.md) permit explicit larger profiles within validated ceilings.
+- Default index scan: 100,000 visited non-ignored entries (including directories) and 256 MiB source reads, including unsupported files. Known oversized files are skipped before reading. Exhausting configured pass budgets preserves the previous generation.
 - PDF/PPTX: 512 pages/slides; OOXML archive: 10,000 entries/paragraphs.
 - Native syntax: 500,000 visited nodes and 10,000 facts per file.
 - DOCX: 256 tables, 32 nested table levels, 256 cells per row; table rows count toward the document fact/text budgets.

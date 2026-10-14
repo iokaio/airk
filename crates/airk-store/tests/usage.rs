@@ -46,6 +46,7 @@ fn observation(scope: &UsageScope, id: u8) -> UsageObservation {
             unique_sources: 1,
         }),
         index_work: None,
+        resources: None,
     }
 }
 
