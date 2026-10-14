@@ -211,15 +211,19 @@ fn validate_workspace_boundaries(
         );
         plain(&database)?;
         let connection = Connection::open_with_flags(database, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        let version: u32 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+        ensure!(
+            (1..=crate::ROOT_POINTER_VERSION).contains(&version),
+            "unsupported relocation root pointer version"
+        );
         let root: String =
             connection.query_row("SELECT root FROM revision WHERE id=1", [], |row| row.get(0))?;
         let mut roots = crate::roots::RootConfig::load(&directory, &root)?.roots;
         roots.insert(String::new(), root);
         // The published pointer can retain aliases removed from pending config.
-        if let Ok(payload) = connection.query_row::<String, _, _>("SELECT payload FROM index_components WHERE id=1 AND length(CAST(payload AS BLOB))<=131072", [], |row| row.get(0)) {
-            let value: serde_json::Value = serde_json::from_str(&payload)?;
-            if let Some(published) = value.get("roots").and_then(serde_json::Value::as_object) {
-                for (alias, path) in published { if let Some(path) = path.as_str() { roots.insert(format!("published:{alias}"), path.into()); } }
+        if let Some(header) = crate::sqlite::persistent_revision(&directory)? {
+            for (alias, path) in header.roots {
+                roots.insert(format!("published:{alias}"), path);
             }
         }
         for root in roots.values() {

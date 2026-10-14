@@ -4,6 +4,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 pub const EXTRACTION_CONTRACT_VERSION: u32 = 1;
+/// Preserves legacy 40-line chunks across the bounded native source ceiling.
+/// The independent 64 MiB encoded payload limit remains authoritative.
+pub const MAX_EXTRACTION_CHUNKS: usize = 500_000;
 
 /// A source slice admitted under the native input ceiling. Document adapters
 /// must additionally enforce their lower extraction/text limits.
@@ -320,7 +323,7 @@ impl ExtractionPayload {
             "extraction payload exceeds limits"
         );
         anyhow::ensure!(
-            self.chunks.len() <= 10_000 && self.diagnostics.len() <= 256,
+            self.chunks.len() <= MAX_EXTRACTION_CHUNKS && self.diagnostics.len() <= 256,
             "extraction metadata exceeds limits"
         );
         anyhow::ensure!(

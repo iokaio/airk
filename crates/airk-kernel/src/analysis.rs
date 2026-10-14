@@ -27,8 +27,12 @@ impl Kernel {
         // allowance even though the subprocess sandbox resides in OS temporary storage.
         reservation.charge(160 * 1024 * 1024)?;
         let analysis = match adapter {
-            "lsp" => airk_ingest::providers::run_lsp(&self.root, &snapshot, &catalog, request)?,
-            _ => airk_ingest::providers::run_ctags(&self.root, &snapshot, &catalog, request)?,
+            "lsp" => {
+                airk_ingest::providers::run_lsp(&self.root, &snapshot, catalog.as_ref(), request)?
+            }
+            _ => {
+                airk_ingest::providers::run_ctags(&self.root, &snapshot, catalog.as_ref(), request)?
+            }
         };
         let current = self.verify_source_inventory(&snapshot)?;
         ensure!(
@@ -36,7 +40,7 @@ impl Kernel {
                 == airk_ingest::semantic::source_inventory(&snapshot),
             "source inventory changed while provider ran; previous generation retained"
         );
-        airk_ingest::providers::apply(&mut snapshot, &analysis, &catalog)?;
+        airk_ingest::providers::apply(&mut snapshot, &analysis, catalog.as_ref())?;
         snapshot.generation = snapshot
             .generation
             .checked_add(1)
@@ -44,7 +48,15 @@ impl Kernel {
         snapshot.persistent_indexes = true;
         snapshot.storage_format = 1;
         snapshot.embedding_model = self.configured_model()?;
-        self.publish(&snapshot, &reservation)?;
+        self.publish_v2(
+            &snapshot,
+            &reservation,
+            if adapter == "lsp" {
+                airk_core::changes::PublicationReason::Lsp
+            } else {
+                airk_core::changes::PublicationReason::Ctags
+            },
+        )?;
         Ok(json!({"status":self.status()?,"provider":adapter,"coverage":analysis.coverage}))
     }
 
@@ -119,7 +131,11 @@ impl Kernel {
         snapshot.persistent_indexes = true;
         snapshot.storage_format = 1;
         snapshot.embedding_model = self.configured_model()?;
-        self.publish(&snapshot, &reservation)?;
+        self.publish_v2(
+            &snapshot,
+            &reservation,
+            airk_core::changes::PublicationReason::Ocr,
+        )?;
         Ok(json!({"status":self.status()?,"path":path,"provenance":output.provenance}))
     }
 }

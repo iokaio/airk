@@ -56,7 +56,7 @@ fn object_path(base: &Path, kind: &str, digest: &str) -> Result<PathBuf> {
     Ok(path)
 }
 
-fn read_verified(path: &Path, digest: &str, limit: u64) -> Result<Vec<u8>> {
+pub(crate) fn read_verified(path: &Path, digest: &str, limit: u64) -> Result<Vec<u8>> {
     let file = File::open(path)
         .context("retained object missing; previous generation cannot be reconstructed")?;
     ensure!(
@@ -64,12 +64,219 @@ fn read_verified(path: &Path, digest: &str, limit: u64) -> Result<Vec<u8>> {
         "retained object exceeds byte limit"
     );
     let mut bytes = Vec::new();
-    file.take(limit + 1).read_to_end(&mut bytes)?;
+    file.take(limit + 1)
+        .read_to_end(&mut bytes)
+        .with_context(|| format!("read retained object {}", path.display()))?;
     ensure!(
         bytes.len() as u64 <= limit && format!("{:x}", Sha256::digest(&bytes)) == digest,
         "retained object digest mismatch"
     );
     Ok(bytes)
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ComponentDigest {
+    bytes: u64,
+    sha256: airk_core::identity::Sha256Digest,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ManifestV2 {
+    schema: u32,
+    engine: String,
+    token: airk_core::identity::RevisionToken,
+    collection: String,
+    chunks: usize,
+    vectors: usize,
+    model_sha256: Option<String>,
+    embedding: String,
+    inventory_digest: airk_core::identity::Sha256Digest,
+    components: std::collections::BTreeMap<String, ComponentDigest>,
+}
+
+/// Verify against a committed receipt (or a newly prepared receipt before commit),
+/// never against an untrusted manifest's self-asserted identity alone.
+pub(crate) fn verify_v2_generation(
+    base: &Path,
+    receipt: &airk_core::identity::PublicationReceipt,
+) -> Result<airk_core::publication::InventoryV2> {
+    let directory = base
+        .join("generations")
+        .join(receipt.token.revision.to_string());
+    for path in [base.join("generations"), directory.clone()] {
+        ensure!(
+            !fs::symlink_metadata(path)?.file_type().is_symlink(),
+            "linked v2 generation"
+        );
+    }
+    ensure!(
+        !fs::symlink_metadata(directory.join("manifest.json"))?
+            .file_type()
+            .is_symlink(),
+        "linked generation manifest"
+    );
+    let bytes = read_verified(
+        &directory.join("manifest.json"),
+        &receipt.manifest_digest.to_string(),
+        131_072,
+    )?;
+    let manifest: ManifestV2 = serde_json::from_slice(&bytes)?;
+    ensure!(
+        manifest.schema == 2
+            && manifest.token == receipt.token
+            && manifest.inventory_digest == receipt.inventory_digest
+            && manifest.components.len() <= 1024,
+        "v2 manifest receipt mismatch"
+    );
+    ensure!(
+        manifest.embedding.len() <= 4096
+            && manifest
+                .model_sha256
+                .as_ref()
+                .is_none_or(|value| valid_digest(value)),
+        "invalid embedding manifest binding"
+    );
+    for required in ["inventory.json", "lineage.json", "catalog.sqlite"] {
+        ensure!(
+            manifest.components.contains_key(required),
+            "required v2 component missing"
+        );
+    }
+    ensure!(
+        manifest.components["inventory.json"].sha256 == receipt.inventory_digest,
+        "inventory checksum binding mismatch"
+    );
+    // Unlisted SQLite WAL/SHM or rollback files must not overlay verified main bytes.
+    let mut actual = std::collections::BTreeSet::new();
+    let mut pending = vec![directory.clone()];
+    let mut visited = 0usize;
+    while let Some(parent) = pending.pop() {
+        for entry in fs::read_dir(parent)? {
+            visited += 1;
+            ensure!(visited <= 4096, "generation entry bound exceeded");
+            let entry = entry?;
+            let metadata = entry.file_type()?;
+            ensure!(!metadata.is_symlink(), "linked v2 component entry");
+            let path = entry.path();
+            let relative = path
+                .strip_prefix(&directory)?
+                .to_str()
+                .context("non-UTF-8 component path")?
+                .replace('\\', "/");
+            ensure!(relative.len() <= 4096, "generation path exceeds bound");
+            if metadata.is_dir() {
+                let prefix = format!("{relative}/");
+                ensure!(
+                    manifest
+                        .components
+                        .keys()
+                        .any(|name| name.starts_with(&prefix)),
+                    "unlisted generation directory"
+                );
+                pending.push(path);
+            } else {
+                ensure!(metadata.is_file(), "nonregular generation entry");
+                if relative != "manifest.json" {
+                    actual.insert(relative);
+                }
+            }
+        }
+    }
+    ensure!(
+        actual.len() == manifest.components.len()
+            && actual
+                .iter()
+                .all(|name| manifest.components.contains_key(name)),
+        "generation component set differs from anchored manifest"
+    );
+    for (relative, component) in &manifest.components {
+        ensure!(
+            !relative.is_empty()
+                && relative.len() <= 4096
+                && !relative.contains(['\\', ':', '\0'])
+                && relative
+                    .split('/')
+                    .all(|part| !part.is_empty() && part != "." && part != "..")
+                && relative != "manifest.json",
+            "unsafe manifest component path"
+        );
+        let mut path = directory.clone();
+        for part in relative.split('/') {
+            path.push(part);
+            ensure!(
+                !fs::symlink_metadata(&path)?.file_type().is_symlink(),
+                "linked generation component"
+            );
+        }
+        let mut file = File::open(&path)
+            .with_context(|| format!("open manifest component {}", path.display()))?;
+        ensure!(
+            file.metadata()?.is_file() && file.metadata()?.len() == component.bytes,
+            "component length mismatch"
+        );
+        let mut hash = Sha256::new();
+        let mut buffer = [0u8; 65_536];
+        let mut total = 0u64;
+        // An empty component's metadata establishes its empty digest. Do not
+        // issue an EOF read on Tantivy coordination files: Windows rejects that
+        // read while another reader holds the file's byte-range lock.
+        loop {
+            if component.bytes == 0 {
+                break;
+            }
+            let count = file
+                .read(&mut buffer)
+                .with_context(|| format!("hash manifest component {}", path.display()))?;
+            if count == 0 {
+                break;
+            }
+            total = total
+                .checked_add(count as u64)
+                .context("component length overflow")?;
+            ensure!(
+                total <= component.bytes,
+                "component grew during verification"
+            );
+            hash.update(&buffer[..count]);
+        }
+        ensure!(
+            total == component.bytes
+                && file.metadata()?.len() == component.bytes
+                && airk_core::identity::Sha256Digest::from_bytes(hash.finalize().into())
+                    == component.sha256,
+            "component checksum mismatch"
+        );
+    }
+    let bytes = read_verified(
+        &directory.join("inventory.json"),
+        &receipt.inventory_digest.to_string(),
+        MAX_CATALOG_BYTES,
+    )?;
+    ensure!(
+        airk_core::identity::revision_digest(manifest.engine.as_bytes(), &bytes)
+            == receipt.token.revision,
+        "v2 revision byte digest mismatch"
+    );
+    let inventory: airk_core::publication::InventoryV2 = serde_json::from_slice(&bytes)?;
+    inventory.validate()?;
+    ensure!(
+        inventory.incarnation == receipt.token.incarnation
+            && inventory.generation == receipt.token.generation
+            && inventory.collection == manifest.collection
+            && inventory.retrieval_specification == manifest.engine
+            && inventory
+                .files
+                .values()
+                .try_fold(0usize, |sum, file| sum.checked_add(file.chunks))
+                == Some(manifest.chunks)
+            && manifest.vectors <= manifest.chunks
+            && inventory.lineage_digest == manifest.components["lineage.json"].sha256,
+        "v2 inventory manifest binding mismatch"
+    );
+    crate::sqlite::verify_prepared_catalog(&directory, receipt)?;
+    Ok(inventory)
 }
 
 fn put(
@@ -149,12 +356,77 @@ impl FileStore {
         put(self.directory(), "artifacts", &bytes, &object, reservation)?;
         let mut compact = artifact.clone();
         compact.retained = Some(ArtifactRef {
+            profile: None,
             object,
             object_bytes: bytes.len(),
             raw_source: source.is_some(),
             chunks: artifact.chunks.len(),
             extracted_bytes: artifact.extracted_bytes(),
             facts: artifact.facts.len(),
+        });
+        compact.chunks.clear();
+        compact.facts.clear();
+        Ok(compact)
+    }
+
+    pub fn retain_payload_with_budget(
+        &self,
+        artifact: &Artifact,
+        payload: &airk_core::extraction::ExtractionPayload,
+        profile: &airk_core::extraction::ExtractionProfile,
+        source: Option<&[u8]>,
+        reservation: Option<&crate::quota::Reservation>,
+    ) -> Result<Artifact> {
+        payload.validate()?;
+        profile.identity()?;
+        let bound = airk_core::binding::bind_payload(
+            payload,
+            profile,
+            airk_core::binding::ArtifactBinding {
+                path: &artifact.path,
+                source_hash: artifact.content_hash.parse()?,
+                source_bytes: artifact.bytes,
+            },
+        )?;
+        let mut expected = artifact.clone();
+        expected.retained = None;
+        ensure!(
+            serde_json::to_vec(&bound)? == serde_json::to_vec(&expected)?,
+            "path-free conversion changed artifact evidence"
+        );
+        if let Some(source) = source {
+            ensure!(
+                source.len() == artifact.bytes,
+                "source byte count changed before retention"
+            );
+            put(
+                self.directory(),
+                "sources",
+                source,
+                &artifact.content_hash,
+                reservation,
+            )?;
+        }
+        let bytes = serde_json::to_vec(payload)?;
+        ensure!(
+            bytes.len() as u64 <= MAX_ARTIFACT_BYTES,
+            "path-free payload exceeds byte limit"
+        );
+        let object = format!("{:x}", Sha256::digest(&bytes));
+        put(self.directory(), "artifacts", &bytes, &object, reservation)?;
+        let mut compact = artifact.clone();
+        compact.retained = Some(ArtifactRef {
+            object,
+            object_bytes: bytes.len(),
+            raw_source: source.is_some()
+                || artifact
+                    .retained
+                    .as_ref()
+                    .is_some_and(|value| value.raw_source),
+            chunks: artifact.chunks.len(),
+            extracted_bytes: artifact.extracted_bytes(),
+            facts: artifact.facts.len(),
+            profile: Some(profile.clone()),
         });
         compact.chunks.clear();
         compact.facts.clear();
@@ -194,7 +466,20 @@ impl FileStore {
             bytes.len() == reference.object_bytes,
             "retained artifact length does not match pinned inventory"
         );
-        let artifact: Artifact = serde_json::from_slice(&bytes)?;
+        let artifact: Artifact = if let Some(profile) = &reference.profile {
+            let payload: airk_core::extraction::ExtractionPayload = serde_json::from_slice(&bytes)?;
+            airk_core::binding::bind_payload(
+                &payload,
+                profile,
+                airk_core::binding::ArtifactBinding {
+                    path: &entry.path,
+                    source_hash: entry.content_hash.parse()?,
+                    source_bytes: entry.bytes,
+                },
+            )?
+        } else {
+            serde_json::from_slice(&bytes)?
+        };
         ensure!(
             artifact.retained.is_none()
                 && artifact.path == entry.path
@@ -239,6 +524,9 @@ impl FileStore {
                 self.check_legacy_catalog_size(maximum)?;
                 return Ok(crate::SnapshotStore::load(self)?.map(|snapshot| Catalog {
                     snapshot,
+                    inventory: None,
+                    lineage: None,
+                    receipt: None,
                     store: self.clone(),
                     _lease: None,
                     _lifecycle: lifecycle.clone(),
@@ -248,6 +536,9 @@ impl FileStore {
                 self.check_legacy_catalog_size(maximum)?;
                 return Ok(crate::SnapshotStore::load(self)?.map(|snapshot| Catalog {
                     snapshot,
+                    inventory: None,
+                    lineage: None,
+                    receipt: None,
                     store: self.clone(),
                     _lease: None,
                     _lifecycle: lifecycle.clone(),
@@ -256,6 +547,60 @@ impl FileStore {
             let open = || -> Result<Catalog> {
                 let lease = File::open(reader_lease_path(self.directory(), &header.revision)?)?;
                 lease.lock_shared()?;
+                if header.storage_format == 2 {
+                    ensure!(
+                        fs::metadata(
+                            self.directory()
+                                .join("generations")
+                                .join(&header.revision)
+                                .join("inventory.json")
+                        )?
+                        .len()
+                            <= maximum,
+                        "catalog exceeds request byte limit"
+                    );
+                    let token = header.token.context("v2 token missing")?;
+                    let receipt = self.receipt(&token)?.context("v2 receipt missing")?;
+                    let inventory = verify_v2_generation(self.directory(), &receipt)?;
+                    ensure!(
+                        inventory.canonical_bytes()?.len() as u64 <= maximum,
+                        "catalog exceeds request byte limit"
+                    );
+                    let lineage_bytes = read_verified(
+                        &self
+                            .directory()
+                            .join("generations")
+                            .join(&header.revision)
+                            .join("lineage.json"),
+                        &inventory.lineage_digest.to_string(),
+                        airk_core::changes::MAX_LINEAGE_BYTES as u64,
+                    )?;
+                    let lineage: airk_core::changes::LineageEnvelope =
+                        serde_json::from_slice(&lineage_bytes)?;
+                    lineage.validate()?;
+                    ensure!(
+                        lineage.incarnation == inventory.incarnation
+                            && lineage.observation.generation == inventory.generation
+                            && inventory.root == header.root
+                            && inventory.collection == header.collection
+                            && inventory.roots == header.roots
+                            && inventory.files.len() == header.files,
+                        "v2 pinned catalog identity mismatch"
+                    );
+                    return Ok(Catalog {
+                        snapshot: inventory.projection()?,
+                        inventory: Some(inventory),
+                        lineage: Some(lineage),
+                        receipt: Some(receipt),
+                        store: self.clone(),
+                        _lease: Some(lease),
+                        _lifecycle: lifecycle.clone(),
+                    });
+                }
+                ensure!(
+                    header.storage_format == 1,
+                    "unsupported retained inventory format"
+                );
                 let path = self
                     .directory()
                     .join("generations")
@@ -270,6 +615,32 @@ impl FileStore {
                     MAX_CATALOG_BYTES.min(maximum),
                 )?;
                 let snapshot: Snapshot = serde_json::from_slice(&bytes)?;
+                // Legacy revision selection is bound to its original encoded bytes.
+                // Newly defaulted fields must never change which directory is read.
+                let mut manifest_bytes = Vec::new();
+                File::open(
+                    self.directory()
+                        .join("generations")
+                        .join(&header.revision)
+                        .join("manifest.json"),
+                )?
+                .take(16_385)
+                .read_to_end(&mut manifest_bytes)?;
+                ensure!(
+                    manifest_bytes.len() <= 16_384,
+                    "legacy manifest exceeds bound"
+                );
+                let manifest: serde_json::Value = serde_json::from_slice(&manifest_bytes)?;
+                let engine = manifest["engine"]
+                    .as_str()
+                    .context("legacy engine missing")?;
+                let mut hash = Sha256::new();
+                hash.update(engine.as_bytes());
+                hash.update(&bytes);
+                ensure!(
+                    format!("{:x}", hash.finalize()) == header.revision,
+                    "legacy inventory revision digest mismatch"
+                );
                 ensure!(
                     snapshot.schema_version == airk_core::SCHEMA_VERSION
                         && snapshot.storage_format == 1
@@ -301,6 +672,9 @@ impl FileStore {
                 );
                 Ok(Catalog {
                     snapshot,
+                    inventory: None,
+                    lineage: None,
+                    receipt: None,
                     store: self.clone(),
                     _lease: Some(lease),
                     _lifecycle: lifecycle.clone(),
@@ -338,12 +712,34 @@ impl FileStore {
 
 pub struct Catalog {
     pub snapshot: Snapshot,
+    pub inventory: Option<airk_core::publication::InventoryV2>,
+    pub lineage: Option<airk_core::changes::LineageEnvelope>,
+    pub receipt: Option<airk_core::identity::PublicationReceipt>,
     store: FileStore,
     _lease: Option<File>,
     _lifecycle: Option<std::sync::Arc<File>>,
 }
 
 impl Catalog {
+    /// Indexed lookup in this already verified, leased catalog. No inventory parse.
+    pub fn file(&self, path: &str) -> Result<Option<airk_core::publication::InventoryFile>> {
+        let receipt = self
+            .receipt
+            .as_ref()
+            .context("indexed metadata requires v2 catalog")?;
+        let file = crate::sqlite::file_in_catalog(self.store.directory(), receipt, path)?;
+        let expected = self
+            .inventory
+            .as_ref()
+            .context("verified v2 inventory missing")?
+            .files
+            .get(path);
+        ensure!(
+            file.as_ref() == expected,
+            "indexed metadata differs from pinned receipt-bound inventory"
+        );
+        Ok(file)
+    }
     pub fn load_artifact_bounded(&self, path: &str, maximum: u64) -> Result<Artifact> {
         self.store.load_retained_bounded(
             self.snapshot

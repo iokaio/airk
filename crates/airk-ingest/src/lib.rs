@@ -193,6 +193,87 @@ fn scan_streaming_configured(
     limits: ScanLimits,
     mut emit: impl FnMut(&Artifact, &[u8]) -> Result<Artifact>,
 ) -> Result<(Snapshot, IndexReport)> {
+    let policy = adapters::profile::ExtractionPolicy {
+        version: 1,
+        rules: vec![],
+    };
+    scan_streaming_profiled(
+        root,
+        data_dir,
+        previous,
+        roots,
+        limits,
+        &policy,
+        false,
+        |path, hash, _profile| {
+            Ok(previous
+                .artifacts
+                .get(path)
+                .filter(|old| {
+                    old.content_hash == hash.to_string()
+                        && previous.extractor_version == EXTRACTOR_VERSION
+                })
+                .cloned())
+        },
+        |_, artifact, bytes| emit(artifact, bytes),
+    )
+}
+
+/// V2 profile-aware scan. Lookup is collection-scoped and returns verified,
+/// correctly rebound artifacts; selection precedes lookup and full rebuilds
+/// bypass it. Failed lookups abort rather than silently omitting evidence.
+#[allow(clippy::too_many_arguments)]
+pub fn scan_streaming_v2_with_budgets(
+    root: &Path,
+    data_dir: &Path,
+    previous: &Snapshot,
+    roots: &BTreeMap<String, String>,
+    limits: ScanLimits,
+    policy: &adapters::profile::ExtractionPolicy,
+    full_reindex: bool,
+    lookup: impl FnMut(
+        &str,
+        &airk_core::identity::Sha256Digest,
+        &airk_core::extraction::ExtractionProfile,
+    ) -> Result<Option<Artifact>>,
+    emit: impl FnMut(&airk_core::extraction::ExtractionProfile, &Artifact, &[u8]) -> Result<Artifact>,
+) -> Result<(Snapshot, IndexReport)> {
+    limits.validate()?;
+    scan_streaming_profiled(
+        root,
+        data_dir,
+        previous,
+        roots,
+        limits,
+        policy,
+        full_reindex,
+        lookup,
+        emit,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn scan_streaming_profiled(
+    root: &Path,
+    data_dir: &Path,
+    previous: &Snapshot,
+    roots: &BTreeMap<String, String>,
+    limits: ScanLimits,
+    policy: &adapters::profile::ExtractionPolicy,
+    full_reindex: bool,
+    mut lookup: impl FnMut(
+        &str,
+        &airk_core::identity::Sha256Digest,
+        &airk_core::extraction::ExtractionProfile,
+    ) -> Result<Option<Artifact>>,
+    mut emit: impl FnMut(
+        &airk_core::extraction::ExtractionProfile,
+        &Artifact,
+        &[u8],
+    ) -> Result<Artifact>,
+) -> Result<(Snapshot, IndexReport)> {
+    let registry = adapters::registry::AdapterRegistry::baseline();
+    policy.validate(&registry)?;
     let root = root.canonicalize().context("resolve workspace root")?;
     ensure!(
         root.to_string_lossy() == previous.root,
@@ -270,16 +351,53 @@ fn scan_streaming_configured(
             continue;
         }
         let content_hash = format!("{:x}", Sha256::digest(&bytes));
-        let artifact = match previous.artifacts.get(&path) {
-            Some(old)
-                if old.content_hash == content_hash
-                    && previous.extractor_version == EXTRACTOR_VERSION =>
-            {
+        let hash = content_hash.parse::<airk_core::identity::Sha256Digest>()?;
+        let selection = policy.select_with_prefix(&registry, &path, &bytes)?;
+        let mut profile = selection.profile;
+        // A deliberate OCR operation is retained for unchanged source bytes.
+        // Explicit policy overrides and full rebuilds select native extraction.
+        if !full_reindex
+            && !matches!(
+                selection.basis.as_str(),
+                "exact_override" | "scoped_override"
+            )
+            && let Some(old) = previous
+                .artifacts
+                .get(&path)
+                .filter(|old| old.content_hash == content_hash && old.language == "ocr")
+        {
+            profile = adapters::legacy::legacy_profile(old)?;
+        }
+        profile.identity()?;
+        let cached = if full_reindex {
+            None
+        } else {
+            lookup(&path, &hash, &profile)?
+        };
+        let artifact = match cached {
+            Some(old) => {
+                ensure!(
+                    old.path == path
+                        && old.content_hash == content_hash
+                        && old.language == profile.language,
+                    "cache returned incompatible artifact binding"
+                );
+                ensure!(
+                    old.retained
+                        .as_ref()
+                        .and_then(|reference| reference.profile.as_ref())
+                        .is_none_or(|cached_profile| cached_profile == &profile),
+                    "cache returned incompatible extraction profile"
+                );
                 report.reused += 1;
-                old.clone()
+                old
             }
             _ => {
-                let extracted = match documents::extract(&path, &bytes) {
+                ensure!(
+                    profile.language != "ocr",
+                    "retained OCR payload unavailable; explicit OCR operation required"
+                );
+                let extracted = match documents::extract_selected(&path, &bytes, &profile) {
                     Ok(extracted) => extracted,
                     Err(error) => {
                         report.skip(SkippedFile {
@@ -320,7 +438,7 @@ fn scan_streaming_configured(
             artifacts.len() < limits.files,
             "corpus exceeds configured file count; previous generation retained"
         );
-        let artifact = emit(&artifact, &bytes)?;
+        let artifact = emit(&profile, &artifact, &bytes)?;
         ensure!(
             artifact.path == path && artifact.content_hash == content_hash,
             "retention changed artifact identity"
@@ -494,6 +612,167 @@ pub fn chunk(text: &str) -> Vec<Chunk> {
 #[cfg(test)]
 mod scan_budget_tests {
     use super::*;
+
+    #[test]
+    fn selected_profile_precedes_reuse_and_full_rebuild_bypasses_lookup() -> Result<()> {
+        use adapters::profile::{ExtractionPolicy, RuleMatch, SelectionRule};
+        let root = tempfile::tempdir()?;
+        let data = tempfile::tempdir()?;
+        std::fs::write(
+            root.path().join("header.h"),
+            "class Widget { public: void run() {} };\n",
+        )?;
+        std::fs::write(root.path().join("stable.rs"), "fn stable() {}\n")?;
+        let empty = Snapshot::empty(root.path().canonicalize()?.to_string_lossy().into_owned());
+        let (previous, _) = scan(root.path(), data.path(), &empty)?;
+        assert_eq!(previous.artifacts["header.h"].language, "c");
+        let policy = ExtractionPolicy {
+            version: 1,
+            rules: vec![SelectionRule {
+                selector: RuleMatch::Scoped {
+                    prefix: String::new(),
+                    suffix: Some(".h".into()),
+                    basename: None,
+                },
+                case_sensitive: true,
+                adapter_id: "cpp".into(),
+            }],
+        };
+        let mut calls = 0;
+        let (next, report) = scan_streaming_v2_with_budgets(
+            root.path(),
+            data.path(),
+            &previous,
+            &BTreeMap::new(),
+            ScanLimits::default(),
+            &policy,
+            false,
+            |path, hash, profile| {
+                calls += 1;
+                let old = &previous.artifacts[path];
+                assert_eq!(old.content_hash, hash.to_string());
+                if path == "header.h" {
+                    assert_eq!(profile.language, "cpp");
+                }
+                Ok((adapters::legacy::legacy_profile(old)? == *profile).then(|| old.clone()))
+            },
+            |_, artifact, _| Ok(artifact.clone()),
+        )?;
+        assert_eq!(calls, 2);
+        assert_eq!((report.indexed, report.reused), (1, 1));
+        assert_eq!(next.artifacts["header.h"].language, "cpp");
+        assert!(
+            next.artifacts["header.h"]
+                .facts
+                .iter()
+                .any(|fact| fact.name == "Widget" && fact.syntax_kind == "class_specifier")
+        );
+        let (_, rebuilt) = scan_streaming_v2_with_budgets(
+            root.path(),
+            data.path(),
+            &next,
+            &BTreeMap::new(),
+            ScanLimits::default(),
+            &policy,
+            true,
+            |_, _, _| anyhow::bail!("full rebuild must not read cache"),
+            |_, artifact, _| Ok(artifact.clone()),
+        )?;
+        assert_eq!((rebuilt.indexed, rebuilt.reused), (2, 0));
+        assert!(
+            scan_streaming_v2_with_budgets(
+                root.path(),
+                data.path(),
+                &next,
+                &BTreeMap::new(),
+                ScanLimits::default(),
+                &policy,
+                false,
+                |_, _, _| anyhow::bail!("corrupt verified cache"),
+                |_, artifact, _| Ok(artifact.clone())
+            )
+            .is_err()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn unchanged_ocr_keeps_explicit_profile_without_rerunning_and_full_resets() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let data = tempfile::tempdir()?;
+        let bytes = b"source text only when explicitly re-extracted\n";
+        std::fs::write(root.path().join("scan.png"), bytes)?;
+        let hash = format!("{:x}", Sha256::digest(bytes));
+        let provenance = ocr::OcrProvenance {
+            schema: 1,
+            source_sha256: hash.clone(),
+            tesseract_sha256: hash.clone(),
+            renderer_sha256: None,
+            traineddata_sha256: BTreeMap::from([("eng".into(), hash.clone())]),
+            language: "eng".into(),
+            first_page: 1,
+            last_page: 1,
+            pages_with_text: 0,
+            dpi: 150,
+            coverage: "fictional fixture".into(),
+        };
+        let status = serde_json::to_string(&provenance)?;
+        let artifact = Artifact {
+            path: "scan.png".into(),
+            content_hash: hash,
+            bytes: bytes.len(),
+            chunks: vec![],
+            language: "ocr".into(),
+            extraction_method: format!(
+                "local-tesseract-ocr/1:{:x}",
+                Sha256::digest(status.as_bytes())
+            ),
+            parse_status: status,
+            facts: vec![],
+            retained: None,
+        };
+        let mut previous =
+            Snapshot::empty(root.path().canonicalize()?.to_string_lossy().into_owned());
+        previous
+            .artifacts
+            .insert(artifact.path.clone(), artifact.clone());
+        let policy = adapters::profile::ExtractionPolicy {
+            version: 1,
+            rules: vec![],
+        };
+        let (retained, report) = scan_streaming_v2_with_budgets(
+            root.path(),
+            data.path(),
+            &previous,
+            &BTreeMap::new(),
+            ScanLimits::default(),
+            &policy,
+            false,
+            |_, _, profile| {
+                assert_eq!(*profile, adapters::legacy::legacy_profile(&artifact)?);
+                Ok(Some(artifact.clone()))
+            },
+            |_, artifact, _| Ok(artifact.clone()),
+        )?;
+        assert_eq!(report.reused, 1);
+        assert_eq!(
+            retained.artifacts["scan.png"].parse_status,
+            artifact.parse_status
+        );
+        let (reset, _) = scan_streaming_v2_with_budgets(
+            root.path(),
+            data.path(),
+            &previous,
+            &BTreeMap::new(),
+            ScanLimits::default(),
+            &policy,
+            true,
+            |_, _, _| anyhow::bail!("full rebuild must bypass OCR cache"),
+            |_, artifact, _| Ok(artifact.clone()),
+        )?;
+        assert_eq!(reset.artifacts["scan.png"].language, "text");
+        Ok(())
+    }
 
     #[test]
     fn unsupported_sources_consume_raw_read_budget_without_partial_success() -> Result<()> {
