@@ -3,7 +3,12 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+pub mod changes;
 pub mod code;
+pub mod embedding;
+pub mod extraction;
+pub mod identity;
+pub mod location;
 pub mod usage;
 pub use code::*;
 
