@@ -6,14 +6,17 @@ use crate::{
     terms, truncate_utf8,
     vector::DiskIndex,
 };
+use airk_core::identity::{PublicationReceipt, RevisionToken, Sha256Digest, revision_digest};
+use airk_core::publication::InventoryV2;
 use airk_core::{ArtifactSource, Citation, Hit, SearchQuery, SearchResponse, Snapshot};
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
+    collections::BTreeMap,
     fs::{self, File},
     io::{Read, Write},
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     sync::Mutex,
 };
 use tantivy::{
@@ -24,6 +27,44 @@ use tantivy::{
 };
 
 const ENGINE: &str = "tantivy-0.26.2/diskann-0.59.0/airk-file-1/generation-3";
+const ENGINE_V2: &str = "tantivy-0.26.2/diskann-0.59.0/airk-file-1/generation-4/inventory-2";
+const MAX_MANIFEST_V2_BYTES: usize = 128 * 1024;
+const MAX_COMPONENTS_V2: usize = 1024;
+const MAX_INVENTORY_V2_BYTES: usize = 128 * 1024 * 1024;
+
+pub fn retrieval_specification_v2() -> &'static [u8] {
+    ENGINE_V2.as_bytes()
+}
+
+/// Kernel-finalized identity plus the bound artifact projection needed to build
+/// retrieval components. Inventory bytes are preserved verbatim, never reencoded.
+pub struct V2Preparation<'a> {
+    pub snapshot: &'a Snapshot,
+    pub canonical_inventory: &'a [u8],
+    pub token: RevisionToken,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ComponentDigest {
+    pub bytes: u64,
+    pub sha256: Sha256Digest,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ManifestV2 {
+    pub schema: u32,
+    pub engine: String,
+    pub token: RevisionToken,
+    pub collection: String,
+    pub chunks: usize,
+    pub vectors: usize,
+    pub model_sha256: Option<String>,
+    pub embedding: String,
+    pub inventory_digest: Sha256Digest,
+    pub components: BTreeMap<String, ComponentDigest>,
+}
 
 fn read_manifest(directory: &Path) -> Result<ReadManifest> {
     let file = File::open(directory.join("manifest.json"))?;
@@ -156,6 +197,63 @@ pub fn prepare_streaming(
         .prefix("building-")
         .tempdir_in(staging_parent.unwrap_or(&generations))?;
     let lexical = staging.path().join("lexical");
+    let manifest = build_streaming_components(
+        staging.path(),
+        snapshot,
+        model_directory,
+        source,
+        charge.clone(),
+        revision_id(snapshot)?,
+    )?;
+    let mut inventory = BudgetWriter::new(
+        File::create(staging.path().join("inventory.json"))?,
+        charge.clone(),
+    );
+    serde_json::to_writer(&mut inventory, snapshot)?;
+    inventory.get_ref().sync_all()?;
+    drop(inventory);
+    let manifest_bytes = serde_json::to_vec(&manifest)?;
+    ensure!(manifest_bytes.len() <= 16_384, "oversized index manifest");
+    let mut file = BudgetWriter::new(
+        File::create(staging.path().join("manifest.json"))?,
+        charge.clone(),
+    );
+    file.write_all(&manifest_bytes)?;
+    file.get_ref().sync_all()?;
+    drop(file);
+    // The catalog can consume the remaining generation quota: every other
+    // nonempty component has already been written and charged.
+    prepare_catalog(staging.path())?;
+    // Windows cannot rename directories containing open OS lease handles.
+    let lease_path = reader_lease_path(base, &manifest.revision)?;
+    fs::create_dir_all(lease_path.parent().context("lease parent missing")?)?;
+    let lease = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(lease_path)?;
+    lease.sync_all()?;
+    drop(lease);
+    // Reopen Tantivy before publication to detect incomplete commits.
+    let probe: IndexReader = Index::open_in_dir(&lexical)?
+        .reader_builder()
+        .reload_policy(ReloadPolicy::Manual)
+        .try_into()?;
+    drop(probe);
+    let directory = staging.keep();
+    fs::rename(&directory, &target).context("publish immutable index components")?;
+    Ok(())
+}
+
+fn build_streaming_components(
+    directory: &Path,
+    snapshot: &Snapshot,
+    model_directory: Option<&Path>,
+    source: &dyn ArtifactSource,
+    charge: Charge,
+    revision: String,
+) -> Result<Manifest> {
+    let lexical = directory.join("lexical");
     fs::create_dir(&lexical)?;
     let (schema, fields) = schema();
     let index = Index::create(
@@ -176,7 +274,7 @@ pub fn prepare_streaming(
         .as_ref()
         .map(|model| {
             DiskIndex::create_with_budget(
-                &staging.path().join("vectors.bin"),
+                &directory.join("vectors.bin"),
                 model.dimensions(),
                 charge.clone(),
             )
@@ -221,59 +319,429 @@ pub fn prepare_streaming(
     if let Some(mut graph) = graph {
         graph.finish()?;
         drop(graph);
-        DiskIndex::open(&staging.path().join("vectors.bin"))?;
+        DiskIndex::open(&directory.join("vectors.bin"))?;
     }
     if let Some(model_directory) = model_directory {
-        fs::create_dir(staging.path().join("model"))?;
+        fs::create_dir(directory.join("model"))?;
         for name in model
             .as_ref()
             .context("model adapter missing")?
             .asset_names()
         {
-            let destination = staging.path().join("model").join(name);
+            let destination = directory.join("model").join(name);
             let mut input = File::open(model_directory.join(name))?;
             let mut output = BudgetWriter::new(File::create(destination)?, charge.clone());
             std::io::copy(&mut input, &mut output)?;
             output.get_ref().sync_all()?;
         }
-        let copied = crate::model::inspect(&staging.path().join("model"))?;
+        let copied = crate::model::inspect(&directory.join("model"))?;
         ensure!(
             Some(copied.identity.as_str()) == model.as_ref().map(EmbeddingModel::identity),
             "model changed while building revision"
         );
     }
-    let manifest = Manifest {
+    Ok(Manifest {
         schema: 1,
         engine: ENGINE.into(),
-        revision: revision_id(snapshot)?,
+        revision,
         generation: snapshot.generation,
         collection: snapshot.collection.clone(),
         chunks: ordinal as usize,
         vectors,
         model_sha256: model.as_ref().map(|m| m.identity().to_owned()),
         embedding: model.as_ref().map_or("none", EmbeddingModel::specification),
-    };
+    })
+}
+
+fn raw_digest(bytes: &[u8]) -> Sha256Digest {
+    Sha256Digest::from_bytes(Sha256::digest(bytes).into())
+}
+
+fn bounded_file(path: &Path, maximum: usize) -> Result<Vec<u8>> {
+    let metadata = fs::symlink_metadata(path)?;
+    ensure!(
+        metadata.is_file() && !metadata.file_type().is_symlink(),
+        "invalid component file"
+    );
+    ensure!(
+        metadata.len() <= maximum as u64,
+        "component exceeds read bound"
+    );
+    let mut bytes = Vec::new();
+    File::open(path)?
+        .take(maximum as u64 + 1)
+        .read_to_end(&mut bytes)?;
+    ensure!(bytes.len() <= maximum, "component exceeds read bound");
+    Ok(bytes)
+}
+
+fn component_digests(directory: &Path) -> Result<BTreeMap<String, ComponentDigest>> {
+    component_digests_expected(directory, None)
+}
+
+fn component_digests_expected(
+    directory: &Path,
+    expected: Option<&BTreeMap<String, ComponentDigest>>,
+) -> Result<BTreeMap<String, ComponentDigest>> {
+    ensure!(
+        !fs::symlink_metadata(directory)?.file_type().is_symlink(),
+        "linked generation directory"
+    );
+    let mut pending = vec![directory.to_path_buf()];
+    let mut components = BTreeMap::new();
+    while let Some(parent) = pending.pop() {
+        for entry in fs::read_dir(parent)? {
+            let entry = entry?;
+            let path = entry.path();
+            let relative = path.strip_prefix(directory)?;
+            ensure!(
+                relative
+                    .components()
+                    .all(|part| matches!(part, Component::Normal(_))),
+                "unsafe component path"
+            );
+            let name = relative
+                .to_str()
+                .context("non-UTF8 component path")?
+                .replace('\\', "/");
+            ensure!(name.len() <= 4096, "oversized component path");
+            let metadata = fs::symlink_metadata(&path)?;
+            ensure!(
+                !metadata.file_type().is_symlink(),
+                "linked generation component"
+            );
+            if metadata.is_dir() {
+                ensure!(
+                    name == "lexical" || name == "model",
+                    "foreign generation directory"
+                );
+                pending.push(path);
+                continue;
+            }
+            ensure!(metadata.is_file(), "non-file generation component");
+            if name == "manifest.json" {
+                continue;
+            }
+            ensure!(
+                matches!(
+                    name.as_str(),
+                    "inventory.json" | "lineage.json" | "catalog.sqlite" | "vectors.bin"
+                ) || name.starts_with("lexical/")
+                    || name.starts_with("model/"),
+                "foreign generation component"
+            );
+            ensure!(
+                components.len() < MAX_COMPONENTS_V2,
+                "too many generation components"
+            );
+            if let Some(expected) = expected {
+                ensure!(
+                    expected
+                        .get(&name)
+                        .is_some_and(|value| value.bytes == metadata.len()),
+                    "unexpected component or changed component size"
+                );
+            }
+            let mut file = File::open(&path)?;
+            let mut hash = Sha256::new();
+            let mut buffer = [0u8; 64 * 1024];
+            let mut bytes = 0u64;
+            // Empty Tantivy coordination files may be locked by another reader.
+            // Windows rejects even an EOF read through an exclusive byte lock;
+            // their checked length determines SHA256(empty) without that read.
+            while bytes < metadata.len() {
+                let read = file.read(&mut buffer)?;
+                if read == 0 {
+                    break;
+                }
+                bytes = bytes
+                    .checked_add(read as u64)
+                    .context("component size overflow")?;
+                ensure!(
+                    bytes <= metadata.len(),
+                    "component grew during verification"
+                );
+                hash.update(&buffer[..read]);
+            }
+            ensure!(
+                bytes == metadata.len() && file.metadata()?.len() == metadata.len(),
+                "component changed during verification"
+            );
+            components.insert(
+                name,
+                ComponentDigest {
+                    bytes,
+                    sha256: Sha256Digest::from_bytes(hash.finalize().into()),
+                },
+            );
+        }
+    }
+    Ok(components)
+}
+
+fn sync_components(directory: &Path, components: &BTreeMap<String, ComponentDigest>) -> Result<()> {
+    for name in components.keys() {
+        fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(directory.join(name))?
+            .sync_all()?;
+    }
+    // Tantivy's directory implementation supplies its platform-specific sync
+    // behavior. Windows directory durability is not a power-loss guarantee.
+    for name in ["lexical", "model", ""] {
+        let path = directory.join(name);
+        if path.is_dir() {
+            tantivy::directory::Directory::sync_directory(
+                &tantivy::directory::MmapDirectory::open(path)?,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn read_manifest_v2(
+    directory: &Path,
+    receipt: &PublicationReceipt,
+    collection: &str,
+) -> Result<ManifestV2> {
+    let bytes = bounded_file(&directory.join("manifest.json"), MAX_MANIFEST_V2_BYTES)?;
+    ensure!(
+        raw_digest(&bytes) == receipt.manifest_digest,
+        "v2 manifest receipt mismatch"
+    );
+    let manifest: ManifestV2 = serde_json::from_slice(&bytes)?;
+    ensure!(
+        manifest.schema == 2
+            && manifest.engine == ENGINE_V2
+            && manifest.token == receipt.token
+            && manifest.collection == collection
+            && manifest.inventory_digest == receipt.inventory_digest
+            && manifest.components.len() <= MAX_COMPONENTS_V2,
+        "v2 manifest identity mismatch"
+    );
+    for name in manifest.components.keys() {
+        ensure!(
+            name.len() <= 4096
+                && !name.contains('\\')
+                && Path::new(name)
+                    .components()
+                    .all(|part| matches!(part, Component::Normal(_))),
+            "invalid manifest component path"
+        );
+    }
+    for name in [
+        "inventory.json",
+        "lineage.json",
+        "catalog.sqlite",
+        "lexical/meta.json",
+    ] {
+        ensure!(
+            manifest.components.contains_key(name),
+            "required v2 component missing: {name}"
+        );
+    }
+    ensure!(
+        manifest.components["inventory.json"].sha256 == receipt.inventory_digest,
+        "inventory receipt mismatch"
+    );
+    Ok(manifest)
+}
+
+fn verify_directory_v2(
+    directory: &Path,
+    receipt: &PublicationReceipt,
+    collection: &str,
+) -> Result<ManifestV2> {
+    let manifest = read_manifest_v2(directory, receipt, collection)?;
+    ensure!(
+        component_digests_expected(directory, Some(&manifest.components))? == manifest.components,
+        "v2 generation component checksum mismatch"
+    );
+    let inventory = bounded_file(&directory.join("inventory.json"), MAX_INVENTORY_V2_BYTES)?;
+    ensure!(
+        revision_digest(retrieval_specification_v2(), &inventory) == receipt.token.revision,
+        "v2 revision input mismatch"
+    );
+    Ok(manifest)
+}
+
+fn open_components_v2(directory: &Path, manifest: &ManifestV2) -> Result<(IndexReader, Fields)> {
+    let (expected, fields) = schema();
+    let index = Index::open_in_dir(directory.join("lexical"))?;
+    ensure!(index.schema() == expected, "unsupported lexical schema");
+    let reader: IndexReader = index
+        .reader_builder()
+        .reload_policy(ReloadPolicy::Manual)
+        .try_into()?;
+    ensure!(
+        reader.searcher().num_docs() == manifest.chunks as u64,
+        "lexical inventory mismatch"
+    );
+    ensure!(
+        manifest.vectors <= manifest.chunks,
+        "vector inventory exceeds lexical inventory"
+    );
+    if let Some(identity) = &manifest.model_sha256 {
+        ensure!(
+            crate::model::inspect(&directory.join("model"))?.identity == *identity,
+            "v2 model identity mismatch"
+        );
+        ensure!(
+            DiskIndex::open(&directory.join("vectors.bin"))?.len() == manifest.vectors,
+            "vector inventory mismatch"
+        );
+    } else {
+        ensure!(
+            manifest.vectors == 0
+                && !directory.join("vectors.bin").exists()
+                && !directory.join("model").exists(),
+            "model-free revision contains vector/model state"
+        );
+    }
+    Ok((reader, fields))
+}
+
+/// Build a private v2 revision; this does not advance any committed pointer.
+/// The callback must quota-charge, sync, verify and close catalog.sqlite and
+/// lineage.json before returning. It may not alter existing components or add
+/// sidecars. An existing target requires a trusted receipt and is never adopted.
+pub fn prepare_streaming_v2(
+    base: &Path,
+    preparation: &V2Preparation<'_>,
+    model_directory: Option<&Path>,
+    source: &dyn ArtifactSource,
+    charge: Option<Charge>,
+    staging_parent: Option<&Path>,
+    prepare_catalog: impl FnOnce(&Path) -> Result<()>,
+) -> Result<PublicationReceipt> {
+    let snapshot = preparation.snapshot;
+    ensure!(
+        preparation.canonical_inventory.len() <= MAX_INVENTORY_V2_BYTES,
+        "oversized v2 inventory"
+    );
+    let authoritative: InventoryV2 = serde_json::from_slice(preparation.canonical_inventory)?;
+    ensure!(
+        authoritative.canonical_bytes()? == preparation.canonical_inventory,
+        "noncanonical v2 inventory bytes"
+    );
+    ensure!(
+        authoritative.incarnation == preparation.token.incarnation
+            && authoritative.retrieval_specification.as_bytes() == retrieval_specification_v2(),
+        "v2 inventory identity/specification mismatch"
+    );
+    ensure!(
+        serde_json::to_vec(&authoritative.projection()?)? == serde_json::to_vec(snapshot)?,
+        "v2 inventory projection mismatch"
+    );
+    ensure!(
+        preparation.token.generation == snapshot.generation,
+        "v2 generation projection mismatch"
+    );
+    ensure!(
+        preparation.token.revision
+            == revision_digest(
+                retrieval_specification_v2(),
+                preparation.canonical_inventory
+            ),
+        "v2 revision input mismatch"
+    );
+    let generations = base.join("generations");
+    fs::create_dir_all(&generations)?;
+    ensure!(
+        !fs::symlink_metadata(&generations)?.file_type().is_symlink(),
+        "linked generation root"
+    );
+    let target = generations.join(preparation.token.revision.to_string());
+    ensure!(
+        !target.try_exists()?,
+        "v2 revision already exists; verify a trusted receipt before reuse"
+    );
+    let staging = tempfile::Builder::new()
+        .prefix("building-v2-")
+        .tempdir_in(staging_parent.unwrap_or(&generations))?;
+    let charge = charge.unwrap_or_else(|| std::sync::Arc::new(|_| Ok(())));
+    let built = build_streaming_components(
+        staging.path(),
+        snapshot,
+        model_directory,
+        source,
+        charge.clone(),
+        preparation.token.revision.to_string(),
+    )?;
     let mut inventory = BudgetWriter::new(
         File::create(staging.path().join("inventory.json"))?,
         charge.clone(),
     );
-    serde_json::to_writer(&mut inventory, snapshot)?;
+    inventory.write_all(preparation.canonical_inventory)?;
     inventory.get_ref().sync_all()?;
     drop(inventory);
-    let manifest_bytes = serde_json::to_vec(&manifest)?;
-    ensure!(manifest_bytes.len() <= 16_384, "oversized index manifest");
-    let mut file = BudgetWriter::new(
-        File::create(staging.path().join("manifest.json"))?,
-        charge.clone(),
-    );
-    file.write_all(&manifest_bytes)?;
-    file.get_ref().sync_all()?;
-    drop(file);
-    // The catalog can consume the remaining generation quota: every other
-    // nonempty component has already been written and charged.
+    let before_catalog = component_digests(staging.path())?;
     prepare_catalog(staging.path())?;
-    // Windows cannot rename directories containing open OS lease handles.
-    let lease_path = reader_lease_path(base, &manifest.revision)?;
+    ensure!(
+        !staging.path().join("manifest.json").exists(),
+        "catalog callback created the final manifest"
+    );
+    let components = component_digests(staging.path())?;
+    ensure!(
+        components.len() == before_catalog.len() + 2
+            && components.contains_key("catalog.sqlite")
+            && components.contains_key("lineage.json")
+            && before_catalog
+                .iter()
+                .all(|(name, digest)| components.get(name) == Some(digest)),
+        "catalog callback altered retrieval components or omitted required files"
+    );
+    let inventory_digest = raw_digest(preparation.canonical_inventory);
+    ensure!(
+        components["lineage.json"].sha256 == authoritative.lineage_digest,
+        "lineage input digest mismatch"
+    );
+    let expected_chunks = authoritative
+        .files
+        .values()
+        .try_fold(0usize, |count, file| {
+            count
+                .checked_add(file.chunks)
+                .context("chunk count overflow")
+        })?;
+    ensure!(
+        built.chunks == expected_chunks,
+        "streamed chunk inventory mismatch"
+    );
+    let manifest = ManifestV2 {
+        schema: 2,
+        engine: ENGINE_V2.into(),
+        token: preparation.token,
+        collection: snapshot.collection.clone(),
+        chunks: built.chunks,
+        vectors: built.vectors,
+        model_sha256: built.model_sha256,
+        embedding: built.embedding.into(),
+        inventory_digest,
+        components,
+    };
+    let bytes = serde_json::to_vec(&manifest)?;
+    ensure!(
+        bytes.len() <= MAX_MANIFEST_V2_BYTES,
+        "oversized v2 manifest"
+    );
+    let mut output = BudgetWriter::new(File::create(staging.path().join("manifest.json"))?, charge);
+    output.write_all(&bytes)?;
+    output.get_ref().sync_all()?;
+    drop(output);
+    sync_components(staging.path(), &manifest.components)?;
+    let receipt = PublicationReceipt {
+        token: preparation.token,
+        inventory_digest,
+        manifest_digest: raw_digest(&bytes),
+    };
+    let verified = verify_directory_v2(staging.path(), &receipt, &snapshot.collection)?;
+    let (probe, _) = open_components_v2(staging.path(), &verified)?;
+    drop(probe);
+    // Reopening must not introduce an unbound file before directory publication.
+    verify_directory_v2(staging.path(), &receipt, &snapshot.collection)?;
+    let lease_path = reader_lease_path(base, &preparation.token.revision.to_string())?;
     fs::create_dir_all(lease_path.parent().context("lease parent missing")?)?;
     let lease = fs::OpenOptions::new()
         .write(true)
@@ -282,15 +750,11 @@ pub fn prepare_streaming(
         .open(lease_path)?;
     lease.sync_all()?;
     drop(lease);
-    // Reopen Tantivy before publication to detect incomplete commits.
-    let probe: IndexReader = Index::open_in_dir(&lexical)?
-        .reader_builder()
-        .reload_policy(ReloadPolicy::Manual)
-        .try_into()?;
-    drop(probe);
-    let directory = staging.keep();
-    fs::rename(&directory, &target).context("publish immutable index components")?;
-    Ok(())
+    fs::rename(staging.path(), &target).context("publish immutable v2 components")?;
+    tantivy::directory::Directory::sync_directory(&tantivy::directory::MmapDirectory::open(
+        &generations,
+    )?)?;
+    Ok(receipt)
 }
 
 pub struct PersistentIndex {
@@ -303,9 +767,31 @@ pub struct PersistentIndex {
     collection: String,
     pub vectors: usize,
     pub model_sha256: Option<String>,
+    v2_receipt: Option<PublicationReceipt>,
 }
 
 impl PersistentIndex {
+    pub fn open_v2(base: &Path, collection: &str, receipt: &PublicationReceipt) -> Result<Self> {
+        let revision = receipt.token.revision.to_string();
+        let directory = base.join("generations").join(&revision);
+        let lease = File::open(reader_lease_path(base, &revision)?)?;
+        lease.lock_shared()?;
+        let manifest = verify_directory_v2(&directory, receipt, collection)?;
+        let (reader, fields) = open_components_v2(&directory, &manifest)?;
+        Ok(Self {
+            model: Mutex::new(None),
+            _lease: lease,
+            reader,
+            fields,
+            directory,
+            generation: receipt.token.generation,
+            collection: collection.into(),
+            vectors: manifest.vectors,
+            model_sha256: manifest.model_sha256,
+            v2_receipt: Some(receipt.clone()),
+        })
+    }
+
     pub fn open(base: &Path, snapshot: &Snapshot) -> Result<Self> {
         Self::open_revision(
             base,
@@ -370,6 +856,7 @@ impl PersistentIndex {
             collection: collection.into(),
             vectors: manifest.vectors,
             model_sha256: manifest.model_sha256,
+            v2_receipt: None,
         })
     }
 
@@ -520,6 +1007,16 @@ impl PersistentIndex {
     // Cached/mapped handles can outlive a removed or replaced directory. Keep
     // failure reporting consistent with fresh readers without reloading a model.
     fn verify_retained_manifest(&self) -> Result<()> {
+        if let Some(receipt) = &self.v2_receipt {
+            let manifest = read_manifest_v2(&self.directory, receipt, &self.collection)?;
+            ensure!(
+                manifest.chunks as u64 == self.reader.searcher().num_docs()
+                    && manifest.vectors == self.vectors
+                    && manifest.model_sha256 == self.model_sha256,
+                "cached v2 generation manifest mismatch"
+            );
+            return Ok(());
+        }
         let manifest = read_manifest(&self.directory)?;
         ensure!(
             manifest.schema == 1

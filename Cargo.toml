@@ -29,6 +29,7 @@ scip = "=0.10.0"
 protobuf = "=3.7.2"
 url = "2"
 sha2 = "0.10"
+getrandom = "=0.3.4"
 tempfile = "3"
 tantivy = { version = "=0.26.2", default-features = false, features = ["mmap", "lz4-compression"] }
 diskann = { version = "=0.59.0", default-features = false }

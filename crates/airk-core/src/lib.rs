@@ -3,12 +3,14 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+pub mod binding;
 pub mod changes;
 pub mod code;
 pub mod embedding;
 pub mod extraction;
 pub mod identity;
 pub mod location;
+pub mod publication;
 pub mod usage;
 pub use code::*;
 
@@ -49,6 +51,10 @@ pub struct ArtifactRef {
     pub chunks: usize,
     pub extracted_bytes: usize,
     pub facts: usize,
+    /// Present only for a path-free v2 extraction object; absent legacy objects
+    /// retain their original encoded representation and path binding.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<extraction::ExtractionProfile>,
 }
 
 impl Artifact {

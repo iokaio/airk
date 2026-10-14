@@ -19,7 +19,20 @@ struct Profile {
 }
 
 pub fn analyze(path: &str, text: &str) -> anyhow::Result<Analysis> {
-    let Some(profile) = profile(path) else {
+    analyze_profile(path, text, profile(path))
+}
+
+/// Dispatch an already selected adapter without reinterpreting its filename.
+pub(crate) fn analyze_selected(
+    path: &str,
+    text: &str,
+    adapter_id: &str,
+) -> anyhow::Result<Analysis> {
+    analyze_profile(path, text, profile_id(adapter_id))
+}
+
+fn analyze_profile(path: &str, text: &str, selected: Option<Profile>) -> anyhow::Result<Analysis> {
+    let Some(profile) = selected else {
         return Ok(Analysis {
             language: "text".into(),
             status: "text-only".into(),
@@ -531,14 +544,44 @@ fn profile(path: &str) -> Option<Profile> {
         .and_then(|s| s.to_str())
         .unwrap_or("")
         .to_ascii_lowercase();
+    let id = match extension.as_str() {
+        "rs" => "rust",
+        "py" | "pyi" => "python",
+        "js" | "jsx" | "mjs" | "cjs" => "javascript",
+        "ts" | "mts" | "cts" => "typescript",
+        "tsx" => "tsx",
+        "go" => "go",
+        "java" => "java",
+        "c" | "h" => "c",
+        "cpp" | "cc" | "cxx" | "hpp" | "hh" | "hxx" => "cpp",
+        "cs" => "csharp",
+        "rb" => "ruby",
+        "php" => "php",
+        "sh" | "bash" | "zsh" => "bash",
+        "ps1" | "psm1" | "psd1" => "powershell",
+        "lua" => "lua",
+        "swift" => "swift",
+        "kt" | "kts" => "kotlin",
+        "json" | "jsonc" => "json",
+        "yaml" | "yml" => "yaml",
+        "toml" => "toml",
+        "html" | "htm" | "vue" | "svelte" => "html",
+        "css" | "scss" => "css",
+        "sql" => "sql",
+        _ => return None,
+    };
+    profile_id(id)
+}
+
+fn profile_id(adapter_id: &str) -> Option<Profile> {
     let (language, grammar, definitions, imports, keys): (
         &str,
         Language,
         &[&str],
         &[&str],
         &[&str],
-    ) = match extension.as_str() {
-        "rs" => (
+    ) = match adapter_id {
+        "rust" => (
             "rust",
             tree_sitter_rust::LANGUAGE.into(),
             &[
@@ -556,14 +599,14 @@ fn profile(path: &str) -> Option<Profile> {
             &["use_declaration", "extern_crate_declaration"],
             &[],
         ),
-        "py" | "pyi" => (
+        "python" => (
             "python",
             tree_sitter_python::LANGUAGE.into(),
             &["function_definition", "class_definition"],
             &["import_statement", "import_from_statement"],
             &[],
         ),
-        "js" | "jsx" | "mjs" | "cjs" => (
+        "javascript" => (
             "javascript",
             tree_sitter_javascript::LANGUAGE.into(),
             &[
@@ -576,7 +619,7 @@ fn profile(path: &str) -> Option<Profile> {
             &["import_statement"],
             &[],
         ),
-        "ts" | "mts" | "cts" => (
+        "typescript" => (
             "typescript",
             tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
             &[
@@ -627,7 +670,7 @@ fn profile(path: &str) -> Option<Profile> {
             &["import_declaration", "package_declaration"],
             &[],
         ),
-        "c" | "h" => (
+        "c" => (
             "c",
             tree_sitter_c::LANGUAGE.into(),
             &[
@@ -639,7 +682,7 @@ fn profile(path: &str) -> Option<Profile> {
             &["preproc_include"],
             &[],
         ),
-        "cpp" | "cc" | "cxx" | "hpp" | "hh" | "hxx" => (
+        "cpp" => (
             "cpp",
             tree_sitter_cpp::LANGUAGE.into(),
             &[
@@ -653,7 +696,7 @@ fn profile(path: &str) -> Option<Profile> {
             &["preproc_include", "using_declaration"],
             &[],
         ),
-        "cs" => (
+        "csharp" => (
             "csharp",
             tree_sitter_c_sharp::LANGUAGE.into(),
             &[
@@ -669,7 +712,7 @@ fn profile(path: &str) -> Option<Profile> {
             &["using_directive"],
             &[],
         ),
-        "rb" => (
+        "ruby" => (
             "ruby",
             tree_sitter_ruby::LANGUAGE.into(),
             &["class", "module", "method", "singleton_method"],
@@ -693,14 +736,14 @@ fn profile(path: &str) -> Option<Profile> {
             ],
             &[],
         ),
-        "sh" | "bash" | "zsh" => (
+        "bash" => (
             "bash",
             tree_sitter_bash::LANGUAGE.into(),
             &["function_definition"],
             &[],
             &[],
         ),
-        "ps1" | "psm1" | "psd1" => (
+        "powershell" => (
             "powershell",
             tree_sitter_powershell::LANGUAGE.into(),
             &["function_statement", "class_statement"],
@@ -726,7 +769,7 @@ fn profile(path: &str) -> Option<Profile> {
             &["import_declaration"],
             &[],
         ),
-        "kt" | "kts" => (
+        "kotlin" => (
             "kotlin",
             tree_sitter_kotlin_ng::LANGUAGE.into(),
             &[
@@ -738,14 +781,14 @@ fn profile(path: &str) -> Option<Profile> {
             &["import"],
             &[],
         ),
-        "json" | "jsonc" => (
+        "json" => (
             "json",
             tree_sitter_json::LANGUAGE.into(),
             &[],
             &[],
             &["pair"],
         ),
-        "yaml" | "yml" => (
+        "yaml" => (
             "yaml",
             tree_sitter_yaml::LANGUAGE.into(),
             &[],
@@ -759,14 +802,14 @@ fn profile(path: &str) -> Option<Profile> {
             &[],
             &["pair", "table", "table_array_element"],
         ),
-        "html" | "htm" | "vue" | "svelte" => (
+        "html" => (
             "html",
             tree_sitter_html::LANGUAGE.into(),
             &[],
             &[],
             &["start_tag"],
         ),
-        "css" | "scss" => (
+        "css" => (
             "css",
             tree_sitter_css::LANGUAGE.into(),
             &[],

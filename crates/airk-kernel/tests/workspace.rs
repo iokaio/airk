@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-use airk_core::{SearchQuery, Snapshot, SnapshotStore};
+use airk_core::{ArtifactSource, SearchQuery, Snapshot, SnapshotStore};
 use airk_kernel::Kernel;
 use airk_store::{FileStore, MemoryStore};
 use std::fs;
@@ -212,8 +212,25 @@ fn writer_lock_schema_and_workspace_identity_fail_closed() -> anyhow::Result<()>
     );
     let mut snapshot = store.load()?.expect("initialized");
     snapshot.schema_version = 999;
-    store.save(&snapshot)?;
-    assert!(kernel.status().is_err());
+    let head = store.expected_head()?;
+    assert!(store.save(&snapshot).is_err());
+    assert_eq!(store.expected_head()?, head);
+    assert!(kernel.status().is_ok());
+    // Corrupt an independent original legacy fixture, never rewrite a v2 head.
+    let legacy_state = tempfile::tempdir()?;
+    let legacy_directory = legacy_state.path().join("collections/default");
+    fs::create_dir_all(&legacy_directory)?;
+    let mut legacy = Snapshot::empty(root.path().canonicalize()?.to_string_lossy().into_owned());
+    legacy.schema_version = 999;
+    fs::write(
+        legacy_directory.join("snapshot.json"),
+        serde_json::to_vec(&legacy)?,
+    )?;
+    assert!(
+        Kernel::open(root.path(), Some(legacy_state.path().into()))?
+            .status()
+            .is_err()
+    );
     assert!(Kernel::open(root.path(), Some(root.path().into())).is_err());
     Ok(())
 }
@@ -373,26 +390,53 @@ fn document_categories_roundtrip_with_metadata_budgets_and_extractor_refresh() -
     assert_eq!(kernel.index()?.reused, 2);
     let store = FileStore::new(state.path().join("collections/default"));
     let mut old = store.load()?.expect("snapshot");
+    let catalog = store.catalog()?.expect("catalog");
+    for artifact in old.artifacts.values_mut() {
+        *artifact = catalog.load_artifact(&artifact.path)?;
+        assert!(
+            artifact.retained.is_none(),
+            "legacy fixture is fully hydrated"
+        );
+    }
+    old.schema_version = airk_core::SCHEMA_VERSION;
+    old.storage_format = 0;
+    old.persistent_indexes = false;
     old.extractor_version = "native-facts/2".into();
     old.artifacts
         .get_mut("requirements.md")
         .expect("artifact")
         .facts
         .clear();
-    store.save(&old)?;
-    let refreshed = kernel.index()?;
+    let head = store.expected_head()?;
+    assert!(
+        store.save(&old).is_err(),
+        "legacy writes cannot replace v2 evidence"
+    );
+    assert_eq!(store.expected_head()?, head);
+    assert_eq!(kernel.status()?.generation, first.generation);
+    let legacy_state = tempfile::tempdir()?;
+    let legacy_store = FileStore::new(legacy_state.path().join("collections/default"));
+    legacy_store.save(&old)?;
+    let legacy_kernel = Kernel::open(root.path(), Some(legacy_state.path().into()))?;
+    assert!(
+        legacy_kernel
+            .facts(&fact_query("requirement", 8192))?
+            .facts
+            .is_empty()
+    );
+    let refreshed = legacy_kernel.index()?;
     assert_eq!(refreshed.indexed, 2);
     assert_eq!(refreshed.reused, 0);
     assert_eq!(refreshed.generation, first.generation + 1);
     assert_eq!(
-        reopened
+        Kernel::open(root.path(), Some(legacy_state.path().into()))?
             .facts(&fact_query("requirement", 8192))?
             .facts
             .len(),
         1
     );
     assert_eq!(
-        kernel.status()?.extractor_version,
+        legacy_kernel.status()?.extractor_version,
         airk_core::EXTRACTOR_VERSION
     );
     Ok(())

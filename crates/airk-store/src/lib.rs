@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Derived state only. Source workspaces remain authoritative.
+use airk_core::identity::{PublicationReceipt, RevisionToken, Sha256Digest};
 use airk_core::{SCHEMA_VERSION, Snapshot, SnapshotStore};
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
@@ -27,6 +28,10 @@ pub struct FileStore {
 /// Small metadata pin for disk retrieval, committed with the corresponding revision.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersistentRevision {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token: Option<RevisionToken>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manifest_sha256: Option<String>,
     #[serde(default)]
     pub storage_format: u32,
     #[serde(default)]
@@ -46,6 +51,26 @@ pub struct PersistentRevision {
     pub imported_relationships: usize,
 }
 
+pub const ROOT_POINTER_VERSION: u32 = 3;
+pub const IMMUTABLE_CATALOG_VERSION: u32 = 3;
+
+#[derive(Clone, Debug)]
+pub enum CommittedRevision {
+    Legacy(PersistentRevision),
+    V2 {
+        header: PersistentRevision,
+        receipt: PublicationReceipt,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ExpectedHead {
+    Empty,
+    /// Digest of exact legacy root payload/header bytes, never a reserialized Snapshot.
+    Legacy(Sha256Digest),
+    V2(RevisionToken),
+}
+
 impl FileStore {
     pub fn new(directory: impl Into<PathBuf>) -> Self {
         Self {
@@ -54,6 +79,66 @@ impl FileStore {
     }
     pub fn directory(&self) -> &Path {
         &self.directory
+    }
+    pub fn expected_head(&self) -> Result<ExpectedHead> {
+        let _lifecycle = self.lifecycle(false)?;
+        sqlite::expected_head(&self.directory)
+    }
+    pub fn committed_revision(&self) -> Result<Option<CommittedRevision>> {
+        self.persistent_revision()?
+            .map(|header| {
+                if let Some(token) = header.token {
+                    let receipt = self.receipt(&token)?.context("committed receipt missing")?;
+                    Ok(CommittedRevision::V2 { header, receipt })
+                } else {
+                    Ok(CommittedRevision::Legacy(header))
+                }
+            })
+            .transpose()
+    }
+    pub fn receipt(&self, token: &RevisionToken) -> Result<Option<PublicationReceipt>> {
+        let _lifecycle = self.lifecycle(false)?;
+        sqlite::receipt(&self.directory, token)
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_catalog_v2(
+        &self,
+        directory: &Path,
+        inventory: &airk_core::publication::InventoryV2,
+        lineage: &airk_core::changes::LineageEnvelope,
+        token: &RevisionToken,
+        source: &dyn airk_core::ArtifactSource,
+        reservation: Option<&quota::Reservation>,
+        maximum: u64,
+    ) -> Result<()> {
+        // Unlike legacy builds, the final v2 manifest follows catalog checksums.
+        // Reserve its full bound plus the lineage callback write before page admission.
+        let pending = 131_072u64
+            .checked_add(serde_json::to_vec(lineage)?.len() as u64)
+            .context("v2 metadata allowance overflow")?;
+        let maximum = maximum.saturating_sub(pending) / 4096 * 4096;
+        ensure!(
+            maximum >= 16_384,
+            "v2 catalog admission cannot preserve final manifest/lineage allowance"
+        );
+        sqlite::save_catalog_v2(
+            directory,
+            inventory,
+            lineage,
+            token,
+            source,
+            reservation,
+            maximum,
+        )
+    }
+    pub fn publish_catalog_v2(
+        &self,
+        inventory: &airk_core::publication::InventoryV2,
+        receipt: &PublicationReceipt,
+        expected: &ExpectedHead,
+        reservation: &quota::Reservation,
+    ) -> Result<()> {
+        sqlite::publish_catalog_v2(&self.directory, inventory, receipt, expected, reservation)
     }
     pub(crate) fn lifecycle(&self, create: bool) -> Result<Option<Arc<File>>> {
         let Some(collections) = self
@@ -204,7 +289,7 @@ impl SnapshotStore for FileStore {
         if self.directory.join("index.sqlite3").exists() {
             if self
                 .persistent_revision()?
-                .is_some_and(|h| h.storage_format == 1)
+                .is_some_and(|h| matches!(h.storage_format, 1 | 2))
             {
                 return self.catalog()?.map(|c| c.materialize()).transpose();
             }

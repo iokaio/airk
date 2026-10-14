@@ -10,6 +10,7 @@ use airk_ingest::IndexReport;
 pub mod analysis;
 pub mod coverage;
 pub mod limits;
+mod publication;
 mod resources;
 pub mod roots;
 pub mod scheduler;
@@ -37,7 +38,8 @@ pub struct Kernel {
     collection: String,
     data_root: PathBuf,
     store: FileStore,
-    cache: Arc<Mutex<Option<CachedIndex>>>,
+    cache: Arc<Mutex<Option<Arc<CachedIndex>>>>,
+    catalog_cache: Arc<Mutex<Option<Arc<airk_store::blobs::Catalog>>>>,
 }
 
 struct CachedIndex {
@@ -174,6 +176,7 @@ impl Kernel {
             data_root: directory.clone(),
             store: FileStore::new(directory.join("collections").join(collection)),
             cache: Arc::new(Mutex::new(None)),
+            catalog_cache: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -196,6 +199,10 @@ impl Kernel {
     pub fn remove_collection(&self, id: &str) -> Result<CollectionUsage> {
         if id == self.collection {
             *self
+                .catalog_cache
+                .lock()
+                .map_err(|_| anyhow::anyhow!("catalog cache poisoned"))? = None;
+            *self
                 .cache
                 .lock()
                 .map_err(|_| anyhow::anyhow!("index cache poisoned"))? = None;
@@ -209,7 +216,11 @@ impl Kernel {
             snapshot.persistent_indexes,
             "reindex before pruning legacy state"
         );
-        let active = persistent::revision_id(&snapshot)?;
+        let active = self
+            .store
+            .persistent_revision()?
+            .context("active revision missing")?
+            .revision;
         airk_store::retention::prune(self.store.directory(), &active, dry_run)
     }
     fn empty_snapshot(&self) -> Snapshot {
@@ -240,7 +251,24 @@ impl Kernel {
             .context("workspace is not indexed; run airk index first")
     }
 
-    fn catalog(&self) -> Result<airk_store::blobs::Catalog> {
+    fn catalog(&self) -> Result<Arc<airk_store::blobs::Catalog>> {
+        let cached = self
+            .catalog_cache
+            .lock()
+            .map_err(|_| anyhow::anyhow!("catalog cache poisoned"))?
+            .clone();
+        let header = self.persistent_revision()?;
+        if let (Some(header), Some(cached)) = (&header, cached.as_ref())
+            && cached.receipt.as_ref().is_some_and(|receipt| {
+                header.token == Some(receipt.token)
+                    && header.inventory_sha256.as_deref()
+                        == Some(receipt.inventory_digest.to_string().as_str())
+                    && header.manifest_sha256.as_deref()
+                        == Some(receipt.manifest_digest.to_string().as_str())
+            })
+        {
+            return Ok(cached.clone());
+        }
         let catalog = self
             .store
             .catalog()?
@@ -250,6 +278,26 @@ impl Kernel {
                 && catalog.snapshot.collection == self.collection,
             "index belongs to another root or collection"
         );
+        let catalog = Arc::new(catalog);
+        // Filesystem/SQLite work above is outside the cache mutex. Concurrent
+        // callers can keep their pinned view; don't replace a newer installed pin.
+        let mut cache = self
+            .catalog_cache
+            .lock()
+            .map_err(|_| anyhow::anyhow!("catalog cache poisoned"))?;
+        let replace =
+            cache
+                .as_ref()
+                .is_none_or(|current| match (&current.receipt, &catalog.receipt) {
+                    (Some(current), Some(candidate)) => {
+                        current.token.incarnation != candidate.token.incarnation
+                            || current.token.generation <= candidate.token.generation
+                    }
+                    _ => true,
+                });
+        if replace {
+            *cache = Some(catalog.clone());
+        }
         Ok(catalog)
     }
 
@@ -263,7 +311,11 @@ impl Kernel {
             let mut snapshot = self.empty_snapshot();
             snapshot.embedding_model = self.configured_model()?;
             let reservation = self.publication_reservation()?;
-            self.publish(&snapshot, &reservation)?;
+            self.publish_v2(
+                &snapshot,
+                &reservation,
+                airk_core::changes::PublicationReason::Initialization,
+            )?;
         }
         self.status()
     }
@@ -293,23 +345,72 @@ impl Kernel {
         let roots = self.configured_roots()?;
         let reservation = self.publication_reservation()?;
         let scan_started = std::time::Instant::now();
-        let (mut snapshot, mut report) = airk_ingest::scan_streaming_with_budgets(
+        let policy = airk_ingest::adapters::profile::ExtractionPolicy {
+            version: 1,
+            rules: vec![],
+        };
+        let (mut snapshot, mut report) = airk_ingest::scan_streaming_v2_with_budgets(
             &self.root,
             &self.data_root,
             &previous,
             &roots,
             self.scan_limits()?,
-            |artifact, bytes| {
-                self.store
-                    .retain_artifact_with_budget(artifact, Some(bytes), Some(&reservation))
+            &policy,
+            full,
+            |path, hash, profile| {
+                let Some(old) = previous.artifacts.get(path) else {
+                    return Ok(None);
+                };
+                if old.content_hash != hash.to_string() {
+                    return Ok(None);
+                }
+                if old
+                    .retained
+                    .as_ref()
+                    .is_none_or(|reference| reference.profile.is_none())
+                    && previous.extractor_version != airk_core::EXTRACTOR_VERSION
+                {
+                    return Ok(None);
+                }
+                let hydrated = self.store.load_retained(old)?;
+                let actual = old
+                    .retained
+                    .as_ref()
+                    .and_then(|r| r.profile.clone())
+                    .map(Ok)
+                    .unwrap_or_else(|| airk_ingest::adapters::legacy::legacy_profile(&hydrated))?;
+                if actual != *profile {
+                    return Ok(None);
+                }
+                Ok(Some(old.clone()))
+            },
+            |profile, artifact, bytes| {
+                if artifact
+                    .retained
+                    .as_ref()
+                    .is_some_and(|reference| reference.profile.as_ref() == Some(profile))
+                {
+                    return Ok(artifact.clone());
+                }
+                let hydrated = self.store.load_retained(artifact)?;
+                let payload = airk_ingest::adapters::legacy::convert_native_legacy(
+                    &hydrated, bytes, profile,
+                )?;
+                self.store.retain_payload_with_budget(
+                    &hydrated,
+                    &payload,
+                    profile,
+                    Some(bytes),
+                    Some(&reservation),
+                )
             },
         )?;
         report.scan_extract_us =
             u64::try_from(scan_started.elapsed().as_micros()).unwrap_or(u64::MAX);
         snapshot.persistent_indexes = true;
-        snapshot.storage_format = 1;
+        snapshot.storage_format = 2;
         snapshot.embedding_model = desired_model;
-        if (snapshot.embedding_model != previous.embedding_model || previous.storage_format != 1)
+        if (snapshot.embedding_model != previous.embedding_model || previous.storage_format != 2)
             && snapshot.generation == previous.generation
         {
             snapshot.generation = snapshot
@@ -322,19 +423,25 @@ impl Kernel {
         if snapshot.generation != previous.generation
             || !self.store.directory().join("index.sqlite3").exists()
             || self.store.persistent_revision()?.is_none()
-            || !persistent::component_directory(self.store.directory(), &snapshot)?.exists()
         {
-            self.publish(&snapshot, &reservation)?;
+            report.generation = self.publish_v2(
+                &snapshot,
+                &reservation,
+                if full {
+                    airk_core::changes::PublicationReason::FullReindex
+                } else {
+                    airk_core::changes::PublicationReason::Index
+                },
+            )?;
         } else {
             // Reuse must not report success for a corrupt retained component.
-            PersistentIndex::open(self.store.directory(), &snapshot)?;
+            self.pin_revision(
+                self.persistent_revision()?
+                    .context("active revision missing")?,
+            )?;
         }
         report.publish_us =
             u64::try_from(publish_started.elapsed().as_micros()).unwrap_or(u64::MAX);
-        *self
-            .cache
-            .lock()
-            .map_err(|_| anyhow::anyhow!("index cache poisoned"))? = None;
         Ok(report)
     }
 
@@ -407,50 +514,38 @@ impl Kernel {
     pub fn search(&self, query: &SearchQuery) -> Result<SearchResponse> {
         query.validate()?;
         if let Some(revision) = self.persistent_revision()? {
-            let mut cache = self
-                .cache
-                .lock()
-                .map_err(|_| anyhow::anyhow!("index cache poisoned"))?;
-            if cache
-                .as_ref()
-                .is_none_or(|cached| cached.revision != revision.revision)
-            {
-                let (revision, index) = self.pin_revision(revision)?;
-                *cache = Some(CachedIndex {
-                    revision: revision.revision.clone(),
-                    index: CachedBackend::Persistent(Box::new(index)),
-                });
-            }
-            if let CachedBackend::Persistent(index) =
-                &cache.as_ref().context("index cache unavailable")?.index
-            {
+            let cache = self.cached_persistent(revision)?;
+            if let CachedBackend::Persistent(index) = &cache.index {
                 return index.search(query);
             }
             anyhow::bail!("persistent cache identity mismatch");
         }
         let snapshot = self.load()?;
-        let mut cache = self
+        let cached = self
             .cache
             .lock()
-            .map_err(|_| anyhow::anyhow!("index cache poisoned"))?;
+            .map_err(|_| anyhow::anyhow!("index cache poisoned"))?
+            .clone();
         let revision = persistent::revision_id(&snapshot)?;
-        if cache
-            .as_ref()
-            .is_none_or(|cached| cached.revision != revision)
-        {
-            *cache = Some(CachedIndex {
-                revision,
-                index: if snapshot.persistent_indexes {
-                    CachedBackend::Persistent(Box::new(PersistentIndex::open(
-                        self.store.directory(),
-                        &snapshot,
-                    )?))
-                } else {
-                    CachedBackend::Legacy(LexicalIndex::build(&snapshot))
-                },
-            });
-        }
-        match &cache.as_ref().context("index cache unavailable")?.index {
+        let cache =
+            if let Some(cached) = cached.as_ref().filter(|cached| cached.revision == revision) {
+                cached.clone()
+            } else {
+                let built = Arc::new(CachedIndex {
+                    revision,
+                    index: if snapshot.persistent_indexes {
+                        CachedBackend::Persistent(Box::new(PersistentIndex::open(
+                            self.store.directory(),
+                            &snapshot,
+                        )?))
+                    } else {
+                        CachedBackend::Legacy(LexicalIndex::build(&snapshot))
+                    },
+                });
+                self.install_index(&cached, built.clone())?;
+                built
+            };
+        match &cache.index {
             CachedBackend::Persistent(index) => index.search(query),
             CachedBackend::Legacy(index) => index.search(&snapshot, query),
         }
@@ -469,23 +564,8 @@ impl Kernel {
         let revision = self
             .persistent_revision()?
             .context("vector retrieval not ready: reindex with a provisioned local model")?;
-        let mut cache = self
-            .cache
-            .lock()
-            .map_err(|_| anyhow::anyhow!("index cache poisoned"))?;
-        if cache
-            .as_ref()
-            .is_none_or(|cached| cached.revision != revision.revision)
-        {
-            let (revision, index) = self.pin_revision(revision)?;
-            *cache = Some(CachedIndex {
-                revision: revision.revision,
-                index: CachedBackend::Persistent(Box::new(index)),
-            });
-        }
-        let CachedBackend::Persistent(index) =
-            &cache.as_ref().context("index cache unavailable")?.index
-        else {
+        let cache = self.cached_persistent(revision)?;
+        let CachedBackend::Persistent(index) = &cache.index else {
             anyhow::bail!("persistent cache identity mismatch");
         };
         if hybrid {
@@ -495,6 +575,50 @@ impl Kernel {
         }
     }
 
+    fn cached_persistent(
+        &self,
+        revision: airk_store::PersistentRevision,
+    ) -> Result<Arc<CachedIndex>> {
+        let cached = self
+            .cache
+            .lock()
+            .map_err(|_| anyhow::anyhow!("index cache poisoned"))?
+            .clone();
+        let identity = serde_json::to_string(&revision)?;
+        if let Some(cached) = cached.as_ref().filter(|cached| cached.revision == identity) {
+            return Ok(cached.clone());
+        }
+        let (revision, index) = self.pin_revision(revision)?;
+        let built = Arc::new(CachedIndex {
+            revision: serde_json::to_string(&revision)?,
+            index: CachedBackend::Persistent(Box::new(index)),
+        });
+        self.install_index(&cached, built.clone())?;
+        Ok(built)
+    }
+
+    /// Installing a pin is the only locked step. A concurrent caller may keep
+    /// its own verified pin without replacing a cache installed in the meantime.
+    fn install_index(
+        &self,
+        observed: &Option<Arc<CachedIndex>>,
+        built: Arc<CachedIndex>,
+    ) -> Result<()> {
+        let mut cache = self
+            .cache
+            .lock()
+            .map_err(|_| anyhow::anyhow!("index cache poisoned"))?;
+        let unchanged = match (cache.as_ref(), observed.as_ref()) {
+            (None, None) => true,
+            (Some(current), Some(previous)) => Arc::ptr_eq(current, previous),
+            _ => false,
+        };
+        if unchanged {
+            *cache = Some(built);
+        }
+        Ok(())
+    }
+
     /// A writer may publish and prune between the metadata read and lease open.
     /// Retry only when the active identity changed; stable corruption fails closed.
     fn pin_revision(
@@ -502,12 +626,23 @@ impl Kernel {
         mut revision: airk_store::PersistentRevision,
     ) -> Result<(airk_store::PersistentRevision, PersistentIndex)> {
         for _ in 0..3 {
-            match PersistentIndex::open_revision(
-                self.store.directory(),
-                &revision.revision,
-                revision.generation,
-                &revision.collection,
-            ) {
+            let opened = (|| {
+                if let Some(token) = revision.token {
+                    let receipt = self
+                        .store
+                        .receipt(&token)?
+                        .context("committed receipt missing")?;
+                    PersistentIndex::open_v2(self.store.directory(), &revision.collection, &receipt)
+                } else {
+                    PersistentIndex::open_revision(
+                        self.store.directory(),
+                        &revision.revision,
+                        revision.generation,
+                        &revision.collection,
+                    )
+                }
+            })();
+            match opened {
                 Ok(index) => return Ok((revision, index)),
                 Err(error) => {
                     let Some(current) = self.persistent_revision()? else {
@@ -550,55 +685,6 @@ impl Kernel {
         // The reservation includes temporary and retained bytes together. Each
         // provider charges before writes; exhausting it leaves the active pin intact.
         quota.reserve_available(&self.collection, u64::MAX)
-    }
-
-    fn publish(
-        &self,
-        snapshot: &Snapshot,
-        reservation: &airk_store::quota::Reservation,
-    ) -> Result<()> {
-        ensure!(
-            snapshot.persistent_indexes,
-            "published revisions must declare persistent components"
-        );
-        let model = self.data_root.join("models").join("local");
-        ensure!(
-            snapshot.storage_format == 1,
-            "new publications require compact retained inventories"
-        );
-        let source = airk_store::blobs::RetainedSource {
-            store: &self.store,
-            snapshot,
-        };
-        let revision = persistent::revision_id(snapshot)?;
-        let staging = reservation.staging_directory()?;
-        let charge_reservation = reservation.clone();
-        let charge: airk_retrieval::bounded::Charge =
-            Arc::new(move |bytes| charge_reservation.charge(bytes));
-        persistent::prepare_streaming(
-            self.store.directory(),
-            snapshot,
-            model.exists().then_some(model.as_path()),
-            &source,
-            Some(charge),
-            Some(&staging),
-            |directory| {
-                // Fact rows repeat citation/index keys and add derived edges;
-                // their size cannot be inferred from compact artifact JSON.
-                // All other generation writes are complete at this point.
-                let database_budget = self.store.catalog_budget(reservation)?;
-                self.store.prepare_catalog(
-                    directory,
-                    snapshot,
-                    &revision,
-                    &source,
-                    Some(reservation),
-                    database_budget,
-                )
-            },
-        )?;
-        self.store
-            .publish_catalog(snapshot, &revision, Some(reservation))
     }
 
     pub fn list_files(&self, prefix: &str, limit: usize, max_bytes: usize) -> Result<FileList> {
@@ -719,6 +805,29 @@ impl Kernel {
     pub fn file_info(&self, path: &str) -> Result<FileInfo> {
         let catalog = self.catalog()?;
         let snapshot = &catalog.snapshot;
+        if catalog.inventory.is_some()
+            && let Some(file) = catalog.file(path)?
+        {
+            return Ok(FileInfo {
+                source: airk_store::roots::source_location(&snapshot.root, &snapshot.roots, path)?,
+                generation: snapshot.generation,
+                collection: snapshot.collection.clone(),
+                path: path.into(),
+                content_hash: file.state.source_hash.to_string(),
+                source_bytes: file.source_bytes,
+                language: file.language,
+                extraction_method: file.extraction_method.clone(),
+                parse_status: file.parse_status,
+                chunks: file.chunks,
+                facts: file.facts,
+                indexed_lines: file.indexed_lines,
+                line_basis: if file.extraction_method == "utf8" {
+                    "source"
+                } else {
+                    "extracted-text; cite original location"
+                },
+            });
+        }
         let a = catalog.load_artifact(path)?;
         Ok(FileInfo {
             source: airk_store::roots::source_location(&snapshot.root, &snapshot.roots, path)?,
@@ -938,7 +1047,7 @@ impl Kernel {
             &mut snapshot,
             binding.clone(),
             &bytes,
-            &catalog,
+            catalog.as_ref(),
         )?;
         airk_ingest::semantic::validate_build_inputs(&self.root, &binding)?;
         snapshot.generation = snapshot
@@ -954,7 +1063,11 @@ impl Kernel {
         }
         snapshot.storage_format = 1;
         snapshot.embedding_model = self.configured_model()?;
-        self.publish(&snapshot, &reservation)?;
+        self.publish_v2(
+            &snapshot,
+            &reservation,
+            airk_core::changes::PublicationReason::ScipImport,
+        )?;
         self.status()
     }
 

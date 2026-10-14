@@ -6,7 +6,6 @@ use quick_xml::{Reader, events::Event};
 use std::{
     collections::{BTreeMap, BTreeSet},
     io::{Cursor, Read},
-    path::Path,
 };
 
 pub(crate) const MAX_EXTRACTED: usize = 4_194_304;
@@ -19,12 +18,29 @@ pub struct Extracted {
 }
 
 pub fn extract(path: &str, bytes: &[u8]) -> Result<Extracted> {
-    let extension = Path::new(path)
-        .extension()
-        .and_then(|s| s.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    match extension.as_str() {
+    let registry = crate::adapters::registry::AdapterRegistry::baseline();
+    let policy = crate::adapters::profile::ExtractionPolicy {
+        version: 1,
+        rules: vec![],
+    };
+    let selected = policy.select_with_prefix(&registry, path, bytes)?;
+    extract_selected(path, bytes, &selected.profile)
+}
+
+pub(crate) fn extract_selected(
+    path: &str,
+    bytes: &[u8],
+    profile: &airk_core::extraction::ExtractionProfile,
+) -> Result<Extracted> {
+    let registry = crate::adapters::registry::AdapterRegistry::baseline();
+    ensure!(
+        registry
+            .get(&profile.adapter_id)
+            .is_some_and(|descriptor| descriptor.profile == *profile),
+        "unsupported effective extraction profile"
+    );
+    let adapter = profile.adapter_id.as_str();
+    match adapter {
         "pdf" => {
             let pages = pdf_extract::extract_text_from_mem_by_pages(bytes)
                 .context("PDF text-layer extraction failed")?;
@@ -132,42 +148,21 @@ pub fn extract(path: &str, bytes: &[u8]) -> Result<Extracted> {
                 text.len() <= MAX_EXTRACTED,
                 "text exceeds 4 MiB extraction limit"
             );
-            let mut analysis = crate::syntax::analyze(path, text)?;
-            let basename = Path::new(path)
-                .file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or("");
-            if matches!(extension.as_str(), "md" | "markdown" | "mdx") {
+            let mut analysis = crate::syntax::analyze_selected(path, text, adapter)?;
+            if adapter == "markdown" {
                 analysis.language = "markdown".into();
                 analysis.status = "structured-markdown".into();
                 analysis.facts = crate::prose::markdown(text)?;
-            } else if matches!(extension.as_str(), "csv" | "tsv") {
-                analysis.language = extension.clone();
+            } else if matches!(adapter, "csv" | "tsv") {
+                analysis.language = adapter.into();
                 analysis.status = "structured-delimited".into();
-                analysis.facts = delimited_facts(text, extension == "tsv")?;
-            } else if matches!(
-                extension.as_str(),
-                "xml" | "svg" | "xsd" | "xsl" | "csproj" | "props" | "targets"
-            ) {
-                analysis.language = if extension == "svg" { "svg" } else { "xml" }.into();
+                analysis.facts = delimited_facts(text, adapter == "tsv")?;
+            } else if matches!(adapter, "xml" | "svg") {
+                analysis.language = adapter.into();
                 analysis.status = "structured-xml".into();
                 analysis.facts = xml_facts(text)?;
-            } else if basename.eq_ignore_ascii_case("Dockerfile")
-                || basename.starts_with("Dockerfile.")
-                || matches!(
-                    extension.as_str(),
-                    "dockerfile" | "ini" | "cfg" | "conf" | "properties"
-                )
-            {
-                analysis.language = if basename.eq_ignore_ascii_case("Dockerfile")
-                    || basename.starts_with("Dockerfile.")
-                    || extension == "dockerfile"
-                {
-                    "dockerfile"
-                } else {
-                    "ini"
-                }
-                .into();
+            } else if matches!(adapter, "dockerfile" | "ini") {
+                analysis.language = adapter.into();
                 analysis.status = "line-structured".into();
                 analysis.facts = line_facts(text, &analysis.language)?;
             }

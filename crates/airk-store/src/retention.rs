@@ -16,6 +16,9 @@ pub struct PruneReport {
     pub candidates: Vec<String>,
     pub pinned: Vec<String>,
     pub unreferenced_objects: usize,
+    pub retired_receipts: usize,
+    pub receipt_cleanup_pending: bool,
+    pub receipt_cleanup_error: Option<String>,
 }
 
 fn generations(directory: &Path) -> Result<Vec<PathBuf>> {
@@ -114,6 +117,9 @@ pub fn prune(directory: &Path, active: &str, dry_run: bool) -> Result<PruneRepor
         candidates: Vec::new(),
         pinned: Vec::new(),
         unreferenced_objects: 0,
+        retired_receipts: 0,
+        receipt_cleanup_pending: false,
+        receipt_cleanup_error: None,
     };
     for path in generations(directory)? {
         let name = path
@@ -151,6 +157,16 @@ pub fn prune(directory: &Path, active: &str, dry_run: bool) -> Result<PruneRepor
         }
     }
     prune_objects(directory, &mut result)?;
+    if !dry_run && directory.join("index.sqlite3").exists() {
+        match crate::sqlite::retire_unrepresented_receipts(directory) {
+            Ok(count) => result.retired_receipts = count,
+            Err(error) => {
+                result.receipt_cleanup_pending = true;
+                result.receipt_cleanup_error =
+                    Some(format!("{error:#}").chars().take(4096).collect());
+            }
+        }
+    }
     Ok(result)
 }
 
@@ -184,13 +200,31 @@ fn prune_objects(directory: &Path, report: &mut PruneReport) -> Result<()> {
         }
         let mut manifest_bytes = Vec::new();
         File::open(generation.join("manifest.json"))?
-            .take(16_385)
+            .take(131_073)
             .read_to_end(&mut manifest_bytes)?;
         ensure!(
-            manifest_bytes.len() <= 16_384,
+            manifest_bytes.len() <= 131_072,
             "oversized generation manifest"
         );
         let manifest: serde_json::Value = serde_json::from_slice(&manifest_bytes)?;
+        if manifest["schema"].as_u64() == Some(2) {
+            let token: airk_core::identity::RevisionToken =
+                serde_json::from_value(manifest["token"].clone())?;
+            ensure!(
+                token.revision.to_string() == revision,
+                "retained v2 directory identity mismatch"
+            );
+            let receipt = crate::sqlite::receipt(directory, &token)?
+                .context("retained publication receipt missing; refusing object deletion")?;
+            let inventory = crate::blobs::verify_v2_generation(directory, &receipt)?;
+            for entry in inventory.files.values() {
+                artifacts.insert(entry.state.payload_digest.to_string());
+                if entry.raw_source {
+                    sources.insert(entry.state.source_hash.to_string());
+                }
+            }
+            continue;
+        }
         let engine = manifest["engine"]
             .as_str()
             .context("generation engine missing")?;

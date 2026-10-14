@@ -15,12 +15,26 @@ fn catalogs_are_compact_sources_deduplicate_and_file_reads_are_lazy() -> Result<
     let text = "fn retained_source_marker() {}\n";
     fs::write(root.path().join("a.rs"), text)?;
     fs::write(root.path().join("b.rs"), text)?;
+    fs::write(root.path().join("c.rs"), "fn distinct_source_marker() {}\n")?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
     kernel.index()?;
     let directory = data.path().join("collections/default");
     let store = FileStore::new(&directory);
     let catalog = store.catalog()?.unwrap();
-    assert_eq!(catalog.snapshot.storage_format, 1);
+    assert_eq!(catalog.snapshot.storage_format, 2);
+    assert_eq!(
+        catalog.snapshot.artifacts["a.rs"]
+            .retained
+            .as_ref()
+            .unwrap()
+            .object,
+        catalog.snapshot.artifacts["b.rs"]
+            .retained
+            .as_ref()
+            .unwrap()
+            .object,
+        "path-free payloads share identical native output"
+    );
     assert!(
         catalog
             .snapshot
@@ -28,7 +42,7 @@ fn catalogs_are_compact_sources_deduplicate_and_file_reads_are_lazy() -> Result<
             .values()
             .all(|a| a.chunks.is_empty() && a.facts.is_empty() && a.retained.is_some())
     );
-    assert_eq!(fs::read_dir(directory.join("objects/sources"))?.count(), 1);
+    assert_eq!(fs::read_dir(directory.join("objects/sources"))?.count(), 2);
     let header = store.persistent_revision()?.unwrap();
     let inventory = fs::read_to_string(
         directory
@@ -45,7 +59,7 @@ fn catalogs_are_compact_sources_deduplicate_and_file_reads_are_lazy() -> Result<
     );
     // Corruption of an unrelated object proves per-file reads do not deserialize
     // the entire retained corpus. The requested object still fails closed.
-    let bad = &catalog.snapshot.artifacts["b.rs"]
+    let bad = &catalog.snapshot.artifacts["c.rs"]
         .retained
         .as_ref()
         .unwrap()
@@ -56,8 +70,8 @@ fn catalogs_are_compact_sources_deduplicate_and_file_reads_are_lazy() -> Result<
             .text
             .contains("retained_source_marker")
     );
-    assert!(kernel.read_file("b.rs", 1, 1, 4096).is_err());
-    assert_eq!(kernel.list_files("", 10, 4096)?.paths.len(), 2);
+    assert!(kernel.read_file("c.rs", 1, 1, 4096).is_err());
+    assert_eq!(kernel.list_files("", 10, 4096)?.paths.len(), 3);
     assert!(
         kernel
             .outline("a.rs", 10, 4096)?
@@ -128,7 +142,8 @@ fn catalog_digest_binds_paths_and_source_alias_metadata() -> Result<()> {
         .join("generations")
         .join(header.revision)
         .join("inventory.json");
-    let mut inventory: Snapshot = serde_json::from_slice(&fs::read(&path)?)?;
+    let mut inventory: airk_core::publication::InventoryV2 =
+        serde_json::from_slice(&fs::read(&path)?)?;
     inventory
         .roots
         .insert("altered".into(), root.path().display().to_string());
@@ -209,7 +224,7 @@ fn legacy_snapshot_migrates_to_verified_objects_without_losing_citations() -> Re
             .unwrap()
             .snapshot
             .storage_format,
-        1
+        2
     );
     Ok(())
 }

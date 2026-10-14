@@ -241,14 +241,33 @@ impl AdapterRegistry {
         let basename = path.rsplit('/').next().unwrap_or(path);
         let suffix = basename.rsplit_once('.').map_or("", |(_, s)| s);
         let lower_suffix = suffix.to_ascii_lowercase();
-        let (id, basis) =
-            if basename.eq_ignore_ascii_case("Dockerfile") || basename.starts_with("Dockerfile.") {
-                ("dockerfile", "known_basename")
-            } else if let Some(id) = self.suffixes.get(&lower_suffix) {
-                (id.as_str(), "suffix")
-            } else {
-                ("text", "utf8_fallback")
-            };
+        let (id, basis) = if (basename.eq_ignore_ascii_case("Dockerfile")
+            || basename.starts_with("Dockerfile."))
+            && !matches!(
+                lower_suffix.as_str(),
+                "pdf"
+                    | "docx"
+                    | "xlsx"
+                    | "pptx"
+                    | "md"
+                    | "markdown"
+                    | "mdx"
+                    | "csv"
+                    | "tsv"
+                    | "xml"
+                    | "svg"
+                    | "xsd"
+                    | "xsl"
+                    | "csproj"
+                    | "props"
+                    | "targets"
+            ) {
+            ("dockerfile", "known_basename")
+        } else if let Some(id) = self.suffixes.get(&lower_suffix) {
+            (id.as_str(), "suffix")
+        } else {
+            ("text", "utf8_fallback")
+        };
         let ambiguity = match suffix {
             "h" | "H" => vec!["Header defaults to C; C++ context is not inferred".into()],
             "sql" | "SQL" => vec!["SQL dialect unselected; only existing CREATE subset".into()],

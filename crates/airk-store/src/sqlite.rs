@@ -14,6 +14,24 @@ struct PinnedConnection {
     conn: Connection,
     _lease: Option<std::fs::File>,
 }
+
+/// Percent-encode the entire native UTF-8 filename, including separators. SQLite
+/// decodes it after URI parsing, preserving Windows extended paths without treating
+/// UNC prefixes as URI authorities or filename '?'/'#' bytes as URI syntax.
+fn open_immutable_catalog(path: &Path) -> Result<Connection> {
+    use std::fmt::Write;
+    let path = path.canonicalize()?;
+    let native = path.to_str().context("non-UTF-8 catalog path")?;
+    let mut uri = String::from("file:");
+    for byte in native.bytes() {
+        write!(&mut uri, "%{byte:02X}").expect("string formatting is infallible");
+    }
+    uri.push_str("?mode=ro&immutable=1");
+    Ok(Connection::open_with_flags(
+        uri,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
+    )?)
+}
 impl std::ops::Deref for PinnedConnection {
     type Target = Connection;
     fn deref(&self) -> &Connection {
@@ -26,7 +44,34 @@ impl std::ops::DerefMut for PinnedConnection {
     }
 }
 
+/// WAL read-lock negotiation can report SQLITE_PROTOCOL under concurrent
+/// connection churn. Restart only a read or pre-transaction connection setup;
+/// never replay a mutation whose commit result might be ambiguous.
+fn retry_wal_protocol<T>(mut read: impl FnMut() -> Result<T>) -> Result<T> {
+    for attempt in 0..3 {
+        match read() {
+            Err(error)
+                if attempt < 2
+                    && error
+                        .downcast_ref::<rusqlite::Error>()
+                        .is_some_and(|error| {
+                            matches!(error, rusqlite::Error::SqliteFailure(code, _)
+                            if code.extended_code & 0xff == rusqlite::ffi::SQLITE_PROTOCOL)
+                        }) =>
+            {
+                std::thread::sleep(Duration::from_millis(10 * (attempt + 1)));
+            }
+            result => return result,
+        }
+    }
+    unreachable!("last attempt returns its result")
+}
+
 fn connect_root(directory: &Path, write: bool) -> Result<Connection> {
+    retry_wal_protocol(|| connect_root_once(directory, write))
+}
+
+fn connect_root_once(directory: &Path, write: bool) -> Result<Connection> {
     let flags = if write {
         OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE
     } else {
@@ -36,14 +81,19 @@ fn connect_root(directory: &Path, write: bool) -> Result<Connection> {
     conn.busy_timeout(Duration::from_secs(2))?;
     if !write {
         let version: u32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-        ensure!((1..=2).contains(&version), "unsupported SQLite schema");
+        ensure!(
+            (1..=crate::ROOT_POINTER_VERSION).contains(&version),
+            "unsupported SQLite schema"
+        );
         let deadline = Instant::now() + Duration::from_millis(250);
         conn.progress_handler(1000, Some(move || Instant::now() > deadline))?;
     }
     if write {
-        conn.execute_batch(
-            "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA max_page_count=262144;",
-        )?;
+        let journal: String = conn.query_row("PRAGMA journal_mode", [], |row| row.get(0))?;
+        if !journal.eq_ignore_ascii_case("wal") {
+            conn.execute_batch("PRAGMA journal_mode=WAL")?;
+        }
+        conn.execute_batch("PRAGMA synchronous=FULL; PRAGMA max_page_count=262144;")?;
     }
     Ok(conn)
 }
@@ -51,6 +101,10 @@ fn connect_root(directory: &Path, write: bool) -> Result<Connection> {
 fn connect(directory: &Path, write: bool) -> Result<PinnedConnection> {
     let conn = connect_root(directory, write)?;
     let version: u32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    if !write && version == crate::ROOT_POINTER_VERSION {
+        drop(conn);
+        return read_transaction(directory);
+    }
     if !write && version == 2 {
         let header = persistent_revision(directory)?.context("active catalog pointer missing")?;
         ensure!(
@@ -89,8 +143,12 @@ fn connect(directory: &Path, write: bool) -> Result<PinnedConnection> {
 /// Select legacy rows or an immutable generation while the active pointer is
 /// pinned by a read transaction. Migration cannot combine new metadata/old facts.
 fn read_transaction(directory: &Path) -> Result<PinnedConnection> {
+    retry_wal_protocol(|| read_transaction_once(directory))
+}
+
+fn read_transaction_once(directory: &Path) -> Result<PinnedConnection> {
     for _ in 0..3 {
-        let conn = connect_root(directory, false)?;
+        let conn = connect_root_once(directory, false)?;
         conn.execute_batch("BEGIN DEFERRED")?;
         let version: u32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
         if version == 1 {
@@ -99,7 +157,7 @@ fn read_transaction(directory: &Path) -> Result<PinnedConnection> {
         let payload: String = conn.query_row("SELECT payload FROM index_components WHERE id=1 AND length(CAST(payload AS BLOB)) <= 131072", [], |r| r.get(0))?;
         let header: PersistentRevision = serde_json::from_str(&payload)?;
         ensure!(
-            header.storage_format == 1,
+            matches!(header.storage_format, 1 | 2),
             "unsupported active catalog format"
         );
         let open = || -> Result<PinnedConnection> {
@@ -108,13 +166,21 @@ fn read_transaction(directory: &Path) -> Result<PinnedConnection> {
                 &header.revision,
             )?)?;
             lease.lock_shared()?;
-            let inner = Connection::open_with_flags(
-                directory
-                    .join("generations")
-                    .join(&header.revision)
-                    .join("catalog.sqlite"),
-                OpenFlags::SQLITE_OPEN_READ_ONLY,
-            )?;
+            let catalog_path = directory
+                .join("generations")
+                .join(&header.revision)
+                .join("catalog.sqlite");
+            let inner = if version == crate::ROOT_POINTER_VERSION {
+                open_immutable_catalog(&catalog_path)?
+            } else {
+                Connection::open_with_flags(catalog_path, OpenFlags::SQLITE_OPEN_READ_ONLY)?
+            };
+            if version == crate::ROOT_POINTER_VERSION {
+                let token = header.token.context("v2 catalog token missing")?;
+                let receipt = receipt_connection(&conn, &token)?.context("v2 receipt missing")?;
+                crate::blobs::verify_v2_generation(directory, &receipt)?;
+                validate_v2_catalog(&inner, &token, &receipt.inventory_digest)?;
+            }
             inner.execute_batch("BEGIN DEFERRED")?;
             ensure!(
                 identity(&inner, &header.root, &header.collection)? == header.generation,
@@ -151,7 +217,8 @@ pub(super) fn load(directory: &Path) -> Result<Option<Snapshot>> {
     let payload = payload.context("snapshot exceeds 512 MiB limit")?;
     let snapshot: Snapshot = serde_json::from_str(&payload)?;
     ensure!(
-        snapshot.schema_version == SCHEMA_VERSION,
+        snapshot.schema_version == SCHEMA_VERSION
+            || (snapshot.schema_version == 4 && snapshot.storage_format == 2),
         "unsupported snapshot schema"
     );
     Ok(Some(snapshot))
@@ -168,7 +235,13 @@ pub(super) fn legacy_payload_bytes(directory: &Path) -> Result<u64> {
 }
 
 pub(super) fn persistent_revision(directory: &Path) -> Result<Option<PersistentRevision>> {
-    let conn = connect_root(directory, false)?;
+    retry_wal_protocol(|| persistent_revision_once(directory))
+}
+
+fn persistent_revision_once(directory: &Path) -> Result<Option<PersistentRevision>> {
+    let conn = connect_root_once(directory, false)?;
+    conn.execute_batch("BEGIN DEFERRED")?;
+    let version: u32 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
     let exists: bool = conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='index_components')",
         [],
@@ -184,18 +257,47 @@ pub(super) fn persistent_revision(directory: &Path) -> Result<Option<PersistentR
         .map(|(payload, root, collection, generation, schema)| {
             let header: PersistentRevision = serde_json::from_str(&payload)?;
             ensure!(
-                schema == SCHEMA_VERSION
+                ((schema == SCHEMA_VERSION && header.storage_format <= 1 && version <= 2)
+                    || (schema == 4
+                        && header.storage_format == 2
+                        && version == crate::ROOT_POINTER_VERSION))
                     && header.root == root
                     && header.collection == collection
                     && header.generation == u64::try_from(generation)?,
                 "component header does not match active revision"
             );
+            if version == crate::ROOT_POINTER_VERSION {
+                let token = header.token.context("v2 header missing token")?;
+                ensure!(
+                    token.generation == header.generation
+                        && token.revision.to_string() == header.revision,
+                    "v2 token header mismatch"
+                );
+                let receipt = receipt_connection(&conn, &token)?
+                    .context("active publication receipt missing")?;
+                ensure!(
+                    header.inventory_sha256.as_deref()
+                        == Some(receipt.inventory_digest.to_string().as_str())
+                        && header.manifest_sha256.as_deref()
+                            == Some(receipt.manifest_digest.to_string().as_str()),
+                    "active receipt binding mismatch"
+                );
+            } else {
+                ensure!(
+                    header.token.is_none() && header.manifest_sha256.is_none(),
+                    "legacy header contains v2 identity"
+                );
+            }
             Ok(header)
         })
         .transpose()
 }
 
 pub(super) fn save(directory: &Path, snapshot: &Snapshot, revision: Option<&str>) -> Result<()> {
+    ensure!(
+        snapshot.schema_version == SCHEMA_VERSION && snapshot.storage_format <= 1,
+        "v2 evidence requires transactional publication finalizer"
+    );
     save_inner(directory, snapshot, revision, snapshot, false)
 }
 
@@ -230,6 +332,8 @@ pub(super) fn save_catalog(
 
 fn header(snapshot: &Snapshot, revision: &str) -> PersistentRevision {
     PersistentRevision {
+        token: None,
+        manifest_sha256: None,
         storage_format: snapshot.storage_format,
         roots: snapshot.roots.clone(),
         inventory_sha256: (snapshot.storage_format == 1).then(|| {
@@ -253,6 +357,561 @@ fn header(snapshot: &Snapshot, revision: &str) -> PersistentRevision {
         imported_facts: snapshot.imported_facts.len(),
         imported_relationships: snapshot.imported_relationships.len(),
     }
+}
+
+fn raw_digest(bytes: &[u8]) -> airk_core::identity::Sha256Digest {
+    use sha2::Digest;
+    airk_core::identity::Sha256Digest::from_bytes(sha2::Sha256::digest(bytes).into())
+}
+
+fn validate_v2_catalog(
+    conn: &Connection,
+    token: &airk_core::identity::RevisionToken,
+    inventory_digest: &airk_core::identity::Sha256Digest,
+) -> Result<()> {
+    let version: u32 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    ensure!(
+        version == crate::IMMUTABLE_CATALOG_VERSION,
+        "unsupported immutable catalog version"
+    );
+    let (stored_token, digest): (String, String) = conn.query_row(
+        "SELECT token,inventory_digest FROM v2_catalog WHERE id=1",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    ensure!(
+        stored_token == token.to_string() && digest == inventory_digest.to_string(),
+        "immutable catalog identity mismatch"
+    );
+    Ok(())
+}
+
+pub(crate) fn verify_prepared_catalog(
+    directory: &Path,
+    receipt: &airk_core::identity::PublicationReceipt,
+) -> Result<()> {
+    let conn = open_immutable_catalog(&directory.join("catalog.sqlite"))?;
+    validate_v2_catalog(&conn, &receipt.token, &receipt.inventory_digest)?;
+    let integrity: String = conn.query_row("PRAGMA quick_check", [], |row| row.get(0))?;
+    ensure!(
+        integrity == "ok",
+        "immutable catalog integrity check failed"
+    );
+    Ok(())
+}
+
+pub(crate) fn file_in_catalog(
+    directory: &Path,
+    receipt: &airk_core::identity::PublicationReceipt,
+    path: &str,
+) -> Result<Option<airk_core::publication::InventoryFile>> {
+    ensure!(path.len() <= 4096, "metadata path exceeds bound");
+    let conn = open_immutable_catalog(
+        &directory
+            .join("generations")
+            .join(receipt.token.revision.to_string())
+            .join("catalog.sqlite"),
+    )?;
+    validate_v2_catalog(&conn, &receipt.token, &receipt.inventory_digest)?;
+    let payload: Option<String> = conn
+        .query_row(
+            "SELECT payload FROM files WHERE path=?1 AND length(CAST(payload AS BLOB)) <= 131072",
+            [path],
+            |row| row.get(0),
+        )
+        .optional()?;
+    payload
+        .map(|payload| Ok(serde_json::from_str(&payload)?))
+        .transpose()
+}
+
+fn legacy_json_head(directory: &Path) -> Result<crate::ExpectedHead> {
+    use std::io::Read;
+    let path = directory.join("snapshot.json");
+    let file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(crate::ExpectedHead::Empty);
+        }
+        Err(error) => return Err(error.into()),
+    };
+    ensure!(
+        file.metadata()?.len() <= 536_870_912,
+        "legacy snapshot exceeds bound"
+    );
+    let mut bytes = Vec::new();
+    file.take(536_870_913).read_to_end(&mut bytes)?;
+    ensure!(bytes.len() <= 536_870_912, "legacy snapshot exceeds bound");
+    Ok(crate::ExpectedHead::Legacy(
+        airk_core::identity::framed_digest(b"legacy-json-head/1", &[&bytes]),
+    ))
+}
+
+fn expected_head_connection(directory: &Path, conn: &Connection) -> Result<crate::ExpectedHead> {
+    let exists: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='revision')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !exists {
+        return legacy_json_head(directory);
+    }
+    let payload: Option<String> = conn.query_row("SELECT payload FROM revision WHERE id=1 AND length(CAST(payload AS BLOB)) <= 536870912", [], |row| row.get(0)).optional()?;
+    let Some(payload) = payload else {
+        anyhow::bail!("invalid or oversized committed revision");
+    };
+    let has_components: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='index_components')",
+        [],
+        |row| row.get(0),
+    )?;
+    let components: Option<String> = if has_components {
+        conn.query_row("SELECT payload FROM index_components WHERE id=1 AND length(CAST(payload AS BLOB))<=131072", [], |row| row.get(0)).optional()?
+    } else {
+        None
+    };
+    let version: u32 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    if version == crate::ROOT_POINTER_VERSION {
+        let header: PersistentRevision =
+            serde_json::from_str(components.as_deref().context("v2 head missing")?)?;
+        return Ok(crate::ExpectedHead::V2(
+            header.token.context("v2 token missing")?,
+        ));
+    }
+    ensure!(version <= 2, "unsupported root version");
+    Ok(crate::ExpectedHead::Legacy(
+        airk_core::identity::framed_digest(
+            b"legacy-sqlite-head/1",
+            &[
+                &version.to_be_bytes(),
+                payload.as_bytes(),
+                components.as_deref().unwrap_or("").as_bytes(),
+            ],
+        ),
+    ))
+}
+
+pub(super) fn expected_head(directory: &Path) -> Result<crate::ExpectedHead> {
+    if !directory.join("index.sqlite3").exists() {
+        return legacy_json_head(directory);
+    }
+    let conn = Connection::open_with_flags(
+        directory.join("index.sqlite3"),
+        OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )?;
+    conn.execute_batch("BEGIN DEFERRED")?;
+    expected_head_connection(directory, &conn)
+}
+
+fn receipt_connection(
+    conn: &Connection,
+    token: &airk_core::identity::RevisionToken,
+) -> Result<Option<airk_core::identity::PublicationReceipt>> {
+    let value: Option<String> = conn.query_row("SELECT payload FROM publication_receipts WHERE revision=?1 AND incarnation=?2 AND generation=?3 AND length(CAST(payload AS BLOB))<=4096", params![token.revision.to_string(),token.incarnation.to_string(),i64::try_from(token.generation)?], |row| row.get(0)).optional()?;
+    value
+        .map(|value| {
+            let receipt: airk_core::identity::PublicationReceipt = serde_json::from_str(&value)?;
+            ensure!(
+                receipt.token == *token,
+                "retained receipt identity mismatch"
+            );
+            Ok(receipt)
+        })
+        .transpose()
+}
+
+pub(super) fn receipt(
+    directory: &Path,
+    token: &airk_core::identity::RevisionToken,
+) -> Result<Option<airk_core::identity::PublicationReceipt>> {
+    retry_wal_protocol(|| receipt_once(directory, token))
+}
+
+fn receipt_once(
+    directory: &Path,
+    token: &airk_core::identity::RevisionToken,
+) -> Result<Option<airk_core::identity::PublicationReceipt>> {
+    let conn = connect_root_once(directory, false)?;
+    let version: u32 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    if version != crate::ROOT_POINTER_VERSION {
+        return Ok(None);
+    }
+    receipt_connection(&conn, token)
+}
+
+/// Caller holds the collection writer lock. Receipt removal is separately charged
+/// and occurs only after the last representation has actually disappeared.
+pub(crate) fn retire_unrepresented_receipts(directory: &Path) -> Result<usize> {
+    let exists = |path: &Path| -> Result<bool> {
+        match std::fs::symlink_metadata(path) {
+            Ok(metadata) => {
+                ensure!(
+                    !metadata.file_type().is_symlink(),
+                    "linked receipt representation"
+                );
+                Ok(true)
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(error.into()),
+        }
+    };
+    let conn = connect_root(directory, false)?;
+    let version: u32 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    if version != crate::ROOT_POINTER_VERSION {
+        return Ok(0);
+    }
+    ensure!(
+        !exists(&directory.join("maintenance"))? && !exists(&directory.join("checkpoints"))?,
+        "receipt retirement awaits maintenance/checkpoint-aware cleanup"
+    );
+    exists(&directory.join("history"))?;
+    let header =
+        persistent_revision(directory)?.context("active pointer missing during receipt cleanup")?;
+    let revisions: Vec<String> = {
+        let mut statement = conn.prepare("SELECT revision FROM publication_receipts WHERE revision<>?1 ORDER BY revision LIMIT 10001")?;
+        statement
+            .query_map([&header.revision], |row| row.get(0))?
+            .collect::<rusqlite::Result<_>>()?
+    };
+    ensure!(
+        revisions.len() <= 10_000,
+        "receipt cleanup candidate bound exceeded"
+    );
+    let mut candidates = Vec::new();
+    let mut leases = Vec::new();
+    for revision in revisions {
+        ensure!(
+            crate::blobs::valid_digest(&revision),
+            "invalid retained receipt identity"
+        );
+        if exists(&directory.join("generations").join(&revision))?
+            || exists(
+                &directory
+                    .join("generations")
+                    .join(format!("removing-{revision}")),
+            )?
+            || exists(&directory.join("history").join(&revision))?
+        {
+            continue;
+        }
+        let lease = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(crate::blobs::reader_lease_path(directory, &revision)?)?;
+        match lease.try_lock() {
+            Ok(()) => {
+                leases.push(lease);
+                candidates.push(revision);
+            }
+            Err(std::fs::TryLockError::WouldBlock) => {
+                anyhow::bail!("detached receipt remains reader-protected")
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+    if candidates.is_empty() {
+        return Ok(0);
+    }
+    drop(conn);
+    let root = directory
+        .parent()
+        .and_then(Path::parent)
+        .context("receipt cleanup data root missing")?;
+    let collection = directory
+        .file_name()
+        .and_then(|value| value.to_str())
+        .context("receipt cleanup collection missing")?;
+    let (maximum, allowance) = pointer_budget(directory)?;
+    let reservation = crate::quota::Quota::open(root)?.reserve(collection, allowance)?;
+    reservation.charge(allowance)?;
+    let mut conn = connect_root(directory, true)?;
+    conn.execute_batch(&format!(
+        "PRAGMA max_page_count={maximum}; PRAGMA cache_spill=OFF; PRAGMA temp_store=MEMORY;"
+    ))?;
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    ensure!(
+        expected_head_connection(directory, &tx)?
+            == crate::ExpectedHead::V2(header.token.context("active v2 token missing")?),
+        "active pointer changed during receipt cleanup"
+    );
+    let mut removed = 0;
+    for revision in &candidates {
+        removed += tx.execute(
+            "DELETE FROM publication_receipts WHERE revision=?1",
+            [revision],
+        )?;
+    }
+    tx.commit()?;
+    drop(leases);
+    Ok(removed)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn save_catalog_v2(
+    directory: &Path,
+    inventory: &airk_core::publication::InventoryV2,
+    lineage: &airk_core::changes::LineageEnvelope,
+    token: &airk_core::identity::RevisionToken,
+    source: &dyn ArtifactSource,
+    reservation: Option<&crate::quota::Reservation>,
+    maximum: u64,
+) -> Result<()> {
+    use std::io::Write;
+    inventory.validate()?;
+    lineage.validate()?;
+    let bytes = inventory.canonical_bytes()?;
+    ensure!(
+        token.incarnation == inventory.incarnation
+            && token.generation == inventory.generation
+            && token.revision
+                == airk_core::identity::revision_digest(
+                    inventory.retrieval_specification.as_bytes(),
+                    &bytes
+                ),
+        "catalog token mismatch"
+    );
+    let lineage_bytes = serde_json::to_vec(lineage)?;
+    ensure!(
+        raw_digest(&lineage_bytes) == inventory.lineage_digest
+            && lineage.incarnation == inventory.incarnation
+            && lineage.observation.generation == inventory.generation,
+        "catalog lineage mismatch"
+    );
+    ensure!(
+        reservation.is_some(),
+        "v2 catalog requires a charged reservation"
+    );
+    let reservation = reservation.context("reservation missing")?;
+    let mut lineage_file = reservation.create_file(directory.join("lineage.json"))?;
+    lineage_file.write_all(&lineage_bytes)?;
+    lineage_file.sync_all()?;
+    drop(lineage_file);
+    let mut database =
+        reservation.open_private_sqlite(directory.join("catalog.sqlite"), maximum)?;
+    let snapshot = inventory.projection()?;
+    save_connection(
+        database.connection_mut(),
+        &snapshot,
+        Some(&token.revision.to_string()),
+        source,
+    )?;
+    let conn = database.connection_mut();
+    let tx = conn.transaction()?;
+    tx.execute_batch("CREATE TABLE v2_catalog(id INTEGER PRIMARY KEY CHECK(id=1),token TEXT NOT NULL,inventory_digest TEXT NOT NULL,lineage_digest TEXT NOT NULL); CREATE TABLE files(path TEXT PRIMARY KEY,artifact_id TEXT NOT NULL UNIQUE,source_hash TEXT NOT NULL,profile_id TEXT NOT NULL,payload TEXT NOT NULL); CREATE INDEX files_source_hash ON files(source_hash); CREATE INDEX files_profile ON files(profile_id); CREATE TABLE change_events(generation INTEGER NOT NULL,event_id INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(generation,event_id)); CREATE TABLE revision_headers(generation INTEGER PRIMARY KEY,token TEXT NOT NULL,payload TEXT NOT NULL); CREATE TABLE path_resolutions(artifact_id TEXT NOT NULL,path TEXT NOT NULL,payload TEXT NOT NULL); CREATE INDEX resolutions_path ON path_resolutions(path); CREATE INDEX resolutions_artifact ON path_resolutions(artifact_id);")?;
+    tx.execute(
+        "INSERT INTO v2_catalog VALUES(1,?1,?2,?3)",
+        params![
+            token.to_string(),
+            raw_digest(&bytes).to_string(),
+            inventory.lineage_digest.to_string()
+        ],
+    )?;
+    for (path, file) in &inventory.files {
+        tx.execute(
+            "INSERT INTO files VALUES(?1,?2,?3,?4,?5)",
+            params![
+                path,
+                file.state.artifact_id.to_string(),
+                file.state.source_hash.to_string(),
+                file.state.profile_id.to_string(),
+                serde_json::to_string(file)?
+            ],
+        )?;
+    }
+    for event in &lineage.events {
+        tx.execute(
+            "INSERT INTO change_events VALUES(?1,?2,?3)",
+            params![
+                i64::try_from(event.generation)?,
+                i64::try_from(event.event_id)?,
+                serde_json::to_string(event)?
+            ],
+        )?;
+    }
+    for header in &lineage.ancestry {
+        tx.execute(
+            "INSERT INTO revision_headers VALUES(?1,?2,?3)",
+            params![
+                i64::try_from(header.token.generation)?,
+                header.token.to_string(),
+                serde_json::to_string(header)?
+            ],
+        )?;
+    }
+    for resolver in &lineage.resolvers {
+        tx.execute(
+            "INSERT INTO path_resolutions VALUES(?1,?2,?3)",
+            params![
+                resolver.artifact_id.to_string(),
+                resolver.from.path,
+                serde_json::to_string(resolver)?
+            ],
+        )?;
+    }
+    tx.pragma_update(None, "user_version", crate::IMMUTABLE_CATALOG_VERSION)?;
+    tx.commit()?;
+    database.finish()?;
+    Ok(())
+}
+
+pub(super) fn publish_catalog_v2(
+    directory: &Path,
+    inventory: &airk_core::publication::InventoryV2,
+    receipt: &airk_core::identity::PublicationReceipt,
+    expected: &crate::ExpectedHead,
+    reservation: &crate::quota::Reservation,
+) -> Result<()> {
+    inventory.validate()?;
+    let bytes = inventory.canonical_bytes()?;
+    let token = receipt.token;
+    ensure!(
+        token.incarnation == inventory.incarnation
+            && token.generation == inventory.generation
+            && token.revision
+                == airk_core::identity::revision_digest(
+                    inventory.retrieval_specification.as_bytes(),
+                    &bytes
+                )
+            && receipt.inventory_digest == raw_digest(&bytes),
+        "publication receipt does not bind inventory"
+    );
+    let prepared = crate::blobs::verify_v2_generation(directory, receipt)?;
+    ensure!(
+        prepared.canonical_bytes()? == bytes,
+        "prepared inventory differs from publication candidate"
+    );
+    let lineage_bytes = crate::blobs::read_verified(
+        &directory
+            .join("generations")
+            .join(token.revision.to_string())
+            .join("lineage.json"),
+        &inventory.lineage_digest.to_string(),
+        airk_core::changes::MAX_LINEAGE_BYTES as u64,
+    )?;
+    let lineage: airk_core::changes::LineageEnvelope = serde_json::from_slice(&lineage_bytes)?;
+    lineage.validate()?;
+    ensure!(
+        lineage.incarnation == token.incarnation
+            && lineage.observation.generation == token.generation,
+        "prepared lineage identity mismatch"
+    );
+    let (maximum, allowance) = pointer_budget(directory)?;
+    reservation.charge(allowance)?;
+    // The first SQLite pointer is prepared privately. Creating an empty root DB
+    // would otherwise shadow a valid legacy JSON snapshot after a failed transaction.
+    let private_root = if !directory.join("index.sqlite3").exists() {
+        Some(
+            tempfile::Builder::new()
+                .prefix("pointer-")
+                .tempdir_in(reservation.staging_directory()?)?,
+        )
+    } else {
+        None
+    };
+    let pointer_directory = private_root
+        .as_ref()
+        .map_or(directory, |temporary| temporary.path());
+    let mut conn = connect_root(pointer_directory, true)?;
+    conn.execute_batch(&format!(
+        "PRAGMA max_page_count={maximum}; PRAGMA cache_spill=OFF; PRAGMA temp_store=MEMORY;"
+    ))?;
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    ensure!(
+        &expected_head_connection(directory, &tx)? == expected,
+        "publication parent changed"
+    );
+    if let crate::ExpectedHead::V2(parent) = expected {
+        ensure!(
+            parent.incarnation == token.incarnation
+                && parent.next_generation()? == token.generation,
+            "publication sequence/incarnation mismatch"
+        );
+        ensure!(
+            lineage.observation.parent.as_ref() == Some(parent),
+            "prepared lineage parent does not match committed parent"
+        );
+    } else {
+        ensure!(
+            lineage.observation.parent.is_none(),
+            "first v2 observation cannot invent an earlier v2 parent"
+        );
+    }
+    if !matches!(expected, crate::ExpectedHead::Empty) {
+        let has_revision: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='revision')",
+            [],
+            |row| row.get(0),
+        )?;
+        let (old_root, old_collection, old_generation) = if has_revision {
+            let (root, collection, generation): (String, String, i64) = tx.query_row(
+                "SELECT root,collection,generation FROM revision WHERE id=1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )?;
+            (root, collection, u64::try_from(generation)?)
+        } else {
+            let snapshot: Snapshot =
+                serde_json::from_reader(std::fs::File::open(directory.join("snapshot.json"))?)?;
+            (snapshot.root, snapshot.collection, snapshot.generation)
+        };
+        ensure!(
+            old_root == inventory.root
+                && old_collection == inventory.collection
+                && old_generation.checked_add(1) == Some(token.generation),
+            "publication changes collection binding or skips sequence"
+        );
+    }
+    tx.execute_batch("CREATE TABLE IF NOT EXISTS revision(id INTEGER PRIMARY KEY CHECK(id=1),root TEXT NOT NULL,collection TEXT NOT NULL,generation INTEGER NOT NULL,schema_version INTEGER NOT NULL,payload TEXT NOT NULL); CREATE TABLE IF NOT EXISTS index_components(id INTEGER PRIMARY KEY CHECK(id=1),payload TEXT NOT NULL); CREATE TABLE IF NOT EXISTS publication_receipts(revision TEXT PRIMARY KEY,incarnation TEXT NOT NULL,generation INTEGER NOT NULL,payload TEXT NOT NULL); CREATE INDEX IF NOT EXISTS receipts_scope ON publication_receipts(incarnation,generation);")?;
+    let mut header = header(&inventory.projection()?, &token.revision.to_string());
+    header.token = Some(token);
+    header.inventory_sha256 = Some(receipt.inventory_digest.to_string());
+    header.manifest_sha256 = Some(receipt.manifest_digest.to_string());
+    let header_payload = serde_json::to_string(&header)?;
+    ensure!(
+        header_payload.len() <= 131_072,
+        "active v2 pointer exceeds 128 KiB"
+    );
+    tx.execute(
+        "INSERT INTO publication_receipts VALUES(?1,?2,?3,?4)",
+        params![
+            token.revision.to_string(),
+            token.incarnation.to_string(),
+            i64::try_from(token.generation)?,
+            serde_json::to_string(receipt)?
+        ],
+    )?;
+    tx.execute(
+        "INSERT OR REPLACE INTO revision VALUES(1,?1,?2,?3,4,?4)",
+        params![
+            inventory.root,
+            inventory.collection,
+            i64::try_from(inventory.generation)?,
+            header_payload
+        ],
+    )?;
+    tx.execute(
+        "INSERT OR REPLACE INTO index_components VALUES(1,?1)",
+        [&header_payload],
+    )?;
+    tx.pragma_update(None, "user_version", crate::ROOT_POINTER_VERSION)?;
+    tx.commit()?;
+    if let Some(private_root) = private_root {
+        let (busy, _, _): (i64, i64, i64) =
+            conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })?;
+        ensure!(busy == 0, "private pointer checkpoint remained busy");
+        conn.close().map_err(|(_, error)| error)?;
+        let staged = private_root.path().join("index.sqlite3").canonicalize()?;
+        std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&staged)?
+            .sync_all()?;
+        let target = directory.canonicalize()?.join("index.sqlite3");
+        tempfile::TempPath::try_from_path(staged)?.persist_noclobber(target)?;
+    }
+    Ok(())
 }
 
 pub(super) fn catalog_page_budget(reserved: u64, physical: u64, pointer: u64) -> Result<u64> {
@@ -563,7 +1222,11 @@ fn identity(conn: &Connection, root: &str, collection: &str) -> Result<u64> {
         stored_root == root && stored_collection == collection,
         "index belongs to another root or collection"
     );
-    ensure!(schema == SCHEMA_VERSION, "unsupported snapshot schema");
+    let version: u32 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    ensure!(
+        schema == SCHEMA_VERSION || (schema == 4 && version == crate::IMMUTABLE_CATALOG_VERSION),
+        "unsupported snapshot schema"
+    );
     Ok(u64::try_from(generation)?)
 }
 
@@ -718,6 +1381,37 @@ impl FileStore {
 mod tests {
     use super::*;
     use crate::FileStore;
+
+    #[test]
+    fn wal_retry_is_bounded_and_only_retries_protocol_failures() -> Result<()> {
+        let mut attempts = 0;
+        let value = retry_wal_protocol(|| {
+            attempts += 1;
+            if attempts < 3 {
+                return Err(rusqlite::Error::SqliteFailure(
+                    rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_PROTOCOL),
+                    None,
+                )
+                .into());
+            }
+            Ok(7)
+        })?;
+        assert_eq!((attempts, value), (3, 7));
+        for (code, expected_attempts) in [
+            (rusqlite::ffi::SQLITE_PROTOCOL, 3),
+            (rusqlite::ffi::SQLITE_CORRUPT, 1),
+            (rusqlite::ffi::SQLITE_IOERR, 1),
+        ] {
+            let mut attempts = 0;
+            let result: Result<()> = retry_wal_protocol(|| {
+                attempts += 1;
+                Err(rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(code), None).into())
+            });
+            assert!(result.is_err());
+            assert_eq!(attempts, expected_attempts);
+        }
+        Ok(())
+    }
 
     #[test]
     fn catalog_admission_leaves_pointer_room_with_smaller_physical_capacity() -> Result<()> {
