@@ -11,7 +11,7 @@ python scripts/package-native.py --target x86_64-pc-windows-msvc --signed-dir ar
 
 `--signtool` may select the installed Windows SDK tool explicitly. Signing uses SHA-256 file and timestamp digests. Verification requires a valid Authenticode trust result, the exact requested signer and a timestamp. The [Microsoft SignTool reference](https://learn.microsoft.com/en-us/windows/win32/seccrypto/signtool) describes the OS trust and timestamp checks.
 
-The supplied Apple public certificate identifies `Developer ID Application: Ioka LLC (5PX7D99PXA)` and expires February 1, 2027. The certificate file contains no private key. The owner will continue on the original Mac holding the matching private key; no certificate or key is copied into this repository. Inspect that Mac's signing identities with `security find-identity -v -p codesigning` and use an existing `notarytool` keychain profile. Do not put credentials in command-line arguments or repository files.
+The supplied Apple public certificate identifies `Developer ID Application: Ioka LLC (5PX7D99PXA)` and expires February 1, 2027. The certificate file contains no private key. The original Mac holds the matching private key; no certificate or key is copied into this repository. Inspect that Mac's signing identities with `security find-identity -v -p codesigning` and use AIRK’s separate `airk-notary` profile in its own signing keychain. Do not put credentials in command-line arguments or repository files.
 
 After native tests/build on the Mac, choose its architecture and run:
 
@@ -19,7 +19,8 @@ After native tests/build on the Mac, choose its architecture and run:
 cargo build --release --locked -p airk-cli --target aarch64-apple-darwin
 python3 scripts/sign-native.py --target aarch64-apple-darwin \
   --identity 'Developer ID Application: Ioka LLC (5PX7D99PXA)' \
-  --team-id 5PX7D99PXA --notarize --keychain-profile YOUR_EXISTING_PROFILE \
+  --team-id 5PX7D99PXA --notarize --keychain-profile airk-notary \
+  --keychain "$HOME/Library/Keychains/airk-signing.keychain-db" \
   --output artifacts/signed/mac-arm64-candidate
 python3 scripts/package-native.py --target aarch64-apple-darwin \
   --signed-dir artifacts/signed/mac-arm64-candidate \
@@ -28,4 +29,27 @@ python3 scripts/package-native.py --target aarch64-apple-darwin \
 
 Use `x86_64-apple-darwin` on the Intel native runner. The signer enables hardened runtime and a trusted timestamp, verifies the Developer ID certificate/team, and uploads only when `--notarize` is supplied. It waits for Apple's explicit `Accepted` result and records the submission ID. A standalone CLI does not support stapling; the server-side ticket is not an offline Gatekeeper qualification. See [Apple's notarization workflow](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow).
 
-Feed the resulting native `publish/` directory to `package-extension.py --native-dir ...`. Candidate payload hashes then cover the signed executable. Existing hosted CI remains an unsigned build path; a signing runner/keychain is an owner-controlled release setup, not an inferred secret configuration. Neither real signing/notarization nor macOS installed-service/remote-editor qualification has been performed on this Windows workstation. Continue with [the macOS build guide](macos-build.md) and [release checklist](release-checklist-0.1.0.md), retaining actual logs for the final commit.
+Feed the resulting native `publish/` directory to `package-extension.py --native-dir ...`. Candidate payload hashes then cover the signed executable. Continue with [the macOS build guide](macos-build.md) and [release checklist](release-checklist-0.1.0.md), retaining actual logs for the final commit. Signing/notarization does not qualify installed services, remote editors or the oldest supported macOS version.
+
+The local AIRK keychain is `~/Library/Keychains/airk-signing.keychain-db`; its notary profile is `airk-notary`. It reuses the company’s Developer ID Application identity, with a separate keychain and profile from WritingForgePro. Unlock it in Keychain Access before signing. Its generated unlock password is kept in the login keychain as the generic-password item `airk-signing-keychain-password`, never in the repository.
+
+## Manual GitHub-hosted signing
+
+[Signed macOS candidates](../.github/workflows/macos-signing.yml) is a separate, manual workflow for `main`. It builds/tests both Apple Silicon and Intel on their native hosted runners, then signs, notarizes and packages native ZIPs and preview VSIX files. Artifacts are retained for seven days. It does not publish a release or Marketplace extension. Ordinary PR CI and Extension release continue to create unsigned candidates.
+
+Before dispatching, configure the repository environment **macos-signing** with a deployment branch policy allowing only the `main` branch (not tags), and these environment secrets:
+
+| Secret | Value |
+|---|---|
+| `MACOS_CERTIFICATE_P12` | Single-line base64 of a password-encrypted PKCS#12 containing only the matching Developer ID Application certificate and private key |
+| `MACOS_CERTIFICATE_PASSWORD` | Password protecting that PKCS#12 export |
+| `APPLE_ID` | Apple account authorized to notarize for team `5PX7D99PXA` |
+| `APPLE_APP_SPECIFIC_PASSWORD` | That account's app-specific password, validated against Apple's notary service |
+
+The public `.cer` file cannot replace the PKCS#12 private key. Export the exact Developer ID Application identity through Keychain Access or the Security framework, rather than exporting every identity in the login keychain. Transfer values through GitHub's secret UI or `gh secret set --env macos-signing` using standard input; never paste secrets into commands, logs or repository files. Remove temporary exports after transfer. Rotate the certificate before its February 1, 2027 expiry. GitHub documents [certificate secrets and temporary runner keychains](https://docs.github.com/en/actions/how-tos/deploy/deploy-to-third-party-platforms/sign-xcode-applications).
+
+The workflow exposes secrets only to [the CI signing helper](../scripts/ci-macos-sign.py), after build/test steps finish. It uses a private directory under `RUNNER_TEMP`, a fresh random keychain password, and explicit `--keychain` selection. Passwords reach `security` through standard input and `notarytool` through its password prompt. Credential-tool diagnostics are suppressed to prevent accidental disclosure. The helper clears secrets from child-process environments, validates the imported identity and notary credentials, requires notarization `Accepted`, and deletes the temporary keychain on success or failure. An additional always-run cleanup step handles an interrupted signer. No compiler cache or artifact contains the credentials.
+
+Once the workflow change is merged to `main` and environment secrets are configured, use **Actions → Signed macOS candidates → Run workflow** on `main`. A failed signing or notarization step prevents candidate upload. Download `airk-signed-native-…` and `airk-signed-vsix-…` from that run; the native manifest includes the verified signature and Apple's submission ID. A local signing result does not establish that the hosted workflow has passed.
+
+The environment, main-only deployment policy and four secrets were configured on 14 October 2026. See the [validation record](validation.md) for the accepted local Apple Silicon notarization and hosted-run limitations.
