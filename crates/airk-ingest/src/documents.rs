@@ -4,12 +4,12 @@ use airk_core::{Chunk, DocumentLocation, Fact};
 use anyhow::{Context, Result, ensure};
 use quick_xml::{Reader, events::Event};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     io::{Cursor, Read},
     path::Path,
 };
 
-const MAX_EXTRACTED: usize = 4_194_304;
+pub(crate) const MAX_EXTRACTED: usize = 4_194_304;
 pub struct Extracted {
     pub chunks: Vec<Chunk>,
     pub language: String,
@@ -39,6 +39,7 @@ pub fn extract(path: &str, bytes: &[u8]) -> Result<Extracted> {
                     .collect(),
                 BTreeMap::new(),
                 BTreeMap::new(),
+                BTreeSet::new(),
             )
         }
         "docx" => {
@@ -49,10 +50,11 @@ pub fn extract(path: &str, bytes: &[u8]) -> Result<Extracted> {
                 "OOXML archive exceeds 10000 entries"
             );
             let xml = read_part(&mut archive, "word/document.xml")?;
+            require_root(&xml, b"document")?;
             let paragraphs = ooxml_paragraphs(&xml)?;
-            from_blocks(
+            let mut extracted = from_blocks(
                 "docx",
-                "docx-paragraphs",
+                "docx-paragraphs-and-tables",
                 paragraphs
                     .into_iter()
                     .enumerate()
@@ -60,8 +62,12 @@ pub fn extract(path: &str, bytes: &[u8]) -> Result<Extracted> {
                     .collect(),
                 docx_heading_levels(&xml)?,
                 BTreeMap::new(),
-            )
+                crate::tables::docx_table_paragraphs(&xml)?,
+            )?;
+            crate::tables::append_docx_tables(&xml, &mut extracted)?;
+            Ok(extracted)
         }
+        "xlsx" => crate::spreadsheets::extract(bytes),
         "pptx" => {
             let mut archive =
                 zip::ZipArchive::new(Cursor::new(bytes)).context("invalid PPTX archive")?;
@@ -109,7 +115,14 @@ pub fn extract(path: &str, bytes: &[u8]) -> Result<Extracted> {
                     _ => {}
                 }
             }
-            from_blocks("pptx", "pptx-slide-text", slides, BTreeMap::new(), titles)
+            from_blocks(
+                "pptx",
+                "pptx-slide-text",
+                slides,
+                BTreeMap::new(),
+                titles,
+                BTreeSet::new(),
+            )
         }
         _ => {
             let text =
@@ -146,15 +159,17 @@ pub fn extract(path: &str, bytes: &[u8]) -> Result<Extracted> {
                     "dockerfile" | "ini" | "cfg" | "conf" | "properties"
                 )
             {
-                analysis.language =
-                    if basename.starts_with("Dockerfile") || extension == "dockerfile" {
-                        "dockerfile"
-                    } else {
-                        "ini"
-                    }
-                    .into();
+                analysis.language = if basename.eq_ignore_ascii_case("Dockerfile")
+                    || basename.starts_with("Dockerfile.")
+                    || extension == "dockerfile"
+                {
+                    "dockerfile"
+                } else {
+                    "ini"
+                }
+                .into();
                 analysis.status = "line-structured".into();
-                analysis.facts = line_facts(text, &analysis.language);
+                analysis.facts = line_facts(text, &analysis.language)?;
             }
             if analysis.language == "text" {
                 analysis.facts = crate::prose::plain(text)?;
@@ -177,6 +192,7 @@ fn from_blocks(
     blocks: Vec<(String, DocumentLocation)>,
     heading_levels: BTreeMap<usize, u8>,
     titles: BTreeMap<usize, String>,
+    excluded_prose: BTreeSet<usize>,
 ) -> Result<Extracted> {
     let mut chunks = Vec::new();
     let mut facts = Vec::new();
@@ -226,17 +242,19 @@ fn from_blocks(
                 }),
             });
         }
-        let (prose_facts, next_context) = crate::prose::plain_with_context(
-            &text,
-            &heading_context,
-            heading_levels.get(&(ordinal + 1)).copied(),
-        )?;
-        heading_context = next_context;
-        for mut fact in prose_facts {
-            fact.start_line += block_start - 1;
-            fact.end_line += block_start - 1;
-            fact.location = location.clone();
-            facts.push(fact);
+        if !excluded_prose.contains(&(ordinal + 1)) {
+            let (prose_facts, next_context) = crate::prose::plain_with_context(
+                &text,
+                &heading_context,
+                heading_levels.get(&(ordinal + 1)).copied(),
+            )?;
+            heading_context = next_context;
+            for mut fact in prose_facts {
+                fact.start_line += block_start - 1;
+                fact.end_line += block_start - 1;
+                fact.location = location.clone();
+                facts.push(fact);
+            }
         }
         facts.push(Fact {
             code: None,
@@ -263,7 +281,10 @@ fn from_blocks(
     })
 }
 
-fn read_part(archive: &mut zip::ZipArchive<Cursor<&[u8]>>, name: &str) -> Result<String> {
+pub(crate) fn read_part(
+    archive: &mut zip::ZipArchive<Cursor<&[u8]>>,
+    name: &str,
+) -> Result<String> {
     let file = archive
         .by_name(name)
         .with_context(|| format!("missing OOXML part {name}"))?;
@@ -278,7 +299,70 @@ fn read_part(archive: &mut zip::ZipArchive<Cursor<&[u8]>>, name: &str) -> Result
         bytes.len() <= MAX_EXTRACTED,
         "OOXML expanded part exceeds 4 MiB"
     );
-    String::from_utf8(bytes).context("OOXML part is not UTF-8")
+    let xml = String::from_utf8(bytes).context("OOXML part is not UTF-8")?;
+    let mut reader = Reader::from_str(&xml);
+    let mut depth = 0usize;
+    let mut roots = 0usize;
+    loop {
+        match reader.read_event()? {
+            Event::Start(element) => {
+                for value in element.attributes() {
+                    value?;
+                }
+                if depth == 0 {
+                    roots += 1;
+                }
+                depth += 1;
+                ensure!(depth <= 128, "OOXML nesting exceeds 128 levels");
+            }
+            Event::Empty(element) => {
+                for value in element.attributes() {
+                    value?;
+                }
+                if depth == 0 {
+                    roots += 1;
+                }
+            }
+            Event::End(_) => {
+                depth = depth
+                    .checked_sub(1)
+                    .context("unexpected OOXML closing element")?;
+            }
+            Event::Text(text) if depth == 0 => ensure!(
+                text.decode()?.trim().is_empty(),
+                "OOXML text outside document root"
+            ),
+            Event::CData(_) | Event::GeneralRef(_) if depth == 0 => {
+                anyhow::bail!("OOXML content outside document root")
+            }
+            Event::DocType(_) => anyhow::bail!("OOXML document type declarations are unsupported"),
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    ensure!(
+        depth == 0 && roots == 1,
+        "incomplete or multiple OOXML document roots"
+    );
+    Ok(xml)
+}
+
+pub(crate) fn require_root(xml: &str, expected: &[u8]) -> Result<()> {
+    let mut reader = Reader::from_str(xml);
+    loop {
+        match reader.read_event()? {
+            Event::Start(element) | Event::Empty(element) => {
+                ensure!(
+                    element.local_name().as_ref() == expected,
+                    "OOXML part has the wrong document root"
+                );
+                return Ok(());
+            }
+            Event::DocType(_) => anyhow::bail!("OOXML DTDs are unsupported"),
+            Event::Eof => anyhow::bail!("OOXML part has no document root"),
+            _ => (),
+        }
+    }
 }
 
 fn ooxml_paragraphs(xml: &str) -> Result<Vec<String>> {
@@ -289,8 +373,16 @@ fn ooxml_paragraphs(xml: &str) -> Result<Vec<String>> {
     loop {
         match reader.read_event()? {
             Event::Start(e) if e.local_name().as_ref() == b"p" => paragraph.clear(),
+            Event::Empty(e) if e.local_name().as_ref() == b"p" => {
+                paragraphs.push(String::new());
+                ensure!(
+                    paragraphs.len() <= 10_000,
+                    "document exceeds 10000 paragraphs"
+                );
+            }
             Event::Start(e) if e.local_name().as_ref() == b"t" => in_text = true,
             Event::Text(e) if in_text => paragraph.push_str(&e.decode()?),
+            Event::CData(e) if in_text => paragraph.push_str(&e.decode()?),
             Event::GeneralRef(e) if in_text => paragraph.push_str(&entity(&e.decode()?)?),
             Event::Empty(e) if e.local_name().as_ref() == b"tab" => paragraph.push('\t'),
             Event::Empty(e) if e.local_name().as_ref() == b"br" => paragraph.push('\n'),
@@ -316,7 +408,7 @@ fn docx_heading_levels(xml: &str) -> Result<BTreeMap<usize, u8>> {
     let mut headings = BTreeMap::new();
     loop {
         match reader.read_event()? {
-            Event::Start(e) if e.local_name().as_ref() == b"p" => ordinal += 1,
+            Event::Start(e) | Event::Empty(e) if e.local_name().as_ref() == b"p" => ordinal += 1,
             Event::Empty(e) | Event::Start(e)
                 if matches!(e.local_name().as_ref(), b"pStyle" | b"outlineLvl") =>
             {
@@ -370,6 +462,7 @@ fn pptx_title(xml: &str) -> Result<Option<String>> {
             }
             Event::Start(e) if in_shape && e.local_name().as_ref() == b"t" => in_text = true,
             Event::Text(e) if in_text => value.push_str(&e.decode()?),
+            Event::CData(e) if in_text => value.push_str(&e.decode()?),
             Event::GeneralRef(e) if in_text => value.push_str(&entity(&e.decode()?)?),
             Event::Empty(e) if in_shape && e.local_name().as_ref() == b"br" => value.push('\n'),
             Event::Empty(e) if in_shape && e.local_name().as_ref() == b"tab" => value.push('\t'),
@@ -388,17 +481,21 @@ fn pptx_title(xml: &str) -> Result<Option<String>> {
     Ok(None)
 }
 
-fn entity(name: &str) -> Result<String> {
+pub(crate) fn entity(name: &str) -> Result<String> {
     Ok(quick_xml::escape::unescape(&format!("&{name};"))?.into_owned())
 }
-fn attribute(e: &quick_xml::events::BytesStart<'_>, name: &[u8]) -> Result<Option<String>> {
+pub(crate) fn attribute(
+    e: &quick_xml::events::BytesStart<'_>,
+    name: &[u8],
+) -> Result<Option<String>> {
+    let mut value = None;
     for attr in e.attributes() {
         let attr = attr?;
         if attr.key.as_ref() == name {
-            return Ok(Some(attr.unescape_value()?.into_owned()));
+            value = Some(attr.unescape_value()?.into_owned());
         }
     }
-    Ok(None)
+    Ok(value)
 }
 fn relationship_targets(xml: &str) -> Result<BTreeMap<String, String>> {
     let mut result = BTreeMap::new();
@@ -426,6 +523,34 @@ fn delimited_facts(text: &str, tsv: bool) -> Result<Vec<Fact>> {
         .delimiter(if tsv { b'\t' } else { b',' })
         .from_reader(text.as_bytes());
     let headers = reader.headers()?.clone();
+    ensure!(
+        headers.len() <= 10_000,
+        "delimited document exceeds 10000 headers"
+    );
+    ensure!(
+        headers.iter().all(|name| name.len() <= 1024),
+        "column header exceeds 1024 bytes"
+    );
+    let start = headers
+        .position()
+        .map_or(0, |position| position.byte() as usize);
+    // csv records the position before ignored blank lines, so advance only over
+    // newline bytes (spaces are real field contents).
+    let start = start
+        + text[start..]
+            .bytes()
+            .take_while(|b| matches!(b, b'\r' | b'\n'))
+            .count();
+    let end = reader.position().byte() as usize;
+    // A quoted header can span several source lines, and blank rows can precede it.
+    // Cite the header record rather than inventing line 1 for every column.
+    let start_line = text[..start].bytes().filter(|b| *b == b'\n').count() + 1;
+    let end_line = text[..end]
+        .trim_end_matches(['\r', '\n'])
+        .bytes()
+        .filter(|b| *b == b'\n')
+        .count()
+        + 1;
     for record in reader.records() {
         record?;
     }
@@ -436,9 +561,12 @@ fn delimited_facts(text: &str, tsv: bool) -> Result<Vec<Fact>> {
             name: name.into(),
             kind: "key".into(),
             syntax_kind: "column-header".into(),
-            start_line: 1,
-            end_line: 1,
-            location: DocumentLocation::Lines { start: 1, end: 1 },
+            start_line,
+            end_line,
+            location: DocumentLocation::Lines {
+                start: start_line,
+                end: end_line,
+            },
             document: None,
         })
         .collect())
@@ -483,43 +611,50 @@ fn xml_facts(text: &str) -> Result<Vec<Fact>> {
     Ok(facts)
 }
 
-fn line_facts(text: &str, language: &str) -> Vec<Fact> {
+fn line_facts(text: &str, language: &str) -> Result<Vec<Fact>> {
     let mut facts = Vec::new();
-    let mut offset = 0;
-    for line in text.split_inclusive('\n') {
+    for (ordinal, line) in text.split_inclusive('\n').enumerate() {
         let trimmed = line.trim();
-        let fact = if language == "dockerfile" && !trimmed.starts_with('#') && !trimmed.is_empty() {
-            Some((
+        let fact: Option<(String, &str)> =
+            if language == "dockerfile" && !trimmed.starts_with('#') && !trimmed.is_empty() {
+                Some((
+                    trimmed
+                        .split_whitespace()
+                        .next()
+                        .unwrap_or("")
+                        .to_uppercase(),
+                    "directive",
+                ))
+            } else if trimmed.starts_with('[') && trimmed.ends_with(']') {
+                Some((trimmed.into(), "section"))
+            } else if !trimmed.starts_with(['#', ';']) {
                 trimmed
-                    .split_whitespace()
-                    .next()
-                    .unwrap_or("")
-                    .to_uppercase(),
-                "directive",
-            ))
-        } else if trimmed.starts_with('[') && trimmed.ends_with(']') {
-            Some((trimmed.into(), "section"))
-        } else if !trimmed.starts_with(['#', ';']) {
-            trimmed
-                .split_once('=')
-                .or_else(|| trimmed.split_once(':'))
-                .map(|(k, _)| (k.trim().into(), "key"))
-        } else {
-            None
-        };
+                    .split_once('=')
+                    .or_else(|| trimmed.split_once(':'))
+                    .map(|(k, _)| (k.trim().into(), "key"))
+            } else {
+                None
+            };
         if let Some((name, kind)) = fact {
-            facts.push(line_fact(
-                text,
-                offset,
-                offset + line.len(),
+            ensure!(facts.len() < 10_000, "configuration exceeds 10000 facts");
+            ensure!(name.len() <= 1024, "configuration key exceeds 1024 bytes");
+            let line_number = ordinal + 1;
+            facts.push(Fact {
+                code: None,
                 name,
-                kind,
-                "line-directive",
-            ));
+                kind: kind.into(),
+                syntax_kind: "line-directive".into(),
+                start_line: line_number,
+                end_line: line_number,
+                location: DocumentLocation::Lines {
+                    start: line_number,
+                    end: line_number,
+                },
+                document: None,
+            });
         }
-        offset += line.len();
     }
-    facts
+    Ok(facts)
 }
 
 fn line_fact(
@@ -560,6 +695,41 @@ fn line_fact(
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn structured_header_locations_and_configuration_limits() -> Result<()> {
+        let facts = delimited_facts("\n\"first\ncolumn\",second\nvalue,other\n", false)?;
+        assert_eq!(facts[0].name, "first\ncolumn");
+        assert_eq!((facts[0].start_line, facts[0].end_line), (2, 3));
+        assert!(delimited_facts(&"x,".repeat(10_001), false).is_err());
+        assert!(line_facts(&"key=value\n".repeat(10_001), "ini").is_err());
+        let facts = line_facts("; comment\n\n[section]\nname=value\n", "ini")?;
+        assert_eq!(facts[1].start_line, 4);
+        let docker = extract("dockerfile", b"FROM scratch\n")?;
+        assert_eq!(docker.language, "dockerfile");
+        assert_eq!(docker.facts[0].kind, "directive");
+        Ok(())
+    }
+
+    #[test]
+    fn empty_docx_paragraphs_preserve_original_block_ordinals() -> Result<()> {
+        let bytes = archive(&[(
+            "word/document.xml",
+            "<w:document xmlns:w=\"urn:fixture\"><w:body><w:p/><w:p><w:pPr><w:pStyle w:val=\"Heading1\"/></w:pPr><w:r><w:t>Overview</w:t></w:r></w:p></w:body></w:document>",
+        )])?;
+        let doc = extract("fixture.docx", &bytes)?;
+        assert_eq!(
+            doc.chunks[0].location,
+            DocumentLocation::Block { number: 2 }
+        );
+        assert!(doc.facts.iter().any(|f| {
+            f.name == "Overview"
+                && f.document
+                    .as_ref()
+                    .is_some_and(|d| d.heading_path == ["Overview"])
+        }));
+        Ok(())
+    }
 
     fn archive(parts: &[(&str, &str)]) -> Result<Vec<u8>> {
         let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
@@ -613,6 +783,51 @@ mod tests {
                 .iter()
                 .any(|fact| fact.syntax_kind == "docx-styled-heading")
         );
+        Ok(())
+    }
+
+    #[test]
+    fn docx_tables_preserve_headers_empty_cells_and_merge_evidence() -> Result<()> {
+        let bytes = archive(&[(
+            "word/document.xml",
+            r#"<w:document xmlns:w="word"><w:body><w:tbl><w:tr><w:trPr><w:tblHeader/></w:trPr><w:tc><w:p><w:r><w:t>Identifier</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Owner</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:gridSpan w:val="2"/></w:tcPr><w:p><w:r><w:t>Requirement</w:t></w:r></w:p></w:tc></w:tr><w:tr/><w:tr><w:tc><w:tcPr><w:vMerge w:val="restart"/></w:tcPr><w:p><w:r><w:t>REQ-2</w:t></w:r></w:p></w:tc><w:tc/><w:tc><w:p><w:r><w:t>The API must respond in at most 200 ms.</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr><w:vMerge/></w:tcPr><w:p/></w:tc><w:tc/><w:tc><w:p><w:r><w:t>Follow up</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>"#,
+        )])?;
+        let result = extract("requirements.docx", &bytes)?;
+        let fact = result
+            .facts
+            .iter()
+            .find(|f| {
+                f.kind == "requirement"
+                    && f.location == DocumentLocation::TableRow { table: 1, row: 3 }
+            })
+            .expect("table requirement");
+        let details = fact.document.as_ref().unwrap();
+        assert_eq!(details.requirement_id.as_deref(), Some("REQ-2"));
+        assert_eq!(details.quantities[0].value, "200");
+        let table = details.table.as_ref().unwrap();
+        assert_eq!(table.header_basis, "explicit-header-row");
+        assert_eq!(table.cells[1].column, 2);
+        assert!(table.cells[1].value.is_empty());
+        assert_eq!(table.cells[2].header.as_deref(), Some("Requirement"));
+        assert_eq!(table.cells[0].vertical_merge.as_deref(), Some("restart"));
+        let continuation = result
+            .facts
+            .iter()
+            .find(|f| {
+                f.kind == "table_row"
+                    && f.location == DocumentLocation::TableRow { table: 1, row: 4 }
+            })
+            .unwrap();
+        let cell = &continuation
+            .document
+            .as_ref()
+            .unwrap()
+            .table
+            .as_ref()
+            .unwrap()
+            .cells[0];
+        assert!(cell.value.is_empty());
+        assert_eq!(cell.vertical_merge.as_deref(), Some("continue"));
         Ok(())
     }
 

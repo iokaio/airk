@@ -39,6 +39,9 @@ try {
     $env:AIRK_TEST_BINARY = Join-Path $airkRoot "target/$airkTarget/release/airk.exe"
     if (-not $SkipChecks) {
         Invoke-AirkTool $airkPython @('scripts/benchmark-code.py', '--binary', $env:AIRK_TEST_BINARY, '--files', '64', '--output', (Join-Path $airkOutput 'code-benchmark.json'))
+        Invoke-AirkTool $airkPython @('scripts/check-document-tables.py', '--binary', $env:AIRK_TEST_BINARY)
+        Invoke-AirkTool $airkPython @('scripts/check-storage-lifecycle.py', '--binary', $env:AIRK_TEST_BINARY)
+        Invoke-AirkTool $airkPython @('scripts/check-usage-inputs.py', '--binary', $env:AIRK_TEST_BINARY)
     }
     if ($SkipChecks) { Invoke-AirkTool npm.cmd @('run', 'compile', '--prefix', 'packages/vscode') }
     else { Invoke-AirkTool npm.cmd @('test', '--prefix', 'packages/vscode') }

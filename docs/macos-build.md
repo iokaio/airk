@@ -106,7 +106,7 @@ For macOS delivery:
 4. For signed distribution, use the maintainer's Developer ID identity and Apple notarization workflow. This is separate from building locally from source; no signing credentials or publication are part of the scaffold. See [Apple's Developer ID guidance](https://developer.apple.com/help/account/certificates/create-developer-id-certificates/).
 5. Review the generated Mac VSIX and verify clean installation on its intended architecture. CI bundles the matching helper in each platform package; local packaging needs Node/npm for the pinned extension build tools. See [extension deployment](extension-deployment.md).
 
-The selected final DiskANN disk provider and local embedding runtime are still unimplemented. Their SDK, disk-I/O, memory-mapping and CPU requirements must be qualified on both Mac architectures before semantic-index support is advertised. The current lexical/native-fact tests cannot establish that future compatibility.
+DiskANN now uses AIRK's portable disk provider; local embeddings use explicitly provisioned static word vectors. Their disk-I/O, locking, memory-mapping, CPU and model behavior must still be qualified on both Mac architectures. Windows tests do not establish that compatibility. Transformer/ONNX inference and representative semantic quality remain separate follow-ups; see [local models](local-models.md) and the [release checklist](release-checklist-0.1.0.md).
 
 ## Troubleshooting
 

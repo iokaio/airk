@@ -1,6 +1,6 @@
 # Code facts, relationships and SQLite
 
-AIRK now uses bundled embedded SQLite for collection revisions, exact facts and relationships. Runtime installation still requires only the native helper. SQLite complements the selected future disk-backed DiskANN vector tier and persistent Tantivy lexical tier; the current lexical map remains in memory.
+AIRK uses bundled embedded SQLite for collection revisions, exact facts and relationships. Runtime installation still requires only the native helper. SQLite complements persistent Tantivy lexical retrieval and DiskANN vector retrieval through AIRK's portable disk provider. Vector/hybrid search additionally requires deliberately provisioned local model assets; see [local models](local-models.md).
 
 ## Native evidence
 
@@ -50,11 +50,11 @@ Import transactionally publishes a new generation with source inventory, native/
 
 ## Storage and migration
 
-Each collection owns `index.sqlite3` (SQLite schema 1): revision metadata, retained snapshot payload, normalized facts and indexed relationships. Legacy `snapshot.json` is read only when no SQLite exists. A successful indexing/import write migrates state; the legacy JSON remains for manual recovery and is not an active second index. Corrupt/unsupported SQLite fails closed.
+Each collection owns `index.sqlite3` with the active revision/component pointer. New generations contain compact digest-bound inventories and immutable `catalog.sqlite3` exact facts/relationships; source text and extractions live in content-addressed objects. Queries pin the published generation and read individual artifacts. Legacy whole-snapshot SQLite and `snapshot.json` remain readable and migrate on successful publication. Corrupt/unsupported state fails closed.
 
 WAL transactions publish all rows and revision metadata together, with full synchronous commits and a two-second busy timeout. Existing reader transactions keep their revision during publication; later requests see the new one. The collection writer lock serializes mutations. Read tools open SQLite read-only, perform no migrations and take no writer lock; SQLite may maintain derived WAL/shared-memory sidecars. Use local storage. Network-filesystem and power-loss/process-kill qualification remain open.
 
-Retained snapshot payloads retain a 512 MiB cap. The SQLite main database has a 1 GiB page cap; WAL and legacy recovery files add usage, and long-lived readers can retain WAL space. Usage inspection includes these files. Freed pages are reused but physical files do not automatically shrink. Disconnect readers and choose fresh/rebuilt collection state for physical reclamation. Hard quotas, automatic eviction and final vector-generation pruning remain planned.
+Legacy retained payloads retain a 512 MiB cap. New private catalogs use a reserved page cap; the small active pointer publishes after immutable components are ready. Application [logical-byte quotas](storage-quotas.md) cover participating writers, including temporary components, model copies, database growth and retained generations. They do not cap physical allocation overhead or independent external writes. Pruning protects generation leases and removes blobs only when no retained generation references them. Nothing is automatically evicted; see [collections](collections.md).
 
 ## Measurement
 

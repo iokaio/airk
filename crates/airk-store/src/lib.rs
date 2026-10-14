@@ -2,18 +2,47 @@
 //! Derived state only. Source workspaces remain authoritative.
 use airk_core::{SCHEMA_VERSION, Snapshot, SnapshotStore};
 use anyhow::{Context, Result, ensure};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File, OpenOptions},
-    io::{BufReader, Write},
+    io::{BufReader, Read, Write},
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{Arc, Mutex},
 };
+pub mod blobs;
+pub mod quota;
+pub mod relocation;
+pub mod retention;
+pub mod roots;
+pub mod scheduler;
 mod sqlite;
+pub mod usage;
 
 #[derive(Clone, Debug)]
 pub struct FileStore {
     directory: PathBuf,
+}
+
+/// Small metadata pin for disk retrieval, committed with the corresponding revision.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PersistentRevision {
+    #[serde(default)]
+    pub storage_format: u32,
+    #[serde(default)]
+    pub roots: std::collections::BTreeMap<String, String>,
+    #[serde(default)]
+    pub inventory_sha256: Option<String>,
+    pub revision: String,
+    pub root: String,
+    pub collection: String,
+    pub generation: u64,
+    pub files: usize,
+    pub chunks: usize,
+    pub source_bytes: usize,
+    pub extractor_version: String,
+    pub semantic_producer: Option<String>,
+    pub imported_facts: usize,
+    pub imported_relationships: usize,
 }
 
 impl FileStore {
@@ -25,27 +54,149 @@ impl FileStore {
     pub fn directory(&self) -> &Path {
         &self.directory
     }
-    /// One writer; a crash leaves a lock requiring deliberate operator recovery.
+    pub(crate) fn lifecycle(&self, create: bool) -> Result<Option<Arc<File>>> {
+        let Some(collections) = self
+            .directory
+            .parent()
+            .filter(|path| path.file_name().is_some_and(|name| name == "collections"))
+        else {
+            return Ok(None);
+        };
+        let root = collections
+            .parent()
+            .context("collection has no data root")?;
+        quota::ensure_current_root(root)?;
+        if !root.exists() {
+            if !create {
+                return Ok(None);
+            }
+            fs::create_dir_all(root)?;
+        }
+        let lease = quota::lifecycle_lease(root, false)?;
+        quota::ensure_current_root(root)?;
+        Ok(Some(Arc::new(lease)))
+    }
+    pub fn persistent_revision(&self) -> Result<Option<PersistentRevision>> {
+        let _lifecycle = self.lifecycle(false)?;
+        if !self.directory.join("index.sqlite3").exists() {
+            return Ok(None);
+        }
+        sqlite::persistent_revision(&self.directory)
+    }
+    pub fn save_with_components(&self, snapshot: &Snapshot, revision: &str) -> Result<()> {
+        ensure!(
+            revision.len() == 64 && revision.bytes().all(|c| c.is_ascii_hexdigit()),
+            "invalid persistent revision identity"
+        );
+        sqlite::save(&self.directory, snapshot, Some(revision))
+    }
+    pub fn prepare_catalog(
+        &self,
+        directory: &Path,
+        snapshot: &Snapshot,
+        revision: &str,
+        source: &dyn airk_core::ArtifactSource,
+        reservation: Option<&quota::Reservation>,
+        maximum: u64,
+    ) -> Result<()> {
+        sqlite::save_catalog(directory, snapshot, revision, source, reservation, maximum)
+    }
+    pub fn publish_catalog(
+        &self,
+        snapshot: &Snapshot,
+        revision: &str,
+        reservation: Option<&quota::Reservation>,
+    ) -> Result<()> {
+        sqlite::publish_catalog(&self.directory, snapshot, revision, reservation)
+    }
+    /// OS-backed exclusivity releases after process death. Legacy lock markers
+    /// still fail closed until an operator establishes that their writer exited.
     pub fn lock(&self) -> Result<WriterLock> {
-        fs::create_dir_all(&self.directory)?;
-        let path = self.directory.join("writer.lock");
-        let mut file = OpenOptions::new()
+        let lifecycle = self.lifecycle(true)?;
+        let parent = self
+            .directory
+            .parent()
+            .context("index directory has no parent")?;
+        let name = self
+            .directory
+            .file_name()
+            .context("index directory has no name")?;
+        fs::create_dir_all(parent)?;
+        ensure!(
+            !fs::symlink_metadata(parent)?.file_type().is_symlink(),
+            "refusing linked collection parent"
+        );
+        let locks = parent.join(".writer-locks");
+        fs::create_dir_all(&locks)?;
+        ensure!(
+            !fs::symlink_metadata(&locks)?.file_type().is_symlink(),
+            "refusing linked writer lock directory"
+        );
+        if locks.join(name).exists() {
+            ensure!(
+                !fs::symlink_metadata(locks.join(name))?
+                    .file_type()
+                    .is_symlink(),
+                "refusing linked writer lock"
+            );
+        }
+        let advisory = OpenOptions::new()
+            .read(true)
             .write(true)
-            .create_new(true)
-            .open(&path)
-            .context("index writer locked; see docs/operations.md for recovery")?;
+            .create(true)
+            .truncate(false)
+            .open(locks.join(name))?;
+        advisory.try_lock().context("index writer locked")?;
+        fs::create_dir_all(&self.directory)?;
+        ensure!(
+            !fs::symlink_metadata(&self.directory)?
+                .file_type()
+                .is_symlink(),
+            "refusing linked collection directory"
+        );
+        // tempfile persistence uses native Win32 paths; give both operands the
+        // canonical extended prefix even for direct FileStore callers.
+        let directory = self.directory.canonicalize()?;
+        let path = directory.join("writer.lock");
+        if path.exists() {
+            ensure!(
+                !fs::symlink_metadata(&path)?.file_type().is_symlink(),
+                "refusing linked writer marker"
+            );
+            let mut marker = String::new();
+            File::open(&path)?.take(128).read_to_string(&mut marker)?;
+            ensure!(
+                marker.starts_with("airk-advisory-v1\n"),
+                "legacy index writer locked; see docs/operations.md for recovery"
+            );
+            fs::remove_file(&path)?;
+        }
+        let mut file = tempfile::NamedTempFile::new_in(&directory)?;
+        writeln!(file, "airk-advisory-v1\npid={}", std::process::id())?;
+        file.as_file().sync_all()?;
+        // Older binaries only use create_new markers; never replace one that
+        // appeared after our check while preparing the new marker.
+        file.persist_noclobber(&path)
+            .context("write collection writer marker; another writer may be active")?;
         let guard = WriterLock {
             path,
-            _file: file.try_clone()?,
+            _file: advisory,
+            _lifecycle: lifecycle,
         };
-        writeln!(file, "pid={}", std::process::id())?;
         Ok(guard)
     }
 }
 
 impl SnapshotStore for FileStore {
     fn load(&self) -> Result<Option<Snapshot>> {
+        let _lifecycle = self.lifecycle(false)?;
         if self.directory.join("index.sqlite3").exists() {
+            if self
+                .persistent_revision()?
+                .is_some_and(|h| h.storage_format == 1)
+            {
+                return self.catalog()?.map(|c| c.materialize()).transpose();
+            }
             return sqlite::load(&self.directory);
         }
         let path = self.directory.join("snapshot.json");
@@ -68,13 +219,15 @@ impl SnapshotStore for FileStore {
     }
 
     fn save(&self, snapshot: &Snapshot) -> Result<()> {
-        sqlite::save(&self.directory, snapshot)
+        let _lifecycle = self.lifecycle(true)?;
+        sqlite::save(&self.directory, snapshot, None)
     }
 }
 
 pub struct WriterLock {
     path: PathBuf,
     _file: File,
+    _lifecycle: Option<Arc<File>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -120,12 +273,20 @@ pub fn list_collections(data_root: &Path) -> Result<Vec<CollectionUsage>> {
             continue;
         }
         let (disk_bytes, files) = directory_usage(&entry.path())?;
-        let snapshot = FileStore::new(entry.path()).load();
-        let (generation, indexed_files, status) = match snapshot {
-            Ok(Some(s)) if s.collection == id => {
-                (Some(s.generation), Some(s.artifacts.len()), "indexed")
+        let store = FileStore::new(entry.path());
+        let (generation, indexed_files, status) = match store.persistent_revision() {
+            Ok(Some(header)) if header.collection == id => {
+                (Some(header.generation), Some(header.files), "indexed")
             }
-            Ok(None) => (None, None, "no-snapshot"),
+            Ok(None) => match store.load() {
+                Ok(Some(snapshot)) if snapshot.collection == id => (
+                    Some(snapshot.generation),
+                    Some(snapshot.artifacts.len()),
+                    "indexed",
+                ),
+                Ok(None) => (None, None, "no-snapshot"),
+                _ => (None, None, "invalid-snapshot"),
+            },
             _ => (None, None, "invalid-snapshot"),
         };
         result.push(CollectionUsage {
@@ -168,6 +329,10 @@ fn directory_usage(root: &Path) -> Result<(u64, usize)> {
 
 pub fn remove_collection(data_root: &Path, id: &str) -> Result<CollectionUsage> {
     validate_collection(id)?;
+    let scheduler = scheduler::Queue::new(data_root);
+    let worker = scheduler
+        .worker_lock()?
+        .context("scheduler worker active; wait before removing collections")?;
     let base = data_root
         .join("collections")
         .canonicalize()
@@ -184,18 +349,37 @@ pub fn remove_collection(data_root: &Path, id: &str) -> Result<CollectionUsage> 
     );
     let store = FileStore::new(&resolved);
     let lock = store.lock()?;
-    let snapshot = store
-        .load()?
-        .context("no managed snapshot; refusing collection deletion")?;
+    let usage_deletion = usage::deletion_guard(&resolved)?;
+    let _generation_leases = retention::exclusive_collection_leases(&resolved)?;
+    let (stored_collection, stored_root, generation, indexed_files) =
+        if let Some(header) = store.persistent_revision()? {
+            (
+                header.collection,
+                header.root,
+                header.generation,
+                header.files,
+            )
+        } else {
+            let snapshot = store
+                .load()?
+                .context("no managed snapshot; refusing collection deletion")?;
+            (
+                snapshot.collection,
+                snapshot.root,
+                snapshot.generation,
+                snapshot.artifacts.len(),
+            )
+        };
     ensure!(
-        snapshot.collection == id,
+        stored_collection == id,
         "collection identity mismatch; refusing deletion"
     );
     let (disk_bytes, files) = directory_usage(&resolved)?;
+    scheduler.forget_locked(&worker, id, &stored_root)?;
     // The lock remains held while snapshot and derived artifacts are removed.
     for entry in fs::read_dir(&resolved)? {
         let entry = entry?;
-        if entry.file_name() == "writer.lock" {
+        if entry.file_name() == "writer.lock" || entry.file_name() == "usage.lock" {
             continue;
         }
         let target = entry.path().canonicalize()?;
@@ -209,14 +393,19 @@ pub fn remove_collection(data_root: &Path, id: &str) -> Result<CollectionUsage> 
             fs::remove_file(&target)?;
         }
     }
-    drop(lock);
+    drop(usage_deletion);
+    if resolved.join("usage.lock").exists() {
+        fs::remove_file(resolved.join("usage.lock"))?;
+    }
+    fs::remove_file(&lock.path)?;
     fs::remove_dir(&resolved)?;
+    drop(lock);
     Ok(CollectionUsage {
         collection: id.into(),
         disk_bytes,
         files,
-        generation: Some(snapshot.generation),
-        indexed_files: Some(snapshot.artifacts.len()),
+        generation: Some(generation),
+        indexed_files: Some(indexed_files),
         status: "removed-derived-index".into(),
     })
 }

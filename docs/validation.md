@@ -1,6 +1,37 @@
-# Scaffold validation record
+# Validation record
 
-Local observations on 13 October 2026; no hosted CI run, signed/public release, production deployment or complete installed-editor lifecycle qualification is claimed. The local packaged-extension smoke below is narrower. Changes remain uncommitted.
+Local observations on 13–14 October 2026. No hosted CI run, signed/public release, production deployment or complete installed-editor lifecycle qualification is claimed. Current code changes are uncommitted. Historical receipts below validate their own earlier implementation and must not be treated as packages of the current changes.
+
+## Current review checks
+
+| Check | Observed result |
+|---|---|
+| Windows workspace, Rust 1.98.0 | 133 tests passed; full formatting check and all-target Clippy with warnings denied passed |
+| Linux amd64 Docker test stage, Rust 1.98.0 | 136 tests passed, including Unix-specific source/link and quota boundary checks. Test image `airk:review-test`, digest `sha256:989a718203fdd5ac1ca2dedaa516c276e558828046dcd55b4c0320e105983504` |
+| Extraction | 39 native ingestion tests passed, including explicit DOCX headers/table context, XLSX root/relationship validation, duplicate values, empty/missing formula caches, merge continuations and bounded expansion. Extractor identity is `native-facts/7` |
+| Streaming storage and maintenance | Full suites include compact inventories, content-addressed objects, lazy/bounded reads, migration, inventory/object tampering, alias rebinding, quota rollback, SQLite WAL checkpoint allowance, pinned-reader garbage collection, relocation interruption/recovery and source preservation |
+| Windows long managed paths | Regressions cover direct store publication/locking beyond 300 characters and existing/absent long data directories without read-only creation. Public CLI lifecycle smoke passed with a 264-character data directory and 267-character relocation destination: index/reopen/facts, aliases, coverage, usage, quotas, scheduling, pruning and relocation/recovery; source hashes unchanged |
+| Scheduling and coverage | Full suites include durable revisions, process-exit lock recovery, fair scheduling, editor-absent reconciliation, legacy read-only status at full quota, root retirement, coverage freshness/capacity and pending source configuration |
+| Usage | Full suites include scoped recording, replay/clear/recreation, retained supplemental measurements, exact supplied byte-BPE counts, signed price scenarios, quota failure and disabled recording |
+| Public CLI checks on Windows and Linux | `check-document-tables.py`, `check-storage-lifecycle.py` and `check-usage-inputs.py` passed against the rebuilt helpers. Linux runs used isolated containers with networking disabled |
+| Extension TypeScript and native-helper suite | 21 passed, zero skipped, with `AIRK_TEST_BINARY` set to the rebuilt Windows release helper. Includes coverage/index writer coordination, surfaced command failures and retry, scheduler, trust/multi-root selection, real fourteen-tool MCP, usage, isolation and helper caching |
+| Packaging/workflow contracts | All 10 Python tests passed; actionlint passed. Package identity, complete platform sets, tampering, executable permissions, archive paths, DCO and SBOM graph contracts are covered |
+| Current Windows native/VSIX candidate | Explicit-target release build, allowlisted native ZIP and complete VSIX payload verification passed. The package includes a notice inventory for 334 dependencies and both original PNG illustrations. Isolated installed-editor smoke passed, including concurrent initial coverage/indexing, full reindex, fourteen-tool MCP and storage selection |
+| Final runtime container | Build passed: `airk:review`, digest `sha256:17475d53d4104f3c21f24dfdd91c1c98fae0b6a379833799607f96b96bbb6c05`. One-container smoke passed for two collections, actual stdio MCP, offline/read-only runtime, persistent restart, notices, usage and source-safe removal |
+| Original Linux code benchmark | 4,096 small TS files: initial index 20.61 s; unchanged pass 0.269 s; fresh-process exact queries 14.3–15.4 ms; changed/deleted passes 1.59/1.60 s. Peak child RSS 54.4 MiB and aggregate child CPU 6.81 s; retained logical state 121.5 MiB. Correctness/reuse/invalidation passed |
+| Original Windows code benchmark | 64 small TS files: initial index 0.961 s; unchanged pass 0.136 s; fresh-process exact queries 59–61 ms. Correctness/reuse/invalidation passed; CPU/RSS unavailable from this Python harness |
+
+The current integration logs are under ignored `artifacts/review-20261014-243ffc32/`: `windows-final-clippy.log`, `windows-final-tests.log`, `windows-final-extension.log`, `linux-final-tests.log` and `linux-final-runtime.log`. These are local evidence, not public artifacts or a clean-commit attestation. Native fixture counts include crash-test helper cases; they are not counts of qualified production repositories.
+
+The benchmark reports are `linux-code-benchmark-4096.json` and `windows-code-benchmark-64.json` in that directory. They use generated original syntax fixtures and the final release helpers, without a provisioned vector model. The Linux run used Docker Desktop/WSL2 with networking disabled. Timings include process startup; repeat queries reuse the OS page cache. Retained disk totals include multiple generations, and RSS is the maximum child high-water mark, not an attribution of individual index components. These measurements do not qualify production-corpus scale, ANN relevance, physical I/O or agent savings. The final Linux store suite also passed 50 consecutive parallel repetitions after the relocation contention fix.
+
+The long-path CLI receipt is `artifacts/long-path-review-1ffe86a6b62e4617bd6d076d409f1457/long-path-smoke.json`. It uses public fictional sources and records observed local Windows behavior, not network-filesystem qualification.
+
+The current Windows package receipt is `artifacts/local/20261014-015813-600228b5/result.json`. It records `checksSkipped=true` because the full native/extension/Python checks above ran separately, and `editorTests=true` for the packaged editor run. The corresponding ZIP and `airk-0.1.0-win32-x64.vsix` are local uncommitted review candidates, not published releases. `windows-final-package.log` records the build and editor outcome. Earlier package attempts are superseded: they exposed the coverage/index writer race and Windows long-path publication failure documented in [the review](review-0.1.0.md), both fixed before this candidate.
+
+Three further clean-profile installations of that exact VSIX passed the same editor smoke, including concurrent coverage/indexing and managed object paths beyond the legacy Windows limit. Their isolated `install.log` and `editor.log` files are under `artifacts/local/editor-repeat-b7634c87b4c048a58e7ee39b5b46227c/`, `artifacts/local/editor-repeat-5f71813661a048a5ae04d7583808a60a/` and `artifacts/local/editor-repeat-4d407a44918948a9aa9a852c11c8d97d/`. These four successful editor runs cover the public fixture flow; they do not replace the upgrade/remote/client/platform matrix.
+
+## Historical scaffold receipts
 
 | Check | Observed result |
 |---|---|
@@ -25,6 +56,6 @@ Local observations on 13 October 2026; no hosted CI run, signed/public release, 
 
 Use [CONTRIBUTING.md](../CONTRIBUTING.md) to reproduce checks. The public tiny fixtures are original and contain no user documents or local temp/ material.
 
-The final checked local run is `artifacts/local/20261013-223003-9a7759ef`, with a Windows ZIP, `airk-0.1.0-win32-x64.vsix`, checksums, `code-benchmark.json` and `result.json`. These ignored local artifacts are review candidates, not published releases. The SCIP producer wrapper passed PowerShell syntax parsing; format/import behavior is exercised with original Rust-generated SCIP fixtures, not a qualified production indexer installation.
+The earlier recorded local run is `artifacts/local/20261013-223003-9a7759ef`, with a Windows ZIP, `airk-0.1.0-win32-x64.vsix`, checksums, `code-benchmark.json` and `result.json`. These ignored artifacts are historical review candidates, not current packages or published releases. The SCIP producer wrapper passed PowerShell syntax parsing in that earlier run; format/import behavior uses original Rust-generated SCIP fixtures, not a qualified production indexer installation.
 
-These checks establish the initial behavior, not release readiness, comprehensive language correctness, disk-backed DiskANN operation, semantic quality, machine-wide index scheduling/retention, crash/power-loss durability, large-repository performance or token savings. Those outcomes retain explicit acceptance criteria in [the roadmap](roadmap.md).
+Current tests establish bounded implementation behavior, including disk-backed DiskANN integration, local scheduling and reader-aware retention. They do not establish release readiness, comprehensive language correctness, production model relevance, physical disk/RSS behavior, a complete crash/power-loss campaign, large-repository performance or provider savings. [The roadmap](roadmap.md) and [0.1.0 release checklist](release-checklist-0.1.0.md) retain those acceptance requirements.

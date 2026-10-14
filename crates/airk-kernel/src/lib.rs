@@ -1,14 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 //! A single workspace boundary and one application service for CLI and MCP.
 use airk_core::{
-    Citation, DocumentLocation, FactHit, FactsResponse, Hit, SearchQuery, SearchResponse, Snapshot,
-    SnapshotStore, validate_budget,
+    Artifact, ArtifactSource, Citation, DocumentLocation, FactHit, FactsResponse, Hit, SearchQuery,
+    SearchResponse, Snapshot, validate_budget,
 };
 pub use airk_core::{FactQuery, RelationshipQuery};
 use airk_ingest::IndexReport;
 
+pub mod coverage;
+pub mod roots;
+pub mod scheduler;
+pub mod storage;
 pub mod usage;
-use airk_retrieval::{LexicalIndex, truncate_utf8};
+use airk_retrieval::{
+    LexicalIndex,
+    persistent::{self, PersistentIndex},
+    truncate_utf8,
+};
 use airk_store::{CollectionUsage, FileStore};
 use anyhow::{Context, Result, ensure};
 use serde::Serialize;
@@ -27,14 +35,52 @@ pub struct Kernel {
 }
 
 struct CachedIndex {
-    generation: u64,
-    extractor_version: String,
-    inventory: Vec<(String, String)>,
-    index: LexicalIndex,
+    revision: String,
+    index: CachedBackend,
+}
+
+#[cfg(windows)]
+fn managed_data_path(path: PathBuf) -> Result<PathBuf> {
+    // Resolve the nearest existing directory without creating managed state on
+    // read-only open. Canonical Windows paths carry the extended prefix needed
+    // by native dependencies when later component filenames cross MAX_PATH.
+    let mut existing = std::path::absolute(path)?;
+    let mut missing = Vec::new();
+    loop {
+        match std::fs::metadata(&existing) {
+            Ok(metadata) => {
+                ensure!(
+                    metadata.is_dir(),
+                    "data directory ancestor is not a directory"
+                );
+                let mut resolved = existing.canonicalize()?;
+                for component in missing.into_iter().rev() {
+                    resolved.push(component);
+                }
+                return Ok(resolved);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                missing.push(
+                    existing
+                        .file_name()
+                        .context("data directory has no existing ancestor")?
+                        .to_os_string(),
+                );
+                ensure!(existing.pop(), "data directory has no existing ancestor");
+            }
+            Err(error) => return Err(error).context("resolve managed data directory"),
+        }
+    }
+}
+
+enum CachedBackend {
+    Persistent(PersistentIndex),
+    Legacy(LexicalIndex),
 }
 
 #[derive(Serialize)]
 pub struct Status {
+    pub source_roots: std::collections::BTreeMap<String, String>,
     pub generation: u64,
     pub collection: String,
     pub files: usize,
@@ -42,6 +88,10 @@ pub struct Status {
     pub source_bytes: usize,
     pub extractor_version: String,
     pub exact_fact_backend: &'static str,
+    pub lexical_backend: &'static str,
+    pub vector_backend: &'static str,
+    pub local_model_ready: bool,
+    pub indexed_vectors: usize,
     pub semantic_producer: Option<String>,
     pub imported_facts: usize,
     pub imported_relationships: usize,
@@ -57,6 +107,7 @@ pub struct FileList {
 
 #[derive(Serialize)]
 pub struct FileInfo {
+    pub source: airk_store::roots::SourceLocation,
     pub generation: u64,
     pub collection: String,
     pub path: String,
@@ -92,8 +143,15 @@ impl Kernel {
             .as_ref()
             .canonicalize()
             .context("resolve workspace root")?;
+        ensure!(
+            root.to_str().is_some(),
+            "non-UTF-8 workspace root is unsupported; collection identities must be lossless"
+        );
         ensure!(root.is_dir(), "workspace root must be a directory");
         let directory = data_dir.unwrap_or_else(|| root.join(".airk"));
+        #[cfg(windows)]
+        let directory = managed_data_path(directory)?;
+        airk_store::relocation::check_root(&directory)?;
         ensure!(
             directory != root,
             "data directory must not be the workspace root"
@@ -130,16 +188,34 @@ impl Kernel {
         airk_store::list_collections(&self.data_root)
     }
     pub fn remove_collection(&self, id: &str) -> Result<CollectionUsage> {
+        if id == self.collection {
+            *self
+                .cache
+                .lock()
+                .map_err(|_| anyhow::anyhow!("index cache poisoned"))? = None;
+        }
         airk_store::remove_collection(&self.data_root, id)
+    }
+    pub fn prune_indexes(&self, dry_run: bool) -> Result<airk_store::retention::PruneReport> {
+        let _lock = self.store.lock()?;
+        let snapshot = self.load()?;
+        ensure!(
+            snapshot.persistent_indexes,
+            "reindex before pruning legacy state"
+        );
+        let active = persistent::revision_id(&snapshot)?;
+        airk_store::retention::prune(self.store.directory(), &active, dry_run)
     }
     fn empty_snapshot(&self) -> Snapshot {
         let mut snapshot = Snapshot::empty(self.root_id());
         snapshot.collection = self.collection.clone();
+        snapshot.persistent_indexes = true;
+        snapshot.storage_format = 1;
         snapshot
     }
 
     fn load_optional(&self) -> Result<Option<Snapshot>> {
-        let snapshot = self.store.load()?;
+        let snapshot = self.store.catalog()?.map(|catalog| catalog.snapshot);
         if let Some(snapshot) = &snapshot {
             ensure!(
                 snapshot.root == self.root_id(),
@@ -158,6 +234,19 @@ impl Kernel {
             .context("workspace is not indexed; run airk index first")
     }
 
+    fn catalog(&self) -> Result<airk_store::blobs::Catalog> {
+        let catalog = self
+            .store
+            .catalog()?
+            .context("workspace is not indexed; run airk index first")?;
+        ensure!(
+            catalog.snapshot.root == self.root_id()
+                && catalog.snapshot.collection == self.collection,
+            "index belongs to another root or collection"
+        );
+        Ok(catalog)
+    }
+
     pub fn initialize(&self) -> Result<Status> {
         let _lock = self.store.lock()?;
         ensure!(
@@ -165,7 +254,10 @@ impl Kernel {
             "data directory must not contain the workspace root"
         );
         if self.load_optional()?.is_none() {
-            self.store.save(&self.empty_snapshot())?;
+            let mut snapshot = self.empty_snapshot();
+            snapshot.embedding_model = self.configured_model()?;
+            let reservation = self.publication_reservation()?;
+            self.publish(&snapshot, &reservation)?;
         }
         self.status()
     }
@@ -191,12 +283,47 @@ impl Kernel {
         if full {
             previous.extractor_version.clear();
         }
-        let (snapshot, report) = airk_ingest::scan(&self.root, &self.data_root, &previous)?;
+        let desired_model = self.configured_model()?;
+        let roots = self.configured_roots()?;
+        let reservation = self.publication_reservation()?;
+        let scan_started = std::time::Instant::now();
+        let (mut snapshot, mut report) = airk_ingest::scan_streaming(
+            &self.root,
+            &self.data_root,
+            &previous,
+            &roots,
+            |artifact, bytes| {
+                self.store
+                    .retain_artifact_with_budget(artifact, Some(bytes), Some(&reservation))
+            },
+        )?;
+        report.scan_extract_us =
+            u64::try_from(scan_started.elapsed().as_micros()).unwrap_or(u64::MAX);
+        snapshot.persistent_indexes = true;
+        snapshot.storage_format = 1;
+        snapshot.embedding_model = desired_model;
+        if (snapshot.embedding_model != previous.embedding_model || previous.storage_format != 1)
+            && snapshot.generation == previous.generation
+        {
+            snapshot.generation = snapshot
+                .generation
+                .checked_add(1)
+                .context("generation overflow")?;
+            report.generation = snapshot.generation;
+        }
+        let publish_started = std::time::Instant::now();
         if snapshot.generation != previous.generation
             || !self.store.directory().join("index.sqlite3").exists()
+            || self.store.persistent_revision()?.is_none()
+            || !persistent::component_directory(self.store.directory(), &snapshot)?.exists()
         {
-            self.store.save(&snapshot)?;
+            self.publish(&snapshot, &reservation)?;
+        } else {
+            // Reuse must not report success for a corrupt retained component.
+            PersistentIndex::open(self.store.directory(), &snapshot)?;
         }
+        report.publish_us =
+            u64::try_from(publish_started.elapsed().as_micros()).unwrap_or(u64::MAX);
         *self
             .cache
             .lock()
@@ -205,12 +332,48 @@ impl Kernel {
     }
 
     pub fn status(&self) -> Result<Status> {
+        if let Some(revision) = self.persistent_revision()? {
+            let (revision, index) = self.pin_revision(revision)?;
+            return Ok(Status {
+                source_roots: revision
+                    .roots
+                    .clone()
+                    .into_iter()
+                    .chain([(String::new(), revision.root.clone())])
+                    .collect(),
+                generation: revision.generation,
+                collection: revision.collection,
+                files: revision.files,
+                chunks: revision.chunks,
+                source_bytes: revision.source_bytes,
+                extractor_version: revision.extractor_version,
+                exact_fact_backend: "sqlite",
+                lexical_backend: "tantivy",
+                vector_backend: "microsoft-diskann-0.59.0/airk-file-provider-1",
+                local_model_ready: index.model_sha256.is_some(),
+                indexed_vectors: index.vectors,
+                semantic_producer: revision.semantic_producer,
+                imported_facts: revision.imported_facts,
+                imported_relationships: revision.imported_relationships,
+            });
+        }
         let snapshot = self.load()?;
+        let persistent = if snapshot.persistent_indexes {
+            Some(PersistentIndex::open(self.store.directory(), &snapshot)?)
+        } else {
+            None
+        };
         Ok(Status {
+            source_roots: snapshot
+                .roots
+                .clone()
+                .into_iter()
+                .chain([(String::new(), snapshot.root.clone())])
+                .collect(),
             generation: snapshot.generation,
             collection: snapshot.collection,
             files: snapshot.artifacts.len(),
-            chunks: snapshot.artifacts.values().map(|a| a.chunks.len()).sum(),
+            chunks: snapshot.artifacts.values().map(Artifact::chunk_count).sum(),
             source_bytes: snapshot.artifacts.values().map(|a| a.bytes).sum(),
             extractor_version: snapshot.extractor_version,
             exact_fact_backend: if self.store.directory().join("index.sqlite3").exists() {
@@ -218,6 +381,16 @@ impl Kernel {
             } else {
                 "legacy-json"
             },
+            lexical_backend: if persistent.is_some() {
+                "tantivy"
+            } else {
+                "legacy-memory"
+            },
+            vector_backend: "microsoft-diskann-0.59.0/airk-file-provider-1",
+            local_model_ready: persistent
+                .as_ref()
+                .is_some_and(|index| index.model_sha256.is_some()),
+            indexed_vectors: persistent.as_ref().map_or(0, |index| index.vectors),
             semantic_producer: snapshot.analysis.as_ref().map(|m| m.producer.clone()),
             imported_facts: snapshot.imported_facts.len(),
             imported_relationships: snapshot.imported_relationships.len(),
@@ -226,37 +399,219 @@ impl Kernel {
 
     pub fn search(&self, query: &SearchQuery) -> Result<SearchResponse> {
         query.validate()?;
+        if let Some(revision) = self.persistent_revision()? {
+            let mut cache = self
+                .cache
+                .lock()
+                .map_err(|_| anyhow::anyhow!("index cache poisoned"))?;
+            if cache
+                .as_ref()
+                .is_none_or(|cached| cached.revision != revision.revision)
+            {
+                let (revision, index) = self.pin_revision(revision)?;
+                *cache = Some(CachedIndex {
+                    revision: revision.revision.clone(),
+                    index: CachedBackend::Persistent(index),
+                });
+            }
+            if let CachedBackend::Persistent(index) =
+                &cache.as_ref().context("index cache unavailable")?.index
+            {
+                return index.search(query);
+            }
+            anyhow::bail!("persistent cache identity mismatch");
+        }
         let snapshot = self.load()?;
         let mut cache = self
             .cache
             .lock()
             .map_err(|_| anyhow::anyhow!("index cache poisoned"))?;
-        if cache.as_ref().is_none_or(|cached| {
-            cached.generation != snapshot.generation
-                || cached.extractor_version != snapshot.extractor_version
-                || cached.inventory.len() != snapshot.artifacts.len()
-                || cached
-                    .inventory
-                    .iter()
-                    .zip(&snapshot.artifacts)
-                    .any(|((path, hash), (current, a))| path != current || hash != &a.content_hash)
-        }) {
+        let revision = persistent::revision_id(&snapshot)?;
+        if cache
+            .as_ref()
+            .is_none_or(|cached| cached.revision != revision)
+        {
             *cache = Some(CachedIndex {
-                generation: snapshot.generation,
-                extractor_version: snapshot.extractor_version.clone(),
-                inventory: snapshot
-                    .artifacts
-                    .iter()
-                    .map(|(path, a)| (path.clone(), a.content_hash.clone()))
-                    .collect(),
-                index: LexicalIndex::build(&snapshot),
+                revision,
+                index: if snapshot.persistent_indexes {
+                    CachedBackend::Persistent(PersistentIndex::open(
+                        self.store.directory(),
+                        &snapshot,
+                    )?)
+                } else {
+                    CachedBackend::Legacy(LexicalIndex::build(&snapshot))
+                },
             });
         }
-        cache
-            .as_ref()
-            .context("index cache unavailable")?
-            .index
-            .search(&snapshot, query)
+        match &cache.as_ref().context("index cache unavailable")?.index {
+            CachedBackend::Persistent(index) => index.search(query),
+            CachedBackend::Legacy(index) => index.search(&snapshot, query),
+        }
+    }
+
+    pub fn semantic_search(&self, query: &SearchQuery) -> Result<SearchResponse> {
+        query.validate()?;
+        let revision = self
+            .persistent_revision()?
+            .context("semantic retrieval not ready: reindex with a provisioned local model")?;
+        self.pin_revision(revision)
+            .context("semantic retrieval not ready: reindex with a provisioned local model")?
+            .1
+            .semantic_search(query)
+    }
+
+    pub fn hybrid_search(&self, query: &SearchQuery) -> Result<SearchResponse> {
+        query.validate()?;
+        let revision = self
+            .persistent_revision()?
+            .context("hybrid retrieval not ready: reindex with a provisioned local model")?;
+        self.pin_revision(revision)?.1.hybrid_search(query)
+    }
+
+    /// A writer may publish and prune between the metadata read and lease open.
+    /// Retry only when the active identity changed; stable corruption fails closed.
+    fn pin_revision(
+        &self,
+        mut revision: airk_store::PersistentRevision,
+    ) -> Result<(airk_store::PersistentRevision, PersistentIndex)> {
+        for _ in 0..3 {
+            match PersistentIndex::open_revision(
+                self.store.directory(),
+                &revision.revision,
+                revision.generation,
+                &revision.collection,
+            ) {
+                Ok(index) => return Ok((revision, index)),
+                Err(error) => {
+                    let Some(current) = self.persistent_revision()? else {
+                        return Err(error);
+                    };
+                    if current.revision == revision.revision {
+                        return Err(error);
+                    }
+                    revision = current;
+                }
+            }
+        }
+        anyhow::bail!(
+            "active generation changed repeatedly while acquiring reader lease; retry request"
+        )
+    }
+
+    fn configured_model(&self) -> Result<Option<String>> {
+        let directory = self.data_root.join("models/local");
+        if directory.exists() {
+            Ok(Some(
+                airk_retrieval::vector::LocalModel::open(&directory)?
+                    .manifest
+                    .sha256,
+            ))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn persistent_revision(&self) -> Result<Option<airk_store::PersistentRevision>> {
+        let revision = self.store.persistent_revision()?;
+        if let Some(revision) = &revision {
+            ensure!(
+                revision.root == self.root_id() && revision.collection == self.collection,
+                "index belongs to another root or collection"
+            );
+        }
+        Ok(revision)
+    }
+
+    fn publication_reservation(&self) -> Result<airk_store::quota::Reservation> {
+        let quota = airk_store::quota::Quota::open(&self.data_root)?;
+        let policy = quota.policy()?;
+        let status = quota.status()?;
+        let root_available = status
+            .root_limit_bytes
+            .saturating_sub(status.used_bytes)
+            .saturating_sub(status.reserved_bytes);
+        let collection_available = status.collections.get(&self.collection).map_or_else(
+            || {
+                policy
+                    .collections
+                    .get(&self.collection)
+                    .copied()
+                    .unwrap_or(policy.default_collection_bytes)
+            },
+            |item| {
+                item.limit_bytes
+                    .saturating_sub(item.used_bytes)
+                    .saturating_sub(item.reserved_bytes)
+            },
+        );
+        // The reservation includes temporary and retained bytes together. Each
+        // provider charges before writes; exhausting it leaves the active pin intact.
+        quota.reserve(
+            &self.collection,
+            root_available
+                .min(collection_available)
+                .min(4 * 1024 * 1024 * 1024),
+        )
+    }
+
+    fn publish(
+        &self,
+        snapshot: &Snapshot,
+        reservation: &airk_store::quota::Reservation,
+    ) -> Result<()> {
+        ensure!(
+            snapshot.persistent_indexes,
+            "published revisions must declare persistent components"
+        );
+        let model = self.data_root.join("models").join("local");
+        ensure!(
+            snapshot.storage_format == 1,
+            "new publications require compact retained inventories"
+        );
+        let source = airk_store::blobs::RetainedSource {
+            store: &self.store,
+            snapshot,
+        };
+        let revision = persistent::revision_id(snapshot)?;
+        let staging = reservation.staging_directory()?;
+        let charge_reservation = reservation.clone();
+        let charge: airk_retrieval::bounded::Charge =
+            Arc::new(move |bytes| charge_reservation.charge(bytes));
+        let inventory_bytes = serde_json::to_vec(snapshot)?.len() as u64;
+        let artifact_bytes = snapshot
+            .artifacts
+            .values()
+            .filter_map(|a| a.retained.as_ref())
+            .try_fold(0u64, |sum, retained| {
+                sum.checked_add(retained.object_bytes as u64)
+                    .context("catalog byte estimate overflow")
+            })?;
+        let database_budget = artifact_bytes
+            .saturating_mul(3)
+            .saturating_add(inventory_bytes.saturating_mul(3))
+            .saturating_add(1024 * 1024)
+            .min(1024 * 1024 * 1024)
+            .min(reservation.remaining() / 2);
+        persistent::prepare_streaming(
+            self.store.directory(),
+            snapshot,
+            model.exists().then_some(model.as_path()),
+            &source,
+            Some(charge),
+            Some(&staging),
+            |directory| {
+                self.store.prepare_catalog(
+                    directory,
+                    snapshot,
+                    &revision,
+                    &source,
+                    Some(reservation),
+                    database_budget,
+                )
+            },
+        )?;
+        self.store
+            .publish_catalog(snapshot, &revision, Some(reservation))
     }
 
     pub fn list_files(&self, prefix: &str, limit: usize, max_bytes: usize) -> Result<FileList> {
@@ -288,17 +643,32 @@ impl Kernel {
         end_line: usize,
         max_bytes: usize,
     ) -> Result<SearchResponse> {
+        let catalog = self.catalog()?;
+        let artifact = catalog.load_artifact(path)?;
+        Self::read_snapshot(
+            &catalog.snapshot,
+            &artifact,
+            path,
+            start_line,
+            end_line,
+            max_bytes,
+        )
+    }
+
+    fn read_snapshot(
+        snapshot: &Snapshot,
+        artifact: &Artifact,
+        path: &str,
+        start_line: usize,
+        end_line: usize,
+        max_bytes: usize,
+    ) -> Result<SearchResponse> {
         validate_budget(1, max_bytes)?;
         ensure!(
             start_line > 0 && end_line >= start_line,
             "invalid line range"
         );
-        let snapshot = self.load()?;
         // Lookup only in inventory: caller paths never become filesystem reads.
-        let artifact = snapshot
-            .artifacts
-            .get(path)
-            .context("path is not in indexed inventory")?;
         let last_line = artifact.chunks.last().map_or(0, |c| c.end_line);
         ensure!(end_line <= last_line, "line range exceeds indexed source");
         let locations: Vec<_> = artifact
@@ -343,7 +713,7 @@ impl Kernel {
         }
         Ok(SearchResponse {
             generation: snapshot.generation,
-            collection: snapshot.collection,
+            collection: snapshot.collection.clone(),
             truncated,
             hits: vec![Hit {
                 citation: Citation {
@@ -360,12 +730,11 @@ impl Kernel {
     }
 
     pub fn file_info(&self, path: &str) -> Result<FileInfo> {
-        let snapshot = self.load()?;
-        let a = snapshot
-            .artifacts
-            .get(path)
-            .context("path is not in indexed inventory")?;
+        let catalog = self.catalog()?;
+        let snapshot = &catalog.snapshot;
+        let a = catalog.load_artifact(path)?;
         Ok(FileInfo {
+            source: airk_store::roots::source_location(&snapshot.root, &snapshot.roots, path)?,
             generation: snapshot.generation,
             collection: snapshot.collection.clone(),
             path: a.path.clone(),
@@ -388,7 +757,13 @@ impl Kernel {
     pub fn facts(&self, query: &FactQuery) -> Result<FactsResponse> {
         validate_budget(query.limit, query.max_bytes)?;
         ensure!(
-            query.path_prefix.len() <= 4096 && query.name.as_ref().is_none_or(|n| n.len() <= 1024),
+            query.path_prefix.len() <= 4096
+                && query.name.as_ref().is_none_or(|n| n.len() <= 1024)
+                && query.kind.as_ref().is_none_or(|kind| kind.len() <= 128)
+                && query
+                    .language
+                    .as_ref()
+                    .is_none_or(|language| language.len() <= 128),
             "fact filter too long"
         );
         if let Some(response) = self
@@ -508,6 +883,23 @@ impl Kernel {
     }
 
     /// Prepare binding before the external producer runs; outputs JSON through CLI.
+    fn verify_source_inventory(&self, snapshot: &Snapshot) -> Result<Snapshot> {
+        let (current, _) = airk_ingest::scan_streaming(
+            &self.root,
+            &self.data_root,
+            snapshot,
+            &snapshot.roots,
+            |artifact, _| {
+                // Verification needs identities, never a second in-memory corpus.
+                let mut metadata = artifact.clone();
+                metadata.chunks.clear();
+                metadata.facts.clear();
+                Ok(metadata)
+            },
+        )?;
+        Ok(current)
+    }
+
     pub fn prepare_analysis(
         &self,
         producer: &str,
@@ -516,7 +908,11 @@ impl Kernel {
     ) -> Result<airk_core::AnalysisManifest> {
         let _lock = self.store.lock()?;
         let snapshot = self.load()?;
-        let (current, _) = airk_ingest::scan(&self.root, &self.data_root, &snapshot)?;
+        ensure!(
+            snapshot.roots.is_empty(),
+            "SCIP imports require a single primary root; additional source aliases are not supported by this adapter"
+        );
+        let current = self.verify_source_inventory(&snapshot)?;
         ensure!(
             airk_ingest::semantic::source_inventory(&snapshot)
                 == airk_ingest::semantic::source_inventory(&current)
@@ -528,11 +924,16 @@ impl Kernel {
 
     pub fn import_scip(&self, index: &Path, manifest: &Path) -> Result<Status> {
         let _lock = self.store.lock()?;
-        let mut snapshot = self.load()?;
+        let catalog = self.catalog()?;
+        let mut snapshot = catalog.snapshot.clone();
+        ensure!(
+            snapshot.roots.is_empty(),
+            "SCIP imports require a single primary root; additional source aliases are not supported by this adapter"
+        );
         let binding: airk_core::AnalysisManifest =
             serde_json::from_slice(&airk_ingest::semantic::read_bounded(manifest, 8_388_608)?)?;
         airk_ingest::semantic::validate_build_inputs(&self.root, &binding)?;
-        let (current, _) = airk_ingest::scan(&self.root, &self.data_root, &snapshot)?;
+        let current = self.verify_source_inventory(&snapshot)?;
         ensure!(
             airk_ingest::semantic::source_inventory(&snapshot)
                 == airk_ingest::semantic::source_inventory(&current)
@@ -541,13 +942,27 @@ impl Kernel {
         );
         let bytes =
             airk_ingest::semantic::read_bounded(index, airk_ingest::semantic::MAX_IMPORT_BYTES)?;
-        airk_ingest::semantic::import(&mut snapshot, binding.clone(), &bytes)?;
+        airk_ingest::semantic::import_with_source(
+            &mut snapshot,
+            binding.clone(),
+            &bytes,
+            &catalog,
+        )?;
         airk_ingest::semantic::validate_build_inputs(&self.root, &binding)?;
         snapshot.generation = snapshot
             .generation
             .checked_add(1)
             .context("generation overflow")?;
-        self.store.save(&snapshot)?;
+        snapshot.persistent_indexes = true;
+        let reservation = self.publication_reservation()?;
+        for artifact in snapshot.artifacts.values_mut() {
+            *artifact =
+                self.store
+                    .retain_artifact_with_budget(artifact, None, Some(&reservation))?;
+        }
+        snapshot.storage_format = 1;
+        snapshot.embedding_model = self.configured_model()?;
+        self.publish(&snapshot, &reservation)?;
         self.status()
     }
 
@@ -579,15 +994,20 @@ impl Kernel {
             before <= 100 && after <= 100,
             "context radius must be 0..100"
         );
-        let info = self.file_info(path)?;
+        let catalog = self.catalog()?;
+        let snapshot = &catalog.snapshot;
+        let artifact = catalog.load_artifact(path)?;
+        let indexed_lines = artifact.chunks.last().map_or(0, |chunk| chunk.end_line);
         ensure!(
-            line > 0 && line <= info.indexed_lines,
+            line > 0 && line <= indexed_lines,
             "line is outside indexed source"
         );
-        self.read_file(
+        Self::read_snapshot(
+            snapshot,
+            &artifact,
             path,
             line.saturating_sub(before).max(1),
-            line.saturating_add(after).min(info.indexed_lines),
+            line.saturating_add(after).min(indexed_lines),
             max_bytes,
         )
     }
@@ -603,10 +1023,12 @@ impl Kernel {
         ensure!(
             !name.is_empty()
                 && name.len() <= 1024
+                && path_prefix.len() <= 4096
                 && name.chars().all(|c| c.is_alphanumeric() || c == '_'),
             "reference name must be a single identifier"
         );
-        let snapshot = self.load()?;
+        let catalog = self.catalog()?;
+        let snapshot = &catalog.snapshot;
         let mut evidence = SearchResponse {
             generation: snapshot.generation,
             collection: snapshot.collection.clone(),
@@ -614,10 +1036,18 @@ impl Kernel {
             truncated: false,
         };
         let mut remaining = max_bytes;
-        'files: for (path, a) in &snapshot.artifacts {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(250);
+        let mut read_bytes = 0usize;
+        'files: for (path, entry) in &snapshot.artifacts {
             if !path.starts_with(path_prefix) {
                 continue;
             }
+            read_bytes = read_bytes.saturating_add(entry.extracted_bytes());
+            if read_bytes > 16_777_216 || std::time::Instant::now() >= deadline {
+                evidence.truncated = true;
+                break;
+            }
+            let a = catalog.load_artifact(path)?;
             for chunk in &a.chunks {
                 for (offset, line) in chunk.text.split_inclusive('\n').enumerate() {
                     if !line

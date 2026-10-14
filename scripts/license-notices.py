@@ -1,10 +1,36 @@
 # SPDX-License-Identifier: Apache-2.0
 """Create a third-party license bundle from the locked Cargo graph, not local corpora."""
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import shutil
 import subprocess
+from urllib.parse import quote
+
+
+def software_bill_of_materials(metadata):
+    """CycloneDX 1.6 inventory of Cargo's resolved build graph, including dev/host crates."""
+    purls = {package["id"]: "pkg:cargo/" + quote(package["name"], safe="") + "@" + quote(package["version"], safe="")
+             for package in metadata["packages"]}
+    # Cargo IDs for workspace/path dependencies contain the build machine's absolute path.
+    # Use public package identity plus a source discriminator, never those local paths.
+    references = {package["id"]: purls[package["id"]] + "#" + hashlib.sha256(
+        (package.get("source") or "workspace").encode()).hexdigest()[:16] for package in metadata["packages"]}
+    components = []
+    for package in sorted(metadata["packages"], key=lambda p: (p["name"], p["version"], p["id"])):
+        component = {"type": "library", "bom-ref": references[package["id"]], "name": package["name"],
+                     "version": package["version"], "purl": purls[package["id"]]}
+        if package.get("license"):
+            component["licenses"] = [{"expression": package["license"]}]
+        components.append(component)
+    dependencies = [{"ref": references[node["id"]], "dependsOn": sorted({references[dep["pkg"]] for dep in node["deps"]})}
+                    for node in (metadata.get("resolve") or {}).get("nodes", [])]
+    return {"$schema": "http://cyclonedx.org/schema/bom-1.6.schema.json", "bomFormat": "CycloneDX",
+            "specVersion": "1.6", "version": 1,
+            "metadata": {"properties": [{"name": "airk:inventory-scope", "value":
+                         "Cargo resolved build graph including workspace, development, build and platform-conditional crates; not a linked-binary or container OS inventory"}]},
+            "components": components, "dependencies": dependencies}
 
 
 def main():
@@ -60,6 +86,7 @@ def main():
             (destination / "UPSTREAM-LICENSE-DECLARATION.json").write_text(json.dumps(declaration, indent=2) + "\n", encoding="utf-8")
             print("Release review needed for license declaration without separate text: " + package["name"])
     (args.output / "inventory.json").write_text(json.dumps(inventory, indent=2) + "\n", encoding="utf-8")
+    (args.output / "bom.cdx.json").write_text(json.dumps(software_bill_of_materials(metadata), indent=2) + "\n", encoding="utf-8")
     if missing:
         raise SystemExit("Missing license declarations: " + ", ".join(missing))
     print(f"Bundled notices for {len(inventory)} third-party packages in {args.output}")

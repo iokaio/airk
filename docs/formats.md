@@ -41,21 +41,25 @@ These are initial grammar profiles, not complete compiler/type-system semantics.
 | Dockerfile | Instruction facts | Source lines; initial line adapter, no image/build execution |
 | Plain/other UTF-8 | Deterministic text chunks, conservative headings and prose candidates | Source lines; English cue parsing, not inferred semantics |
 | PDF | Native text-layer extraction by page plus shared prose candidates | Original page; normalized extracted-text lines are secondary coordinates |
-| DOCX | Main-body/table paragraphs, run/entity decoding, built-in heading styles and shared prose candidates | Original paragraph block ordinal, no page-layout claim |
+| DOCX | Main-body paragraphs, run/entity decoding, built-in headings; table rows/cells, header mapping, merge markers and shared prose candidates | Original paragraph block or table/row ordinal, no page-layout claim |
+| XLSX | Worksheet rows/cells, shared/inline rich strings, header candidates, requirement/date/quantity cues, stored formula results and merge markers | Original worksheet name, row and cell addresses; formulas never evaluated |
 | PPTX | OOXML slide text, title placeholders and shared prose candidates; relationship order | Original presentation-order slide number; title context isolated per slide |
 
-PDF scans, image-only slides, OCR, encrypted documents requiring passwords, legacy DOC/PPT/XLS, XLSX, ODT, EPUB and RTF decoding are not currently implemented. DOCX headers/footers/comments/embedded objects and PPTX notes/charts/image contents are not extracted. SVG path geometry is retrievable source but is not interpreted as visual meaning. Titles/descriptions remain searchable XML source text.
+PDF scans, image-only slides, OCR, encrypted documents requiring passwords, legacy DOC/PPT/XLS, XLSB/XLSM, ODT, EPUB and RTF decoding are not currently implemented. DOCX headers/footers/comments/embedded objects and PPTX notes/charts/image contents are not extracted. XLSX charts, drawings, comments, pivot caches and embedded objects are not extracted. SVG path geometry is retrievable source but is not interpreted as visual meaning. Titles/descriptions remain searchable XML source text.
 
-OOXML entries are read in memory, not unpacked to the filesystem. External slide relationships and XML document type declarations are refused. Extraction skips are explicit, rather than replacement-character text pretending to be evidence.
+OOXML entries are read in memory, not unpacked to the filesystem. External slide/worksheet relationships and XML document type declarations are refused; unused external links are never followed. Extraction skips are explicit, rather than replacement-character text pretending to be evidence. Spreadsheet formulas and cached results are labeled separately; caches can be stale or absent. AIRK does not launch Office, recalculate formulas or fetch linked workbooks.
 
 [Document indexing](document-indexing.md) specifies heading context, requirement IDs/modality, written numeric bounds/units, qualitative/design/feature candidates, date ambiguity and category-filtered retrieval. These cues retain source evidence rather than asserting compliance or semantic understanding.
 
-## Bootstrap limits
+## Current safety limits
 
 - Source file: 1 MiB; extracted text/XML part: 4 MiB.
-- Corpus: 64 MiB of source processed under the scan limit, 10,000 indexed files.
+- Corpus: 64 MiB of eligible source and 128 MiB of extracted text, 10,000 indexed files.
+- Index scan: 100,000 visited non-ignored entries (including directories) and 256 MiB of actual source reads, including unsupported files. Known oversized files are skipped before reading. Exhausting either budget fails the whole pass and preserves the previous generation.
 - PDF/PPTX: 512 pages/slides; OOXML archive: 10,000 entries/paragraphs.
 - Native syntax: 500,000 visited nodes and 10,000 facts per file.
+- DOCX: 256 tables, 32 nested table levels, 256 cells per row; table rows count toward the document fact/text budgets.
+- XLSX: 128 sheets, 10,000 rows per sheet, 100,000 stored cells/shared strings per workbook, 16 MiB of selected XML parts; sparse/merged ranges are never expanded. The shared 10,000-fact limit can be reached before the cell limit.
 - Response: 1–100 results and up to 65,536 payload bytes, metadata additional.
 
-These are scaffold bounds, not the final large-repository design. PDF output limits are checked after library extraction, so they do not bound its peak memory. Use trusted local inputs until worker/resource isolation is qualified.
+These are retained beta safety bounds pending large-repository qualification. PDF output limits are checked after library extraction, so they do not bound its peak memory. Use trusted local inputs until worker/resource isolation is qualified.

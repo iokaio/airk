@@ -12,3 +12,11 @@ publish.workspace = true
 [dependencies]
 airk-core.workspace = true
 anyhow.workspace = true
+tantivy.workspace = true
+diskann.workspace = true
+diskann-vector.workspace = true
+futures.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tempfile.workspace = true

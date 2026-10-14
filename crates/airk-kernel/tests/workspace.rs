@@ -4,6 +4,60 @@ use airk_kernel::Kernel;
 use airk_store::{FileStore, MemoryStore};
 use std::fs;
 
+#[cfg(windows)]
+#[test]
+fn long_existing_and_new_windows_data_roots_index_reopen_and_query_without_source_changes()
+-> anyhow::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    let root = tempfile::tempdir()?;
+    let storage = tempfile::tempdir()?;
+    let content = "def long_path_fixture():\n    return True\n";
+    fs::write(root.path().join("fixture.py"), content)?;
+    for present in [false, true] {
+        let directory = storage
+            .path()
+            .join("a".repeat(90))
+            .join("b".repeat(90))
+            .join(if present {
+                "existing-".repeat(12)
+            } else {
+                "not-created-".repeat(9)
+            });
+        assert!(directory.as_os_str().encode_wide().count() > 260);
+        if present {
+            fs::create_dir_all(&directory)?;
+        }
+        let kernel = Kernel::open(root.path(), Some(directory.clone()))?;
+        assert_eq!(
+            directory.exists(),
+            present,
+            "opening a new data root must remain read-only"
+        );
+        assert!(kernel.status().is_err());
+        assert_eq!(
+            directory.exists(),
+            present,
+            "status must not create a data directory"
+        );
+        let indexed = kernel.index()?;
+        assert_eq!(indexed.indexed, 1);
+        drop(kernel);
+        let reopened = Kernel::open(
+            root.path(),
+            Some(directory.join("unused").join("..").join(".")),
+        )?;
+        assert_eq!(reopened.status()?.generation, indexed.generation);
+        assert_eq!(reopened.search(&query("long_path_fixture"))?.hits.len(), 1);
+        assert_eq!(
+            reopened.outline("fixture.py", 10, 4096)?.facts[0].name,
+            "long_path_fixture"
+        );
+        assert_eq!(reopened.index()?.reused, 1);
+        assert_eq!(fs::read_to_string(root.path().join("fixture.py"))?, content);
+    }
+    Ok(())
+}
+
 #[test]
 fn full_reindex_reextracts_without_resetting_generation_or_destroying_prior_state()
 -> anyhow::Result<()> {
@@ -215,10 +269,19 @@ fn collections_share_one_disk_root_without_cross_retrieval() -> anyhow::Result<(
     assert!(ka.remove_collection("project-b").is_err());
     assert!(kb.status().is_ok());
     drop(lock);
+    assert!(
+        ka.remove_collection("project-b").is_err(),
+        "a live persistent reader must prevent collection removal"
+    );
+    drop(kb);
     let removed = ka.remove_collection("project-b")?;
     assert_eq!(removed.status, "removed-derived-index");
     assert!(b.path().join("same.rs").exists());
-    assert!(kb.status().is_err());
+    assert!(
+        Kernel::open_collection(b.path(), Some(state.path().into()), "project-b")?
+            .status()
+            .is_err()
+    );
     assert!(ka.status().is_ok());
     assert!(ka.remove_collection("../project-a").is_err());
     Ok(())
@@ -352,6 +415,29 @@ fn removed_and_rebuilt_collection_cannot_reuse_old_worker_candidates() -> anyhow
         worker.search(&query("new_symbol"))?.hits[0].citation.path,
         "new.rs"
     );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn non_utf8_roots_cannot_share_a_lossy_collection_identity() -> anyhow::Result<()> {
+    use std::os::unix::ffi::OsStringExt;
+    let parent = tempfile::tempdir()?;
+    for suffix in [0x80, 0x81] {
+        let root = parent
+            .path()
+            .join(std::ffi::OsString::from_vec(vec![b'w', suffix]));
+        fs::create_dir(&root)?;
+        let result = Kernel::open(&root, None);
+        assert!(result.is_err());
+        assert!(
+            result
+                .err()
+                .expect("root encoding error")
+                .to_string()
+                .contains("non-UTF-8 workspace root")
+        );
+    }
     Ok(())
 }
 

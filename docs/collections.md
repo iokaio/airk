@@ -1,63 +1,81 @@
 # Collections, storage and DiskANN
 
-One user/machine may search many unrelated workspaces through one deployed AIRK container. Each workspace's MCP configuration fixes its collection, mounted root and data directory. Native deployment uses the same layout without Docker.
+One user/machine can host independent collections in one native data directory or one persistent container. A workspace's MCP configuration fixes its canonical root, collection ID and data directory. Clients using the same three values share the index. MCP retrieval arguments cannot select another collection.
 
-## Implemented isolation
+## Identity and isolation
 
-IDs are 1–64 lowercase ASCII letters/digits/hyphens/underscores; path separators, case aliases and reserved filesystem names are rejected. The kernel accesses only that collection's snapshot and checks persisted collection/root identities. Retrieval envelopes identify their collection. MCP tool arguments cannot select another collection or read arbitrary live filesystem paths.
+Collection IDs contain 1–64 lowercase ASCII letters/digits/hyphens/underscores. Separators, case aliases and reserved filesystem names are rejected. Stored root/collection identities are checked before candidate lookup. Citations use original relative paths, source hashes and source/document locations.
+
+One canonical owner root binds each collection. Explicitly registered additional roots have unique aliases, with citation paths `@alias/<relative-path>`; the alias map is retained with each published revision. See [source roots](source-roots.md). Container root paths do not establish host identity after mounts change; never reuse an existing collection ID for a different project. Source workspaces remain read-only to AIRK.
+
+## Published components
 
 ~~~text
 <data-root>/
+  models/local/                         # explicitly provisioned local model, optional
+    model.json
+    vocabulary.json
   collections/
-    project-a/
-      index.sqlite3    # source revision payload, exact facts and relationships
-      writer.lock      # only while a writer is active, or after a crash
-    project-b/
-      index.sqlite3
+    .writer-locks/<collection>           # persistent native OS lock
+    .reader-locks/<collection>/<revision> # native reader leases outside deletable state
+    <collection>/
+      index.sqlite3                     # small transactional active revision pointer
+      objects/sources/<sha256>           # deduplicated original bytes
+      objects/artifacts/<sha256>         # verified per-artifact extraction payloads
+      writer.lock                       # compatibility/diagnostic writer marker
+      usage.sqlite3                     # bounded local counters, separate from index
+      generations/<revision-sha256>/
+        inventory.json                  # compact artifact references and source aliases
+        catalog.sqlite                  # immutable exact facts and relationships
+        manifest.json                   # engine/model/revision/count binding
+        lexical/                        # immutable Tantivy segments
+        vectors.bin                     # DiskANN graph/vectors, if a model is configured
+        model/                          # verified immutable assets for this revision
 ~~~
 
-Native setup can point all projects to a user-chosen drive with --data-dir. In Docker the shared volume is mounted at /data and each source at a distinct path under /workspaces. Never reuse a collection ID for a different host project. Canonical container paths cannot prove host-workspace identity after changing mounts; managed registration/root aliases are needed before automatic migration.
+The component identifier hashes the compact inventory and engine specification, including parser version, source hashes, content-addressed extraction references, source aliases, generation and optional model digest. Each extraction object's digest binds its text, facts and original locations. Ordinary indexing detects a model digest change and advances the generation. A numerical generation cannot accidentally select an orphan build made with a different model.
 
-One collection currently has one canonical root. Multi-root workspace sets will need a versioned root inventory and source IDs including root aliases. Do not merge identical relative paths from different roots before that exists.
+Indexing retains each successfully extracted artifact and its original bytes, then releases its text before discovering the next file. Component construction loads one verified artifact at a time into Tantivy, the optional DiskANN graph and the immutable exact-fact SQLite catalog. After components are synced and reopened, their private directory is renamed into place. A small root SQLite transaction publishes the revision pointer and inventory digest. Readers select all components from that committed revision. A build or transaction failure preserves the previous published revision; unpublished objects and completed directories are reclaimable derived state.
+
+The active pointer uses SQLite WAL, full synchronous commits and bounded busy waits. Private exact-fact databases use a reserved page limit and no recovery journal because an interrupted private build is discarded. Queries begin a read transaction before selecting the revision, then pin the matching immutable catalog. Immutable readers use manual Tantivy reload and never watch/mutate their selected generation. Graph records have SHA-256 checksums, dimensions, bounded degree and stable generation-local IDs. Corrupt or missing required components fail explicitly; a new persistent revision does not silently become an in-memory index.
+
+Legacy SQLite/JSON snapshots remain readable through the bounded compatibility adapter. The next successful index moves extraction payloads into content-addressed objects and publishes the compact catalog. Legacy JSON is retained for operator recovery. Migration never deletes source files or arbitrary directories.
+
+## Retrieval and memory
+
+Lexical search uses [Tantivy](https://docs.rs/tantivy/0.26.2/tantivy/) 0.26.2 with persistent postings and stored citation payloads. Whole identifier, underscore and camel-case aliases preserve AIRK's lexical contract. Terms use AND; path-prefix filters run in the lexical query. Result ordering remains deterministic by indexed path/chunk. Query and payload limits apply to disk retrieval too.
+
+Vector construction and search use [Microsoft DiskANN](https://docs.rs/diskann/0.59.0/diskann/) 0.59.0 algorithms with an independent AIRK file provider. It reads adjacency lists and full-precision vectors from fixed-size local records as needed during both construction and querying. It does not restore the complete graph/vector corpus into RAM. A bounded DiskANN pruning working set is the build cache; graph degree is 48, pruned degree 32 and build search width 64. Queries cap vector distance reads at 65,536 and fail explicitly when exhausted. Kernel queries expose at most 100 hits; vector overfetch is bounded to 1,000 candidates.
+
+The provider uses portable file seek/read operations rather than upstream's OS-specific `diskann-disk` package. This does not establish SSD throughput, async I/O, physical disk reads, bounded OS page-cache RSS, or cross-platform qualification. Tantivy memory maps its immutable files. Cold/warm latency, operating-system cache effects, full-process RSS and real-corpus recall still need release measurements.
+
+Search and status load the small SQLite component header. File lists and coverage use compact inventory metadata; file/context services load only the requested verified artifact. Ingestion and component construction stream one artifact at a time instead of collecting all extracted text. Inventories remain bounded to 128 MiB and individual extracted-object JSON to 64 MiB; metadata and optional imported analysis are held in memory. Source safety limits remain 1 MiB/file, 64 MiB eligible source, 10,000 files, 4 MiB extracted text/document and 128 MiB extracted text/collection across all aliases. Each pass stops at 100,000 visited non-ignored entries or 256 MiB of raw reads, including unsupported candidates; exhaustion preserves the prior generation. These limits have not been raised to imply large-corpus qualification.
+
+Publication reserves available root/collection capacity before source retention. Blob, Tantivy, graph, model and metadata writes charge their allocation before writing; private SQLite has a page cap, and active-pointer publication reserves its database/journal allowance. Temporary and retained state count together. Exhaustion fails the build without advancing the pointer. Conservative reservations may reject concurrent work even when its eventual compact result would fit; inspect quota status, prune obsolete state or explicitly change policy. See [storage quotas](storage-quotas.md).
+
+Local vectors require deliberate assets; see [local models](local-models.md). `--mode vector` performs approximate retrieval. `--mode hybrid` fuses lexical and vector ranks from one pinned generation. Missing/invalid models and queries without recognized model tokens produce explicit not-ready errors. No remote inference or automatic fallback occurs. Vector path filtering happens over bounded candidates and can underfill results; `truncated` indicates an incomplete candidate scan.
 
 ## Multiple agents sharing one collection
 
-Claude Code, Codex, Copilot and other local clients can query the **same** index concurrently. Configure their launches with the same canonical root, data directory and collection ID; their client-side server names need not match. Collection identity belongs to the workspace, not to the agent or MCP connection. Do not create an index per agent. Each stdio connection has its own worker process reading the common published snapshot; Docker workers all run inside the one deployed container.
+Claude Code, Codex, Gemini CLI, Copilot and other local clients can concurrently read the same collection. Their client-side server names may differ. Each stdio connection has a separate worker; in Docker all workers run inside the one deployed container. There is no separate index per agent.
 
-Reads do not acquire the writer lock. One collection writer builds/publishes at a time; a concurrent writer receives a locked error rather than competing to publish. Each retrieval operation loads one coherent snapshot and reports its generation. A request overlapping publication may finish on the previous generation; subsequent requests reopen the published snapshot and refresh worker-local lexical caches. A multi-call investigation is not a transaction: compare generations/hashes when combining evidence across calls. MCP initialization only connects a reader and does not reindex or take ownership of the collection.
+One writer publishes at a time; other writers receive a locked error. Native OS writer locks are released on process exit. A legacy marker without the new native lock version still requires deliberate operator recovery. Readers do not acquire the writer lock. Each search pins a complete immutable generation with a shared native lease. A request overlapping publication may finish on the preceding generation; the next request loads the new component header and refreshes the cache. Multiple requests are not a transaction: compare generation and hashes when combining evidence.
 
-The real-binary concurrency test runs two MCP processes against one index, verifies reads with a held writer lock, queries during a third indexing process and checks both readers see the new generation without reconnecting. This validates the bounded scaffold on the tested platform; it does not establish large-repository throughput or a shared memory cache. Disconnect every agent/window using a collection before removing its derived state. Machine-wide reader leases and enforced safe pruning are planned for final storage.
+## Retention and removal
 
-## Memory and disk design
-
-The working scaffold persists derived revisions and normalized exact facts/relationships in embedded SQLite WAL transactions and creates worker-local in-memory lexical maps. Read transactions pin one revision during writer publication; legacy JSON migrates on the next successful index. A standalone MemoryStore retains the snapshot contract for embedding. [SQLite contracts](code-facts-and-relationships.md) describe binding, migration, caps and optional SCIP state.
-
-The selected final tier has persistent lexical/exact facts, local embeddings and **disk-backed DiskANN**. DiskANN is a composable algorithm using a provider that owns graph/vector access. Microsoft's current repository documents memory and disk providers separately. An index saved to disk and fully reconstructed into RAM is insufficient for this target. [DiskANN upstream](https://github.com/microsoft/DiskANN) describes that provider boundary.
-
-The inspected Munarium adapter at the revision in [the inspiration record](inspiration.md) implements in-memory access and restores its provider from sealed bytes. AIRK will implement/qualify an independent disk provider with bounded page/neighbor/vector caches, stable IDs and local file storage. Do not claim the existing inspected adapter already solves large-than-memory retrieval.
-
-## Final layout and publication — planned
-
-~~~text
-<data-root>/
-  models/<verified-spec>/                 # local immutable model assets
-  collections/<id>/
-    collection.json                      # explicit root inventory and policy
-    sources/<content-hash>/               # retained normalized/source content
-    generations/<generation>/
-      manifest.json                      # schema, source, parser and model IDs
-      lexical/                           # persistent Tantivy component
-      facts/                             # SQLite native/imported facts and relationships
-      vectors/                           # DiskANN graph, vectors and ID maps
-    active.json                          # one coherent published generation
-    pending/                             # bounded indexing intents/checkpoints
-    cache/                               # disposable per-collection work/cache
+~~~console
+airk --data-dir /path/to/state --collection project-a collections list
+airk --data-dir /path/to/state --collection project-a collections prune
+airk --data-dir /path/to/state --collection project-a collections prune --apply
+airk --data-dir /path/to/state collections remove obsolete-project
 ~~~
 
-Choose an actual DiskANN package/provider version through Windows/macOS/Linux qualification. Record model digest/dimensions/normalization/distance function, provider revision, tokenizer/parser/chunker revisions and source inventory hash. Build privately, verify/reopen all components, then atomically publish one manifest. Queries pin one generation. Never fuse mismatched lexical/vector/source versions.
+Pruning defaults to a preview with candidate IDs, reclaimable bytes, pinned IDs and unreferenced object counts. Explicit `--apply` removes obsolete immutable generations, then garbage-collects objects absent from every surviving generation inventory. The active component and any generation with a live reader lease protect their source and extraction objects. Published local model copies are removed only with their obsolete generation. Failed-build objects can be reclaimed without disturbing published evidence. Quota-owned private staging is recovered after process death; unknown directories and interrupted prune directories require operator inspection.
 
-Collection-specific indexes/caches must be selected before candidate lookup, not just filtered after search. Disk reads and RSS must be measured independently. Use a bounded exact-vector oracle for recall tests, not an unlabelled substitute for DiskANN. Missing model/index state is not-ready, with no remote fallback.
+Collection removal validates the managed root and snapshot identity, acquires writer/worker/usage lifecycle locks and every generation lease, then deletes derived state. An active cached reader prevents removal until disconnected. Filesystem links cause maintenance to fail. Source workspaces are never deletion targets.
 
-## Space lifecycle
+Automated tests exercise native generation publication, reopen/recall/corruption fixtures, model digest isolation, source rename behavior and leased pruning. Real power-loss durability, network filesystems, larger-than-memory scale and the complete native release matrix require independent qualification.
 
-The implemented CLI lists collection usage and removes a named validated managed collection, leaving sources intact. [Operations](operations.md) provides commands. Automatic pruning, compaction and migration are future work. Planned maintenance first removes unpinned obsolete generations and disposable caches, then explicitly selected obsolete collections. Active generations and referenced model assets remain protected. Show reclaimable bytes and a concrete plan before destructive extension actions. If active data alone exceeds a budget, pause new indexing and surface the capacity issue rather than silently erase evidence.
+## Relocating a data root
+
+Use `airk --data-dir OLD storage plan NEW` to preview an explicit move and `storage relocate NEW` to perform it. The destination must be a new directory with sufficient quota headroom. Active workers, writers, usage transactions or cached generation readers prevent relocation. The service verifies file hashes before activation, keeps old managed payloads, and records recoverable markers so ordinary clients cannot reopen retired or incomplete roots. `airk --data-dir OLD storage recover` resumes the recorded operation. Update client configuration explicitly after success; the storage picker does not silently migrate collections. See [relocation and recovery](storage-relocation.md) for boundaries and retained-copy capacity planning.

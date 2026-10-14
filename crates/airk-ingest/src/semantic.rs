@@ -121,6 +121,16 @@ pub fn validate_build_inputs(root: &Path, m: &AnalysisManifest) -> Result<()> {
 }
 
 pub fn import(snapshot: &mut Snapshot, manifest: AnalysisManifest, bytes: &[u8]) -> Result<()> {
+    let source = snapshot.clone();
+    import_with_source(snapshot, manifest, bytes, &source)
+}
+
+pub fn import_with_source(
+    snapshot: &mut Snapshot,
+    manifest: AnalysisManifest,
+    bytes: &[u8],
+    source: &dyn ArtifactSource,
+) -> Result<()> {
     ensure!(bytes.len() <= MAX_IMPORT_BYTES, "SCIP index exceeds 64 MiB");
     ensure!(
         manifest.version == 1
@@ -200,7 +210,7 @@ pub fn import(snapshot: &mut Snapshot, manifest: AnalysisManifest, bytes: &[u8])
                     seen.insert(document.relative_path.clone()) && seen.len() <= 10_000,
                     "duplicate/excess SCIP documents"
                 );
-                add_document(snapshot, &manifest, document, deadline)?;
+                add_document(snapshot, &manifest, document, deadline, source)?;
             }
             // External symbol documentation is deliberately not retained/read.
         }
@@ -257,12 +267,18 @@ fn add_document(
     m: &AnalysisManifest,
     d: Document,
     deadline: Instant,
+    source: &dyn ArtifactSource,
 ) -> Result<()> {
     validate_path(&d.relative_path)?;
-    let a = snapshot
+    let entry = snapshot
         .artifacts
         .get(&d.relative_path)
         .context("SCIP path is not in indexed collection")?;
+    let a = source.load_artifact(&d.relative_path)?;
+    ensure!(
+        a.path == entry.path && a.content_hash == entry.content_hash,
+        "SCIP artifact binding mismatch"
+    );
     let language =
         language_alias(&d.language).context("SCIP adapter currently accepts TS/JS, Rust and C#")?;
     ensure!(

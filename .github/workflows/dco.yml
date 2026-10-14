@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+name: DCO
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+permissions:
+  contents: read
+  pull-requests: read
+concurrency:
+  group: dco-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  signed-off:
+    name: signed-off
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Check every contributor's sign-off
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AIRK_REPOSITORY: ${{ github.repository }}
+          AIRK_PR: ${{ github.event.pull_request.number }}
+        run: python scripts/check-dco.py --repo "$AIRK_REPOSITORY" --pr "$AIRK_PR"

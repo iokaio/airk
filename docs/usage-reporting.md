@@ -1,97 +1,188 @@
-# Local usage, performance and estimated savings
+# Local usage, performance and estimated context reduction
 
-AIRK will collect local aggregate counters by default, as requested. The first code structures are implemented: [core observation/policy contracts](../crates/airk-core/src/usage.rs), [kernel estimation and report helpers](../crates/airk-kernel/src/usage.rs), and [calculation/isolation tests](../crates/airk-kernel/tests/usage.rs). Persistent recording, live CLI/MCP hooks, report commands and extension views are planned below. The current app does not collect usage or advertise a measured savings total yet.
+AIRK records content-free local daily aggregates by default. CLI and MCP adapters measure one outer request, including serialized response bytes, and write a separate bounded ledger under the selected collection. Native scheduler jobs record their actual indexing work once under the job collection. Recording failure never changes a retrieval result. There is no network telemetry, provider credential, remote analytics service or external database.
 
-The tracker measures AIRK's work and delivered context. It does not observe an agent's complete prompt, provider token accounting, cached-input discounts, model responses, task completion or bill. Estimated context reduction and hypothetical monetary savings must remain visibly different from those observations.
+The tracker measures AIRK's work and delivered context. Its hooks cannot observe an agent's complete prompt, provider token accounting, cached-input discounts, model responses, task completion or bill. Optional local imports accept explicitly supplied numeric client/session and paired-task observations, labelled separately from AIRK's own measurements. A nonempty retrieval is not evidence that the result was useful.
 
-[Workspace indexing coverage](index-coverage.md) is a separate planned measure: current indexed files as a percentage of eligible workspace files, stale/pending counts and a clickable Index Now footer. Inventory completeness must remain visible; coverage is neither retrieval quality nor estimated savings.
+[Workspace indexing coverage](index-coverage.md) measures indexed/eligible workspace files, inventory completeness and freshness. Coverage is neither retrieval quality nor estimated savings.
 
-## Ownership and code placement
+## Commands and editor controls
 
-| Owner | Structure / planned responsibility |
+Commands use the usual `--root`, `--data-dir` and `--collection` scope. Reusing a collection name cannot combine another root's history.
+
+```console
+airk usage report --days 7
+airk usage report --days 30 --format csv
+airk usage report --days 30 --format markdown
+airk usage configure --mode disabled
+airk usage configure --mode aggregates-only
+airk usage configure --mode diagnostic-events
+airk usage feedback REQUEST_ID --usefulness useful
+airk usage import measurement.json
+airk usage calibrate --tokenizer tokenizer.json --baseline baseline.json --returned returned.json --generation 1 --content-kind code
+airk usage calibrate --tokenizer tokenizer.json --baseline baseline.json --returned returned.json --generation 1 --content-kind code --record
+airk usage report --price-scenario prices.json
+airk usage clear
+```
+
+`report` writes JSON by default; CSV and Markdown are bounded exports to stdout. Shell redirection chooses an export destination. UTC whole-day windows range from 1 to 30 days and include today. Partial-day filtering is unavailable because default recording discards individual request measurements.
+
+`configure` changes the collection policy. Disabling prevents subsequent retrieval hooks from reading or writing the history ledger; an already running worker checks policy before its next write. `AIRK_USAGE_MODE=disabled` bypasses policy/history access for request recording. Explicit report/configuration/clear commands remain available for existing history. Clearing removes usage diagnostics, feedback and aggregates while preserving source files and the index. Already started spans cannot repopulate cleared history.
+
+Successful JSON result objects include an opaque `request_id` when recording is enabled. Feedback accepts `useful`, `partly-useful` or `not-useful` against a retained ID; repeated feedback replaces its prior selection. Unknown/expired IDs fail explicitly. Feedback is a bounded recent-request sample, not a relevance or task-success score. Absent feedback remains unknown.
+
+The extension's selected-collection Usage and Savings view reads the same report and offers history/recording controls and exports. The extension does not maintain a second accounting database.
+
+## Ownership and data flow
+
+| Component | Responsibility |
 |---|---|
-| airk-core::usage | Versioned content-free observations, collection/root scope, recording policy, recorder interface and explicit usefulness feedback |
-| airk-kernel::usage | Request-span coordination, comparable-baseline construction, token estimates and bounded reporting; estimation/report helpers exist now |
-| airk-store::usage — planned | Bounded local aggregates, writer shards, deduplication, rollups, retention, deletion and coverage metadata |
-| airk-ingest / airk-retrieval — planned hooks | Normalized source byte counts, format/language buckets, index reuse and stage/cache counters |
-| airk-cli / airk-mcp — planned hooks | One observation per outer request, serialized response bytes and normalized client family; future report output |
-| packages/vscode — planned UI | Collection summary, history charts, indexing/space trends, recording controls and selected-collection export |
+| `airk-core::usage` | Content-free contracts, bounded dimensions, signed estimates and aggregate merging |
+| `airk-store::usage` | Daily transactions, retention, quotas, replay protection, feedback and lifecycle safety |
+| `airk-kernel::usage` | Scoped spans, bounded comparable-source baselines, reports and exports |
+| CLI / MCP | One span per outer request and measurement after response serialization |
+| VS Code extension | Selected-collection summaries, history, exports and controls |
 
-~~~mermaid
+```mermaid
 flowchart LR
-  A[CLI or MCP request] --> K[Planned kernel request span]
-  K --> R[Existing indexing and retrieval]
-  R --> O[Content-free observation contracts]
-  O --> S[Planned bounded local aggregates]
-  S --> P[Kernel report and estimate helpers]
-  P --> C[Planned CLI and extension reports]
-~~~
+  A[CLI or MCP request] --> K[Collection-scoped span]
+  K --> R[Indexing or retrieval]
+  R --> O[Content-free measurements]
+  O --> S[Bounded local daily aggregates]
+  S --> P[Scoped report and signed estimates]
+  P --> C[CLI export and extension view]
+```
 
-Keep modules in the existing crates. Usage data is derived state under the chosen AIRK data directory, including the container volume. No cloud analytics, external database, provider credential or network connection is required. MCP reports stay bound to the worker's collection/root; workspace tools must never select another collection's history.
+Small SQLite transactions in `usage.sqlite3` are separate from index transactions and the index writer lock. Multiple workers update shared daily aggregate rows atomically. This directly implements bounded multiworker accounting: no file per request, detailed events off by default, and no complete-history rewrite on each call. A nonblocking OS file lock coordinates writes, clear and collection deletion; a crashed process releases it automatically. A random ledger incarnation rejects late spans after history clearing or collection recreation.
 
-## Measurements and useful interpretations
+## Measurements
 
-| Area | Measurements | Interpretation |
+| Area | Recorded / reported | Interpretation and limits |
 |---|---|---|
-| Activity | Calls by operation, collection, normalized client, document kind and later language; hourly/daily counts | Which tools/formats are used and when |
-| Results | Nonempty/empty/error/not-ready/cancelled/capacity-limited counts, result counts and truncation | Scope, extraction coverage and budget problems; nonempty is not proof of relevance |
-| Latency | Monotonic request duration, cold/warm cache labels, later stage timings | Slow tools, cold-start penalties and cache behavior |
-| Context | Serialized UTF-8 response bytes including citations/metadata, plus comparable baseline bytes | Delivered context relative to an explicitly named alternative |
-| Indexing | Changed/reused/removed/skipped files, processed source bytes, duration and last/peak index footprint | Extraction reuse, churn and disk growth; reuse does not imply source hashing/I/O was avoided |
-| Scheduler | Received/coalesced events, launched batches, queue delay, pending revisions and budget/lock blocks | Excessive indexing or stale evidence during rapid edits |
-| Feedback — optional | Useful/partly useful/not useful against an opaque request ID | Explicit usefulness evidence; absent feedback is unknown |
-| Accounting health | Drops, flush failures, duplicates, retained coverage and estimator version | Whether the report window is complete enough to interpret |
+| Activity | Calls by operation, normalized client, content kind; daily history | No queries, symbols, paths or arbitrary client labels |
+| Results | Success, empty, failed and truncation | Current adapters classify operation errors as failed; contracts also support not-ready/cancelled/capacity categories |
+| Latency | Monotonic duration through serialization; fixed buckets; index scan/extraction and publication stage totals | Includes accounting setup, excludes provider work and final ledger flush. Stage samples are counted separately; missing stages remain unknown |
+| Context | Serialized response bytes and same-generation full-source baseline when available | CLI logical JSON and MCP tool-result JSON are distinct |
+| Indexing | Changed, reused, removed, skipped, processed source bytes; logical index disk samples and signed growth | Reuse saves extraction; it does not establish avoided hashing/I/O. Disk inventories stop at 10,000 entries or a 50 ms check budget; linked/inaccessible/partial scans remain unknown |
+| Supplied evidence | Numeric client/session, alternative-context, paired-task and local tokenizer measurements | Separate provenance, model/tokenizer identity and category limits; never increment AIRK request counts |
+| Feedback | Useful, partly useful, not useful for retained request IDs | Explicit and optional |
+| Accounting | Duplicate IDs, retained daily coverage, ledger bytes, process-local drops | Historical losses across crashes/workers are unknown |
 
-The current report helper supplies operation/client/document-kind counts, outcome/truncation/cache totals, latency buckets, index-work totals and comparison coverage. Language profiles, scheduler metrics, feedback rollups, disk-growth history and persistent recording health are later implementations. Latency boundaries are 1 ms, 5 ms, 20 ms, 100 ms, 500 ms, 2 s and 16 s, followed by an overflow bucket. Bucket-derived percentiles must be approximate; exact percentile calculation is not implemented. Cache hit ratios use known warm/cold observations only and show unknown/not-applicable coverage separately.
+Client labels default to CLI or unknown MCP. `AIRK_CLIENT` can declare a known family: `vscode`, `claude`, `codex`, `gemini`, `cursor`, `cline`, `roo`, `junie`, `copilot-cli`, `opencode`, `kilo`, `amazon-q`, `windsurf`. Labels normalize to fixed categories, authorize nothing and never retain arbitrary supplied strings. Content kinds come from successfully compared sources; mixed sources stay mixed and unavailable comparisons stay unknown.
 
-## Honest token estimates
+Latency boundaries are 1 ms, 5 ms, 20 ms, 100 ms, 500 ms, 2 s and 16 s, followed by overflow. Exact percentiles are not reported. Cache outcomes remain unknown unless measured; adapters do not infer cache hits from latency.
 
-Measure response size after serialization at the CLI/MCP boundary. Current text budgets exclude some framing and cannot substitute for response measurements. The contract distinguishes logical result JSON from MCP tool-result JSON; neither automatically equals the text an agent sends to its model.
+Actual native scheduler index/reindex jobs are recorded once with the fixed `native_scheduler` client family, including extraction reuse and failures on an existing managed collection. The label is independent of `AIRK_CLIENT`; a worker serving another collection records against the job root/collection. `index --scheduled` callers and joined waiters add no second indexing observation. Idle/busy polls and coverage reconciliation are not index work. Scheduler accounting measures the serialized logical index report, excluding queue/watch transport envelopes. Jobs that fail before a valid scoped kernel/managed ledger exists remain visible in the queue, without inventing a usage scope. Native queue timing/event metrics remain available through `airk schedule status`. CPU time and physical I/O counters are explicitly unknown; logical file sizes do not represent disk allocation or actual bytes read. Disk-growth history counts only observations with complete before/after inventories and excludes usage files/locks; retained old index generations contribute to those logical sizes.
 
-Keep three baseline categories separate:
+## Honest estimates
 
-1. **Full returned sources:** normalized full text of the unique sources contributing evidence, rendered with comparable framing from the same generation. This is a counterfactual full-source context scenario, not a claim that the agent would otherwise read every file.
-2. **Observed alternative:** a comparable alternative-tool result captured by an explicitly integrated client or evaluation harness. It does not establish causal provider-billing savings.
-3. **User supplied:** an explicitly configured scenario with provenance, never presented as observed workflow behavior.
+The implemented live baseline is **full returned sources**: unique sources actually cited in the response, from matching indexed generations and content hashes, rendered as normalized text chunks with original locations. PDF/DOCX/XLSX/PPTX use extracted text rather than compressed bytes or images. Repeated citations deduplicate the source before counting its chunks. This is a counterfactual context scenario; it does not assert that an agent would otherwise read every whole source.
 
-Do not use repository size as the baseline. Deduplicate contributing sources within a request. PDF/DOCX/PPTX use extracted text, not compressed file size or images; SVG uses textual content rather than rendered pixels. Baselines and responses must match generation and representation. Missing/mismatched comparisons are excluded and counted. Failed/empty results, indexing and administrative tools receive no token-reduction credit. Nested helpers and replayed request IDs must not count twice.
+Optional comparison work pins one immutable catalog and is capped at 100 sources, an 8 MiB inventory, 8 MiB of cumulative retained artifact payloads, and 1 MiB of contributing normalized text. Concurrent generation changes, missing/mismatched citations, larger indexes and comparison failures produce missing comparisons; they do not change evidence or read live source files. Reports show eligible, compared, missing, mismatched and excluded calls beside totals.
 
-The initial method is a UTF-8-byte heuristic: four nominal bytes per token, with two-to-six-byte sensitivity assumptions. These are adjustable scenario assumptions, not model-specific accuracy guarantees or a statistical confidence interval. Code, Unicode, natural language and JSON tokenize differently. Future local tokenizer adapters must record their exact tokenizer/model revision, apply the same tokenizer to both sides and count transient text without retaining it.
+Responses are counted after serialization. MCP includes the tool-result envelope and text content, but excludes the JSON-RPC envelope and subsequent model prompt. Full-source comparisons use the corresponding JSON representation. Indexing, administrative commands, failures and empty results receive no context-reduction credit. Reports do not estimate their own output as saved context; nested kernel helpers do not record separately. Argument/schema rejection before a handler is entered and interrupted requests are not observed; partial accounting remains explicit.
+
+The estimator is `utf8-byte-assumptions/1`: four nominal bytes per token, with two-to-six-byte sensitivity assumptions. These are scenario assumptions, not a model tokenizer, accuracy guarantee or confidence interval. Code, Unicode, prose and JSON tokenize differently.
 
 ```text
-nominal baseline tokens = ceil(baseline UTF-8 bytes / nominal bytes per token)
-nominal returned tokens = ceil(serialized response UTF-8 bytes / nominal bytes per token)
+nominal baseline tokens = ceil(baseline UTF-8 bytes / 4)
+nominal returned tokens = ceil(serialized response UTF-8 bytes / 4)
 estimated context reduction = nominal baseline tokens - nominal returned tokens
 ```
 
-For a fictional 48,000-byte baseline and 4,800-byte response, the nominal reduction is 10,800 tokens and the broad assumption range is 5,600–23,200. An 80-byte source compared with a 400-byte JSON result instead yields **80 additional nominal tokens**. Preserve signed differences rather than clamping expansions to zero. Estimate per request before aggregation to retain per-call rounding.
+A fictional 48,000-byte baseline and 4,800-byte result produce 10,800 nominal tokens of reduction and an assumption range of 5,600–23,200. An 80-byte baseline and 400-byte result produce **80 additional nominal tokens**. Estimates stay signed and are calculated per request before aggregation to preserve rounding.
 
-Stratify comparisons by baseline and estimator version. Show compared/eligible calls, missing/mismatched baselines, excluded calls, replay duplicates, dropped records and retained coverage beside totals. Unknown drops/retention are unknown, not zero. Repeated deliveries do not establish unique task-level savings; cross-call overlap and cached agent context require an optional explicit client/session integration.
+Live hooks supply only full-returned-source comparisons. The `supplemental` report field separately contains observed-alternative and user-supplied comparisons, client/session counters and calibration; these never enter the native request total. `report.provider_token_usage_observed` remains false for AIRK hooks and `estimated_bill_savings` remains null. Explicit client reports are self-reported evidence, not independently verified provider records.
 
-## Monetary scenarios and user value
+## Explicit client and session inputs
 
-Currency estimates remain unavailable unless the user supplies a model/input-price scenario, currency, rate date and treatment of cached input. A conditional scenario can use `estimated input-token reduction / 1,000,000 × supplied effective input rate`, labeled a hypothetical input-cost equivalent. Do not fetch prices silently, invent a default rate, mix models, count output-token savings or promise a lower bill. The current helper returns no bill-savings value and marks provider token usage as unobserved.
+`usage import FILE` reads one UTF-8 JSON object of at most 16 KiB. Unknown fields are rejected, including free-form notes, prompts and source content. The collection/root comes from the normal CLI scope, not from the input. A current indexed collection and enabled recording are required. There is no background client log scraping or automatic external connection.
 
-Actual bill/task comparisons need optional client-supplied usage and paired evaluations controlling model, task, success criteria and prompt history. Keep them separate from the local estimate. Expose indexing time, CPU/I/O when measurable, memory and disk growth too; smaller context or faster retrieval alone does not prove a net time/cost benefit.
+Example structure below uses fictional numeric observations. Replace `event_id` with a fresh random 32-digit hex ID, `unix_ms` with the observation's UTC milliseconds within retention, and identity digests with the model/tokenizer revision identities actually used. A digest identifies the definition or model revision; do not hash prompts, queries, paths or sample text.
 
-## Recording, scope and retention
+```json
+{
+  "schema_version": 1,
+  "event_id": "00000000000000000000000000000001",
+  "unix_ms": 0,
+  "client": "codex",
+  "content_kind": "code",
+  "provenance": "client_reported",
+  "context": {
+    "baseline_kind": "observed_alternative",
+    "generation": 1,
+    "representation": "logical_result_json",
+    "baseline_utf8_bytes": 80,
+    "returned_utf8_bytes": 400,
+    "tokens": null
+  },
+  "session": {
+    "model_revision_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "requests": 2,
+    "input_tokens": 120,
+    "cached_input_tokens": 20,
+    "output_tokens": 12,
+    "elapsed_ms": 1000,
+    "tool_round_trips": null
+  },
+  "paired_task": null
+}
+```
 
-The default `UsagePolicy` is aggregates-only: 30-day aggregate retention, a 1 MiB collection cap and a 32 MiB data-root cap. These are planned enforced limits; no durable recorder is attached yet. Users can disable recording. Detailed content-free diagnostic events are separately opt-in with a short 24-hour allowance. The schema contains no query strings/hashes, symbol names, paths, source text, prompts, arguments, raw errors, credentials or free-form notes. Map client/format/language labels to bounded categories rather than arbitrary input strings. Client labels never authorize anything.
+Use `provenance: user_supplied` with `baseline_kind: user_supplied` for a scenario rather than an observed alternative. `full_returned_sources` is reserved for native hooks. Each context pair asserts one generation and one representation for both sides; AIRK cannot independently verify imported context comparability. Optional `tokens` contains `baseline_tokens`, `returned_tokens`, and `tokenizer` with `algorithm: client_reported`, `definition_sha256`, and `model_revision_sha256`. Both counts must use that same tokenizer definition and framing. Different tokenizer/model identities and provenance stay in separate bounded strata. Missing counters are `null`, never an implicit zero. Cached input cannot exceed total input.
 
-Scope combines collection ID and root-binding digest. Rebound/recreated collections must not inherit unrelated history. Container mounts need the managed identity discussed in [collections](collections.md); hashing a mount path cannot prove host-project identity. Place diagnostics within managed collection state so storage selection, usage inspection and explicit collection removal also govern those bytes.
+Optional `paired_task` contains `same_task_and_model: true`, `with_airk` and `without_airk` session objects using the same model revision, and `with_airk_result` / `without_airk_result` values `passed`, `failed` or `unknown`. Reports retain numeric session totals and five quality bins: both passed, only AIRK passed, only the alternative passed, both failed, and unknown. This records an explicitly supplied paired evaluation; it does not prove causation or comparable experimental conditions. No task description or session name is retained.
 
-The first durable adapter should flush aggregate batches in short-lived CLI workers and periodically in MCP workers. Each worker owns a bounded shard; a compactor merges daily aggregates with event/sequence deduplication and atomic publication. Do not take the index writer lock per observation, create a file per request, rewrite full history synchronously or persist detailed events by default. Coordinate registration/removal so late writers cannot recreate a deleted collection. Lifecycle tests must pass before persistence is enabled.
+Supplemental imports keep daily aggregates, at most 16 strata per UTC day and 256 opaque recent replay IDs. Once an ID is evicted, older timestamps are rejected rather than counted twice. All supplemental storage shares the existing collection/root quota. Capacity, stale-time and invalid-input failures fail the explicit import atomically and do not change native totals. Repeated IDs return `duplicate: true`; clear/delete/recreate invalidate old writers. Disabled recording rejects import and `calibrate --record` before opening history.
 
-Recording is best-effort: failure never fails retrieval, exceeds a small recording-time budget or starts retry loops. Preserve observable drop/flush-failure counters. Disabled mode performs no usage-state reads/writes. Bound dimensions, buffers, record sizes and retention; prune diagnostics/obsolete aggregates before consuming index capacity. Exports must stream bounded aggregates, safely encode wide totals for JavaScript and avoid estimating their own report output as saved context.
+## Offline tokenizer calibration
 
-## Delivery sequence
+`usage calibrate` reads two comparable logical-result JSON files, at most 256 KiB of UTF-8 each, and a local tokenizer definition up to 1 MiB. Without `--record` it only prints a transient calculation. With `--record` it retains aggregate counts, content kind and tokenizer/model identities, never the files' names, content or hashes. `--generation` is the explicitly supplied generation of the comparable samples. Supply independent held-out samples for each content family being evaluated; one successful sample does not establish general accuracy.
 
-| Increment | Implementation | Acceptance |
-|---|---|---|
-| 1 — implemented foundation | Core contracts/default policy, signed heuristic and scoped bounded summaries | Sensitivity/overflow, expansion, failed/empty/missing/mismatched baselines, root/window isolation, replay deduplication and index work separate from tokens |
-| 2 — local recorder | Store adapter, aggregate-only flush/rollups, caps/retention/coverage and deletion integration | Multiple workers, crash/partial writes, full disk, late deletion writes, disabled mode, no content capture and no retrieval failure |
-| 3 — live hooks | Kernel request spans, adapter serialization measurement, indexing/retrieval/scheduler counters and comparable baselines | No nested/setup double counts; mixed document/framing/generation fixtures; bounded overhead and no extra unbounded source reads |
-| 4 — reports and controls | Planned `airk usage report`, selected-collection JSON/CSV/Markdown export and extension Usage and Savings view | Explicit empty/disabled/partial windows, root/date filters, signed estimates, wide-number-safe exports and source-preserving history clearing |
-| 5 — calibration/client evidence | Local tokenizer, explicit feedback, opt-in session/alternative-tool observations and optional price scenarios | Held-out format/language cases, reproducible provenance, usefulness separate from hit counts and billing claims supported by actual evidence |
+The implemented tokenizer is `utf8-byte-bpe/1`: all 256 byte symbols are implicit, followed by at most 8,192 ranked merges of hexadecimal byte strings. Each merge must combine earlier symbols into at most 256 bytes. The lowest-ranked available pair merges first, with leftmost ties. There is no hidden normalization, regex pretokenization, special-token handling or chat framing. This is exact for the supplied definition; it does **not** claim compatibility with arbitrary provider tokenizers. Model-specific adapters for other tokenizer algorithms require separate implementation and qualification.
 
-A future read-only MCP summary tool is optional and must use the worker's collection. Adding it requires updating capabilities, protocol tests and extension probes; the current fourteen-tool inventory is unchanged. Owner-wide reports remain CLI/extension maintenance actions. None of these planned commands/settings are currently advertised as available.
+```json
+{
+  "schema": 1,
+  "model_revision_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "merges": [["68", "65"], ["6865", "6c"], ["68656c", "6c"], ["68656c6c", "6f"]]
+}
+```
+
+This fictional definition merges `hello`. JSON `"hellohello"` has four tokens (two merged words and two quotes), and `"hello"` has three. Reports include exact signed token reduction, per-side absolute error of the four-byte heuristic, and the number of reductions outside the stated two-to-six-byte assumptions. The tokenizer definition's SHA-256 and the supplied model revision are retained so incompatible counts cannot silently mix. Supplied client counts can use the same comparison fields but retain `client_reported` provenance.
+
+## User-supplied price scenarios
+
+`usage report --price-scenario FILE` reads at most 4 KiB of local JSON. The scenario is ephemeral: no price is fetched, inferred, silently saved or treated as a bill. Rates use fixed decimal arithmetic with at most six fractional digits; signed results retain twelve decimal places.
+
+```json
+{
+  "model": "fictional-model",
+  "currency": "USD",
+  "rate_date": "2026-10-14",
+  "input_price_per_million": "2.500000",
+  "cached_input_treatment": "separate_rate",
+  "cached_input_price_per_million": "0.250000",
+  "context_assumes_uncached": true
+}
+```
+
+This fictional rate converts an 80-token context expansion to `-0.000200000000` USD of hypothetical input-cost reduction. It is not estimated bill savings. Set `context_assumes_uncached: false` to omit context-price counterfactuals. Cache treatment can be `unknown`, `uncached_rate`, or `separate_rate`; only the last accepts a separate cached price. Session input is priced only where the client explicitly supplied its cache split. Missing splits and missing input counters remain unpriced, and missing cached rates remain unknown. Output tokens are reported when supplied but never converted into output-cost savings. Scenario model compatibility and experimental causality are not inferred.
+
+## Scope, retention and capacity
+
+Default policy retains 30 UTC daily buckets, reserves at most 1 MiB per collection and 32 MiB per data root, and disables detailed diagnostics. SQLite page limits reserve room for the rollback journal and policy/lock files. Usage quotas conservatively reserve 1 MiB per existing ledger, allowing at most 32 default collection ledgers even when individual files are smaller. Ledger mutations also reserve their maximum bounded additional DB/journal footprint under the shared managed-storage quota; exhausted shared capacity drops implicit accounting or rejects an explicit import. Clear unlinks usage DB/journal under its lifecycle lock and can reclaim space without a VACUUM reservation even when the managed quota is full.
+
+The ledger contains fixed categories, aggregate counters, a root-binding digest, opaque replay IDs and optional content-free diagnostic measurements. It never stores queries or their hashes, symbols, source paths/text, prompts, arguments, credentials, raw errors or free-form notes. Collection/root ownership is validated against indexed metadata. A mount-path digest cannot establish host-project identity; retain the managed collection precautions in [collections](collections.md).
+
+Replay protection retains at most 4,096 IDs. After eviction, a timestamp floor rejects older delayed observations rather than counting replays again. This deliberately favors dropped accounting over inflated totals. Feedback uses the same bounded retained ID set. Opt-in diagnostics retain at most 128 content-free events with a 24-hour allowance and prune on later recording. Reports immediately filter logical retention; physical pruning runs on the next successful recording transaction. Idle collections can retain expired bytes until recording or explicit clearing resumes.
+
+Writers have a 2 ms SQLite busy timeout and nonblocking lifecycle locks. Implicit hooks use nonblocking managed-quota admission with at most 10 ms of checked inventory work per open/write phase (two phases per request); a busy ledger or exhausted scan budget drops accounting. Explicit imports/configuration can use ordinary quota checks. Individual filesystem calls and synchronous commits cannot be preempted, so these checks are not a hard wall-time guarantee. Busy/full/corrupt ledgers drop accounting and emit a process-local notice without failing retrieval. Drop counters only survive the current process. Nonempty reports consequently say `partial`, empty reports say `empty`, and disabled reports say `disabled`; history is never certified lossless.
+
+Large byte/time/token sums serialize as decimal strings so JavaScript does not round them. CSV includes operation totals and a quoted `details_json` column for supplemental/scenario rows. Markdown adds signed comparison and supplemental summaries plus any explicit scenario. JSON includes policy, daily history, comparison coverage, feedback, supplemental strata and health.
+
+## Validation and remaining release work
+
+Tests cover signed sensitivity and overflow, excluded/missing/mismatched comparisons, root/window isolation, wide-number exports, worker merging/deduplication, disabled no-history writes, clear/deletion/recreation safety, stale/busy drops, SQLite page-cap rollback, root quotas, diagnostic opt-in and feedback. Kernel fixtures check one outer observation, matching-revision baselines, reports not counting themselves, absence of fictional query/source content from the ledger, and actual scheduler jobs attributed once to their own collection with disabled history unchanged.
+
+Tests additionally cover exact signed monetary arithmetic, invalid dates/rates, cache splits, client import deduplication and category caps, paired-quality bins, local byte-BPE counts including Unicode byte fallback, unknown input fields, clear/disabled behavior and no retained calibration text. Release qualification still requires actual full-disk and process-kill fault injection on each supported platform, sustained worker load and overhead measurements, and representative held-out calibration/paired-client evidence. Local Windows tests do not qualify macOS, Linux, network filesystems, provider savings or retrieval usefulness.

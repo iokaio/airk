@@ -16,7 +16,7 @@ test('untrusted workspaces expose no MCP servers and commands cannot launch a he
             onDidSaveTextDocument: event, onDidChangeTextDocument: event, onDidGrantWorkspaceTrust: event,
             onDidChangeWorkspaceFolders: event, onDidChangeConfiguration: event },
         window: { createOutputChannel: () => ({ ...disposable, appendLine() {}, show() {} }),
-            createStatusBarItem: () => ({ ...disposable, show() {} }), onDidChangeTextEditorSelection: event,
+            createStatusBarItem: () => ({ ...disposable, show() {} }), onDidChangeTextEditorSelection: event, onDidChangeActiveTextEditor: event,
             showErrorMessage: (error: string) => { errors.push(error); } },
         commands: { registerCommand: (name: string, handler: () => Promise<unknown>) => { commands.set(name, handler); return disposable; } },
         StatusBarAlignment: { Left: 1 },
@@ -30,9 +30,9 @@ test('untrusted workspaces expose no MCP servers and commands cannot launch a he
         const extension = require('../extension');
         const context = { subscriptions: [] as { dispose(): void }[], extensionPath: '/nonexistent-helper-fixture' };
         const exported = await extension.activate(context);
-        assert.equal(commands.size, 13); assert.deepEqual(await exported.getServerDefinitions(), []);
+        assert.equal(commands.size, 15); assert.deepEqual(await exported.getServerDefinitions(), []);
         assert.deepEqual(await provider.provideMcpServerDefinitions(), []);
-        await commands.get('airk.index')!();
+        await assert.rejects(commands.get('airk.index')!(), /Trust this workspace/);
         assert.equal(errors.length, 1); assert.match(errors[0], /Trust this workspace/);
         await assert.rejects(provider.resolveMcpServerDefinition({}), /Trust this workspace/);
         context.subscriptions.forEach(item => item.dispose());
@@ -56,7 +56,7 @@ test('trusted MCP definitions ignore workspace storage overrides and reconnect w
             onDidSaveTextDocument: event, onDidChangeTextDocument: event, onDidGrantWorkspaceTrust: event,
             onDidChangeWorkspaceFolders: event, onDidChangeConfiguration: event },
         window: { createOutputChannel: () => ({ ...disposable, appendLine() {}, show() {} }),
-            createStatusBarItem: () => ({ ...disposable, show() {} }), onDidChangeTextEditorSelection: event,
+            createStatusBarItem: () => ({ ...disposable, show() {} }), onDidChangeTextEditorSelection: event, onDidChangeActiveTextEditor: event,
             showErrorMessage: (error: string) => { throw new Error(error); } },
         commands: { registerCommand: (name: string, handler: () => Promise<unknown>) => { commands.set(name, handler); return disposable; } },
         env: {}, Uri: { file: (file: string) => ({ fsPath: file }) }, McpStdioServerDefinition: Definition,
@@ -87,5 +87,130 @@ test('trusted MCP definitions ignore workspace storage overrides and reconnect w
         loader._load = original; native.prepareHelper = priorPrepare; native.runJson = priorRun;
         const resolved = await fs.realpath(directory); assert.equal(path.dirname(resolved), await fs.realpath(os.tmpdir()));
         assert.ok(path.basename(resolved).startsWith('airk-vscode-provider-')); await fs.rm(resolved, { recursive: true, force: true });
+    }
+});
+
+test('multi-root Index Now selects the active folder and coverage refresh never restarts MCP definitions', async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'airk-vscode-multiroot-'));
+    const roots = [path.join(directory, 'A'), path.join(directory, 'B')]; await Promise.all(roots.map(root => fs.mkdir(root)));
+    const commands = new Map<string, () => Promise<unknown>>(); const state = new Map<string, unknown>();
+    const disposable = { dispose() {} }, event = () => disposable;
+    let notifications = 0, choices = 0;
+    const calls: { spec: { root: string }; command: string; extra: string[] }[] = [];
+    const window = { activeTextEditor: { document: { uri: { fsPath: path.join(roots[1], 'fixture.ts') } } },
+        createOutputChannel: () => ({ ...disposable, appendLine() {}, show() {} }),
+        createStatusBarItem: () => ({ ...disposable, show() {} }), onDidChangeTextEditorSelection: event, onDidChangeActiveTextEditor: event,
+        showQuickPick: async (items: unknown[]) => { choices++; return items[0]; },
+        withProgress: async (_options: unknown, run: () => Promise<unknown>) => run(),
+        showTextDocument: async () => undefined, showErrorMessage: (error: string) => { throw new Error(error); } };
+    const stub = {
+        workspace: { isTrusted: true, workspaceFolders: roots.map((root, index) => ({ name: String(index), uri: { scheme: 'file', fsPath: root } })),
+            getConfiguration: () => ({ get: (key: string, fallback: unknown) => key === 'index.mode' ? 'manual' : fallback, inspect: () => undefined }),
+            createFileSystemWatcher: () => ({ ...disposable, onDidChange: event, onDidCreate: event, onDidDelete: event }),
+            onDidSaveTextDocument: event, onDidChangeTextDocument: event, onDidGrantWorkspaceTrust: event,
+            onDidChangeWorkspaceFolders: event, onDidChangeConfiguration: event, openTextDocument: async () => ({}) },
+        window, commands: { registerCommand: (name: string, handler: () => Promise<unknown>) => { commands.set(name, handler); return disposable; } },
+        env: {}, StatusBarAlignment: { Left: 1 }, ProgressLocation: { Notification: 1 },
+        EventEmitter: class { event = event; fire() { notifications++; } dispose() {} }, lm: {}
+    };
+    const loader = Module as unknown as { _load: (...args: any[]) => any }, original = loader._load;
+    const native = require('../native'), priorPrepare = native.prepareHelper, priorRun = native.runJson;
+    native.prepareHelper = async () => '/fixture/airk';
+    native.runJson = async (spec: { root: string }, command: string, extra: string[] = []) => {
+        calls.push({ spec, command, extra });
+        return command === 'index' ? { generation: 1, indexed: 1, reused: 0, removed: 0, skipped: [] }
+            : { scan_complete: true, eligible: 1, current: 1, indexed: true };
+    };
+    loader._load = function(request: string, ...args: any[]) { return request === 'vscode' ? stub : original.call(this, request, ...args); };
+    const context = { subscriptions: [] as { dispose(): void }[], extensionPath: '/fixture/extension',
+        extension: { packageJSON: { version: '0.1.0' } }, globalStorageUri: { fsPath: path.join(directory, 'Host') },
+        globalState: { get: (key: string, fallback: unknown) => state.get(key) ?? fallback,
+            update: async (key: string, value: unknown) => { state.set(key, value); } } };
+    try {
+        delete require.cache[require.resolve('../extension')]; await require('../extension').activate(context);
+        const initialNotifications = notifications;
+        await commands.get('airk.index')!();
+        let indexes = calls.filter(call => call.command === 'index');
+        assert.equal(indexes.length, 1); assert.equal(indexes[0].spec.root, await fs.realpath(roots[1])); assert.equal(choices, 0);
+        assert.ok(indexes[0].extra.includes('--scheduled'));
+        await commands.get('airk.status')!(); assert.equal(notifications, initialNotifications);
+        window.activeTextEditor.document.uri.fsPath = path.join(directory, 'outside.txt');
+        await commands.get('airk.index')!(); indexes = calls.filter(call => call.command === 'index');
+        assert.equal(choices, 1); assert.equal(indexes[1].spec.root, await fs.realpath(roots[0]));
+    } finally {
+        context.subscriptions.forEach(item => item.dispose()); loader._load = original;
+        native.prepareHelper = priorPrepare; native.runJson = priorRun;
+        const resolved = await fs.realpath(directory); assert.equal(path.dirname(resolved), await fs.realpath(os.tmpdir()));
+        assert.ok(path.basename(resolved).startsWith('airk-vscode-multiroot-')); await fs.rm(resolved, { recursive: true, force: true });
+    }
+});
+
+test('coverage and indexing share native writer exclusion and command failures remain awaitable', async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'airk-vscode-writers-'));
+    const root = path.join(directory, 'Project'); await fs.mkdir(root);
+    const commands = new Map<string, () => Promise<unknown>>(), state = new Map<string, unknown>();
+    const errors: string[] = [], documents: string[] = [];
+    const disposable = { dispose() {} }, event = () => disposable;
+    let signalCoverage!: () => void, releaseCoverage!: () => void, signalProgress!: () => void;
+    const coverageStarted = new Promise<void>(resolve => { signalCoverage = resolve; });
+    const coverageRelease = new Promise<void>(resolve => { releaseCoverage = resolve; });
+    const progressStarted = new Promise<void>(resolve => { signalProgress = resolve; });
+    let writingCoverage = false, holdCoverage = true, rejectIndex = false, indexes = 0;
+    const stub = {
+        workspace: { isTrusted: true, workspaceFolders: [{ name: 'Project', uri: { scheme: 'file', fsPath: root } }],
+            getConfiguration: () => ({ get: (key: string, fallback: unknown) => key === 'index.mode' ? 'manual' : fallback, inspect: () => undefined }),
+            createFileSystemWatcher: () => ({ ...disposable, onDidChange: event, onDidCreate: event, onDidDelete: event }),
+            onDidSaveTextDocument: event, onDidChangeTextDocument: event, onDidGrantWorkspaceTrust: event,
+            onDidChangeWorkspaceFolders: event, onDidChangeConfiguration: event,
+            openTextDocument: async ({ content }: { content: string }) => { documents.push(content); return {}; } },
+        window: { createOutputChannel: () => ({ ...disposable, appendLine() {}, show() {} }),
+            createStatusBarItem: () => ({ ...disposable, show() {} }), onDidChangeTextEditorSelection: event, onDidChangeActiveTextEditor: event,
+            withProgress: async (_options: unknown, run: () => Promise<unknown>) => { const pending = run(); signalProgress(); return pending; },
+            showTextDocument: async () => undefined, showErrorMessage: (error: string) => { errors.push(error); } },
+        commands: { registerCommand: (name: string, handler: () => Promise<unknown>) => { commands.set(name, handler); return disposable; } },
+        env: {}, StatusBarAlignment: { Left: 1 }, ProgressLocation: { Notification: 1 },
+        EventEmitter: class { event = event; fire() {} dispose() {} }, lm: {}
+    };
+    const loader = Module as unknown as { _load: (...args: any[]) => any }, original = loader._load;
+    const native = require('../native'), priorPrepare = native.prepareHelper, priorRun = native.runJson;
+    native.prepareHelper = async () => '/fixture/airk';
+    native.runJson = async (_spec: unknown, command: string) => {
+        if (command === 'coverage') {
+            if (holdCoverage) { writingCoverage = true; signalCoverage(); await coverageRelease; writingCoverage = false; }
+            return { scan_complete: true, eligible: 1, current: 1, indexed: true };
+        }
+        if (command === 'index') {
+            indexes++;
+            assert.equal(writingCoverage, false, 'Indexing must wait for the coverage writer');
+            if (rejectIndex) { throw new Error('index writer locked by another AIRK process'); }
+            return { generation: indexes, indexed: 1, reused: 0, removed: 0, skipped: [] };
+        }
+        throw new Error(`Unexpected fixture command ${command}`);
+    };
+    loader._load = function(request: string, ...args: any[]) { return request === 'vscode' ? stub : original.call(this, request, ...args); };
+    const context = { subscriptions: [] as { dispose(): void }[], extensionPath: '/fixture/extension',
+        extension: { packageJSON: { version: '0.1.0' } }, globalStorageUri: { fsPath: path.join(directory, 'Host') },
+        globalState: { get: (key: string, fallback: unknown) => state.get(key) ?? fallback,
+            update: async (key: string, value: unknown) => { state.set(key, value); } } };
+    try {
+        delete require.cache[require.resolve('../extension')]; await require('../extension').activate(context);
+        const coverage = commands.get('airk.status')!(); await coverageStarted;
+        const indexing = commands.get('airk.index')!(); await progressStarted;
+        await new Promise<void>(resolve => setTimeout(resolve, 0));
+        assert.equal(indexes, 0, 'A queued index must not race the active native coverage writer');
+        holdCoverage = false; releaseCoverage(); await Promise.all([coverage, indexing]);
+        assert.equal(indexes, 1); assert.deepEqual(errors, []);
+        rejectIndex = true;
+        await assert.rejects(commands.get('airk.index')!(), /writer locked by another AIRK process/);
+        assert.equal(errors.length, 1, 'Explicit command failures must still notify the user');
+        await commands.get('airk.status')!();
+        assert.equal(JSON.parse(documents.at(-1)!).scheduling[0].pending, true, 'External contention retains pending work');
+        rejectIndex = false; await commands.get('airk.index')!();
+        assert.equal(indexes, 3, 'A failed native write does not poison subsequent explicit retries');
+    } finally {
+        releaseCoverage(); context.subscriptions.forEach(item => item.dispose()); loader._load = original;
+        native.prepareHelper = priorPrepare; native.runJson = priorRun;
+        const resolved = await fs.realpath(directory); assert.equal(path.dirname(resolved), await fs.realpath(os.tmpdir()));
+        assert.ok(path.basename(resolved).startsWith('airk-vscode-writers-')); await fs.rm(resolved, { recursive: true, force: true });
     }
 });
