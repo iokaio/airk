@@ -22,12 +22,13 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   CARGO_BUILD_JOBS: '2'
+  CARGO_INCREMENTAL: '0'
 jobs:
   native:
     name: Native / ${{ matrix.target }}
     strategy:
       fail-fast: false
-      max-parallel: 2
+      max-parallel: 4
       matrix:
         include:
           - os: ubuntu-24.04
@@ -53,6 +54,21 @@ jobs:
           python-version: '3.11'
       - name: Install pinned compiler and checks
         run: rustup show
+      - name: Restore Rust dependencies and compiler outputs
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/src
+            ~/.cargo/git/db
+            target/debug
+            target/release
+            target/${{ matrix.target }}/debug
+            target/${{ matrix.target }}/release
+          key: airk-rust-v1-${{ runner.os }}-${{ matrix.target }}-${{ hashFiles('rust-toolchain.toml', '.github/workflows/ci.yml', '.cargo/**') }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}
+          restore-keys: |
+            airk-rust-v1-${{ runner.os }}-${{ matrix.target }}-${{ hashFiles('rust-toolchain.toml', '.github/workflows/ci.yml', '.cargo/**') }}-
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: '24.15.0'

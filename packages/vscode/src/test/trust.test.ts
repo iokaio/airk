@@ -92,23 +92,36 @@ test('trusted MCP definitions ignore workspace storage overrides and reconnect w
 
 test('multi-root Index Now selects the active folder and coverage refresh never restarts MCP definitions', async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'airk-vscode-multiroot-'));
-    const roots = [path.join(directory, 'A'), path.join(directory, 'B')]; await Promise.all(roots.map(root => fs.mkdir(root)));
+    const roots = [path.join(directory, 'A'), path.join(directory, 'B')];
+    const canonicalRoots = [path.join(directory, 'CanonicalA'), path.join(directory, 'CanonicalB')];
+    await Promise.all(canonicalRoots.map(root => fs.mkdir(root)));
+    // Editors keep the opened workspace spelling; native collections use realpath.
+    // A junction also models the short/long temporary-directory aliases on Windows CI.
+    await Promise.all(roots.map((root, index) => fs.symlink(canonicalRoots[index], root, process.platform === 'win32' ? 'junction' : 'dir')));
+    roots.push(path.join(roots[1], 'Nested')); await fs.mkdir(roots[2]);
     const commands = new Map<string, () => Promise<unknown>>(); const state = new Map<string, unknown>();
     const disposable = { dispose() {} }, event = () => disposable;
     let notifications = 0, choices = 0;
+    let saved!: (document: { uri: { fsPath: string } }) => void, changed!: (uri: { fsPath: string }) => void;
+    const documents: { scheduling: { name: string; pending: boolean }[] }[] = [];
+    const status = { ...disposable, show() {}, tooltip: '' };
+    const storage = path.join(roots[1], 'Host'), managedFile = path.join(storage, 'indexes', 'state.json');
     const calls: { spec: { root: string }; command: string; extra: string[] }[] = [];
     const window = { activeTextEditor: { document: { uri: { fsPath: path.join(roots[1], 'fixture.ts') } } },
         createOutputChannel: () => ({ ...disposable, appendLine() {}, show() {} }),
-        createStatusBarItem: () => ({ ...disposable, show() {} }), onDidChangeTextEditorSelection: event, onDidChangeActiveTextEditor: event,
+        createStatusBarItem: () => status, onDidChangeTextEditorSelection: event, onDidChangeActiveTextEditor: event,
         showQuickPick: async (items: unknown[]) => { choices++; return items[0]; },
         withProgress: async (_options: unknown, run: () => Promise<unknown>) => run(),
         showTextDocument: async () => undefined, showErrorMessage: (error: string) => { throw new Error(error); } };
     const stub = {
         workspace: { isTrusted: true, workspaceFolders: roots.map((root, index) => ({ name: String(index), uri: { scheme: 'file', fsPath: root } })),
+            textDocuments: [path.join(roots[1], 'dirty.ts'), managedFile, path.join(roots[1], '.env'), path.join(roots[1] + '-outside', 'other.ts')]
+                .map(fsPath => ({ isDirty: true, uri: { fsPath } })),
             getConfiguration: () => ({ get: (key: string, fallback: unknown) => key === 'index.mode' ? 'manual' : fallback, inspect: () => undefined }),
-            createFileSystemWatcher: () => ({ ...disposable, onDidChange: event, onDidCreate: event, onDidDelete: event }),
-            onDidSaveTextDocument: event, onDidChangeTextDocument: event, onDidGrantWorkspaceTrust: event,
-            onDidChangeWorkspaceFolders: event, onDidChangeConfiguration: event, openTextDocument: async () => ({}) },
+            createFileSystemWatcher: () => ({ ...disposable, onDidChange: (handler: typeof changed) => { changed = handler; return disposable; }, onDidCreate: event, onDidDelete: event }),
+            onDidSaveTextDocument: (handler: typeof saved) => { saved = handler; return disposable; }, onDidChangeTextDocument: event, onDidGrantWorkspaceTrust: event,
+            onDidChangeWorkspaceFolders: event, onDidChangeConfiguration: event,
+            openTextDocument: async ({ content }: { content: string }) => { documents.push(JSON.parse(content)); return {}; } },
         window, commands: { registerCommand: (name: string, handler: () => Promise<unknown>) => { commands.set(name, handler); return disposable; } },
         env: {}, StatusBarAlignment: { Left: 1 }, ProgressLocation: { Notification: 1 },
         EventEmitter: class { event = event; fire() { notifications++; } dispose() {} }, lm: {}
@@ -123,7 +136,7 @@ test('multi-root Index Now selects the active folder and coverage refresh never 
     };
     loader._load = function(request: string, ...args: any[]) { return request === 'vscode' ? stub : original.call(this, request, ...args); };
     const context = { subscriptions: [] as { dispose(): void }[], extensionPath: '/fixture/extension',
-        extension: { packageJSON: { version: '0.1.0' } }, globalStorageUri: { fsPath: path.join(directory, 'Host') },
+        extension: { packageJSON: { version: '0.1.0' } }, globalStorageUri: { fsPath: storage },
         globalState: { get: (key: string, fallback: unknown) => state.get(key) ?? fallback,
             update: async (key: string, value: unknown) => { state.set(key, value); } } };
     try {
@@ -134,9 +147,29 @@ test('multi-root Index Now selects the active folder and coverage refresh never 
         assert.equal(indexes.length, 1); assert.equal(indexes[0].spec.root, await fs.realpath(roots[1])); assert.equal(choices, 0);
         assert.ok(indexes[0].extra.includes('--scheduled'));
         await commands.get('airk.status')!(); assert.equal(notifications, initialNotifications);
+        window.activeTextEditor.document.uri.fsPath = path.join(roots[2], 'nested.ts');
+        await commands.get('airk.index')!(); indexes = calls.filter(call => call.command === 'index');
+        assert.equal(indexes[1].spec.root, await fs.realpath(roots[2]), 'The most specific opened workspace alias must win');
+        window.activeTextEditor.document.uri.fsPath = path.join(await fs.realpath(roots[2]), 'canonical.ts');
+        await commands.get('airk.index')!(); indexes = calls.filter(call => call.command === 'index');
+        assert.equal(indexes[2].spec.root, await fs.realpath(roots[2]), 'Canonical editor paths must select the same nested collection');
+        assert.equal(choices, 0);
         window.activeTextEditor.document.uri.fsPath = path.join(directory, 'outside.txt');
         await commands.get('airk.index')!(); indexes = calls.filter(call => call.command === 'index');
-        assert.equal(choices, 1); assert.equal(indexes[1].spec.root, await fs.realpath(roots[0]));
+        assert.equal(choices, 1); assert.equal(indexes[3].spec.root, await fs.realpath(roots[0]));
+        window.activeTextEditor.document.uri.fsPath = path.join(roots[1], 'dirty.ts');
+        changed({ fsPath: managedFile }); saved({ uri: { fsPath: path.join(roots[1], '.env') } });
+        changed({ fsPath: path.join(roots[1] + '-outside', 'other.ts') });
+        await commands.get('airk.status')!();
+        assert.ok(documents.at(-1)!.scheduling.every(job => !job.pending), 'Aliased private state, secrets and sibling paths cannot schedule work');
+        assert.match(status.tooltip, /1 unsaved document; AIRK indexes saved files\./, 'Dirty counts use the verified alias and existing eligibility exclusions');
+        saved({ uri: { fsPath: path.join(roots[1], 'saved.ts') } });
+        await commands.get('airk.status')!();
+        assert.deepEqual(documents.at(-1)!.scheduling.filter(job => job.pending).map(job => job.name), ['1'], 'An aliased save queues only its eligible collection');
+        await commands.get('airk.index')!();
+        changed({ fsPath: path.join(roots[2], 'changed.ts') });
+        await commands.get('airk.status')!();
+        assert.deepEqual(documents.at(-1)!.scheduling.filter(job => job.pending).map(job => job.name).sort(), ['1', '2'], 'A nested event reaches both containing collections');
     } finally {
         context.subscriptions.forEach(item => item.dispose()); loader._load = original;
         native.prepareHelper = priorPrepare; native.runJson = priorRun;

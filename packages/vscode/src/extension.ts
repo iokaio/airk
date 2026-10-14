@@ -35,6 +35,7 @@ class Controller implements vscode.Disposable {
     private readonly nativeWrites = new NativeWriteQueue();
     private readonly rescan: NodeJS.Timeout;
     private specs = new Map<string, LaunchSpec>();
+    private rootBindings: { opened: string; canonical: string }[] = [];
     private helper?: Promise<string>;
     private refreshRevision = 0;
     private refreshing = false;
@@ -92,17 +93,19 @@ class Controller implements vscode.Disposable {
         const revision = ++this.refreshRevision;
         if (!vscode.workspace.isTrusted) {
             for (const spec of this.specs.values()) { this.scheduler.forget(spec.collection); this.coverage.forget(spec.collection); }
-            this.specs.clear(); this.definitions.fire(); this.updateStatus(); return;
+            this.specs.clear(); this.rootBindings = []; this.definitions.fire(); this.updateStatus(); return;
         }
         this.refreshing = true;
         try {
             const command = await this.command(), dataDir = await this.dataDir();
             const next = new Map<string, LaunchSpec>();
+            const bindings: typeof this.rootBindings = [];
             for (const folder of vscode.workspace.workspaceFolders ?? []) {
                 if (folder.uri.scheme !== 'file' && !(vscode.env.remoteName && folder.uri.scheme === 'vscode-remote')) { continue; }
                 const root = await fs.realpath(folder.uri.fsPath);
                 const collection = collectionId(root);
                 next.set(collection, { command, root, dataDir, collection, name: folder.name });
+                bindings.push({ opened: folder.uri.fsPath, canonical: root });
             }
             if (revision !== this.refreshRevision || this.disposed) { return; }
             const storageChanged = [...this.specs.values()].some(spec => next.has(spec.collection) && next.get(spec.collection)?.dataDir !== spec.dataDir);
@@ -112,6 +115,7 @@ class Controller implements vscode.Disposable {
             }
             const prior = this.specs;
             this.specs = next;
+            this.rootBindings = bindings.sort((a, b) => b.opened.length - a.opened.length);
             const known = this.context.globalState.get<Record<string, KnownCollection>>('collections', {});
             for (const spec of next.values()) {
                 known[spec.collection] = { ...known[spec.collection], name: spec.name, root: spec.root };
@@ -140,14 +144,27 @@ class Controller implements vscode.Disposable {
             : state?.state === 'failed' ? 'Failed' : state?.state === 'paused' ? 'Paused' : !spec ? this.specs.size ? 'Choose folder' : 'Open a folder'
             : coverageLabel(view || undefined);
         this.status.text = `$(database) AIRK: ${summary}`;
-        const unsaved = spec ? (vscode.workspace.textDocuments ?? []).filter(document => document.isDirty && eligibleEvent(document.uri.fsPath, spec.root, spec.dataDir)).length : 0;
+        const unsaved = spec ? (vscode.workspace.textDocuments ?? []).filter(document => document.isDirty && eligibleEvent(this.sourcePath(document.uri.fsPath), spec.root, spec.dataDir)).length : 0;
         this.status.tooltip = spec ? coverageDetails(spec.name, view || undefined, unsaved)
             + `\nAuto-indexing: ${this.scheduler?.isPaused ? 'paused' : this.options().mode}${state?.pending ? '; indexing pending' : ''}\nAIRK: Open Controls is available in the command palette.`
             : 'Select a workspace folder to index. AIRK: Open Controls is available in the command palette.';
     }
+    private sourcePath(file: string): string {
+        // Editors/events retain opened aliases (including Windows short paths).
+        // Translate only workspace roots already verified by async refresh; no
+        // filesystem work belongs in status updates or native event callbacks.
+        for (const binding of this.rootBindings) {
+            const relative = path.relative(binding.opened, file);
+            if (!path.isAbsolute(relative) && relative !== '..' && !relative.startsWith('..' + path.sep)) {
+                return path.resolve(binding.canonical, relative);
+            }
+        }
+        return file;
+    }
     private activeSpec(): LaunchSpec | undefined {
         if (this.specs.size === 1) { return this.specs.values().next().value; }
-        const active = vscode.window.activeTextEditor?.document.uri.fsPath;
+        const opened = vscode.window.activeTextEditor?.document.uri.fsPath;
+        const active = opened && this.sourcePath(opened);
         return active ? [...this.specs.values()].filter(spec => {
             const relative = path.relative(spec.root, active);
             return !path.isAbsolute(relative) && relative !== '..' && !relative.startsWith('..' + path.sep);
@@ -157,8 +174,9 @@ class Controller implements vscode.Disposable {
     changed(uri: vscode.Uri, saved = false): void {
         if (!vscode.workspace.isTrusted) { return; }
         const mode = this.options().mode;
+        const source = this.sourcePath(uri.fsPath);
         for (const spec of this.specs.values()) {
-            if (eligibleEvent(uri.fsPath, spec.root, spec.dataDir)) {
+            if (eligibleEvent(source, spec.root, spec.dataDir)) {
                 this.coverage.request(spec);
                 if (mode !== 'onSave' || saved) { void this.scheduler.request(spec); }
             }
