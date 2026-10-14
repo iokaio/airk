@@ -4,8 +4,8 @@ use crate::Kernel;
 use airk_core::{
     Artifact, Snapshot,
     changes::{
-        ChangeCoverage, CoverageFloor, CoverageReason, FileStamps, FileState, LineageEnvelope,
-        PublicationObservation, PublicationReason, RetainedPublicationHeader,
+        ChangeCause, ChangeDimension, ChangeEvent, ChangeSubject, ContinuityBasis, FileStamps,
+        FileState, PublicationReason,
     },
     identity::{
         ArtifactId, Incarnation, RevisionToken, Sha256Digest, framed_digest, revision_digest,
@@ -90,6 +90,16 @@ impl Kernel {
         snapshot: &Snapshot,
         reservation: &airk_store::quota::Reservation,
         reason: PublicationReason,
+    ) -> Result<u64> {
+        self.publish_v2_observed(snapshot, reservation, reason, None)
+    }
+
+    pub(crate) fn publish_v2_observed(
+        &self,
+        snapshot: &Snapshot,
+        reservation: &airk_store::quota::Reservation,
+        reason: PublicationReason,
+        observation: Option<&airk_ingest::observations::ScanObservation>,
     ) -> Result<u64> {
         ensure!(
             snapshot.root == self.root_id() && snapshot.collection == self.collection,
@@ -221,68 +231,14 @@ impl Kernel {
                 },
             );
         }
-        let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-        let mut ancestry = old
-            .as_ref()
-            .and_then(|catalog| catalog.lineage.as_ref())
-            .map(|lineage| lineage.ancestry.clone())
-            .unwrap_or_default();
-        if let (Some(parent), Some(lineage)) =
-            (parent, old.as_ref().and_then(|c| c.lineage.as_ref()))
-        {
-            ancestry.push(RetainedPublicationHeader {
-                token: parent,
-                parent: lineage.observation.parent,
-                observed_unix_seconds: lineage.observation.observed_unix_seconds,
-                reason: lineage.observation.reason,
-            });
-        }
-        ancestry.retain(|header| {
-            header.observed_age_seconds(now) <= airk_core::changes::MAX_LINEAGE_AGE_SECONDS
-        });
-        if ancestry.len() > 9_994 {
-            ancestry.drain(..ancestry.len() - 9_994);
-        }
-        let floor = CoverageFloor {
-            complete_after: generation,
-            reason: Some(CoverageReason::BaselineUnavailable),
-        };
-        let lineage = LineageEnvelope {
-            version: 1,
-            incarnation,
-            observation: PublicationObservation {
-                generation,
-                parent,
-                observed_unix_seconds: now,
-                reason: if old.is_some() && prior.is_none() {
-                    PublicationReason::Migration
-                } else {
-                    reason
-                },
-            },
-            coverage: ChangeCoverage {
-                files: floor.clone(),
-                code: floor.clone(),
-                documents: floor.clone(),
-                ancestry: CoverageFloor {
-                    complete_after: ancestry.first().map_or(generation, |h| h.token.generation),
-                    reason: Some(CoverageReason::BaselineUnavailable),
-                },
-                resolution: floor,
-            },
-            ancestry,
-            events: vec![],
-            resolvers: vec![],
-        };
-        lineage.validate()?;
-        let inventory = InventoryV2 {
+        let mut inventory = InventoryV2 {
             version: 2,
             incarnation,
             generation,
             root: projection.root.clone(),
             collection: projection.collection.clone(),
             roots: projection.roots.clone(),
-            lineage_digest: digest(&serde_json::to_vec(&lineage)?),
+            lineage_digest: Sha256Digest::from_bytes([0; 32]),
             profiles,
             files,
             retrieval_specification: std::str::from_utf8(persistent::retrieval_specification_v2())?
@@ -293,6 +249,150 @@ impl Kernel {
             imported_facts: projection.imported_facts.clone(),
             imported_relationships: projection.imported_relationships.clone(),
         };
+        let mut facts_by_path: BTreeMap<_, Vec<_>> = BTreeMap::new();
+        for fact in &inventory.imported_facts {
+            facts_by_path
+                .entry(fact.citation.path.as_str())
+                .or_default()
+                .push(fact);
+        }
+        let mut relationships_by_path: BTreeMap<_, Vec<_>> = BTreeMap::new();
+        for relationship in &inventory.imported_relationships {
+            relationships_by_path
+                .entry(relationship.citation.path.as_str())
+                .or_default()
+                .push(relationship);
+        }
+        let domains = inventory
+            .files
+            .keys()
+            .map(|path| {
+                let facts = facts_by_path
+                    .get(path.as_str())
+                    .map_or(&[][..], |facts| facts.as_slice());
+                let relationships = relationships_by_path
+                    .get(path.as_str())
+                    .map_or(&[][..], |relationships| relationships.as_slice());
+                let analysis = if facts.is_empty() && relationships.is_empty() {
+                    None
+                } else {
+                    inventory.analysis.as_ref()
+                };
+                Ok((
+                    path.clone(),
+                    digest(&serde_json::to_vec(&(analysis, facts, relationships))?),
+                ))
+            })
+            .collect::<Result<BTreeMap<_, _>>>()?;
+        let by_payload: BTreeMap<_, _> = projection
+            .artifacts
+            .values()
+            .filter_map(|artifact| {
+                artifact
+                    .retained
+                    .as_ref()
+                    .map(|reference| (reference.object.clone(), artifact))
+            })
+            .collect();
+        let mut reconciled = crate::reconciliation::reconcile(
+            prior,
+            &mut inventory,
+            observation,
+            &domains,
+            |file| {
+                if file.source_bytes < 64 {
+                    return Ok(false);
+                }
+                let artifact = by_payload
+                    .get(&file.state.payload_digest.to_string())
+                    .context("move payload missing")?;
+                let hydrated = self.store.load_retained(artifact)?;
+                let mut words = std::collections::BTreeSet::new();
+                for chunk in &hydrated.chunks {
+                    for word in chunk
+                        .text
+                        .split(|character: char| !character.is_alphanumeric())
+                    {
+                        if word.len() >= 2 {
+                            words.insert(word.to_lowercase());
+                        }
+                        if words.len() >= 8 {
+                            break;
+                        }
+                    }
+                    if words.len() >= 8 {
+                        break;
+                    }
+                }
+                let boilerplate = hydrated.chunks.iter().all(|chunk| {
+                    let text = chunk.text.to_lowercase();
+                    text.trim().is_empty()
+                        || text.contains("all rights reserved")
+                        || text.contains("permission is hereby granted")
+                        || text.contains("spdx-license-identifier") && text.lines().count() <= 2
+                });
+                Ok(words.len() >= 8 && !boilerplate)
+            },
+        )?;
+        if let Some(prior) = prior {
+            let mut invalidations = Vec::new();
+            if prior.embedding_model != inventory.embedding_model {
+                invalidations.push(("retrieval/model", ChangeCause::ModelChanged));
+            }
+            if prior.files.iter().any(|(path, file)| {
+                inventory
+                    .files
+                    .get(path)
+                    .is_some_and(|next| next.state.profile_id != file.state.profile_id)
+            }) {
+                invalidations.push(("extraction/profiles", ChangeCause::ProfileChanged));
+            }
+            if serde_json::to_vec(&(
+                &prior.analysis,
+                &prior.imported_facts,
+                &prior.imported_relationships,
+            ))? != serde_json::to_vec(&(
+                &inventory.analysis,
+                &inventory.imported_facts,
+                &inventory.imported_relationships,
+            ))? {
+                invalidations.push(("producer/assertions", ChangeCause::ProviderInvalidated));
+            }
+            for (domain, cause) in invalidations {
+                reconciled.events.push(ChangeEvent {
+                    generation,
+                    event_id: reconciled.events.len() as u64 + 1,
+                    subject: ChangeSubject::Global {
+                        domain: domain.into(),
+                    },
+                    before: None,
+                    after: None,
+                    before_detail: None,
+                    after_detail: None,
+                    dimensions: vec![ChangeDimension::Evidence],
+                    cause,
+                    basis: ContinuityBasis::Unknown,
+                });
+            }
+        }
+        let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+        let lineage = crate::lineage::build(
+            old.as_ref().and_then(|catalog| catalog.lineage.as_ref()),
+            parent,
+            &inventory,
+            now,
+            if old.is_some() && prior.is_none() {
+                PublicationReason::Migration
+            } else {
+                reason
+            },
+            crate::lineage::PendingLineage {
+                events: reconciled.events,
+                resolvers: reconciled.resolvers,
+                complete: reconciled.complete,
+            },
+        )?;
+        inventory.lineage_digest = digest(&serde_json::to_vec(&lineage)?);
         let canonical = inventory.canonical_bytes()?;
         let token = RevisionToken {
             incarnation,

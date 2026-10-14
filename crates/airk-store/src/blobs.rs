@@ -548,54 +548,18 @@ impl FileStore {
                 let lease = File::open(reader_lease_path(self.directory(), &header.revision)?)?;
                 lease.lock_shared()?;
                 if header.storage_format == 2 {
-                    ensure!(
-                        fs::metadata(
-                            self.directory()
-                                .join("generations")
-                                .join(&header.revision)
-                                .join("inventory.json")
-                        )?
-                        .len()
-                            <= maximum,
-                        "catalog exceeds request byte limit"
-                    );
                     let token = header.token.context("v2 token missing")?;
                     let receipt = self.receipt(&token)?.context("v2 receipt missing")?;
-                    let inventory = verify_v2_generation(self.directory(), &receipt)?;
+                    let catalog =
+                        self.open_catalog_v2(receipt, maximum, lease, lifecycle.clone())?;
                     ensure!(
-                        inventory.canonical_bytes()?.len() as u64 <= maximum,
-                        "catalog exceeds request byte limit"
-                    );
-                    let lineage_bytes = read_verified(
-                        &self
-                            .directory()
-                            .join("generations")
-                            .join(&header.revision)
-                            .join("lineage.json"),
-                        &inventory.lineage_digest.to_string(),
-                        airk_core::changes::MAX_LINEAGE_BYTES as u64,
-                    )?;
-                    let lineage: airk_core::changes::LineageEnvelope =
-                        serde_json::from_slice(&lineage_bytes)?;
-                    lineage.validate()?;
-                    ensure!(
-                        lineage.incarnation == inventory.incarnation
-                            && lineage.observation.generation == inventory.generation
-                            && inventory.root == header.root
-                            && inventory.collection == header.collection
-                            && inventory.roots == header.roots
-                            && inventory.files.len() == header.files,
+                        catalog.snapshot.root == header.root
+                            && catalog.snapshot.collection == header.collection
+                            && catalog.snapshot.roots == header.roots
+                            && catalog.snapshot.artifacts.len() == header.files,
                         "v2 pinned catalog identity mismatch"
                     );
-                    return Ok(Catalog {
-                        snapshot: inventory.projection()?,
-                        inventory: Some(inventory),
-                        lineage: Some(lineage),
-                        receipt: Some(receipt),
-                        store: self.clone(),
-                        _lease: Some(lease),
-                        _lifecycle: lifecycle.clone(),
-                    });
+                    return Ok(catalog);
                 }
                 ensure!(
                     header.storage_format == 1,
@@ -695,6 +659,138 @@ impl FileStore {
         anyhow::bail!("catalog changed repeatedly while pinning revision")
     }
 
+    /// Open exactly one retained v2 representation. No fallback to current data.
+    pub fn catalog_at(
+        &self,
+        token: &airk_core::identity::RevisionToken,
+        maximum: u64,
+    ) -> Result<Option<Catalog>> {
+        if !self.directory().join("index.sqlite3").exists() {
+            return Ok(None);
+        }
+        let lifecycle = self.lifecycle(false)?;
+        let Some(current) = self.persistent_revision()? else {
+            return Ok(None);
+        };
+        let Some(current_token) = current.token else {
+            return Ok(None);
+        };
+        token.validate_against(&current_token)?;
+        crate::sqlite::validate_retained_token(self.directory(), token)?;
+        let Some(receipt) = self.receipt(token)? else {
+            ensure!(
+                token != &current_token,
+                "active publication receipt missing"
+            );
+            // A retired representation may still have a committed ancestry
+            // header. Expiry must not turn a provable fork into an absent page.
+            if let Some(current_catalog) = self.catalog_bounded(MAX_CATALOG_BYTES)?
+                && let Some(lineage) = &current_catalog.lineage
+            {
+                for known in lineage
+                    .ancestry
+                    .iter()
+                    .map(|header| header.token)
+                    .chain(lineage.observation.parent)
+                {
+                    if known.generation == token.generation {
+                        ensure!(known == *token, "forked retired revision token");
+                    }
+                }
+            }
+            match fs::symlink_metadata(
+                self.directory()
+                    .join("generations")
+                    .join(token.revision.to_string()),
+            ) {
+                Ok(_) => anyhow::bail!("retained generation has no committed receipt"),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+            return Ok(None);
+        };
+        let lease = match File::open(reader_lease_path(
+            self.directory(),
+            &token.revision.to_string(),
+        )?) {
+            Ok(lease) => lease,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                ensure!(
+                    self.receipt(token)?.is_none(),
+                    "retained revision lease missing for committed receipt"
+                );
+                return Ok(None);
+            }
+            Err(error) => return Err(error.into()),
+        };
+        lease.lock_shared()?;
+        let directory = self
+            .directory()
+            .join("generations")
+            .join(token.revision.to_string());
+        match fs::symlink_metadata(&directory) {
+            Ok(metadata) => ensure!(
+                metadata.is_dir() && !metadata.file_type().is_symlink(),
+                "invalid retained generation directory"
+            ),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                ensure!(
+                    self.receipt(token)?.is_none(),
+                    "retained generation missing for committed receipt"
+                );
+                return Ok(None);
+            }
+            Err(error) => return Err(error.into()),
+        }
+        let catalog = self.open_catalog_v2(receipt, maximum, lease, lifecycle)?;
+        ensure!(
+            catalog.snapshot.collection == current.collection
+                && catalog.snapshot.root == current.root,
+            "foreign retained catalog binding"
+        );
+        Ok(Some(catalog))
+    }
+
+    fn open_catalog_v2(
+        &self,
+        receipt: airk_core::identity::PublicationReceipt,
+        maximum: u64,
+        lease: File,
+        lifecycle: Option<std::sync::Arc<File>>,
+    ) -> Result<Catalog> {
+        let directory = self
+            .directory()
+            .join("generations")
+            .join(receipt.token.revision.to_string());
+        let maximum = maximum.min(MAX_CATALOG_BYTES);
+        ensure!(
+            fs::metadata(directory.join("inventory.json"))?.len() <= maximum,
+            "catalog exceeds request byte limit"
+        );
+        let inventory = verify_v2_generation(self.directory(), &receipt)?;
+        let lineage_bytes = read_verified(
+            &directory.join("lineage.json"),
+            &inventory.lineage_digest.to_string(),
+            airk_core::changes::MAX_LINEAGE_BYTES as u64,
+        )?;
+        let lineage: airk_core::changes::LineageEnvelope = serde_json::from_slice(&lineage_bytes)?;
+        lineage.validate()?;
+        ensure!(
+            lineage.incarnation == inventory.incarnation
+                && lineage.observation.generation == inventory.generation,
+            "v2 pinned lineage identity mismatch"
+        );
+        Ok(Catalog {
+            snapshot: inventory.projection()?,
+            inventory: Some(inventory),
+            lineage: Some(lineage),
+            receipt: Some(receipt),
+            store: self.clone(),
+            _lease: Some(lease),
+            _lifecycle: lifecycle,
+        })
+    }
+
     fn check_legacy_catalog_size(&self, maximum: u64) -> Result<()> {
         let size = if self.directory().join("index.sqlite3").exists() {
             crate::sqlite::legacy_payload_bytes(self.directory())?
@@ -721,6 +817,92 @@ pub struct Catalog {
 }
 
 impl Catalog {
+    pub fn file_by_artifact(
+        &self,
+        id: airk_core::identity::ArtifactId,
+    ) -> Result<Option<airk_core::publication::InventoryFile>> {
+        let receipt = self
+            .receipt
+            .as_ref()
+            .context("artifact lookup requires v2 catalog")?;
+        let actual =
+            crate::sqlite::file_by_artifact_in_catalog(self.store.directory(), receipt, id)?;
+        let expected = self
+            .inventory
+            .as_ref()
+            .context("verified inventory missing")?
+            .files
+            .iter()
+            .find(|(_, file)| file.state.artifact_id == id);
+        ensure!(
+            actual.as_ref().map(|(path, file)| (path, file)) == expected,
+            "artifact metadata differs from pinned receipt-bound inventory"
+        );
+        Ok(actual.map(|(_, file)| file))
+    }
+
+    pub fn publication_header(
+        &self,
+        generation: u64,
+    ) -> Result<Option<&airk_core::changes::RetainedPublicationHeader>> {
+        let lineage = self
+            .lineage
+            .as_ref()
+            .context("ancestry requires v2 catalog")?;
+        Ok(lineage
+            .ancestry
+            .binary_search_by_key(&generation, |header| header.token.generation)
+            .ok()
+            .map(|index| &lineage.ancestry[index]))
+    }
+
+    pub fn events_since(&self, generation: u64) -> Result<&[airk_core::changes::ChangeEvent]> {
+        let lineage = self.lineage.as_ref().context("events require v2 catalog")?;
+        ensure!(
+            generation <= lineage.observation.generation,
+            "future event baseline"
+        );
+        let start = lineage
+            .events
+            .partition_point(|event| event.generation <= generation);
+        Ok(&lineage.events[start..])
+    }
+
+    pub fn resolvers_for_artifact(
+        &self,
+        id: airk_core::identity::ArtifactId,
+    ) -> Result<Vec<&airk_core::changes::ResolverRecord>> {
+        let lineage = self
+            .lineage
+            .as_ref()
+            .context("resolution requires v2 catalog")?;
+        Ok(lineage
+            .resolvers
+            .iter()
+            .filter(|record| record.artifact_id == id)
+            .collect())
+    }
+
+    pub fn resolvers_for_path(
+        &self,
+        root: &str,
+        path: &str,
+    ) -> Result<Vec<&airk_core::changes::ResolverRecord>> {
+        ensure!(
+            root.len() <= 4096 && path.len() <= 4096,
+            "resolver endpoint exceeds bound"
+        );
+        let lineage = self
+            .lineage
+            .as_ref()
+            .context("resolution requires v2 catalog")?;
+        Ok(lineage
+            .resolvers
+            .iter()
+            .filter(|record| record.from.root == root && record.from.path == path)
+            .collect())
+    }
+
     /// Indexed lookup in this already verified, leased catalog. No inventory parse.
     pub fn file(&self, path: &str) -> Result<Option<airk_core::publication::InventoryFile>> {
         let receipt = self

@@ -66,7 +66,7 @@ export async function runJson<T>(spec: LaunchSpec, command: string, extra: strin
 }
 
 /** Real bounded stdio initialization/tool-list/status probe, independent of any coding agent. */
-export function probeMcp(spec: LaunchSpec): Promise<{ tools: string[]; status: unknown }> {
+export function probeMcp(spec: LaunchSpec, expectedTools: 14 | 15 = 15): Promise<{ tools: string[]; status: unknown }> {
     return new Promise((resolve, reject) => {
         const child = spawn(spec.command, launchArgs(spec), { cwd: spec.root, env: { ...process.env, AIRK_CLIENT: 'vscode' }, windowsHide: true, stdio: 'pipe' });
         let buffer = '', stderr = '', total = 0, done = false;
@@ -111,7 +111,8 @@ export function probeMcp(spec: LaunchSpec): Promise<{ tools: string[]; status: u
             child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
             const listed = await request(2, 'tools/list', {});
             const tools: string[] = listed.tools.map((tool: { name: string }) => tool.name);
-            if (tools.length !== 14 || !['airk_status', 'airk_symbols', 'airk_code_facts', 'airk_relationships'].every(name => tools.includes(name))) { throw new Error('AIRK MCP tool inventory differs from the expected fourteen tools.'); }
+            const required = ['airk_status', 'airk_symbols', 'airk_code_facts', 'airk_relationships', ...(expectedTools === 15 ? ['airk_changes'] : [])];
+            if (tools.length !== expectedTools || !required.every(name => tools.includes(name))) { throw new Error(`AIRK MCP tool inventory differs from the expected ${expectedTools} tools.`); }
             const status = await request(3, 'tools/call', { name: 'airk_status', arguments: {} });
             if (status.isError) { throw new Error('AIRK MCP status failed. Index the collection first.'); }
             finish(undefined, { tools, status });

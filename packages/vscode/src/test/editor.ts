@@ -35,7 +35,7 @@ export async function run(): Promise<void> {
     const symbols = await runJson<{ facts: unknown[] }>(spec, 'symbol', ['authenticate']); assert.equal(symbols.facts.length, 1);
     await vscode.commands.executeCommand('airk.reindex');
     assert.ok((await runJson<{ generation: number }>(spec, 'status')).generation > status.generation);
-    assert.equal((await probeMcp(spec)).tools.length, 14);
+    assert.equal((await probeMcp(spec)).tools.length, 15);
     const selected = path.join(path.dirname(fixture), 'editor-selected-storage-' + Date.now()); await fs.mkdir(selected);
     await vscode.workspace.getConfiguration('airk').update('storage.path', selected, vscode.ConfigurationTarget.Global);
     const moved: vscode.McpStdioServerDefinition[] = await api.getServerDefinitions();

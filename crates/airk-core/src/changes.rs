@@ -8,13 +8,169 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 pub const CHANGE_CONTRACT_VERSION: u32 = 1;
-pub const LINEAGE_CONTRACT_VERSION: u32 = 1;
+pub const LINEAGE_CONTRACT_VERSION: u32 = 2;
 pub const MAX_REMEMBERED_SELECTORS: usize = 64;
 pub const MAX_SELECTOR_BYTES: usize = 32 * 1024;
 pub const MAX_CHANGE_PATH_BYTES: usize = 4096;
 pub const MAX_LINEAGE_RECORDS: usize = 10_000;
 pub const MAX_LINEAGE_BYTES: usize = 16 * 1024 * 1024;
 pub const MAX_LINEAGE_AGE_SECONDS: u64 = 90 * 24 * 60 * 60;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ChangesRequest {
+    pub since: Option<RevisionToken>,
+    pub selectors: Vec<RememberedSelector>,
+    pub path_prefix: String,
+    pub include_symbols: bool,
+    pub include_documents: bool,
+    pub limit: usize,
+    pub max_bytes: usize,
+    pub cursor: Option<String>,
+}
+
+impl Default for ChangesRequest {
+    fn default() -> Self {
+        Self {
+            since: None,
+            selectors: vec![],
+            path_prefix: String::new(),
+            include_symbols: false,
+            include_documents: false,
+            limit: 10,
+            max_bytes: 8192,
+            cursor: None,
+        }
+    }
+}
+
+impl ChangesRequest {
+    pub fn validate(&self) -> Result<()> {
+        validate_selectors(self.since.as_ref(), &self.selectors, &self.path_prefix)?;
+        ensure!(
+            (1..=100).contains(&self.limit),
+            "change limit must be 1..100"
+        );
+        ensure!(
+            (1..=65_536).contains(&self.max_bytes),
+            "change max_bytes must be 1..65536"
+        );
+        ensure!(
+            self.cursor
+                .as_ref()
+                .is_none_or(|cursor| cursor.len() <= 4096),
+            "change cursor exceeds 4096 bytes"
+        );
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BaselineStatus {
+    NotRequested,
+    Verified,
+    BaselineUnavailable,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChangesStatus {
+    Ready,
+    CursorExpired,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CoalescedChange {
+    pub subject: ChangeSubject,
+    pub first_generation: u64,
+    pub last: ChangePosition,
+    pub observations: usize,
+    pub before: Option<ChangeEndpoint>,
+    pub after: Option<ChangeEndpoint>,
+    pub before_detail: Option<ChangeDetail>,
+    pub after_detail: Option<ChangeDetail>,
+    pub dimensions: Vec<ChangeDimension>,
+    pub causes: Vec<ChangeCause>,
+    pub basis: ContinuityBasis,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ValidationOutcome {
+    Current,
+    Unchanged,
+    Modified,
+    MoveCandidate,
+    RemovedFromIndex,
+    PathReused,
+    Ambiguous,
+    Unknown,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EvidenceValidation {
+    pub ordinal: usize,
+    pub selector: RememberedSelector,
+    pub outcome: ValidationOutcome,
+    pub artifact_id: Option<ArtifactId>,
+    pub current: Option<FileState>,
+    pub requested_path: Option<String>,
+    pub resolved_path: Option<String>,
+    pub basis: ContinuityBasis,
+    pub validated_dimensions: Vec<ChangeDimension>,
+    pub candidates: Vec<ChangeEndpoint>,
+    pub candidates_truncated: bool,
+    pub reason: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FreshnessState {
+    Unregistered,
+    Unavailable,
+    Idle,
+    Pending,
+    Running,
+    Paused,
+    Blocked,
+    Failed,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FreshnessObservation {
+    pub observed_unix_ms: u64,
+    pub state: FreshnessState,
+    pub requested_watermark: Option<u64>,
+    pub completed_watermark: Option<u64>,
+    pub running_watermark: Option<u64>,
+    pub last_success_unix_ms: Option<u64>,
+    pub error: Option<String>,
+    pub live_source_verified: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChangesResponse {
+    pub status: ChangesStatus,
+    pub publication: crate::evidence::RevisionEnvelope,
+    pub from: Option<RevisionToken>,
+    pub to: RevisionToken,
+    pub current: RevisionToken,
+    pub baseline_status: BaselineStatus,
+    pub coverage: Option<ChangeCoverage>,
+    pub changes: Vec<CoalescedChange>,
+    pub invalidations: Vec<CoalescedChange>,
+    pub validations: Vec<EvidenceValidation>,
+    pub freshness: FreshnessObservation,
+    /// Exact sum of serialized change/invalidation/validation records.
+    pub record_bytes: usize,
+    pub truncated: bool,
+    pub cursor: Option<String>,
+}
 
 /// Count events, resolver records and ancestry together, including detail records.
 /// The store supplies actual encoded bytes, not an estimated payload size.
@@ -104,6 +260,10 @@ pub enum ContinuityBasis {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ChangeEndpoint {
+    /// Original collection-relative citation, including the then-bound alias.
+    /// Absent in lineage contract 1; physical root/path remain authoritative.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub citation_path: Option<String>,
     pub root: String,
     pub path: String,
     pub source_hash: Sha256Digest,
@@ -113,6 +273,17 @@ pub struct ChangeEndpoint {
 impl ChangeEndpoint {
     fn validate(&self) -> Result<()> {
         validate_root(&self.root)?;
+        if let Some(path) = &self.citation_path {
+            validate_path(path, false)?;
+            ensure!(
+                path == &self.path
+                    || path
+                        .strip_prefix('@')
+                        .and_then(|path| path.split_once('/'))
+                        .is_some_and(|(_, relative)| relative == self.path),
+                "citation path differs from endpoint location"
+            );
+        }
         validate_path(&self.path, false)
     }
 }
@@ -355,7 +526,7 @@ impl LineageEnvelope {
     /// Structural admission, not a proof that persisted ancestors or roots are authentic.
     pub fn validate(&self) -> Result<()> {
         ensure!(
-            self.version == LINEAGE_CONTRACT_VERSION,
+            (1..=LINEAGE_CONTRACT_VERSION).contains(&self.version),
             "unsupported lineage contract"
         );
         let records = self
@@ -757,12 +928,14 @@ mod tests {
         assert!(lineage.validate().is_err());
         lineage.observation.parent = Some(parent);
         let from = ChangeEndpoint {
+            citation_path: Some("old.rs".into()),
             root: "/fixture".into(),
             path: "old.rs".into(),
             source_hash: digest,
             profile_id: digest,
         };
         let to = ChangeEndpoint {
+            citation_path: Some("new.rs".into()),
             path: "new.rs".into(),
             ..from.clone()
         };
@@ -833,5 +1006,26 @@ mod tests {
                 .validate_binding(&target, None, &digest, 2)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn endpoint_migration_preserves_absent_and_historic_citations() -> Result<()> {
+        let legacy = serde_json::json!({
+            "root": "/original", "path": "notes.txt",
+            "source_hash": "01".repeat(32), "profile_id": "02".repeat(32)
+        });
+        let mut endpoint: ChangeEndpoint = serde_json::from_value(legacy.clone())?;
+        endpoint.validate()?;
+        assert!(endpoint.citation_path.is_none());
+        assert_eq!(serde_json::to_value(&endpoint)?, legacy);
+        endpoint.citation_path = Some("@removed/notes.txt".into());
+        endpoint.validate()?;
+        let decoded: ChangeEndpoint = serde_json::from_slice(&serde_json::to_vec(&endpoint)?)?;
+        assert_eq!(decoded, endpoint);
+        endpoint.citation_path = Some("@removed/other.txt".into());
+        assert!(endpoint.validate().is_err());
+        endpoint.citation_path = Some("../notes.txt".into());
+        assert!(endpoint.validate().is_err());
+        Ok(())
     }
 }

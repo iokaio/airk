@@ -8,6 +8,7 @@ use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, fs::File, io::Read, path::Path};
 
 pub mod adapters;
+pub mod observations;
 
 pub const MAX_FILE_BYTES: usize = 16_777_216;
 pub const MAX_CORPUS_BYTES: usize = 67_108_864;
@@ -266,12 +267,80 @@ fn scan_streaming_profiled(
         &airk_core::identity::Sha256Digest,
         &airk_core::extraction::ExtractionProfile,
     ) -> Result<Option<Artifact>>,
+    emit: impl FnMut(&airk_core::extraction::ExtractionProfile, &Artifact, &[u8]) -> Result<Artifact>,
+) -> Result<(Snapshot, IndexReport)> {
+    let (snapshot, report, _) = scan_observed_profiled(
+        root,
+        data_dir,
+        previous,
+        roots,
+        limits,
+        policy,
+        full_reindex,
+        |request| {
+            Ok(
+                lookup(request.path, request.source_hash, request.profile)?.map(|artifact| {
+                    observations::VerifiedReuse {
+                        artifact,
+                        basis: observations::ReuseBasis::SamePath,
+                    }
+                }),
+            )
+        },
+        emit,
+    )?;
+    Ok((snapshot, report))
+}
+
+/// Complete, budgeted observations plus independently verified extraction reuse.
+/// The caller owns collection isolation, payload verification and binding. Reuse
+/// basis does not establish continuity. No observation escapes a failed scan.
+#[allow(clippy::too_many_arguments)]
+pub fn scan_observed_v2_with_budgets(
+    root: &Path,
+    data_dir: &Path,
+    previous: &Snapshot,
+    roots: &BTreeMap<String, String>,
+    limits: ScanLimits,
+    policy: &adapters::profile::ExtractionPolicy,
+    full_reindex: bool,
+    lookup: impl FnMut(observations::ReuseRequest<'_>) -> Result<Option<observations::VerifiedReuse>>,
+    emit: impl FnMut(&airk_core::extraction::ExtractionProfile, &Artifact, &[u8]) -> Result<Artifact>,
+) -> Result<(Snapshot, IndexReport, observations::ScanObservation)> {
+    limits.validate()?;
+    scan_observed_profiled(
+        root,
+        data_dir,
+        previous,
+        roots,
+        limits,
+        policy,
+        full_reindex,
+        lookup,
+        emit,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn scan_observed_profiled(
+    root: &Path,
+    data_dir: &Path,
+    previous: &Snapshot,
+    roots: &BTreeMap<String, String>,
+    limits: ScanLimits,
+    policy: &adapters::profile::ExtractionPolicy,
+    full_reindex: bool,
+    mut lookup: impl FnMut(
+        observations::ReuseRequest<'_>,
+    ) -> Result<Option<observations::VerifiedReuse>>,
     mut emit: impl FnMut(
         &airk_core::extraction::ExtractionProfile,
         &Artifact,
         &[u8],
     ) -> Result<Artifact>,
-) -> Result<(Snapshot, IndexReport)> {
+) -> Result<(Snapshot, IndexReport, observations::ScanObservation)> {
+    use observations::{DisappearanceCause, ReuseBasis};
+    let mut observation = observations::ScanObservation::default();
     let registry = adapters::registry::AdapterRegistry::baseline();
     policy.validate(&registry)?;
     let root = root.canonicalize().context("resolve workspace root")?;
@@ -297,14 +366,22 @@ fn scan_streaming_profiled(
         );
         sources.push((format!("@{alias}/"), source));
     }
+    for (prefix, source) in &sources {
+        observations::verify_root(source, &mut observation.usage, limits.discovery_entries)?;
+        observation.roots.insert(
+            prefix.trim_start_matches('@').trim_end_matches('/').into(),
+            source.to_str().context("non-UTF-8 source root")?.into(),
+        );
+    }
     let walker = sources.iter().flat_map(|(prefix, source)| {
         discovery(source, &data_dir).map(move |entry| (prefix, source, entry))
     });
-    for (visited, (prefix, source, entry)) in walker.enumerate() {
+    for (prefix, source, entry) in walker {
         ensure!(
-            visited < limits.discovery_entries,
+            observation.usage.charged_entries() < limits.discovery_entries,
             "workspace discovery entry budget exhausted; previous generation retained"
         );
+        observation.usage.discovery_entries += 1;
         let entry = entry.context("workspace discovery failed; previous generation retained")?;
         let Some(kind) = entry.file_type() else {
             continue;
@@ -330,6 +407,11 @@ fn scan_streaming_profiled(
         // need no source read. Recheck identity/size inside the bounded reader.
         let source_size = entry.path().symlink_metadata()?.len();
         if source_size > limits.file_bytes as u64 {
+            if previous.artifacts.contains_key(&path) {
+                observation
+                    .disappeared
+                    .insert(path.clone(), DisappearanceCause::Oversized);
+            }
             report.skip(SkippedFile {
                 path,
                 reason: format!("file exceeds {} byte configured limit", limits.file_bytes),
@@ -343,7 +425,13 @@ fn scan_streaming_profiled(
         );
         let bytes = read_source_with_budget(source, entry.path(), remaining)?;
         read_bytes += bytes.len();
+        observation.usage.source_read_bytes = read_bytes;
         if bytes.len() > limits.file_bytes {
+            if previous.artifacts.contains_key(&path) {
+                observation
+                    .disappeared
+                    .insert(path.clone(), DisappearanceCause::Oversized);
+            }
             report.skip(SkippedFile {
                 path,
                 reason: format!("file exceeds {} byte configured limit", limits.file_bytes),
@@ -372,13 +460,21 @@ fn scan_streaming_profiled(
         let cached = if full_reindex {
             None
         } else {
-            lookup(&path, &hash, &profile)?
+            lookup(observations::ReuseRequest {
+                path: &path,
+                canonical_root: source.to_str().context("non-UTF-8 source root")?,
+                source_hash: &hash,
+                source_bytes: bytes.len(),
+                profile: &profile,
+            })?
         };
         let artifact = match cached {
-            Some(old) => {
+            Some(reused) => {
+                let old = reused.artifact;
                 ensure!(
                     old.path == path
                         && old.content_hash == content_hash
+                        && old.bytes == bytes.len()
                         && old.language == profile.language,
                     "cache returned incompatible artifact binding"
                 );
@@ -390,6 +486,10 @@ fn scan_streaming_profiled(
                     "cache returned incompatible extraction profile"
                 );
                 report.reused += 1;
+                match reused.basis {
+                    ReuseBasis::SamePath => observation.usage.same_path_hits += 1,
+                    ReuseBasis::PriorContent => observation.usage.prior_content_hits += 1,
+                }
                 old
             }
             _ => {
@@ -397,9 +497,25 @@ fn scan_streaming_profiled(
                     profile.language != "ocr",
                     "retained OCR payload unavailable; explicit OCR operation required"
                 );
+                observation.usage.parser_calls += 1;
                 let extracted = match documents::extract_selected(&path, &bytes, &profile) {
                     Ok(extracted) => extracted,
                     Err(error) => {
+                        if previous.artifacts.contains_key(&path) {
+                            let unsupported = !matches!(
+                                profile.adapter_id.as_str(),
+                                "pdf" | "docx" | "xlsx" | "pptx"
+                            ) && (std::str::from_utf8(&bytes).is_err()
+                                || bytes.contains(&0));
+                            observation.disappeared.insert(
+                                path.clone(),
+                                if unsupported {
+                                    DisappearanceCause::Unsupported
+                                } else {
+                                    DisappearanceCause::ExtractionFailed
+                                },
+                            );
+                        }
                         report.skip(SkippedFile {
                             path,
                             reason: error.to_string(),
@@ -450,8 +566,63 @@ fn scan_streaming_profiled(
         .keys()
         .filter(|path| !artifacts.contains_key(*path))
         .count();
-    let changed = report.indexed > 0
-        || report.removed > 0
+    for path in previous.artifacts.keys() {
+        ensure!(
+            observation.usage.charged_entries() < limits.discovery_entries,
+            "previous-path reconciliation budget exhausted; previous generation retained"
+        );
+        observation.usage.reconciled_paths += 1;
+        let (alias, relative) = if let Some(aliased) = path.strip_prefix('@') {
+            let (alias, relative) = aliased
+                .split_once('/')
+                .context("invalid previous alias path")?;
+            (alias, relative)
+        } else {
+            ("", path.as_str())
+        };
+        let old_root = if alias.is_empty() {
+            Some(&previous.root)
+        } else {
+            previous.roots.get(alias)
+        };
+        let current_root = observation.roots.get(alias);
+        let cause = match (old_root, current_root) {
+            (_, None) => Some(DisappearanceCause::AliasRemoved),
+            (Some(old), Some(current)) if old != current => Some(DisappearanceCause::AliasRebound),
+            (None, _) => Some(DisappearanceCause::Unknown),
+            (_, Some(current))
+                if !artifacts.contains_key(path) && !observation.disappeared.contains_key(path) =>
+            {
+                Some(observations::reconcile_missing(
+                    Path::new(current),
+                    relative,
+                    &mut observation.usage,
+                    limits.discovery_entries,
+                )?)
+            }
+            _ => None,
+        };
+        if let Some(cause) = cause {
+            observation.disappeared.insert(path.clone(), cause);
+        }
+    }
+    for (_, source) in &sources {
+        observations::verify_root(source, &mut observation.usage, limits.discovery_entries)?;
+    }
+    observation.complete = true;
+    // Parsing and extraction reuse are independent from inventory changes.
+    let changed = artifacts.len() != previous.artifacts.len()
+        || artifacts.iter().any(|(path, artifact)| {
+            previous.artifacts.get(path).is_none_or(|old| {
+                old.content_hash != artifact.content_hash
+                    || old.language != artifact.language
+                    || old.extraction_method != artifact.extraction_method
+                    || old.parse_status != artifact.parse_status
+                    || old.retained.as_ref().map(|r| (&r.object, &r.profile))
+                        != artifact.retained.as_ref().map(|r| (&r.object, &r.profile))
+            })
+        })
+        || report.indexed > 0
         || previous.extractor_version != EXTRACTOR_VERSION
         || previous.roots != *roots;
     report.generation = if changed {
@@ -482,7 +653,7 @@ fn scan_streaming_profiled(
         }
     }
     report.source_bytes = total_bytes;
-    Ok((next, report))
+    Ok((next, report, observation))
 }
 
 impl IndexReport {
@@ -812,7 +983,9 @@ mod scan_budget_tests {
         let error = scan_with_limits(root.path(), data.path(), &previous, 2, 0)
             .expect_err("directory budget");
         assert!(error.to_string().contains("discovery entry budget"));
-        assert!(scan_with_limits(root.path(), data.path(), &previous, 4, 0).is_ok());
+        // Four walk entries plus the two charged root-binding checks.
+        assert!(scan_with_limits(root.path(), data.path(), &previous, 5, 0).is_err());
+        assert!(scan_with_limits(root.path(), data.path(), &previous, 6, 0).is_ok());
         Ok(())
     }
 }

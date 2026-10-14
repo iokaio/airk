@@ -30,7 +30,7 @@ flowchart LR
 
 Core must remain free of parser, filesystem, inference and transport implementations. Adapters call kernel services rather than bypassing validation or collection scope. MemoryStore is an available in-memory snapshot adapter; the CLI kernel uses FileStore and immutable retrieval components.
 
-The [v2 publication contract](v2-publication-contract.md) defines the current authoritative inventory, path-free native payloads, exact revision tokens, receipt-bound publication and independently versioned migration. Legacy snapshots remain compatibility inputs; detailed changes, automatic retention and new adapters are implemented in subsequent [v2 phases](architecture-v2.md).
+The [v2 publication contract](v2-publication-contract.md) defines the current authoritative inventory, path-free native payloads, exact revision tokens, receipt-bound publication and independently versioned migration. Bounded observed file changes, remembered-evidence validation and conditional reads use the [identity and change contract](v2-identity-contract.md). Legacy snapshots remain compatibility inputs; code/document continuity, automatic retention and new adapters remain subsequent [v2 phases](architecture-v2.md).
 
 ## Current indexing and retrieval
 

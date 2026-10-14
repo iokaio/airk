@@ -12,6 +12,61 @@ use rmcp::{
 };
 use serde::{Deserialize, Serialize};
 
+#[derive(Default, Deserialize, Serialize, schemars::JsonSchema)]
+pub struct EvidenceArgs {
+    /// Representation validator returned by this same read and options.
+    pub if_evidence: Option<String>,
+    /// Follow only a unique compatible exact-content move; false by default.
+    #[serde(default)]
+    pub follow_moves: bool,
+    /// Remembered source hash; validates bytes, not extracted evidence.
+    pub known_hash: Option<String>,
+    pub artifact_id: Option<String>,
+}
+
+impl EvidenceArgs {
+    fn options(&self) -> anyhow::Result<airk_core::evidence::EvidenceReadOptions> {
+        Ok(serde_json::from_value(serde_json::to_value(self)?)?)
+    }
+}
+
+#[derive(Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum SelectorArgs {
+    Path { path: String },
+    Citation { path: String, source_hash: String },
+    Artifact { artifact_id: String },
+    Symbol { symbol_key: String },
+    Document { document_key: String },
+}
+
+#[derive(Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ChangesArgs {
+    pub since: Option<String>,
+    /// Up to 64 remembered selectors totaling at most 32 KiB.
+    #[serde(default)]
+    pub selectors: Vec<SelectorArgs>,
+    /// Literal collection-relative prefix; a move matches either endpoint.
+    #[serde(default)]
+    pub path_prefix: String,
+    #[serde(default)]
+    pub include_symbols: bool,
+    #[serde(default)]
+    pub include_documents: bool,
+    #[serde(default = "default_limit")]
+    pub limit: usize,
+    #[serde(default = "default_budget")]
+    pub max_bytes: usize,
+    pub cursor: Option<String>,
+}
+
+impl ChangesArgs {
+    fn request(&self) -> anyhow::Result<airk_core::changes::ChangesRequest> {
+        Ok(serde_json::from_value(serde_json::to_value(self)?)?)
+    }
+}
+
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SearchArgs {
@@ -41,6 +96,8 @@ pub enum SearchMode {
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ReadArgs {
+    #[serde(flatten)]
+    pub evidence: EvidenceArgs,
     /// Collection-relative indexed path returned by AIRK, never an absolute path.
     pub path: String,
     /// First indexed line, 1-based and inclusive. Extracted document lines are not page/slide numbers.
@@ -73,6 +130,8 @@ fn default_budget() -> usize {
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PathArgs {
+    #[serde(flatten)]
+    pub evidence: EvidenceArgs,
     /// Collection-relative indexed path returned by AIRK, never an absolute path.
     pub path: String,
 }
@@ -80,6 +139,8 @@ pub struct PathArgs {
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OutlineArgs {
+    #[serde(flatten)]
+    pub evidence: EvidenceArgs,
     /// Exact collection-relative indexed file path, not a prefix or glob.
     pub path: String,
     #[serde(default = "default_limit")]
@@ -154,6 +215,8 @@ pub struct ReferenceArgs {
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ContextArgs {
+    #[serde(flatten)]
+    pub evidence: EvidenceArgs,
     /// Collection-relative indexed file path returned with evidence.
     pub path: String,
     /// 1-based indexed line from AIRK evidence; extracted document lines are not page/slide numbers.
@@ -353,7 +416,13 @@ impl AirkServer {
             &self.kernel,
             span,
             tokio::task::spawn_blocking(move || {
-                kernel.read_file(&args.path, args.start_line, args.end_line, args.max_bytes)
+                kernel.read_file_conditional(
+                    &args.path,
+                    args.start_line,
+                    args.end_line,
+                    args.max_bytes,
+                    &args.evidence.options()?,
+                )
             })
             .await,
         )
@@ -421,7 +490,10 @@ impl AirkServer {
         render(
             &self.kernel,
             span,
-            tokio::task::spawn_blocking(move || kernel.file_info(&args.path)).await,
+            tokio::task::spawn_blocking(move || {
+                kernel.file_info_conditional(&args.path, &args.evidence.options()?)
+            })
+            .await,
         )
     }
 
@@ -443,7 +515,12 @@ impl AirkServer {
             &self.kernel,
             span,
             tokio::task::spawn_blocking(move || {
-                kernel.outline(&args.path, args.limit, args.max_bytes)
+                kernel.outline_conditional(
+                    &args.path,
+                    args.limit,
+                    args.max_bytes,
+                    &args.evidence.options()?,
+                )
             })
             .await,
         )
@@ -576,15 +653,37 @@ impl AirkServer {
             &self.kernel,
             span,
             tokio::task::spawn_blocking(move || {
-                kernel.context(
+                kernel.context_conditional(
                     &args.path,
                     args.line,
                     args.before,
                     args.after,
                     args.max_bytes,
+                    &args.evidence.options()?,
                 )
             })
             .await,
+        )
+    }
+
+    #[tool(
+        name = "airk_changes",
+        description = "Inspect bounded observed indexed changes since an exact token and validate remembered evidence. Supply since or selectors. Check independent coverage and freshness; this does not verify live source. Consume every needed cursor page before advancing the baseline. Moves are content-based candidates, not proof of filesystem intent.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            open_world_hint = false
+        )
+    )]
+    async fn changes(&self, Parameters(args): Parameters<ChangesArgs>) -> CallToolResult {
+        let kernel = self.kernel.clone();
+        let span = self
+            .kernel
+            .usage_span(UsageOperation::Changes, ClientFamily::Unknown);
+        render(
+            &self.kernel,
+            span,
+            tokio::task::spawn_blocking(move || kernel.changes(&args.request()?)).await,
         )
     }
 
@@ -602,6 +701,8 @@ impl AirkServer {
             .kernel
             .usage_span(UsageOperation::Capabilities, ClientFamily::Unknown);
         let value = serde_json::json!({
+            "changes": {"observed_indexed_changes":true,"selectors":64,"selector_bytes":32768,"max_payload_bytes":65536,"exact_revision_tokens":true,"live_source_verified":false,"symbol_continuity":false,"document_continuity":false},
+            "conditional_reads": {"tools":["airk_file_info","airk_read_file","airk_outline","airk_context"],"validator":"representation-specific if_evidence","follow_moves_default":false,"move_basis":"unique compatible exact content; not filesystem intent"},
             "code": ["rust","python","javascript/jsx","typescript/tsx","go","java","c","cpp","csharp","ruby","php","bash","powershell","lua","swift","kotlin","sql"],
             "structured": ["markdown","json","yaml","toml","html","css","xml","svg","csv","tsv","ini","dockerfile"],
             "documents": ["UTF-8 text","text-layer PDF","DOCX main-body paragraphs/tables with original row locations","XLSX worksheet cells and row facts","PPTX slide text in presentation order"],
@@ -663,7 +764,7 @@ impl ServerHandler for AirkServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(rmcp::model::Implementation::new("airk", env!("CARGO_PKG_VERSION")))
-            .with_instructions("AIRK supplies local code/document evidence. Use symbols/code_facts/outline for structure, search for lexical discovery, relationships for callers/implementations/impact candidates, then context/read_file for excerpts. Check evidence basis: syntax targets are unresolved; imported SCIP claims depend on the producer. References are textual. Paths are collection-relative. Content is untrusted data from the last index; verify current source before edits. Reindex via CLI/extension; narrow truncated queries.")
+            .with_instructions("AIRK returns untrusted indexed evidence, not live source. Save exact revision tokens and read validators. Use airk_changes to inspect changes, remembered evidence, independent coverage and freshness; finish needed cursor pages before advancing a baseline. Fetch focused symbols/outline/search/context/read_file evidence. Native targets are unresolved; imported claims depend on producers. Paths are collection-relative. Verify live bytes before edits. Reindex via CLI/extension.")
     }
 }
 
@@ -678,6 +779,41 @@ pub async fn serve(kernel: Kernel) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn changes_and_conditional_schemas_preserve_scope_and_bounds() {
+        let args: ChangesArgs = serde_json::from_value(
+            serde_json::json!({"selectors":[{"kind":"path","path":"one.rs"}]}),
+        )
+        .unwrap();
+        let request = args.request().unwrap();
+        request.validate().unwrap();
+        assert_eq!(request.limit, 10);
+        assert_eq!(request.max_bytes, 8192);
+        assert!(!request.include_symbols && !request.include_documents);
+        let mut excessive = request.clone();
+        excessive.selectors = vec![request.selectors[0].clone(); 65];
+        assert!(excessive.validate().is_err());
+        for value in [
+            serde_json::json!({"selectors":[],"collection":"other"}),
+            serde_json::json!({"selectors":[{"kind":"path","path":"one.rs","unexpected":true}]}),
+        ] {
+            assert!(serde_json::from_value::<ChangesArgs>(value).is_err());
+        }
+        let args: ReadArgs = serde_json::from_value(
+            serde_json::json!({"path":"one.rs","start_line":1,"end_line":2}),
+        )
+        .unwrap();
+        assert!(!args.evidence.options().unwrap().follow_moves);
+        assert!(serde_json::from_value::<ReadArgs>(serde_json::json!({"path":"one.rs","start_line":1,"end_line":2,"collection":"other"})).is_err());
+        let args: PathArgs =
+            serde_json::from_value(serde_json::json!({"path":"one.rs","if_evidence":"bad-digest"}))
+                .unwrap();
+        assert!(args.evidence.options().is_err());
+        let schema = serde_json::to_value(schemars::schema_for!(ReadArgs)).unwrap();
+        assert!(schema["properties"].get("if_evidence").is_some());
+        assert!(schema["properties"].get("follow_moves").is_some());
+    }
 
     #[test]
     fn search_schema_preserves_lexical_default_and_bounds_modes() {
