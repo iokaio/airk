@@ -1,6 +1,6 @@
 # Building AIRK for macOS
 
-Build the native Rust executable on a Mac or macOS CI runner. Docker is optional and is not needed for this workflow. These instructions cover the current scaffold; macOS validation has not yet been observed in this checkout. See the [validation record](validation.md) for checks actually completed.
+Build the native Rust executable on a Mac or macOS CI runner. Docker is optional and is not needed for this workflow. Local Apple Silicon build/tests and signing/notarization were observed on 14 October 2026; see the [validation record](validation.md) for exact scope and remaining qualification.
 
 ## Prerequisites
 
@@ -103,7 +103,7 @@ For macOS delivery:
 1. Collect successful hosted results and native candidates for both architectures.
 2. Test actual MCP client links, Unicode/case-sensitive paths, file locking, SQLite WAL transactions/migration, collection isolation and state on a user-selected drive.
 3. Review the generated candidate's dependency notices and checksums before releasing. Users should not need a compiler or Docker to install a release.
-4. For signed distribution, use the maintainer's existing Developer ID identity and [native signing/notarization tools](native-signing.md). The public certificate alone cannot sign; the original Mac must supply its matching private key and an existing notarytool profile. Signing creates a fresh artifact copy and does not publish it. See [Apple's Developer ID guidance](https://developer.apple.com/help/account/certificates/create-developer-id-certificates/).
+4. For signed distribution, use AIRK's separate keychain and `airk-notary` profile with the existing company Developer ID identity, or the manual hosted workflow described in [native signing/notarization](native-signing.md). The public certificate alone cannot sign; the matching private key is required. Signing creates a fresh artifact copy and does not publish it. See [Apple's Developer ID guidance](https://developer.apple.com/help/account/certificates/create-developer-id-certificates/).
 5. Review the generated Mac VSIX and verify clean installation on its intended architecture. CI bundles the matching helper in each platform package; local packaging needs Node/npm for the pinned extension build tools. See [extension deployment](extension-deployment.md).
 
 DiskANN uses AIRK's portable disk provider; local embeddings support explicitly provisioned static word vectors and CPU ONNX transformer inference. Their disk-I/O, locking, memory-mapping, CPU and model behavior must still be qualified on both Mac architectures. Windows tests do not establish that compatibility or representative semantic quality; see [local models](local-models.md), [ONNX qualification](onnx-models.md) and the [release checklist](release-checklist-0.1.0.md).

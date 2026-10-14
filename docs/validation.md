@@ -2,6 +2,20 @@
 
 Local observations on 13–14 October 2026. Historical receipts below validate their own implementation and must not be treated as packages of later changes. A passing fixture or hosted build is not a signed release, production deployment or complete host/client qualification.
 
+## Local Apple Silicon signing, 14 October 2026
+
+macOS 26.5.1 / Apple Silicon, Rust 1.98.0, base commit `6881531bddb2c6d3a04e3d98dbde1a7d6e1961f1` with uncommitted signing-workflow changes:
+
+- Formatting, workspace/all-target clippy with warnings denied, workspace tests and the explicit `aarch64-apple-darwin` release build passed. Existing deliberate Rust fixture skips remain; this run did not provision a transformer model.
+- Python packaging/signing contracts, repository checks, whitespace checks and actionlint 1.7.12 passed. The Linux-only Python RSS test was skipped on macOS. Extension tests with the real debug helper passed 21 tests with one optional old-helper upgrade test skipped; local Node was 26.3.1, rather than the hosted workflow's pinned 24.15.0.
+- The release helper indexed the public project-a fixture, returned the `authenticate` symbol and collection status, and removed its derived collection. Removal emitted the existing dropped-usage-observation diagnostic; this does not establish complete usage recording.
+- AIRK's own signing keychain and `airk-notary` profile were created and validated. The company Developer ID Application identity was copied with owner authorization; WritingForgePro's original key/profile were retained. Isolated PKCS#12 import, noninteractive notary credential validation and temporary-keychain cleanup were exercised locally.
+- Actual signing exposed and fixed the verifier's missing `=` prefix for a literal `codesign -R` requirement. The final binary passed Apple Developer ID/team, hardened-runtime and trusted-timestamp verification. Apple returned **Accepted**, submission `995e8f8e-f51c-4706-b8a0-deb82f40174a`. The receipt is `artifacts/signed/mac-arm64-verified/signing.json`; signed binary SHA-256 is `fb68f1107aa6d5c8afbc7d9e3ebbfb07b63958fcc8aa5659a4852423900820f5`.
+- Native packaging reverified the signature and build identity, verified the archive inventory and ran the archived executable. The matching preview VSIX also passed payload/provenance verification. Candidates are under `artifacts/native/mac-arm64-signed-candidate/publish/` and `artifacts/extension/mac-arm64-signed-candidate/publish/`; the native manifest records the dirty checkout.
+- The GitHub `macos-signing` environment was provisioned with four signing/notarization secrets and a deployment policy allowing only the `main` branch. The new manual workflow was linted locally; it has not yet run on hosted runners. No code, release or Marketplace package was published.
+
+The CLI has a server-side notarization ticket, not a stapled offline ticket. This evidence does not qualify Intel execution, installed services/editors, remote clients, the oldest supported OS or the hosted signing workflow. Dependency notices still report the existing missing-separate-license-text review items for adobe-cmap-parser, htmlescape, pdf-extract and type1-encoding-parser.
+
 ## Expanded roadmap qualification
 
 The follow-up adds local CPU ONNX inference, live LSP/Ctags and explicit OCR, native watchers/per-user services, OS capacity checks, configurable scan limits, process-resource probes, bounded Hugging Face tokenizer calibration and signing tools. The owner will continue actual Mac signing and host qualification on the original Mac holding the private key. No signing key or public certificate is included in the repository.

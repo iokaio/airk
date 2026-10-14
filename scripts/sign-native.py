@@ -48,7 +48,7 @@ def verify(binary, receipt, signtool="signtool"):
         if not re.fullmatch(r"[A-Z0-9]{10}", team):
             raise ValueError("Expected exact Apple team identifier")
         run(["/usr/bin/codesign", "--verify", "--strict", "--verbose=2", "-R",
-             f'anchor apple generic and certificate leaf[subject.OU] = "{team}" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists', binary])
+             f'=anchor apple generic and certificate leaf[subject.OU] = "{team}" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists', binary])
         result = subprocess.run(["/usr/bin/codesign", "--display", "--verbose=4", str(binary)],
                                 capture_output=True, text=True, encoding="utf-8", timeout=30, check=True)
         details = result.stderr
@@ -86,6 +86,7 @@ def main():
     parser.add_argument("--team-id")
     parser.add_argument("--notarize", action="store_true")
     parser.add_argument("--keychain-profile")
+    parser.add_argument("--keychain", type=Path, help="Explicit existing Apple signing/notary keychain (for isolated CI keychains)")
     args = parser.parse_args()
     windows = "windows" in args.target
     if platform.system() != ("Windows" if windows else "Darwin"):
@@ -94,7 +95,7 @@ def main():
         url = urllib.parse.urlsplit(args.timestamp_url or "")
         if not re.fullmatch(r"[0-9a-fA-F]{40}", args.identity) or url.scheme not in ("http", "https") or not url.hostname or url.username or url.password:
             parser.error("Windows signing requires an exact certificate thumbprint and explicit RFC3161 timestamp URL")
-        if args.notarize or args.keychain_profile or args.team_id:
+        if args.notarize or args.keychain_profile or args.team_id or args.keychain:
             parser.error("Apple signing options do not apply to Windows")
     elif not args.identity.startswith("Developer ID Application:") or not re.fullmatch(r"[A-Z0-9]{10}", args.team_id or ""):
         parser.error("Apple signing requires a Developer ID Application identity and exact team ID")
@@ -117,7 +118,8 @@ def main():
     if windows:
         run([args.signtool,"sign","/sha1",args.identity,"/fd","SHA256","/tr",args.timestamp_url,"/td","SHA256",binary])
     else:
-        run(["/usr/bin/codesign","--sign",args.identity,"--options","runtime","--timestamp",binary])
+        keychain = ["--keychain", str(args.keychain)] if args.keychain else []
+        run(["/usr/bin/codesign","--sign",args.identity,"--options","runtime","--timestamp",*keychain,binary])
     receipt["binary_sha256"] = digest(binary)
     receipt["verification"] = verify(binary,receipt,args.signtool)
     if args.notarize:
@@ -128,7 +130,7 @@ def main():
             with zipfile.ZipFile(archive,"x",compression=zipfile.ZIP_DEFLATED) as zipped:
                 zipped.write(binary,binary.name)
             result = json.loads(run(["/usr/bin/xcrun","notarytool","submit",archive,"--keychain-profile",
-                                     args.keychain_profile,"--wait","--timeout","20m","--output-format","json"],timeout=1250))
+                                     args.keychain_profile,*keychain,"--wait","--timeout","20m","--output-format","json"],timeout=1250))
             if result.get("status") != "Accepted" or not result.get("id"):
                 raise RuntimeError("Apple notarization did not return Accepted")
             receipt["notarization"] = {"id":result["id"],"status":"Accepted","stapled":False}

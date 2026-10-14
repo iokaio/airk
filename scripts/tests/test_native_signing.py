@@ -2,6 +2,8 @@
 import importlib.util
 import json
 from pathlib import Path
+import sys
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -12,6 +14,56 @@ spec.loader.exec_module(signing)
 
 
 class SigningContracts(unittest.TestCase):
+    def test_apple_verification_requires_runtime_timestamp_and_exact_team(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            binary = Path(temporary) / "airk"
+            binary.write_bytes(b"fictional signed executable")
+            receipt = {"platform": "Darwin", "binary_sha256": signing.digest(binary), "team_id": "ABCDEFGHIJ"}
+            details = ("Authority=Developer ID Application: Fixture\nflags=0x10000(runtime)\n"
+                       "TeamIdentifier=ABCDEFGHIJ\nTimestamp=fixture\n")
+            with patch.object(signing.platform, "system", return_value="Darwin"), \
+                    patch.object(signing, "run") as run:
+                for removed in ("", "Authority=Developer ID Application:", "runtime", "TeamIdentifier=ABCDEFGHIJ", "Timestamp="):
+                    display = subprocess.CompletedProcess([], 0, "", details.replace(removed, "") if removed else details)
+                    with self.subTest(removed=removed), patch.object(signing.subprocess, "run", return_value=display):
+                        if removed:
+                            with self.assertRaises(ValueError):
+                                signing.verify(binary, receipt)
+                        else:
+                            self.assertEqual(signing.verify(binary, receipt)["trust"], "apple_developer_id")
+                command = run.call_args.args[0]
+                # Without '=', codesign treats the requirement as a filename.
+                self.assertTrue(command[command.index("-R") + 1].startswith("=anchor apple generic"))
+
+    def test_explicit_apple_keychain_reaches_signer_and_notary(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "target/aarch64-apple-darwin/release/airk"
+            source.parent.mkdir(parents=True)
+            source.write_bytes(b"fictional executable")
+            (root / "Cargo.lock").write_bytes(b"fictional lock")
+            output = root / "artifacts/signed"
+            keychain = root / "airk keychain"
+            def run(command, **kwargs):
+                if "notarytool" in command:
+                    return json.dumps({"id": "fixture-submission", "status": "Accepted"})
+                return "fixture-commit"
+            arguments = ["sign-native.py", "--target", "aarch64-apple-darwin", "--output", str(output),
+                         "--identity", "Developer ID Application: Fixture (ABCDEFGHIJ)",
+                         "--team-id", "ABCDEFGHIJ", "--notarize", "--keychain-profile", "airk-notary",
+                         "--keychain", str(keychain)]
+            with patch.object(signing, "ROOT", root), patch.object(signing.platform, "system", return_value="Darwin"), \
+                    patch.object(sys, "argv", arguments), patch.object(signing, "verify", return_value={}), \
+                    patch.object(signing, "run", side_effect=run) as command:
+                signing.main()
+            calls = [call.args[0] for call in command.call_args_list]
+            for tool in ("/usr/bin/codesign", "/usr/bin/xcrun"):
+                invocation = next(call for call in calls if call[0] == tool)
+                self.assertEqual(invocation[invocation.index("--keychain") + 1], str(keychain))
+            receipt = json.loads((output / "signing.json").read_text())
+            self.assertEqual(receipt["notarization"]["status"], "Accepted")
+            self.assertNotIn("keychain", receipt)
+
     def test_altered_binary_and_source_receipt_fail_before_trust_probe(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
