@@ -16,6 +16,10 @@ The native product targets **Windows, macOS and Linux**. Developer builds requir
 
 [GitHub CI](docs/ci-and-builds.md) is configured to test and package Windows x64, Linux x64 and both Mac architectures using standard hosted runners. Successful runs retain matching unsigned candidate ZIPs/VSIX packages, notices and checksums for seven days.
 
+The manual [GitHub release workflow](docs/release-workflow.md#numbered-github-releases) adds automatically numbered releases, Azure-signed Windows helpers, signed/notarized Mac helpers, and native ZIP/VSIX downloads hosted on [GitHub Releases](https://github.com/iokaio/airk/releases). Linux downloads are unsigned. Publication is selected explicitly when dispatching the workflow.
+
+The [downloads website workflow](docs/release-workflow.md#downloads-website) publishes an AIRK overview, installation steps and direct platform downloads to **airk.ioka.io** using GitHub Pages. It refreshes after release publication and can also be run manually. Until the first release, it displays a pending-download notice.
+
 For a local Windows app and extension build:
 
 ~~~powershell

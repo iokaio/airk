@@ -17,6 +17,13 @@ import urllib.parse
 import zipfile
 
 ROOT = Path(__file__).resolve().parent.parent
+AZURE_SIGNING = {
+    "endpoint": "https://wus2.codesigning.azure.net",
+    "account": "ioka-llc-signing",
+    "profile": "WritingForgePro",
+    "publisher": "CN=Ioka LLC, O=Ioka LLC, L=Mapleton, S=Utah, C=US",
+    "identity_eku": "1.3.6.1.4.1.311.97.88309284.513035131.587831003.613935669",
+}
 
 
 def digest(path):
@@ -38,9 +45,14 @@ def verify(binary, receipt, signtool="signtool"):
         if not re.fullmatch(r"[0-9a-fA-F]{40}", receipt["identity"]):
             raise ValueError("Expected exact certificate SHA-1 thumbprint")
         run([signtool, "verify", "/pa", "/all", "/v", binary])
+        azure = receipt.get("azure")
+        if azure is not None and azure != AZURE_SIGNING:
+            raise ValueError("Unexpected Azure signing policy")
+        policy = (["-Publisher", azure["publisher"], "-IdentityEku", azure["identity_eku"]]
+                  if azure is not None else [])
         identity = json.loads(run(["pwsh", "-NoProfile", "-NonInteractive", "-File",
                                    ROOT / "scripts/verify-authenticode.ps1", "-Binary", binary,
-                                   "-Thumbprint", receipt["identity"]]))
+                                   "-Thumbprint", receipt["identity"], *policy]))
         return {"trust":"authenticode_valid", "timestamp_present":True,
                 "signer_thumbprint":identity["thumbprint"]}
     if platform.system() == "Darwin":

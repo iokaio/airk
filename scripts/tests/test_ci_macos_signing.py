@@ -22,8 +22,11 @@ class HostedSigningContracts(unittest.TestCase):
                            "RUNNER_TEMP": temporary}
             with patch.dict(os.environ, environment, clear=True), patch.object(signing.sys, "platform", "darwin"):
                 self.assertEqual(signing.runner_directory(), Path(temporary).resolve() / "airk-macos-signing")
+                with patch.dict(os.environ, {"GITHUB_WORKFLOW_REF": "iokaio/airk/.github/workflows/github-release.yml@refs/heads/main"}):
+                    self.assertEqual(signing.runner_directory(), Path(temporary).resolve() / "airk-macos-signing")
                 for key, value in (("GITHUB_REF", "refs/pull/1/merge"),
                                    ("GITHUB_EVENT_NAME", "pull_request"),
+                                   ("GITHUB_WORKFLOW_REF", "other/repo/.github/workflows/macos-signing.yml@refs/heads/main"),
                                    ("RUNNER_ENVIRONMENT", "self-hosted"),
                                    ("GITHUB_WORKFLOW_REF", "iokaio/airk/.github/workflows/ci.yml@refs/heads/main")):
                     with self.subTest(key=key), patch.dict(os.environ, {key: value}):

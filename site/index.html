@@ -1,0 +1,110 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="AIRK gives coding agents local code and document evidence with source locations. Download the native VS Code extension for Windows, macOS and Linux.">
+  <meta name="theme-color" content="#193e31">
+  <meta property="og:title" content="AIRK — Local evidence for coding agents">
+  <meta property="og:description" content="Index your workspace. Retrieve bounded evidence. Follow it back to the source.">
+  <meta property="og:url" content="https://airk.ioka.io/">
+  <link rel="canonical" href="https://airk.ioka.io/">
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./style.css">
+  <title>AIRK — Local evidence for coding agents</title>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header wrap">
+    <a class="wordmark" href="./" aria-label="AIRK home"><span class="mark" aria-hidden="true">a<span>›</span></span>AIRK</a>
+    <nav aria-label="Main navigation">
+      <a href="#how-it-works">How it works</a>
+      <a href="https://github.com/iokaio/airk/tree/main/docs">Docs <span aria-hidden="true">↗</span></a>
+      <a class="nav-download" href="#downloads">Downloads <span aria-hidden="true">↓</span></a>
+    </nav>
+  </header>
+  <main id="main">
+    <section class="hero wrap" aria-labelledby="hero-title">
+      <div class="hero-copy">
+        <p class="eyebrow"><span class="status-dot"></span> Open source · Local first · Beta</p>
+        <h1 id="hero-title">Give your agent<br><em>the source.</em></h1>
+        <p class="intro">Local code and document evidence, ready for your coding agent.</p>
+        <p class="hero-detail">AIRK indexes your workspace and returns focused facts and passages with their original locations. Your agent brings the reasoning. AIRK brings the evidence.</p>
+        <div class="hero-actions">
+          <a class="button primary" href="#downloads">Get the VS Code extension <span aria-hidden="true">↓</span></a>
+          <a class="text-link" href="https://github.com/iokaio/airk">Explore the source <span aria-hidden="true">↗</span></a>
+        </div>
+        <p class="platform-note">Windows x64 · macOS Apple silicon &amp; Intel · Linux x64</p>
+      </div>
+      <figure class="evidence-panel">
+        <figcaption><span class="panel-dot"></span> A workspace, made retrievable <span class="example-label">Illustration</span></figcaption>
+        <div class="source-tree">
+          <p class="tree-root">your-workspace/</p>
+          <p><span>├─</span> src/<strong>auth.ts</strong><span class="file-type">code</span></p>
+          <p><span>├─</span> docs/<strong>design.md</strong><span class="file-type">decisions</span></p>
+          <p><span>└─</span> specs/<strong>requirements.docx</strong><span class="file-type">documents</span></p>
+        </div>
+        <div class="index-path"><span class="path-line"></span><span>AIRK · local collection</span><span class="path-line"></span></div>
+        <div class="evidence-result">
+          <p class="result-label">Evidence returned to your agent</p>
+          <p class="result-title">A definition. A requirement. The lines around it.</p>
+          <div class="evidence-tags"><span>source path</span><span>content hash</span><span>original location</span></div>
+        </div>
+        <p class="panel-footer"><span aria-hidden="true">↳</span> Bounded results, traceable to indexed source.</p>
+      </figure>
+    </section>
+    <div class="principles">
+      <div class="wrap principles-inner">
+        <p><strong>Local runtime</strong><span>Memory and disk on your machine</span></p>
+        <p><strong>14 read-only MCP tools</strong><span>Scoped to your workspace collection</span></p>
+        <p><strong>Native helper included</strong><span>No Docker or build tools to install</span></p>
+      </div>
+    </div>
+    <section class="downloads-section wrap section" id="downloads" aria-labelledby="downloads-title">
+      <div class="section-heading">
+        <div><p class="eyebrow">01 / Get AIRK</p><h2 id="downloads-title">Your workspace.<br>Your platform.</h2></div>
+        <p>Download the extension for the machine running your workspace. Each VSIX includes its matching native helper.</p>
+      </div>
+      <!-- RELEASE_DOWNLOADS -->
+      <div class="install-strip">
+        <span class="step-label">Install the extension</span>
+        <p>In VS Code, open the command palette and run <strong>Extensions: Install from VSIX</strong>. Select your download, then open a trusted workspace.</p>
+        <a href="https://github.com/iokaio/airk/blob/main/docs/vscode-extension.md">Installation guide <span aria-hidden="true">↗</span></a>
+      </div>
+      <p class="download-footnote">Using SSH, WSL or a development container? Choose the package for the remote workspace host. AIRK requires desktop VS Code; browser-only workspaces cannot run its native helper.</p>
+    </section>
+    <section class="workflow-section" id="how-it-works" aria-labelledby="workflow-title">
+      <div class="wrap section">
+        <div class="section-heading">
+          <div><p class="eyebrow">02 / From files to context</p><h2 id="workflow-title">A small tool.<br>A grounded workflow.</h2></div>
+          <p>Keep the index on your machine, see what is covered, and give your agent a way back to the original material.</p>
+        </div>
+        <ol class="workflow-steps">
+          <li><span class="step-number">1</span><h3>Index your workspace</h3><p>Click the AIRK status item to index. Review measured coverage, choose an indexing mode, or pause automatic updates from AIRK controls.</p></li>
+          <li><span class="step-number">2</span><h3>Connect your agent</h3><p>Run <strong>AIRK: Set Up Coding Agent</strong> to preview scoped configuration for clients such as Claude Code, Codex and Gemini CLI. Enable the connection in your client.</p></li>
+          <li><span class="step-number">3</span><h3>Retrieve with a reference</h3><p>Your agent can search, inspect definitions and read document evidence. Results retain source paths, content hashes and original locations within a published index revision.</p></li>
+        </ol>
+        <p class="privacy-note">AIRK runs locally without a service account or API key. Your chosen agent controls whether it sends retrieved evidence to its model provider.</p>
+      </div>
+    </section>
+    <section class="formats-section wrap section" aria-labelledby="formats-title">
+      <div><p class="eyebrow">03 / More than source code</p><h2 id="formats-title">The context lives<br>across your files.</h2><a class="text-link" href="https://github.com/iokaio/airk/blob/main/docs/formats.md">See formats and extraction limits <span aria-hidden="true">↗</span></a></div>
+      <dl class="format-list">
+        <div><dt>Code &amp; configuration</dt><dd>Native grammar profiles for Rust, Python, TypeScript, Go, C#, Swift and more. Structured adapters for JSON, YAML, TOML and other configuration formats.</dd></div>
+        <div><dt>Documents &amp; decisions</dt><dd>Markdown, text-layer PDFs, DOCX and PPTX. Retrieve passages and evidence cues such as headings, dates, requirements and numeric bounds.</dd></div>
+        <div><dt>Tables &amp; worksheets</dt><dd>DOCX tables and XLSX stored cells preserve row and cell locations. Spreadsheet formulas retain stored results; AIRK does not recalculate them.</dd></div>
+      </dl>
+    </section>
+    <section class="open-source wrap">
+      <div><p class="eyebrow">Artifact Indexing and Retrieval Kernel</p><h2>Open to inspection.<br>Built to stay local.</h2><p>AIRK is an independent beta, licensed under Apache-2.0. Read the implementation, explore the documented limits, or help improve it.</p></div>
+      <a class="button primary" href="https://github.com/iokaio/airk">Find AIRK on GitHub <span aria-hidden="true">↗</span></a>
+    </section>
+  </main>
+  <footer class="site-footer wrap">
+    <a class="wordmark" href="./">AIRK</a>
+    <p>Artifact Indexing and Retrieval Kernel · by Ioka</p>
+    <nav aria-label="Footer navigation"><a href="https://github.com/iokaio/airk/releases">All releases</a><a href="https://github.com/iokaio/airk/blob/main/SUPPORT.md">Support</a><a href="https://github.com/iokaio/airk/blob/main/LICENSE">License</a></nav>
+  </footer>
+</body>
+</html>

@@ -146,6 +146,10 @@ For each client, record exact version, configuration scope, startup/tool-list/st
 
 ## 9. Manual release workflow rehearsal and publication
 
+- [ ] For GitHub-hosted downloads, dispatch **GitHub release** on `main` with publish disabled. Verify the numbered tag, full CI, Azure-signed Windows, both notarized Macs, unsigned Linux and matching VSIX packages.
+- [ ] Verify AIRK's Azure OIDC federation and main-only `native-signing` / `github-releases` environments. Review the exact signing publisher/profile and all final download hashes.
+- [ ] Dispatch with publish enabled only for the intended preview/stable release. Verify the draft upload completes before publication and that the final [GitHub Release](https://github.com/iokaio/airk/releases) contains all packages, manifests and SHA256SUMS. Existing tags/assets must never be overwritten.
+
 - [ ] Merge the reviewed workflow changes through a PR. Run **Actions → Extension release → Run workflow**, choose the exact checked-in version/channel and leave **publish** false. Inspect all four verified native/VSIX artifacts and receipts.
 - [ ] Verify deliberate wrong version/platform/channel/digest/incomplete-set inputs fail before publication. Build-only and PR jobs must have no publishing identity.
 - [ ] Configure the `iokaio` Marketplace publisher's trusted-publishing policy for `iokaio/airk` and `.github/workflows/extension-release.yml`, including the `vscode-marketplace` environment/appropriate claims. The workflow requests a short-lived OIDC credential; no silent PAT fallback.

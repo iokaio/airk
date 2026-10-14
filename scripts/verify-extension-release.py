@@ -19,14 +19,14 @@ def read_receipt(path):
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def verify(directory, commit, version, channel):
+def verify(directory, commit, version, channel, *, receipts=None):
     if not re.fullmatch(r"[0-9a-f]{40}", commit) or not re.fullmatch(r"\d+\.\d+\.\d+", version):
         raise ValueError("Expected full commit SHA and numeric extension version")
     if channel not in ("preview", "stable"):
         raise ValueError("Unknown release channel")
     platforms = set(package.TARGETS.values())
     archives = []
-    receipts = sorted(directory.glob("*/manifest.json"))
+    receipts = sorted(directory.glob("*/manifest.json")) if receipts is None else receipts
     if len(receipts) != len(platforms):
         raise ValueError("Expected exactly four platform receipts")
     lock_digest = package.digest((ROOT / "packages/vscode/package-lock.json").read_bytes())
