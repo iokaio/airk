@@ -36,6 +36,7 @@ test('native writer queue isolates data directories and collections', async () =
 // AIRK_TEST_UPGRADE_BINARY remains supported for earlier qualification commands.
 const previousHelperBinary = process.env.AIRK_TEST_PREVIOUS_BINARY || process.env.AIRK_TEST_BINARY;
 const upgradedHelperBinary = process.env.AIRK_TEST_PREVIOUS_BINARY ? process.env.AIRK_TEST_BINARY : process.env.AIRK_TEST_UPGRADE_BINARY;
+const previousToolCount = process.env.AIRK_TEST_PREVIOUS_TOOL_COUNT === '14' ? 14 : 15;
 test('cached old helper survives extension replacement and a changed trusted helper uses a new path',
     { skip: !previousHelperBinary || !upgradedHelperBinary }, async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'airk-helper-upgrade-'));
@@ -65,15 +66,15 @@ test('cached old helper survives extension replacement and a changed trusted hel
         await runJson(oldAgent, 'index');
         await fs.rename(extension, path.join(directory, 'replaced-extension'));
         assert.equal((await runText(oldCached, ['--version'])).trim(), `airk ${oldVersion}`);
-        assert.equal((await probeMcp(oldAgent)).tools.length, 14);
+        assert.equal((await probeMcp(oldAgent, previousToolCount)).tools.length, previousToolCount);
         await installFixture(newBytes, newDigest, newVersion);
         const newCached = await prepareHelper(extension, storage, newVersion);
         assert.notEqual(newCached, oldCached);
         assert.equal(await prepareHelper(extension, storage, newVersion), newCached);
         assert.equal(createHash('sha256').update(await fs.readFile(oldCached)).digest('hex'), oldDigest);
         assert.equal((await runText(newCached, ['--version'])).trim(), `airk ${newVersion}`);
-        assert.equal((await probeMcp(oldAgent)).tools.length, 14, 'Existing agent command still works after replacement');
-        assert.equal((await probeMcp({ ...oldAgent, command: newCached })).tools.length, 14);
+        assert.equal((await probeMcp(oldAgent, previousToolCount)).tools.length, previousToolCount, 'Existing agent command still works after replacement');
+        assert.equal((await probeMcp({ ...oldAgent, command: newCached })).tools.length, 15);
     } finally { await removeFixture(directory, 'airk-helper-upgrade-'); }
 });
 
@@ -110,7 +111,8 @@ test('extension native adapter indexes, rebuilds, probes MCP, isolates and remov
         await runJson(spec, 'schedule', ['resume']);
         assert.equal((await runJson<IndexReport>(spec, 'index')).reused, 1);
         const full = await runJson<IndexReport>(spec, 'index', ['--full']); assert.equal(full.reused, 0); assert.ok(full.generation > first.generation);
-        const probe = await probeMcp(spec); assert.equal(probe.tools.length, 14);
+        const probe = await probeMcp(spec); assert.equal(probe.tools.length, 15);
+        assert.ok(probe.tools.includes('airk_changes'));
         assert.ok(probe.tools.includes('airk_code_facts')); assert.ok(probe.tools.includes('airk_relationships'));
         const second = { ...spec, root: other, collection: collectionId(other), name: 'B' };
         await runJson(second, 'index');

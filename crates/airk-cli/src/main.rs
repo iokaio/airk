@@ -6,6 +6,29 @@ use airk_kernel::{FactQuery, Kernel};
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
+#[derive(clap::Args, Default)]
+struct EvidenceOptions {
+    #[arg(long)]
+    if_evidence: Option<airk_core::identity::Sha256Digest>,
+    #[arg(long)]
+    follow_moves: bool,
+    #[arg(long)]
+    known_hash: Option<airk_core::identity::Sha256Digest>,
+    #[arg(long)]
+    artifact_id: Option<airk_core::identity::ArtifactId>,
+}
+
+impl From<EvidenceOptions> for airk_core::evidence::EvidenceReadOptions {
+    fn from(value: EvidenceOptions) -> Self {
+        Self {
+            if_evidence: value.if_evidence,
+            follow_moves: value.follow_moves,
+            known_hash: value.known_hash,
+            artifact_id: value.artifact_id,
+        }
+    }
+}
+
 #[derive(Parser)]
 #[command(
     name = "airk",
@@ -25,6 +48,29 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Inspect observed indexed changes and validate remembered evidence.
+    Changes {
+        #[arg(long)]
+        since: Option<airk_core::identity::RevisionToken>,
+        /// Repeatable tagged JSON selector, e.g. {"kind":"path","path":"one.rs"}.
+        #[arg(long = "selector")]
+        selectors: Vec<String>,
+        /// Remember an exact collection-relative indexed path.
+        #[arg(long = "path")]
+        paths: Vec<String>,
+        #[arg(long, default_value = "")]
+        path_prefix: String,
+        #[arg(long)]
+        include_symbols: bool,
+        #[arg(long)]
+        include_documents: bool,
+        #[arg(long, default_value_t = 10)]
+        limit: usize,
+        #[arg(long, default_value_t = 8192)]
+        max_bytes: usize,
+        #[arg(long)]
+        cursor: Option<String>,
+    },
     /// Extract explicit local OCR pages using a bounded provider request JSON.
     Ocr {
         path: String,
@@ -147,6 +193,8 @@ enum Command {
     },
     /// Read indexed source lines, with inclusive 1-based bounds.
     Read {
+        #[command(flatten)]
+        evidence: EvidenceOptions,
         path: String,
         #[arg(long)]
         start_line: usize,
@@ -158,9 +206,15 @@ enum Command {
     /// Serve read-only MCP tools over stdio.
     Mcp,
     /// Inspect format and extraction quality for an indexed file.
-    Info { path: String },
+    Info {
+        path: String,
+        #[command(flatten)]
+        evidence: EvidenceOptions,
+    },
     /// Retrieve a file's native and imported code/document outline.
     Outline {
+        #[command(flatten)]
+        evidence: EvidenceOptions,
         path: String,
         #[arg(long, default_value_t = 50)]
         limit: usize,
@@ -198,6 +252,8 @@ enum Command {
     },
     /// Retrieve neighboring indexed lines.
     Context {
+        #[command(flatten)]
+        evidence: EvidenceOptions,
         path: String,
         line: usize,
         #[arg(long, default_value_t = 5)]
@@ -332,6 +388,7 @@ impl Command {
             Self::Search { .. } => UsageOperation::Search,
             Self::Files { .. } => UsageOperation::ListFiles,
             Self::Read { .. } => UsageOperation::ReadFile,
+            Self::Changes { .. } => UsageOperation::Changes,
             Self::Info { .. } => UsageOperation::FileInfo,
             Self::Outline { .. } => UsageOperation::Outline,
             Self::Symbol { .. } => UsageOperation::Symbols,
@@ -840,18 +897,25 @@ async fn main() -> anyhow::Result<()> {
             max_bytes,
         } => recorder.print(&kernel.list_files(&prefix, limit, max_bytes)?),
         Command::Read {
+            evidence,
             path,
             start_line,
             end_line,
             max_bytes,
-        } => recorder.print(&kernel.read_file(&path, start_line, end_line, max_bytes)?),
+        } => recorder.print(&kernel.read_file_conditional(&path, start_line, end_line, max_bytes, &evidence.into())?),
+        Command::Changes { since, selectors, paths, path_prefix, include_symbols, include_documents, limit, max_bytes, cursor } => {
+            let mut selectors = selectors.iter().map(|value| serde_json::from_str(value)).collect::<Result<Vec<airk_core::changes::RememberedSelector>, _>>()?;
+            selectors.extend(paths.into_iter().map(|path| airk_core::changes::RememberedSelector::Path { path }));
+            recorder.print(&kernel.changes(&airk_core::changes::ChangesRequest { since, selectors, path_prefix, include_symbols, include_documents, limit, max_bytes, cursor })?)
+        },
         Command::Mcp => airk_mcp::serve(kernel.clone()).await,
-        Command::Info { path } => recorder.print(&kernel.file_info(&path)?),
+        Command::Info { path, evidence } => recorder.print(&kernel.file_info_conditional(&path, &evidence.into())?),
         Command::Outline {
+            evidence,
             path,
             limit,
             max_bytes,
-        } => recorder.print(&kernel.outline(&path, limit, max_bytes)?),
+        } => recorder.print(&kernel.outline_conditional(&path, limit, max_bytes, &evidence.into())?),
         Command::Symbol {
             name,
             language,
@@ -897,12 +961,13 @@ async fn main() -> anyhow::Result<()> {
             recorder.print(&kernel.references(&name, &path_prefix, 50, 8192)?)
         }
         Command::Context {
+            evidence,
             path,
             line,
             before,
             after,
             max_bytes,
-        } => recorder.print(&kernel.context(&path, line, before, after, max_bytes)?),
+        } => recorder.print(&kernel.context_conditional(&path, line, before, after, max_bytes, &evidence.into())?),
     }}.await;
     if result.is_err() {
         recorder.failure();

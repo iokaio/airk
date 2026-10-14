@@ -57,7 +57,7 @@ To install the reviewed package into your normal profile later, use **Extensions
 pwsh -NoProfile -File scripts/build-windows.ps1 -RunEditorTests
 ```
 
-The test loads the verified VSIX payload in an isolated VS Code extension host, using the installed Code.exe beside its code.cmd launcher. It checks contributed commands, MCP server definitions, the cached helper, incremental/full indexing, the real fourteen-tool stdio handshake, and switching index storage while retaining the original snapshot. It uses only a generated fixture and profile; workspace trust is disabled only in that test process. Other installed extensions are disabled for this smoke, and the normal user's settings/trust are untouched.
+The test loads the verified VSIX payload in an isolated VS Code extension host, using the installed Code.exe beside its code.cmd launcher. It checks contributed commands, MCP server definitions, the cached helper, incremental/full indexing, the real fifteen-tool stdio handshake, and switching index storage while retaining the original snapshot. It uses only a generated fixture and profile; workspace trust is disabled only in that test process. Other installed extensions are disabled for this smoke, and the normal user's settings/trust are untouched.
 
 This is a packaged-extension development-host smoke, not complete installed Marketplace, remote-host, upgrade/rollback or clean-machine qualification. It does not exercise any paid coding model. VS Code startup may show a temporary test window even though the process is launched with its console hidden.
 

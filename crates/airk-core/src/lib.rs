@@ -7,6 +7,7 @@ pub mod binding;
 pub mod changes;
 pub mod code;
 pub mod embedding;
+pub mod evidence;
 pub mod extraction;
 pub mod identity;
 pub mod location;
@@ -151,6 +152,8 @@ pub struct Hit {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SearchResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub publication: Option<evidence::RevisionEnvelope>,
     pub generation: u64,
     pub collection: String,
     pub hits: Vec<Hit>,
@@ -306,6 +309,8 @@ pub struct FactHit {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FactsResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub publication: Option<evidence::RevisionEnvelope>,
     pub generation: u64,
     pub collection: String,
     pub facts: Vec<FactHit>,

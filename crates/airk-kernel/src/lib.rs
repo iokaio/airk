@@ -8,9 +8,13 @@ pub use airk_core::{FactQuery, RelationshipQuery};
 use airk_ingest::IndexReport;
 
 pub mod analysis;
+pub mod changes;
+mod conditional;
 pub mod coverage;
 pub mod limits;
+mod lineage;
 mod publication;
+mod reconciliation;
 mod resources;
 pub mod roots;
 pub mod scheduler;
@@ -88,6 +92,7 @@ enum CachedBackend {
 
 #[derive(Serialize)]
 pub struct Status {
+    pub publication: Option<airk_core::evidence::RevisionEnvelope>,
     pub source_roots: std::collections::BTreeMap<String, String>,
     pub generation: u64,
     pub collection: String,
@@ -107,6 +112,7 @@ pub struct Status {
 
 #[derive(Serialize)]
 pub struct FileList {
+    pub publication: Option<airk_core::evidence::RevisionEnvelope>,
     pub generation: u64,
     pub collection: String,
     pub paths: Vec<String>,
@@ -115,6 +121,7 @@ pub struct FileList {
 
 #[derive(Serialize)]
 pub struct FileInfo {
+    pub publication: Option<airk_core::evidence::RevisionEnvelope>,
     pub source: airk_store::roots::SourceLocation,
     pub generation: u64,
     pub collection: String,
@@ -349,7 +356,30 @@ impl Kernel {
             version: 1,
             rules: vec![],
         };
-        let (mut snapshot, mut report) = airk_ingest::scan_streaming_v2_with_budgets(
+        let mut prior_content = std::collections::BTreeMap::new();
+        if !full {
+            for old in previous.artifacts.values() {
+                if let Some(profile) = old
+                    .retained
+                    .as_ref()
+                    .and_then(|reference| reference.profile.as_ref())
+                {
+                    let old_root = airk_store::roots::source_location(
+                        &previous.root,
+                        &previous.roots,
+                        &old.path,
+                    )?;
+                    let current_root =
+                        airk_store::roots::source_location(&previous.root, &roots, &old.path)?;
+                    if old_root.root == current_root.root {
+                        prior_content
+                            .entry((old.content_hash.clone(), profile.identity()?, old.bytes))
+                            .or_insert(old);
+                    }
+                }
+            }
+        }
+        let (mut snapshot, mut report, observation) = airk_ingest::scan_observed_v2_with_budgets(
             &self.root,
             &self.data_root,
             &previous,
@@ -357,11 +387,34 @@ impl Kernel {
             self.scan_limits()?,
             &policy,
             full,
-            |path, hash, profile| {
-                let Some(old) = previous.artifacts.get(path) else {
+            |request| {
+                use airk_ingest::observations::{ReuseBasis, VerifiedReuse};
+                let profile = request.profile;
+                let source_hash = request.source_hash.to_string();
+                let same = previous.artifacts.get(request.path).filter(|old| {
+                    old.content_hash == source_hash
+                        && old.bytes == request.source_bytes
+                        && old
+                            .retained
+                            .as_ref()
+                            .and_then(|reference| reference.profile.as_ref())
+                            .is_none_or(|old_profile| old_profile == profile)
+                });
+                let cached = prior_content
+                    .get(&(
+                        source_hash.clone(),
+                        profile.identity()?,
+                        request.source_bytes,
+                    ))
+                    .copied();
+                let Some(old) = same.or(cached) else {
                     return Ok(None);
                 };
-                if old.content_hash != hash.to_string() {
+                let old_root =
+                    airk_store::roots::source_location(&previous.root, &previous.roots, &old.path)?;
+                let current_root =
+                    airk_store::roots::source_location(&previous.root, &roots, &old.path)?;
+                if old_root.root != current_root.root {
                     return Ok(None);
                 }
                 if old
@@ -382,7 +435,26 @@ impl Kernel {
                 if actual != *profile {
                     return Ok(None);
                 }
-                Ok(Some(old.clone()))
+                let basis = if old.path == request.path {
+                    ReuseBasis::SamePath
+                } else {
+                    ReuseBasis::PriorContent
+                };
+                let mut rebound = old.clone();
+                rebound.path = request.path.into();
+                // Typed path-free binding reconstructs all destination syntax IDs.
+                // Retained objects remain shared only by verified source/profile.
+                if rebound
+                    .retained
+                    .as_ref()
+                    .is_some_and(|reference| reference.profile.is_some())
+                {
+                    self.store.load_retained(&rebound)?;
+                }
+                Ok(Some(VerifiedReuse {
+                    artifact: rebound,
+                    basis,
+                }))
             },
             |profile, artifact, bytes| {
                 if artifact
@@ -424,7 +496,7 @@ impl Kernel {
             || !self.store.directory().join("index.sqlite3").exists()
             || self.store.persistent_revision()?.is_none()
         {
-            report.generation = self.publish_v2(
+            report.generation = self.publish_v2_observed(
                 &snapshot,
                 &reservation,
                 if full {
@@ -432,6 +504,7 @@ impl Kernel {
                 } else {
                     airk_core::changes::PublicationReason::Index
                 },
+                Some(&observation),
             )?;
         } else {
             // Reuse must not report success for a corrupt retained component.
@@ -449,6 +522,9 @@ impl Kernel {
         if let Some(revision) = self.persistent_revision()? {
             let (revision, index) = self.pin_revision(revision)?;
             return Ok(Status {
+                publication: revision.token.map(|token| {
+                    airk_core::evidence::RevisionEnvelope::new(revision.collection.clone(), token)
+                }),
                 source_roots: revision
                     .roots
                     .clone()
@@ -478,6 +554,7 @@ impl Kernel {
             None
         };
         Ok(Status {
+            publication: None,
             source_roots: snapshot
                 .roots
                 .clone()
@@ -690,8 +767,10 @@ impl Kernel {
     pub fn list_files(&self, prefix: &str, limit: usize, max_bytes: usize) -> Result<FileList> {
         validate_budget(limit, max_bytes)?;
         ensure!(prefix.len() <= 4096, "prefix exceeds 4096 bytes");
-        let snapshot = self.load()?;
+        let catalog = self.catalog()?;
+        let snapshot = &catalog.snapshot;
         let mut response = FileList {
+            publication: Self::catalog_envelope(&catalog),
             generation: snapshot.generation,
             collection: snapshot.collection.clone(),
             paths: Vec::new(),
@@ -719,6 +798,7 @@ impl Kernel {
         let catalog = self.catalog()?;
         let artifact = catalog.load_artifact(path)?;
         Self::read_snapshot(
+            Self::catalog_envelope(&catalog),
             &catalog.snapshot,
             &artifact,
             path,
@@ -729,6 +809,7 @@ impl Kernel {
     }
 
     fn read_snapshot(
+        publication: Option<airk_core::evidence::RevisionEnvelope>,
         snapshot: &Snapshot,
         artifact: &Artifact,
         path: &str,
@@ -785,6 +866,7 @@ impl Kernel {
             }
         }
         Ok(SearchResponse {
+            publication,
             generation: snapshot.generation,
             collection: snapshot.collection.clone(),
             truncated,
@@ -804,11 +886,27 @@ impl Kernel {
 
     pub fn file_info(&self, path: &str) -> Result<FileInfo> {
         let catalog = self.catalog()?;
+        self.file_info_in(&catalog, path)
+    }
+
+    fn catalog_envelope(
+        catalog: &airk_store::blobs::Catalog,
+    ) -> Option<airk_core::evidence::RevisionEnvelope> {
+        catalog.receipt.as_ref().map(|receipt| {
+            airk_core::evidence::RevisionEnvelope::new(
+                catalog.snapshot.collection.clone(),
+                receipt.token,
+            )
+        })
+    }
+
+    fn file_info_in(&self, catalog: &airk_store::blobs::Catalog, path: &str) -> Result<FileInfo> {
         let snapshot = &catalog.snapshot;
         if catalog.inventory.is_some()
             && let Some(file) = catalog.file(path)?
         {
             return Ok(FileInfo {
+                publication: Self::catalog_envelope(catalog),
                 source: airk_store::roots::source_location(&snapshot.root, &snapshot.roots, path)?,
                 generation: snapshot.generation,
                 collection: snapshot.collection.clone(),
@@ -830,6 +928,7 @@ impl Kernel {
         }
         let a = catalog.load_artifact(path)?;
         Ok(FileInfo {
+            publication: Self::catalog_envelope(catalog),
             source: airk_store::roots::source_location(&snapshot.root, &snapshot.roots, path)?,
             generation: snapshot.generation,
             collection: snapshot.collection.clone(),
@@ -870,6 +969,7 @@ impl Kernel {
         }
         let snapshot = self.load()?;
         let mut response = FactsResponse {
+            publication: None,
             generation: snapshot.generation,
             collection: snapshot.collection.clone(),
             facts: Vec::new(),
@@ -1108,6 +1208,7 @@ impl Kernel {
             "line is outside indexed source"
         );
         Self::read_snapshot(
+            Self::catalog_envelope(&catalog),
             snapshot,
             &artifact,
             path,
@@ -1135,6 +1236,7 @@ impl Kernel {
         let catalog = self.catalog()?;
         let snapshot = &catalog.snapshot;
         let mut evidence = SearchResponse {
+            publication: Self::catalog_envelope(&catalog),
             generation: snapshot.generation,
             collection: snapshot.collection.clone(),
             hits: Vec::new(),

@@ -100,6 +100,16 @@ impl FileStore {
         let _lifecycle = self.lifecycle(false)?;
         sqlite::receipt(&self.directory, token)
     }
+    /// Reject a token contradicting a retained receipt; absence is not ancestry proof.
+    pub fn validate_revision_token(&self, token: &RevisionToken) -> Result<()> {
+        let _lifecycle = self.lifecycle(false)?;
+        let current = self
+            .persistent_revision()?
+            .and_then(|header| header.token)
+            .context("revision tokens require a v2 collection")?;
+        token.validate_against(&current)?;
+        sqlite::validate_retained_token(&self.directory, token)
+    }
     #[allow(clippy::too_many_arguments)]
     pub fn prepare_catalog_v2(
         &self,

@@ -75,6 +75,102 @@ impl Drop for Session {
 }
 
 #[test]
+fn changes_cli_and_mcp_share_results_and_conditional_validators() -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let state = tempfile::tempdir()?;
+    fs::write(
+        root.path().join("aurora.py"),
+        "def northern_observation():\n    return 71\n",
+    )?;
+    let cli = |args: &[&str]| -> anyhow::Result<Value> {
+        let output = Command::new(env!("CARGO_BIN_EXE_airk"))
+            .arg("--root")
+            .arg(root.path())
+            .arg("--data-dir")
+            .arg(state.path())
+            .args(["--collection", "project-a"])
+            .args(args)
+            .output()?;
+        anyhow::ensure!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(serde_json::from_slice(&output.stdout)?)
+    };
+    cli(&["index"])?;
+    let mut session = Session::start(root.path(), state.path())?;
+    session.send(json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"original-parity-test","version":"1"}}}))?;
+    let initialized = session.receive(1)?;
+    assert!(
+        initialized["result"]["instructions"]
+            .as_str()
+            .expect("instructions")
+            .len()
+            <= 512
+    );
+    session.send(json!({"jsonrpc":"2.0","method":"notifications/initialized"}))?;
+    let payload = |result: Value| -> anyhow::Result<Value> {
+        anyhow::ensure!(
+            result["result"]["isError"] != true && result.get("error").is_none(),
+            "{result}"
+        );
+        Ok(serde_json::from_str(
+            result["result"]["content"][0]["text"]
+                .as_str()
+                .expect("tool JSON"),
+        )?)
+    };
+    let mut expected = cli(&["changes", "--path", "aurora.py"])?;
+    let mut actual = payload(session.call(
+        2,
+        "airk_changes",
+        json!({"selectors":[{"kind":"path","path":"aurora.py"}]}),
+    )?)?;
+    for value in [&mut expected, &mut actual] {
+        value.as_object_mut().unwrap().remove("request_id");
+        value["freshness"]
+            .as_object_mut()
+            .unwrap()
+            .remove("observed_unix_ms");
+    }
+    assert_eq!(actual, expected);
+    let info = cli(&["info", "aurora.py"])?;
+    let validator = info["read"]["validator"].as_str().expect("validator");
+    let unchanged = payload(session.call(
+        3,
+        "airk_file_info",
+        json!({"path":"aurora.py","if_evidence":validator}),
+    )?)?;
+    assert_eq!(unchanged["read"]["status"], "not_modified");
+    assert_eq!(
+        unchanged["read"]["publication"],
+        info["read"]["publication"]
+    );
+    for (id, args) in [
+        (
+            4,
+            json!({"selectors":[{"kind":"path","path":"../outside"}]}),
+        ),
+        (
+            5,
+            json!({"selectors":vec![json!({"kind":"path","path":"aurora.py"});65]}),
+        ),
+        (
+            6,
+            json!({"selectors":[{"kind":"path","path":"aurora.py"}],"max_bytes":1}),
+        ),
+    ] {
+        let result = session.call(id, "airk_changes", args)?;
+        assert!(
+            result["result"]["isError"] == true || result.get("error").is_some(),
+            "{result}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn concurrent_mcp_agents_share_one_index_and_refresh_after_publication() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let state = tempfile::tempdir()?;
@@ -314,7 +410,7 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
     session.send(json!({"jsonrpc":"2.0","id":2,"method":"tools/list"}))?;
     let listed = session.receive(2)?;
     let tools = listed["result"]["tools"].as_array().expect("tools");
-    assert_eq!(tools.len(), 14);
+    assert_eq!(tools.len(), 15);
     assert!(
         tools
             .iter()
@@ -355,6 +451,11 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
             "airk_relationships",
             json!({"symbol":"file:auth.py","direction":"outgoing","kind":"import"}),
         ),
+        (
+            17,
+            "airk_changes",
+            json!({"selectors":[{"kind":"path","path":"auth.py"}]}),
+        ),
     ] {
         let result = session.call(i, name, args)?;
         assert!(result.get("error").is_none(), "{name}: {result}");
@@ -368,7 +469,8 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
             assert_eq!(
                 payload
                     .get("collection")
-                    .or_else(|| payload["evidence"].get("collection")),
+                    .or_else(|| payload["evidence"].get("collection"))
+                    .or_else(|| payload["publication"].get("collection")),
                 Some(&json!("project-a"))
             );
         }

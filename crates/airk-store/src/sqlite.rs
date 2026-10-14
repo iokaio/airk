@@ -13,6 +13,7 @@ use std::{
 struct PinnedConnection {
     conn: Connection,
     _lease: Option<std::fs::File>,
+    publication: Option<airk_core::evidence::RevisionEnvelope>,
 }
 
 /// Percent-encode the entire native UTF-8 filename, including separators. SQLite
@@ -135,9 +136,14 @@ fn connect(directory: &Path, write: bool) -> Result<PinnedConnection> {
         return Ok(PinnedConnection {
             conn,
             _lease: Some(lease),
+            publication: None,
         });
     }
-    Ok(PinnedConnection { conn, _lease: None })
+    Ok(PinnedConnection {
+        conn,
+        _lease: None,
+        publication: None,
+    })
 }
 
 /// Select legacy rows or an immutable generation while the active pointer is
@@ -152,7 +158,11 @@ fn read_transaction_once(directory: &Path) -> Result<PinnedConnection> {
         conn.execute_batch("BEGIN DEFERRED")?;
         let version: u32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
         if version == 1 {
-            return Ok(PinnedConnection { conn, _lease: None });
+            return Ok(PinnedConnection {
+                conn,
+                _lease: None,
+                publication: None,
+            });
         }
         let payload: String = conn.query_row("SELECT payload FROM index_components WHERE id=1 AND length(CAST(payload AS BLOB)) <= 131072", [], |r| r.get(0))?;
         let header: PersistentRevision = serde_json::from_str(&payload)?;
@@ -191,6 +201,12 @@ fn read_transaction_once(directory: &Path) -> Result<PinnedConnection> {
             Ok(PinnedConnection {
                 conn: inner,
                 _lease: Some(lease),
+                publication: header
+                    .token
+                    .filter(|_| version == crate::ROOT_POINTER_VERSION)
+                    .map(|token| {
+                        airk_core::evidence::RevisionEnvelope::new(header.collection.clone(), token)
+                    }),
             })
         };
         let result = open();
@@ -425,6 +441,25 @@ pub(crate) fn file_in_catalog(
         .transpose()
 }
 
+pub(crate) fn file_by_artifact_in_catalog(
+    directory: &Path,
+    receipt: &airk_core::identity::PublicationReceipt,
+    id: airk_core::identity::ArtifactId,
+) -> Result<Option<(String, airk_core::publication::InventoryFile)>> {
+    let conn = open_immutable_catalog(
+        &directory
+            .join("generations")
+            .join(receipt.token.revision.to_string())
+            .join("catalog.sqlite"),
+    )?;
+    validate_v2_catalog(&conn, &receipt.token, &receipt.inventory_digest)?;
+    let row: Option<(String, String)> = conn.query_row(
+        "SELECT path,payload FROM files WHERE artifact_id=?1 AND length(CAST(payload AS BLOB)) <= 131072 AND length(CAST(path AS BLOB))<=4096",
+        [id.to_string()], |row| Ok((row.get(0)?, row.get(1)?))).optional()?;
+    row.map(|(path, payload)| Ok((path, serde_json::from_str(&payload)?)))
+        .transpose()
+}
+
 fn legacy_json_head(directory: &Path) -> Result<crate::ExpectedHead> {
     use std::io::Read;
     let path = directory.join("snapshot.json");
@@ -525,6 +560,33 @@ pub(super) fn receipt(
     token: &airk_core::identity::RevisionToken,
 ) -> Result<Option<airk_core::identity::PublicationReceipt>> {
     retry_wal_protocol(|| receipt_once(directory, token))
+}
+
+pub(crate) fn validate_retained_token(
+    directory: &Path,
+    token: &airk_core::identity::RevisionToken,
+) -> Result<()> {
+    retry_wal_protocol(|| {
+        let conn = connect_root_once(directory, false)?;
+        let mut statement = conn.prepare("SELECT revision FROM publication_receipts WHERE incarnation=?1 AND generation=?2 LIMIT 2")?;
+        let revisions = statement
+            .query_map(
+                params![
+                    token.incarnation.to_string(),
+                    i64::try_from(token.generation)?
+                ],
+                |row| row.get::<_, String>(0),
+            )?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        ensure!(
+            revisions.len() <= 1
+                && revisions
+                    .first()
+                    .is_none_or(|revision| revision == &token.revision.to_string()),
+            "forked retained revision token"
+        );
+        Ok(())
+    })
 }
 
 fn receipt_once(
@@ -1248,6 +1310,7 @@ impl FileStore {
         let generation = identity(tx, root, collection)?;
         let mut response = FactsResponse {
             generation,
+            publication: conn.publication.clone(),
             collection: collection.into(),
             facts: Vec::new(),
             truncated: false,
@@ -1317,7 +1380,7 @@ impl FileStore {
         let conn = read_transaction(&self.directory)?;
         let tx = &conn;
         let generation = identity(tx, root, collection)?;
-        let mut response = RelationshipsResponse {generation,collection:collection.into(),relationships:Vec::new(),truncated:false,coverage:"Selected syntax patterns and optional manifest-bound producer assertions. External targets are identifiers only; impact is incomplete.".into()};
+        let mut response = RelationshipsResponse {generation,publication:conn.publication.clone(),collection:collection.into(),relationships:Vec::new(),truncated:false,coverage:"Selected syntax patterns and optional manifest-bound producer assertions. External targets are identifiers only; impact is incomplete.".into()};
         let mut pending = BTreeSet::from([q.symbol.clone()]);
         let mut visited = BTreeSet::new();
         let mut returned = BTreeSet::new();

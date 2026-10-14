@@ -1,6 +1,6 @@
 # AIRK for VS Code — Beta 0.1.0
 
-AIRK supplies local code and document evidence to coding agents through fourteen read-only MCP tools. This preview bundles its native helper; installation requires no Docker, Rust, Python, service account or API key.
+AIRK supplies local code and document evidence to coding agents through fifteen read-only MCP tools. This preview bundles its native helper; installation requires no Docker, Rust, Python, service account or API key.
 
 Your agent can find a definition, inspect nearby source lines or retrieve a document requirement through a shared workspace index. AIRK returns bounded evidence with source paths, hashes and original locations, so you can inspect what the agent used. The agent supplies the reasoning; smaller responses do not by themselves prove lower bills or better answers.
 
@@ -27,7 +27,7 @@ Install the VSIX for your platform through **Extensions: Install from VSIX**. Op
 - **Show Collection Status**: inspect current, stale, missing, extraction-failed and capacity-blocked eligible files. Incomplete scans show unknown coverage; unsaved buffers are separate from indexed disk bytes.
 - **Show Local Usage and Estimated Savings**: inspect content-free local aggregates, measured indexing stages and supported host resource counters, including process CPU. Overlapping/unavailable measurements stay unknown. Signed context estimates are not billed savings; optional CLI imports, local tokenizers and supplied price scenarios retain their labels.
 - **Set Up Coding Agent**: preview a scoped configuration for Claude Code, Codex, Cursor, Gemini CLI, Cline, Roo, Junie, Copilot CLI, OpenCode or Kilo. Amazon Q and Windsurf/Devin get connection details and version-specific setup guidance. AIRK never overwrites their settings or enables blanket tool approval.
-- **Verify Native MCP Connection**: check the actual native handshake, fourteen tools and collection status. This does not prove another agent has enabled the server.
+- **Verify Native MCP Connection**: check the actual native handshake, fifteen tools and collection status. This does not prove another agent has enabled the server.
 
 `airk.storage.path` and `airk.storage.maxBytes` are machine settings. The optional byte budget pauses automatic indexing after existing collection usage reaches the limit; manual commands may exceed it. It is a soft limit, not a filesystem quota. No collections are deleted automatically. Changing storage requires reconnecting already-running agents. Helper paths cached per version/digest survive extension directory replacement; refresh agent configuration after helper upgrades.
 

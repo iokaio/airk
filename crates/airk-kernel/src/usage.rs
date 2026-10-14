@@ -442,6 +442,7 @@ impl crate::Kernel {
             }
         }
         let baseline = airk_core::SearchResponse {
+            publication: None,
             generation: snapshot.generation,
             collection: snapshot.collection.clone(),
             hits,

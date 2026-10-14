@@ -1044,6 +1044,9 @@ impl PersistentIndex {
 
     fn bound(&self, hits: Vec<Hit>, query: &SearchQuery) -> SearchResponse {
         let mut response = SearchResponse {
+            publication: self.v2_receipt.as_ref().map(|receipt| {
+                airk_core::evidence::RevisionEnvelope::new(self.collection.clone(), receipt.token)
+            }),
             generation: self.generation,
             collection: self.collection.clone(),
             hits: Vec::new(),

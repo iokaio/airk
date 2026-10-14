@@ -48,6 +48,7 @@ impl LexicalIndex {
             }
         }
         let mut response = SearchResponse {
+            publication: None,
             generation: snapshot.generation,
             collection: snapshot.collection.clone(),
             hits: Vec::new(),
