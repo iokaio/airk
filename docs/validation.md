@@ -2,6 +2,29 @@
 
 Local observations on 13–14 October 2026. Historical receipts below validate their own implementation and must not be treated as packages of later changes. A passing fixture or hosted build is not a signed release, production deployment or complete host/client qualification.
 
+## Downloads website, 14 October 2026
+
+- The static builder fetched AIRK's real GitHub releases array (empty at validation time) and generated the pending-download page. No unavailable package was represented as downloadable.
+- Six download tests passed: stable/preview selection independent of API order, draft exclusion, complete platform assets, rejection of foreign URLs/missing digests/unpublished assets, and a three-file public output allowlist. The full Python suite passed 38 tests with the existing Linux-only RSS test skipped.
+- Headless Edge rendered the initial page at 1440 px and 390 px. A separate fictional release fixture rendered both channels and all eight extension links at 1440 px, 390 px and 320 px. No horizontal overflow, missing internal anchors, page errors or failed page resource requests were observed. Screenshots and fixtures are ignored local review artifacts, never site deployment inputs.
+- actionlint 1.7.12, repository checks and whitespace checks passed. The Rust/extension results in the release-workflow record below remain applicable; this addition changes no runtime code.
+- GitHub readback confirmed AIRK's Actions-based Pages site with custom domain `airk.ioka.io` and a main-only deployment environment. The authoritative DNS server returned `airk.ioka.io CNAME iokaio.github.io`. VCP retained `downloads.ioka.io` and HTTPS enforcement.
+
+The website workflow has not been merged or deployed. GitHub's certificate issuance and HTTPS enforcement remain pending; DNS and repository configuration alone do not establish a live page. The local screenshots establish layout behavior, not hosted download delivery.
+
+## Numbered GitHub release workflow, 14 October 2026
+
+Local Windows validation of the new manual workflow and independent release/signing scripts:
+
+- Rust formatting, workspace build, all-target clippy with warnings denied, and workspace tests passed with the pinned toolchain. Existing deliberate subprocess fixture ignores remain.
+- Python 3.13.12 ran 33 packaging/release/signing tests: 32 passed, with the existing Linux-only RSS test skipped. These include complete signed/unsigned platform assembly, exact native/VSIX pairing, source digest binding, rejected notarization, run/attempt identity, unsafe/unexpected files, altered downloads, draft-upload verification and refusal to overwrite releases.
+- PowerShell exercised publisher, identity EKU, timestamp, thumbprint and trust refusals using a generated in-memory certificate and a fixture signature lookup. This tests policy handling, not an actual Azure signature.
+- Node 24.15.0 extension tests using the real native debug helper passed 21 tests; the optional old-helper upgrade fixture was skipped. actionlint 1.7.12, repository checks and whitespace checks passed.
+- License notice generation succeeded for 430 dependencies; the four existing missing-separate-license-text review items remain.
+- GitHub readback confirmed main-branch-only policies for the new `native-signing` and `github-releases` environments and the three non-secret Azure identifiers. Azure readback confirmed AIRK's separate immutable-subject federation and the preserved VCP entry; its existing certificate-profile-only signing role was unchanged.
+
+The workflow has not yet run on hosted machines. No release, tag, Marketplace package or source commit was published by this work. Actual Windows signing, both Mac notarizations and draft-to-public release delivery for this implementation require the first run after the workflow is merged to main.
+
 ## Local Apple Silicon signing, 14 October 2026
 
 macOS 26.5.1 / Apple Silicon, Rust 1.98.0, base commit `6881531bddb2c6d3a04e3d98dbde1a7d6e1961f1` with uncommitted signing-workflow changes:

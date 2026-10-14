@@ -4,7 +4,7 @@ Contributions to code, extraction fixtures, retrieval quality and documentation 
 
 ## Development
 
-Install Git, Rust as pinned in [rust-toolchain.toml](rust-toolchain.toml), native C/C++ build tools for Tree-sitter grammars, and PowerShell 7 for repository checks. On Windows use the Visual Studio C++ build tools; macOS uses Xcode command line tools; Linux needs a C/C++ toolchain. Python 3.9+ is needed for packaging and third-party license bundles, not running AIRK.
+Install Git, Rust as pinned in [rust-toolchain.toml](rust-toolchain.toml), native C/C++ build tools for Tree-sitter grammars, and PowerShell 7 for repository checks. On Windows use the Visual Studio C++ build tools; macOS uses Xcode command line tools; Linux needs a C/C++ toolchain. Python 3.11+ is needed for the complete packaging/release contract suite and third-party license bundles, not running AIRK.
 
 For the native Mac workflow and architecture-specific release steps, see [the macOS build guide](docs/macos-build.md). For the app and extension together, see [Windows build/review](docs/windows-local-build.md). Extension development also needs Node.js 24.15.0/npm; use `npm ci --ignore-scripts --no-audit --no-fund --prefix packages/vscode` and `npm test --prefix packages/vscode`.
 

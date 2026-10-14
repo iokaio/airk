@@ -35,6 +35,8 @@ The local AIRK keychain is `~/Library/Keychains/airk-signing.keychain-db`; its n
 
 ## Manual GitHub-hosted signing
 
+The [numbered GitHub release workflow](release-workflow.md#numbered-github-releases) also uses this Apple environment, signing the exact native candidates from its successful CI run. It requires accepted notarization for both architectures before any release is published.
+
 [Signed macOS candidates](../.github/workflows/macos-signing.yml) is a separate, manual workflow for `main`. It builds/tests both Apple Silicon and Intel on their native hosted runners, then signs, notarizes and packages native ZIPs and preview VSIX files. Artifacts are retained for seven days. It does not publish a release or Marketplace extension. Ordinary PR CI and Extension release continue to create unsigned candidates.
 
 Before dispatching, configure the repository environment **macos-signing** with a deployment branch policy allowing only the `main` branch (not tags), and these environment secrets:
@@ -53,3 +55,21 @@ The workflow exposes secrets only to [the CI signing helper](../scripts/ci-macos
 Once the workflow change is merged to `main` and environment secrets are configured, use **Actions → Signed macOS candidates → Run workflow** on `main`. A failed signing or notarization step prevents candidate upload. Download `airk-signed-native-…` and `airk-signed-vsix-…` from that run; the native manifest includes the verified signature and Apple's submission ID. A local signing result does not establish that the hosted workflow has passed.
 
 The environment, main-only deployment policy and four secrets were configured on 14 October 2026. See the [validation record](validation.md) for the accepted local Apple Silicon notarization and hosted-run limitations.
+
+## Hosted Windows signing through Azure
+
+The GitHub release workflow uses Microsoft's pinned [Artifact Signing action](https://github.com/Azure/artifact-signing-action) with Azure CLI OIDC login. It reuses VCP's existing service configuration: endpoint `https://wus2.codesigning.azure.net`, account `ioka-llc-signing`, and certificate profile `WritingForgePro`. AIRK has its own environment/federation boundary; it does not copy VCP implementation or private key material.
+
+Configure environment **native-signing**, restricted to the `main` branch only, with `AZURE_SIGNING_CLIENT_ID`, `AZURE_SIGNING_TENANT_ID` and `AZURE_SIGNING_SUBSCRIPTION_ID` as variables. The existing Azure application already has **Artifact Signing Certificate Profile Signer** on this exact profile. Add a separate federated credential for AIRK; no broader Azure role is needed. AIRK currently uses GitHub's immutable OIDC subject:
+
+~~~text
+issuer: https://token.actions.githubusercontent.com
+subject: repo:iokaio@152147161/airk@1418150478:environment:native-signing
+audience: api://AzureADTokenExchange
+~~~
+
+Read `repos/iokaio/airk/actions/oidc/customization/sub` before provisioning rather than assuming the older repository-name-only subject format. See [GitHub's OIDC reference](https://docs.github.com/en/actions/reference/security/oidc).
+
+The Windows job creates a fresh executable copy, signs only that file with SHA-256 and an RFC3161 timestamp, then checks Authenticode trust, the exact `Ioka LLC` publisher subject, the profile's stable identity EKU and timestamp. The receipt binds the original tested digest, signed digest, commit, lock and observed certificate thumbprint. Repackaging repeats OS verification. Certificate rotation may change the thumbprint between builds; the publisher and identity EKU remain required. Failed authentication, signing or verification prevents publication. Azure login is cleared after signing; no Azure client secret or local certificate export is needed.
+
+On 14 October 2026, AIRK's `native-signing` and `github-releases` environments were created with branch policies allowing only `main`, the three Azure variables were configured, and `github-airk-native-signing` was added to the existing Azure application's federated credentials. Readback confirmed AIRK's immutable subject and VCP's existing entry. No Azure role was changed. Hosted AIRK signing/publication still requires a successful run of the merged workflow.

@@ -27,8 +27,9 @@ def runner_directory():
             or os.environ.get("RUNNER_ENVIRONMENT") != "github-hosted"
             or os.environ.get("GITHUB_REF") != "refs/heads/main"
             or os.environ.get("GITHUB_EVENT_NAME") != "workflow_dispatch"
-            or not os.environ.get("GITHUB_WORKFLOW_REF", "").endswith(
-                "/.github/workflows/macos-signing.yml@refs/heads/main")):
+            or os.environ.get("GITHUB_WORKFLOW_REF") not in (
+                "iokaio/airk/.github/workflows/macos-signing.yml@refs/heads/main",
+                "iokaio/airk/.github/workflows/github-release.yml@refs/heads/main")):
         raise ValueError("Signing credentials require the manual main-branch hosted Mac workflow")
     temporary = Path(os.environ["RUNNER_TEMP"]).resolve(strict=True)
     return temporary / "airk-macos-signing"
