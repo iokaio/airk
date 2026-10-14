@@ -1,0 +1,25 @@
+# AIRK documentation
+
+- [Architecture and code boundaries](architecture.md)
+- [Decision 001: focused local retrieval](decisions/001-local-retrieval-kernel.md)
+- [Design inspiration and independent implementation](inspiration.md)
+- [Implemented format support](formats.md)
+- [Document requirements, dates and design indexing](document-indexing.md)
+- [Code-indexing recommendations and optional semantic-provider review](code-indexing-options.md)
+- [Implemented SQLite code facts, relationships and SCIP imports](code-facts-and-relationships.md)
+- [Collections and selected DiskANN architecture](collections.md)
+- [MCP tool contracts](mcp.md)
+- [Coding-agent setup compatibility research](agent-integration.md)
+- [Coding-agent tool alignment and online documentation review](agent-tool-alignment.md)
+- [Workspace indexing coverage and clickable footer plan](index-coverage.md)
+- [Native VS Code extension preview and limits](vscode-extension.md)
+- [Build and review Windows app/extension locally](windows-local-build.md)
+- [Extension deployment adapted from VCP](extension-deployment.md)
+- [GitHub CI, native artifacts, credentials and spending controls](ci-and-builds.md)
+- [Operations and recovery](operations.md)
+- [Native macOS build and release instructions](macos-build.md)
+- [Implementation roadmap](roadmap.md)
+- [Observed scaffold validation](validation.md)
+- [Local usage, performance and estimated savings plan](usage-reporting.md)
+
+Contributor guidance: [CONTRIBUTING.md](../CONTRIBUTING.md). Implemented, proposed and unqualified behavior must remain distinguishable.

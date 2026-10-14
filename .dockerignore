@@ -1,0 +1,23 @@
+# Only explicitly public build inputs enter the Docker context.
+**
+!Cargo.toml
+!Cargo.lock
+!rust-toolchain.toml
+!crates/
+!crates/**
+!scripts/
+!scripts/license-notices.py
+!LICENSE
+!NOTICE
+!THIRD_PARTY_NOTICES.md
+!Dockerfile
+!third_party/
+!third_party/licenses/
+!third_party/licenses/**
+# Explicit defense for local references and source/index residue.
+temp/
+**/.airk/
+**/target/
+**/.env*
+**/*.pem
+**/*.key

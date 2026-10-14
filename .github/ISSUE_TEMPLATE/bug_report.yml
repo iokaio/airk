@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: Apache-2.0
+name: Bug report
+description: Report a reproducible non-sensitive defect
+body:
+  - type: markdown
+    attributes:
+      value: Do not attach private source, indexes, temp files or credentials. Use SECURITY.md for sensitive reports.
+  - type: textarea
+    id: environment
+    attributes:
+      label: Version, OS/architecture and deployment mode
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal fictional reproduction and expected/actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Relevant extraction status, generation and sanitized error

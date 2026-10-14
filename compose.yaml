@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: Apache-2.0
+name: airk
+services:
+  airk:
+    build: .
+    image: airk:dev
+    container_name: airk
+    init: true
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: [/tmp]
+    volumes:
+      - type: bind
+        source: ${AIRK_WORKSPACES:-./examples/workspaces}
+        target: /workspaces
+        read_only: true
+      - type: volume
+        source: airk-data
+        target: /data
+volumes:
+  airk-data:

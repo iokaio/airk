@@ -1,0 +1,53 @@
+# SPDX-License-Identifier: Apache-2.0
+[package]
+name = "airk-ingest"
+description = "Bounded workspace discovery and deterministic text extraction"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+airk-core.workspace = true
+anyhow.workspace = true
+ignore.workspace = true
+sha2.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+scip.workspace = true
+protobuf.workspace = true
+url.workspace = true
+tree-sitter = "=0.25.10"
+tree-sitter-rust = "=0.24.2"
+tree-sitter-python = "=0.25.0"
+tree-sitter-javascript = "=0.25.0"
+tree-sitter-typescript = "=0.23.2"
+tree-sitter-go = "=0.25.0"
+tree-sitter-java = "=0.23.5"
+tree-sitter-c = "=0.24.2"
+tree-sitter-cpp = "=0.23.4"
+tree-sitter-c-sharp = "=0.23.5"
+tree-sitter-ruby = "=0.23.1"
+tree-sitter-php = "=0.25.1"
+tree-sitter-bash = "=0.25.1"
+tree-sitter-powershell = "=0.26.4"
+tree-sitter-lua = "=0.5.0"
+tree-sitter-swift = "=0.7.4"
+tree-sitter-kotlin-ng = "=1.1.0"
+tree-sitter-json = "=0.24.8"
+tree-sitter-html = "=0.23.2"
+tree-sitter-css = "=0.25.0"
+tree-sitter-yaml = "=0.7.2"
+tree-sitter-toml-ng = "=0.7.0"
+tree-sitter-sequel = "=0.3.11"
+quick-xml = "0.39"
+zip = { version = "4", default-features = false, features = ["deflate"] }
+pdf-extract = "=0.12.1"
+csv = "1"
+pulldown-cmark = { version = "0.10", default-features = false }
+regex = "=1.13.1"
+
+[dev-dependencies]
+tempfile.workspace = true

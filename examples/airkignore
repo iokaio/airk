@@ -1,0 +1,10 @@
+# Copy to .airkignore in an indexed workspace; gitignore syntax.
+temp/
+dist/
+build/
+bin/
+obj/
+artifacts/
+coverage/
+*.local.*
+secrets/

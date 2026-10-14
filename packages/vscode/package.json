@@ -1,0 +1,59 @@
+{
+  "name": "airk",
+  "displayName": "AIRK — Artifact Indexing and Retrieval Kernel (beta)",
+  "description": "Pre-release beta: local collection indexing and specialized MCP evidence for coding agents, with a bundled native helper.",
+  "version": "0.1.0",
+  "publisher": "iokaio",
+  "license": "Apache-2.0",
+  "repository": { "type": "git", "url": "https://github.com/iokaio/airk.git" },
+  "engines": { "vscode": "^1.140.0" },
+  "categories": ["Other"],
+  "main": "./out/extension.js",
+  "files": ["out/*.js", "native/**", "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md", "README.md"],
+  "extensionKind": ["workspace"],
+  "activationEvents": ["onStartupFinished", "onMcpServerDefinitionProvider:airk.collections"],
+  "capabilities": {
+    "virtualWorkspaces": false,
+    "untrustedWorkspaces": { "supported": "limited", "description": "AIRK requires workspace trust before starting its native helper or indexing files." }
+  },
+  "contributes": {
+    "mcpServerDefinitionProviders": [{ "id": "airk.collections", "label": "AIRK workspace collections" }],
+    "commands": [
+      { "command": "airk.menu", "title": "AIRK: Open Controls" },
+      { "command": "airk.index", "title": "AIRK: Index Now" },
+      { "command": "airk.reindex", "title": "AIRK: Reindex Collection" },
+      { "command": "airk.indexMode", "title": "AIRK: Choose Indexing Mode" },
+      { "command": "airk.pause", "title": "AIRK: Pause Auto-indexing" },
+      { "command": "airk.resume", "title": "AIRK: Resume Auto-indexing" },
+      { "command": "airk.chooseStorage", "title": "AIRK: Choose Index Storage Folder" },
+      { "command": "airk.collections", "title": "AIRK: Manage Collections and Disk Space" },
+      { "command": "airk.removeCollection", "title": "AIRK: Remove Unneeded Collection" },
+      { "command": "airk.status", "title": "AIRK: Show Collection Status" },
+      { "command": "airk.setupAgent", "title": "AIRK: Set Up Coding Agent" },
+      { "command": "airk.verifyMcp", "title": "AIRK: Verify Native MCP Connection" },
+      { "command": "airk.logs", "title": "AIRK: Show Output" }
+    ],
+    "configuration": {
+      "title": "AIRK",
+      "properties": {
+        "airk.storage.path": { "type": "string", "default": "", "scope": "machine", "description": "Absolute index folder on this extension host. Empty uses per-user extension storage. Changing it preserves old indexes and indexes the current workspace in the new location." },
+        "airk.storage.maxBytes": { "type": "number", "default": 0, "minimum": 0, "scope": "machine", "description": "Soft collection-state budget in bytes. Zero disables it. Automatic indexing pauses at the budget; manual indexing can exceed it. No collection is deleted automatically." },
+        "airk.index.mode": { "type": "string", "enum": ["manual", "onSave", "debounced", "idle"], "default": "debounced", "scope": "window", "description": "Manual, after saves, after filesystem edits settle, or after editor activity settles." },
+        "airk.index.quietMs": { "type": "number", "default": 2000, "minimum": 250, "maximum": 60000, "scope": "window", "description": "Quiet period after filesystem edits for debounced indexing." },
+        "airk.index.idleMs": { "type": "number", "default": 10000, "minimum": 1000, "maximum": 300000, "scope": "window", "description": "Required absence of editor activity in idle mode." },
+        "airk.index.maxDelayMs": { "type": "number", "default": 30000, "minimum": 1000, "maximum": 300000, "scope": "window", "description": "Maximum batching delay for debounced/on-save changes, subject to minimum interval and pause/budget controls." },
+        "airk.index.minIntervalMs": { "type": "number", "default": 5000, "minimum": 0, "maximum": 300000, "scope": "window", "description": "Minimum interval between automatic indexing jobs. Jobs run serially in each extension host." }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "test": "npm run compile && node --test out/test/*.test.js"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "@types/vscode": "1.140.0",
+    "@vscode/vsce": "4.0.0",
+    "typescript": "5.9.3"
+  }
+}

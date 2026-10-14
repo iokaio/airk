@@ -1,0 +1,8 @@
+AIRK — Artifact Indexing and Retrieval Kernel
+
+AIRK's original source and documentation are licensed under Apache-2.0.
+See LICENSE and THIRD_PARTY_NOTICES.md for dependency attribution.
+
+Design inspiration includes Munarium and VCP. Neither project's source is
+incorporated into AIRK, and this acknowledgement does not imply endorsement.
+Local reference material in temp/ is not part of this distribution.

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "airk": {
+      "command": "airk",
+      "args": ["--root", "/absolute/path/to/project-a", "--data-dir", "/absolute/path/to/user/airk-state", "--collection", "project-a", "mcp"]
+    }
+  }
+}

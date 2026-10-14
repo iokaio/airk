@@ -1,0 +1,38 @@
+# Extension deployment: adapting VCP's approach
+
+AIRK's native-helper VS Code extension and native/VSIX candidate packaging are implemented. Publication and full installed lifecycle qualification remain separate work. [Extension behavior](vscode-extension.md) defines runtime and storage controls; [Windows local build/review](windows-local-build.md) provides the PowerShell entry point.
+
+Reviewed inspiration: VCP's `docs/development/editor-packaging.md`, `docs/development/p8-distribution.md`, `docs/development/marketplace-publication.md`, and its `beta-candidate.yml` / `publish-beta.yml` workflows at revision `2d252594cbf082f9011e2f9db3cd75d0d867f19b`. These inform the delivery design; AIRK does not copy VCP's scripts, extension code or dependencies.
+
+## Practices carried forward
+
+Use a pinned compiler and locked dependency graph. Build a native candidate before constructing an editor package. Stage an explicit payload, verify archive contents and retain version/hash/build records. Keep test evidence tied to the exact commit and artifacts. Publishing remains a separate operation with its own permissions and installed-product checks. The native portion now uses [AIRK's packager](../scripts/package-native.py) and [four-platform hosted CI](ci-and-builds.md).
+
+VCP's Windows deployment uses a separately installed engine, machine-scoped paths and a Windows VSIX. AIRK's preferred optional extension bundles its native helper in platform-specific VSIX packages so users do not install a compiler or Docker. Use `win32-x64`, `linux-x64`, `darwin-arm64` and `darwin-x64` for the current native matrix. Add ARM64 Windows/Linux only alongside native test coverage. Remote workspaces require the helper on the workspace host; VCP's local Windows-only qualification cannot establish AIRK remote support.
+
+## Implemented VSIX construction
+
+The initial native/helper/extension version is **0.1.0**. The visible extension name is **AIRK — Artifact Indexing and Retrieval Kernel** (beta), its identity is `iokaio.airk`, and its description begins `Pre-release beta:`. VSCE sets the actual pre-release flag in the VSIX; a version below 1.0 by itself does not establish that channel. Keep the numeric version `0.1.0`, because VS Code does not support a `-beta` suffix in its extension version field. [Official pre-release rules](https://code.visualstudio.com/api/working-with-extensions/publishing-extension#pre-release-extensions) describe the flag and separate release/pre-release versions.
+
+| Platform | Initial VSIX filename |
+|---|---|
+| Windows x64 | airk-0.1.0-win32-x64.vsix |
+| Linux x64 | airk-0.1.0-linux-x64.vsix |
+| macOS Apple Silicon | airk-0.1.0-darwin-arm64.vsix |
+| macOS Intel | airk-0.1.0-darwin-x64.vsix |
+
+Beta patch updates can use `0.1.1`, `0.1.2` and subsequent `0.1.x` versions. A regular release must use a distinct version; the same Marketplace version cannot be both release and pre-release. Platform packages share the version and extension identity, with their target and bundled native helper distinguished in the artifact. No Marketplace listing or publication is created by the local build.
+
+The extension has its own package, checked-in npm lock and pinned Node/TypeScript/VSCE versions. CI restores with `npm ci --ignore-scripts` and compiles on the same native runner as its helper. [The extension packager](../scripts/package-extension.py) builds a fresh allowlisted stage containing compiled runtime modules, manifest, required media/docs, the verified helper and legal notices. Exclude tests, development dependencies, source maps, indexes, fixtures, reference files and arbitrary checkout contents.
+
+The pinned official VSCE tool packages the stage with its explicit platform target. Archive verification checks all payload entries, platform/version/extension identity and Unix executable bits for Mac/Linux packages. Those packages are built on Unix. The extension manifest records native/VSIX digests, tool versions, source commit and npm lock hash, tying each VSIX to the verified native candidate. The extension/helper versions must agree. Microsoft describes [platform packaging and publication](https://code.visualstudio.com/api/working-with-extensions/publishing-extension).
+
+User-selected storage and any executable override must be machine-scoped and trusted; workspace-controlled paths must not silently replace the helper. Extension updates preserve collections and user-selected storage. Removing the extension must not remove source workspaces or indexed collections automatically.
+
+## Qualification and publication
+
+Install the exact VSIX in a clean editor profile outside the checkout. Verify native startup, actual MCP links, reload/restart, version mismatch, unavailable helper, upgrade/rollback, storage selection and collection isolation. Retain failures and unexecuted checks explicitly. Passing kernel tests does not establish installed-extension behavior.
+
+Then publish the already verified package through a separate owner-controlled step. VCP currently uses an authenticated publisher-owner flow for Marketplace; it does not need a Marketplace PAT to build a VSIX. AIRK's publisher membership and extension identity need their own verification. For automated publication, Microsoft documents Entra/workload identity authentication as well as PATs; global Azure DevOps PATs are scheduled to retire December 1, 2026. Choose the supported method when the publishing workflow is implemented rather than adding a token to ordinary PR builds.
+
+Signing, notarization and publication credentials are listed separately in [CI configuration](ci-and-builds.md#optional-future-credentials). Ordinary native builds and future local VSIX packaging need none of those credentials. Current CI does not publish to Marketplace, GitHub Releases or a container registry.

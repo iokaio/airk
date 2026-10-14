@@ -1,0 +1,9 @@
+{
+  "servers": {
+    "airk": {
+      "type": "stdio",
+      "command": "airk",
+      "args": ["--root", "${workspaceFolder}", "--data-dir", "${workspaceFolder}/.airk", "--collection", "project-a", "mcp"]
+    }
+  }
+}

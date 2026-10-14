@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: Apache-2.0
+[package]
+name = "airk-kernel"
+description = "Local indexing and retrieval application services shared by all adapters"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+airk-core.workspace = true
+airk-ingest.workspace = true
+airk-store.workspace = true
+airk-retrieval.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+scip.workspace = true
+protobuf.workspace = true
+url.workspace = true

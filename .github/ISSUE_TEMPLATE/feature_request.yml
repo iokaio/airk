@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: Apache-2.0
+name: Feature request
+description: Propose a focused indexing or retrieval capability
+body:
+  - type: textarea
+    id: use_case
+    attributes:
+      label: File type, retrieval need and concrete example
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Expected facts, provenance and how to verify quality

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "airk": {
+      "command": "docker",
+      "args": ["exec", "-i", "airk", "airk", "--root", "/workspaces/project-a", "--data-dir", "/data", "--collection", "project-a", "mcp"]
+    }
+  }
+}

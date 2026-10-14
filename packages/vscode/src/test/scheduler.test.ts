@@ -1,0 +1,86 @@
+// SPDX-License-Identifier: Apache-2.0
+import { strict as assert } from 'node:assert';
+import { test } from 'node:test';
+import { CapacityError, Clock, Options, Scheduler } from '../scheduler';
+import { IndexReport, LaunchSpec } from '../model';
+
+const spec: LaunchSpec = { command: '/fixture/airk', root: '/fixture/project', dataDir: '/fixture/state', collection: 'project-fixture', name: 'Fixture' };
+const report: IndexReport = { generation: 1, indexed: 1, reused: 0, removed: 0, skipped: [] };
+const options: Options = { mode: 'debounced', quietMs: 100, maxDelayMs: 500, idleMs: 1000, minIntervalMs: 0 };
+const flush = () => new Promise<void>(resolve => setImmediate(resolve));
+class FakeClock implements Clock {
+    time = 0; sequence = 0; timers = new Map<number, { fn(): void; at: number }>();
+    now(): number { return this.time; }
+    set(fn: () => void, ms: number): number { const id = ++this.sequence; this.timers.set(id, { fn, at: this.time + ms }); return id; }
+    clear(timer: unknown): void { this.timers.delete(timer as number); }
+    async advance(ms: number): Promise<void> {
+        const end = this.time + ms;
+        for (let count = 0; count < 1000; count++) {
+            const next = [...this.timers.entries()].filter(([, t]) => t.at <= end).sort((a, b) => a[1].at - b[1].at)[0];
+            if (!next) { this.time = end; await flush(); return; }
+            this.time = next[1].at; this.timers.delete(next[0]); next[1].fn(); await flush();
+        }
+        throw new Error('Scheduler timer loop');
+    }
+}
+
+test('100 rapid edits coalesce into one job after the quiet period', async () => {
+    const clock = new FakeClock(); let count = 0;
+    const scheduler = new Scheduler(options, async () => { count++; return report; }, () => {}, () => {}, clock);
+    for (let edit = 0; edit < 100; edit++) { await scheduler.request(spec); await clock.advance(1); }
+    await clock.advance(98); assert.equal(count, 0);
+    await clock.advance(1); assert.equal(count, 1); assert.equal(scheduler.states()[0].pending, false);
+    scheduler.dispose();
+});
+
+test('edits during indexing survive and collections never run concurrently', async () => {
+    const clock = new FakeClock(); let release!: (value: IndexReport) => void; const ran: string[] = [];
+    const scheduler = new Scheduler(options, async current => {
+        ran.push(current.collection);
+        return ran.length === 1 ? new Promise<IndexReport>(resolve => { release = resolve; }) : report;
+    }, () => {}, () => {}, clock);
+    await scheduler.request(spec); await clock.advance(100);
+    await scheduler.request(spec);
+    await scheduler.request({ ...spec, collection: 'second', name: 'Second' });
+    await clock.advance(1000); assert.equal(ran.length, 1);
+    release(report); await flush(); await clock.advance(0);
+    assert.equal(ran.length, 3); assert.equal(ran.filter(id => id === spec.collection).length, 2);
+    assert.ok(scheduler.states().every(state => !state.pending)); scheduler.dispose();
+});
+
+test('manual mode and pause preserve pending work; an explicit request overrides pause', async () => {
+    const clock = new FakeClock(); let count = 0;
+    const scheduler = new Scheduler({ ...options, mode: 'manual' }, async () => { count++; return report; }, () => {}, () => {}, clock);
+    await scheduler.request(spec); await clock.advance(5000); assert.equal(count, 0);
+    scheduler.configure(options); scheduler.pause(); await clock.advance(5000); assert.equal(count, 0);
+    const manual = scheduler.request(spec, true); await clock.advance(0); await manual;
+    assert.equal(count, 1); assert.equal(scheduler.isPaused, true);
+    await scheduler.request(spec); scheduler.resume(); await clock.advance(100); assert.equal(count, 2); scheduler.dispose();
+});
+
+test('capacity failure preserves pending work without retry loops and manual indexing can proceed', async () => {
+    const clock = new FakeClock(); let count = 0;
+    const scheduler = new Scheduler(options, async (_spec, _full, automatic) => {
+        count++; if (automatic) { throw new CapacityError('fixture budget'); } return report;
+    }, () => {}, () => {}, clock);
+    await scheduler.request(spec); await clock.advance(10000);
+    assert.equal(count, 1); assert.equal(scheduler.states()[0].state, 'capacity-limited'); assert.ok(scheduler.states()[0].pending);
+    const manual = scheduler.request(spec, true); await clock.advance(0); await manual; assert.equal(count, 2); scheduler.dispose();
+});
+
+test('idle activity delays indexing; maximum delay and minimum interval bound debounced jobs', async () => {
+    const clock = new FakeClock(); const times: number[] = [];
+    const scheduler = new Scheduler({ ...options, mode: 'idle' }, async () => { times.push(clock.now()); return report; }, () => {}, () => {}, clock);
+    await scheduler.request(spec); await clock.advance(900); scheduler.activity(); await clock.advance(999); assert.equal(times.length, 0);
+    await clock.advance(1); assert.equal(times[0], 1900);
+    scheduler.configure({ ...options, minIntervalMs: 1000 });
+    for (let i = 0; i < 8; i++) { await scheduler.request(spec); await clock.advance(80); }
+    assert.equal(times.length, 1); await clock.advance(360); assert.equal(times[1], 2900); scheduler.dispose();
+});
+
+test('closed collections lose queued work without deleting source or starting a job', async () => {
+    const clock = new FakeClock(); let count = 0;
+    const scheduler = new Scheduler(options, async () => { count++; return report; }, () => {}, () => {}, clock);
+    await scheduler.request(spec); scheduler.forget(spec.collection); await clock.advance(1000);
+    assert.equal(count, 0); assert.equal(scheduler.states().length, 0); scheduler.dispose();
+});
