@@ -18,6 +18,8 @@ Extension identity: **iokaio.airk**. Display name: **AIRK — Artifact Indexing 
 
 Install the VSIX for your platform through **Extensions: Install from VSIX**. Open a folder and grant workspace trust. The **AIRK** status item shows measured coverage for the active folder; click it to open grouped controls, including **Index Now**. The controls are also available through **AIRK: Open Controls** in the command palette. Each workspace folder gets an isolated collection. VS Code discovers the collection through AIRK's MCP provider; use **MCP: List Servers** to enable it.
 
+The AIRK Activity Bar view lists active and stored collections with indexing state, measured coverage when available, disk use and last successful index time. Inline actions index or reindex an active collection, pause auto-indexing for the window, and remove an inactive indexed collection after confirmation. An open workspace collection cannot be removed from the view.
+
 - **Index Now / Reindex Collection**: incremental indexing or full re-extraction.
 - **Choose Indexing Mode**: after edits settle (default), when idle, on save, or manual.
 - **Pause / Resume Auto-indexing**: preserve queued edits; an in-progress write finishes.

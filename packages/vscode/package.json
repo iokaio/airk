@@ -9,7 +9,7 @@
   "engines": { "vscode": "^1.140.0" },
   "categories": ["Other"],
   "main": "./out/extension.js",
-  "files": ["out/*.js", "native/**", "images/*.png", "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md", "README.md"],
+  "files": ["out/*.js", "native/**", "images/*.png", "images/*.svg", "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md", "README.md"],
   "extensionKind": ["workspace"],
   "activationEvents": ["onStartupFinished", "onMcpServerDefinitionProvider:airk.collections"],
   "capabilities": {
@@ -18,7 +18,23 @@
   },
   "contributes": {
     "mcpServerDefinitionProviders": [{ "id": "airk.collections", "label": "AIRK workspace collections" }],
+    "viewsContainers": { "activitybar": [{ "id": "airk", "title": "AIRK", "icon": "images/airk.svg" }] },
+    "views": { "airk": [{ "id": "airk.collectionsView", "name": "Collections" }] },
+    "menus": {
+      "view/title": [{ "command": "airk.treeRefresh", "when": "view == airk.collectionsView", "group": "navigation" }],
+      "view/item/context": [
+        { "command": "airk.treeIndex", "when": "view == airk.collectionsView && viewItem == airkActiveCollection", "group": "inline@1" },
+        { "command": "airk.treeReindex", "when": "view == airk.collectionsView && viewItem == airkActiveCollection", "group": "inline@2" },
+        { "command": "airk.treePause", "when": "view == airk.collectionsView && viewItem == airkActiveCollection", "group": "inline@3" },
+        { "command": "airk.treeRemove", "when": "view == airk.collectionsView && viewItem == airkInactiveCollection", "group": "inline@1" }
+      ]
+    },
     "commands": [
+      { "command": "airk.treeRefresh", "title": "AIRK: Refresh Collections", "icon": "$(refresh)" },
+      { "command": "airk.treeIndex", "title": "AIRK: Index Collection", "icon": "$(run)" },
+      { "command": "airk.treeReindex", "title": "AIRK: Reindex Collection from View", "icon": "$(sync)" },
+      { "command": "airk.treePause", "title": "AIRK: Pause All Auto-indexing", "icon": "$(debug-pause)" },
+      { "command": "airk.treeRemove", "title": "AIRK: Remove Inactive Collection", "icon": "$(trash)" },
       { "command": "airk.menu", "title": "AIRK: Open Controls" },
       { "command": "airk.index", "title": "AIRK: Index Now" },
       { "command": "airk.reindex", "title": "AIRK: Reindex Collection" },
