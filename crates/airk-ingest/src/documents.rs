@@ -33,12 +33,7 @@ pub(crate) fn extract_selected(
     profile: &airk_core::extraction::ExtractionProfile,
 ) -> Result<Extracted> {
     let registry = crate::adapters::registry::AdapterRegistry::baseline();
-    ensure!(
-        registry
-            .get(&profile.adapter_id)
-            .is_some_and(|descriptor| descriptor.profile == *profile),
-        "unsupported effective extraction profile"
-    );
+    registry.validate_effective_profile(path, profile)?;
     let adapter = profile.adapter_id.as_str();
     match adapter {
         "pdf" => {
@@ -149,10 +144,13 @@ pub(crate) fn extract_selected(
                 "text exceeds 4 MiB extraction limit"
             );
             let mut analysis = crate::syntax::analyze_selected(path, text, adapter)?;
-            if adapter == "markdown" {
-                analysis.language = "markdown".into();
+            if matches!(adapter, "markdown" | "instruction-markdown") {
+                analysis.language = adapter.into();
                 analysis.status = "structured-markdown".into();
                 analysis.facts = crate::prose::markdown(text)?;
+                if adapter == "instruction-markdown" {
+                    crate::instruction_documents::enrich(path, text, &mut analysis.facts)?;
+                }
             } else if matches!(adapter, "csv" | "tsv") {
                 analysis.language = adapter.into();
                 analysis.status = "structured-delimited".into();

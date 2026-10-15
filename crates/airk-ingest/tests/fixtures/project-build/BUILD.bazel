@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: Apache-2.0
+load("//tools:rules.bzl", "fictional_library")
+fictional_library(
+    name = "café",
+    deps = ["//core:api", "@external//archive:reader"],
+)
+def publish_local(name):
+    fictional_library(name = name, deps = [":café"])

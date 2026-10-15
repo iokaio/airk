@@ -15,16 +15,18 @@ Native support means the shipped binary contains the parser/extractor. No Python
 | C | c, h | Function/type/struct/enum declarations selected by profile, includes |
 | C++ | cpp, cc, cxx, hpp, hh, hxx | Functions/classes/structs/enums/namespaces and includes/using |
 | C# | cs | Classes/structs/interfaces/records/enums/methods/namespaces and using |
-| Ruby | rb | Classes/modules/methods; dynamic require resolution unavailable |
-| PHP | php | Classes/interfaces/traits/functions/methods, selected use/include/require |
+| Ruby | rb | Classes/modules/methods, literal require/include/extend, written mixins and receiver calls; dynamic dispatch remains unknown |
+| PHP | php | Classes/interfaces/traits/functions/methods/namespaces, imports/trait use and written receiver/member/static call spellings |
 | Bash-family | sh, bash, zsh | Bash grammar function definitions; Zsh-specific constructs may be partial |
 | PowerShell | ps1, psm1, psd1 | Selected function/class and using statements |
 | Lua | lua | Function declarations; dynamic require resolution unavailable |
 | Swift | swift | Selected function/class/protocol/typealias and import declarations |
 | Kotlin | kt, kts | Selected function/class/object/typealias and import declarations |
-| SQL | sql | Selected create table/view/function/index nodes; dialect coverage varies |
+| SQL | sql; explicit `sql-postgresql` / `sql-mysql` overrides | SELECT/query scopes, CTEs, joins, aliases, written references and selected DDL; dialect semantics are not validated |
 
-These are initial grammar profiles, not complete compiler/type-system semantics. Original fixtures exercise a definition in every listed language. Declarations containing grammar errors are suppressed and file_info reports partial-syntax. Macros, overloaded/dynamic names, cross-file references and all framework-specific behavior need future adapters. A .h file uses C; C++ headers should use an explicit C++ extension until language overrides exist. Grammar-recognized syntax does not guarantee that every declaration has a named fact extractor.
+These are bounded grammar profiles, not complete compiler/type-system semantics. Declarations containing grammar errors are suppressed and file_info reports partial-syntax. Macros, overloaded/dynamic names and cross-file references remain unresolved. A `.h` file defaults to C; explicit overrides or qualified [captured header context](extraction-policy.md#captured-header-context) can select C++. Grammar-recognized syntax does not guarantee that every declaration has a named fact extractor.
+
+Explicit PostgreSQL/MySQL profiles add separately labeled structural procedure evidence for selected complete headers and bodies. PostgreSQL accepts qualified SQL/PLpgSQL literal or dollar-quoted bodies; MySQL accepts selected nested BEGIN/END bodies with ordinary semicolon framing. Delimiter changes, unsupported control-flow and quote modes remain partial. This does not qualify Oracle or SQL Server procedural dialects.
 
 ## Structured text and documents
 
@@ -60,10 +62,19 @@ Explicit local OCR supports selected PDF pages and PNG/JPEG/BMP inputs using pro
 | MSBuild: `.csproj`, `.fsproj`, `.vbproj`, `.props`, `.targets`, `.sln`, `.slnx` | Projects/packages/frameworks, imports/targets/properties/conditions and solution membership |
 | Actions: source-root `.github/workflows/*.yml` or `*.yaml` | Triggers/jobs/steps/needs/uses, permissions, environment/configuration and written commands |
 | Compose: `compose.yaml`, `compose.yml`, `docker-compose.yml`, `docker-compose.yaml` | Services/images/build contexts/dependencies/networks/volumes and written configuration |
+| Bazel/Starlark: `BUILD`, `BUILD.bazel`, `.bzl` | Written loads, rules/targets, labels/dependencies and macros; bounded Python-grammar subset |
+| Gradle Kotlin: `.gradle.kts` | Kotlin declarations plus selected plugins/tasks/modules/configurations/dependencies; arbitrary computed receivers remain unknown |
+| Kubernetes: recognized YAML documents | apiVersion/kind/metadata, resources, selectors and written references across bounded multiple documents |
+| OpenAPI: recognized YAML/JSON | Paths/methods/operations/parameters/schema/request/response facts and reference spellings; bounded same-document traversal |
+| GitLab: recognized `.gitlab-ci.yml` | Jobs/stages/needs/dependencies/artifacts/includes, without fetching includes |
+| Finite manifests | `package.json`, `tsconfig*.json`, `composer.json`, `Cargo.toml`, `pyproject.toml`: written package/dependency/script/compiler/workspace/build/tool fields |
+| Instruction Markdown | `AGENTS.md`, `CLAUDE.md`, source-root `.github/copilot-instructions.md`: Markdown evidence plus untrusted written constraints, inline-code path literals and filename-derived scope |
 
 These profiles preserve original source locations and never evaluate builds, resolve references, expand variables or fetch dependencies. The four repository grammars expose conservative declaration continuity; CMake, Make, MSBuild, Actions and Compose expose structural-rule evidence without continuity. Explicit extraction-policy overrides take precedence, including for additional source roots.
 
 Unsupported constructs remain explicit: Docker CRLF line continuations and Make custom recipe prefixes are partial syntax; malformed declarations are omitted. Workflow/Compose YAML aliases, anchors, tags, merges, duplicate keys and multiple documents produce diagnostics without expansion or key overwriting. MSBuild XML forbids DTDs and limits nesting to 128, events to 500,000 and attributes to 256 per element with 4,096-byte attribute values. YAML limits structure to 100,000 nodes, depth 128 and 64 documents; all profiles retain file/fact/query budgets. Display truncation preserves the full original span. Platform qualification is recorded in the [v2 ledger](architecture-v2-ledger.md), independently of implementation.
+
+Project schema detection inspects at most 4,096 captured bytes and requires recognizable structure; incomplete or unknown schemas retain generic key extraction. Ordered JSON/JSONC/YAML/TOML views preserve duplicate evidence and source offsets. OpenAPI traversal is capped at 1,024 local reference edges, depth 16 and 100,000 steps; cycles, external/unresolved/unsupported encoded references are partial and never fetched. TOML array tables and unsupported multiline forms remain partial. Schema/parser flavor enters profile identity. Instruction documents never become an obedience engine: code blocks and HTML comments are excluded from new instruction cues, client precedence is not inferred, and literal paths are never followed. New instruction cues do not receive continuity keys; existing Markdown units retain conservative continuity.
 
 OOXML entries are read in memory, not unpacked to the filesystem. External slide/worksheet relationships and XML document type declarations are refused; unused external links are never followed. Extraction skips are explicit, rather than replacement-character text pretending to be evidence. Spreadsheet formulas and cached results are labeled separately; caches can be stale or absent. AIRK does not launch Office, recalculate formulas or fetch linked workbooks.
 

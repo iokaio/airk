@@ -271,7 +271,10 @@ pub fn describe(
 ) -> Result<ContinuityDraft> {
     payload.validate()?;
     let supported = native(profile)
-        || matches!(profile.language.as_str(), "markdown" | "text")
+        || matches!(
+            profile.language.as_str(),
+            "markdown" | "instruction-markdown" | "text"
+        )
         || payload.facts.iter().any(|fact| fact.document.is_some())
         || !payload.regions.is_empty();
     if !supported {
@@ -330,15 +333,25 @@ pub fn describe(
                 .push(fact);
         }
     }
-    if !native(profile) && matches!(profile.language.as_str(), "markdown" | "text") {
-        let units =
-            match crate::prose::continuity_units(&payload.text, profile.language == "markdown") {
-                Ok(units) => units,
-                Err(_) => {
-                    builder.partial("document structural extraction exceeded bounds");
-                    return Ok(builder.draft);
-                }
-            };
+    if !native(profile)
+        && matches!(
+            profile.language.as_str(),
+            "markdown" | "instruction-markdown" | "text"
+        )
+    {
+        let units = match crate::prose::continuity_units(
+            &payload.text,
+            matches!(
+                profile.language.as_str(),
+                "markdown" | "instruction-markdown"
+            ),
+        ) {
+            Ok(units) => units,
+            Err(_) => {
+                builder.partial("document structural extraction exceeded bounds");
+                return Ok(builder.draft);
+            }
+        };
         for (index, unit) in units.into_iter().enumerate() {
             if unit.visible.trim().is_empty() {
                 continue;
@@ -405,7 +418,13 @@ pub fn describe(
     ordered_facts.sort_by_key(|fact| (fact.region, fact.span.start, fact.id));
     let mut native_headings: Vec<(usize, ContinuitySubject)> = vec![];
     for fact in ordered_facts {
-        if used.contains(&fact.id) || fact.code.is_some() {
+        if used.contains(&fact.id)
+            || fact.code.is_some()
+            || fact
+                .document
+                .as_ref()
+                .is_some_and(|details| details.basis == "untrusted_structural_rule")
+        {
             continue;
         }
         let generic_native = native(profile) && fact.kind == "section";

@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: Apache-2.0
+[package]
+name = "original-beacon"
+version = "0.1.0"
+[dependencies]
+example-library = { version = "1", optional = true }
+[workspace]
+members = ["local-member"]

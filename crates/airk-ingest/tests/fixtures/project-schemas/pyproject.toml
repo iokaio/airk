@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: Apache-2.0
+[project]
+name = "original-beacon"
+dependencies = ["example-library>=1"]
+[build-system]
+requires = ["example-builder"]
+build-backend = "example_builder.api"
+[tool.original]
+enabled = true

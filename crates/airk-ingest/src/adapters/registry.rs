@@ -81,6 +81,22 @@ impl AdapterRegistry {
                 true,
             ),
             ("sql", "tree-sitter-sequel/0.3.11", "sql", false, false),
+            (
+                "sql-postgresql",
+                "tree-sitter-sequel/0.3.11",
+                "",
+                false,
+                false,
+            ),
+            ("sql-mysql", "tree-sitter-sequel/0.3.11", "", false, false),
+            ("starlark", "tree-sitter-python/0.25.0", "bzl", true, false),
+            (
+                "gradle-kotlin",
+                "tree-sitter-kotlin-ng/1.1.0",
+                "",
+                true,
+                true,
+            ),
             ("hcl", "tree-sitter-hcl/1.1.0", "hcl tf tfvars", true, false),
             (
                 "dockerfile",
@@ -119,7 +135,7 @@ impl AdapterRegistry {
         ] {
             let structured = matches!(
                 id,
-                "json" | "yaml" | "toml" | "html" | "css" | "cmake" | "make"
+                "json" | "yaml" | "toml" | "html" | "css" | "cmake" | "make" | "starlark"
             );
             registry.add_baseline(
                 id,
@@ -144,6 +160,11 @@ impl AdapterRegistry {
             ("msbuild", "csproj fsproj vbproj props targets sln slnx"),
             ("github-actions", ""),
             ("compose", ""),
+            ("kubernetes", ""),
+            ("openapi", ""),
+            ("gitlab-ci", ""),
+            ("project-manifest", ""),
+            ("instruction-markdown", ""),
             ("svg", "svg"),
             ("ini", "ini cfg conf properties"),
             ("pdf", "pdf"),
@@ -177,7 +198,14 @@ impl AdapterRegistry {
         capabilities.continuity = capabilities.definitions
             || matches!(
                 id,
-                "markdown" | "text" | "csv" | "pdf" | "docx" | "xlsx" | "pptx"
+                "markdown"
+                    | "instruction-markdown"
+                    | "text"
+                    | "csv"
+                    | "pdf"
+                    | "docx"
+                    | "xlsx"
+                    | "pptx"
             );
         let limitations = if capabilities.continuity {
             vec!["Conservative native continuity within established artifact/owner identity; unsupported dimensions and partial extraction remain unknown. No resolved references or embedded-host extraction qualification.".into()]
@@ -203,12 +231,30 @@ impl AdapterRegistry {
                             | "compose"
                     ) {
                         "repository-facts/1"
+                    } else if matches!(
+                        id,
+                        "starlark"
+                            | "gradle-kotlin"
+                            | "kubernetes"
+                            | "openapi"
+                            | "gitlab-ci"
+                            | "project-manifest"
+                            | "instruction-markdown"
+                    ) {
+                        "project-facts/1"
+                    } else if matches!(id, "php" | "ruby" | "sql" | "sql-postgresql" | "sql-mysql")
+                    {
+                        "repair-facts/1"
                     } else {
                         "native-facts/7"
                     }
                     .into(),
                     language: id.into(),
-                    dialect: None,
+                    dialect: match id {
+                        "sql-postgresql" => Some("postgresql".into()),
+                        "sql-mysql" => Some("mysql".into()),
+                        _ => None,
+                    },
                     grammar_identity: grammar.map(|g| format!("tree-sitter/0.25.10:{g}")),
                     mapping_version: 1,
                     chunk_version: 2,
@@ -226,6 +272,66 @@ impl AdapterRegistry {
 
     pub fn get(&self, id: &str) -> Option<&AdapterDescriptor> {
         self.entries.get(id)
+    }
+
+    pub fn effective_profile(&self, path: &str, id: &str) -> anyhow::Result<ExtractionProfile> {
+        let mut profile = self
+            .get(id)
+            .ok_or_else(|| anyhow::anyhow!("unknown adapter"))?
+            .profile
+            .clone();
+        if matches!(
+            id,
+            "kubernetes" | "openapi" | "gitlab-ci" | "project-manifest"
+        ) {
+            profile.options.insert(
+                "schema_flavor".into(),
+                crate::project_schemas::flavor(path, id),
+            );
+            let grammar = if path.ends_with(".toml") {
+                "tree-sitter-toml-ng/0.7.0"
+            } else if path.ends_with(".json") || path.ends_with(".jsonc") {
+                "tree-sitter-json/0.24.8"
+            } else {
+                "tree-sitter-yaml/0.7.2"
+            };
+            profile.grammar_identity = Some(format!("tree-sitter/0.25.10:{grammar}"));
+        } else if id == "instruction-markdown" {
+            profile.options.insert(
+                "instruction_flavor".into(),
+                crate::instruction_documents::flavor(path).into(),
+            );
+        }
+        Ok(profile)
+    }
+
+    pub(crate) fn validate_effective_profile(
+        &self,
+        path: &str,
+        profile: &ExtractionProfile,
+    ) -> anyhow::Result<()> {
+        profile.identity()?;
+        let mut checked = profile.clone();
+        if checked.options.contains_key("header_context") {
+            anyhow::ensure!(
+                matches!(checked.adapter_id.as_str(), "c" | "cpp")
+                    && path.to_ascii_lowercase().ends_with(".h")
+                    && checked.options.get("header_context").map(String::as_str)
+                        == Some(crate::header_context::CONTEXT_VERSION)
+                    && checked.configuration_inputs.len() == 1,
+                "invalid captured header profile"
+            );
+            super::profile::validate_relative_path(
+                checked.configuration_inputs.keys().next().unwrap(),
+            )?;
+            checked.options.remove("header_context");
+            checked.configuration_inputs.clear();
+        }
+        anyhow::ensure!(
+            checked == self.effective_profile(path, &profile.adapter_id)?,
+            "unsupported effective extraction profile"
+        );
+        Ok(())
     }
     pub fn descriptors(&self) -> impl Iterator<Item = &AdapterDescriptor> {
         self.entries.values()
@@ -280,8 +386,17 @@ impl AdapterRegistry {
             .filter(|(suffix, _)| path.ends_with(suffix.as_str()))
             .max_by_key(|(suffix, _)| suffix.len())
         {
-            selected.profile = self.entries[adapter].profile.clone();
+            selected.profile = self.effective_profile(path, adapter)?;
             selected.basis = "compound_suffix".into();
+            return Ok(selected);
+        }
+        if matches!(
+            selected.profile.adapter_id.as_str(),
+            "yaml" | "json" | "toml"
+        ) && let Some(id) = crate::project_schemas::detect(path, source)
+        {
+            selected.profile = self.effective_profile(path, id)?;
+            selected.basis = "bounded_schema_discriminator".into();
             return Ok(selected);
         }
         if selected.basis != "utf8_fallback" {
@@ -307,7 +422,13 @@ impl AdapterRegistry {
         let workflow = path.strip_prefix(".github/workflows/").is_some_and(|tail| {
             !tail.contains('/') && matches!(lower_suffix.as_str(), "yaml" | "yml")
         });
-        let (id, basis) = if workflow {
+        let (id, basis) = if crate::instruction_documents::recognized(path) {
+            ("instruction-markdown", "known_basename")
+        } else if matches!(basename, "BUILD" | "BUILD.bazel") {
+            ("starlark", "known_basename")
+        } else if basename.ends_with(".gradle.kts") {
+            ("gradle-kotlin", "compound_suffix")
+        } else if workflow {
             ("github-actions", "known_basename")
         } else if matches!(
             basename,
@@ -348,14 +469,19 @@ impl AdapterRegistry {
         };
         let ambiguity = match suffix {
             "h" | "H" => vec!["Header defaults to C; C++ context is not inferred".into()],
-            "sql" | "SQL" => vec!["SQL dialect unselected; only existing CREATE subset".into()],
+            "sql" | "SQL" => vec![
+                "SQL dialect unselected; written syntax does not establish dialect semantics"
+                    .into(),
+            ],
             "m" | "pl" | "cls" | "v" | "s" | "S" => vec![format!(
                 "Ambiguous suffix .{suffix}; no qualified default language"
             )],
             _ => vec![],
         };
         Selection {
-            profile: self.entries[id].profile.clone(),
+            profile: self
+                .effective_profile(path, id)
+                .expect("registered default adapter"),
             basis: basis.into(),
             ambiguity,
         }
@@ -417,7 +543,7 @@ mod tests {
         for (path, language) in [
             ("x.vue", "html"),
             ("x.scss", "css"),
-            ("build.gradle.kts", "kotlin"),
+            ("build.gradle.kts", "gradle-kotlin"),
             ("x.mdx", "markdown"),
             ("Dockerfile.dev", "dockerfile"),
         ] {

@@ -13,7 +13,7 @@ airk index
 
 Global `--root`, `--data-dir` and `--collection` select the collection as on other commands. `show` observes current policy; `validate` checks a proposed policy without saving or indexing. `set` saves the policy under the collection writer lock. Its effect becomes visible only in the next successful index publication. Existing reads continue using their published profiles if indexing has not run or fails.
 
-Both `validate` and `set` require exactly one of `--file PATH` or `--json JSON`. Input is limited to 128 KiB; version 1 accepts at most 256 rules and rejects unknown fields and adapter IDs. For larger policies, use `--file` to avoid operating-system command-line limits. An explicit reset uses an empty rule list:
+Both `validate` and `set` require exactly one of `--file PATH` or `--json JSON`. Input is limited to 128 KiB and 256 rules. Versions 1 and 2 reject unknown fields and adapter IDs; version 2 additionally accepts captured header-context rules. For larger policies, use `--file` to avoid operating-system command-line limits. An explicit reset uses an empty rule list:
 
 ```powershell
 airk collections extraction set --json '{"version":1,"rules":[]}'
@@ -48,6 +48,25 @@ An exact match precedes scoped matches. Among scoped matches, the longest prefix
 Without an override, selection uses the registry's known basenames, registered compound suffixes, ordinary suffixes, bounded content discriminators, then text fallback. Available adapters and their capability limitations appear in `show`. Selecting an adapter does not expand its supported dialects or turn syntax references into resolved references. For ambiguous formats, choose a qualified adapter explicitly rather than assuming a filename establishes project semantics.
 
 Index reports expose bounded `selection_diagnostics` warnings, including the adapter actually selected, and `selection_diagnostics_truncated` when the list exceeds its limit. These warnings are regenerated during scans, including extraction reuse. They do not mean the file was skipped and do not replace native parse status or OCR provenance.
+
+### Captured header context
+
+Version 2 can select C/C++ headers from explicitly declared local compilation arguments:
+
+```json
+{
+  "version": 2,
+  "rules": [{
+    "selector": {"kind": "header_context", "prefix": "build/include", "configuration": "build/compile_commands.json"},
+    "case_sensitive": true,
+    "adapter_id": "cpp"
+  }]
+}
+```
+
+This rule accepts a bounded JSON array of compilation entries whose relative `file` is resolved beneath the configuration file's directory. An eligible entry has `directory` absent, empty or `.` and an `arguments` array containing explicit `-x c++` or `-xc++` (likewise `c`). The rule's adapter must agree. Compiler names and shell command strings are not interpreted. Absolute paths, escaping paths, unsupported bases, conflicting entries and missing context do not imply C++ selection; unresolved headers retain C and a warning. Exact/scoped overrides take precedence over context rules.
+
+Only the declared configuration files are captured, using registered-root discovery, ignore and symlink rules. At most 16 files, 128 KiB per file, 1,024 entries and 128 arguments per entry are admitted; argument strings are capped at 4,096 bytes. Discovery and reads consume the existing scan budgets. The same captured bytes supply the indexed configuration artifact, and the actual SHA-256 enters affected header profiles. Changes apply on publication and invalidate only affected effective profiles. AIRK does not run a compiler or claim build-accurate configuration. Version 1 rejects header-context rules.
 
 ## Configured versus published state
 
