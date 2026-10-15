@@ -451,6 +451,12 @@ impl AdapterRegistry {
             descriptor.capabilities.continuity = true;
             descriptor.limitations = vec!["Bounded mapped child syntax and original host locations; unsupported/dynamic markers remain partial. No framework compilation, execution or resolved references.".into()];
         }
+        registry
+            .entries
+            .get_mut("objcpp")
+            .unwrap()
+            .capabilities
+            .continuity = false;
         registry.entries.get_mut("objcpp").unwrap().limitations = vec![
             "Always partial: clean Objective-C islands and disjoint C++ syntax only; no compiler, preprocessor, runtime dispatch or edit-continuity qualification.".into()
         ];
@@ -670,6 +676,7 @@ impl AdapterRegistry {
             let children: &[&str] = match id {
                 "notebook" => &[
                     "markdown",
+                    "r",
                     "python",
                     "javascript",
                     "typescript",
@@ -1063,6 +1070,55 @@ mod tests {
             );
         }
         Ok(())
+    }
+
+    #[test]
+    fn notebook_identity_tracks_admitted_r_profile_only() -> anyhow::Result<()> {
+        let mut registry = AdapterRegistry::baseline();
+        let before = registry.effective_profile("original.ipynb", "notebook")?;
+        assert_eq!(
+            before.options.get("child_profile:r"),
+            Some(&registry.get("r").unwrap().profile.identity()?.to_string())
+        );
+        let python_before = registry.effective_profile("original.py", "python")?;
+        registry
+            .entries
+            .get_mut("r")
+            .unwrap()
+            .profile
+            .adapter_version = "general-b-facts/test-revision".into();
+        let changed = registry.effective_profile("original.ipynb", "notebook")?;
+        assert_ne!(before.identity()?, changed.identity()?);
+        assert_eq!(
+            python_before,
+            registry.effective_profile("original.py", "python")?
+        );
+        // Recognized but omitted notebook languages must not acquire parser capabilities
+        // or cause unrelated parent invalidation through registry membership alone.
+        for id in ["julia", "sql"] {
+            assert!(!changed.options.contains_key(&format!("child_profile:{id}")));
+            registry
+                .entries
+                .get_mut(id)
+                .unwrap()
+                .profile
+                .adapter_version = "unadmitted/test-revision".into();
+        }
+        assert_eq!(
+            changed,
+            registry.effective_profile("original.ipynb", "notebook")?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn objective_cpp_partial_facts_do_not_advertise_edit_continuity() {
+        let registry = AdapterRegistry::baseline();
+        let mixed = registry.get("objcpp").unwrap();
+        assert!(mixed.capabilities.definitions);
+        assert!(mixed.capabilities.call_candidates);
+        assert!(!mixed.capabilities.continuity);
+        assert!(registry.get("objc").unwrap().capabilities.continuity);
     }
 
     #[test]

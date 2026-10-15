@@ -608,7 +608,11 @@ mod tests {
     }
     #[test]
     fn ctags_locations_binding_and_native_fact_preservation() -> Result<()> {
-        let (root, snapshot, request) = fixture(std::env::current_exe()?)?;
+        // This parser/binding fixture never launches a provider. Hash a tiny
+        // original stand-in rather than the grammar-heavy debug test binary.
+        let provider = tempfile::NamedTempFile::new()?;
+        std::fs::write(provider.path(), b"original provider identity fixture\n")?;
+        let (root, snapshot, request) = fixture(provider.path().to_path_buf())?;
         let root = root.path().canonicalize()?;
         let mut excessive = snapshot.clone();
         let mut empty = snapshot.artifacts["src/lib.rs"].clone();
@@ -624,6 +628,10 @@ mod tests {
                 .contains("10000-file copy budget")
         );
         let workspace = Workspace::prepare(&root, &snapshot, &snapshot, &request)?;
+        assert_eq!(
+            workspace.executable_digest,
+            semantic::digest(b"original provider identity fixture\n")
+        );
         let bytes = br#"{"_type":"tag","name":"one","path":"src/lib.rs","line":1,"end":1,"kind":"function","signature":"() -> u32"}
 "#;
         let output = parse_ctags(&workspace, bytes)?.finish(&root, &snapshot)?;
