@@ -227,7 +227,7 @@ class Controller implements vscode.Disposable {
         if (automatic && maxBytes > 0) {
             const usage = await runJson<Usage[]>(spec, 'collections', ['list']);
             if (usage.reduce((bytes, item) => bytes + item.disk_bytes, 0) >= maxBytes) {
-                throw new CapacityError('Collection storage budget reached. Remove unused collections or increase the budget, then resume indexing.');
+                throw new CapacityError('Index storage budget (airk.storage.maxBytes) reached; automatic indexing stopped. Trim old generations, remove unused collections or raise the budget, then run Resume Auto-indexing. Index Now still works.');
             }
         }
         let report: IndexReport;
@@ -308,12 +308,14 @@ class Controller implements vscode.Disposable {
         if (!paused) { this.scheduler.resume(); }
     }
     async chooseMode(): Promise<void> {
+        const current = this.options().mode;
         const choices = [
-            { label: 'After edits settle', mode: 'debounced', description: 'Coalesce filesystem changes, including agent edits' },
-            { label: 'When idle', mode: 'idle', description: 'Wait until filesystem and editor activity settle' },
-            { label: 'On save', mode: 'onSave', description: 'Batch saved documents; external edits wait for Index Now' },
-            { label: 'Manual', mode: 'manual', description: 'Index only when explicitly requested' }
-        ];
+            { label: 'After edits settle (default)', mode: 'debounced', description: 'Batch file changes, including agent edits',
+                detail: 'Recommended when a coding agent edits files in this workspace.' },
+            { label: 'When idle', mode: 'idle', description: 'Wait until file changes and editor activity settle' },
+            { label: 'On save', mode: 'onSave', description: 'Index saved documents; external edits wait for Index Now' },
+            { label: 'Manual', mode: 'manual', description: 'Index only when you run Index Now' }
+        ].map(choice => ({ ...choice, picked: choice.mode === current }));
         const choice = await vscode.window.showQuickPick(choices, { title: 'AIRK indexing mode' });
         if (choice) { await vscode.workspace.getConfiguration('airk').update('index.mode', choice.mode, vscode.ConfigurationTarget.Global); }
     }
@@ -332,7 +334,7 @@ class Controller implements vscode.Disposable {
         await this.rememberStorage(await this.dataDir());
         await vscode.workspace.getConfiguration('airk').update('storage.path', directory, vscode.ConfigurationTarget.Global);
         await this.refresh();
-        void vscode.window.showInformationMessage('AIRK storage selected. Old collections remain available through Manage Collections; restart already-connected agents to use the new location.');
+        void vscode.window.showInformationMessage(`AIRK now stores new indexes in ${directory}. Existing indexes stay where they were and remain available in Manage Collections. Restart any agents already connected to AIRK.`);
     }
     private async maintenanceSpec(): Promise<LaunchSpec | undefined> {
         this.trusted();
@@ -367,7 +369,8 @@ class Controller implements vscode.Disposable {
             if (requestedId) { throw new Error('Collection is no longer removable. Refresh the AIRK view.'); }
             return;
         }
-        const confirm = await vscode.window.showWarningMessage(`Remove derived index ${selected.item.collection}? Disconnect its MCP workers and close that project in other windows first. Source files are retained.`, { modal: true }, 'Remove index');
+        const label = known[selected.item.collection]?.name;
+        const confirm = await vscode.window.showWarningMessage(`Remove the index for ${label ? `${label} (${selected.item.collection})` : selected.item.collection}? Source files are not affected. Stop agents using this collection and close that folder in other windows first; removal is refused while it is still open.`, { modal: true }, 'Remove index');
         if (confirm !== 'Remove index') { return; }
         await runJson(spec, 'collections', ['remove', selected.item.collection]);
         this.invalidateCollectionTree();
@@ -382,7 +385,7 @@ class Controller implements vscode.Disposable {
         if (!preview.candidates.length && !preview.unreferenced_objects && !preview.receipt_cleanup_pending) { void vscode.window.showInformationMessage('No unpinned obsolete generations or unreferenced objects can be reclaimed.'); return; }
         const objects = preview.unreferenced_objects ? ` and ${preview.unreferenced_objects} unreferenced objects` : '';
         const pending = preview.receipt_cleanup_pending ? ' Receipt cleanup or further bounded inspection remains pending.' : '';
-        const confirm = await vscode.window.showWarningMessage(`Trim ${preview.candidates.length} obsolete generations${objects} from ${spec.name} (${(preview.reclaimable_bytes / 1048576).toFixed(2)} MiB)?${pending} Active evidence and pinned readers are protected.`, { modal: true }, 'Trim old generations');
+        const confirm = await vscode.window.showWarningMessage(`Reclaim ${(preview.reclaimable_bytes / 1048576).toFixed(2)} MiB by trimming ${preview.candidates.length} superseded index generations${objects} from ${spec.name}?${pending} The current index and any generation an agent is still reading are kept.`, { modal: true }, 'Trim old generations');
         if (confirm !== 'Trim old generations') { return; }
         await this.showJson('AIRK generation trim result', await this.writeNative<PruneReport>(spec, 'collections', ['prune', '--apply']));
         if (!this.scheduler.isPaused) { this.scheduler.resume(); }
@@ -509,14 +512,17 @@ class Controller implements vscode.Disposable {
         const content = configFor(client, spec);
         const document = await vscode.workspace.openTextDocument({ language: client === 'codex' ? 'toml' : 'json', content });
         await vscode.window.showTextDocument(document, { preview: true });
-        if (await vscode.window.showInformationMessage(locations[client], 'Copy configuration') === 'Copy configuration') {
+        const note = 'This configuration was generated, not installed. AIRK does not edit the client\'s settings.';
+        if (await vscode.window.showInformationMessage(`${locations[client]} ${note}`, 'Copy configuration') === 'Copy configuration') {
             await vscode.env.clipboard.writeText(content);
         }
     }
     async verify(): Promise<void> {
         const spec = await this.chooseSpec(); if (!spec) { return; }
         await this.scheduler.request(spec, true);
-        await this.showJson('AIRK native stdio MCP verified; client approval is separate', await probeMcp(spec));
+        const result = await probeMcp(spec);
+        await this.showJson('AIRK native stdio MCP verified; client approval is separate', result);
+        void vscode.window.showInformationMessage(`AIRK helper OK: ${result.tools.length} tools available for ${spec.name}. Each coding agent still needs the server enabled in its own settings.`);
     }
     async provideDefinitions(): Promise<vscode.McpStdioServerDefinition[]> {
         if (!vscode.workspace.isTrusted) { return []; }
@@ -542,29 +548,47 @@ class Controller implements vscode.Disposable {
         this.trusted(); return definition;
     }
     async menu(): Promise<void> {
-        const groups: { label: string; commands: [string, string][] }[] = [
+        // Labels match the Command Palette titles; descriptions double as inline help.
+        const groups: { label: string; commands: [string, string, string][] }[] = [
             { label: 'Indexing', commands: [
-                ['Index Now', 'airk.index'], ['Reindex Collection', 'airk.reindex'], ['Choose Indexing Mode', 'airk.indexMode'],
-                ['Pause Auto-indexing', 'airk.pause'], ['Resume Auto-indexing', 'airk.resume']] },
+                ['Index Now', 'airk.index', 'Incremental update of this folder'],
+                ['Reindex Collection (Full Re-extraction)', 'airk.reindex', 'Re-extract every eligible file'],
+                ['Choose Indexing Mode…', 'airk.indexMode', 'After edits settle · When idle · On save · Manual'],
+                ['Pause Auto-indexing', 'airk.pause', 'Stop automatic jobs; keep queued changes'],
+                ['Resume Auto-indexing', 'airk.resume', 'Restart automatic jobs after a pause or budget stop']] },
+            { label: 'Setup and reports', commands: [
+                ['Set Up Coding Agent (Claude Code, Codex, Gemini CLI…)', 'airk.setupAgent', 'Preview a configuration to merge into your agent'],
+                ['Verify Native MCP Connection', 'airk.verifyMcp', 'Handshake with the helper and list its tools'],
+                ['Show Collection Status and Coverage', 'airk.status', 'Current, stale, missing and failed files'],
+                ['Show Local Usage Report', 'airk.usage', 'Content-free local aggregates and estimates'],
+                ['Show Output Log', 'airk.logs', 'Skipped files and failures']] },
             { label: 'Collections and storage', commands: [
-                ['Choose Index Storage', 'airk.chooseStorage'], ['Manage Collections and Disk Space', 'airk.collections'],
-                ['Remove Unneeded Collection', 'airk.removeCollection'], ['Trim Obsolete Index Generations', 'airk.prune']] },
+                ['Choose Index Storage Folder…', 'airk.chooseStorage', 'Build new indexes on another drive'],
+                ['Manage Collections and Disk Space', 'airk.collections', 'Sizes, roots and free space'],
+                ['Remove Unneeded Collection…', 'airk.removeCollection', 'Delete a derived index; source files stay'],
+                ['Trim Obsolete Index Generations…', 'airk.prune', 'Preview, then reclaim superseded builds']] },
             { label: 'Retention and history', commands: [
-                ['Show Retention Status', 'airk.retention'], ['Choose Retention Policy', 'airk.retentionPolicy'], ['Run Retention Maintenance', 'airk.retentionRun'],
-                ['Show History Status', 'airk.history'], ['Choose History Policy', 'airk.historyPolicy'], ['Run History Maintenance', 'airk.historyRun'],
-                ['List Retained Publication Identities', 'airk.historyAvailable'], ['Show Checkpoints', 'airk.checkpoints'],
-                ['Create Checkpoint', 'airk.createCheckpoint'], ['Remove Checkpoint', 'airk.removeCheckpoint'], ['Preview Logical History Purge', 'airk.purgeHistory']] },
-            { label: 'Extraction', commands: [['Show Extraction Policy', 'airk.extractionPolicy'], ['Configure Extraction Policy', 'airk.configureExtractionPolicy']] },
-            { label: 'Reports and setup', commands: [
-                ['Workspace Coverage', 'airk.status'], ['Local Usage and Estimated Savings', 'airk.usage'],
-                ['Set Up Coding Agent', 'airk.setupAgent'], ['Verify Native MCP Connection', 'airk.verifyMcp'], ['Show Output', 'airk.logs']] }
+                ['Show Retention Status', 'airk.retention', 'Policy, protected bytes and pending work'],
+                ['Choose Retention Policy…', 'airk.retentionPolicy', 'Manual or automatic cleanup'],
+                ['Run Retention Maintenance…', 'airk.retentionRun', 'Preview, then one bounded cleanup pass'],
+                ['Show History Status', 'airk.history', 'Retained history policy and plan'],
+                ['Choose History Policy…', 'airk.historyPolicy', 'Enable or disable bounded history'],
+                ['Run History Maintenance…', 'airk.historyRun', 'Preview, then one bounded pass'],
+                ['List Retained Publication Identities', 'airk.historyAvailable', 'Committed revisions you can pin'],
+                ['Show Checkpoints', 'airk.checkpoints', 'Pinned committed revisions'],
+                ['Create Checkpoint…', 'airk.createCheckpoint', 'Pin a committed revision under a label'],
+                ['Remove Checkpoint…', 'airk.removeCheckpoint', 'Release one pin'],
+                ['Preview Logical History Purge…', 'airk.purgeHistory', 'Plan, then confirm; not secure erasure']] },
+            { label: 'Extraction', commands: [
+                ['Show Extraction Policy', 'airk.extractionPolicy', 'Configured versus applied policy'],
+                ['Configure Extraction Policy…', 'airk.configureExtractionPolicy', 'Validate a JSON policy for the next index']] }
         ];
         const items: (vscode.QuickPickItem & { command?: string })[] = [];
         for (const group of groups) {
             items.push({ label: group.label, kind: vscode.QuickPickItemKind.Separator });
-            items.push(...group.commands.map(([label, command]) => ({ label, command })));
+            items.push(...group.commands.map(([label, command, description]) => ({ label, command, description })));
         }
-        const choice = await vscode.window.showQuickPick(items, { title: 'AIRK controls' });
+        const choice = await vscode.window.showQuickPick(items, { title: 'AIRK controls', matchOnDescription: true });
         if (choice?.command) { await vscode.commands.executeCommand(choice.command); }
     }
     configure(): void { const options = this.options(); this.scheduler.configure(options); this.coverage?.configure(options.quietMs, options.mode === 'idle' ? options.idleMs : 0); }

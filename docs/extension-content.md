@@ -1,6 +1,6 @@
 # VS Code extension content and illustrations
 
-This is the content specification for AIRK's extension details/Marketplace page, its first-use guidance and the material shown from its commands for 0.1.0. The shipped listing is [packages/vscode/README.md](../packages/vscode/README.md); the command/settings source is [package.json](../packages/vscode/package.json). Review this page against the actual release candidate, then capture editor screenshots for the [release checklist](release-checklist-0.1.0.md).
+This is the content specification for AIRK's extension details/Marketplace page, its first-use guidance and the material shown from its commands for the current beta (0.2.0). The shipped listing is [packages/vscode/README.md](../packages/vscode/README.md); the command/settings source is [package.json](../packages/vscode/package.json). Review this page against the actual release candidate, then capture editor screenshots for the [release checklist](release-checklist-0.1.0.md).
 
 The package includes the two original PNG illustrations and rewrites their listing links to those bundled assets. The installed listing can display them without fetching repository images; package verification includes their exact digests.
 
@@ -67,7 +67,7 @@ Use **“Preview configuration”** and **“Verify AIRK connection”** accurat
 
 | Surface | Required content and purpose |
 |---|---|
-| Status item and coverage details | Active folder/collection, current versus eligible files, scan time/completeness, stale/missing/failed counts and pending unsaved edits. Unknown stays unknown; zero eligible files is not 100%. Clicking requests indexing. |
+| Status item and coverage details | Active folder/collection, current versus eligible files, scan time/completeness, stale/missing/failed counts and pending unsaved edits. Unknown stays unknown; zero eligible files is not 100%. Clicking opens grouped controls, including Index Now. |
 | Controls | Index/reindex, mode, pause/resume, status, coverage, storage, collections, agent setup, connection verification and output. Describe automatic versus explicit actions. |
 | Storage and collection maintenance | Selected data directory, derived bytes, collection identity and removal consequences. Source files are preserved. Changing storage must explain whether it rebuilds or migrates. |
 | Usage report | Locally recorded aggregate activity/performance and recording health, measured stages/logical growth and supported host CPU/resource counters. Overlapping or unavailable counters stay unknown. Signed context estimates require a comparable baseline; optional client/session imports, local tokenizer calibration and supplied price scenarios retain provenance labels. State unknown/disabled/partial windows. Provider billing and full prompt usage are unobserved. |
