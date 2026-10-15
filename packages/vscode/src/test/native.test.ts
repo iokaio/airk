@@ -74,7 +74,29 @@ test('cached old helper survives extension replacement and a changed trusted hel
         assert.equal(createHash('sha256').update(await fs.readFile(oldCached)).digest('hex'), oldDigest);
         assert.equal((await runText(newCached, ['--version'])).trim(), `airk ${newVersion}`);
         assert.equal((await probeMcp(oldAgent, previousToolCount)).tools.length, previousToolCount, 'Existing agent command still works after replacement');
-        assert.equal((await probeMcp({ ...oldAgent, command: newCached })).tools.length, 16);
+        const newAgent = { ...oldAgent, command: newCached };
+        assert.equal((await probeMcp(newAgent)).tools.length, 16);
+        const readArguments = ['fixture.rs', '--start-line', '1', '--end-line', '1'];
+        const oldRead = await runJson<{ hits: { text: string }[] }>(oldAgent, 'read', readArguments);
+        assert.ok(oldRead.hits.some(hit => hit.text.includes('helper_upgrade_fixture')));
+
+        // Use a real new writer and explicit history enablement to establish the
+        // newer on-disk contract; do not fake a schema or helper version in files.
+        await runJson(newAgent, 'index', ['--full']);
+        await runJson(newAgent, 'collections', ['history', 'set', '--json', JSON.stringify({
+            version: 1, enabled: true, recent: 3, hourly_hours: 24,
+            max_packages: 12, max_bytes: 268435456, quota_basis_points: 1000
+        })]);
+        const beforeOldAttempt = await runJson<{ read: { publication: { token: string } }; hits: { text: string }[] }>(newAgent, 'read', readArguments);
+        assert.ok(beforeOldAttempt.hits.some(hit => hit.text.includes('helper_upgrade_fixture')));
+        await assert.rejects(runJson(oldAgent, 'read', readArguments), /unsupported.*(?:schema|format|version)|(?:schema|format|version).*unsupported/i,
+            'The preserved real old helper must fail closed on the newly enabled storage contract');
+        const afterOldAttempt = await runJson<{ read: { publication: { token: string } } }>(newAgent, 'read', readArguments);
+        assert.equal(afterOldAttempt.read.publication.token, beforeOldAttempt.read.publication.token);
+        assert.equal(await fs.readFile(path.join(root, 'fixture.rs'), 'utf8'), 'fn helper_upgrade_fixture() {}\n');
+        assert.equal(createHash('sha256').update(await fs.readFile(oldCached)).digest('hex'), oldDigest);
+        assert.equal((await runText(oldCached, ['--version'])).trim(), `airk ${oldVersion}`,
+            'Format rejection does not replace or disable the cached old executable');
     } finally { await removeFixture(directory, 'airk-helper-upgrade-'); }
 });
 
@@ -115,7 +137,7 @@ test('extension native adapter indexes, rebuilds, probes MCP, isolates and remov
         assert.ok(probe.tools.includes('airk_changes'));
         assert.ok(probe.tools.includes('airk_history'));
         const retention = await runJson<{ policy: { policy: { version: number; mode: string; searchable_predecessors: number } }; history_supported: boolean }>(spec, 'collections', ['retention', 'show']);
-        assert.equal(retention.history_supported, false);
+        assert.equal(retention.history_supported, true);
         assert.equal(retention.policy.policy.mode, 'automatic', 'New collections visibly use the qualified automatic default');
         const manualRetention = JSON.stringify({ ...retention.policy.policy, mode: 'manual' });
         await runJson(spec, 'collections', ['retention', 'preview', '--json', manualRetention]);
