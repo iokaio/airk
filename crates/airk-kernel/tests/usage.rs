@@ -622,14 +622,30 @@ fn native_jobs_record_actual_work_once_in_the_jobs_collection() -> anyhow::Resul
         false,
         airk_store::usage::unix_ms(),
     )?;
-    assert_eq!(host.run_scheduled_once()?.state, "failed");
+    let failed = host.run_scheduled_once()?;
+    assert_eq!(failed.state, "failed");
+    assert!(
+        failed
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("index writer locked")
+    );
     drop(writer);
     let report = target.usage_report(30)?;
-    assert_eq!(report.report.calls, 3);
-    assert_eq!(report.report.clients[&ClientFamily::NativeScheduler], 3);
+    // Usage recording is best effort. A contended Windows runner may drop the
+    // failed job's observation, but the loss must be visible in process health.
+    assert!((2..=3).contains(&report.report.calls));
+    if report.report.calls == 2 {
+        assert!(report.process_dropped_observations > 0);
+    }
+    assert_eq!(
+        report.report.clients[&ClientFamily::NativeScheduler],
+        report.report.calls
+    );
     let work = &report.report.operations[&UsageOperation::Index];
     assert_eq!(work.successful, 2);
-    assert_eq!(work.failed, 1);
+    assert_eq!(work.failed, report.report.calls - 2);
     assert_eq!(work.index_work.indexed, 1);
     assert_eq!(work.index_work.reused, 1);
     assert!(report.report.comparisons.is_empty());
