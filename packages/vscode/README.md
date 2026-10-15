@@ -20,6 +20,8 @@ Install the VSIX for your platform through **Extensions: Install from VSIX**. Op
 
 The AIRK Activity Bar view lists active and stored collections with indexing state, measured coverage when available, disk use and last successful index time. Inline actions index or reindex an active collection, pause auto-indexing for the window, and remove an inactive indexed collection after confirmation. An open workspace collection cannot be removed from the view.
 
+The **Get Started with AIRK** walkthrough in VS Code's Getting Started page links the four setup steps: choose local storage, choose an indexing mode, preview coding-agent setup, and verify the native MCP connection. Running a linked command marks its step complete; agent configuration still needs your review and application in that client.
+
 - **Index Now / Reindex Collection**: incremental indexing or full re-extraction.
 - **Choose Indexing Mode**: after edits settle (default), when idle, on save, or manual.
 - **Pause / Resume Auto-indexing**: preserve queued edits; an in-progress write finishes.
