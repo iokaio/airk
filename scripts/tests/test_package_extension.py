@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import hashlib
 import importlib.util
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -12,6 +13,25 @@ spec.loader.exec_module(package)
 
 
 class VsixContracts(unittest.TestCase):
+    def test_walkthrough_commands_and_media_are_packaged(self):
+        manifest = json.loads((package.EXTENSION / "package.json").read_text(encoding="utf-8"))
+        commands = {entry["command"] for entry in manifest["contributes"]["commands"]}
+        walkthroughs = manifest["contributes"]["walkthroughs"]
+        self.assertEqual(len(walkthroughs), 1)
+        steps = walkthroughs[0]["steps"]
+        self.assertEqual(len(steps), 4)
+        self.assertEqual(len({step["id"] for step in steps}), len(steps))
+        for step in steps:
+            event, = step["completionEvents"]
+            self.assertTrue(event.startswith("onCommand:"))
+            command = event.removeprefix("onCommand:")
+            self.assertIn(command, commands)
+            self.assertIn("(command:" + command + ")", step["description"])
+            image = step["media"]["image"]
+            self.assertTrue(step["media"]["altText"])
+            self.assertIn(image, {"images/" + name for name in package.ILLUSTRATIONS})
+            self.assertTrue((package.ROOT / "docs" / image).is_file())
+
     def test_runtime_import_closure_includes_controls_without_test_extras(self):
         with tempfile.TemporaryDirectory() as directory:
             compiled = Path(directory) / "compiled"

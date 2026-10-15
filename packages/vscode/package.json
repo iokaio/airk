@@ -20,6 +20,41 @@
     "mcpServerDefinitionProviders": [{ "id": "airk.collections", "label": "AIRK workspace collections" }],
     "viewsContainers": { "activitybar": [{ "id": "airk", "title": "AIRK", "icon": "images/airk.svg" }] },
     "views": { "airk": [{ "id": "airk.collectionsView", "name": "Collections" }] },
+    "walkthroughs": [{
+      "id": "airk.gettingStarted",
+      "title": "Get Started with AIRK",
+      "description": "Set up a local collection and connect a coding agent to bounded source evidence.",
+      "steps": [
+        {
+          "id": "airk.chooseStorageStep",
+          "title": "Choose index storage",
+          "description": "[Choose Index Storage Folder](command:airk.chooseStorage) to use a local drive, or leave the default per-user storage in place.",
+          "media": { "image": "images/local-evidence.png", "altText": "Local workspaces feed separate AIRK collections and coding agents." },
+          "completionEvents": ["onCommand:airk.chooseStorage"]
+        },
+        {
+          "id": "airk.indexModeStep",
+          "title": "Choose an indexing mode",
+          "description": "[Choose Indexing Mode](command:airk.indexMode) for edits, saves, idle time or manual indexing. Use Index Now to publish the first revision.",
+          "media": { "image": "images/index-to-context.png", "altText": "Saved files become a published index before an agent retrieves evidence." },
+          "completionEvents": ["onCommand:airk.indexMode"]
+        },
+        {
+          "id": "airk.setupAgentStep",
+          "title": "Set up a coding agent",
+          "description": "[Set Up Coding Agent](command:airk.setupAgent) previews a scoped MCP configuration for your selected client. Review and apply it in that client.",
+          "media": { "image": "images/local-evidence.png", "altText": "Coding agents connect to workspace-scoped AIRK collections." },
+          "completionEvents": ["onCommand:airk.setupAgent"]
+        },
+        {
+          "id": "airk.verifyMcpStep",
+          "title": "Verify the native connection",
+          "description": "[Verify Native MCP Connection](command:airk.verifyMcp) checks the local helper, tools and collection status. Enable the server separately in your coding agent.",
+          "media": { "image": "images/index-to-context.png", "altText": "An agent retrieves bounded evidence from a published local collection." },
+          "completionEvents": ["onCommand:airk.verifyMcp"]
+        }
+      ]
+    }],
     "menus": {
       "view/title": [{ "command": "airk.treeRefresh", "when": "view == airk.collectionsView", "group": "navigation" }],
       "view/item/context": [
