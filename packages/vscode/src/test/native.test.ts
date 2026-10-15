@@ -158,10 +158,12 @@ test('extension native adapter indexes, rebuilds, probes MCP, isolates and remov
         const extension = path.join(directory, 'extension'), native = path.join(extension, 'native'); await fs.mkdir(native, { recursive: true });
         const executable = process.platform === 'win32' ? 'airk.exe' : 'airk', binary = await fs.readFile(command);
         await fs.writeFile(path.join(native, executable), binary);
-        await fs.writeFile(path.join(native, 'manifest.json'), JSON.stringify({ version: '0.1.0', vsix_target: `${process.platform}-${process.arch}`,
+        // The real helper reports the workspace version, which must match the extension package.
+        const version: string = require('../../package.json').version;
+        await fs.writeFile(path.join(native, 'manifest.json'), JSON.stringify({ version, vsix_target: `${process.platform}-${process.arch}`,
             payload: { [executable]: createHash('sha256').update(binary).digest('hex') } }));
-        const cached = await prepareHelper(extension, path.join(directory, 'cache'), '0.1.0');
+        const cached = await prepareHelper(extension, path.join(directory, 'cache'), version);
         assert.ok(cached.startsWith(path.join(directory, 'cache')));
-        assert.equal(await prepareHelper(extension, path.join(directory, 'cache'), '0.1.0'), cached);
+        assert.equal(await prepareHelper(extension, path.join(directory, 'cache'), version), cached);
     } finally { await removeFixture(directory, 'airk-native-extension-'); }
 });
