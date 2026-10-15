@@ -12,7 +12,15 @@ use sha2::{Digest, Sha256};
 pub(crate) fn is_host(id: &str) -> bool {
     matches!(
         id,
-        "html" | "vue" | "svelte" | "astro" | "mdx" | "notebook" | "razor"
+        "html"
+            | "vue"
+            | "svelte"
+            | "astro"
+            | "mdx"
+            | "notebook"
+            | "razor"
+            | "rmd"
+            | "haskell-literate"
     )
 }
 
@@ -51,6 +59,38 @@ pub(crate) fn extract(
     let mut budget = HostBudget::new(500_000, 10_000, 16_777_216)?;
     let mut exclusions = Vec::new();
     let (mut regions, mut facts, diagnostics, partial) = match profile.adapter_id.as_str() {
+        "haskell-literate" => {
+            let found = crate::languages_b_functional::literate::discover(path, text, &mut budget)?;
+            exclusions = found.exclusions;
+            let regions = found
+                .regions
+                .into_iter()
+                .enumerate()
+                .map(|(index, child)| {
+                    let local_span = ByteSpan {
+                        start: 0,
+                        end: child.text.len(),
+                    };
+                    let original_spans = child
+                        .source_map
+                        .original_spans(local_span, &child.text, text)?
+                        .context("literate region must map to original source")?;
+                    Ok(LocalRegion {
+                        id: index as u32,
+                        parent: None,
+                        profile: registry.get("haskell").unwrap().profile.clone(),
+                        text: child.text,
+                        source_map: child.source_map,
+                        location: RegionLocation::Embedded {
+                            region_id: format!("{}:{index}", child.kind),
+                            local_span,
+                            original_spans,
+                        },
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?;
+            (regions, vec![], found.diagnostics, found.partial)
+        }
         "notebook" => {
             let found = crate::notebook::discover(path, text, &mut budget)?;
             (found.regions, found.facts, found.diagnostics, found.partial)
@@ -61,6 +101,12 @@ pub(crate) fn extract(
         }
         id => {
             let found = match id {
+                "rmd" => {
+                    let found =
+                        crate::languages_b_r_perl_groovy::rmd::discover(path, text, &mut budget)?;
+                    exclusions = found.exclusions;
+                    found.host
+                }
                 "html" => crate::host_html::discover(path, text, &mut budget)?,
                 "vue" | "svelte" => crate::host_components::discover(path, text, id, &mut budget)?,
                 "astro" | "mdx" => {
@@ -107,7 +153,10 @@ pub(crate) fn extract(
         }
     };
     let mut prose_text = None;
-    if profile.adapter_id == "mdx" {
+    if matches!(
+        profile.adapter_id.as_str(),
+        "mdx" | "rmd" | "haskell-literate"
+    ) {
         // Preserve offsets while suppressing syntax islands from the prose pass.
         let mut masked = bytes.to_vec();
         for span in &exclusions {
@@ -140,6 +189,8 @@ pub(crate) fn extract(
         if !matches!(
             child_id,
             "markdown"
+                | "r"
+                | "haskell"
                 | "rust"
                 | "python"
                 | "javascript"

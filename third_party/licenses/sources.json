@@ -412,6 +412,20 @@
     "missing_text": false
   },
   {
+    "name": "tree-sitter-julia",
+    "version": "0.23.1",
+    "revision": "a8e1262997d5a45520a06cbe1b86c0737d507054",
+    "repository": "https://github.com/tree-sitter/tree-sitter-julia",
+    "files": [
+      {
+        "file": "LICENSE",
+        "url": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-julia/a8e1262997d5a45520a06cbe1b86c0737d507054/LICENSE",
+        "sha256": "74f800107f200f4e28da33e9c3f86230d37d8f4c0a4916f7111e800c395ee3a2"
+      }
+    ],
+    "missing_text": false
+  },
+  {
     "name": "tree-sitter-kotlin-ng",
     "version": "1.1.0",
     "revision": "77dd60ea0a9003ce062c9728a513ffe1aaff8c82",
@@ -519,6 +533,20 @@
         "file": "LICENSE",
         "url": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-typescript/f975a621f4e7f532fe322e13c4f79495e0a7b2e7/LICENSE",
         "sha256": "49bf33cf78ef5897e4e161ce1517df7de1ae5042a65b6bcfd44401e0fc606559"
+      }
+    ],
+    "missing_text": false
+  },
+  {
+    "name": "tree-sitter-zig",
+    "version": "1.1.2",
+    "revision": "b670c8df85a1568f498aa5c8cae42f51a90473c0",
+    "repository": "https://github.com/tree-sitter-grammars/tree-sitter-zig",
+    "files": [
+      {
+        "file": "LICENSE",
+        "url": "https://raw.githubusercontent.com/tree-sitter-grammars/tree-sitter-zig/b670c8df85a1568f498aa5c8cae42f51a90473c0/LICENSE",
+        "sha256": "0eea8dc45e89deeb03c7799bbbc7b4688f365fb274562f4540ecfebdea82e727"
       }
     ],
     "missing_text": false

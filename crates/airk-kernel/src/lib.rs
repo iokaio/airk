@@ -869,7 +869,15 @@ impl Kernel {
     ) -> Result<Artifact> {
         if matches!(
             artifact.language.as_str(),
-            "html" | "vue" | "svelte" | "astro" | "mdx" | "notebook" | "razor"
+            "html"
+                | "vue"
+                | "svelte"
+                | "astro"
+                | "mdx"
+                | "notebook"
+                | "razor"
+                | "rmd"
+                | "haskell-literate"
         ) && artifact.extraction_method == "utf8"
             && catalog
                 .snapshot
@@ -877,7 +885,7 @@ impl Kernel {
                 .get(&artifact.path)
                 .and_then(|entry| entry.retained.as_ref())
                 .and_then(|r| r.profile.as_ref())
-                .is_some_and(|profile| profile.adapter_version == "composite-facts/1")
+                .is_some_and(|profile| profile.contract_version == 2)
         {
             let entry = catalog
                 .snapshot

@@ -310,8 +310,11 @@ pub fn describe_with_prose_text(
     payload.validate()?;
     if let Some(masked) = prose_text {
         ensure!(
-            profile.adapter_id == "mdx",
-            "prose mask is only supported for MDX"
+            matches!(
+                profile.adapter_id.as_str(),
+                "mdx" | "rmd" | "haskell-literate"
+            ),
+            "prose mask is only supported for qualified Markdown hosts"
         );
         ensure!(
             masked.len() == payload.text.len(),
@@ -330,7 +333,7 @@ pub fn describe_with_prose_text(
     let supported = native(profile)
         || matches!(
             profile.language.as_str(),
-            "markdown" | "instruction-markdown" | "text" | "mdx"
+            "markdown" | "instruction-markdown" | "text" | "mdx" | "rmd" | "haskell-literate"
         )
         || payload.facts.iter().any(|fact| fact.document.is_some())
         || !payload.regions.is_empty();
@@ -442,20 +445,27 @@ pub fn describe_with_prose_text(
                 .push(fact);
         }
     }
-    if profile.adapter_id == "mdx" && prose_text.is_none() {
+    if matches!(
+        profile.adapter_id.as_str(),
+        "mdx" | "rmd" | "haskell-literate"
+    ) && prose_text.is_none()
+    {
         builder.partial("MDX paragraph continuity requires the qualified host prose mask");
     }
     if !native(profile)
         && (matches!(
             profile.language.as_str(),
             "markdown" | "instruction-markdown" | "text"
-        ) || (profile.adapter_id == "mdx" && prose_text.is_some()))
+        ) || (matches!(
+            profile.adapter_id.as_str(),
+            "mdx" | "rmd" | "haskell-literate"
+        ) && prose_text.is_some()))
     {
         let units = match crate::prose::continuity_units(
             prose_text.unwrap_or(&payload.text),
             matches!(
                 profile.language.as_str(),
-                "markdown" | "instruction-markdown" | "mdx"
+                "markdown" | "instruction-markdown" | "mdx" | "rmd" | "haskell-literate"
             ),
         ) {
             Ok(units) => units,

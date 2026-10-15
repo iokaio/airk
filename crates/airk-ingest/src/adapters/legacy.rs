@@ -129,6 +129,15 @@ pub fn convert_native_legacy(
             );
             ensure!(
                 code.producer.starts_with("airk-tree-sitter/")
+                    || (code.basis == EvidenceBasis::StructuralRule
+                        && code.producer_version == "general-b-facts/1"
+                        && ((matches!(
+                            profile.adapter_id.as_str(),
+                            "r" | "gradle-groovy" | "clojure" | "edn"
+                        ) && code.producer
+                            == format!("airk-language-structure/{}", profile.adapter_id))
+                            || (profile.adapter_id == "rmd"
+                                && code.producer == "airk-host-structure/rmd")))
                     || (profile.adapter_id == "elixir"
                         && code.basis == EvidenceBasis::StructuralRule
                         && code.producer == "airk-language-structure/elixir"

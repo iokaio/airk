@@ -26,9 +26,22 @@ Native support means the shipped binary contains the parser/extractor. No Python
 | Scala | scala, sc | Packages/imports, classes/objects/traits, defs/vals/types and selected calls; braced and selected Scala 3 forms |
 | Elixir | ex, exs | Structural literal module/function/macro heads, written arity/guards, aliases/imports/uses/requires and calls; quoted macro bodies excluded |
 | Objective-C / Objective-C++ | qualified m; mm | Interfaces/implementations/protocols/categories, selectors/properties/imports and messages; mixed C++ is explicitly partial |
+| R | r, R | Written assignments/function bindings, selected calls and literal package-load candidates; no R evaluation |
+| Perl | qualified pl, pm, t | Packages, named subroutines/methods, use/literal require and selected calls; ambiguous suffixes require a strong discriminator or policy |
+| Groovy | groovy | Packages/imports, classes/methods, selected closures and written calls |
+| Nix | nix | Attribute bindings, named lambdas, applications and written import arguments; no evaluation |
+| Zig | zig | Functions, container declarations, variables, tests and written builtins/imports; no comptime execution |
+| Julia | jl | Modules, functions/types/macros, selected short methods, using/import/export and calls; no macro expansion or dispatch resolution |
+| Clojure | clj, cljs, cljc | Structural namespace/require and written definition/call forms; reader-conditional feature context retained without branch selection |
+| OCaml | ml, mli | Modules/module types/types/values/functions/exceptions/open/include; separate interface grammar and written signatures |
+| Haskell | hs | Modules/imports/signatures/data/type aliases/classes/instances/bindings; no typeclass resolution |
+| Erlang | erl, hrl | Modules/exports/imports/includes/specs/records/functions and written arities/calls/macros; no preprocessor expansion |
+| F# | fs, fsi, fsx | Namespaces/modules/open/types/members/let bindings, separate signature grammar and written script directives |
 | SQL | sql; explicit `sql-postgresql` / `sql-mysql` overrides | SELECT/query scopes, CTEs, joins, aliases, written references and selected DDL; dialect semantics are not validated |
 
 These are bounded grammar profiles, not complete compiler/type-system semantics. Declarations containing grammar errors are suppressed and file_info reports partial-syntax. Macros, overloaded/dynamic names and cross-file references remain unresolved. A `.h` file defaults to C; explicit overrides or qualified [captured header context](extraction-policy.md#captured-header-context) can select C++. Grammar-recognized syntax does not guarantee that every declaration has a named fact extractor.
+
+P10 focused qualification passed 18 adapter unit tests and native grammar builds on Windows, and 19 kernel pipeline cases on Linux. Those cases cover original retained bytes, warm and compatible-move reuse, bounded key queries where native continuity is qualified, and profile changes without unrelated-file reparsing. Final P12 platform qualification remains pending. Clojure/EDN and Gradle structural cues do not imply native declaration continuity; unknown body/documentation dimensions remain unknown. See the [first](v2-general-languages-b-first.md), [data](v2-general-languages-b-data.md), and [functional](v2-general-languages-b-functional.md) batch receipts for exact dependencies and limits.
 
 Explicit PostgreSQL/MySQL profiles add separately labeled structural procedure evidence for selected complete headers and bodies. PostgreSQL accepts qualified SQL/PLpgSQL literal or dollar-quoted bodies; MySQL accepts selected nested BEGIN/END bodies with ordinary semicolon framing. Delimiter changes, unsupported control-flow and quote modes remain partial. This does not qualify Oracle or SQL Server procedural dialects.
 
@@ -38,6 +51,9 @@ Explicit PostgreSQL/MySQL profiles add separately labeled structural procedure e
 |---|---|---|
 | Markdown | Heading hierarchy, tables, requirement/date/design/architecture/feature/decision candidates; lexical source | Source lines; code examples excluded from prose cues |
 | MDX | Preserved Markdown prose plus bounded standalone ESM/JSX/expression islands | Original host spans and region-local code; mixed inline syntax remains partial |
+| R Markdown `.Rmd` | Preserved prose and supported labeled code chunks under shared host budgets | Exact original raw body spans; no knitr execution; unsupported engines/indented transformations remain partial |
+| Literate Haskell `.lhs` | Preserved prose and bounded Bird/LaTeX Haskell regions | Bird prefix gaps map to original bytes; CRLF retained, no generated wrappers; separate regions have independent parsing scopes |
+| EDN `.edn` | Structural data maps and keys | Data list values never become executable Clojure declarations or calls; unsupported reader forms remain partial |
 | JSON / JSONC | Tree-sitter object keys | Source lines; comments/nonstandard syntax may produce partial-syntax |
 | YAML / TOML | Native mapping keys/tables | Source lines; key names are local, not fully qualified paths |
 | HTML | Tags plus supported JS/TS and CSS/SCSS script/style blocks | Exact mapped child spans; linked resources are not fetched |
@@ -74,6 +90,7 @@ Explicit local OCR supports selected PDF pages and PNG/JPEG/BMP inputs using pro
 | Compose: `compose.yaml`, `compose.yml`, `docker-compose.yml`, `docker-compose.yaml` | Services/images/build contexts/dependencies/networks/volumes and written configuration |
 | Bazel/Starlark: `BUILD`, `BUILD.bazel`, `.bzl` | Written loads, rules/targets, labels/dependencies and macros; bounded Python-grammar subset |
 | Gradle Kotlin: `.gradle.kts` | Kotlin declarations plus selected plugins/tasks/modules/configurations/dependencies; arbitrary computed receivers remain unknown |
+| Gradle Groovy: `.gradle` | Groovy declarations plus structural plugins/tasks/modules/configurations/dependencies; no build evaluation or dependency resolution |
 | Kubernetes: recognized YAML documents | apiVersion/kind/metadata, resources, selectors and written references across bounded multiple documents |
 | OpenAPI: recognized YAML/JSON | Paths/methods/operations/parameters/schema/request/response facts and reference spellings; bounded same-document traversal |
 | GitLab: recognized `.gitlab-ci.yml` | Jobs/stages/needs/dependencies/artifacts/includes, without fetching includes |

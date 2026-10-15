@@ -101,6 +101,71 @@ impl AdapterRegistry {
             ("go", "tree-sitter-go/0.25.0", "go", true, true),
             ("java", "tree-sitter-java/0.23.5", "java", true, true),
             ("dart", "tree-sitter-dart/0.2.0", "dart", true, true),
+            ("r", "tree-sitter-r/1.3.0", "r", true, true),
+            ("ocaml", "tree-sitter-ocaml/0.26.0/ocaml", "ml", true, true),
+            (
+                "ocaml-interface",
+                "tree-sitter-ocaml/0.26.0/interface",
+                "mli",
+                true,
+                true,
+            ),
+            ("haskell", "tree-sitter-haskell/0.24.1", "hs", true, true),
+            (
+                "haskell-literate",
+                "tree-sitter-haskell/0.24.1",
+                "lhs",
+                true,
+                true,
+            ),
+            ("erlang", "tree-sitter-erlang/0.21.0", "erl hrl", true, true),
+            (
+                "fsharp",
+                "tree-sitter-fsharp/0.3.12/fsharp",
+                "fs fsx",
+                true,
+                true,
+            ),
+            (
+                "fsharp-signature",
+                "tree-sitter-fsharp/0.3.12/signature",
+                "fsi",
+                true,
+                true,
+            ),
+            ("nix", "tree-sitter-nix/0.3.0", "nix", true, true),
+            ("zig", "tree-sitter-zig/1.1.2", "zig", true, true),
+            ("julia", "tree-sitter-julia/0.23.1", "jl", true, true),
+            (
+                "clojure",
+                "tree-sitter-clojure/0.1.0",
+                "clj cljs cljc",
+                true,
+                true,
+            ),
+            ("edn", "tree-sitter-clojure/0.1.0", "edn", false, false),
+            ("perl", "ts-parser-perl/2.0.0", "", true, true),
+            (
+                "groovy",
+                "dekobon-tree-sitter-groovy/0.3.0",
+                "groovy",
+                true,
+                true,
+            ),
+            (
+                "gradle-groovy",
+                "dekobon-tree-sitter-groovy/0.3.0",
+                "gradle",
+                true,
+                true,
+            ),
+            (
+                "rmd",
+                "pulldown-cmark/0.10+tree-sitter-r/1.3.0",
+                "rmd",
+                true,
+                true,
+            ),
             ("scala", "tree-sitter-scala/0.25.1", "scala sc", true, true),
             ("elixir", "tree-sitter-elixir/0.3.5", "ex exs", true, true),
             ("objc", "tree-sitter-objc/3.0.2", "", true, true),
@@ -219,7 +284,9 @@ impl AdapterRegistry {
         ] {
             let structured = matches!(
                 id,
-                "elixir"
+                "clojure"
+                    | "edn"
+                    | "elixir"
                     | "json"
                     | "yaml"
                     | "toml"
@@ -284,7 +351,17 @@ impl AdapterRegistry {
                 },
             );
         }
-        for id in ["html", "vue", "svelte", "astro", "mdx", "notebook", "razor"] {
+        for id in [
+            "html",
+            "vue",
+            "svelte",
+            "astro",
+            "mdx",
+            "notebook",
+            "razor",
+            "rmd",
+            "haskell-literate",
+        ] {
             let descriptor = registry
                 .entries
                 .get_mut(id)
@@ -364,6 +441,26 @@ impl AdapterRegistry {
                             | "instruction-markdown"
                     ) {
                         "project-facts/1"
+                    } else if matches!(
+                        id,
+                        "r" | "perl"
+                            | "groovy"
+                            | "gradle-groovy"
+                            | "rmd"
+                            | "nix"
+                            | "zig"
+                            | "julia"
+                            | "clojure"
+                            | "edn"
+                            | "ocaml"
+                            | "ocaml-interface"
+                            | "haskell"
+                            | "haskell-literate"
+                            | "erlang"
+                            | "fsharp"
+                            | "fsharp-signature"
+                    ) {
+                        "general-b-facts/1"
                     } else if matches!(id, "dart" | "scala" | "elixir" | "objc" | "objcpp") {
                         "general-facts/1"
                     } else if matches!(id, "php" | "ruby" | "sql" | "sql-postgresql" | "sql-mysql")
@@ -440,6 +537,15 @@ impl AdapterRegistry {
                 ],
                 "razor" => &["csharp"],
                 "mdx" => &["markdown", "tsx"],
+                "haskell-literate" => &["markdown", "haskell"],
+                "rmd" => &[
+                    "markdown",
+                    "r",
+                    "python",
+                    "javascript",
+                    "typescript",
+                    "bash",
+                ],
                 _ => &["javascript", "typescript", "css", "scss"],
             };
             for child in children {
@@ -524,6 +630,23 @@ impl AdapterRegistry {
         source: &[u8],
     ) -> anyhow::Result<Selection> {
         let mut selected = self.select_default(path);
+        if path
+            .rsplit_once('.')
+            .is_some_and(|(_, suffix)| matches!(suffix, "pl" | "pm" | "t"))
+            && source[..source.len().min(256)]
+                .split(|byte| *byte == b'\n')
+                .next()
+                .is_some_and(|line| {
+                    line.starts_with(b"#!")
+                        && line
+                            .split(|byte| byte.is_ascii_whitespace() || *byte == b'/')
+                            .any(|word| word == b"perl")
+                })
+        {
+            selected.profile = self.effective_profile(path, "perl")?;
+            selected.basis = "bounded_perl_shebang".into();
+            return Ok(selected);
+        }
         if path.to_ascii_lowercase().ends_with(".m") && objective_c_prefix(source) {
             selected.profile = self.effective_profile(path, "objc")?;
             selected.basis = "bounded_objective_c_discriminator".into();
@@ -625,7 +748,7 @@ impl AdapterRegistry {
                 "SQL dialect unselected; written syntax does not establish dialect semantics"
                     .into(),
             ],
-            "m" | "pl" | "cls" | "v" | "s" | "S" => vec![format!(
+            "m" | "pl" | "pm" | "t" | "cls" | "v" | "s" | "S" => vec![format!(
                 "Ambiguous suffix .{suffix}; no qualified default language"
             )],
             _ => vec![],
@@ -703,6 +826,44 @@ mod tests {
         }
         assert_eq!(r.select_default("x.S").profile.language, "text");
         assert!(!r.select_default("x.S").ambiguity.is_empty());
+    }
+
+    #[test]
+    fn r_and_gradle_are_selected_but_ambiguous_perl_requires_a_shebang() -> anyhow::Result<()> {
+        let registry = AdapterRegistry::baseline();
+        for (path, id) in [
+            ("x.R", "r"),
+            ("x.r", "r"),
+            ("x.Rmd", "rmd"),
+            ("build.gradle", "gradle-groovy"),
+            ("x.groovy", "groovy"),
+        ] {
+            assert_eq!(registry.select_default(path).profile.adapter_id, id);
+        }
+        for path in ["x.pl", "x.pm", "x.t"] {
+            assert_eq!(
+                registry
+                    .select_with_prefix(path, b"# example perl\n")?
+                    .profile
+                    .adapter_id,
+                "text"
+            );
+            assert_eq!(
+                registry
+                    .select_with_prefix(path, b"#!/usr/bin/env perl\npackage Archive;\n")?
+                    .profile
+                    .adapter_id,
+                "perl"
+            );
+            assert_eq!(
+                registry
+                    .select_with_prefix(path, b"#!/usr/bin/perl-like\n")?
+                    .profile
+                    .adapter_id,
+                "text"
+            );
+        }
+        Ok(())
     }
 
     #[test]

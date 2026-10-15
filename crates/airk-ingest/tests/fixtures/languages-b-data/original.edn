@@ -1,0 +1,1 @@
+{:title "café" :dependencies {archive/core "1.0"} :example (defn phantom [] nil)}

@@ -1,0 +1,18 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+# Archive café 🦀
+
+REQ-920: Preserve the original bounded archive description.
+
+```{r render, echo=FALSE}
+render <- function(value) { print(value) }
+render("archive")
+```
+
+```{python helper}
+def helper(value):
+    return value
+```
+
+```r
+phantom <- function() { stop("example only") }
+```
