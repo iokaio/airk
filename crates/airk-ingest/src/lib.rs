@@ -21,6 +21,7 @@ mod host_components;
 mod host_html;
 mod host_prose;
 mod instruction_documents;
+mod languages_a;
 mod msbuild;
 mod notebook;
 pub mod observations;

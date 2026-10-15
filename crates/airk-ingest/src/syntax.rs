@@ -32,6 +32,9 @@ pub(crate) fn analyze_selected(
     adapter_id: &str,
 ) -> anyhow::Result<Analysis> {
     match adapter_id {
+        "dart" | "scala" | "elixir" | "objc" | "objcpp" => {
+            return crate::languages_a::analyze(path, text, adapter_id);
+        }
         "scss" => return crate::scss::analyze(path, text),
         "cmake" => return crate::build_cmake::analyze(path, text),
         "make" => return crate::build_make::analyze(path, text),
@@ -602,6 +605,73 @@ fn code_evidence(
 
 pub(crate) fn informative_body(body: Node<'_>, text: &str) -> bool {
     informative_body_with_budget(body, text, None).unwrap_or(false)
+}
+
+/// Complete original declaration inputs for adapters with dedicated node mappings.
+/// `None` means unknown, including documentation; `Some(&[])` means known absence.
+pub(crate) fn declaration_fingerprints(
+    source: &str,
+    name: &str,
+    qualified_parts: &[&str],
+    signature: Option<airk_core::location::ByteSpan>,
+    body: Option<Node<'_>>,
+    documentation: Option<&[airk_core::location::ByteSpan]>,
+    budget: &mut HostBudget,
+) -> anyhow::Result<CodeFingerprints> {
+    let read = |span: airk_core::location::ByteSpan| -> anyhow::Result<&str> {
+        span.validate(source)?;
+        Ok(&source[span.start..span.end])
+    };
+    let signature = signature.map(read).transpose()?;
+    let body_text = body
+        .map(|node| {
+            read(airk_core::location::ByteSpan {
+                start: node.start_byte(),
+                end: node.end_byte(),
+            })
+        })
+        .transpose()?;
+    let docs = documentation
+        .map(|spans| {
+            spans
+                .iter()
+                .copied()
+                .map(read)
+                .collect::<anyhow::Result<Vec<_>>>()
+        })
+        .transpose()?;
+    let needed = qualified_parts
+        .iter()
+        .fold(name.len().saturating_mul(2), |sum, part| {
+            sum.saturating_add(part.len())
+        })
+        .saturating_add(signature.map_or(0, str::len))
+        .saturating_add(body_text.map_or(0, str::len))
+        .saturating_add(
+            docs.as_ref()
+                .map_or(0, |docs| docs.iter().map(|doc| doc.len()).sum()),
+        );
+    budget.charge_fingerprints(needed)?;
+    let mut qualified: Vec<&[u8]> = qualified_parts.iter().map(|part| part.as_bytes()).collect();
+    qualified.push(name.as_bytes());
+    Ok(CodeFingerprints {
+        version: 1,
+        name: Some(framed_digest(b"code-name/1", &[name.as_bytes()])),
+        qualified_name: Some(framed_digest(b"code-qualified-name/1", &qualified)),
+        signature: signature.map(|value| framed_digest(b"code-signature/1", &[value.as_bytes()])),
+        body: body_text.map(|value| framed_digest(b"code-body/1", &[value.as_bytes()])),
+        body_informative: if let Some(body) = body {
+            informative_body_with_budget(body, source, Some(budget))?
+        } else {
+            false
+        },
+        documentation: docs.map(|docs| {
+            framed_digest(
+                b"code-documentation/1",
+                &docs.iter().map(|doc| doc.as_bytes()).collect::<Vec<_>>(),
+            )
+        }),
+    })
 }
 
 fn informative_body_with_budget(
