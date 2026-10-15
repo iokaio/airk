@@ -15,6 +15,15 @@ function addTreeApi(stub: any, capture?: (provider: any) => void): void {
         return { dispose() {} };
     };
 }
+function addReportApi(stub: any): void {
+    stub.ViewColumn = { Active: 1 };
+    stub.window.createWebviewPanel = () => ({
+        webview: { html: '', onDidReceiveMessage: (handler: (message: unknown) => void) => {
+            handler({ type: 'ignored' }); handler({ type: 'openJson' }); return { dispose() {} };
+        } },
+        onDidDispose: () => ({ dispose() {} })
+    });
+}
 
 test('untrusted workspaces expose no MCP servers and commands cannot launch a helper', async () => {
     const commands = new Map<string, () => Promise<unknown>>(); const errors: string[] = []; let provider: any;
@@ -160,6 +169,7 @@ test('multi-root Index Now selects the active folder and coverage refresh never 
         EventEmitter: class { private readonly ordinal = ++emitters; event = event; fire() { if (this.ordinal === 1) { notifications++; } } dispose() {} }, lm: {}
     };
     addTreeApi(stub);
+    addReportApi(stub);
     const loader = Module as unknown as { _load: (...args: any[]) => any }, original = loader._load;
     const native = require('../native'), priorPrepare = native.prepareHelper, priorRun = native.runJson;
     native.prepareHelper = async () => '/fixture/airk';
@@ -180,7 +190,9 @@ test('multi-root Index Now selects the active folder and coverage refresh never 
         let indexes = calls.filter(call => call.command === 'index');
         assert.equal(indexes.length, 1); assert.equal(indexes[0].spec.root, await fs.realpath(roots[1])); assert.equal(choices, 0);
         assert.ok(indexes[0].extra.includes('--scheduled'));
+        const beforeJson = documents.length;
         await commands.get('airk.status')!(); assert.equal(notifications, initialNotifications);
+        assert.equal(documents.length, beforeJson + 1, 'Only Open as JSON creates a diagnostic document');
         window.activeTextEditor.document.uri.fsPath = path.join(roots[2], 'nested.ts');
         await commands.get('airk.index')!(); indexes = calls.filter(call => call.command === 'index');
         assert.equal(indexes[1].spec.root, await fs.realpath(roots[2]), 'The most specific opened workspace alias must win');
@@ -239,6 +251,7 @@ test('coverage and indexing share native writer exclusion and command failures r
         EventEmitter: class { event = event; fire() {} dispose() {} }, lm: {}
     };
     addTreeApi(stub);
+    addReportApi(stub);
     const loader = Module as unknown as { _load: (...args: any[]) => any }, original = loader._load;
     const native = require('../native'), priorPrepare = native.prepareHelper, priorRun = native.runJson;
     native.prepareHelper = async () => '/fixture/airk';
