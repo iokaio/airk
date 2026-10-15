@@ -18,6 +18,7 @@ TARGETS = {"x86_64-pc-windows-msvc": "win32-x64", "x86_64-unknown-linux-gnu": "l
 MODULES = ("extension.js", "model.js", "native.js", "scheduler.js", "coverage.js",
            "retention.js", "extractionPolicy.js", "history.js")
 ILLUSTRATIONS = ("local-evidence.png", "index-to-context.png")
+ICONS = ("airk.svg",)
 
 
 def digest(data):
@@ -157,6 +158,11 @@ def main():
         shutil.copyfile(source, stage / "images" / name)
         listing = listing.replace("https://raw.githubusercontent.com/iokaio/airk/main/docs/images/" + name,
                                   "images/" + name)
+    for name in ICONS:
+        source = EXTENSION / "images" / name
+        if source.is_symlink() or not source.is_file() or source.stat().st_size > 16_384:
+            raise SystemExit("Invalid or oversized extension icon: " + name)
+        shutil.copyfile(source, stage / "images" / name)
     (stage / "README.md").write_text(listing, encoding="utf-8")
     for name in ("LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"):
         shutil.copyfile(ROOT / name, stage / name)

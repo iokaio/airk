@@ -12,6 +12,27 @@ import { historyControl, HistoryAction } from './history';
 
 interface KnownCollection { name: string; root: string; lastIndexed?: string }
 interface PruneReport { dry_run: boolean; reclaimable_bytes: number; removed_bytes: number; candidates: string[]; pinned: string[]; unreferenced_objects?: number; receipt_cleanup_pending?: boolean }
+class CollectionItem extends vscode.TreeItem {
+    constructor(readonly collection: string, readonly dataDir: string, readonly active: boolean, removable: boolean, name: string,
+        state: string, coverage: string, bytes: number | undefined, lastIndexed: string | undefined, root: string | undefined) {
+        super(name, vscode.TreeItemCollapsibleState.None);
+        this.contextValue = active ? 'airkActiveCollection' : removable ? 'airkInactiveCollection' : 'airkUnavailableCollection';
+        const size = bytes == null ? 'size unknown' : `${(bytes / 1048576).toFixed(2)} MiB`;
+        const last = lastIndexed ? new Date(lastIndexed).toLocaleString() : 'never';
+        this.description = `${state} · ${coverage} · ${size} · indexed ${last}`;
+        this.tooltip = `${name}\n${root ?? collection}\nState: ${state}\nCoverage: ${coverage}\nDisk use: ${size}\nLast indexed: ${last}`;
+        this.iconPath = new vscode.ThemeIcon(state === 'paused' ? 'debug-pause' : state === 'indexed' ? 'database' : 'clock');
+    }
+}
+class CollectionTree implements vscode.TreeDataProvider<CollectionItem> {
+    readonly changed = new vscode.EventEmitter<void>();
+    readonly onDidChangeTreeData = this.changed.event;
+    constructor(private readonly controller: Controller) {}
+    getTreeItem(item: CollectionItem): vscode.TreeItem { return item; }
+    getChildren(): Promise<CollectionItem[]> { return this.controller.collectionTreeItems(); }
+    refresh(): void { this.changed.fire(); }
+    dispose(): void { this.changed.dispose(); }
+}
 const locations: Record<Client, string> = {
     vscode: 'VS Code: use MCP: List Servers to enable the registered AIRK collection, or merge into .vscode/mcp.json.',
     claude: 'Claude Code: merge into project .mcp.json, then review and enable the server in Claude Code.',
@@ -33,6 +54,7 @@ class Controller implements vscode.Disposable {
     readonly output = vscode.window.createOutputChannel('AIRK');
     readonly status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 40);
     readonly definitions = new vscode.EventEmitter<void>();
+    readonly collectionTree = new CollectionTree(this);
     readonly scheduler: Scheduler;
     private readonly coverage: CoverageQueue;
     private readonly nativeWrites = new NativeWriteQueue();
@@ -44,6 +66,7 @@ class Controller implements vscode.Disposable {
     private refreshRevision = 0;
     private refreshing = false;
     private disposed = false;
+    private treeUsage?: { dataDir: string; updated: number; entries: Usage[] };
 
     constructor(private readonly context: vscode.ExtensionContext) {
         this.status.command = 'airk.menu'; this.status.show();
@@ -114,6 +137,7 @@ class Controller implements vscode.Disposable {
             if (revision !== this.refreshRevision || this.disposed) { return; }
             const storageChanged = [...this.specs.values()].some(spec => next.has(spec.collection) && next.get(spec.collection)?.dataDir !== spec.dataDir);
             if (storageChanged && this.scheduler.isBusy) { throw new Error('Wait for the running index job to finish, then refresh AIRK controls.'); }
+            if (storageChanged) { this.treeUsage = undefined; }
             for (const old of this.specs.values()) {
                 if (!next.has(old.collection) || next.get(old.collection)?.dataDir !== old.dataDir) { this.scheduler.forget(old.collection); this.coverage.forget(old.collection); }
             }
@@ -148,6 +172,7 @@ class Controller implements vscode.Disposable {
             : state?.state === 'failed' ? 'Failed' : state?.state === 'paused' ? 'Paused' : !spec ? this.specs.size ? 'Choose folder' : 'Open a folder'
             : coverageLabel(view || undefined);
         this.status.text = `$(database) AIRK: ${summary}`;
+        this.collectionTree.refresh();
         const unsaved = spec ? (vscode.workspace.textDocuments ?? []).filter(document => document.isDirty && eligibleEvent(this.sourcePath(document.uri.fsPath), spec.root, spec.dataDir)).length : 0;
         this.status.tooltip = spec ? coverageDetails(spec.name, view || undefined, unsaved)
             + `\n${retentionSummary(this.retentionViews.get(JSON.stringify([spec.dataDir, spec.collection])))}`
@@ -217,7 +242,58 @@ class Controller implements vscode.Disposable {
         known[spec.collection] = { name: spec.name, root: spec.root, lastIndexed: new Date().toISOString() };
         await this.context.globalState.update('collections', known);
         await this.refreshRetention(spec);
+        this.invalidateCollectionTree();
         return report;
+    }
+    invalidateCollectionTree(): void { this.treeUsage = undefined; this.collectionTree.refresh(); }
+    async collectionTreeItems(): Promise<CollectionItem[]> {
+        if (!vscode.workspace.isTrusted || this.disposed) { return []; }
+        const dataDir = await this.dataDir();
+        let usage: Usage[] = [];
+        if (this.treeUsage?.dataDir === dataDir && Date.now() - this.treeUsage.updated < 30000) {
+            usage = this.treeUsage.entries;
+        } else {
+            try {
+                const command = await this.command();
+                const spec: LaunchSpec = { command, dataDir, root: this.specs.values().next().value?.root || this.context.extensionPath,
+                    collection: 'maintenance', name: 'Storage' };
+                const listed = await runJson<Usage[]>(spec, 'collections', ['list']);
+                if (!Array.isArray(listed)) { throw new Error('Invalid native collection list.'); }
+                usage = listed;
+                this.treeUsage = { dataDir, updated: Date.now(), entries: usage };
+            } catch (error) {
+                this.output.appendLine(`Collection view unavailable: ${String(error)}`);
+                this.treeUsage = { dataDir, updated: Date.now(), entries: [] };
+            }
+        }
+        const byId = new Map(usage.map(item => [item.collection, item]));
+        const known = this.context.globalState.get<Record<string, KnownCollection>>('collections', {});
+        const states = new Map(this.scheduler.states().map(item => [item.collection, item]));
+        const ids = new Set([...this.specs.keys(), ...byId.keys()]);
+        return [...ids].map(id => {
+            const spec = this.specs.get(id), entry = byId.get(id), view = this.coverage.get(id), scheduler = states.get(id);
+            const active = !!spec && spec.dataDir === dataDir;
+            const state = scheduler?.state === 'failed' ? 'failed'
+                : active && (this.scheduler.isPaused || scheduler?.state === 'paused') ? 'paused'
+                : active && scheduler?.state === 'indexing' ? 'indexing'
+                : active && (scheduler?.pending || view?.pending) ? 'pending'
+                : entry?.status === 'indexed' ? 'indexed' : 'pending';
+            const coverage = active ? coverageLabel(view) : 'coverage unavailable';
+            return new CollectionItem(id, dataDir, active, !active && entry?.status === 'indexed', spec?.name || known[id]?.name || id,
+                state, coverage, entry?.disk_bytes, known[id]?.lastIndexed, spec?.root || known[id]?.root);
+        }).sort((a, b) => Number(b.active) - Number(a.active) || String(a.label).localeCompare(String(b.label)));
+    }
+    async treeIndex(item: CollectionItem, full: boolean): Promise<void> {
+        this.trusted();
+        const spec = this.specs.get(item.collection);
+        if (!item.active || !spec || spec.dataDir !== item.dataDir) { throw new Error('Collection is no longer active in this window.'); }
+        await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification,
+            title: `${full ? 'Reindexing' : 'Indexing'} ${spec.name}` }, () => this.scheduler.request(spec, true, full));
+    }
+    async treeRemove(item: CollectionItem): Promise<void> {
+        this.trusted();
+        if (item.active || item.dataDir !== await this.dataDir()) { throw new Error('Only an inactive collection in current storage can be removed.'); }
+        await this.collections(true, item.collection);
     }
     async manualIndex(full = false): Promise<void> {
         const spec = await this.chooseSpec(); if (!spec) { return; }
@@ -266,8 +342,10 @@ class Controller implements vscode.Disposable {
         if (!directory) { return; }
         return { command, root: this.specs.values().next().value?.root || this.context.extensionPath, dataDir: directory, collection: 'maintenance', name: 'Storage' };
     }
-    async collections(remove = false): Promise<void> {
-        const spec = await this.maintenanceSpec(); if (!spec) { return; }
+    async collections(remove = false, requestedId?: string): Promise<void> {
+        const spec = requestedId ? { command: await this.command(), root: this.specs.values().next().value?.root || this.context.extensionPath,
+            dataDir: await this.dataDir(), collection: 'maintenance', name: 'Storage' } : await this.maintenanceSpec();
+        if (!spec) { return; }
         const usage = await runJson<Usage[]>(spec, 'collections', ['list']);
         const free = await fs.statfs(spec.dataDir).then(stat => stat.bavail * stat.bsize).catch(() => null);
         const known = this.context.globalState.get<Record<string, KnownCollection>>('collections', {});
@@ -280,12 +358,18 @@ class Controller implements vscode.Disposable {
         if (this.scheduler.isBusy) { throw new Error('Wait for indexing to finish before removing collections.'); }
         const candidates = usage.filter(item => this.specs.get(item.collection)?.dataDir !== spec.dataDir && item.status === 'indexed');
         if (!candidates.length) { void vscode.window.showInformationMessage('No removable unused collections. Open workspace collections are protected in this window.'); return; }
-        const selected = await vscode.window.showQuickPick(candidates.map(item => ({ label: known[item.collection]?.name || item.collection,
-            description: `${(item.disk_bytes / 1048576).toFixed(2)} MiB · ${item.collection}`, detail: known[item.collection]?.root || item.status, item })), { title: 'Remove an unneeded AIRK collection' });
-        if (!selected) { return; }
+        const selected = requestedId
+            ? candidates.filter(item => item.collection === requestedId).map(item => ({ item }))[0]
+            : await vscode.window.showQuickPick(candidates.map(item => ({ label: known[item.collection]?.name || item.collection,
+                description: `${(item.disk_bytes / 1048576).toFixed(2)} MiB · ${item.collection}`, detail: known[item.collection]?.root || item.status, item })), { title: 'Remove an unneeded AIRK collection' });
+        if (!selected) {
+            if (requestedId) { throw new Error('Collection is no longer removable. Refresh the AIRK view.'); }
+            return;
+        }
         const confirm = await vscode.window.showWarningMessage(`Remove derived index ${selected.item.collection}? Disconnect its MCP workers and close that project in other windows first. Source files are retained.`, { modal: true }, 'Remove index');
         if (confirm !== 'Remove index') { return; }
         await runJson(spec, 'collections', ['remove', selected.item.collection]);
+        this.invalidateCollectionTree();
         this.output.appendLine(`Removed derived collection ${selected.item.collection} from ${spec.dataDir}`);
         if (!this.scheduler.isPaused) { this.scheduler.resume(); }
     }
@@ -468,11 +552,12 @@ class Controller implements vscode.Disposable {
         if (choice?.command) { await vscode.commands.executeCommand(choice.command); }
     }
     configure(): void { const options = this.options(); this.scheduler.configure(options); this.coverage?.configure(options.quietMs, options.mode === 'idle' ? options.idleMs : 0); }
-    dispose(): void { this.disposed = true; clearInterval(this.rescan); this.coverage.dispose(); this.scheduler.dispose(); this.definitions.dispose(); this.status.dispose(); this.output.dispose(); }
+    dispose(): void { this.disposed = true; clearInterval(this.rescan); this.coverage.dispose(); this.scheduler.dispose(); this.definitions.dispose(); this.collectionTree.dispose(); this.status.dispose(); this.output.dispose(); }
 }
 
 export async function activate(context: vscode.ExtensionContext): Promise<{ getServerDefinitions(): Promise<vscode.McpStdioServerDefinition[]> }> {
     const controller = new Controller(context); context.subscriptions.push(controller);
+    context.subscriptions.push(vscode.window.createTreeView('airk.collectionsView', { treeDataProvider: controller.collectionTree }));
     const safe = (action: () => void | Promise<unknown>, propagate = false) => async () => {
         try { await action(); } catch (error) {
             controller.output.appendLine(String(error)); controller.output.show(true);
@@ -492,6 +577,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<{ getS
         status: () => controller.collectionStatus(), usage: () => controller.usage(), setupAgent: () => controller.setupAgent(), verifyMcp: () => controller.verify(), logs: () => controller.output.show()
     };
     for (const [name, action] of Object.entries(commands)) { context.subscriptions.push(vscode.commands.registerCommand(`airk.${name}`, safe(action, true))); }
+    context.subscriptions.push(
+        vscode.commands.registerCommand('airk.treeRefresh', () => controller.invalidateCollectionTree()),
+        vscode.commands.registerCommand('airk.treeIndex', (item: CollectionItem) => safe(() => controller.treeIndex(item, false), true)()),
+        vscode.commands.registerCommand('airk.treeReindex', (item: CollectionItem) => safe(() => controller.treeIndex(item, true), true)()),
+        vscode.commands.registerCommand('airk.treePause', () => safe(() => controller.pauseAuto(true), true)()),
+        vscode.commands.registerCommand('airk.treeRemove', (item: CollectionItem) => safe(() => controller.treeRemove(item), true)()));
     if (vscode.lm?.registerMcpServerDefinitionProvider) {
         context.subscriptions.push(vscode.lm.registerMcpServerDefinitionProvider('airk.collections', {
             onDidChangeMcpServerDefinitions: controller.definitions.event,

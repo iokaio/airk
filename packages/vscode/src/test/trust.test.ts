@@ -6,6 +6,16 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
+function addTreeApi(stub: any, capture?: (provider: any) => void): void {
+    stub.TreeItem = class { constructor(public label: string) {} };
+    stub.TreeItemCollapsibleState = { None: 0 };
+    stub.ThemeIcon = class { constructor(public id: string) {} };
+    stub.window.createTreeView = (_id: string, options: { treeDataProvider: any }) => {
+        capture?.(options.treeDataProvider);
+        return { dispose() {} };
+    };
+}
+
 test('untrusted workspaces expose no MCP servers and commands cannot launch a helper', async () => {
     const commands = new Map<string, () => Promise<unknown>>(); const errors: string[] = []; let provider: any;
     const disposable = { dispose() {} };
@@ -23,6 +33,7 @@ test('untrusted workspaces expose no MCP servers and commands cannot launch a he
         EventEmitter: class { event = event; fire() {} dispose() {} },
         lm: { registerMcpServerDefinitionProvider: (_id: string, value: unknown) => { provider = value; return disposable; } }
     };
+    addTreeApi(stub);
     const loader = Module as unknown as { _load: (...args: any[]) => any };
     const original = loader._load;
     loader._load = function(request: string, ...args: any[]) { return request === 'vscode' ? stub : original.call(this, request, ...args); };
@@ -47,7 +58,7 @@ test('trusted MCP definitions ignore workspace storage overrides and reconnect w
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'airk-vscode-provider-'));
     const root = path.join(directory, 'Project'), storage = path.join(directory, 'Host'); await fs.mkdir(root);
     const commands = new Map<string, () => Promise<unknown>>(); const state = new Map<string, unknown>();
-    const disposable = { dispose() {} }, event = () => disposable; let provider: any, events = 0;
+    const disposable = { dispose() {} }, event = () => disposable; let provider: any, tree: any, events = 0, emitters = 0, removals = 0;
     class Definition {
         cwd?: { fsPath: string };
         constructor(public label: string, public command: string, public args: string[], public env: object, public version: string) {}
@@ -61,17 +72,26 @@ test('trusted MCP definitions ignore workspace storage overrides and reconnect w
             onDidChangeWorkspaceFolders: event, onDidChangeConfiguration: event },
         window: { createOutputChannel: () => ({ ...disposable, appendLine() {}, show() {} }),
             createStatusBarItem: () => ({ ...disposable, show() {} }), onDidChangeTextEditorSelection: event, onDidChangeActiveTextEditor: event,
+            showWarningMessage: async () => 'Remove index',
             showErrorMessage: (error: string) => { throw new Error(error); } },
         commands: { registerCommand: (name: string, handler: () => Promise<unknown>) => { commands.set(name, handler); return disposable; } },
         env: {}, Uri: { file: (file: string) => ({ fsPath: file }) }, McpStdioServerDefinition: Definition,
-        StatusBarAlignment: { Left: 1 }, EventEmitter: class { event = event; fire() { events++; } dispose() {} },
+        StatusBarAlignment: { Left: 1 }, EventEmitter: class { private readonly ordinal = ++emitters; event = event; fire() { if (this.ordinal === 1) { events++; } } dispose() {} },
         lm: { registerMcpServerDefinitionProvider: (_id: string, value: unknown) => { provider = value; return disposable; } }
     };
+    addTreeApi(stub, value => { tree = value; });
     const loader = Module as unknown as { _load: (...args: any[]) => any }, original = loader._load;
     const native = require('../native'), priorPrepare = native.prepareHelper, priorRun = native.runJson;
     const calls: string[] = [];
     native.prepareHelper = async () => '/fixture/airk';
-    native.runJson = async (_spec: unknown, command: string) => { calls.push(command); return { generation: 1 }; };
+    native.runJson = async (_spec: unknown, command: string, extra: string[] = []) => {
+        calls.push(command);
+        if (command === 'collections') {
+            if (extra[0] === 'remove') { removals++; return {}; }
+            return [{ collection: 'retired', status: 'indexed', disk_bytes: 1024, indexed_files: 1, generation: 1 }];
+        }
+        return { generation: 1 };
+    };
     loader._load = function(request: string, ...args: any[]) { return request === 'vscode' ? stub : original.call(this, request, ...args); };
     try {
         delete require.cache[require.resolve('../extension')];
@@ -84,6 +104,15 @@ test('trusted MCP definitions ignore workspace storage overrides and reconnect w
         assert.equal(first[0].args[first[0].args.indexOf('--data-dir') + 1], await fs.realpath(path.join(storage, 'indexes')));
         const priorEvents = events; await api.getServerDefinitions(); assert.equal(events, priorEvents, 'No recursive definition-change loop');
         await provider.resolveMcpServerDefinition(first[0]); assert.deepEqual(calls, ['status']);
+        const rows = await tree.getChildren();
+        assert.equal(rows.length, 2);
+        const active = rows.find((row: any) => row.active), inactive = rows.find((row: any) => !row.active);
+        assert.equal(active.contextValue, 'airkActiveCollection');
+        assert.match(active.description, /pending.*size unknown.*indexed never/);
+        assert.equal(inactive.contextValue, 'airkInactiveCollection');
+        await assert.rejects((commands.get('airk.treeRemove') as any)(active), /Only an inactive collection/);
+        await (commands.get('airk.treeRemove') as any)(inactive);
+        assert.equal(removals, 1, 'Only the inactive indexed collection is removable after confirmation');
         const unrelated = new Definition('Other', '/fixture/airk', ['--collection', 'other'], {}, '0.1.0');
         await assert.rejects(provider.resolveMcpServerDefinition(unrelated), /configuration changed/);
         context.subscriptions.forEach(item => item.dispose());
@@ -105,7 +134,7 @@ test('multi-root Index Now selects the active folder and coverage refresh never 
     roots.push(path.join(roots[1], 'Nested')); await fs.mkdir(roots[2]);
     const commands = new Map<string, () => Promise<unknown>>(); const state = new Map<string, unknown>();
     const disposable = { dispose() {} }, event = () => disposable;
-    let notifications = 0, choices = 0;
+    let notifications = 0, choices = 0, emitters = 0;
     let saved!: (document: { uri: { fsPath: string } }) => void, changed!: (uri: { fsPath: string }) => void;
     const documents: { scheduling: { name: string; pending: boolean }[] }[] = [];
     const status = { ...disposable, show() {}, tooltip: '' };
@@ -128,8 +157,9 @@ test('multi-root Index Now selects the active folder and coverage refresh never 
             openTextDocument: async ({ content }: { content: string }) => { documents.push(JSON.parse(content)); return {}; } },
         window, commands: { registerCommand: (name: string, handler: () => Promise<unknown>) => { commands.set(name, handler); return disposable; } },
         env: {}, StatusBarAlignment: { Left: 1 }, ProgressLocation: { Notification: 1 },
-        EventEmitter: class { event = event; fire() { notifications++; } dispose() {} }, lm: {}
+        EventEmitter: class { private readonly ordinal = ++emitters; event = event; fire() { if (this.ordinal === 1) { notifications++; } } dispose() {} }, lm: {}
     };
+    addTreeApi(stub);
     const loader = Module as unknown as { _load: (...args: any[]) => any }, original = loader._load;
     const native = require('../native'), priorPrepare = native.prepareHelper, priorRun = native.runJson;
     native.prepareHelper = async () => '/fixture/airk';
@@ -208,6 +238,7 @@ test('coverage and indexing share native writer exclusion and command failures r
         env: {}, StatusBarAlignment: { Left: 1 }, ProgressLocation: { Notification: 1 },
         EventEmitter: class { event = event; fire() {} dispose() {} }, lm: {}
     };
+    addTreeApi(stub);
     const loader = Module as unknown as { _load: (...args: any[]) => any }, original = loader._load;
     const native = require('../native'), priorPrepare = native.prepareHelper, priorRun = native.runJson;
     native.prepareHelper = async () => '/fixture/airk';

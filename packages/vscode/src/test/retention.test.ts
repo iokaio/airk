@@ -62,6 +62,10 @@ test('retention controls preview before explicit mutation and never rewrite clie
         if (extra[1] === 'run') { return { receipt: { state: 'pending', pending: true }, receipt_persisted: true, status }; }
         throw new Error(`Unexpected native call ${command} ${extra}`);
     };
+    (stub as any).TreeItem = class { constructor(public label: string) {} };
+    (stub as any).TreeItemCollapsibleState = { None: 0 };
+    (stub as any).ThemeIcon = class { constructor(public id: string) {} };
+    (stub.window as any).createTreeView = () => ({ dispose() {} });
     loader._load = function(request: string, ...args: any[]) { return request === 'vscode' ? stub : original.call(this, request, ...args); };
     const context = { subscriptions: [] as { dispose(): void }[], extensionPath: '/original/extension', extension: { packageJSON: { version: '0.1.0' } },
         globalStorageUri: { fsPath: path.join(directory, 'Host') }, globalState: { get: (_key: string, fallback: unknown) => fallback, update: async () => {} } };
