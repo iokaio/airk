@@ -354,8 +354,11 @@ fn two_hundred_real_edits_reach_searchable_and_content_plateau() -> Result<()> {
         );
         assert_eq!(observed.reserved_bytes, 0);
         if edit >= 180 {
+            // Postcommit object cleanup may be deferred independently of full
+            // generation retirement. Measure only after its bounded continuation.
+            finish_pending_objects(&fixture)?;
             tail.push(content_and_search_bytes(&fixture.store)?);
-            total_tail.push(observed.used_bytes);
+            total_tail.push(quota.status()?.used_bytes);
         }
         if (edit + 1) % 25 == 0 {
             eprintln!(
