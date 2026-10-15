@@ -1129,14 +1129,19 @@ fn purge_plan(
         {
             protected.push(HistoryProtection::Checkpoint);
         }
-        if crate::sqlite::history_binding(store.directory(), token)?.is_none() {
-            // Purge is historical-only; ordinary full generations remain under retention.
-            protected.push(HistoryProtection::Conversion);
-        }
         let source = store
             .directory()
             .join("generations")
             .join(token.revision.to_string());
+        if crate::sqlite::history_binding(store.directory(), token)?.is_none()
+            || crate::history::conversion_intent(store, token)?.is_some()
+            || source.exists()
+        {
+            // A bound package is readable before conversion finishes retiring
+            // the full representation. Purge must preserve that recovery work.
+            // Ordinary full generations remain under searchable retention.
+            protected.push(HistoryProtection::Conversion);
+        }
         let lease = crate::retention::exclusive(&source)?;
         if lease.is_none() {
             protected.push(HistoryProtection::Reader);

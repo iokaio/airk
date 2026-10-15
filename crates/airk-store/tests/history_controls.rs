@@ -469,6 +469,91 @@ fn automatic_selection_demotes_only_old_revisions_and_keeps_exact_receipts() -> 
     Ok(())
 }
 #[test]
+fn purge_protects_a_bound_package_until_conversion_finishes() -> Result<()> {
+    use airk_store::history::ConversionStage;
+
+    let fixture = Fixture::new()?;
+    let writer = fixture.store.lock()?;
+    let target = fixture.tokens[0];
+    let interrupted = fixture.store.history_convert_with_observer(
+        &writer,
+        &fixture.quota,
+        &target,
+        Fixture::budget(),
+        &|stage, _| {
+            anyhow::ensure!(
+                stage != ConversionStage::BindingCommitted,
+                "original interruption"
+            );
+            Ok(())
+        },
+    );
+    assert!(interrupted.is_err());
+    assert!(
+        fixture
+            .store
+            .history_at(&target, 64 * 1024 * 1024)?
+            .is_some()
+    );
+    let request = PurgeRequest {
+        revisions: vec![target],
+        checkpoints: vec![],
+        clear_lineage: false,
+    };
+    let plan = fixture.store.purge_preview(&request, budget())?;
+    assert!(
+        plan.targets[0]
+            .protected
+            .contains(&HistoryProtection::Conversion)
+    );
+    let result = fixture.store.purge_apply(
+        &writer,
+        &fixture.quota,
+        &PurgeApplyRequest {
+            request: request.clone(),
+            expected_plan_digest: plan.digest,
+        },
+        budget(),
+    )?;
+    assert!(result.error.is_none(), "{result:?}");
+    assert!(result.pending && result.removals.is_empty());
+    assert_eq!(result.protected, vec![target]);
+    assert!(
+        fixture
+            .store
+            .history_at(&target, 64 * 1024 * 1024)?
+            .is_some()
+    );
+    fixture
+        .store
+        .history_convert(&writer, &fixture.quota, &target, Fixture::budget())?;
+    let plan = fixture.store.purge_preview(&request, budget())?;
+    assert!(plan.targets[0].protected.is_empty());
+    let result = fixture.store.purge_apply(
+        &writer,
+        &fixture.quota,
+        &PurgeApplyRequest {
+            request,
+            expected_plan_digest: plan.digest,
+        },
+        budget(),
+    )?;
+    assert!(result.error.is_none(), "{result:?}");
+    assert!(!result.pending && result.removals.len() == 1);
+    assert!(
+        fixture
+            .store
+            .history_at(&target, 64 * 1024 * 1024)?
+            .is_none()
+    );
+    assert_eq!(
+        fixture.store.retained_receipts(None, 1)?.head,
+        fixture.tokens[3]
+    );
+    Ok(())
+}
+
+#[test]
 fn purge_binds_operator_state_and_never_implicitly_removes_a_checkpoint() -> Result<()> {
     let fixture = Fixture::new()?;
     let writer = fixture.store.lock()?;

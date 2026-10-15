@@ -325,6 +325,14 @@ fn two_hundred_real_edits_reach_searchable_and_content_plateau() -> Result<()> {
     let fixture = Fixture::new()?;
     fixture.automatic()?;
     let quota = Quota::open(fixture.data.path())?;
+    // Private SQLite admission precharges its maximum page allowance. This tiny
+    // fixture needs no multi-GiB default allowance competing with other tests
+    // for point-in-time free space on a shared hosted runner.
+    let mut policy = quota.policy()?;
+    policy
+        .collections
+        .insert("default".into(), 128 * 1024 * 1024);
+    quota.configure(policy)?;
     let mut previous = None;
     let mut tail = vec![];
     let mut total_tail = vec![];
