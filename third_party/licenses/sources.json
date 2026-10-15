@@ -342,6 +342,20 @@
     "missing_text": false
   },
   {
+    "name": "tree-sitter-dockerfile-updated",
+    "version": "0.2.0",
+    "revision": "9bae81a7069d89d5bbb18dba97fee5b70f4f0169",
+    "repository": "https://github.com/c-gamble/tree-sitter-dockerfile",
+    "files": [
+      {
+        "file": "LICENSE",
+        "url": "https://raw.githubusercontent.com/c-gamble/tree-sitter-dockerfile/9bae81a7069d89d5bbb18dba97fee5b70f4f0169/LICENSE",
+        "sha256": "806b8fcd19c1cdf23e178eb25942acc844a38669e36b2c896c7baf5f8bcecbb4"
+      }
+    ],
+    "missing_text": false
+  },
+  {
     "name": "tree-sitter-html",
     "version": "0.23.2",
     "revision": "5a5ca8551a179998360b4a4ca2c0f366a35acc03",
@@ -407,6 +421,20 @@
         "file": "LICENSE.md",
         "url": "https://raw.githubusercontent.com/tree-sitter-grammars/tree-sitter-lua/10fe0054734eec83049514ea2e718b2a56acd0c9/LICENSE.md",
         "sha256": "9a32b02e4c917b1ce6b5e79d8ea81e25cefd7f27d89c7235f2afb262c06cf32e"
+      }
+    ],
+    "missing_text": false
+  },
+  {
+    "name": "tree-sitter-make",
+    "version": "1.1.1",
+    "revision": "5e9e8f8ff3387b0edcaa90f46ddf3629f4cfeb1d",
+    "repository": "https://github.com/tree-sitter-grammars/tree-sitter-make",
+    "files": [
+      {
+        "file": "LICENSE",
+        "url": "https://raw.githubusercontent.com/tree-sitter-grammars/tree-sitter-make/5e9e8f8ff3387b0edcaa90f46ddf3629f4cfeb1d/LICENSE",
+        "sha256": "28eecdb75b6de2d9020603531461444bf54db827ee2fb345a8fcf4dbee7c2ad1"
       }
     ],
     "missing_text": false

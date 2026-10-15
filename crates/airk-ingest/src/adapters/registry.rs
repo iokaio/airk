@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Descriptions of existing adapters only. No scanner dispatch is changed.
+//! Versioned native adapter capabilities and deterministic default selection.
 use super::profile::Selection;
 use airk_core::extraction::{AdapterCapabilities, AdapterDescriptor, ExtractionProfile};
 use std::collections::BTreeMap;
@@ -81,6 +81,24 @@ impl AdapterRegistry {
                 true,
             ),
             ("sql", "tree-sitter-sequel/0.3.11", "sql", false, false),
+            ("hcl", "tree-sitter-hcl/1.1.0", "hcl tf tfvars", true, false),
+            (
+                "dockerfile",
+                "tree-sitter-dockerfile-updated/0.2.0",
+                "dockerfile",
+                true,
+                false,
+            ),
+            ("proto", "tree-sitter-proto/0.4.0", "proto", true, false),
+            (
+                "graphql",
+                "tree-sitter-graphql/0.1.0",
+                "graphql gql",
+                false,
+                false,
+            ),
+            ("cmake", "tree-sitter-cmake/0.7.1", "cmake", false, false),
+            ("make", "tree-sitter-make/1.1.1", "mk", false, false),
             (
                 "json",
                 "tree-sitter-json/0.24.8",
@@ -99,7 +117,10 @@ impl AdapterRegistry {
             ),
             ("css", "tree-sitter-css/0.25.0", "css scss", false, false),
         ] {
-            let structured = matches!(id, "json" | "yaml" | "toml" | "html" | "css");
+            let structured = matches!(
+                id,
+                "json" | "yaml" | "toml" | "html" | "css" | "cmake" | "make"
+            );
             registry.add_baseline(
                 id,
                 Some(grammar),
@@ -119,10 +140,12 @@ impl AdapterRegistry {
             ("markdown", "md markdown mdx"),
             ("csv", "csv"),
             ("tsv", "tsv"),
-            ("xml", "xml xsd xsl csproj props targets"),
+            ("xml", "xml xsd xsl"),
+            ("msbuild", "csproj fsproj vbproj props targets sln slnx"),
+            ("github-actions", ""),
+            ("compose", ""),
             ("svg", "svg"),
             ("ini", "ini cfg conf properties"),
-            ("dockerfile", "dockerfile"),
             ("pdf", "pdf"),
             ("docx", "docx"),
             ("xlsx", "xlsx"),
@@ -131,7 +154,7 @@ impl AdapterRegistry {
         ] {
             registry.add_baseline(
                 id,
-                None,
+                matches!(id, "github-actions" | "compose").then_some("tree-sitter-yaml/0.7.2"),
                 suffixes,
                 AdapterCapabilities {
                     lexical: true,
@@ -167,7 +190,23 @@ impl AdapterRegistry {
                 profile: ExtractionProfile {
                     contract_version: 1,
                     adapter_id: id.into(),
-                    adapter_version: "native-facts/7".into(),
+                    adapter_version: if matches!(
+                        id,
+                        "hcl"
+                            | "dockerfile"
+                            | "proto"
+                            | "graphql"
+                            | "cmake"
+                            | "make"
+                            | "msbuild"
+                            | "github-actions"
+                            | "compose"
+                    ) {
+                        "repository-facts/1"
+                    } else {
+                        "native-facts/7"
+                    }
+                    .into(),
                     language: id.into(),
                     dialect: None,
                     grammar_identity: grammar.map(|g| format!("tree-sitter/0.25.10:{g}")),
@@ -265,7 +304,21 @@ impl AdapterRegistry {
         let basename = path.rsplit('/').next().unwrap_or(path);
         let suffix = basename.rsplit_once('.').map_or("", |(_, s)| s);
         let lower_suffix = suffix.to_ascii_lowercase();
-        let (id, basis) = if (basename.eq_ignore_ascii_case("Dockerfile")
+        let workflow = path.strip_prefix(".github/workflows/").is_some_and(|tail| {
+            !tail.contains('/') && matches!(lower_suffix.as_str(), "yaml" | "yml")
+        });
+        let (id, basis) = if workflow {
+            ("github-actions", "known_basename")
+        } else if matches!(
+            basename,
+            "compose.yaml" | "compose.yml" | "docker-compose.yml" | "docker-compose.yaml"
+        ) {
+            ("compose", "known_basename")
+        } else if basename == "CMakeLists.txt" {
+            ("cmake", "known_basename")
+        } else if basename == "Makefile" {
+            ("make", "known_basename")
+        } else if (basename.eq_ignore_ascii_case("Dockerfile")
             || basename.starts_with("Dockerfile."))
             && !matches!(
                 lower_suffix.as_str(),
@@ -285,7 +338,8 @@ impl AdapterRegistry {
                     | "csproj"
                     | "props"
                     | "targets"
-            ) {
+            )
+        {
             ("dockerfile", "known_basename")
         } else if let Some(id) = self.suffixes.get(&lower_suffix) {
             (id.as_str(), "suffix")
@@ -312,6 +366,36 @@ impl AdapterRegistry {
 mod tests {
     use super::*;
     #[test]
+    fn repository_conventions_are_scoped_and_do_not_capture_generic_files() {
+        let registry = AdapterRegistry::baseline();
+        for (path, adapter) in [
+            (".github/workflows/check.yaml", "github-actions"),
+            (".github/workflows/check.yml", "github-actions"),
+            ("nested/.github/workflows/check.yml", "yaml"),
+            (".github/workflows/nested/check.yml", "yaml"),
+            ("workflows/check.yml", "yaml"),
+            ("compose.yaml", "compose"),
+            ("nested/docker-compose.yml", "compose"),
+            ("compose.other.yaml", "yaml"),
+            ("CMakeLists.txt", "cmake"),
+            ("nested/Makefile", "make"),
+            ("x.mk", "make"),
+            ("x.fsproj", "msbuild"),
+            ("x.slnx", "msbuild"),
+            ("x.xml", "xml"),
+            ("x.tfvars", "hcl"),
+            ("Dockerfile.dev", "dockerfile"),
+            ("x.proto", "proto"),
+            ("x.gql", "graphql"),
+        ] {
+            assert_eq!(
+                registry.select_default(path).profile.adapter_id,
+                adapter,
+                "{path}"
+            );
+        }
+    }
+    #[test]
     fn registry_additions_do_not_change_existing_profile_identity() -> anyhow::Result<()> {
         let mut registry = AdapterRegistry::baseline();
         let old = registry.select_default("src/a.rs").profile.identity()?;
@@ -335,7 +419,6 @@ mod tests {
             ("x.scss", "css"),
             ("build.gradle.kts", "kotlin"),
             ("x.mdx", "markdown"),
-            ("x.fsproj", "text"),
             ("Dockerfile.dev", "dockerfile"),
         ] {
             assert_eq!(r.select_default(path).profile.language, language);

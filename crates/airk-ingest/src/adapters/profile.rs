@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Bounded deterministic selection scaffolding; not yet used by the scanner.
+//! Bounded deterministic selection and persisted collection overrides.
 use super::registry::AdapterRegistry;
 use airk_core::extraction::ExtractionProfile;
 use serde::{Deserialize, Serialize};
@@ -109,6 +109,27 @@ impl ExtractionPolicy {
         self.select_with_prefix(registry, path, &[])
     }
 
+    /// Overrides address collection paths; repository conventions are relative
+    /// to the owning source root, independent of its collection alias.
+    pub(crate) fn select_in_root(
+        &self,
+        registry: &AdapterRegistry,
+        path: &str,
+        relative: &str,
+        source: &[u8],
+    ) -> anyhow::Result<Selection> {
+        validate_relative_path(relative)?;
+        let selected = self.select_with_prefix(registry, path, source)?;
+        if matches!(
+            selected.basis.as_str(),
+            "exact_override" | "scoped_override"
+        ) {
+            Ok(selected)
+        } else {
+            registry.select_with_prefix(relative, &source[..source.len().min(4096)])
+        }
+    }
+
     /// Caller supplies source bytes already charged to scan budgets. Only the
     /// first 4096 bytes can participate in declared content discrimination.
     pub fn select_with_prefix(
@@ -197,6 +218,39 @@ impl ExtractionPolicy {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn repository_selection_uses_source_root_but_overrides_use_collection_path()
+    -> anyhow::Result<()> {
+        let registry = AdapterRegistry::baseline();
+        let mut policy = ExtractionPolicy {
+            version: 1,
+            rules: vec![],
+        };
+        let logical = "@vendor/.github/workflows/check.yml";
+        let relative = ".github/workflows/check.yml";
+        assert_eq!(
+            policy
+                .select_in_root(&registry, logical, relative, b"")?
+                .profile
+                .adapter_id,
+            "github-actions"
+        );
+        policy.rules.push(SelectionRule {
+            selector: RuleMatch::Exact {
+                path: logical.into(),
+            },
+            case_sensitive: true,
+            adapter_id: "text".into(),
+        });
+        assert_eq!(
+            policy
+                .select_in_root(&registry, logical, relative, b"")?
+                .profile
+                .adapter_id,
+            "text"
+        );
+        Ok(())
+    }
     #[test]
     fn empty_scope_selects_root_headers_without_crossing_other_scopes() -> anyhow::Result<()> {
         let registry = AdapterRegistry::baseline();

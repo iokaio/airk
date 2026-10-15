@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: Apache-2.0
+schema { query: Archive }
+scalar Token
+interface Named { name: String! }
+type Entry implements Named { name: String! token: Token }
+input Filter { name: String }
+enum State { READY EMPTY }
+type Archive { entries(filter: Filter): [Entry!]! }
+extend type Entry { state: State }
+query Browse($filter: Filter) { archive: entries(filter: $filter) { ...EntryFields } }
+fragment EntryFields on Entry { name token }

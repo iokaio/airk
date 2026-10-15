@@ -7,10 +7,19 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, fs::File, io::Read, path::Path};
 
+mod actions;
 pub mod adapters;
+mod build_cmake;
+mod build_facts;
+mod build_make;
 pub mod chunking;
+mod compose;
 pub mod continuity;
+mod msbuild;
 pub mod observations;
+mod repository_binding;
+mod repository_syntax;
+mod structured_yaml;
 
 pub const MAX_FILE_BYTES: usize = 16_777_216;
 pub const MAX_CORPUS_BYTES: usize = 67_108_864;
@@ -455,7 +464,12 @@ fn scan_observed_profiled(
         }
         let content_hash = format!("{:x}", Sha256::digest(&bytes));
         let hash = content_hash.parse::<airk_core::identity::Sha256Digest>()?;
-        let selection = policy.select_with_prefix(&registry, &path, &bytes)?;
+        let selection = policy.select_in_root(
+            &registry,
+            &path,
+            path.strip_prefix(prefix.as_str()).unwrap_or(&path),
+            &bytes,
+        )?;
         let mut profile = selection.profile;
         // A deliberate OCR operation is retained for unchanged source bytes.
         // Explicit policy overrides and full rebuilds select native extraction.

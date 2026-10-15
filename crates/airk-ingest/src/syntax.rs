@@ -30,6 +30,14 @@ pub(crate) fn analyze_selected(
     text: &str,
     adapter_id: &str,
 ) -> anyhow::Result<Analysis> {
+    match adapter_id {
+        "cmake" => return crate::build_cmake::analyze(path, text),
+        "make" => return crate::build_make::analyze(path, text),
+        "msbuild" => return crate::msbuild::analyze(path, text),
+        "github-actions" => return crate::actions::analyze(path, text),
+        "compose" => return crate::compose::analyze(path, text),
+        _ => {}
+    }
     analyze_profile(path, text, profile_id(adapter_id))
 }
 
@@ -46,6 +54,23 @@ fn analyze_profile(path: &str, text: &str, selected: Option<Profile>) -> anyhow:
     let tree = parser
         .parse(text, None)
         .ok_or_else(|| anyhow::anyhow!("parser returned no tree"))?;
+    use crate::repository_syntax::RepositoryFormat;
+    let repository_format = match profile.language {
+        "hcl" => Some(RepositoryFormat::Hcl),
+        "dockerfile" => Some(RepositoryFormat::Dockerfile),
+        "proto" => Some(RepositoryFormat::Proto),
+        "graphql" => Some(RepositoryFormat::Graphql),
+        _ => None,
+    };
+    if let Some(format) = repository_format {
+        return crate::repository_binding::analyze(
+            path,
+            text,
+            tree.root_node(),
+            format,
+            profile.language,
+        );
+    }
     let mut facts = Vec::new();
     let mut pending = vec![tree.root_node()];
     let mut visited = 0;
@@ -469,7 +494,7 @@ fn code_evidence(
     }
 }
 
-fn informative_body(body: Node<'_>, text: &str) -> bool {
+pub(crate) fn informative_body(body: Node<'_>, text: &str) -> bool {
     if body.end_byte() - body.start_byte() < 32 {
         return false;
     }
@@ -716,6 +741,10 @@ fn profile(path: &str) -> Option<Profile> {
         "html" | "htm" | "vue" | "svelte" => "html",
         "css" | "scss" => "css",
         "sql" => "sql",
+        "hcl" | "tf" | "tfvars" => "hcl",
+        "proto" => "proto",
+        "graphql" | "gql" => "graphql",
+        "dockerfile" => "dockerfile",
         _ => return None,
     };
     profile_id(id)
@@ -729,6 +758,22 @@ fn profile_id(adapter_id: &str) -> Option<Profile> {
         &[&str],
         &[&str],
     ) = match adapter_id {
+        "hcl" => ("hcl", tree_sitter_hcl::LANGUAGE.into(), &[], &[], &[]),
+        "dockerfile" => (
+            "dockerfile",
+            tree_sitter_dockerfile_updated::language(),
+            &[],
+            &[],
+            &[],
+        ),
+        "proto" => ("proto", tree_sitter_proto::LANGUAGE.into(), &[], &[], &[]),
+        "graphql" => (
+            "graphql",
+            tree_sitter_graphql::LANGUAGE.into(),
+            &[],
+            &[],
+            &[],
+        ),
         "rust" => (
             "rust",
             tree_sitter_rust::LANGUAGE.into(),
