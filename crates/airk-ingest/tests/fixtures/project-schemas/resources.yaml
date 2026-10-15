@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: beacon
+spec:
+  selector:
+    matchLabels: {app: beacon}
+  template:
+    spec:
+      serviceAccountName: beacon-reader
+      containers:
+        - name: beacon
+          image: example/beacon:${TAG}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: beacon-service
+spec:
+  selector: {app: beacon}
+  ports: [{port: 8080, targetPort: 8081}]

@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: Apache-2.0
+stages: [build, verify]
+include: {local: local-jobs.yml}
+assemble:
+  stage: build
+  script: [echo original-unexecuted]
+  artifacts: {paths: [output/beacon]}
+verify:
+  stage: verify
+  needs: [assemble]
+  dependencies: [assemble]
+  script: [echo verify-unexecuted]

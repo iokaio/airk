@@ -29,8 +29,7 @@ pub fn legacy_profile(artifact: &Artifact) -> Result<ExtractionProfile> {
         return Ok(profile);
     }
     registry
-        .get(&artifact.language)
-        .map(|descriptor| descriptor.profile.clone())
+        .effective_profile(&artifact.path, &artifact.language)
         .context("legacy artifact has no compatible native profile")
 }
 
@@ -56,10 +55,18 @@ pub fn convert_native_legacy(
         "legacy source hash mismatch"
     );
     profile.identity()?;
-    ensure!(
-        *profile == legacy_profile(artifact)?,
-        "legacy interpretation differs from effective profile; re-extraction required"
-    );
+    if profile.options.contains_key("header_context") {
+        ensure!(
+            profile.language == artifact.language,
+            "captured header language mismatch"
+        );
+        AdapterRegistry::baseline().validate_effective_profile(&artifact.path, profile)?;
+    } else {
+        ensure!(
+            *profile == legacy_profile(artifact)?,
+            "legacy interpretation differs from effective profile; re-extraction required"
+        );
+    }
     ensure!(
         artifact.facts.len() <= 10_000
             && artifact.chunks.len() <= airk_core::extraction::MAX_EXTRACTION_CHUNKS,
@@ -125,9 +132,22 @@ pub fn convert_native_legacy(
                     || code.producer == "airk-framework-cues"
                     || (matches!(
                         profile.adapter_id.as_str(),
-                        "cmake" | "make" | "msbuild" | "github-actions" | "compose"
+                        "cmake"
+                            | "make"
+                            | "msbuild"
+                            | "github-actions"
+                            | "compose"
+                            | "starlark"
+                            | "gradle-kotlin"
+                            | "kubernetes"
+                            | "openapi"
+                            | "gitlab-ci"
+                            | "project-manifest"
                     ) && code.basis == EvidenceBasis::StructuralRule
-                        && code.producer == format!("airk-build-structure/{}", profile.adapter_id)),
+                        && code.producer == format!("airk-build-structure/{}", profile.adapter_id))
+                    || (matches!(profile.adapter_id.as_str(), "sql-postgresql" | "sql-mysql")
+                        && code.basis == EvidenceBasis::StructuralRule
+                        && code.producer == format!("airk-sql-structure/{}", profile.adapter_id)),
                 "unknown code producer requires separate domain"
             );
             for id in std::iter::once(&code.symbol_id).chain(code.owner_id.iter()) {

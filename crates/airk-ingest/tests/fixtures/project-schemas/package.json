@@ -1,0 +1,1 @@
+{"name":"original-beacon","dependencies":{"example-library":"^1.0"},"scripts":{"build":"echo original-unexecuted"}}

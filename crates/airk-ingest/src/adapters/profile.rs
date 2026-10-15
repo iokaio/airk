@@ -15,6 +15,10 @@ pub enum RuleMatch {
         suffix: Option<String>,
         basename: Option<String>,
     },
+    HeaderContext {
+        prefix: String,
+        configuration: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -65,7 +69,7 @@ impl ExtractionPolicy {
 
     pub fn validate(&self, registry: &AdapterRegistry) -> anyhow::Result<()> {
         anyhow::ensure!(
-            self.version == 1 && self.rules.len() <= 256,
+            matches!(self.version, 1 | 2) && self.rules.len() <= 256,
             "unsupported or oversized extraction policy"
         );
         anyhow::ensure!(
@@ -100,9 +104,115 @@ impl ExtractionPolicy {
                         anyhow::ensure!(!value.contains('/'), "invalid basename");
                     }
                 }
+                RuleMatch::HeaderContext {
+                    prefix,
+                    configuration,
+                } => {
+                    anyhow::ensure!(
+                        self.version == 2,
+                        "header context requires policy version 2"
+                    );
+                    anyhow::ensure!(
+                        rule.case_sensitive && matches!(rule.adapter_id.as_str(), "c" | "cpp"),
+                        "header context requires case-sensitive C/C++ qualification"
+                    );
+                    if !prefix.is_empty() {
+                        validate_relative_path(prefix)?;
+                    }
+                    validate_relative_path(configuration)?;
+                }
             }
         }
+        anyhow::ensure!(
+            self.declared_configurations().len() <= crate::header_context::MAX_CONFIGURATIONS,
+            "too many captured header configurations"
+        );
         Ok(())
+    }
+
+    /// Explicit logical collection paths only; this method performs no reads.
+    pub fn declared_configurations(&self) -> Vec<&str> {
+        let mut paths = std::collections::BTreeSet::new();
+        for rule in &self.rules {
+            if let RuleMatch::HeaderContext { configuration, .. } = &rule.selector {
+                paths.insert(configuration.as_str());
+            }
+        }
+        paths.into_iter().collect()
+    }
+
+    /// Apply captured context only after explicit exact/scoped overrides.
+    pub fn select_in_root_captured(
+        &self,
+        registry: &AdapterRegistry,
+        path: &str,
+        relative: &str,
+        source: &[u8],
+        captured: &crate::header_context::CapturedMap,
+    ) -> anyhow::Result<Selection> {
+        let mut selected = self.select_in_root(registry, path, relative, source)?;
+        if matches!(
+            selected.basis.as_str(),
+            "exact_override" | "scoped_override"
+        ) || !relative.to_ascii_lowercase().ends_with(".h")
+        {
+            return Ok(selected);
+        }
+        let rules: Vec<_> = self
+            .rules
+            .iter()
+            .filter(|rule| match &rule.selector {
+                RuleMatch::HeaderContext { prefix, .. } => {
+                    prefix.is_empty()
+                        || path
+                            .strip_prefix(prefix)
+                            .is_some_and(|rest| rest.starts_with('/'))
+                }
+                _ => false,
+            })
+            .collect();
+        if rules.is_empty() {
+            return Ok(selected);
+        }
+        let best = rules
+            .iter()
+            .filter_map(|rule| match &rule.selector {
+                RuleMatch::HeaderContext { prefix, .. } => Some(prefix.len()),
+                _ => None,
+            })
+            .max()
+            .unwrap();
+        let rules:Vec<_>=rules.into_iter().filter(|rule|matches!(&rule.selector,RuleMatch::HeaderContext{prefix,..}if prefix.len()==best)).collect();
+        if rules.len() != 1 {
+            selected
+                .ambiguity
+                .push("Conflicting captured header context rules; retained C default".into());
+            return Ok(selected);
+        }
+        let rule = rules[0];
+        let RuleMatch::HeaderContext { configuration, .. } = &rule.selector else {
+            unreachable!()
+        };
+        if let Some(context) = captured
+            .get(configuration)
+            .filter(|context| context.path() == configuration)
+            && context.adapter(path) == Some(rule.adapter_id.as_str())
+        {
+            selected.profile = registry.effective_profile(path, &rule.adapter_id)?;
+            selected.profile.options.insert(
+                "header_context".into(),
+                crate::header_context::CONTEXT_VERSION.into(),
+            );
+            selected
+                .profile
+                .configuration_inputs
+                .insert(configuration.clone(), context.digest());
+            selected.basis = "captured_header_context".into();
+            selected.ambiguity.clear();
+        } else {
+            selected.ambiguity.push("Header context missing, unsupported or conflicting; retained C default without C++ inference".into());
+        }
+        Ok(selected)
     }
 
     pub fn select(&self, registry: &AdapterRegistry, path: &str) -> anyhow::Result<Selection> {
@@ -119,15 +229,7 @@ impl ExtractionPolicy {
         source: &[u8],
     ) -> anyhow::Result<Selection> {
         validate_relative_path(relative)?;
-        let selected = self.select_with_prefix(registry, path, source)?;
-        if matches!(
-            selected.basis.as_str(),
-            "exact_override" | "scoped_override"
-        ) {
-            Ok(selected)
-        } else {
-            registry.select_with_prefix(relative, &source[..source.len().min(4096)])
-        }
+        self.select_with_default_path(registry, path, relative, source)
     }
 
     /// Caller supplies source bytes already charged to scan budgets. Only the
@@ -136,6 +238,16 @@ impl ExtractionPolicy {
         &self,
         registry: &AdapterRegistry,
         path: &str,
+        source: &[u8],
+    ) -> anyhow::Result<Selection> {
+        self.select_with_default_path(registry, path, path, source)
+    }
+
+    fn select_with_default_path(
+        &self,
+        registry: &AdapterRegistry,
+        path: &str,
+        default_path: &str,
         source: &[u8],
     ) -> anyhow::Result<Selection> {
         self.validate(registry)?;
@@ -197,11 +309,7 @@ impl ExtractionPolicy {
             );
             let rule = matches[0].1;
             return Ok(Selection {
-                profile: registry
-                    .get(&rule.adapter_id)
-                    .expect("validated adapter")
-                    .profile
-                    .clone(),
+                profile: registry.effective_profile(path, &rule.adapter_id)?,
                 basis: if best.0 == 2 {
                     "exact_override"
                 } else {
@@ -211,13 +319,82 @@ impl ExtractionPolicy {
                 ambiguity: vec![],
             });
         }
-        registry.select_with_prefix(path, &source[..source.len().min(4096)])
+        registry.select_with_prefix(default_path, &source[..source.len().min(4096)])
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn captured_header_inputs_are_verified_scoped_and_below_explicit_overrides()
+    -> anyhow::Result<()> {
+        let registry = AdapterRegistry::baseline();
+        let mut policy = ExtractionPolicy {
+            version: 2,
+            rules: vec![SelectionRule {
+                selector: RuleMatch::HeaderContext {
+                    prefix: "@vendor/build/include".into(),
+                    configuration: "@vendor/build/compile_commands.json".into(),
+                },
+                case_sensitive: true,
+                adapter_id: "cpp".into(),
+            }],
+        };
+        let path = "@vendor/build/include/beacon.h";
+        let source = b"class Beacon {};";
+        let empty = crate::header_context::CapturedMap::new();
+        let fallback = policy.select_in_root_captured(
+            &registry,
+            path,
+            "build/include/beacon.h",
+            source,
+            &empty,
+        )?;
+        assert_eq!(fallback.profile.adapter_id, "c");
+        assert!(!fallback.ambiguity.is_empty());
+        let bytes = br#"[{"file":"include/beacon.h","arguments":["compiler","-x","c++"]}]"#;
+        let context = crate::header_context::capture_configuration(
+            "@vendor/build/compile_commands.json",
+            bytes,
+        )?;
+        let digest = context.digest();
+        let captured = std::collections::BTreeMap::from([(context.path().to_owned(), context)]);
+        let selected = policy.select_in_root_captured(
+            &registry,
+            path,
+            "build/include/beacon.h",
+            source,
+            &captured,
+        )?;
+        assert_eq!(selected.profile.adapter_id, "cpp");
+        assert_eq!(selected.basis, "captured_header_context");
+        assert!(selected.ambiguity.is_empty());
+        assert_eq!(
+            selected.profile.configuration_inputs["@vendor/build/compile_commands.json"],
+            digest
+        );
+        let unrelated =
+            policy.select_in_root_captured(&registry, "other.h", "other.h", source, &captured)?;
+        assert!(unrelated.profile.configuration_inputs.is_empty());
+        policy.rules.push(SelectionRule {
+            selector: RuleMatch::Exact { path: path.into() },
+            case_sensitive: true,
+            adapter_id: "c".into(),
+        });
+        let explicit = policy.select_in_root_captured(
+            &registry,
+            path,
+            "build/include/beacon.h",
+            source,
+            &captured,
+        )?;
+        assert_eq!(explicit.profile.adapter_id, "c");
+        assert!(explicit.profile.configuration_inputs.is_empty());
+        policy.version = 1;
+        assert!(policy.validate(&registry).is_err());
+        Ok(())
+    }
     #[test]
     fn repository_selection_uses_source_root_but_overrides_use_collection_path()
     -> anyhow::Result<()> {

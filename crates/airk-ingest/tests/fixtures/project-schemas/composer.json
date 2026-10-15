@@ -1,0 +1,1 @@
+{"name":"original/beacon","description":"Independent beacon package for bounded repository discovery","license":"Apache-2.0","require":{"example/library":"^1.0"}}

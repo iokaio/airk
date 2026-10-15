@@ -22,7 +22,16 @@ pub fn describe(
     let profile_id = profile.identity()?;
     if matches!(
         profile.adapter_id.as_str(),
-        "cmake" | "make" | "msbuild" | "github-actions" | "compose"
+        "cmake"
+            | "make"
+            | "msbuild"
+            | "github-actions"
+            | "compose"
+            | "starlark"
+            | "kubernetes"
+            | "openapi"
+            | "gitlab-ci"
+            | "project-manifest"
     ) {
         return Ok(ContinuityDraft::default());
     }

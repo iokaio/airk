@@ -15,11 +15,17 @@ mod build_make;
 pub mod chunking;
 mod compose;
 pub mod continuity;
+pub mod header_context;
+mod instruction_documents;
 mod msbuild;
 pub mod observations;
+mod project_build;
+mod project_schemas;
 mod repository_binding;
 mod repository_syntax;
+mod structured_view;
 mod structured_yaml;
+mod syntax_repairs;
 
 pub const MAX_FILE_BYTES: usize = 16_777_216;
 pub const MAX_CORPUS_BYTES: usize = 67_108_864;
@@ -397,6 +403,14 @@ fn scan_observed_profiled(
             source.to_str().context("non-UTF-8 source root")?.into(),
         );
     }
+    let (captured_context, captured_sources) = capture_header_inputs(
+        &sources,
+        &data_dir,
+        policy,
+        limits,
+        &mut observation.usage,
+        &mut read_bytes,
+    )?;
     let walker = sources.iter().flat_map(|(prefix, source)| {
         discovery(source, &data_dir).map(move |entry| (prefix, source, entry))
     });
@@ -444,11 +458,16 @@ fn scan_observed_profiled(
         }
         let remaining = limits.read_bytes.saturating_sub(read_bytes);
         ensure!(
-            source_size <= remaining as u64,
+            captured_sources.contains_key(&path) || source_size <= remaining as u64,
             "workspace raw source read budget exhausted; previous generation retained"
         );
-        let bytes = read_source_with_budget(source, entry.path(), remaining)?;
-        read_bytes += bytes.len();
+        let bytes = if let Some(bytes) = captured_sources.get(&path) {
+            bytes.clone()
+        } else {
+            let bytes = read_source_with_budget(source, entry.path(), remaining)?;
+            read_bytes += bytes.len();
+            bytes
+        };
         observation.usage.source_read_bytes = read_bytes;
         if bytes.len() > limits.file_bytes {
             if previous.artifacts.contains_key(&path) {
@@ -464,11 +483,12 @@ fn scan_observed_profiled(
         }
         let content_hash = format!("{:x}", Sha256::digest(&bytes));
         let hash = content_hash.parse::<airk_core::identity::Sha256Digest>()?;
-        let selection = policy.select_in_root(
+        let selection = policy.select_in_root_captured(
             &registry,
             &path,
             path.strip_prefix(prefix.as_str()).unwrap_or(&path),
             &bytes,
+            &captured_context,
         )?;
         let mut profile = selection.profile;
         // A deliberate OCR operation is retained for unchanged source bytes.
@@ -720,6 +740,69 @@ impl IndexReport {
             self.skipped_truncated += 1;
         }
     }
+}
+
+fn capture_header_inputs(
+    sources: &[(String, std::path::PathBuf)],
+    data_dir: &Path,
+    policy: &adapters::profile::ExtractionPolicy,
+    limits: ScanLimits,
+    usage: &mut observations::ScanUsage,
+    read_bytes: &mut usize,
+) -> Result<(header_context::CapturedMap, BTreeMap<String, Vec<u8>>)> {
+    let mut wanted: std::collections::BTreeSet<_> =
+        policy.declared_configurations().into_iter().collect();
+    let mut captured = header_context::CapturedMap::new();
+    let mut bytes_by_path = BTreeMap::new();
+    if wanted.is_empty() {
+        return Ok((captured, bytes_by_path));
+    }
+    for (prefix, root) in sources {
+        for entry in discovery(root, data_dir) {
+            ensure!(
+                usage.charged_entries() < limits.discovery_entries,
+                "header configuration discovery budget exhausted; previous generation retained"
+            );
+            usage.discovery_entries += 1;
+            let entry = entry.context("header configuration discovery failed")?;
+            if !entry.file_type().is_some_and(|kind| kind.is_file()) {
+                continue;
+            }
+            let relative = entry
+                .path()
+                .strip_prefix(root)?
+                .to_str()
+                .context("non-UTF-8 configuration path")?
+                .replace('\\', "/");
+            let logical = format!("{prefix}{relative}");
+            if !wanted.remove(logical.as_str()) {
+                continue;
+            }
+            let maximum = limits
+                .file_bytes
+                .min(header_context::MAX_CONFIGURATION_BYTES);
+            let size = entry.path().symlink_metadata()?.len();
+            if size <= maximum as u64 {
+                let remaining = limits.read_bytes.saturating_sub(*read_bytes);
+                ensure!(
+                    size <= remaining as u64,
+                    "header configuration read budget exhausted; previous generation retained"
+                );
+                let bytes =
+                    read_source_with_budget(root, entry.path(), remaining.min(maximum + 1))?;
+                *read_bytes += bytes.len();
+                usage.source_read_bytes = *read_bytes;
+                if let Ok(context) = header_context::capture_configuration(&logical, &bytes) {
+                    captured.insert(logical.clone(), context);
+                }
+                bytes_by_path.insert(logical, bytes);
+            }
+            if wanted.is_empty() {
+                return Ok((captured, bytes_by_path));
+            }
+        }
+    }
+    Ok((captured, bytes_by_path))
 }
 
 fn discovery(root: &Path, data_dir: &Path) -> ignore::Walk {

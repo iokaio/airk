@@ -36,6 +36,12 @@ pub(crate) fn analyze_selected(
         "msbuild" => return crate::msbuild::analyze(path, text),
         "github-actions" => return crate::actions::analyze(path, text),
         "compose" => return crate::compose::analyze(path, text),
+        "starlark" | "gradle-kotlin" => {
+            return crate::project_build::analyze(path, text, adapter_id);
+        }
+        "kubernetes" | "openapi" | "gitlab-ci" | "project-manifest" => {
+            return crate::project_schemas::analyze_selected(path, text, adapter_id);
+        }
         _ => {}
     }
     analyze_profile(path, text, profile_id(adapter_id))
@@ -181,7 +187,7 @@ fn analyze_profile(path: &str, text: &str, selected: Option<Profile>) -> anyhow:
         pending.extend(node.named_children(&mut cursor));
     }
     facts.sort_by(|a, b| (a.start_line, &a.kind, &a.name).cmp(&(b.start_line, &b.kind, &b.name)));
-    Ok(Analysis {
+    let analysis = Analysis {
         language: profile.language.into(),
         status: if tree.root_node().has_error() {
             "partial-syntax"
@@ -190,7 +196,15 @@ fn analyze_profile(path: &str, text: &str, selected: Option<Profile>) -> anyhow:
         }
         .into(),
         facts,
-    })
+    };
+    if matches!(
+        profile.language,
+        "php" | "ruby" | "sql" | "sql-postgresql" | "sql-mysql"
+    ) {
+        crate::syntax_repairs::enrich(analysis, path, text, tree.root_node(), profile.language)
+    } else {
+        Ok(analysis)
+    }
 }
 
 fn call_kind(language: &str, kind: &str) -> bool {
@@ -1009,8 +1023,12 @@ fn profile_id(adapter_id: &str) -> Option<Profile> {
             &[],
             &["rule_set"],
         ),
-        "sql" => (
-            "sql",
+        "sql" | "sql-postgresql" | "sql-mysql" => (
+            match adapter_id {
+                "sql-postgresql" => "sql-postgresql",
+                "sql-mysql" => "sql-mysql",
+                _ => "sql",
+            },
             tree_sitter_sequel::LANGUAGE.into(),
             &[
                 "create_table",

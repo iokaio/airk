@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: Apache-2.0
+openapi: 3.1.0
+info: {title: Original Beacon API, version: '1'}
+paths:
+  /beacons:
+    get:
+      operationId: listBeacons
+      parameters:
+        - {name: limit, in: query, schema: {type: integer}}
+      responses:
+        '200':
+          description: Original response
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Beacon'}
+components:
+  schemas:
+    Beacon:
+      type: object
+      properties: {name: {type: string}}
