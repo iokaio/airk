@@ -519,7 +519,7 @@ pub fn run_lsp(
 ) -> Result<ProviderAnalysis> {
     let workspace = Workspace::prepare(root, snapshot, source, request)?;
     let mut session = Session::start(&workspace, request)?;
-    let initialized = session.request("initialize", json!({"processId":std::process::id(),"clientInfo":{"name":"AIRK","version":"0.1.0"},"rootUri":session.root_uri,"workspaceFolders":[{"uri":session.root_uri,"name":"airk-private-source"}],"capabilities":{"experimental":{"serverStatusNotification":true},"general":{"positionEncodings":["utf-8","utf-16","utf-32"]},"workspace":{"applyEdit":false,"configuration":true},"textDocument":{"documentSymbol":{"hierarchicalDocumentSymbolSupport":true},"definition":{"linkSupport":true},"typeDefinition":{"linkSupport":true},"implementation":{"linkSupport":true},"references":{},"callHierarchy":{}}},"initializationOptions":initialization_options()}))?;
+    let initialized = session.request("initialize", json!({"processId":std::process::id(),"clientInfo":{"name":"AIRK","version":env!("CARGO_PKG_VERSION")},"rootUri":session.root_uri,"workspaceFolders":[{"uri":session.root_uri,"name":"airk-private-source"}],"capabilities":{"experimental":{"serverStatusNotification":true},"general":{"positionEncodings":["utf-8","utf-16","utf-32"]},"workspace":{"applyEdit":false,"configuration":true},"textDocument":{"documentSymbol":{"hierarchicalDocumentSymbolSupport":true},"definition":{"linkSupport":true},"typeDefinition":{"linkSupport":true},"implementation":{"linkSupport":true},"references":{},"callHierarchy":{}}},"initializationOptions":initialization_options()}))?;
     let capabilities = initialized
         .get("capabilities")
         .context("LSP initialize capabilities missing")?;
