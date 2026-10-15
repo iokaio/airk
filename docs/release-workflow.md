@@ -4,7 +4,7 @@
 
 The [GitHub release workflow](../.github/workflows/github-release.yml) builds, signs and prepares downloads on GitHub-hosted machines. Run **Actions → GitHub release → Run workflow** on **main**, choose **preview** or **stable**, and enable **publish** to publish the verified downloads. Leave publish disabled for a full build/signing rehearsal with downloadable Actions artifacts.
 
-The release tag is automatically numbered from this workflow's run number: for example, `v0.1.0-build.42`. The base version comes from the checked-in Cargo workspace and must match the VS Code extension. App/extension versions remain `0.1.0`; no commit, lockfile or package metadata is rewritten. Every new dispatch advances the build number, including failed/rehearsal runs. Reruns retain the number and change the attempt. An existing release or tag is never overwritten; after a partial publication, inspect the retained draft and dispatch a new build.
+The release tag is automatically numbered from this workflow's run number: for example, `v0.1.0-build.42`. The base version comes from the checked-in Cargo workspace and must match the VS Code extension. App/extension versions remain the checked-in version (currently `0.2.0`); no commit, lockfile or package metadata is rewritten. Every new dispatch advances the build number, including failed/rehearsal runs. Reruns retain the number and change the attempt. An existing release or tag is never overwritten; after a partial publication, inspect the retained draft and dispatch a new build.
 
 Before a draft exists, retry with **Re-run all jobs** so every input belongs to the new attempt. Re-running only failed signing/publishing jobs cannot consume artifacts from an older attempt.
 
@@ -75,7 +75,7 @@ The new required check names become available when a PR runs these workflow chan
 
 ## Build manually
 
-Open **Actions → Extension release → Run workflow**. Enter the exact checked-in version (initially `0.1.0`), select `preview` or `stable`, and leave `publish` false. Builds may be reviewed from a feature branch; publication requires `main`.
+Open **Actions → Extension release → Run workflow**. Enter the exact checked-in version (currently `0.2.0`), select `preview` or `stable`, and leave `publish` false. Builds may be reviewed from a feature branch; publication requires `main`.
 
 The [release workflow](../.github/workflows/extension-release.yml) invokes the same [CI workflow](../.github/workflows/ci.yml) used for PRs: native build/tests, extension tests with the real helper, repository/packaging checks, the four platform packages, and Linux container validation. It does not skip checks when publishing. Candidate artifacts expire after seven days.
 
