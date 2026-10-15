@@ -26,7 +26,7 @@ For a local Windows app and extension build:
 pwsh -NoProfile -File scripts/build-windows.ps1
 ~~~
 
-Add `-OpenReview` to install the generated VSIX in an isolated editor profile. The extension provides measured workspace coverage, click-to-index, indexing presets, persistent pause/resume, storage selection, generation trimming, local usage reports, scoped VS Code MCP registration and guided agent setup. See [Windows build/review instructions](docs/windows-local-build.md) and [extension behavior and limits](docs/vscode-extension.md).
+Add `-OpenReview` to install the generated VSIX in an isolated editor profile. The extension provides measured workspace coverage, grouped controls, indexing presets, persistent pause/resume, storage selection, generation trimming, local usage reports, scoped VS Code MCP registration and guided agent setup. See [Windows build/review instructions](docs/windows-local-build.md) and [extension behavior and limits](docs/vscode-extension.md).
 
 ~~~console
 cargo install --path crates/airk-cli --locked
