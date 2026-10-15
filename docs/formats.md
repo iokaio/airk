@@ -32,11 +32,17 @@ Explicit PostgreSQL/MySQL profiles add separately labeled structural procedure e
 
 | Format | Native extraction/facts | Citation and scope |
 |---|---|---|
-| Markdown / MDX | Heading hierarchy, tables, requirement/date/design/architecture/feature/decision candidates; lexical source | Source lines; code examples excluded from prose cues |
+| Markdown | Heading hierarchy, tables, requirement/date/design/architecture/feature/decision candidates; lexical source | Source lines; code examples excluded from prose cues |
+| MDX | Preserved Markdown prose plus bounded standalone ESM/JSX/expression islands | Original host spans and region-local code; mixed inline syntax remains partial |
 | JSON / JSONC | Tree-sitter object keys | Source lines; comments/nonstandard syntax may produce partial-syntax |
 | YAML / TOML | Native mapping keys/tables | Source lines; key names are local, not fully qualified paths |
-| HTML | Element/tag facts and raw text retrieval | Source lines; Vue/Svelte markup uses HTML grammar, not full component semantics |
-| CSS / SCSS | Selector facts and source retrieval | Source lines; SCSS-only syntax may be partial |
+| HTML | Tags plus supported JS/TS and CSS/SCSS script/style blocks | Exact mapped child spans; linked resources are not fetched |
+| Vue / Svelte | Component/directive/slot/prop/event and setup/module/style candidates plus mapped children | No template compiler, framework execution or resolved bindings |
+| Astro | Leading TypeScript frontmatter and explicit script/style blocks, component candidates | Original spans; general template expressions remain partial |
+| Razor / Blazor | Directives/routes/injection, component candidates and contiguous C# member blocks | Mapped original spans; mixed template blocks remain partial |
+| Jupyter format 4 | Supported code and Markdown cell sources and stored cell metadata | Exact decoded JSON/cell locations; outputs/attachments excluded from retrieval |
+| CSS | Selector facts and source retrieval | Source lines |
+| SCSS | Selectors, variables, mixins/includes, functions, use/import/forward | Original spans; non-ASCII selectors/interpolation remain partial; no Sass evaluation |
 | XML / SVG | Elements and selected identity/reference/drawing attributes | Source lines; no rendering, scripts, external resource/entity loading |
 | CSV / TSV | Parsed records and column headers | Source lines; header assumption, validates record consistency |
 | INI/config/properties | Sections and simple key/value lines | Source lines; initial line adapter, not every configuration dialect |

@@ -1,0 +1,12 @@
+// SPDX-License-Identifier: Apache-2.0
+@use "palette";
+@forward "shared";
+@import "legacy";
+$tone: #369;
+@mixin padded($size) { padding: $size; }
+@function double($value) { @return $value * 2; }
+.café {
+  @include padded(4px);
+  color: $tone;
+  &:hover { color: #123; }
+}

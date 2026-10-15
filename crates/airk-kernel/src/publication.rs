@@ -243,12 +243,24 @@ impl Kernel {
                     payload_bytes: reference.object_bytes,
                     extracted_bytes: reference.extracted_bytes,
                     chunks: reference.chunks,
-                    indexed_lines: self
-                        .store
-                        .load_retained(artifact)?
-                        .chunks
-                        .last()
-                        .map_or(0, |chunk| chunk.end_line),
+                    indexed_lines: if reference
+                        .profile
+                        .as_ref()
+                        .is_some_and(|profile| profile.adapter_version == "composite-facts/1")
+                        && artifact.extraction_method == "utf8"
+                    {
+                        std::str::from_utf8(&self.store.read_retained_source(artifact)?)?
+                            .split_inclusive('\n')
+                            .count()
+                    } else {
+                        self.store
+                            .load_retained(artifact)?
+                            .chunks
+                            .iter()
+                            .map(|chunk| chunk.end_line)
+                            .max()
+                            .unwrap_or(0)
+                    },
                     facts: reference.facts,
                     raw_source: reference.raw_source,
                     language: artifact.language.clone(),

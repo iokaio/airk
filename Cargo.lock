@@ -82,6 +82,7 @@ version = "0.1.0"
 dependencies = [
  "airk-core",
  "anyhow",
+ "cortexkit-tree-sitter-scss",
  "csv",
  "ignore",
  "libc",
@@ -117,6 +118,7 @@ dependencies = [
  "tree-sitter-powershell",
  "tree-sitter-proto",
  "tree-sitter-python",
+ "tree-sitter-razor",
  "tree-sitter-ruby",
  "tree-sitter-rust",
  "tree-sitter-sequel",
@@ -643,6 +645,16 @@ name = "core_detect"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f8f80099a98041a3d1622845c271458a2d73e688351bf3cb999266764b81d48"
+
+[[package]]
+name = "cortexkit-tree-sitter-scss"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7e1ab239ee763e587b6213bde9320d0ffb7013808b827ef36c115bfd265799a1"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
 
 [[package]]
 name = "cpufeatures"
@@ -3629,6 +3641,16 @@ name = "tree-sitter-python"
 version = "0.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6bf85fd39652e740bf60f46f4cda9492c3a9ad75880575bf14960f775cb74a1c"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "tree-sitter-razor"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3c99d14709439f7c7383c8376765219ece638eddb86ccc2b434a4853c64838c5"
 dependencies = [
  "cc",
  "tree-sitter-language",

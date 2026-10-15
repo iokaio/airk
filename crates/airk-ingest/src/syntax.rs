@@ -2,6 +2,7 @@
 //! Native grammar profiles. Syntax facts never imply cross-file name resolution.
 use airk_core::continuity::{CodeFingerprints, MAX_CONTINUITY_HASH_BYTES};
 use airk_core::identity::framed_digest;
+use airk_core::location::HostBudget;
 use airk_core::{CodeEvidence, CodeSpan, DocumentLocation, EvidenceBasis, Fact};
 use std::path::Path;
 use tree_sitter::{Language, Node, Parser};
@@ -31,6 +32,7 @@ pub(crate) fn analyze_selected(
     adapter_id: &str,
 ) -> anyhow::Result<Analysis> {
     match adapter_id {
+        "scss" => return crate::scss::analyze(path, text),
         "cmake" => return crate::build_cmake::analyze(path, text),
         "make" => return crate::build_make::analyze(path, text),
         "msbuild" => return crate::msbuild::analyze(path, text),
@@ -47,7 +49,54 @@ pub(crate) fn analyze_selected(
     analyze_profile(path, text, profile_id(adapter_id))
 }
 
+/// Shared child extraction. Caller admits text and map bytes once; this charges
+/// parse attempts, visited syntax/fingerprint nodes, emitted facts and hash inputs.
+/// Specialized adapters without a shared walk are rejected, never reset silently.
+pub(crate) fn analyze_selected_budgeted(
+    path: &str,
+    text: &str,
+    adapter_id: &str,
+    budget: &mut HostBudget,
+) -> anyhow::Result<Analysis> {
+    anyhow::ensure!(
+        text.len() <= crate::MAX_FILE_BYTES,
+        "child source exceeds native ceiling"
+    );
+    if adapter_id == "scss" {
+        return crate::scss::analyze_budgeted(path, text, budget);
+    }
+    anyhow::ensure!(
+        !matches!(
+            adapter_id,
+            "php"
+                | "ruby"
+                | "sql"
+                | "sql-postgresql"
+                | "sql-mysql"
+                | "hcl"
+                | "dockerfile"
+                | "proto"
+                | "graphql"
+        ),
+        "adapter has no shared-budget child walk"
+    );
+    let selected = profile_id(adapter_id)
+        .ok_or_else(|| anyhow::anyhow!("adapter has no shared-budget child walk"))?;
+    analyze_profile_budgeted(path, text, Some(selected), budget, true)
+}
+
 fn analyze_profile(path: &str, text: &str, selected: Option<Profile>) -> anyhow::Result<Analysis> {
+    let mut budget = HostBudget::new(500_000, 10_000, 16_777_216)?;
+    analyze_profile_budgeted(path, text, selected, &mut budget, false)
+}
+
+fn analyze_profile_budgeted(
+    path: &str,
+    text: &str,
+    selected: Option<Profile>,
+    budget: &mut HostBudget,
+    shared: bool,
+) -> anyhow::Result<Analysis> {
     let Some(profile) = selected else {
         return Ok(Analysis {
             language: "text".into(),
@@ -55,6 +104,7 @@ fn analyze_profile(path: &str, text: &str, selected: Option<Profile>) -> anyhow:
             facts: Vec::new(),
         });
     };
+    budget.charge(1, 0, 0, 0)?;
     let mut parser = Parser::new();
     parser.set_language(&profile.grammar)?;
     let tree = parser
@@ -83,6 +133,7 @@ fn analyze_profile(path: &str, text: &str, selected: Option<Profile>) -> anyhow:
     let mut fingerprint_bytes = 0usize;
     while let Some(node) = pending.pop() {
         visited += 1;
+        budget.charge(1, 0, 0, 0)?;
         anyhow::ensure!(visited <= 500_000, "file exceeds parser node limit");
         // Error-containing declarations do not become authoritative syntax facts.
         if !node.has_error() && !node.is_missing() {
@@ -122,6 +173,7 @@ fn analyze_profile(path: &str, text: &str, selected: Option<Profile>) -> anyhow:
                 if let Some(name) = name.filter(|name| !name.trim().is_empty()) {
                     let start = node.start_position().row + 1;
                     let end = node.end_position().row + usize::from(node.end_position().column > 0);
+                    budget.charge(0, 1, 0, 0)?;
                     facts.push(Fact {
                         code: if kind == "key" {
                             None
@@ -133,8 +185,11 @@ fn analyze_profile(path: &str, text: &str, selected: Option<Profile>) -> anyhow:
                                 &profile,
                                 kind,
                                 name.trim(),
-                                &mut fingerprint_bytes,
-                            ))
+                                EvidenceBudget {
+                                    fingerprint_bytes: &mut fingerprint_bytes,
+                                    host: shared.then_some(&mut *budget),
+                                },
+                            )?)
                         },
                         name: bounded_name(name.trim()),
                         kind: kind.into(),
@@ -157,6 +212,7 @@ fn analyze_profile(path: &str, text: &str, selected: Option<Profile>) -> anyhow:
                         evidence.producer = "airk-framework-cues".into();
                         evidence.producer_version = "1".into();
                         evidence.coverage="Matched a written call pattern; aliases, framework identity and runtime behavior unverified".into();
+                        budget.charge(0, 1, 0, 0)?;
                         facts.push(cue);
                     }
                     if kind == "definition" {
@@ -175,6 +231,7 @@ fn analyze_profile(path: &str, text: &str, selected: Option<Profile>) -> anyhow:
                             evidence.producer = "airk-framework-cues".into();
                             evidence.producer_version = "1".into();
                             evidence.coverage="Recognized written attribute/annotation; framework binding, security and runtime behavior unverified".into();
+                            budget.charge(0, 1, 0, 0)?;
                             facts.push(cue);
                         }
                     }
@@ -184,7 +241,10 @@ fn analyze_profile(path: &str, text: &str, selected: Option<Profile>) -> anyhow:
         }
         let mut cursor = node.walk();
         // Iterative walk avoids Rust stack growth on deeply nested input.
-        pending.extend(node.named_children(&mut cursor));
+        for child in node.named_children(&mut cursor) {
+            anyhow::ensure!(pending.len() < 500_000, "parser pending limit exceeded");
+            pending.push(child);
+        }
     }
     facts.sort_by(|a, b| (a.start_line, &a.kind, &a.name).cmp(&(b.start_line, &b.kind, &b.name)));
     let analysis = Analysis {
@@ -276,6 +336,11 @@ fn symbol_id(path: &str, node: Node<'_>) -> String {
     )
 }
 
+struct EvidenceBudget<'a> {
+    fingerprint_bytes: &'a mut usize,
+    host: Option<&'a mut HostBudget>,
+}
+
 fn code_evidence(
     path: &str,
     node: Node<'_>,
@@ -283,8 +348,12 @@ fn code_evidence(
     profile: &Profile,
     kind: &str,
     name: &str,
-    fingerprint_bytes: &mut usize,
-) -> CodeEvidence {
+    work: EvidenceBudget<'_>,
+) -> anyhow::Result<CodeEvidence> {
+    let EvidenceBudget {
+        fingerprint_bytes,
+        host: mut budget,
+    } = work;
     let mut omitted = name.len() > 1024;
     let mut scopes = Vec::new();
     let mut full_scopes = Vec::new();
@@ -292,6 +361,9 @@ fn code_evidence(
     let mut parent = node.parent();
     let mut count = 0;
     while let Some(ancestor) = parent {
+        if let Some(budget) = budget.as_deref_mut() {
+            budget.charge(1, 0, 0, 0)?;
+        }
         count += 1;
         if count > 128 {
             break;
@@ -319,6 +391,9 @@ fn code_evidence(
     let mut modifiers = Vec::new();
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
+        if let Some(budget) = budget.as_deref_mut() {
+            budget.charge(1, 0, 0, 0)?;
+        }
         if matches!(
             child.kind(),
             "visibility_modifier"
@@ -345,6 +420,9 @@ fn code_evidence(
         let Some(sibling) = previous else {
             break;
         };
+        if let Some(budget) = budget.as_deref_mut() {
+            budget.charge(1, 0, 0, 0)?;
+        }
         if sibling.end_position().row + 2 < next_documentation_row {
             break;
         }
@@ -437,48 +515,62 @@ fn code_evidence(
     let qualified_name = bounded_name(&qualified_display);
     // Hash complete original bytes before any display truncation. Literal and
     // whitespace changes remain observable; no token-erasing normalization.
-    let fingerprints = (kind == "definition").then(|| {
-        let signature_bytes = body.map(|body| &text[node.start_byte()..body.start_byte()]);
-        let body_bytes = body.and_then(|body| body.utf8_text(text.as_bytes()).ok());
-        let needed = name
-            .len()
-            .saturating_mul(2)
-            .saturating_add(full_scopes.iter().map(String::len).sum::<usize>())
-            .saturating_add(signature_bytes.map_or(0, str::len))
-            .saturating_add(body_bytes.map_or(0, str::len))
-            .saturating_add(external_modifiers.iter().map(|s| s.len()).sum::<usize>())
-            .saturating_add(full_documentation.iter().map(|s| s.len()).sum::<usize>());
-        *fingerprint_bytes = fingerprint_bytes.saturating_add(needed);
-        let admitted = *fingerprint_bytes <= MAX_CONTINUITY_HASH_BYTES;
-        let hash = |domain: &[u8], value: &str| framed_digest(domain, &[value.as_bytes()]);
-        let mut qualified: Vec<&[u8]> = full_scopes.iter().map(|s| s.as_bytes()).collect();
-        qualified.push(name.as_bytes());
-        CodeFingerprints {
-            version: 1,
-            name: admitted.then(|| hash(b"code-name/1", name)),
-            qualified_name: (admitted && count <= 128)
-                .then(|| framed_digest(b"code-qualified-name/1", &qualified)),
-            signature: signature_bytes
-                .filter(|_| admitted && modifiers_complete)
-                .map(|s| {
-                    let mut fields: Vec<&[u8]> =
-                        external_modifiers.iter().map(|s| s.as_bytes()).collect();
-                    fields.push(s.as_bytes());
-                    framed_digest(b"code-signature/1", &fields)
-                }),
-            body: body_bytes
-                .filter(|_| admitted)
-                .map(|s| hash(b"code-body/1", s)),
-            body_informative: admitted && body.is_some_and(|body| informative_body(body, text)),
-            documentation: (admitted && documentation_complete && profile.language != "python")
-                .then(|| {
-                    let fields: Vec<&[u8]> =
-                        full_documentation.iter().map(|s| s.as_bytes()).collect();
-                    framed_digest(b"code-documentation/1", &fields)
-                }),
-        }
-    });
-    CodeEvidence {
+    let fingerprints = (kind == "definition")
+        .then(|| -> anyhow::Result<CodeFingerprints> {
+            let signature_bytes = body.map(|body| &text[node.start_byte()..body.start_byte()]);
+            let body_bytes = body.and_then(|body| body.utf8_text(text.as_bytes()).ok());
+            let needed = name
+                .len()
+                .saturating_mul(2)
+                .saturating_add(full_scopes.iter().map(String::len).sum::<usize>())
+                .saturating_add(signature_bytes.map_or(0, str::len))
+                .saturating_add(body_bytes.map_or(0, str::len))
+                .saturating_add(external_modifiers.iter().map(|s| s.len()).sum::<usize>())
+                .saturating_add(full_documentation.iter().map(|s| s.len()).sum::<usize>());
+            if let Some(budget) = budget.as_deref_mut() {
+                budget.charge_fingerprints(needed)?;
+            }
+            *fingerprint_bytes = fingerprint_bytes.saturating_add(needed);
+            let admitted = *fingerprint_bytes <= MAX_CONTINUITY_HASH_BYTES;
+            let hash = |domain: &[u8], value: &str| framed_digest(domain, &[value.as_bytes()]);
+            let mut qualified: Vec<&[u8]> = full_scopes.iter().map(|s| s.as_bytes()).collect();
+            qualified.push(name.as_bytes());
+            let body_informative = if admitted {
+                if let Some(body) = body {
+                    informative_body_with_budget(body, text, budget)?
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+            Ok(CodeFingerprints {
+                version: 1,
+                name: admitted.then(|| hash(b"code-name/1", name)),
+                qualified_name: (admitted && count <= 128)
+                    .then(|| framed_digest(b"code-qualified-name/1", &qualified)),
+                signature: signature_bytes
+                    .filter(|_| admitted && modifiers_complete)
+                    .map(|s| {
+                        let mut fields: Vec<&[u8]> =
+                            external_modifiers.iter().map(|s| s.as_bytes()).collect();
+                        fields.push(s.as_bytes());
+                        framed_digest(b"code-signature/1", &fields)
+                    }),
+                body: body_bytes
+                    .filter(|_| admitted)
+                    .map(|s| hash(b"code-body/1", s)),
+                body_informative,
+                documentation: (admitted && documentation_complete && profile.language != "python")
+                    .then(|| {
+                        let fields: Vec<&[u8]> =
+                            full_documentation.iter().map(|s| s.as_bytes()).collect();
+                        framed_digest(b"code-documentation/1", &fields)
+                    }),
+            })
+        })
+        .transpose()?;
+    Ok(CodeEvidence {
         fingerprints,
         span: Some(CodeSpan {
             start_byte: node.start_byte(),
@@ -505,20 +597,31 @@ fn code_evidence(
             "Selected grammar nodes; written syntax only, no inferred types or target resolution"
                 .into(),
         details_truncated,
-    }
+    })
 }
 
 pub(crate) fn informative_body(body: Node<'_>, text: &str) -> bool {
+    informative_body_with_budget(body, text, None).unwrap_or(false)
+}
+
+fn informative_body_with_budget(
+    body: Node<'_>,
+    text: &str,
+    mut budget: Option<&mut HostBudget>,
+) -> anyhow::Result<bool> {
     if body.end_byte() - body.start_byte() < 32 {
-        return false;
+        return Ok(false);
     }
     let mut words = std::collections::BTreeSet::new();
     let mut pending = vec![body];
     let mut visited = 0usize;
     while let Some(node) = pending.pop() {
         visited += 1;
+        if let Some(budget) = budget.as_deref_mut() {
+            budget.charge(1, 0, 0, 0)?;
+        }
         if visited > 4096 {
-            return false;
+            return Ok(false);
         }
         if node.kind().contains("comment") {
             continue;
@@ -528,14 +631,14 @@ pub(crate) fn informative_body(body: Node<'_>, text: &str) -> bool {
             // The admission cap also bounds the traversal's pending storage.
             for child in node.named_children(&mut cursor).take(4097) {
                 if pending.len() >= 4096 {
-                    return false;
+                    return Ok(false);
                 }
                 pending.push(child);
             }
             continue;
         }
         let Ok(token) = node.utf8_text(text.as_bytes()) else {
-            return false;
+            return Ok(false);
         };
         for word in token.split(|c: char| !c.is_alphanumeric() && c != '_') {
             if word.len() < 2
@@ -564,11 +667,11 @@ pub(crate) fn informative_body(body: Node<'_>, text: &str) -> bool {
             }
             words.insert(word);
             if words.len() >= 4 {
-                return true;
+                return Ok(true);
             }
         }
     }
-    false
+    Ok(false)
 }
 
 fn framework_call(language: &str, target: &str) -> Option<&'static str> {
@@ -1053,6 +1156,57 @@ fn profile_id(adapter_id: &str) -> Option<Profile> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn child_walks_share_facts_and_do_not_readmit_text() {
+        let mut budget = HostBudget::new(1000, 1, 0).unwrap();
+        let first =
+            analyze_selected_budgeted("a.js", "function alpha() {}", "javascript", &mut budget)
+                .unwrap();
+        assert_eq!(first.facts.len(), 1);
+        assert!(
+            analyze_selected_budgeted("b.js", "function beta() {}", "javascript", &mut budget)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn empty_and_malformed_child_walks_consume_shared_nodes() {
+        let mut budget = HostBudget::new(3, 0, 0).unwrap();
+        analyze_selected_budgeted("a.js", "", "javascript", &mut budget).unwrap();
+        assert!(analyze_selected_budgeted("b.js", "", "javascript", &mut budget).is_err());
+        let mut budget = HostBudget::new(2, 10, 0).unwrap();
+        assert!(
+            analyze_selected_budgeted("bad.js", "function ( {", "javascript", &mut budget).is_err()
+        );
+    }
+
+    #[test]
+    fn child_fingerprints_share_complete_input_allowance() {
+        let mut budget = HostBudget::new(1000, 10, 0).unwrap();
+        budget
+            .charge_fingerprints(MAX_CONTINUITY_HASH_BYTES - 1)
+            .unwrap();
+        let error = analyze_selected_budgeted("a.rs", "fn alpha() {}", "rust", &mut budget)
+            .err()
+            .unwrap();
+        assert!(error.to_string().contains("fingerprint budget"));
+        assert!(budget.charge_fingerprints(1).is_err());
+    }
+
+    #[test]
+    fn specialized_child_adapter_cannot_reset_shared_budget() {
+        for adapter in ["php", "ruby", "sql", "hcl", "gradle-kotlin", "unknown"] {
+            let mut budget = HostBudget::new(1000, 10, 0).unwrap();
+            assert!(
+                analyze_selected_budgeted("child", "", adapter, &mut budget)
+                    .err()
+                    .unwrap()
+                    .to_string()
+                    .contains("shared-budget child walk")
+            );
+        }
+    }
 
     #[test]
     fn native_annotation_rules_preserve_evidence_and_do_not_guess_security() -> anyhow::Result<()> {

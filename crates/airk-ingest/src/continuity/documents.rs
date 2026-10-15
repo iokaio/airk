@@ -40,6 +40,12 @@ fn category(location: &DocumentLocation) -> &'static str {
         DocumentLocation::Slide { .. } => "slide",
         DocumentLocation::TableRow { .. } => "table_row",
         DocumentLocation::WorksheetRow { .. } => "worksheet_row",
+        DocumentLocation::Mapped {
+            region: airk_core::location::RegionLocation::Embedded { .. },
+        } => "embedded_paragraph",
+        DocumentLocation::Mapped {
+            region: airk_core::location::RegionLocation::NotebookCell { .. },
+        } => "notebook_cell",
     }
 }
 
@@ -57,6 +63,9 @@ struct Builder<'a> {
     draft: ContinuityDraft,
     encoded_bytes: usize,
     lines: BTreeMap<Option<u32>, Vec<usize>>,
+    mapper: Option<airk_core::mapped_binding::MappedBinding<'a>>,
+    mapping_budget: airk_core::location::HostBudget,
+    region_identities: BTreeMap<u32, Sha256Digest>,
 }
 
 impl Builder<'_> {
@@ -90,6 +99,16 @@ impl Builder<'_> {
             owner,
             region,
         } = context;
+        let location = match region {
+            Some(id) => {
+                self.mapper
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("missing document mapper"))?
+                    .mapped_location(id, span.clone(), &mut self.mapping_budget)?
+                    .0
+            }
+            None => location,
+        };
         let text = match region {
             None => self.payload.text.as_str(),
             Some(id) => self
@@ -112,7 +131,11 @@ impl Builder<'_> {
         let coordinates = serde_json::to_vec(&(
             &location,
             &span,
-            mapping.map(|item| (&item.location, &item.source_map)),
+            if matches!(location, DocumentLocation::Mapped { .. }) {
+                None
+            } else {
+                mapping.map(|item| (&item.location, &item.source_map))
+            },
         ))?;
         let details = fact.and_then(|fact| fact.document.as_ref());
         let details_bytes = serde_json::to_vec(&details)?;
@@ -205,7 +228,9 @@ impl Builder<'_> {
                 // Native page/slide/table coordinates are part of matching
                 // eligibility. A DOCX paragraph ordinal intentionally is not.
                 match &location {
-                    DocumentLocation::Lines { .. } | DocumentLocation::Block { .. } => None,
+                    DocumentLocation::Lines { .. }
+                    | DocumentLocation::Block { .. }
+                    | DocumentLocation::Mapped { .. } => None,
                     native => Some(native),
                 },
             ))?,
@@ -229,8 +254,10 @@ impl Builder<'_> {
             family: ContinuityFamily::Documents,
             category: category.into(),
             name: heading.then(|| hash(b"document-heading/1", statement.as_bytes())),
-            explicit_identity: explicit
-                .map(|value| hash(b"document-explicit-id/1", value.as_bytes())),
+            explicit_identity: match subject {
+                ContinuitySubject::Region(id) => self.region_identities.get(&id).copied(),
+                _ => explicit.map(|value| hash(b"document-explicit-id/1", value.as_bytes())),
+            },
             body_informative: false,
             profile: self.profile,
             provenance,
@@ -269,11 +296,41 @@ pub fn describe(
     profile: &ExtractionProfile,
     budget: &mut ContinuityBudget,
 ) -> Result<ContinuityDraft> {
+    describe_with_prose_text(payload, profile, budget, None)
+}
+
+/// A caller-qualified MDX mask preserves byte offsets and line endings while
+/// removing syntax islands. It is transient and never becomes source evidence.
+pub fn describe_with_prose_text(
+    payload: &ExtractionPayload,
+    profile: &ExtractionProfile,
+    budget: &mut ContinuityBudget,
+    prose_text: Option<&str>,
+) -> Result<ContinuityDraft> {
     payload.validate()?;
+    if let Some(masked) = prose_text {
+        ensure!(
+            profile.adapter_id == "mdx",
+            "prose mask is only supported for MDX"
+        );
+        ensure!(
+            masked.len() == payload.text.len(),
+            "prose mask length differs from original source"
+        );
+        budget.charge(masked.len())?;
+        ensure!(
+            masked
+                .bytes()
+                .zip(payload.text.bytes())
+                .all(|(mask, original)| mask == original
+                    || (mask == b' ' && !matches!(original, b'\r' | b'\n'))),
+            "prose mask rewrites original text or line endings"
+        );
+    }
     let supported = native(profile)
         || matches!(
             profile.language.as_str(),
-            "markdown" | "instruction-markdown" | "text"
+            "markdown" | "instruction-markdown" | "text" | "mdx"
         )
         || payload.facts.iter().any(|fact| fact.document.is_some())
         || !payload.regions.is_empty();
@@ -293,6 +350,55 @@ pub fn describe(
             ..Default::default()
         });
     }
+    let mut mapping_budget = airk_core::location::HostBudget::new(500_000, 10_000, 16_777_216)?;
+    let mapper = if payload.regions.is_empty() {
+        None
+    } else {
+        Some(airk_core::mapped_binding::MappedBinding::new(
+            payload,
+            profile,
+            &mut mapping_budget,
+        )?)
+    };
+    let mut candidates = Vec::new();
+    let mut counts = BTreeMap::new();
+    for region in &payload.regions {
+        let identity = match &region.location {
+            airk_core::location::RegionLocation::NotebookCell {
+                cell_id: Some(id), ..
+            } => Some(hash(b"notebook-written-cell/1", id.as_bytes())),
+            airk_core::location::RegionLocation::Embedded { region_id, .. } => {
+                let kind = region_id
+                    .rsplit_once(':')
+                    .and_then(|(kind, ordinal)| ordinal.parse::<u32>().ok().map(|_| kind))
+                    .filter(|kind| {
+                        matches!(
+                            *kind,
+                            "script" | "style" | "frontmatter" | "esm" | "jsx" | "expression"
+                        )
+                    });
+                kind.map(|kind| -> Result<_> {
+                    Ok(hash(
+                        b"unique-embedded-kind-profile/1",
+                        &serde_json::to_vec(&(kind, region.profile.identity()?))?,
+                    ))
+                })
+                .transpose()?
+            }
+            _ => None,
+        };
+        if let Some(identity) = identity {
+            budget.charge(64)?;
+            *counts.entry((region.parent, identity)).or_insert(0usize) += 1;
+            candidates.push((region.id, region.parent, identity));
+        }
+    }
+    let region_identities = candidates
+        .into_iter()
+        .filter_map(|(id, parent, identity)| {
+            (counts[&(parent, identity)] == 1).then_some((id, identity))
+        })
+        .collect();
     let mut builder = Builder {
         payload,
         profile: profile.identity()?,
@@ -304,6 +410,9 @@ pub fn describe(
             ..Default::default()
         },
         encoded_bytes: 2,
+        mapper,
+        mapping_budget,
+        region_identities,
         lines: std::iter::once((None, &payload.text))
             .chain(
                 payload
@@ -333,17 +442,20 @@ pub fn describe(
                 .push(fact);
         }
     }
+    if profile.adapter_id == "mdx" && prose_text.is_none() {
+        builder.partial("MDX paragraph continuity requires the qualified host prose mask");
+    }
     if !native(profile)
-        && matches!(
+        && (matches!(
             profile.language.as_str(),
             "markdown" | "instruction-markdown" | "text"
-        )
+        ) || (profile.adapter_id == "mdx" && prose_text.is_some()))
     {
         let units = match crate::prose::continuity_units(
-            &payload.text,
+            prose_text.unwrap_or(&payload.text),
             matches!(
                 profile.language.as_str(),
-                "markdown" | "instruction-markdown"
+                "markdown" | "instruction-markdown" | "mdx"
             ),
         ) {
             Ok(units) => units,
@@ -354,6 +466,13 @@ pub fn describe(
         };
         for (index, unit) in units.into_iter().enumerate() {
             if unit.visible.trim().is_empty() {
+                continue;
+            }
+            if prose_text.is_some_and(|masked| {
+                masked.get(unit.span.start..unit.span.end)
+                    != payload.text.get(unit.span.start..unit.span.end)
+            }) {
+                builder.partial("MDX prose unit crosses an excluded syntax island");
                 continue;
             }
             if let Some(level) = unit.level {
@@ -411,6 +530,114 @@ pub fn describe(
             if let Some(level) = unit.level {
                 headings.push((level, unit.span.start, subject));
                 heading_positions.push((unit.span.start, subject));
+            }
+        }
+    }
+    // Unit IDs are global within this payload, not reset for each cell/region.
+    let mut next_unit = builder
+        .draft
+        .descriptors
+        .iter()
+        .filter_map(|item| match item.subject {
+            ContinuitySubject::Unit(id) => Some(id + 1),
+            _ => None,
+        })
+        .max()
+        .unwrap_or(0);
+    let mut region_headings: BTreeMap<(u32, usize), Vec<&LocalFact>> = BTreeMap::new();
+    for fact in &payload.facts {
+        if fact.kind == "section"
+            && fact.document.is_some()
+            && let Some(region) = fact.region
+        {
+            region_headings
+                .entry((region, fact.span.start))
+                .or_default()
+                .push(fact);
+        }
+    }
+    for region in &payload.regions {
+        if !matches!(
+            region.profile.language.as_str(),
+            "markdown" | "instruction-markdown" | "text"
+        ) {
+            continue;
+        }
+        // Charge source traversal before the independent prose parser allocates units.
+        if builder.budget.charge(region.text.len()).is_err() {
+            builder.partial("document region traversal budget exceeded");
+            break;
+        }
+        let units =
+            match crate::prose::continuity_units(&region.text, region.profile.language != "text") {
+                Ok(units) => units,
+                Err(_) => {
+                    builder.partial("document region structural extraction exceeded bounds");
+                    continue;
+                }
+            };
+        let mut headings: Vec<(u8, ContinuitySubject)> = Vec::new();
+        for unit in units {
+            if unit.visible.trim().is_empty() {
+                continue;
+            }
+            if let Some(level) = unit.level {
+                headings.retain(|(old, _)| *old < level);
+            }
+            let fact = if unit.level.is_some() {
+                region_headings
+                    .get(&(region.id, unit.span.start))
+                    .and_then(|facts| {
+                        facts
+                            .iter()
+                            .copied()
+                            .find(|fact| fact.span.end >= unit.span.end)
+                    })
+            } else {
+                None
+            };
+            let subject = if let Some(fact) = fact {
+                ContinuitySubject::Fact(fact.id)
+            } else {
+                let id = next_unit;
+                next_unit = next_unit
+                    .checked_add(1)
+                    .ok_or_else(|| anyhow::anyhow!("document unit ID overflow"))?;
+                ContinuitySubject::Unit(id)
+            };
+            let category = if unit.level.is_some() {
+                "section"
+            } else {
+                match unit.origin {
+                    "markdown-list-item" => "list_item",
+                    "markdown-table-row" | "markdown-table-header" => "table_row",
+                    _ => "paragraph",
+                }
+            };
+            let span = LocalSpan {
+                start: unit.span.start,
+                end: unit.span.end,
+            };
+            let (start, end) = builder.line_numbers(Some(region.id), &span);
+            if !builder.add(
+                SubjectContext {
+                    subject,
+                    owner: headings.last().map(|item| item.1),
+                    region: Some(region.id),
+                },
+                category,
+                span,
+                DocumentLocation::Lines { start, end },
+                unit.level.is_some(),
+                fact,
+            )? {
+                break;
+            }
+            if let Some(fact) = fact {
+                used.insert(fact.id);
+            }
+            if let Some(level) = unit.level {
+                headings.push((level, subject));
             }
         }
     }
@@ -477,48 +704,16 @@ pub fn describe(
             native_headings.push((depth, ContinuitySubject::Fact(fact.id)));
         }
     }
-    // Existing region primitives are accepted only with already validated maps
-    // and an actual native locator. This does not enable any new host adapter.
+    // Valid discontiguous/decoded maps are original locations, not a reason to
+    // replace cell evidence with guessed contiguous host lines.
     for region in &payload.regions {
-        let host = region
-            .parent
-            .and_then(|id| payload.regions.iter().find(|parent| parent.id == id))
-            .map_or(payload.text.as_str(), |parent| parent.text.as_str());
-        let original = region.source_map.original_spans(
-            airk_core::location::ByteSpan {
-                start: 0,
-                end: region.text.len(),
-            },
-            &region.text,
-            host,
-        )?;
-        let location = if region.parent.is_none() {
-            original
-                .as_ref()
-                .filter(|spans| {
-                    !spans.is_empty() && spans.windows(2).all(|pair| pair[0].end == pair[1].start)
-                })
-                .map(|spans| {
-                    let (start, end) = builder.line_numbers(
-                        None,
-                        &LocalSpan {
-                            start: spans[0].start,
-                            end: spans.last().unwrap().end,
-                        },
-                    );
-                    DocumentLocation::Lines { start, end }
-                })
-        } else {
-            None
-        };
-        let Some(location) = location else {
-            builder.partial("region has no qualified native document locator");
+        if region.text.is_empty() {
             continue;
-        };
+        }
         if !builder.add(
             SubjectContext {
                 subject: ContinuitySubject::Region(region.id),
-                owner: None,
+                owner: region.parent.map(ContinuitySubject::Region),
                 region: Some(region.id),
             },
             "embedded_region",
@@ -526,7 +721,10 @@ pub fn describe(
                 start: 0,
                 end: region.text.len(),
             },
-            location,
+            DocumentLocation::Lines {
+                start: 1,
+                end: region.text.lines().count().max(1),
+            },
             false,
             None,
         )? {
@@ -548,6 +746,52 @@ mod tests {
         extraction::LocalRegion,
         location::{ByteSpan, MapSegment, Mapping, RegionLocation, SourceMap},
     };
+
+    #[test]
+    fn mdx_mask_preserves_prose_units_without_promoting_code_to_requirements() -> Result<()> {
+        let text = "# Original heading\n\nA fictional beacon paragraph.\n\nexport const secret = 'must never infer';\n\n- Original list item.\n";
+        let p = payload(text);
+        let start = text.find("export const").unwrap();
+        let end = start + text[start..].find('\n').unwrap();
+        let mut mask = text.as_bytes().to_vec();
+        mask[start..end].fill(b' ');
+        let mask = String::from_utf8(mask)?;
+        let result = describe_with_prose_text(
+            &p,
+            &profile("mdx"),
+            &mut ContinuityBudget::default(),
+            Some(&mask),
+        )?;
+        assert!(
+            result
+                .descriptors
+                .iter()
+                .any(|unit| unit.category == "paragraph")
+        );
+        assert!(
+            result
+                .descriptors
+                .iter()
+                .any(|unit| unit.category == "list_item")
+        );
+        assert!(
+            result
+                .descriptors
+                .iter()
+                .all(|unit| unit.span.end <= start || unit.span.start >= end)
+        );
+        assert!(describe(&p, &profile("mdx"), &mut ContinuityBudget::default())?.partial);
+        assert!(
+            describe_with_prose_text(
+                &p,
+                &profile("mdx"),
+                &mut ContinuityBudget::default(),
+                Some("wrong length")
+            )
+            .is_err()
+        );
+        Ok(())
+    }
 
     fn profile(language: &str) -> ExtractionProfile {
         ExtractionProfile {
@@ -840,7 +1084,9 @@ mod tests {
         assert_eq!(result.descriptors[0].subject, ContinuitySubject::Region(1));
         assert_eq!(
             result.descriptors[0].location,
-            DocumentLocation::Lines { start: 2, end: 2 }
+            DocumentLocation::Mapped {
+                region: p.regions[0].location.clone()
+            }
         );
         let map = SourceMap {
             version: 1,

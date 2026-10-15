@@ -1,6 +1,8 @@
-# V2 extraction contract revision 1
+# V2 extraction contract revisions 1 and 2
 
 Contract revision 1 supports the converted scanner, verified path-free extraction reuse and persisted collection policy. The [execution ledger](architecture-v2-ledger.md) records completed gates and platform limits. Extractor identity remains `native-facts/7`; effective profiles independently bind mapping and chunk strategies, including published chunk strategy 2.
+
+Revision 2 activates mapped composite profiles and the additive public `Mapped` location. Readers explicitly accept revisions 1 and 2; unchanged standalone profiles keep revision 1. Mapped binding requires revision 2 so older readers reject unsupported profiles. Direct payload retention, shared child budgets, child-profile invalidation, exact original-source reads and qualified limits are specified in [D11](v2-composite-profiles.md).
 
 [Core extraction](../crates/airk-core/src/extraction.rs) exports `AdapterCapabilities`, `AdapterDescriptor`, `ExtractionProfile`, `LocalSpan`, `LocalFact`, `ExtractionPayload`, `ExtractionCache`, `extraction_key` and `EXTRACTION_CONTRACT_VERSION`. Core needs the integrator's `identity` module and `serde_json` dependency. Profiles hash canonical struct-field-order JSON with sorted `BTreeMap` options and strictly typed canonical SHA256 input hashes through `framed_digest` domain `extraction-profile-v1`; source/profile digests compose under `extraction-key-v1`. The full registry and irrelevant policy rules are excluded. Changing effective options changes identity; adding an unrelated adapter does not.
 

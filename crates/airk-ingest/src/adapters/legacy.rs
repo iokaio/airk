@@ -147,7 +147,19 @@ pub fn convert_native_legacy(
                         && code.producer == format!("airk-build-structure/{}", profile.adapter_id))
                     || (matches!(profile.adapter_id.as_str(), "sql-postgresql" | "sql-mysql")
                         && code.basis == EvidenceBasis::StructuralRule
-                        && code.producer == format!("airk-sql-structure/{}", profile.adapter_id)),
+                        && code.producer == format!("airk-sql-structure/{}", profile.adapter_id))
+                    || (code.basis == EvidenceBasis::StructuralRule
+                        && code.producer_version == "composite-facts/1"
+                        && matches!(
+                            (profile.adapter_id.as_str(), code.producer.as_str()),
+                            (
+                                "html" | "vue" | "svelte" | "astro",
+                                "airk-host-structure/html"
+                            ) | ("vue" | "svelte", "airk-host-structure/components")
+                                | ("astro" | "mdx", "airk-host-structure/prose")
+                                | ("notebook", "airk-notebook-metadata")
+                                | ("razor", "airk-razor-structure")
+                        )),
                 "unknown code producer requires separate domain"
             );
             for id in std::iter::once(&code.symbol_id).chain(code.owner_id.iter()) {

@@ -326,6 +326,7 @@ impl ChangeDetail {
         if let Some(location) = &self.location {
             use crate::DocumentLocation;
             let valid = match location {
+                DocumentLocation::Mapped { region } => region.validate_shape().is_ok(),
                 DocumentLocation::Lines { start, end } => *start > 0 && end >= start,
                 DocumentLocation::Page { number }
                 | DocumentLocation::Block { number }

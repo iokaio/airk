@@ -102,6 +102,7 @@ impl Kernel {
             .as_deref()
             .context("resolved path missing")?;
         let artifact = catalog.load_artifact(resolved)?;
+        let artifact = self.source_line_artifact(&catalog, artifact)?;
         let payload = Self::read_snapshot(
             Self::catalog_envelope(&catalog),
             &catalog.snapshot,
@@ -148,7 +149,13 @@ impl Kernel {
             .as_deref()
             .context("resolved path missing")?;
         let artifact = catalog.load_artifact(resolved)?;
-        let lines = artifact.chunks.last().map_or(0, |chunk| chunk.end_line);
+        let artifact = self.source_line_artifact(&catalog, artifact)?;
+        let lines = artifact
+            .chunks
+            .iter()
+            .map(|chunk| chunk.end_line)
+            .max()
+            .unwrap_or(0);
         ensure!(line <= lines, "line is outside indexed source");
         let payload = Self::read_snapshot(
             Self::catalog_envelope(&catalog),

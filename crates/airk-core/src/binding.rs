@@ -19,6 +19,14 @@ pub fn bind_payload(
     profile: &ExtractionProfile,
     binding: ArtifactBinding<'_>,
 ) -> Result<Artifact> {
+    if !payload.regions.is_empty() {
+        return crate::mapped_binding::bind_payload(
+            payload,
+            profile,
+            binding,
+            &mut crate::location::HostBudget::new(500_000, 10_000, 16_777_216)?,
+        );
+    }
     ensure!(
         !binding.path.is_empty()
             && binding.path.len() <= 4096

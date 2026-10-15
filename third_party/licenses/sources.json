@@ -8,6 +8,20 @@
     "missing_text": true
   },
   {
+    "name": "cortexkit-tree-sitter-scss",
+    "version": "1.0.1",
+    "revision": "0254de4cfbf81d152447aa14285d931adf4ab0f3",
+    "repository": "https://github.com/cortexkit/tree-sitter-scss",
+    "files": [
+      {
+        "file": "LICENSE",
+        "url": "https://raw.githubusercontent.com/cortexkit/tree-sitter-scss/0254de4cfbf81d152447aa14285d931adf4ab0f3/LICENSE",
+        "sha256": "0eea8dc45e89deeb03c7799bbbc7b4688f365fb274562f4540ecfebdea82e727"
+      }
+    ],
+    "missing_text": false
+  },
+  {
     "name": "datasketches",
     "version": "0.2.0",
     "revision": "fdb38b85d22e6549ab283bf3b9b133659267d19f",

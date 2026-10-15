@@ -124,18 +124,51 @@ impl AdapterRegistry {
             ),
             ("yaml", "tree-sitter-yaml/0.7.2", "yaml yml", false, false),
             ("toml", "tree-sitter-toml-ng/0.7.0", "toml", false, false),
+            ("html", "tree-sitter-html/0.23.2", "html htm", false, false),
+            ("css", "tree-sitter-css/0.25.0", "css", false, false),
             (
-                "html",
-                "tree-sitter-html/0.23.2",
-                "html htm vue svelte",
+                "scss",
+                "cortexkit-tree-sitter-scss/1.0.1",
+                "scss",
+                true,
+                false,
+            ),
+            ("vue", "tree-sitter-html/0.23.2", "vue", false, false),
+            ("svelte", "tree-sitter-html/0.23.2", "svelte", false, false),
+            ("astro", "tree-sitter-html/0.23.2", "astro", true, false),
+            (
+                "mdx",
+                "tree-sitter-typescript/0.23.2/tsx",
+                "mdx",
+                true,
+                false,
+            ),
+            (
+                "razor",
+                "tree-sitter-razor/0.1.0",
+                "razor cshtml",
                 false,
                 false,
             ),
-            ("css", "tree-sitter-css/0.25.0", "css scss", false, false),
+            ("notebook", "tree-sitter-json/0.24.8", "ipynb", false, false),
         ] {
             let structured = matches!(
                 id,
-                "json" | "yaml" | "toml" | "html" | "css" | "cmake" | "make" | "starlark"
+                "json"
+                    | "yaml"
+                    | "toml"
+                    | "html"
+                    | "css"
+                    | "cmake"
+                    | "make"
+                    | "starlark"
+                    | "scss"
+                    | "vue"
+                    | "svelte"
+                    | "astro"
+                    | "mdx"
+                    | "razor"
+                    | "notebook"
             );
             registry.add_baseline(
                 id,
@@ -153,7 +186,7 @@ impl AdapterRegistry {
             );
         }
         for (id, suffixes) in [
-            ("markdown", "md markdown mdx"),
+            ("markdown", "md markdown"),
             ("csv", "csv"),
             ("tsv", "tsv"),
             ("xml", "xml xsd xsl"),
@@ -184,6 +217,18 @@ impl AdapterRegistry {
                     ..Default::default()
                 },
             );
+        }
+        for id in ["html", "vue", "svelte", "astro", "mdx", "notebook", "razor"] {
+            let descriptor = registry
+                .entries
+                .get_mut(id)
+                .expect("registered composite host");
+            descriptor.capabilities.embedded_regions = true;
+            descriptor.capabilities.definitions = true;
+            descriptor.capabilities.imports = true;
+            descriptor.capabilities.call_candidates = true;
+            descriptor.capabilities.continuity = true;
+            descriptor.limitations = vec!["Bounded mapped child syntax and original host locations; unsupported/dynamic markers remain partial. No framework compilation, execution or resolved references.".into()];
         }
         registry
     }
@@ -216,9 +261,14 @@ impl AdapterRegistry {
             id.into(),
             AdapterDescriptor {
                 profile: ExtractionProfile {
-                    contract_version: 1,
+                    contract_version: if crate::composite::is_host(id) { 2 } else { 1 },
                     adapter_id: id.into(),
                     adapter_version: if matches!(
+                        id,
+                        "html" | "scss" | "vue" | "svelte" | "astro" | "mdx" | "razor" | "notebook"
+                    ) {
+                        "composite-facts/1"
+                    } else if matches!(
                         id,
                         "hcl"
                             | "dockerfile"
@@ -301,6 +351,29 @@ impl AdapterRegistry {
                 "instruction_flavor".into(),
                 crate::instruction_documents::flavor(path).into(),
             );
+        }
+        if crate::composite::is_host(id) {
+            let children: &[&str] = match id {
+                "notebook" => &[
+                    "markdown",
+                    "python",
+                    "javascript",
+                    "typescript",
+                    "rust",
+                    "bash",
+                    "c",
+                    "cpp",
+                ],
+                "razor" => &["csharp"],
+                "mdx" => &["markdown", "tsx"],
+                _ => &["javascript", "typescript", "css", "scss"],
+            };
+            for child in children {
+                profile.options.insert(
+                    format!("child_profile:{child}"),
+                    self.entries[*child].profile.identity()?.to_string(),
+                );
+            }
         }
         Ok(profile)
     }
@@ -538,13 +611,13 @@ mod tests {
         Ok(())
     }
     #[test]
-    fn partial_profiles_are_not_new_language_support() {
+    fn admitted_profiles_preserve_ambiguous_fallbacks() {
         let r = AdapterRegistry::baseline();
         for (path, language) in [
-            ("x.vue", "html"),
-            ("x.scss", "css"),
+            ("x.vue", "vue"),
+            ("x.scss", "scss"),
             ("build.gradle.kts", "gradle-kotlin"),
-            ("x.mdx", "markdown"),
+            ("x.mdx", "mdx"),
             ("Dockerfile.dev", "dockerfile"),
         ] {
             assert_eq!(r.select_default(path).profile.language, language);
