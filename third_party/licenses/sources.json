@@ -454,6 +454,20 @@
     "missing_text": false
   },
   {
+    "name": "tree-sitter-objc",
+    "version": "3.0.2",
+    "revision": "18802acf31d0b5c1c1d50bdbc9eb0e1636cab9ed",
+    "repository": "https://github.com/tree-sitter-grammars/tree-sitter-objc",
+    "files": [
+      {
+        "file": "LICENSE",
+        "url": "https://raw.githubusercontent.com/tree-sitter-grammars/tree-sitter-objc/18802acf31d0b5c1c1d50bdbc9eb0e1636cab9ed/LICENSE",
+        "sha256": "099c44248f8cf353123211318680e93465587c005a4b3730ce8cb5334de043d6"
+      }
+    ],
+    "missing_text": false
+  },
+  {
     "name": "tree-sitter-ruby",
     "version": "0.23.1",
     "revision": "71bd32fb7607035768799732addba884a37a6210",

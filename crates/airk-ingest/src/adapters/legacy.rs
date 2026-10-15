@@ -129,6 +129,10 @@ pub fn convert_native_legacy(
             );
             ensure!(
                 code.producer.starts_with("airk-tree-sitter/")
+                    || (profile.adapter_id == "elixir"
+                        && code.basis == EvidenceBasis::StructuralRule
+                        && code.producer == "airk-language-structure/elixir"
+                        && code.producer_version == "general-facts/1")
                     || code.producer == "airk-framework-cues"
                     || (matches!(
                         profile.adapter_id.as_str(),

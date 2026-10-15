@@ -22,6 +22,10 @@ Native support means the shipped binary contains the parser/extractor. No Python
 | Lua | lua | Function declarations; dynamic require resolution unavailable |
 | Swift | swift | Selected function/class/protocol/typealias and import declarations |
 | Kotlin | kt, kts | Selected function/class/object/typealias and import declarations |
+| Dart | dart | Libraries/imports/parts, classes/mixins/extensions, selected members and written calls |
+| Scala | scala, sc | Packages/imports, classes/objects/traits, defs/vals/types and selected calls; braced and selected Scala 3 forms |
+| Elixir | ex, exs | Structural literal module/function/macro heads, written arity/guards, aliases/imports/uses/requires and calls; quoted macro bodies excluded |
+| Objective-C / Objective-C++ | qualified m; mm | Interfaces/implementations/protocols/categories, selectors/properties/imports and messages; mixed C++ is explicitly partial |
 | SQL | sql; explicit `sql-postgresql` / `sql-mysql` overrides | SELECT/query scopes, CTEs, joins, aliases, written references and selected DDL; dialect semantics are not validated |
 
 These are bounded grammar profiles, not complete compiler/type-system semantics. Declarations containing grammar errors are suppressed and file_info reports partial-syntax. Macros, overloaded/dynamic names and cross-file references remain unresolved. A `.h` file defaults to C; explicit overrides or qualified [captured header context](extraction-policy.md#captured-header-context) can select C++. Grammar-recognized syntax does not guarantee that every declaration has a named fact extractor.

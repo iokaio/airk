@@ -4,6 +4,60 @@ use super::profile::Selection;
 use airk_core::extraction::{AdapterCapabilities, AdapterDescriptor, ExtractionProfile};
 use std::collections::BTreeMap;
 
+fn objective_c_prefix(source: &[u8]) -> bool {
+    // Selection examines at most 4 KiB and ignores comments/string contents.
+    // This is a strong filename discriminator, not Objective-C extraction.
+    let source = &source[..source.len().min(4096)];
+    let mut visible = source.to_vec();
+    let mut i = 0;
+    while i < source.len() {
+        let start = i;
+        if source[i..].starts_with(b"/*") {
+            i += 2;
+            while i < source.len() && !source[i..].starts_with(b"*/") {
+                i += 1;
+            }
+            i = (i + 2).min(source.len());
+        } else if source[i..].starts_with(b"//") {
+            while i < source.len() && source[i] != b'\n' {
+                i += 1;
+            }
+        } else if matches!(source[i], b'\'' | b'"') {
+            let quote = source[i];
+            i += 1;
+            while i < source.len() {
+                if source[i] == b'\\' {
+                    i = (i + 2).min(source.len());
+                } else if source[i] == quote {
+                    i += 1;
+                    break;
+                } else {
+                    i += 1;
+                }
+            }
+        } else {
+            i += 1;
+            continue;
+        }
+        for byte in &mut visible[start..i] {
+            if *byte != b'\n' {
+                *byte = b' ';
+            }
+        }
+    }
+    visible.split(|byte| *byte == b'\n').any(|line| {
+        let line = line.trim_ascii_start();
+        [
+            b"@interface ".as_slice(),
+            b"@implementation ",
+            b"@protocol ",
+            b"#import ",
+        ]
+        .iter()
+        .any(|marker| line.starts_with(marker))
+    })
+}
+
 #[derive(Clone, Debug)]
 pub struct AdapterRegistry {
     entries: BTreeMap<String, AdapterDescriptor>,
@@ -46,6 +100,17 @@ impl AdapterRegistry {
             ),
             ("go", "tree-sitter-go/0.25.0", "go", true, true),
             ("java", "tree-sitter-java/0.23.5", "java", true, true),
+            ("dart", "tree-sitter-dart/0.2.0", "dart", true, true),
+            ("scala", "tree-sitter-scala/0.25.1", "scala sc", true, true),
+            ("elixir", "tree-sitter-elixir/0.3.5", "ex exs", true, true),
+            ("objc", "tree-sitter-objc/3.0.2", "", true, true),
+            (
+                "objcpp",
+                "tree-sitter-objc/3.0.2+tree-sitter-cpp/0.23.4",
+                "mm",
+                true,
+                true,
+            ),
             ("c", "tree-sitter-c/0.24.2", "c h", true, true),
             (
                 "cpp",
@@ -154,7 +219,8 @@ impl AdapterRegistry {
         ] {
             let structured = matches!(
                 id,
-                "json"
+                "elixir"
+                    | "json"
                     | "yaml"
                     | "toml"
                     | "html"
@@ -230,6 +296,12 @@ impl AdapterRegistry {
             descriptor.capabilities.continuity = true;
             descriptor.limitations = vec!["Bounded mapped child syntax and original host locations; unsupported/dynamic markers remain partial. No framework compilation, execution or resolved references.".into()];
         }
+        registry.entries.get_mut("objcpp").unwrap().limitations = vec![
+            "Always partial: clean Objective-C islands and disjoint C++ syntax only; no compiler, preprocessor, runtime dispatch or edit-continuity qualification.".into()
+        ];
+        registry.entries.get_mut("elixir").unwrap().limitations = vec![
+            "Literal structural macro-head and written call evidence; quoted macro bodies excluded. No macro execution, runtime resolution or native declaration continuity.".into()
+        ];
         registry
     }
 
@@ -292,6 +364,8 @@ impl AdapterRegistry {
                             | "instruction-markdown"
                     ) {
                         "project-facts/1"
+                    } else if matches!(id, "dart" | "scala" | "elixir" | "objc" | "objcpp") {
+                        "general-facts/1"
                     } else if matches!(id, "php" | "ruby" | "sql" | "sql-postgresql" | "sql-mysql")
                     {
                         "repair-facts/1"
@@ -450,6 +524,11 @@ impl AdapterRegistry {
         source: &[u8],
     ) -> anyhow::Result<Selection> {
         let mut selected = self.select_default(path);
+        if path.to_ascii_lowercase().ends_with(".m") && objective_c_prefix(source) {
+            selected.profile = self.effective_profile(path, "objc")?;
+            selected.basis = "bounded_objective_c_discriminator".into();
+            return Ok(selected);
+        }
         if selected.basis == "known_basename" {
             return Ok(selected);
         }
@@ -624,6 +703,42 @@ mod tests {
         }
         assert_eq!(r.select_default("x.S").profile.language, "text");
         assert!(!r.select_default("x.S").ambiguity.is_empty());
+    }
+
+    #[test]
+    fn objective_c_selection_requires_visible_bounded_markers() -> anyhow::Result<()> {
+        let registry = AdapterRegistry::baseline();
+        for source in [
+            b"/*\n@interface Hidden\n*/\n".as_slice(),
+            b"// @interface Hidden\n",
+            b"x = \"\n@interface Hidden\n\";",
+            b"function x = sample(y)\nx = y;\nend",
+        ] {
+            assert_eq!(
+                registry
+                    .select_with_prefix("sample.m", source)?
+                    .profile
+                    .adapter_id,
+                "text"
+            );
+        }
+        assert_eq!(
+            registry
+                .select_with_prefix("sample.m", b"/* note */\n@interface Visible\n@end")?
+                .profile
+                .adapter_id,
+            "objc"
+        );
+        let mut late = vec![b' '; 4096];
+        late.extend_from_slice(b"\n@interface Late");
+        assert_eq!(
+            registry
+                .select_with_prefix("sample.m", &late)?
+                .profile
+                .adapter_id,
+            "text"
+        );
+        Ok(())
     }
 
     #[test]
