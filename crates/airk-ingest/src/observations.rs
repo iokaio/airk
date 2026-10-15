@@ -116,6 +116,29 @@ pub(crate) fn reconcile_missing(
         if metadata.file_type().is_symlink() {
             return Ok(DisappearanceCause::NonRegular);
         }
+        // Metadata lookup can resolve a different spelling on case-insensitive
+        // filesystems. Citation paths describe observed directory-entry names,
+        // so require the original component itself to remain present. Charge
+        // every examined name; exhaustion cannot become evidence of deletion.
+        let mut exact_spelling = false;
+        for entry in current
+            .parent()
+            .expect("relative component has parent")
+            .read_dir()?
+        {
+            ensure!(
+                usage.charged_entries() < limit,
+                "exact path reconciliation discovery budget exhausted"
+            );
+            usage.discovery_entries += 1;
+            if entry?.file_name() == std::ffi::OsStr::new(part) {
+                exact_spelling = true;
+                break;
+            }
+        }
+        if !exact_spelling {
+            return Ok(DisappearanceCause::DeletedObserved);
+        }
         if index + 1 < parts.len() {
             if !metadata.is_dir() {
                 return Ok(DisappearanceCause::NonRegular);
@@ -125,4 +148,76 @@ pub(crate) fn reconcile_missing(
         }
     }
     Ok(DisappearanceCause::ExcludedFromDiscovery)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_observation_uses_exact_directory_spelling_not_casefold_lookup() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        std::fs::create_dir(root.path().join("Folder"))?;
+        std::fs::write(root.path().join("Folder/Beacon.rs"), "original source")?;
+        assert_eq!(
+            reconcile_missing(
+                root.path(),
+                "Folder/Beacon.rs",
+                &mut ScanUsage::default(),
+                100
+            )?,
+            DisappearanceCause::ExcludedFromDiscovery
+        );
+        std::fs::rename(
+            root.path().join("Folder/Beacon.rs"),
+            root.path().join("Folder/beacon.rs"),
+        )?;
+        assert_eq!(
+            reconcile_missing(
+                root.path(),
+                "Folder/Beacon.rs",
+                &mut ScanUsage::default(),
+                100
+            )?,
+            DisappearanceCause::DeletedObserved
+        );
+        assert_eq!(
+            reconcile_missing(
+                root.path(),
+                "Folder/beacon.rs",
+                &mut ScanUsage::default(),
+                100
+            )?,
+            DisappearanceCause::ExcludedFromDiscovery
+        );
+        std::fs::rename(root.path().join("Folder"), root.path().join("folder"))?;
+        assert_eq!(
+            reconcile_missing(
+                root.path(),
+                "Folder/beacon.rs",
+                &mut ScanUsage::default(),
+                100
+            )?,
+            DisappearanceCause::DeletedObserved
+        );
+        assert_eq!(
+            reconcile_missing(
+                root.path(),
+                "folder/beacon.rs",
+                &mut ScanUsage::default(),
+                100
+            )?,
+            DisappearanceCause::ExcludedFromDiscovery
+        );
+        assert!(
+            reconcile_missing(
+                root.path(),
+                "folder/beacon.rs",
+                &mut ScanUsage::default(),
+                1
+            )
+            .is_err()
+        );
+        Ok(())
+    }
 }
