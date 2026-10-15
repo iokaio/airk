@@ -63,6 +63,8 @@ One writer publishes at a time; other writers receive a locked error. Native OS 
 
 ## Retention and removal
 
+The [searchable retention policy](retention.md) keeps active evidence plus one committed predecessor, with live reader leases protecting additional revisions. New collections use automatic retention; upgraded collections remain manual until an operator selects automatic retention. `collections retention show` reports effective mode/origin, protected bytes, pending work and maintenance failures. Policy preview/set/run are separate from the older explicit prune command below. History packages and checkpoints are not yet available.
+
 ~~~console
 airk --data-dir /path/to/state --collection project-a collections list
 airk --data-dir /path/to/state --collection project-a collections prune
@@ -70,7 +72,7 @@ airk --data-dir /path/to/state --collection project-a collections prune --apply
 airk --data-dir /path/to/state collections remove obsolete-project
 ~~~
 
-Pruning defaults to a preview with candidate IDs, reclaimable bytes, pinned IDs and unreferenced object counts. Explicit `--apply` removes obsolete immutable generations, then garbage-collects objects absent from every surviving generation inventory. The active component and any generation with a live reader lease protect their source and extraction objects. Published local model copies are removed only with their obsolete generation. Failed-build objects can be reclaimed without disturbing published evidence. Quota-owned private staging is recovered after process death; unknown directories and interrupted prune directories require operator inspection.
+Pruning defaults to a preview with candidate IDs, reclaimable bytes, pinned IDs and unreferenced object counts. Explicit `--apply` is an active-only manual trim: it can remove the retention policy's predecessor, while preserving active and reader-leased evidence. Use `collections retention run --apply` to preserve the policy keep set. Object GC verifies surviving dependency roots before deleting unreferenced objects. Published local model copies are removed only with their obsolete generation. Failed-build objects can be reclaimed without disturbing published evidence. Quota-owned private staging and validated intent-bound retirements are recoverable; unknown directories, malformed markers and unrelated interrupted removals require inspection.
 
 Collection removal validates the managed root and snapshot identity, acquires writer/worker/usage lifecycle locks and every generation lease, then deletes derived state. An active cached reader prevents removal until disconnected. Filesystem links cause maintenance to fail. Source workspaces are never deletion targets.
 

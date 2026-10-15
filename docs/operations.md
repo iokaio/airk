@@ -15,6 +15,8 @@ Windows accepts a path such as D:/indexes/airk. State is stored under <data-dir>
 
 Unsupported binary, empty extracted document and oversized files are reported as skipped. Arbitrary UTF-8 files remain eligible without an extension allowlist. The next successful index removes excluded entries. Ignore-excluded content is not traversed and does not generate per-file skip records. Reports retain at most 1000 detailed skip records and count further omissions. Corpus/extracted-text limits or filesystem failures retain the old snapshot.
 
+Inspect retention after setup or upgrade with `airk collections retention show`. New collections use automatic retention; existing collections without explicit policy remain manual. Policy origin distinguishes new-collection defaults from upgrades and operator choices. `collections retention preview` and `run` without `--apply` do not clean up. Use [retention policy and maintenance](retention.md) to preview/set policy or perform an explicit bounded pass. A successful publication remains successful if its later cleanup reports pending work or an error; inspect the maintenance receipt separately. MCP reads never perform cleanup.
+
 ## One-container deployment
 
 From the AIRK checkout, set AIRK_WORKSPACES to the intended workspace parent directory, then:

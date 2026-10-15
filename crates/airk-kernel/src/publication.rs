@@ -87,20 +87,23 @@ impl Kernel {
 
     pub(crate) fn publish_v2(
         &self,
+        writer: &airk_store::WriterLock,
         snapshot: &Snapshot,
-        reservation: &airk_store::quota::Reservation,
+        reservation: airk_store::quota::Reservation,
         reason: PublicationReason,
     ) -> Result<u64> {
-        self.publish_v2_observed(snapshot, reservation, reason, None)
+        self.publish_v2_observed(writer, snapshot, reservation, reason, None)
     }
 
     pub(crate) fn publish_v2_observed(
         &self,
+        writer: &airk_store::WriterLock,
         snapshot: &Snapshot,
-        reservation: &airk_store::quota::Reservation,
+        reservation: airk_store::quota::Reservation,
         reason: PublicationReason,
         observation: Option<&airk_ingest::observations::ScanObservation>,
     ) -> Result<u64> {
+        let quota = airk_store::quota::Quota::open(&self.data_root)?;
         ensure!(
             snapshot.root == self.root_id() && snapshot.collection == self.collection,
             "foreign publication binding"
@@ -135,7 +138,7 @@ impl Kernel {
         projection.storage_format = 2;
         projection.persistent_indexes = true;
         for artifact in projection.artifacts.values_mut() {
-            *artifact = self.retain_v2(artifact, None, reservation)?;
+            *artifact = self.retain_v2(artifact, None, &reservation)?;
         }
         let producer_domain = digest(&serde_json::to_vec(&(
             &projection.analysis,
@@ -426,29 +429,18 @@ impl Kernel {
                     &lineage,
                     &token,
                     &source,
-                    Some(reservation),
-                    self.store.catalog_budget(reservation)?,
+                    Some(&reservation),
+                    self.store.catalog_budget(&reservation)?,
                 )
             },
         )?;
         self.store
-            .publish_catalog_v2(&inventory, &receipt, &expected, reservation)?;
+            .publish_catalog_v2(&inventory, &receipt, &expected, &reservation)?;
         // Publication is already committed. Cache disposal must neither report
         // a failed publication nor retain superseded idle leases. Active calls
         // own independent Arc pins; drop potentially large indexes outside locks.
-        let cached_index = self
-            .cache
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take();
-        self.cache.clear_poison();
-        let cached_catalog = self
-            .catalog_cache
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take();
-        self.catalog_cache.clear_poison();
-        drop((cached_index, cached_catalog));
+        drop((old, reservation));
+        self.after_publication(writer, &quota);
         Ok(generation)
     }
 }

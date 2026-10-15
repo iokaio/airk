@@ -105,6 +105,15 @@ pub(crate) fn verify_v2_generation(
     let directory = base
         .join("generations")
         .join(receipt.token.revision.to_string());
+    verify_v2_directory(base, &directory, receipt)
+}
+
+pub(crate) fn verify_v2_directory(
+    base: &Path,
+    directory: &Path,
+    receipt: &airk_core::identity::PublicationReceipt,
+) -> Result<airk_core::publication::InventoryV2> {
+    let directory = directory.to_path_buf();
     for path in [base.join("generations"), directory.clone()] {
         ensure!(
             !fs::symlink_metadata(path)?.file_type().is_symlink(),
@@ -677,6 +686,10 @@ impl FileStore {
         };
         token.validate_against(&current_token)?;
         crate::sqlite::validate_retained_token(self.directory(), token)?;
+        if crate::sqlite::retirement_proof(self.directory(), token)?.is_some() {
+            ensure!(token != &current_token, "active revision cannot be retired");
+            return Ok(None);
+        }
         let Some(receipt) = self.receipt(token)? else {
             ensure!(
                 token != &current_token,

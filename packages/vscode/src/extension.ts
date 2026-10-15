@@ -6,9 +6,10 @@ import { Client, IndexReport, LaunchSpec, Usage, clients, collectionId, configFo
 import { NativeWriteQueue, prepareHelper, probeMcp, runJson } from './native';
 import { CapacityError, Options, PausedError, Scheduler } from './scheduler';
 import { Coverage, CoverageQueue, coverageDetails, coverageLabel } from './coverage';
+import { RetentionStatus, RetentionPreview, retentionSummary, retentionPolicyForMode } from './retention';
 
 interface KnownCollection { name: string; root: string; lastIndexed?: string }
-interface PruneReport { dry_run: boolean; reclaimable_bytes: number; removed_bytes: number; candidates: string[]; pinned: string[] }
+interface PruneReport { dry_run: boolean; reclaimable_bytes: number; removed_bytes: number; candidates: string[]; pinned: string[]; unreferenced_objects?: number; receipt_cleanup_pending?: boolean }
 const locations: Record<Client, string> = {
     vscode: 'VS Code: use MCP: List Servers to enable the registered AIRK collection, or merge into .vscode/mcp.json.',
     claude: 'Claude Code: merge into project .mcp.json, then review and enable the server in Claude Code.',
@@ -33,6 +34,7 @@ class Controller implements vscode.Disposable {
     readonly scheduler: Scheduler;
     private readonly coverage: CoverageQueue;
     private readonly nativeWrites = new NativeWriteQueue();
+    private readonly retentionViews = new Map<string, RetentionStatus>();
     private readonly rescan: NodeJS.Timeout;
     private specs = new Map<string, LaunchSpec>();
     private rootBindings: { opened: string; canonical: string }[] = [];
@@ -146,6 +148,7 @@ class Controller implements vscode.Disposable {
         this.status.text = `$(database) AIRK: ${summary}`;
         const unsaved = spec ? (vscode.workspace.textDocuments ?? []).filter(document => document.isDirty && eligibleEvent(this.sourcePath(document.uri.fsPath), spec.root, spec.dataDir)).length : 0;
         this.status.tooltip = spec ? coverageDetails(spec.name, view || undefined, unsaved)
+            + `\n${retentionSummary(this.retentionViews.get(JSON.stringify([spec.dataDir, spec.collection])))}`
             + `\nAuto-indexing: ${this.scheduler?.isPaused ? 'paused' : this.options().mode}${state?.pending ? '; indexing pending' : ''}\nAIRK: Open Controls is available in the command palette.`
             : 'Select a workspace folder to index. AIRK: Open Controls is available in the command palette.';
     }
@@ -211,6 +214,7 @@ class Controller implements vscode.Disposable {
         const known = this.context.globalState.get<Record<string, KnownCollection>>('collections', {});
         known[spec.collection] = { name: spec.name, root: spec.root, lastIndexed: new Date().toISOString() };
         await this.context.globalState.update('collections', known);
+        await this.refreshRetention(spec);
         return report;
     }
     async manualIndex(full = false): Promise<void> {
@@ -288,11 +292,59 @@ class Controller implements vscode.Disposable {
         if (this.scheduler.isBusy) { throw new Error('Wait for indexing to finish before trimming old generations.'); }
         const preview = await this.writeNative<PruneReport>(spec, 'collections', ['prune']);
         await this.showJson('AIRK generation trim preview', preview);
-        if (!preview.candidates.length) { void vscode.window.showInformationMessage('No unpinned obsolete generations can be reclaimed.'); return; }
-        const confirm = await vscode.window.showWarningMessage(`Trim ${preview.candidates.length} obsolete generations from ${spec.name} (${(preview.reclaimable_bytes / 1048576).toFixed(2)} MiB)? Active evidence and pinned readers are protected.`, { modal: true }, 'Trim old generations');
+        if (!preview.candidates.length && !preview.unreferenced_objects && !preview.receipt_cleanup_pending) { void vscode.window.showInformationMessage('No unpinned obsolete generations or unreferenced objects can be reclaimed.'); return; }
+        const objects = preview.unreferenced_objects ? ` and ${preview.unreferenced_objects} unreferenced objects` : '';
+        const pending = preview.receipt_cleanup_pending ? ' Receipt cleanup or further bounded inspection remains pending.' : '';
+        const confirm = await vscode.window.showWarningMessage(`Trim ${preview.candidates.length} obsolete generations${objects} from ${spec.name} (${(preview.reclaimable_bytes / 1048576).toFixed(2)} MiB)?${pending} Active evidence and pinned readers are protected.`, { modal: true }, 'Trim old generations');
         if (confirm !== 'Trim old generations') { return; }
         await this.showJson('AIRK generation trim result', await this.writeNative<PruneReport>(spec, 'collections', ['prune', '--apply']));
         if (!this.scheduler.isPaused) { this.scheduler.resume(); }
+    }
+    private async refreshRetention(spec: LaunchSpec): Promise<RetentionStatus | undefined> {
+        const key = JSON.stringify([spec.dataDir, spec.collection]);
+        try {
+            this.trusted();
+            const status = await runJson<RetentionStatus>(spec, 'collections', ['retention', 'show']);
+            this.retentionViews.set(key, status); this.updateStatus(); return status;
+        } catch (error) {
+            this.retentionViews.delete(key); this.updateStatus();
+            this.output.appendLine(`${spec.name}: retention status unavailable: ${String(error)}`);
+            return undefined;
+        }
+    }
+    async retention(): Promise<void> {
+        const spec = await this.chooseSpec(); if (!spec) { return; }
+        const status = await this.refreshRetention(spec);
+        await this.showJson('AIRK retention status', { collection: spec.collection, root: spec.root, dataDir: spec.dataDir,
+            retention: status ?? null, statusUnavailable: !status,
+            explanation: 'Retention concerns searchable index revisions. History and checkpoints are unavailable. Reader leases and the active revision remain protected. Indexing mode is separate from retention mode.' });
+    }
+    async retentionPolicy(): Promise<void> {
+        const spec = await this.chooseSpec(); if (!spec) { return; }
+        const status = await this.refreshRetention(spec); if (!status) { throw new Error('Cannot configure retention without current policy status.'); }
+        const choice = await vscode.window.showQuickPick([
+            { label: 'Manual retention', description: 'Keep generations until explicit maintenance; no quota-triggered cleanup.', mode: 'manual' as const },
+            { label: 'Automatic retention', description: 'Bounded cleanup after publications; protected readers may delay convergence.', mode: 'automatic' as const }
+        ], { title: `Retention policy for ${spec.name} (${spec.collection}) · current ${status.policy.policy.mode}` });
+        if (!choice) { return; }
+        const json = JSON.stringify(retentionPolicyForMode(status, choice.mode));
+        const preview = await runJson<RetentionPreview>(spec, 'collections', ['retention', 'preview', '--json', json]);
+        await this.showJson('AIRK proposed retention policy', { collection: spec.collection, root: spec.root, dataDir: spec.dataDir, preview });
+        const confirm = await vscode.window.showWarningMessage(`Set ${choice.mode} retention for ${spec.name} (${spec.collection})? This persists the previewed policy without immediately deleting generations.`, { modal: true }, 'Save retention policy');
+        if (confirm !== 'Save retention policy') { return; }
+        await this.writeNative(spec, 'collections', ['retention', 'set', '--json', json]);
+        await this.refreshRetention(spec);
+    }
+    async retentionRun(): Promise<void> {
+        const spec = await this.chooseSpec(); if (!spec) { return; }
+        const preview = await runJson<RetentionPreview>(spec, 'collections', ['retention', 'preview']);
+        await this.showJson('AIRK retention maintenance preview', { collection: spec.collection, root: spec.root, dataDir: spec.dataDir, preview });
+        const estimate = preview.estimated_reclaimable_bytes == null ? 'unknown reclaimable bytes' : `${preview.estimated_reclaimable_bytes} estimated reclaimable bytes`;
+        const legacy = preview.legacy_candidates?.length ? ` Includes ${preview.legacy_candidates.length} legacy revision candidates identified by their original digests.` : '';
+        const confirm = await vscode.window.showWarningMessage(`Run one bounded retention pass for ${spec.name} (${spec.collection}), ${estimate}?${legacy} Protected readers may leave pending work. Source files are retained.`, { modal: true }, 'Run retention maintenance');
+        if (confirm !== 'Run retention maintenance') { return; }
+        await this.showJson('AIRK retention maintenance result', await this.writeNative(spec, 'collections', ['retention', 'run', '--apply']));
+        await this.refreshRetention(spec);
     }
     async showJson(title: string, value: unknown): Promise<void> {
         const document = await vscode.workspace.openTextDocument({ language: 'json', content: JSON.stringify({ title, ...value as object }, null, 2) });
@@ -301,7 +353,8 @@ class Controller implements vscode.Disposable {
     async collectionStatus(): Promise<void> {
         const spec = await this.chooseSpec(); if (!spec) { return; }
         const coverage = await this.writeNative<Coverage>(spec, 'coverage', ['--refresh']);
-        await this.showJson('AIRK workspace coverage', { coverage, scheduling: this.scheduler.states(), dataDir: spec.dataDir,
+        const retention = await this.refreshRetention(spec);
+        await this.showJson('AIRK workspace coverage', { coverage, retention: retention ?? null, scheduling: this.scheduler.states(), dataDir: spec.dataDir,
             explanation: 'Coverage compares saved eligible files with indexed hashes at the inventory time. Ignored and unsupported files are excluded; extraction failures remain eligible. A partial scan cannot establish a percentage.' });
     }
     async usage(): Promise<void> {
@@ -357,6 +410,7 @@ class Controller implements vscode.Disposable {
             ['Pause Auto-indexing', 'airk.pause'], ['Resume Auto-indexing', 'airk.resume'], ['Choose Index Storage', 'airk.chooseStorage'],
             ['Manage Collections and Disk Space', 'airk.collections'], ['Remove Unneeded Collection', 'airk.removeCollection'],
             ['Trim Obsolete Index Generations', 'airk.prune'],
+            ['Show Retention Status', 'airk.retention'], ['Choose Retention Policy', 'airk.retentionPolicy'], ['Run Retention Maintenance', 'airk.retentionRun'],
             ['Set Up Coding Agent', 'airk.setupAgent'], ['Verify Native MCP Connection', 'airk.verifyMcp'], ['Workspace Coverage', 'airk.status'], ['Local Usage and Estimated Savings', 'airk.usage'], ['Show Output', 'airk.logs']
         ];
         const choice = await vscode.window.showQuickPick(commands.map(([label, command]) => ({ label, command })), { title: 'AIRK controls' });
@@ -380,6 +434,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<{ getS
         indexMode: () => controller.chooseMode(), pause: () => controller.pauseAuto(true),
         resume: async () => { await controller.refresh(); await controller.pauseAuto(false); },
         chooseStorage: () => controller.chooseStorage(), collections: () => controller.collections(), removeCollection: () => controller.collections(true), prune: () => controller.prune(),
+        retention: () => controller.retention(), retentionPolicy: () => controller.retentionPolicy(), retentionRun: () => controller.retentionRun(),
         status: () => controller.collectionStatus(), usage: () => controller.usage(), setupAgent: () => controller.setupAgent(), verifyMcp: () => controller.verify(), logs: () => controller.output.show()
     };
     for (const [name, action] of Object.entries(commands)) { context.subscriptions.push(vscode.commands.registerCommand(`airk.${name}`, safe(action, true))); }

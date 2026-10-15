@@ -113,6 +113,17 @@ test('extension native adapter indexes, rebuilds, probes MCP, isolates and remov
         const full = await runJson<IndexReport>(spec, 'index', ['--full']); assert.equal(full.reused, 0); assert.ok(full.generation > first.generation);
         const probe = await probeMcp(spec); assert.equal(probe.tools.length, 15);
         assert.ok(probe.tools.includes('airk_changes'));
+        const retention = await runJson<{ policy: { policy: { version: number; mode: string; searchable_predecessors: number } }; history_supported: boolean }>(spec, 'collections', ['retention', 'show']);
+        assert.equal(retention.history_supported, false);
+        assert.equal(retention.policy.policy.mode, 'automatic', 'New collections visibly use the qualified automatic default');
+        const manualRetention = JSON.stringify({ ...retention.policy.policy, mode: 'manual' });
+        await runJson(spec, 'collections', ['retention', 'preview', '--json', manualRetention]);
+        const configured = await runJson<{ policy: { mode: string } }>(spec, 'collections', ['retention', 'set', '--json', manualRetention]);
+        assert.equal(configured.policy.mode, 'manual');
+        await runJson(spec, 'collections', ['retention', 'run']);
+        const maintained = await runJson<{ receipt: { state: string; pending: boolean } }>(spec, 'collections', ['retention', 'run', '--apply']);
+        assert.ok(['complete', 'pending'].includes(maintained.receipt.state));
+        if (maintained.receipt.state === 'pending') { assert.equal(maintained.receipt.pending, true); }
         assert.ok(probe.tools.includes('airk_code_facts')); assert.ok(probe.tools.includes('airk_relationships'));
         const second = { ...spec, root: other, collection: collectionId(other), name: 'B' };
         await runJson(second, 'index');

@@ -327,7 +327,12 @@ mod tests {
             Some(&reservation),
         )?;
         snapshot.artifacts.insert("one.rs".into(), compact);
-        kernel.publish_v2(&snapshot, &reservation, PublicationReason::PolicyChange)?;
+        kernel.publish_v2(
+            &_writer,
+            &snapshot,
+            reservation,
+            PublicationReason::PolicyChange,
+        )?;
         let changed = kernel.read_file_conditional(
             "one.rs",
             1,

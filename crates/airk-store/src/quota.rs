@@ -25,6 +25,31 @@ const RECORD_MAX: u64 = 1024;
 const MAX_RESERVATIONS: usize = 1024;
 const MAX_ENTRIES: usize = 1_000_000;
 
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PressureScope {
+    Root,
+    Collection,
+    Reservation,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct QuotaPressure {
+    pub scope: PressureScope,
+    pub required_bytes: u64,
+    pub available_bytes: u64,
+    pub protected_bytes: Option<u64>,
+}
+impl std::fmt::Display for QuotaPressure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "storage quota exhausted ({:?}): need {} bytes, available {}",
+            self.scope, self.required_bytes, self.available_bytes
+        )
+    }
+}
+impl std::error::Error for QuotaPressure {}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct QuotaPolicy {
@@ -424,6 +449,7 @@ impl Quota {
         let allocated = existing.map_or(Ok(0), |item| {
             checked_add(item.used_bytes, item.reserved_bytes)
         })?;
+        let requested_bytes = bytes;
         let bytes = if available {
             bytes
                 .min(
@@ -435,18 +461,28 @@ impl Quota {
         } else {
             bytes
         };
-        ensure!(bytes > 0, "storage quota has no available headroom");
-        ensure!(
-            checked_add(
-                checked_add(report.used_bytes, report.reserved_bytes)?,
-                bytes
-            )? <= policy.root_bytes,
-            "root storage quota exhausted"
-        );
-        ensure!(
-            collection.is_empty() || checked_add(allocated, bytes)? <= policy.limit(collection),
-            "collection storage quota exhausted"
-        );
+        let root_available = policy
+            .root_bytes
+            .saturating_sub(checked_add(report.used_bytes, report.reserved_bytes)?);
+        let collection_available = policy.limit(collection).saturating_sub(allocated);
+        if (bytes == 0 && root_available == 0) || bytes > root_available {
+            return Err(QuotaPressure {
+                scope: PressureScope::Root,
+                required_bytes: requested_bytes,
+                available_bytes: root_available,
+                protected_bytes: None,
+            }
+            .into());
+        }
+        if bytes == 0 || (!collection.is_empty() && bytes > collection_available) {
+            return Err(QuotaPressure {
+                scope: PressureScope::Collection,
+                required_bytes: requested_bytes,
+                available_bytes: collection_available,
+                protected_bytes: None,
+            }
+            .into());
+        }
         within_deadline(deadline)?;
         if !collection.is_empty() {
             let target = self.root.join("collections").join(collection);
@@ -725,10 +761,11 @@ impl Reservation {
                     .checked_add(bytes)
                     .filter(|next| *next <= self.0.limit)
             })
-            .map_err(|_| {
-                anyhow::anyhow!(
-                    "publication reservation exhausted; previous generation must remain active"
-                )
+            .map_err(|_| QuotaPressure {
+                scope: PressureScope::Reservation,
+                required_bytes: bytes,
+                available_bytes: self.remaining(),
+                protected_bytes: None,
             })?;
         Ok(())
     }
@@ -863,6 +900,18 @@ pub struct QuotaWriter {
     known_len: u64,
     reservation: Reservation,
 }
+#[derive(Debug)]
+struct QuotaWriteError(anyhow::Error);
+impl std::fmt::Display for QuotaWriteError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+impl std::error::Error for QuotaWriteError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.0.as_ref())
+    }
+}
 impl QuotaWriter {
     pub fn sync_all(&self) -> io::Result<()> {
         self.file.sync_all()
@@ -870,7 +919,7 @@ impl QuotaWriter {
     pub fn set_len(&mut self, length: u64) -> io::Result<()> {
         self.reservation
             .charge(length.saturating_sub(self.known_len))
-            .map_err(io::Error::other)?;
+            .map_err(|error| io::Error::other(QuotaWriteError(error)))?;
         self.file.set_len(length)?;
         self.known_len = self.known_len.max(length);
         Ok(())
@@ -884,7 +933,7 @@ impl Write for QuotaWriter {
             .ok_or_else(|| io::Error::other("quota offset overflow"))?;
         self.reservation
             .charge(end.saturating_sub(self.known_len))
-            .map_err(io::Error::other)?;
+            .map_err(|error| io::Error::other(QuotaWriteError(error)))?;
         let written = self.file.write(bytes)?;
         self.known_len = self.known_len.max(position + written as u64);
         Ok(written)

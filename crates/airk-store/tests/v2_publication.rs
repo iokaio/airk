@@ -517,11 +517,10 @@ fn legacy_original_inventory_bytes_survive_new_default_fields() -> Result<()> {
 }
 
 #[test]
-fn receipt_cleanup_quota_failure_reports_pending_and_retries_without_restoring_evidence()
--> Result<()> {
+fn retirement_admission_failure_preserves_all_evidence_until_retry() -> Result<()> {
     let root = tempfile::tempdir()?;
     let store = FileStore::new(root.path().join("collections/fixture"));
-    let _writer = store.lock()?;
+    let writer = store.lock()?;
     let (first, receipt, reservation) = prepare(&store, "Old quota fixture.\n", 1, None)?;
     store.publish_catalog_v2(&first, &receipt, &ExpectedHead::Empty, &reservation)?;
     drop(reservation);
@@ -541,15 +540,55 @@ fn receipt_cleanup_quota_failure_reports_pending_and_retries_without_restoring_e
         default_collection_bytes: used.collections["fixture"].used_bytes + 1,
         collections: BTreeMap::new(),
     })?;
-    let report = airk_store::retention::prune(
-        store.directory(),
-        &current.token.revision.to_string(),
-        false,
-    )?;
-    assert!(report.removed_bytes > 0);
-    assert!(report.receipt_cleanup_pending);
-    assert!(report.receipt_cleanup_error.is_some());
+    assert!(
+        airk_store::retention::prune(
+            store.directory(),
+            &current.token.revision.to_string(),
+            false,
+        )
+        .is_err()
+    );
+    let rejected = store.maintain_retention(
+        &writer,
+        &quota,
+        airk_store::maintenance::MaintenanceTrigger::ExplicitLegacyPrune,
+        airk_store::maintenance::MaintenanceBudget::default(),
+    );
+    assert_eq!(
+        rejected.receipt.state,
+        airk_store::maintenance::MaintenanceState::Blocked
+    );
+    let pressure = rejected
+        .receipt
+        .pressure
+        .as_ref()
+        .expect("typed quota rejection");
+    assert!(pressure.required_bytes > pressure.available_bytes);
+    assert_eq!(rejected.receipt.reclaimed_bytes, 0);
+    assert_eq!(rejected.receipt.retired_receipts, 0);
+    assert!(rejected.receipt.pending);
     assert!(store.receipt(&receipt.token)?.is_some());
+    assert!(
+        store
+            .directory()
+            .join("generations")
+            .join(receipt.token.revision.to_string())
+            .is_dir()
+    );
+    {
+        let old = store
+            .catalog_at(&receipt.token, 16 * 1024 * 1024)?
+            .expect("old evidence remains readable");
+        let artifact = &old.snapshot.artifacts["note.txt"];
+        assert_eq!(
+            store.load_retained(artifact)?.chunks[0].text,
+            "Old quota fixture.\n"
+        );
+        assert_eq!(
+            store.read_retained_source(artifact)?,
+            b"Old quota fixture.\n"
+        );
+    }
     assert_eq!(
         store.persistent_revision()?.unwrap().token,
         Some(current.token)
@@ -560,9 +599,24 @@ fn receipt_cleanup_quota_failure_reports_pending_and_retries_without_restoring_e
         &current.token.revision.to_string(),
         false,
     )?;
+    assert!(retried.removed_bytes > 0);
     assert_eq!(retried.retired_receipts, 1);
     assert!(!retried.receipt_cleanup_pending);
     assert!(store.receipt(&receipt.token)?.is_none());
+    assert!(
+        store
+            .catalog_at(&receipt.token, 16 * 1024 * 1024)?
+            .is_none()
+    );
+    assert_eq!(
+        store.persistent_revision()?.unwrap().token,
+        Some(current.token)
+    );
+    assert!(
+        store
+            .catalog_at(&current.token, 16 * 1024 * 1024)?
+            .is_some()
+    );
     Ok(())
 }
 

@@ -15,6 +15,21 @@ use tantivy::directory::{
 
 pub type Charge = Arc<dyn Fn(u64) -> Result<()> + Send + Sync>;
 
+// Preserve typed admission errors through io/serde/Tantivy wrappers without
+// coupling retrieval to the store's quota implementation.
+#[derive(Debug)]
+struct ChargeError(anyhow::Error);
+impl fmt::Display for ChargeError {
+    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.0, out)
+    }
+}
+impl std::error::Error for ChargeError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.0.as_ref())
+    }
+}
+
 /// The callback must reject over-budget growth atomically across all provider
 /// instances and retain the publication reservation for its entire lifetime.
 #[derive(Clone)]
@@ -79,7 +94,7 @@ impl Directory for BoundedDirectory {
         relative(path)?;
         // Atomic replacement creates a full temporary file alongside its old
         // version, so charge the entire payload before opening that temporary.
-        (self.charge)(bytes.len() as u64).map_err(io::Error::other)?;
+        (self.charge)(bytes.len() as u64).map_err(|error| io::Error::other(ChargeError(error)))?;
         self.inner.atomic_write(path, bytes)
     }
     fn sync_directory(&self) -> io::Result<()> {
@@ -112,7 +127,7 @@ impl<W> BudgetWriter<W> {
 }
 impl<W: Write> Write for BudgetWriter<W> {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        (self.charge)(bytes.len() as u64).map_err(io::Error::other)?;
+        (self.charge)(bytes.len() as u64).map_err(|error| io::Error::other(ChargeError(error)))?;
         self.inner.write(bytes)
     }
     fn flush(&mut self) -> io::Result<()> {
@@ -134,6 +149,25 @@ mod tests {
         directory::MmapDirectory,
         schema::{Schema, TEXT},
     };
+
+    #[test]
+    fn serialized_writes_preserve_typed_admission_cause() {
+        #[derive(Debug)]
+        struct Denied;
+        impl fmt::Display for Denied {
+            fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
+                out.write_str("original admission denial")
+            }
+        }
+        impl std::error::Error for Denied {}
+        let charge: Charge = Arc::new(|_| Err(Denied.into()));
+        let mut writer = BudgetWriter::new(Vec::new(), charge);
+        let error = anyhow::Error::from(
+            serde_json::to_writer(&mut writer, &vec!["original fixture"]).unwrap_err(),
+        );
+        assert!(error.chain().any(|cause| cause.is::<Denied>()));
+        assert!(writer.get_ref().is_empty());
+    }
 
     fn budget(maximum: u64) -> (Charge, Arc<AtomicU64>) {
         let used = Arc::new(AtomicU64::new(0));
