@@ -12,6 +12,7 @@ use std::{
 };
 pub mod blobs;
 pub mod capacity;
+pub mod catalog_experiment;
 pub mod checkpoints;
 pub mod extraction_policy;
 pub mod history;
