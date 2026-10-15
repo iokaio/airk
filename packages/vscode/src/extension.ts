@@ -9,6 +9,7 @@ import { Coverage, CoverageQueue, coverageDetails, coverageLabel } from './cover
 import { RetentionStatus, RetentionPreview, retentionSummary, retentionPolicyForMode } from './retention';
 import { withPolicySnapshot } from './extractionPolicy';
 import { historyControl, HistoryAction } from './history';
+import { renderReport, ReportKind } from './report';
 
 interface KnownCollection { name: string; root: string; lastIndexed?: string }
 interface PruneReport { dry_run: boolean; reclaimable_bytes: number; removed_bytes: number; candidates: string[]; pinned: string[]; unreferenced_objects?: number; receipt_cleanup_pending?: boolean }
@@ -401,7 +402,7 @@ class Controller implements vscode.Disposable {
     async retention(): Promise<void> {
         const spec = await this.chooseSpec(); if (!spec) { return; }
         const status = await this.refreshRetention(spec);
-        await this.showJson('AIRK retention status', { collection: spec.collection, root: spec.root, dataDir: spec.dataDir,
+        this.showReport('retention', 'AIRK retention status', { collection: spec.collection, root: spec.root, dataDir: spec.dataDir,
             retention: status ?? null, statusUnavailable: !status,
             explanation: 'Retention concerns searchable index revisions. History and checkpoint controls manage retained committed evidence separately. Reader leases and the active revision remain protected. Indexing mode is separate from retention mode.' });
     }
@@ -471,16 +472,31 @@ class Controller implements vscode.Disposable {
         const document = await vscode.workspace.openTextDocument({ language: 'json', content: JSON.stringify({ title, ...value as object }, null, 2) });
         await vscode.window.showTextDocument(document, { preview: true });
     }
+    showReport(kind: ReportKind, title: string, value: unknown): void {
+        const panel = vscode.window.createWebviewPanel('airk.report', title, vscode.ViewColumn.Active,
+            { enableScripts: true, localResourceRoots: [] });
+        panel.webview.html = renderReport(title, kind, value);
+        const listener = panel.webview.onDidReceiveMessage(message => {
+            if (message && typeof message === 'object' && !Array.isArray(message)
+                && Object.keys(message).length === 1 && message.type === 'openJson') {
+                void this.showJson(title, value).catch(error => {
+                    this.output.appendLine(`Report JSON unavailable: ${String(error)}`);
+                    void vscode.window.showErrorMessage(`AIRK: ${String(error)}`);
+                });
+            }
+        });
+        panel.onDidDispose(() => listener.dispose());
+    }
     async collectionStatus(): Promise<void> {
         const spec = await this.chooseSpec(); if (!spec) { return; }
         const coverage = await this.writeNative<Coverage>(spec, 'coverage', ['--refresh']);
         const retention = await this.refreshRetention(spec);
-        await this.showJson('AIRK workspace coverage', { coverage, retention: retention ?? null, scheduling: this.scheduler.states(), dataDir: spec.dataDir,
+        this.showReport('coverage', 'AIRK workspace coverage', { coverage, retention: retention ?? null, scheduling: this.scheduler.states(), dataDir: spec.dataDir,
             explanation: 'Coverage compares saved eligible files with indexed hashes at the inventory time. Ignored and unsupported files are excluded; extraction failures remain eligible. A partial scan cannot establish a percentage.' });
     }
     async usage(): Promise<void> {
         const spec = await this.chooseSpec(); if (!spec) { return; }
-        await this.showJson('AIRK local usage and estimated context reduction', {
+        this.showReport('usage', 'AIRK local usage and estimated context reduction', {
             ...await runJson<object>(spec, 'usage', ['report']),
             explanation: 'Local aggregate activity and counterfactual context estimates; these are not measured provider tokens or billed savings.' });
     }

@@ -66,6 +66,12 @@ test('retention controls preview before explicit mutation and never rewrite clie
     (stub as any).TreeItemCollapsibleState = { None: 0 };
     (stub as any).ThemeIcon = class { constructor(public id: string) {} };
     (stub.window as any).createTreeView = () => ({ dispose() {} });
+    (stub as any).ViewColumn = { Active: 1 };
+    (stub.window as any).createWebviewPanel = () => ({
+        webview: { html: '', onDidReceiveMessage: (handler: (message: unknown) => void) => {
+            handler({ type: 'openJson' }); return disposable;
+        } }, onDidDispose: () => disposable
+    });
     loader._load = function(request: string, ...args: any[]) { return request === 'vscode' ? stub : original.call(this, request, ...args); };
     const context = { subscriptions: [] as { dispose(): void }[], extensionPath: '/original/extension', extension: { packageJSON: { version: '0.1.0' } },
         globalStorageUri: { fsPath: path.join(directory, 'Host') }, globalState: { get: (_key: string, fallback: unknown) => fallback, update: async () => {} } };
