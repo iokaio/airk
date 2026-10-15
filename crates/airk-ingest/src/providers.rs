@@ -315,6 +315,7 @@ impl Workspace {
 
 fn evidence(manifest: &AnalysisManifest, id: String, name: String, coverage: &str) -> CodeEvidence {
     CodeEvidence {
+        fingerprints: None,
         symbol_id: id,
         qualified_name: name,
         scope: Vec::new(),
@@ -436,6 +437,7 @@ fn parse_ctags(workspace: &Workspace, bytes: &[u8]) -> Result<ProviderAnalysis> 
             code.signature = Some(crate::tables::bounded(signature, 1024));
         }
         output.facts.push(FactHit {
+            continuity_key: None,
             name: name.into(),
             kind: "definition".into(),
             syntax_kind: format!("ctags/{kind}"),

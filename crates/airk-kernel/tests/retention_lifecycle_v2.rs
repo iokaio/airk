@@ -9,7 +9,7 @@ use airk_store::{
 };
 use anyhow::{Context, Result, ensure};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
     sync::{
@@ -114,6 +114,109 @@ fn content_and_search_bytes(store: &FileStore) -> Result<u64> {
         .sum())
 }
 
+fn retained_object_paths(store: &FileStore) -> Result<BTreeSet<PathBuf>> {
+    let current = store.catalog()?.context("active catalog missing")?;
+    let parent = current
+        .lineage
+        .as_ref()
+        .and_then(|lineage| lineage.observation.parent);
+    let mut catalogs = vec![current];
+    if let Some(parent) = parent {
+        catalogs.push(
+            store
+                .catalog_at(&parent, 16 * 1024 * 1024)?
+                .context("searchable predecessor missing")?,
+        );
+    }
+    let mut expected = BTreeSet::new();
+    for catalog in catalogs {
+        for file in catalog
+            .inventory
+            .context("v2 inventory missing")?
+            .files
+            .values()
+        {
+            expected.insert(PathBuf::from("artifacts").join(file.state.payload_digest.to_string()));
+            if file.raw_source {
+                expected.insert(PathBuf::from("sources").join(file.state.source_hash.to_string()));
+            }
+        }
+    }
+    Ok(expected)
+}
+
+fn finish_pending_objects(fixture: &Fixture) -> Result<()> {
+    let head = fixture.store.persistent_revision()?.unwrap().token;
+    let expected = retained_object_paths(&fixture.store)?;
+    for _ in 0..8 {
+        let actual: BTreeSet<_> = files(&fixture.store.directory().join("objects"))?
+            .into_keys()
+            .collect();
+        ensure!(
+            expected.is_subset(&actual),
+            "maintenance removed a retained object"
+        );
+        if actual == expected {
+            assert_eq!(fixture.store.persistent_revision()?.unwrap().token, head);
+            return Ok(());
+        }
+        let status = fixture.kernel.retention_status()?;
+        ensure!(
+            status
+                .last_maintenance
+                .as_ref()
+                .is_some_and(|receipt| receipt.pending),
+            "unreferenced objects require truthful pending maintenance: actual={actual:?}, expected={expected:?}, receipt={:?}",
+            status.last_maintenance
+        );
+        fixture.kernel.maintain_retention_with_budget(
+            airk_store::retention::MaintenanceBudget {
+                max_duration_ms: 10_000,
+                ..Default::default()
+            },
+        )?;
+    }
+    anyhow::bail!("bounded maintenance continuations did not converge to exact retained objects")
+}
+
+#[test]
+fn deferred_postcommit_object_gc_is_pending_and_converges_without_publication() -> Result<()> {
+    let mut fixture = Fixture::new()?;
+    fixture.automatic()?;
+    fixture.edit(0)?;
+    fixture.edit(1)?;
+    let ordinary = fixture.kernel.clone();
+    let observed = Arc::new(AtomicUsize::new(0));
+    let calls = observed.clone();
+    fixture.kernel = fixture
+        .kernel
+        .with_retention_observer(Arc::new(move |stage| {
+            if stage == MaintenanceStage::IntentComplete {
+                calls.fetch_add(1, Ordering::SeqCst);
+                // Deliberately consume the cooperative 1000ms allowance after the
+                // obsolete representation is retired, before object GC can start.
+                std::thread::sleep(std::time::Duration::from_millis(1100));
+            }
+            Ok(())
+        }));
+    fixture.edit(2)?;
+    fixture.kernel = ordinary;
+    assert_eq!(observed.load(Ordering::SeqCst), 1);
+    assert_eq!(generations(&fixture.store)?.len(), 2);
+    assert!(files(&fixture.store.directory().join("objects"))?.len() > 4);
+    assert!(
+        fixture
+            .kernel
+            .retention_status()?
+            .last_maintenance
+            .unwrap()
+            .pending
+    );
+    finish_pending_objects(&fixture)?;
+    assert_eq!(files(&fixture.store.directory().join("objects"))?.len(), 4);
+    Ok(())
+}
+
 #[test]
 fn two_hundred_real_edits_reach_searchable_and_content_plateau() -> Result<()> {
     let fixture = Fixture::new()?;
@@ -158,6 +261,9 @@ fn two_hundred_real_edits_reach_searchable_and_content_plateau() -> Result<()> {
         max <= min + min / 2 + 16 * 1024,
         "content/search bytes did not plateau: {min}..{max}"
     );
+    // Postcommit work has a cooperative deadline. Any deferred object cleanup
+    // must be reported and converge through bounded maintenance, without edits.
+    finish_pending_objects(&fixture)?;
     let object_files = files(&fixture.store.directory().join("objects"))?;
     assert!(
         object_files.len() <= 4,

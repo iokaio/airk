@@ -7,6 +7,7 @@ import { NativeWriteQueue, prepareHelper, probeMcp, runJson } from './native';
 import { CapacityError, Options, PausedError, Scheduler } from './scheduler';
 import { Coverage, CoverageQueue, coverageDetails, coverageLabel } from './coverage';
 import { RetentionStatus, RetentionPreview, retentionSummary, retentionPolicyForMode } from './retention';
+import { withPolicySnapshot } from './extractionPolicy';
 
 interface KnownCollection { name: string; root: string; lastIndexed?: string }
 interface PruneReport { dry_run: boolean; reclaimable_bytes: number; removed_bytes: number; candidates: string[]; pinned: string[]; unreferenced_objects?: number; receipt_cleanup_pending?: boolean }
@@ -319,6 +320,28 @@ class Controller implements vscode.Disposable {
             retention: status ?? null, statusUnavailable: !status,
             explanation: 'Retention concerns searchable index revisions. History and checkpoints are unavailable. Reader leases and the active revision remain protected. Indexing mode is separate from retention mode.' });
     }
+    async extractionPolicy(configure = false): Promise<void> {
+        const spec = await this.chooseSpec(); if (!spec) { return; }
+        const current = await runJson<object>(spec, 'collections', ['extraction', 'show']);
+        if (!configure) {
+            await this.showJson('AIRK extraction policy', { collection: spec.collection, root: spec.root, dataDir: spec.dataDir, ...current });
+            return;
+        }
+        const files = await vscode.window.showOpenDialog({ canSelectMany: false, canSelectFolders: false, filters: { 'Extraction policy JSON': ['json'] }, title: `Choose extraction policy for ${spec.name}` });
+        if (!files?.[0]) { return; }
+        await withPolicySnapshot(files[0].fsPath, async snapshot => {
+            this.trusted();
+            const proposed = await runJson<object>(spec, 'collections', ['extraction', 'validate', '--file', snapshot]);
+            await this.showJson('AIRK proposed extraction policy', { collection: spec.collection, root: spec.root, dataDir: spec.dataDir, current, proposed,
+                explanation: 'The configured policy applies on the next successful index. Existing published evidence keeps its original extraction profiles. Validation does not execute build files or rewrite source configuration.' });
+            const confirm = await vscode.window.showWarningMessage(`Save this extraction policy for ${spec.name} (${spec.collection})? It applies on the next successful index.`, { modal: true }, 'Save extraction policy');
+            if (confirm !== 'Save extraction policy') { return; }
+            await this.showJson('AIRK saved extraction policy', await this.writeNative<object>(spec, 'collections', ['extraction', 'set', '--file', snapshot]));
+            if (await vscode.window.showInformationMessage('Extraction policy saved. Index this collection now to apply it?', 'Index now') === 'Index now') {
+                this.trusted(); await this.scheduler.request(spec, false);
+            }
+        });
+    }
     async retentionPolicy(): Promise<void> {
         const spec = await this.chooseSpec(); if (!spec) { return; }
         const status = await this.refreshRetention(spec); if (!status) { throw new Error('Cannot configure retention without current policy status.'); }
@@ -411,6 +434,7 @@ class Controller implements vscode.Disposable {
             ['Manage Collections and Disk Space', 'airk.collections'], ['Remove Unneeded Collection', 'airk.removeCollection'],
             ['Trim Obsolete Index Generations', 'airk.prune'],
             ['Show Retention Status', 'airk.retention'], ['Choose Retention Policy', 'airk.retentionPolicy'], ['Run Retention Maintenance', 'airk.retentionRun'],
+            ['Show Extraction Policy', 'airk.extractionPolicy'], ['Configure Extraction Policy', 'airk.configureExtractionPolicy'],
             ['Set Up Coding Agent', 'airk.setupAgent'], ['Verify Native MCP Connection', 'airk.verifyMcp'], ['Workspace Coverage', 'airk.status'], ['Local Usage and Estimated Savings', 'airk.usage'], ['Show Output', 'airk.logs']
         ];
         const choice = await vscode.window.showQuickPick(commands.map(([label, command]) => ({ label, command })), { title: 'AIRK controls' });
@@ -435,6 +459,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<{ getS
         resume: async () => { await controller.refresh(); await controller.pauseAuto(false); },
         chooseStorage: () => controller.chooseStorage(), collections: () => controller.collections(), removeCollection: () => controller.collections(true), prune: () => controller.prune(),
         retention: () => controller.retention(), retentionPolicy: () => controller.retentionPolicy(), retentionRun: () => controller.retentionRun(),
+        extractionPolicy: () => controller.extractionPolicy(), configureExtractionPolicy: () => controller.extractionPolicy(true),
         status: () => controller.collectionStatus(), usage: () => controller.usage(), setupAgent: () => controller.setupAgent(), verifyMcp: () => controller.verify(), logs: () => controller.output.show()
     };
     for (const [name, action] of Object.entries(commands)) { context.subscriptions.push(vscode.commands.registerCommand(`airk.${name}`, safe(action, true))); }

@@ -31,11 +31,12 @@ fn patterns() -> &'static Patterns {
     })
 }
 
-struct Unit {
-    span: Range<usize>,
-    visible: String,
-    origin: &'static str,
-    level: Option<u8>,
+#[derive(Clone)]
+pub(crate) struct Unit {
+    pub(crate) span: Range<usize>,
+    pub(crate) visible: String,
+    pub(crate) origin: &'static str,
+    pub(crate) level: Option<u8>,
 }
 
 struct Analyzer<'a> {
@@ -43,6 +44,8 @@ struct Analyzer<'a> {
     line_starts: Vec<usize>,
     headings: HeadingPath,
     facts: Vec<Fact>,
+    collect_units: bool,
+    units: Vec<Unit>,
 }
 
 impl<'a> Analyzer<'a> {
@@ -54,6 +57,8 @@ impl<'a> Analyzer<'a> {
             line_starts,
             headings: Vec::new(),
             facts: Vec::new(),
+            collect_units: false,
+            units: Vec::new(),
         }
     }
 
@@ -91,6 +96,13 @@ impl<'a> Analyzer<'a> {
     }
 
     fn analyze(&mut self, unit: Unit) -> Result<()> {
+        if self.collect_units {
+            ensure!(
+                self.units.len() < airk_core::continuity::MAX_CONTINUITY_UNITS,
+                "document structural unit limit exceeded"
+            );
+            self.units.push(unit.clone());
+        }
         let text = unit
             .visible
             .split_whitespace()
@@ -391,7 +403,12 @@ impl<'a> Analyzer<'a> {
 }
 
 pub(crate) fn markdown(text: &str) -> Result<Vec<Fact>> {
+    Ok(markdown_analysis(text, false)?.facts)
+}
+
+fn markdown_analysis(text: &str, collect_units: bool) -> Result<Analyzer<'_>> {
     let mut analyzer = Analyzer::new(text);
+    analyzer.collect_units = collect_units;
     let mut unit: Option<Unit> = None;
     let mut in_code = false;
     for (ordinal, (event, span)) in Parser::new_ext(text, Options::ENABLE_TABLES)
@@ -502,7 +519,7 @@ pub(crate) fn markdown(text: &str) -> Result<Vec<Fact>> {
             _ => {}
         }
     }
-    Ok(analyzer.facts)
+    Ok(analyzer)
 }
 
 pub(crate) fn plain(text: &str) -> Result<Vec<Fact>> {
@@ -514,7 +531,18 @@ pub(crate) fn plain_with_context(
     context: &[(u8, String)],
     native_level: Option<u8>,
 ) -> Result<(Vec<Fact>, HeadingPath)> {
+    let analyzer = plain_analysis(text, context, native_level, false)?;
+    Ok((analyzer.facts, analyzer.headings))
+}
+
+fn plain_analysis<'a>(
+    text: &'a str,
+    context: &[(u8, String)],
+    native_level: Option<u8>,
+    collect_units: bool,
+) -> Result<Analyzer<'a>> {
     let mut analyzer = Analyzer::new(text);
+    analyzer.collect_units = collect_units;
     analyzer.headings = context.to_vec();
     if let Some(level) = native_level {
         analyzer.analyze(Unit {
@@ -523,7 +551,7 @@ pub(crate) fn plain_with_context(
             origin: "docx-styled-heading",
             level: Some(level),
         })?;
-        return Ok((analyzer.facts, analyzer.headings));
+        return Ok(analyzer);
     }
     let mut offset = 0;
     let mut fence: Option<char> = None;
@@ -594,7 +622,17 @@ pub(crate) fn plain_with_context(
     if let Some(unit) = paragraph {
         analyzer.analyze(unit)?;
     }
-    Ok((analyzer.facts, analyzer.headings))
+    Ok(analyzer)
+}
+
+/// Reuse the existing bounded prose parser; unit ordinals are local locators.
+pub(crate) fn continuity_units(text: &str, markdown: bool) -> Result<Vec<Unit>> {
+    Ok(if markdown {
+        markdown_analysis(text, true)?
+    } else {
+        plain_analysis(text, &[], None, true)?
+    }
+    .units)
 }
 
 fn is_section_title(title: &str) -> bool {

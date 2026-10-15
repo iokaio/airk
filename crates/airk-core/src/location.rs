@@ -202,12 +202,86 @@ impl SourceMap {
         host: &str,
     ) -> Result<Option<Vec<ByteSpan>>> {
         self.validate(local, host)?;
+        self.original_spans_validated(span, local, host)
+    }
+
+    /// Compose this immediate-host map through parents ordered from nearest to
+    /// outermost. Each pair contains a parent map and that map's host text.
+    /// Returned pieces refer only to the outermost original source. Adjacent
+    /// pieces may be joined to cover a complete decoded unit; gaps never are.
+    /// Partial decoded units and unmapped bytes return `None` at any depth.
+    /// All maps share the caller's host allowance, including failed attempts.
+    pub fn original_spans_through(
+        &self,
+        span: ByteSpan,
+        local: &str,
+        host: &str,
+        parents: &[(&SourceMap, &str)],
+        budget: &mut HostBudget,
+    ) -> Result<Option<Vec<ByteSpan>>> {
+        budget.enter_region(parents.len().saturating_add(1))?;
+        budget.charge(0, 0, 0, self.segments.len())?;
+        self.validate(local, host)?;
+        let mut child = host;
+        for (parent, original) in parents {
+            budget.charge(0, 0, 0, parent.segments.len())?;
+            parent.validate(child, original)?;
+            child = original;
+        }
+        let Some(mut pieces) = self.original_spans_validated(span, local, host)? else {
+            return Ok(None);
+        };
+        child = host;
+        for (parent, original) in parents {
+            // A child's segment boundary can fall inside a parent's decoded
+            // unit. Only touching ranges can jointly cover that entire unit.
+            let mut contiguous: Vec<ByteSpan> = Vec::with_capacity(pieces.len());
+            for piece in pieces {
+                if let Some(last) = contiguous.last_mut()
+                    && last.end == piece.start
+                {
+                    last.end = piece.end;
+                } else {
+                    contiguous.push(piece);
+                }
+            }
+            let mut mapped = Vec::new();
+            for piece in contiguous {
+                let Some(next) = parent.original_spans_validated(piece, child, original)? else {
+                    return Ok(None);
+                };
+                ensure!(
+                    mapped.len().saturating_add(next.len()) <= MAX_MAP_SEGMENTS,
+                    "composed source map segment limit"
+                );
+                mapped.extend(next);
+            }
+            pieces = mapped;
+            child = original;
+        }
+        Ok(Some(pieces))
+    }
+
+    /// The caller validates a map once, then maps ordered pieces without
+    /// rescanning every preceding segment for each discontiguous piece.
+    fn original_spans_validated(
+        &self,
+        span: ByteSpan,
+        local: &str,
+        host: &str,
+    ) -> Result<Option<Vec<ByteSpan>>> {
         span.validate(local)?;
         if span.start == span.end {
             return Ok(None);
         }
         let mut result = Vec::new();
-        for segment in &self.segments {
+        let first = self
+            .segments
+            .partition_point(|segment| segment.local.end <= span.start);
+        for segment in &self.segments[first..] {
+            if segment.local.start >= span.end {
+                break;
+            }
             let start = span.start.max(segment.local.start);
             let end = span.end.min(segment.local.end);
             if start >= end {
@@ -295,6 +369,253 @@ impl HostBudget {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn verbatim(local_len: usize, host_start: usize) -> SourceMap {
+        SourceMap {
+            version: SOURCE_MAP_VERSION,
+            segments: vec![MapSegment {
+                local: ByteSpan {
+                    start: 0,
+                    end: local_len,
+                },
+                mapping: Mapping::Verbatim {
+                    host: ByteSpan {
+                        start: host_start,
+                        end: host_start + local_len,
+                    },
+                },
+            }],
+        }
+    }
+
+    #[test]
+    fn nested_javascript_region_preserves_encoded_and_discontiguous_original_pieces() -> Result<()>
+    {
+        // Existing JavaScript syntax embedded in decoded pieces. This fixture
+        // qualifies the map primitive, not a notebook or host-language adapter.
+        let local = "let n = 1;\n";
+        let host = "[let n = 1;\n]";
+        let original = "[\"[let \",\"n = 1;\\n]\"]";
+        let immediate = verbatim(local.len(), 1);
+        let parent = SourceMap {
+            version: SOURCE_MAP_VERSION,
+            segments: vec![
+                MapSegment {
+                    local: ByteSpan { start: 0, end: 5 },
+                    mapping: Mapping::Verbatim {
+                        host: ByteSpan { start: 2, end: 7 },
+                    },
+                },
+                MapSegment {
+                    local: ByteSpan { start: 5, end: 11 },
+                    mapping: Mapping::Verbatim {
+                        host: ByteSpan { start: 10, end: 16 },
+                    },
+                },
+                MapSegment {
+                    local: ByteSpan { start: 11, end: 12 },
+                    mapping: Mapping::Decoded {
+                        host: ByteSpan { start: 16, end: 18 },
+                    },
+                },
+                MapSegment {
+                    local: ByteSpan { start: 12, end: 13 },
+                    mapping: Mapping::Verbatim {
+                        host: ByteSpan { start: 18, end: 19 },
+                    },
+                },
+            ],
+        };
+        let spans = immediate
+            .original_spans_through(
+                ByteSpan {
+                    start: 0,
+                    end: local.len(),
+                },
+                local,
+                host,
+                &[(&parent, original)],
+                &mut HostBudget::new(0, 0, 0)?,
+            )?
+            .unwrap();
+        assert_eq!(
+            spans,
+            vec![
+                ByteSpan { start: 3, end: 7 },
+                ByteSpan { start: 10, end: 16 },
+                ByteSpan { start: 16, end: 18 }
+            ]
+        );
+        assert_eq!(
+            spans
+                .iter()
+                .map(|span| &original[span.start..span.end])
+                .collect::<Vec<_>>(),
+            ["let ", "n = 1;", "\\n"]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn four_nested_verbatim_rust_regions_preserve_utf8_and_crlf() -> Result<()> {
+        let local = "fn café() {}\r\n";
+        let host = format!("[{local}]");
+        let outer = format!("<{host}>");
+        let outer2 = format!("({outer})");
+        let original = format!("{{{outer2}}}");
+        let immediate = verbatim(local.len(), 1);
+        let first = verbatim(host.len(), 1);
+        let second = verbatim(outer.len(), 1);
+        let third = verbatim(outer2.len(), 1);
+        let parents = [
+            (&first, outer.as_str()),
+            (&second, outer2.as_str()),
+            (&third, original.as_str()),
+        ];
+        let selected = ByteSpan { start: 3, end: 8 };
+        let result = immediate
+            .original_spans_through(
+                selected,
+                local,
+                &host,
+                &parents,
+                &mut HostBudget::new(0, 0, 0)?,
+            )?
+            .unwrap();
+        assert_eq!(result, vec![ByteSpan { start: 7, end: 12 }]);
+        assert_eq!(&original[result[0].start..result[0].end], "café");
+        assert!(
+            immediate
+                .original_spans_through(
+                    ByteSpan { start: 3, end: 7 },
+                    local,
+                    &host,
+                    &parents,
+                    &mut HostBudget::new(0, 0, 0)?
+                )
+                .is_err()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn composition_joins_touching_units_but_never_bridges_gaps_or_partial_decoding() -> Result<()> {
+        let immediate = SourceMap {
+            version: SOURCE_MAP_VERSION,
+            segments: vec![
+                MapSegment {
+                    local: ByteSpan { start: 0, end: 1 },
+                    mapping: Mapping::Verbatim {
+                        host: ByteSpan { start: 0, end: 1 },
+                    },
+                },
+                MapSegment {
+                    local: ByteSpan { start: 1, end: 2 },
+                    mapping: Mapping::Verbatim {
+                        host: ByteSpan { start: 1, end: 2 },
+                    },
+                },
+            ],
+        };
+        let mut parent = SourceMap {
+            version: SOURCE_MAP_VERSION,
+            segments: vec![MapSegment {
+                local: ByteSpan { start: 0, end: 2 },
+                mapping: Mapping::Decoded {
+                    host: ByteSpan { start: 0, end: 6 },
+                },
+            }],
+        };
+        let span = ByteSpan { start: 0, end: 2 };
+        assert_eq!(
+            immediate.original_spans_through(
+                span,
+                "ab",
+                "ab",
+                &[(&parent, "&pair;")],
+                &mut HostBudget::new(0, 0, 0)?
+            )?,
+            Some(vec![ByteSpan { start: 0, end: 6 }])
+        );
+        assert_eq!(
+            immediate.original_spans_through(
+                ByteSpan { start: 0, end: 1 },
+                "ab",
+                "ab",
+                &[(&parent, "&pair;")],
+                &mut HostBudget::new(0, 0, 0)?
+            )?,
+            None
+        );
+        let mut separated = immediate.clone();
+        separated.segments[1].mapping = Mapping::Verbatim {
+            host: ByteSpan { start: 2, end: 3 },
+        };
+        parent.segments[0].local.end = 3;
+        assert_eq!(
+            separated.original_spans_through(
+                span,
+                "ab",
+                "a b",
+                &[(&parent, "&pair;")],
+                &mut HostBudget::new(0, 0, 0)?
+            )?,
+            None
+        );
+        parent.segments[0].mapping = Mapping::Unmapped;
+        assert_eq!(
+            separated.original_spans_through(
+                span,
+                "ab",
+                "a b",
+                &[(&parent, "")],
+                &mut HostBudget::new(0, 0, 0)?
+            )?,
+            None
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn composition_charges_shared_limits_and_failed_maps() -> Result<()> {
+        let map = verbatim(1, 0);
+        let span = ByteSpan { start: 0, end: 1 };
+        let mut budget = HostBudget::new(0, 0, 0)?;
+        budget.charge(0, 0, 0, MAX_MAP_SEGMENTS - 1)?;
+        // Failed validation consumes the remaining map-work allowance.
+        assert!(
+            map.original_spans_through(span, "x", "y", &[], &mut budget)
+                .is_err()
+        );
+        assert!(
+            map.original_spans_through(span, "x", "x", &[], &mut budget)
+                .is_err()
+        );
+        let mut budget = HostBudget::new(0, 0, 0)?;
+        budget.charge(0, 0, 0, MAX_MAP_SEGMENTS - 1)?;
+        assert!(
+            map.original_spans_through(span, "x", "x", &[(&map, "x")], &mut budget)
+                .is_err()
+        );
+        let mut budget = HostBudget::new(0, 0, 0)?;
+        for _ in 0..MAX_REGIONS {
+            assert!(
+                map.original_spans_through(
+                    span,
+                    "x",
+                    "x",
+                    &[(&map, "x"); MAX_REGION_DEPTH],
+                    &mut budget
+                )
+                .is_err()
+            );
+        }
+        assert!(
+            map.original_spans_through(span, "x", "x", &[], &mut budget)
+                .is_err()
+        );
+        Ok(())
+    }
 
     #[test]
     fn escaped_json_and_discontiguous_arrays_preserve_original_pieces() {

@@ -10,13 +10,18 @@ use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const INVENTORY_VERSION: u32 = 2;
+pub const INVENTORY_VERSION: u32 = 3;
 pub const SNAPSHOT_PROJECTION_VERSION: u32 = 4;
 pub const MAX_INVENTORY_BYTES: usize = 134_217_728;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InventoryFile {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub continuity: Vec<crate::continuity::ContinuityRecord>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub continuity_coverage:
+        BTreeMap<crate::continuity::ContinuityFamily, crate::continuity::ContinuityCoverage>,
     pub state: FileState,
     pub source_bytes: usize,
     pub payload_bytes: usize,
@@ -33,6 +38,10 @@ pub struct InventoryFile {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InventoryV2 {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embedding_pipeline_digest: Option<Sha256Digest>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extraction_policy_digest: Option<Sha256Digest>,
     pub version: u32,
     pub incarnation: Incarnation,
     pub generation: u64,
@@ -54,7 +63,7 @@ pub struct InventoryV2 {
 impl InventoryV2 {
     pub fn validate(&self) -> Result<()> {
         ensure!(
-            self.version == INVENTORY_VERSION,
+            (2..=INVENTORY_VERSION).contains(&self.version),
             "unsupported inventory format"
         );
         ensure!(
@@ -101,8 +110,72 @@ impl InventoryV2 {
             );
         }
         let mut artifacts = BTreeSet::new();
+        let mut continuity_keys = BTreeSet::new();
         for (path, file) in &self.files {
             file.state.validate(self.generation)?;
+            ensure!(
+                file.continuity.len() <= crate::continuity::MAX_CONTINUITY_UNITS
+                    && serde_json::to_vec(&file.continuity)?.len()
+                        <= crate::continuity::MAX_CONTINUITY_BYTES,
+                "continuity inventory budget exceeded"
+            );
+            let mut subjects = BTreeSet::new();
+            for record in &file.continuity {
+                use crate::continuity::{ContinuityFamily, ContinuityKey};
+                ensure!(
+                    continuity_keys.insert(record.key)
+                        && subjects.insert(record.descriptor.subject),
+                    "duplicate continuity identity"
+                );
+                ensure!(
+                    matches!(
+                        (record.key, record.descriptor.family),
+                        (ContinuityKey::Symbol(_), ContinuityFamily::Code)
+                            | (ContinuityKey::Document(_), ContinuityFamily::Documents)
+                    ),
+                    "continuity key family mismatch"
+                );
+                ensure!(
+                    record.first_generation >= file.state.stamps.first_generation
+                        && record.first_generation <= self.generation
+                        && record.changed.len() <= 14
+                        && record
+                            .changed
+                            .values()
+                            .all(|stamp| *stamp >= record.first_generation
+                                && *stamp <= self.generation),
+                    "invalid continuity generation stamps"
+                );
+                ensure!(
+                    record
+                        .descriptor
+                        .dimensions
+                        .keys()
+                        .all(|dimension| record.changed.contains_key(dimension))
+                        && record.changed.keys().all(|dimension| *dimension
+                            == crate::changes::ChangeDimension::Location
+                            || record.descriptor.dimensions.contains_key(dimension)),
+                    "continuity stamps do not match supported dimensions"
+                );
+                ensure!(
+                    record.descriptor.region.is_some()
+                        || record.descriptor.profile == file.state.profile_id,
+                    "continuity profile binding mismatch"
+                );
+                ensure!(
+                    record.descriptor.algorithm_version == crate::continuity::CONTINUITY_VERSION
+                        && !record.descriptor.category.is_empty()
+                        && record.descriptor.category.len() <= 256
+                        && record.descriptor.dimensions.len() <= 12
+                        && record.descriptor.unsupported_dimensions.len() <= 12
+                        && record
+                            .descriptor
+                            .unsupported_dimensions
+                            .iter()
+                            .all(|dimension| !record.descriptor.dimensions.contains_key(dimension)),
+                    "invalid durable continuity descriptor"
+                );
+            }
             ensure!(
                 artifacts.insert(file.state.artifact_id),
                 "duplicate artifact identity"
@@ -212,7 +285,8 @@ impl InventoryV2 {
             root: self.root.clone(),
             collection: self.collection.clone(),
             generation: self.generation,
-            storage_format: INVENTORY_VERSION,
+            // Storage engine generation and inventory schema evolve independently.
+            storage_format: 2,
             roots: self.roots.clone(),
             persistent_indexes: true,
             embedding_model: self.embedding_model.clone(),
@@ -245,6 +319,8 @@ mod tests {
         let profile_id = profile.identity().unwrap();
         let digest = Sha256Digest::from_bytes([1; 32]);
         InventoryV2 {
+            embedding_pipeline_digest: None,
+            extraction_policy_digest: None,
             version: 2,
             incarnation: Incarnation::from_bytes([2; 16]),
             generation: 4,
@@ -256,6 +332,8 @@ mod tests {
             files: BTreeMap::from([(
                 "notes.txt".into(),
                 InventoryFile {
+                    continuity: Vec::new(),
+                    continuity_coverage: Default::default(),
                     state: FileState {
                         artifact_id: ArtifactId::from_bytes([3; 16]),
                         stamps: FileStamps {

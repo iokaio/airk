@@ -5,6 +5,7 @@ use airk_core::{Artifact, ArtifactRef, ArtifactSource, Snapshot};
 use anyhow::{Context, Result, ensure};
 use sha2::{Digest, Sha256};
 use std::{
+    collections::BTreeSet,
     fs::{self, File},
     io::{Read, Write},
     path::{Path, PathBuf},
@@ -106,6 +107,75 @@ pub(crate) fn verify_v2_generation(
         .join("generations")
         .join(receipt.token.revision.to_string());
     verify_v2_directory(base, &directory, receipt)
+}
+
+impl FileStore {
+    /// Authenticate reusable embedding references against a committed receipt.
+    /// The caller keeps its catalog reader lease alive while using the result.
+    pub fn embedding_cache_references(
+        &self,
+        receipt: &airk_core::identity::PublicationReceipt,
+    ) -> Result<Vec<crate::vector_cache::VectorCacheReference>> {
+        ensure!(
+            self.receipt(&receipt.token)?.as_ref() == Some(receipt),
+            "embedding references require this collection's committed receipt"
+        );
+        let directory = self
+            .directory()
+            .join("generations")
+            .join(receipt.token.revision.to_string());
+        let manifest_path = directory.join("manifest.json");
+        for path in [
+            self.directory().join("generations"),
+            directory.clone(),
+            manifest_path.clone(),
+        ] {
+            ensure!(
+                !fs::symlink_metadata(path)?.file_type().is_symlink(),
+                "linked embedding manifest"
+            );
+        }
+        let manifest: ManifestV2 = serde_json::from_slice(&read_verified(
+            &manifest_path,
+            &receipt.manifest_digest.to_string(),
+            131_072,
+        )?)?;
+        ensure!(
+            manifest.schema == 2
+                && manifest.token == receipt.token
+                && manifest.inventory_digest == receipt.inventory_digest
+                && manifest.components.len() <= 1024
+                && self.directory().file_name().and_then(|name| name.to_str())
+                    == Some(manifest.collection.as_str()),
+            "embedding manifest receipt or collection mismatch"
+        );
+        let path = directory.join("embedding-cache.json");
+        let Some(component) = manifest.components.get("embedding-cache.json") else {
+            match path.symlink_metadata() {
+                Ok(_) => anyhow::bail!("unanchored embedding sidecar"),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+            return Ok(vec![]);
+        };
+        ensure!(
+            component.bytes <= crate::vector_cache::MAX_CACHE_MANIFEST_BYTES as u64,
+            "embedding sidecar exceeds byte bound"
+        );
+        let metadata = fs::symlink_metadata(&path)?;
+        ensure!(
+            metadata.is_file()
+                && !metadata.file_type().is_symlink()
+                && metadata.len() == component.bytes,
+            "embedding sidecar type or length mismatch"
+        );
+        let bytes = read_verified(&path, &component.sha256.to_string(), component.bytes)?;
+        ensure!(
+            bytes.len() as u64 == component.bytes,
+            "embedding sidecar length changed"
+        );
+        Ok(crate::vector_cache::VectorCacheManifest::from_bytes(&bytes)?.references)
+    }
 }
 
 pub(crate) fn verify_v2_directory(
@@ -445,8 +515,25 @@ impl FileStore {
     pub fn load_retained(&self, entry: &Artifact) -> Result<Artifact> {
         self.load_retained_bounded(entry, MAX_ARTIFACT_BYTES)
     }
+    /// Read a verified path-free payload using only immutable retained objects.
+    /// Legacy path-bound objects require explicit migration, never reinterpretation.
+    pub fn load_extraction_payload(
+        &self,
+        entry: &Artifact,
+    ) -> Result<airk_core::extraction::ExtractionPayload> {
+        ensure!(
+            entry
+                .retained
+                .as_ref()
+                .is_some_and(|reference| reference.profile.is_some()),
+            "path-free extraction payload unavailable; legacy evidence requires migration"
+        );
+        self.decode_retained(entry, MAX_ARTIFACT_BYTES)?
+            .1
+            .context("path-free payload missing")
+    }
     pub fn load_retained_bounded(&self, entry: &Artifact, maximum: u64) -> Result<Artifact> {
-        let Some(reference) = &entry.retained else {
+        if entry.retained.is_none() {
             struct Counter {
                 bytes: u64,
                 maximum: u64,
@@ -465,7 +552,19 @@ impl FileStore {
             }
             serde_json::to_writer(&mut Counter { bytes: 0, maximum }, entry)?;
             return Ok(entry.clone());
-        };
+        }
+        Ok(self.decode_retained(entry, maximum)?.0)
+    }
+
+    fn decode_retained(
+        &self,
+        entry: &Artifact,
+        maximum: u64,
+    ) -> Result<(Artifact, Option<airk_core::extraction::ExtractionPayload>)> {
+        let reference = entry
+            .retained
+            .as_ref()
+            .context("retained reference missing")?;
         let bytes = read_verified(
             &object_path(self.directory(), "artifacts", &reference.object)?,
             &reference.object,
@@ -475,9 +574,9 @@ impl FileStore {
             bytes.len() == reference.object_bytes,
             "retained artifact length does not match pinned inventory"
         );
-        let artifact: Artifact = if let Some(profile) = &reference.profile {
+        let (artifact, payload): (Artifact, _) = if let Some(profile) = &reference.profile {
             let payload: airk_core::extraction::ExtractionPayload = serde_json::from_slice(&bytes)?;
-            airk_core::binding::bind_payload(
+            let artifact = airk_core::binding::bind_payload(
                 &payload,
                 profile,
                 airk_core::binding::ArtifactBinding {
@@ -485,9 +584,10 @@ impl FileStore {
                     source_hash: entry.content_hash.parse()?,
                     source_bytes: entry.bytes,
                 },
-            )?
+            )?;
+            (artifact, Some(payload))
         } else {
-            serde_json::from_slice(&bytes)?
+            (serde_json::from_slice(&bytes)?, None)
         };
         ensure!(
             artifact.retained.is_none()
@@ -502,7 +602,7 @@ impl FileStore {
                 && artifact.facts.len() == reference.facts,
             "retained artifact does not match pinned inventory"
         );
-        Ok(artifact)
+        Ok((artifact, payload))
     }
 
     pub fn read_retained_source(&self, entry: &Artifact) -> Result<Vec<u8>> {
@@ -532,6 +632,8 @@ impl FileStore {
             let Some(header) = self.persistent_revision()? else {
                 self.check_legacy_catalog_size(maximum)?;
                 return Ok(crate::SnapshotStore::load(self)?.map(|snapshot| Catalog {
+                    artifact_ids: BTreeSet::new(),
+                    continuity_keys: BTreeSet::new(),
                     snapshot,
                     inventory: None,
                     lineage: None,
@@ -544,6 +646,8 @@ impl FileStore {
             if header.storage_format == 0 {
                 self.check_legacy_catalog_size(maximum)?;
                 return Ok(crate::SnapshotStore::load(self)?.map(|snapshot| Catalog {
+                    artifact_ids: BTreeSet::new(),
+                    continuity_keys: BTreeSet::new(),
                     snapshot,
                     inventory: None,
                     lineage: None,
@@ -644,6 +748,8 @@ impl FileStore {
                     "catalog contains inline source payloads"
                 );
                 Ok(Catalog {
+                    artifact_ids: BTreeSet::new(),
+                    continuity_keys: BTreeSet::new(),
                     snapshot,
                     inventory: None,
                     lineage: None,
@@ -794,6 +900,16 @@ impl FileStore {
             "v2 pinned lineage identity mismatch"
         );
         Ok(Catalog {
+            artifact_ids: inventory
+                .files
+                .values()
+                .map(|file| file.state.artifact_id)
+                .collect(),
+            continuity_keys: inventory
+                .files
+                .values()
+                .flat_map(|file| file.continuity.iter().map(|record| record.key))
+                .collect(),
             snapshot: inventory.projection()?,
             inventory: Some(inventory),
             lineage: Some(lineage),
@@ -820,6 +936,10 @@ impl FileStore {
 }
 
 pub struct Catalog {
+    // Built once from authenticated inventory; negative indexed lookups must
+    // distinguish a genuinely absent identity from a deleted SQLite row.
+    artifact_ids: BTreeSet<airk_core::identity::ArtifactId>,
+    continuity_keys: BTreeSet<airk_core::continuity::ContinuityKey>,
     pub snapshot: Snapshot,
     pub inventory: Option<airk_core::publication::InventoryV2>,
     pub lineage: Option<airk_core::changes::LineageEnvelope>,
@@ -840,18 +960,53 @@ impl Catalog {
             .context("artifact lookup requires v2 catalog")?;
         let actual =
             crate::sqlite::file_by_artifact_in_catalog(self.store.directory(), receipt, id)?;
-        let expected = self
+        ensure!(
+            actual.is_some() == self.artifact_ids.contains(&id),
+            "artifact index presence differs from pinned inventory"
+        );
+        let inventory = self
             .inventory
             .as_ref()
-            .context("verified inventory missing")?
-            .files
-            .iter()
-            .find(|(_, file)| file.state.artifact_id == id);
-        ensure!(
-            actual.as_ref().map(|(path, file)| (path, file)) == expected,
-            "artifact metadata differs from pinned receipt-bound inventory"
-        );
+            .context("verified inventory missing")?;
+        if let Some((path, file)) = &actual {
+            ensure!(
+                file.state.artifact_id == id && inventory.files.get(path) == Some(file),
+                "artifact metadata differs from pinned receipt-bound inventory"
+            );
+        }
         Ok(actual.map(|(_, file)| file))
+    }
+
+    /// One indexed key lookup; verification examines only its bounded owning file.
+    pub fn continuity_by_key(
+        &self,
+        key: airk_core::continuity::ContinuityKey,
+    ) -> Result<Option<(String, airk_core::continuity::ContinuityRecord)>> {
+        let Some(receipt) = &self.receipt else {
+            return Ok(None);
+        };
+        let actual = crate::sqlite::continuity_in_catalog(self.store.directory(), receipt, key)?;
+        ensure!(
+            actual.is_some() == self.continuity_keys.contains(&key),
+            "continuity index presence differs from pinned inventory"
+        );
+        if let Some((path, record)) = &actual {
+            let file = self
+                .inventory
+                .as_ref()
+                .context("verified inventory missing")?
+                .files
+                .get(path)
+                .context("continuity owner file missing")?;
+            ensure!(
+                file.continuity
+                    .iter()
+                    .find(|candidate| candidate.key == key)
+                    == Some(record),
+                "continuity metadata differs from pinned receipt-bound inventory"
+            );
+        }
+        Ok(actual)
     }
 
     pub fn publication_header(
@@ -1039,6 +1194,14 @@ mod tests {
             retained: None,
         };
         let mut retained = store.retain_artifact(&artifact, Some(raw))?;
+        assert!(
+            store.load_extraction_payload(&artifact).is_err(),
+            "inline legacy evidence is not a path-free payload"
+        );
+        assert!(
+            store.load_extraction_payload(&retained).is_err(),
+            "legacy retained objects need explicit migration"
+        );
         let bytes = retained
             .retained
             .as_ref()
@@ -1063,6 +1226,100 @@ mod tests {
             "a valid payload digest must not conceal inconsistent inventory length"
         );
         assert_eq!(store.read_retained_source(&retained)?, raw);
+        Ok(())
+    }
+
+    #[test]
+    fn extraction_payload_load_verifies_object_profile_binding_without_source_reads() -> Result<()>
+    {
+        use airk_core::extraction::{ExtractionPayload, ExtractionProfile, LocalChunk, LocalSpan};
+        use std::collections::BTreeMap;
+        let directory = tempfile::tempdir()?;
+        let store = FileStore::new(directory.path());
+        let text = "Original retained payload α.\n";
+        let profile = ExtractionProfile {
+            contract_version: 1,
+            adapter_id: "text".into(),
+            adapter_version: "original-fixture/1".into(),
+            language: "text".into(),
+            dialect: None,
+            grammar_identity: None,
+            mapping_version: 1,
+            chunk_version: 1,
+            options: BTreeMap::new(),
+            configuration_inputs: BTreeMap::new(),
+        };
+        let payload = ExtractionPayload {
+            continuity_coverage: Default::default(),
+            contract_version: 1,
+            extraction_method: "utf8".into(),
+            parse_status: "plain".into(),
+            provenance: vec![],
+            text: text.into(),
+            facts: vec![],
+            syntax_identities: vec![],
+            chunks: vec![LocalChunk {
+                span: LocalSpan {
+                    start: 0,
+                    end: text.len(),
+                },
+                start_line: 1,
+                end_line: 1,
+                location: airk_core::DocumentLocation::Lines { start: 1, end: 1 },
+                region: None,
+            }],
+            regions: vec![],
+            relationships: vec![],
+            continuity: vec![],
+            diagnostics: vec![],
+            partial: false,
+        };
+        let artifact = airk_core::binding::bind_payload(
+            &payload,
+            &profile,
+            airk_core::binding::ArtifactBinding {
+                path: "original.txt",
+                source_hash: airk_core::identity::Sha256Digest::from_bytes(
+                    Sha256::digest(text.as_bytes()).into(),
+                ),
+                source_bytes: text.len(),
+            },
+        )?;
+        let compact =
+            store.retain_payload_with_budget(&artifact, &payload, &profile, None, None)?;
+        assert!(!store.directory().join("objects/sources").exists());
+        assert_eq!(
+            serde_json::to_value(store.load_extraction_payload(&compact)?)?,
+            serde_json::to_value(&payload)?
+        );
+        assert_eq!(store.load_retained(&compact)?.chunks, artifact.chunks);
+        let mut changed = compact.clone();
+        changed.language = "foreign".into();
+        assert!(store.load_extraction_payload(&changed).is_err());
+        changed = compact.clone();
+        changed.retained.as_mut().unwrap().object_bytes += 1;
+        assert!(store.load_extraction_payload(&changed).is_err());
+        changed = compact.clone();
+        changed
+            .retained
+            .as_mut()
+            .unwrap()
+            .profile
+            .as_mut()
+            .unwrap()
+            .contract_version = u32::MAX;
+        assert!(store.load_extraction_payload(&changed).is_err());
+        let reference = compact.retained.as_ref().unwrap();
+        assert!(
+            store
+                .load_retained_bounded(&compact, reference.object_bytes as u64 - 1)
+                .is_err()
+        );
+        fs::write(
+            object_path(store.directory(), "artifacts", &reference.object)?,
+            b"forged payload",
+        )?;
+        assert!(store.load_extraction_payload(&compact).is_err());
         Ok(())
     }
 }

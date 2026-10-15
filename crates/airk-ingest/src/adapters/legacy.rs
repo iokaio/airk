@@ -192,6 +192,7 @@ pub fn convert_native_legacy(
         vec![]
     };
     let payload = ExtractionPayload {
+        continuity_coverage: BTreeMap::new(),
         contract_version: 1,
         extraction_method: artifact.extraction_method.clone(),
         parse_status: artifact.parse_status.clone(),
@@ -247,6 +248,7 @@ fn convert_code(
         .map(|id| parse_identity(id, path, text).map(|key| identities[&key]))
         .transpose()?;
     Ok(LocalCodeEvidence {
+        fingerprints: code.fingerprints.clone(),
         syntax_id,
         owner_id,
         qualified_name: code.qualified_name.clone(),

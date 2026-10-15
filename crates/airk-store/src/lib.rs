@@ -12,6 +12,7 @@ use std::{
 };
 pub mod blobs;
 pub mod capacity;
+pub mod extraction_policy;
 pub mod maintenance;
 pub mod quota;
 pub mod relocation;
@@ -20,6 +21,7 @@ pub mod roots;
 pub mod scheduler;
 mod sqlite;
 pub mod usage;
+pub mod vector_cache;
 
 #[derive(Clone, Debug)]
 pub struct FileStore {

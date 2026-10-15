@@ -32,6 +32,8 @@
       { "command": "airk.retention", "title": "AIRK: Show Retention Status" },
       { "command": "airk.retentionPolicy", "title": "AIRK: Choose Retention Policy" },
       { "command": "airk.retentionRun", "title": "AIRK: Run Retention Maintenance" },
+      { "command": "airk.extractionPolicy", "title": "AIRK: Show Extraction Policy" },
+      { "command": "airk.configureExtractionPolicy", "title": "AIRK: Configure Extraction Policy" },
       { "command": "airk.status", "title": "AIRK: Show Collection Status" },
       { "command": "airk.usage", "title": "AIRK: Show Local Usage and Estimated Savings" },
       { "command": "airk.setupAgent", "title": "AIRK: Set Up Coding Agent" },

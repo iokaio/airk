@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Native grammar profiles. Syntax facts never imply cross-file name resolution.
+use airk_core::continuity::{CodeFingerprints, MAX_CONTINUITY_HASH_BYTES};
+use airk_core::identity::framed_digest;
 use airk_core::{CodeEvidence, CodeSpan, DocumentLocation, EvidenceBasis, Fact};
 use std::path::Path;
 use tree_sitter::{Language, Node, Parser};
@@ -47,6 +49,7 @@ fn analyze_profile(path: &str, text: &str, selected: Option<Profile>) -> anyhow:
     let mut facts = Vec::new();
     let mut pending = vec![tree.root_node()];
     let mut visited = 0;
+    let mut fingerprint_bytes = 0usize;
     while let Some(node) = pending.pop() {
         visited += 1;
         anyhow::ensure!(visited <= 500_000, "file exceeds parser node limit");
@@ -92,7 +95,15 @@ fn analyze_profile(path: &str, text: &str, selected: Option<Profile>) -> anyhow:
                         code: if kind == "key" {
                             None
                         } else {
-                            Some(code_evidence(path, node, text, &profile, kind, name.trim()))
+                            Some(code_evidence(
+                                path,
+                                node,
+                                text,
+                                &profile,
+                                kind,
+                                name.trim(),
+                                &mut fingerprint_bytes,
+                            ))
                         },
                         name: bounded_name(name.trim()),
                         kind: kind.into(),
@@ -233,9 +244,11 @@ fn code_evidence(
     profile: &Profile,
     kind: &str,
     name: &str,
+    fingerprint_bytes: &mut usize,
 ) -> CodeEvidence {
     let mut omitted = name.len() > 1024;
     let mut scopes = Vec::new();
+    let mut full_scopes = Vec::new();
     let mut owner_id = None;
     let mut parent = node.parent();
     let mut count = 0;
@@ -257,11 +270,13 @@ fn code_evidence(
                     owner_id = Some(symbol_id(path, ancestor));
                 }
                 scopes.push(bounded_name(&scope_name));
+                full_scopes.push(scope_name);
             }
         }
         parent = ancestor.parent();
     }
     scopes.reverse();
+    full_scopes.reverse();
     let mut modifiers = Vec::new();
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
@@ -282,33 +297,58 @@ fn code_evidence(
     }
     let mut previous = node.prev_named_sibling();
     let mut documentation = None;
+    let mut full_documentation = Vec::new();
+    let mut documentation_complete = true;
+    let mut external_modifiers = Vec::new();
+    let mut modifiers_complete = true;
+    let mut next_documentation_row = node.start_position().row;
     for _ in 0..16 {
         let Some(sibling) = previous else {
             break;
         };
-        if sibling.end_position().row + 2 < node.start_position().row {
+        if sibling.end_position().row + 2 < next_documentation_row {
             break;
         }
         let s = sibling.utf8_text(text.as_bytes()).unwrap_or("");
         omitted |= s.len() > 1024;
         if sibling.kind().contains("comment") {
             documentation = Some(bounded_name(s));
+            full_documentation.push(s);
         } else if sibling.kind() == "attribute_item" {
             modifiers.push(bounded_name(s));
+            external_modifiers.push(s);
         } else {
             break;
         }
+        next_documentation_row = sibling.start_position().row;
         previous = sibling.prev_named_sibling();
     }
+    if previous.is_some_and(|s| {
+        s.kind().contains("comment") && s.end_position().row + 2 >= next_documentation_row
+    }) {
+        documentation_complete = false;
+    }
+    if previous.is_some_and(|s| {
+        s.kind() == "attribute_item" && s.end_position().row + 2 >= next_documentation_row
+    }) {
+        modifiers_complete = false;
+    }
+    external_modifiers.reverse();
+    full_documentation.reverse();
     if let Some(parent) = node.parent().filter(|p| p.kind() == "decorated_definition") {
         let mut cursor = parent.walk();
-        for decorator in parent
+        for (index, decorator) in parent
             .named_children(&mut cursor)
             .filter(|n| n.kind() == "decorator")
             .take(17)
+            .enumerate()
         {
+            if index == 16 {
+                modifiers_complete = false;
+            }
             if modifiers.len() >= 32 {
                 omitted = true;
+                modifiers_complete = false;
                 break;
             }
             omitted |= decorator
@@ -317,6 +357,7 @@ fn code_evidence(
             modifiers.push(bounded_name(
                 decorator.utf8_text(text.as_bytes()).unwrap_or(""),
             ));
+            external_modifiers.push(decorator.utf8_text(text.as_bytes()).unwrap_or(""));
         }
     }
     let body = node.child_by_field_name("body");
@@ -355,7 +396,51 @@ fn code_evidence(
         || parameters.as_ref().is_some_and(|s| s.len() > 1024)
         || return_type.as_ref().is_some_and(|s| s.len() > 1024);
     let qualified_name = bounded_name(&qualified_display);
+    // Hash complete original bytes before any display truncation. Literal and
+    // whitespace changes remain observable; no token-erasing normalization.
+    let fingerprints = (kind == "definition").then(|| {
+        let signature_bytes = body.map(|body| &text[node.start_byte()..body.start_byte()]);
+        let body_bytes = body.and_then(|body| body.utf8_text(text.as_bytes()).ok());
+        let needed = name
+            .len()
+            .saturating_mul(2)
+            .saturating_add(full_scopes.iter().map(String::len).sum::<usize>())
+            .saturating_add(signature_bytes.map_or(0, str::len))
+            .saturating_add(body_bytes.map_or(0, str::len))
+            .saturating_add(external_modifiers.iter().map(|s| s.len()).sum::<usize>())
+            .saturating_add(full_documentation.iter().map(|s| s.len()).sum::<usize>());
+        *fingerprint_bytes = fingerprint_bytes.saturating_add(needed);
+        let admitted = *fingerprint_bytes <= MAX_CONTINUITY_HASH_BYTES;
+        let hash = |domain: &[u8], value: &str| framed_digest(domain, &[value.as_bytes()]);
+        let mut qualified: Vec<&[u8]> = full_scopes.iter().map(|s| s.as_bytes()).collect();
+        qualified.push(name.as_bytes());
+        CodeFingerprints {
+            version: 1,
+            name: admitted.then(|| hash(b"code-name/1", name)),
+            qualified_name: (admitted && count <= 128)
+                .then(|| framed_digest(b"code-qualified-name/1", &qualified)),
+            signature: signature_bytes
+                .filter(|_| admitted && modifiers_complete)
+                .map(|s| {
+                    let mut fields: Vec<&[u8]> =
+                        external_modifiers.iter().map(|s| s.as_bytes()).collect();
+                    fields.push(s.as_bytes());
+                    framed_digest(b"code-signature/1", &fields)
+                }),
+            body: body_bytes
+                .filter(|_| admitted)
+                .map(|s| hash(b"code-body/1", s)),
+            body_informative: admitted && body.is_some_and(|body| informative_body(body, text)),
+            documentation: (admitted && documentation_complete && profile.language != "python")
+                .then(|| {
+                    let fields: Vec<&[u8]> =
+                        full_documentation.iter().map(|s| s.as_bytes()).collect();
+                    framed_digest(b"code-documentation/1", &fields)
+                }),
+        }
+    });
     CodeEvidence {
+        fingerprints,
         span: Some(CodeSpan {
             start_byte: node.start_byte(),
             end_byte: node.end_byte(),
@@ -382,6 +467,69 @@ fn code_evidence(
                 .into(),
         details_truncated,
     }
+}
+
+fn informative_body(body: Node<'_>, text: &str) -> bool {
+    if body.end_byte() - body.start_byte() < 32 {
+        return false;
+    }
+    let mut words = std::collections::BTreeSet::new();
+    let mut pending = vec![body];
+    let mut visited = 0usize;
+    while let Some(node) = pending.pop() {
+        visited += 1;
+        if visited > 4096 {
+            return false;
+        }
+        if node.kind().contains("comment") {
+            continue;
+        }
+        if node.named_child_count() > 0 {
+            let mut cursor = node.walk();
+            // The admission cap also bounds the traversal's pending storage.
+            for child in node.named_children(&mut cursor).take(4097) {
+                if pending.len() >= 4096 {
+                    return false;
+                }
+                pending.push(child);
+            }
+            continue;
+        }
+        let Ok(token) = node.utf8_text(text.as_bytes()) else {
+            return false;
+        };
+        for word in token.split(|c: char| !c.is_alphanumeric() && c != '_') {
+            if word.len() < 2
+                || word.chars().all(|c| c.is_numeric())
+                || matches!(
+                    word,
+                    "return"
+                        | "let"
+                        | "var"
+                        | "const"
+                        | "if"
+                        | "else"
+                        | "true"
+                        | "false"
+                        | "null"
+                        | "nil"
+                        | "None"
+                        | "self"
+                        | "this"
+                        | "pass"
+                        | "todo"
+                        | "unimplemented"
+                )
+            {
+                continue;
+            }
+            words.insert(word);
+            if words.len() >= 4 {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn framework_call(language: &str, target: &str) -> Option<&'static str> {

@@ -74,10 +74,18 @@ impl Kernel {
             &source
         };
         let profile = airk_ingest::adapters::legacy::legacy_profile(&hydrated)?;
-        let payload =
-            airk_ingest::adapters::legacy::convert_native_legacy(&hydrated, bytes, &profile)?;
+        let payload = airk_ingest::continuity::prepare_native(&hydrated, bytes, &profile)?;
+        let prepared = airk_core::binding::bind_payload(
+            &payload,
+            &profile,
+            airk_core::binding::ArtifactBinding {
+                path: &hydrated.path,
+                source_hash: hydrated.content_hash.parse()?,
+                source_bytes: hydrated.bytes,
+            },
+        )?;
         self.store.retain_payload_with_budget(
-            &hydrated,
+            &prepared,
             &payload,
             &profile,
             Some(bytes),
@@ -103,6 +111,19 @@ impl Kernel {
         reason: PublicationReason,
         observation: Option<&airk_ingest::observations::ScanObservation>,
     ) -> Result<u64> {
+        Ok(self
+            .publish_v2_observed_metrics(writer, snapshot, reservation, reason, observation)?
+            .0)
+    }
+
+    pub(crate) fn publish_v2_observed_metrics(
+        &self,
+        writer: &airk_store::WriterLock,
+        snapshot: &Snapshot,
+        reservation: airk_store::quota::Reservation,
+        reason: PublicationReason,
+        observation: Option<&airk_ingest::observations::ScanObservation>,
+    ) -> Result<(u64, airk_retrieval::model::EmbeddingCacheStats)> {
         let quota = airk_store::quota::Quota::open(&self.data_root)?;
         ensure!(
             snapshot.root == self.root_id() && snapshot.collection == self.collection,
@@ -206,6 +227,8 @@ impl Kernel {
             files.insert(
                 path.clone(),
                 InventoryFile {
+                    continuity: vec![],
+                    continuity_coverage: BTreeMap::new(),
                     state: FileState {
                         artifact_id,
                         stamps,
@@ -235,7 +258,27 @@ impl Kernel {
             );
         }
         let mut inventory = InventoryV2 {
-            version: 2,
+            embedding_pipeline_digest: if projection.embedding_model.is_some() {
+                Some(
+                    airk_retrieval::model::inspect_cache_descriptor(
+                        &self.data_root.join("models/local"),
+                    )?
+                    .identity()?,
+                )
+            } else {
+                None
+            },
+            version: airk_core::publication::INVENTORY_VERSION,
+            extraction_policy_digest: if matches!(
+                reason,
+                PublicationReason::Initialization
+                    | PublicationReason::Index
+                    | PublicationReason::FullReindex
+            ) {
+                Some(self.extraction_policy()?.digest)
+            } else {
+                prior.and_then(|inventory| inventory.extraction_policy_digest)
+            },
             incarnation,
             generation,
             root: projection.root.clone(),
@@ -337,9 +380,92 @@ impl Kernel {
                 Ok(words.len() >= 8 && !boilerplate)
             },
         )?;
+        let prior_by_id: BTreeMap<_, _> = prior
+            .into_iter()
+            .flat_map(|inventory| inventory.files.iter())
+            .map(|(path, file)| (file.state.artifact_id, (path.as_str(), file)))
+            .collect();
+        let mut continuity_bytes = 0usize;
+        let mut charge_continuity = |file: &InventoryFile| -> Result<()> {
+            continuity_bytes = continuity_bytes
+                .checked_add(serde_json::to_vec(&file.continuity)?.len())
+                .context("continuity inventory size overflow")?;
+            ensure!(
+                continuity_bytes <= airk_core::publication::MAX_INVENTORY_BYTES,
+                "continuity inventory exceeds aggregate byte bound"
+            );
+            Ok(())
+        };
+        for (path, file) in &mut inventory.files {
+            if prior.is_some_and(|inventory| inventory.version >= 3)
+                && let Some((old_path, old_file)) = prior_by_id.get(&file.state.artifact_id)
+                && *old_path == path
+                && old_file.state.payload_digest == file.state.payload_digest
+                && old_file.state.profile_id == file.state.profile_id
+            {
+                file.continuity = old_file.continuity.clone();
+                file.continuity_coverage = old_file.continuity_coverage.clone();
+                charge_continuity(file)?;
+                continue;
+            }
+            let artifact = projection
+                .artifacts
+                .get(path)
+                .context("continuity artifact missing")?;
+            let payload = self.store.load_extraction_payload(artifact)?;
+            let events = crate::continuity::assign(
+                prior_by_id.get(&file.state.artifact_id).copied(),
+                path,
+                file,
+                &payload,
+                generation,
+            )?;
+            if reconciled.events.len().saturating_add(events.len())
+                <= airk_core::changes::MAX_LINEAGE_RECORDS
+            {
+                reconciled.events.extend(events);
+            } else {
+                reconciled.complete = false;
+            }
+            charge_continuity(file)?;
+        }
+        let live_ids: std::collections::BTreeSet<_> = inventory
+            .files
+            .values()
+            .map(|file| file.state.artifact_id)
+            .collect();
+        let removal_causes: BTreeMap<_, _> = reconciled
+            .events
+            .iter()
+            .filter_map(|event| match event.subject {
+                ChangeSubject::Artifact { artifact_id } if event.after.is_none() => {
+                    Some((artifact_id, event.cause))
+                }
+                _ => None,
+            })
+            .collect();
+        for (id, (path, file)) in &prior_by_id {
+            if live_ids.contains(id) {
+                continue;
+            }
+            let cause = removal_causes
+                .get(id)
+                .copied()
+                .unwrap_or(ChangeCause::RemovedUnknown);
+            let events = crate::continuity::removed(path, file, generation, cause);
+            if reconciled.events.len().saturating_add(events.len())
+                <= airk_core::changes::MAX_LINEAGE_RECORDS
+            {
+                reconciled.events.extend(events);
+            } else {
+                reconciled.complete = false;
+            }
+        }
         if let Some(prior) = prior {
             let mut invalidations = Vec::new();
-            if prior.embedding_model != inventory.embedding_model {
+            if prior.embedding_model != inventory.embedding_model
+                || prior.embedding_pipeline_digest != inventory.embedding_pipeline_digest
+            {
                 invalidations.push(("retrieval/model", ChangeCause::ModelChanged));
             }
             if prior.files.iter().any(|(path, file)| {
@@ -378,6 +504,9 @@ impl Kernel {
                 });
             }
         }
+        for (index, event) in reconciled.events.iter_mut().enumerate() {
+            event.event_id = index as u64 + 1;
+        }
         let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
         let lineage = crate::lineage::build(
             old.as_ref().and_then(|catalog| catalog.lineage.as_ref()),
@@ -411,7 +540,29 @@ impl Kernel {
         let charge_reservation = reservation.clone();
         let charge: airk_retrieval::bounded::Charge =
             Arc::new(move |bytes| charge_reservation.charge(bytes));
-        let receipt = persistent::prepare_streaming_v2(
+        let mut cache_stats = airk_retrieval::model::EmbeddingCacheStats::default();
+        let vector_cache = if projection.embedding_model.is_some() {
+            let trusted = old
+                .as_ref()
+                .and_then(|catalog| catalog.receipt.as_ref())
+                .map(|receipt| self.store.embedding_cache_references(receipt))
+                .transpose()?
+                .unwrap_or_default();
+            Some(
+                airk_store::vector_cache::VectorCache::new(self.store.directory(), charge.clone())?
+                    .with_trusted_references(&trusted)?,
+            )
+        } else {
+            None
+        };
+        let mut cache_context = airk_retrieval::model::EmbeddingCacheContext {
+            cache: vector_cache
+                .as_ref()
+                .map(|cache| cache as &dyn airk_core::embedding::EmbeddingCache),
+            bypass: reason == PublicationReason::FullReindex,
+            stats: &mut cache_stats,
+        };
+        let receipt = persistent::prepare_streaming_v2_cached(
             self.store.directory(),
             &persistent::V2Preparation {
                 snapshot: &projection,
@@ -422,7 +573,19 @@ impl Kernel {
             &source,
             Some(charge),
             Some(&staging),
+            Some(&mut cache_context),
             |directory| {
+                if let Some(cache) = &vector_cache {
+                    use std::io::Write;
+                    let manifest = airk_store::vector_cache::VectorCacheManifest {
+                        version: 1,
+                        references: cache.references()?,
+                    };
+                    let mut file =
+                        reservation.create_file(directory.join("embedding-cache.json"))?;
+                    file.write_all(&manifest.canonical_bytes()?)?;
+                    file.sync_all()?;
+                }
                 self.store.prepare_catalog_v2(
                     directory,
                     &inventory,
@@ -439,9 +602,10 @@ impl Kernel {
         // Publication is already committed. Cache disposal must neither report
         // a failed publication nor retain superseded idle leases. Active calls
         // own independent Arc pins; drop potentially large indexes outside locks.
+        drop(vector_cache);
         drop((old, reservation));
         self.after_publication(writer, &quota);
-        Ok(generation)
+        Ok((generation, cache_stats))
     }
 }
 

@@ -46,6 +46,40 @@ struct Cli {
     command: Command,
 }
 
+#[cfg(test)]
+mod continuity_argument_tests {
+    use super::*;
+
+    #[test]
+    fn keys_exclude_text_filters_and_validate_exact_identity() {
+        let key = "01".repeat(16);
+        for (command, selector) in [("code-facts", "--symbol-key"), ("facts", "--document-key")] {
+            assert!(Cli::try_parse_from(["airk", command, selector, &key]).is_ok());
+            assert!(Cli::try_parse_from(["airk", command, selector, "short"]).is_err());
+            assert!(
+                Cli::try_parse_from(["airk", command, selector, &key, "--name", "original"])
+                    .is_err()
+            );
+            assert!(
+                Cli::try_parse_from(["airk", command, selector, &key, "--kind", "definition"])
+                    .is_err()
+            );
+        }
+        assert!(Cli::try_parse_from(["airk", "facts", "src", "--document-key", &key]).is_err());
+        assert!(
+            Cli::try_parse_from([
+                "airk",
+                "code-facts",
+                "--symbol-key",
+                &key,
+                "--path-prefix",
+                "src"
+            ])
+            .is_err()
+        );
+    }
+}
+
 #[derive(Subcommand)]
 enum Command {
     /// Inspect observed indexed changes and validate remembered evidence.
@@ -109,6 +143,9 @@ enum Command {
     },
     /// Query enriched code syntax and imported facts without broad source text.
     CodeFacts {
+        /// Durable symbol key from indexed continuity evidence; excludes textual filters.
+        #[arg(long, conflicts_with_all = ["name", "kind", "language", "path_prefix"])]
+        symbol_key: Option<airk_core::identity::SymbolKey>,
         #[arg(long)]
         name: Option<String>,
         #[arg(long)]
@@ -236,6 +273,9 @@ enum Command {
     },
     /// Retrieve structured document/configuration facts.
     Facts {
+        /// Durable document key; excludes textual filters.
+        #[arg(long, conflicts_with_all = ["name", "kind", "path_prefix"])]
+        document_key: Option<airk_core::identity::DocumentKey>,
         #[arg(default_value = "")]
         path_prefix: String,
         #[arg(long)]
@@ -243,6 +283,10 @@ enum Command {
         /// Exact document fact category, such as requirement, date, architecture or feature.
         #[arg(long)]
         kind: Option<String>,
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+        #[arg(long, default_value_t = 8192)]
+        max_bytes: usize,
     },
     /// Find textual identifier occurrences; no semantic name resolution.
     Refs {
@@ -479,6 +523,11 @@ enum AnalysisCommand {
 
 #[derive(Subcommand)]
 enum CollectionCommand {
+    /// Inspect or persist extraction selection; changes apply on successful indexing.
+    Extraction {
+        #[command(subcommand)]
+        action: ExtractionCommand,
+    },
     /// Inspect or explicitly configure searchable revision retention.
     Retention {
         #[command(subcommand)]
@@ -542,6 +591,48 @@ enum RetentionCommand {
         #[arg(long, value_parser = clap::value_parser!(u64).range(16_384..=67_108_864))]
         max_metadata_bytes: Option<u64>,
     },
+}
+
+#[derive(Subcommand)]
+enum ExtractionCommand {
+    Show,
+    Validate {
+        #[arg(long, required_unless_present = "json", conflicts_with = "json")]
+        file: Option<PathBuf>,
+        #[arg(long, conflicts_with = "file")]
+        json: Option<String>,
+    },
+    Set {
+        #[arg(long, required_unless_present = "json", conflicts_with = "json")]
+        file: Option<PathBuf>,
+        #[arg(long, conflicts_with = "file")]
+        json: Option<String>,
+    },
+}
+
+fn extraction_policy_input(
+    file: Option<PathBuf>,
+    json: Option<String>,
+) -> anyhow::Result<airk_kernel::extraction::ExtractionPolicy> {
+    use std::io::Read;
+    const MAXIMUM: u64 = 131_072;
+    let bytes = if let Some(file) = file {
+        let input = std::fs::File::open(file)?;
+        anyhow::ensure!(
+            input.metadata()?.len() <= MAXIMUM,
+            "extraction policy exceeds 128 KiB"
+        );
+        let mut bytes = Vec::new();
+        input.take(MAXIMUM + 1).read_to_end(&mut bytes)?;
+        bytes
+    } else {
+        json.expect("clap requires policy input").into_bytes()
+    };
+    anyhow::ensure!(
+        bytes.len() <= MAXIMUM as usize,
+        "extraction policy exceeds 128 KiB"
+    );
+    Ok(serde_json::from_slice(&bytes)?)
 }
 
 fn retention_policy_bytes(
@@ -843,13 +934,16 @@ async fn main() -> anyhow::Result<()> {
             }
         },
         Command::CodeFacts {
+            symbol_key,
             name,
             kind,
             language,
             path_prefix,
             limit,
             max_bytes,
-        } => recorder.print(&kernel.code_facts(&FactQuery {
+        } => if let Some(key) = symbol_key {
+            recorder.print(&kernel.continuity_facts(airk_core::continuity::ContinuityKey::Symbol(key), limit, max_bytes)?)
+        } else { recorder.print(&kernel.code_facts(&FactQuery {
             path_prefix,
             name,
             kind,
@@ -859,7 +953,7 @@ async fn main() -> anyhow::Result<()> {
             max_bytes,
             path_exact: false,
             document_only: false,
-        })?),
+        })?) },
         Command::Relationships {
             symbol,
             direction,
@@ -878,6 +972,11 @@ async fn main() -> anyhow::Result<()> {
             max_bytes,
         })?),
         Command::Collections { action } => match action {
+            CollectionCommand::Extraction { action } => match action {
+                ExtractionCommand::Show => recorder.print(&kernel.extraction_policy()?),
+                ExtractionCommand::Validate { file, json } => recorder.print(&kernel.validate_extraction_policy(&extraction_policy_input(file, json)?)?),
+                ExtractionCommand::Set { file, json } => recorder.print(&kernel.configure_extraction_policy(extraction_policy_input(file, json)?)?),
+            },
             CollectionCommand::Limits { action } => match action {
                 LimitsCommand::Show => recorder.print(&kernel.scan_limits()?),
                 LimitsCommand::Set { file } => {
@@ -1029,20 +1128,25 @@ async fn main() -> anyhow::Result<()> {
             document_only: false,
         })?),
         Command::Facts {
+            document_key,
             path_prefix,
             name,
             kind,
-        } => recorder.print(&kernel.facts(&FactQuery {
+            limit,
+            max_bytes,
+        } => if let Some(key) = document_key {
+            recorder.print(&kernel.continuity_facts(airk_core::continuity::ContinuityKey::Document(key), limit, max_bytes)?)
+        } else { recorder.print(&kernel.facts(&FactQuery {
             path_prefix,
             name,
             kind,
             language: None,
             exact_name: false,
-            limit: 50,
-            max_bytes: 8192,
+            limit,
+            max_bytes,
             path_exact: false,
             document_only: true,
-        })?),
+        })?) },
         Command::Refs { name, path_prefix } => {
             recorder.print(&kernel.references(&name, &path_prefix, 50, 8192)?)
         }

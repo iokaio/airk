@@ -1,19 +1,20 @@
 # V2 identity and change contract 1
 
-Phase 1 contract specification, 14 October 2026. These pure primitives live in [identity.rs](../crates/airk-core/src/identity.rs) and [changes.rs](../crates/airk-core/src/changes.rs). They do not enable v2 storage or alter snapshot schema 3 / `native-facts/7`. The integrator owns format activation, exports, dependencies and the final frozen contract decision.
+These pure primitives live in [identity.rs](../crates/airk-core/src/identity.rs), [changes.rs](../crates/airk-core/src/changes.rs) and [continuity.rs](../crates/airk-core/src/continuity.rs). Kernel/store implement allocation, reconciliation and publication. The [publication contract](v2-publication-contract.md) defines activation and legacy compatibility.
 
-Proposed storage version allocation for phase 2 (not runtime activation):
+The active versions are independent:
 
-| Contract | Existing runtime | Proposed v2 |
-|---|---|---|
-| Snapshot/core schema | 3 | 4 |
-| Compact inventory/storage | 1 | 2 |
-| Root SQLite pointer compatibility (`user_version`) | 2 | 3 |
-| Immutable fact catalog compatibility | Existing SQLite catalog schema | 3, independently checked from root pointer |
-| Lineage envelope | Absent | 1 |
-| Identity/change/embedding primitive contracts | Absent | 1 |
+| Contract | Version |
+|---|---|
+| Snapshot compatibility projection | 4; legacy schema 3 remains readable |
+| Authoritative inventory | 3; version 2 remains readable |
+| Storage engine format | 2 |
+| Root SQLite pointer compatibility (`user_version`) | 3 |
+| Immutable fact catalog compatibility | 3; continuity extension 1 |
+| Lineage envelope | 2 |
+| Identity/change/embedding/continuity primitive contracts | 1 |
 
-The independent inventory, pointer, catalog and lineage constants must be named and checked separately when the integrator activates them. Reusing the proposed numeric value 3 for pointer/catalog is not permission to conflate their compatibility checks. No extractor version bump is allocated here; profile ownership is independent.
+Inventory, pointer, catalog and lineage constants are checked separately. Sharing the value 3 does not conflate their compatibility checks. Effective extraction profiles independently bind adapter, grammar, mapping and chunk strategy versions.
 
 ## Canonical identities
 
@@ -71,7 +72,11 @@ Phase 3 activates bounded file observations and read APIs. Newly written lineage
 
 Completed scans carry authoritative disappearance reasons separately from truncated diagnostics. Same-path observations take precedence. Cross-path extraction reuse verifies source bytes and the full effective profile before loading a retained payload; it does not establish identity. Automatic file continuity requires a complete scan, one old and one new compatible occurrence, stable root bindings, observed disappearance and informative content. Copies, duplicates, empty/tiny content and boilerplate remain distinct handles or explicit candidates. Resolver chains compress to the current compatible endpoint; content/profile changes, terminal disappearance and retired roots stop forwarding.
 
-Publication appends bounded metadata only: no excerpts or source history. File, resolution and ancestry coverage expire independently, by whole publication groups. Code and document detail remain explicitly unsupported until phase 5. Single-publication detail overflow retains bounded global invalidations and advances affected completeness floors. The current limits are 10,000 aggregate lineage records, 16 MiB encoded lineage and 90 days; reconciliation reserves space by limiting new file details/resolvers to 8,000 records and 12 MiB.
+Publication appends bounded metadata only: no excerpts or source history. File, code, document, resolution and ancestry coverage have separate floors; eviction removes whole publication groups. Single-publication detail overflow retains bounded global invalidations and advances affected completeness floors. The current limits are 10,000 aggregate lineage records, 16 MiB encoded lineage and 90 days; reconciliation reserves space by limiting new file details/resolvers to 8,000 records and 12 MiB.
+
+Native declaration and document descriptors receive collection-local assigned keys only after artifact identity is established. Matching requires compatible profiles/provenance, established owners and unique full fingerprints; duplicate written IDs and unresolved matches do not transfer keys. Exact retained payload reuse preserves previously assigned keys. Unknown dimensions remain unknown even when independent name/owner evidence establishes continuity. Ambiguous predecessors receive new keys with an explicit ambiguity flag. Code name/signature/body/documentation and location stamps are independent; document statement/quantity/date/modality dimensions are emitted only where extraction supports them.
+
+Native fact responses expose an optional `continuity_key`, separate from generation-local `code.symbol_id` and imported producer IDs. Existing code/document fact tools accept `symbol_key`/`document_key` selectors, exclusive of textual filters. Bounded keyed reads use the current pinned publication; `airk_changes` validates remembered keys and reports observed changes. A missing key without a retained removal observation remains unknown. Mixed or partially supported collections conservatively advance the corresponding family coverage floor.
 
 `changes`/`airk_changes` accepts an exact baseline and/or up to 64 remembered selectors. The kernel validates collection incarnation, sequence and known forks before answering. Retained ancestry proves a baseline; older missing ancestry produces `baseline_unavailable`, never an invented empty complete delta. Coalescing occurs over the entire window before pagination and preserves transient, reverted and intermediate-path observations. Cursors bind the exact target and all request inputs; each page leases that target without holding a cross-request lease. Retired targets return `cursor_expired`. A surviving receipt with missing representation is treated as corruption; cleanup-pending retirement without durable retirement proof remains an explicit phase-4 recovery integration case.
 

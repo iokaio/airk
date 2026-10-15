@@ -330,7 +330,7 @@ pub(super) fn save_catalog(
         let mut database = reservation
             .open_private_sqlite(directory.join("catalog.sqlite"), maximum)
             .with_context(|| format!("admit private fact catalog with {maximum}-byte quota cap"))?;
-        save_connection(database.connection_mut(), snapshot, Some(revision), source)
+        save_connection(database.connection_mut(), snapshot, Some(revision), source, None)
             .with_context(|| format!("build private fact catalog with {maximum}-byte quota cap; previous generation retained"))?;
         return database.finish().context("finish private fact catalog");
     }
@@ -380,6 +380,28 @@ fn raw_digest(bytes: &[u8]) -> airk_core::identity::Sha256Digest {
     airk_core::identity::Sha256Digest::from_bytes(sha2::Sha256::digest(bytes).into())
 }
 
+const MAX_FILE_METADATA_BYTES: usize = airk_core::continuity::MAX_CONTINUITY_BYTES + 131_072;
+
+fn continuity_schema(conn: &Connection) -> Result<bool> {
+    let tables: i64 = conn.query_row(
+        "SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('continuity_schema','continuity_records')",
+        [], |row| row.get(0))?;
+    if tables == 0 {
+        return Ok(false);
+    }
+    ensure!(tables == 2, "incomplete continuity catalog extension");
+    let (count, version): (i64, i64) = conn.query_row(
+        "SELECT count(*),coalesce(min(version),0) FROM continuity_schema",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    ensure!(
+        count == 1 && version == 1,
+        "unsupported continuity catalog version"
+    );
+    Ok(true)
+}
+
 fn validate_v2_catalog(
     conn: &Connection,
     token: &airk_core::identity::RevisionToken,
@@ -399,6 +421,7 @@ fn validate_v2_catalog(
         stored_token == token.to_string() && digest == inventory_digest.to_string(),
         "immutable catalog identity mismatch"
     );
+    continuity_schema(conn)?;
     Ok(())
 }
 
@@ -429,15 +452,19 @@ pub(crate) fn file_in_catalog(
             .join("catalog.sqlite"),
     )?;
     validate_v2_catalog(&conn, &receipt.token, &receipt.inventory_digest)?;
-    let payload: Option<String> = conn
+    let payload: Option<Option<String>> = conn
         .query_row(
-            "SELECT payload FROM files WHERE path=?1 AND length(CAST(payload AS BLOB)) <= 131072",
-            [path],
+            "SELECT CASE WHEN length(CAST(payload AS BLOB)) <= ?2 THEN payload END FROM files WHERE path=?1",
+            params![path, MAX_FILE_METADATA_BYTES as i64],
             |row| row.get(0),
         )
         .optional()?;
     payload
-        .map(|payload| Ok(serde_json::from_str(&payload)?))
+        .map(|payload| {
+            Ok(serde_json::from_str(
+                &payload.context("file metadata exceeds byte bound")?,
+            )?)
+        })
         .transpose()
 }
 
@@ -453,11 +480,44 @@ pub(crate) fn file_by_artifact_in_catalog(
             .join("catalog.sqlite"),
     )?;
     validate_v2_catalog(&conn, &receipt.token, &receipt.inventory_digest)?;
-    let row: Option<(String, String)> = conn.query_row(
-        "SELECT path,payload FROM files WHERE artifact_id=?1 AND length(CAST(payload AS BLOB)) <= 131072 AND length(CAST(path AS BLOB))<=4096",
-        [id.to_string()], |row| Ok((row.get(0)?, row.get(1)?))).optional()?;
-    row.map(|(path, payload)| Ok((path, serde_json::from_str(&payload)?)))
-        .transpose()
+    let row: Option<(Option<String>, Option<String>)> = conn.query_row(
+        "SELECT CASE WHEN length(CAST(path AS BLOB))<=4096 THEN path END,CASE WHEN length(CAST(payload AS BLOB))<=?2 THEN payload END FROM files WHERE artifact_id=?1",
+        params![id.to_string(), MAX_FILE_METADATA_BYTES as i64], |row| Ok((row.get(0)?, row.get(1)?))).optional()?;
+    row.map(|(path, payload)| {
+        Ok((
+            path.context("file path exceeds byte bound")?,
+            serde_json::from_str(&payload.context("file metadata exceeds byte bound")?)?,
+        ))
+    })
+    .transpose()
+}
+
+pub(crate) fn continuity_in_catalog(
+    directory: &Path,
+    receipt: &airk_core::identity::PublicationReceipt,
+    key: airk_core::continuity::ContinuityKey,
+) -> Result<Option<(String, airk_core::continuity::ContinuityRecord)>> {
+    let conn = open_immutable_catalog(
+        &directory
+            .join("generations")
+            .join(receipt.token.revision.to_string())
+            .join("catalog.sqlite"),
+    )?;
+    validate_v2_catalog(&conn, &receipt.token, &receipt.inventory_digest)?;
+    if !continuity_schema(&conn)? {
+        return Ok(None);
+    }
+    let row: Option<(Option<String>, Option<String>)> = conn.query_row(
+        "SELECT CASE WHEN length(CAST(path AS BLOB))<=4096 THEN path END,CASE WHEN length(CAST(record AS BLOB))<=?2 THEN record END FROM continuity_records WHERE key=?1",
+        params![serde_json::to_string(&key)?, airk_core::continuity::MAX_CONTINUITY_BYTES as i64],
+        |row| Ok((row.get(0)?, row.get(1)?))).optional()?;
+    row.map(|(path, record)| {
+        let record: airk_core::continuity::ContinuityRecord =
+            serde_json::from_str(&record.context("continuity record exceeds byte bound")?)?;
+        ensure!(record.key == key, "continuity index key mismatch");
+        Ok((path.context("continuity path exceeds byte bound")?, record))
+    })
+    .transpose()
 }
 
 fn legacy_json_head(directory: &Path) -> Result<crate::ExpectedHead> {
@@ -802,10 +862,12 @@ pub(super) fn save_catalog_v2(
         &snapshot,
         Some(&token.revision.to_string()),
         source,
+        Some(inventory),
     )?;
     let conn = database.connection_mut();
     let tx = conn.transaction()?;
     tx.execute_batch("CREATE TABLE v2_catalog(id INTEGER PRIMARY KEY CHECK(id=1),token TEXT NOT NULL,inventory_digest TEXT NOT NULL,lineage_digest TEXT NOT NULL); CREATE TABLE files(path TEXT PRIMARY KEY,artifact_id TEXT NOT NULL UNIQUE,source_hash TEXT NOT NULL,profile_id TEXT NOT NULL,payload TEXT NOT NULL); CREATE INDEX files_source_hash ON files(source_hash); CREATE INDEX files_profile ON files(profile_id); CREATE TABLE change_events(generation INTEGER NOT NULL,event_id INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(generation,event_id)); CREATE TABLE revision_headers(generation INTEGER PRIMARY KEY,token TEXT NOT NULL,payload TEXT NOT NULL); CREATE TABLE path_resolutions(artifact_id TEXT NOT NULL,path TEXT NOT NULL,payload TEXT NOT NULL); CREATE INDEX resolutions_path ON path_resolutions(path); CREATE INDEX resolutions_artifact ON path_resolutions(artifact_id);")?;
+    tx.execute_batch("CREATE TABLE continuity_schema(id INTEGER PRIMARY KEY CHECK(id=1),version INTEGER NOT NULL); INSERT INTO continuity_schema VALUES(1,1); CREATE TABLE continuity_records(key TEXT PRIMARY KEY,path TEXT NOT NULL,record TEXT NOT NULL); CREATE INDEX continuity_path ON continuity_records(path);")?;
     tx.execute(
         "INSERT INTO v2_catalog VALUES(1,?1,?2,?3)",
         params![
@@ -815,6 +877,11 @@ pub(super) fn save_catalog_v2(
         ],
     )?;
     for (path, file) in &inventory.files {
+        let payload = serde_json::to_string(file)?;
+        ensure!(
+            payload.len() <= MAX_FILE_METADATA_BYTES,
+            "file metadata exceeds byte bound"
+        );
         tx.execute(
             "INSERT INTO files VALUES(?1,?2,?3,?4,?5)",
             params![
@@ -822,9 +889,19 @@ pub(super) fn save_catalog_v2(
                 file.state.artifact_id.to_string(),
                 file.state.source_hash.to_string(),
                 file.state.profile_id.to_string(),
-                serde_json::to_string(file)?
+                payload
             ],
         )?;
+        for record in &file.continuity {
+            tx.execute(
+                "INSERT INTO continuity_records VALUES(?1,?2,?3)",
+                params![
+                    serde_json::to_string(&record.key)?,
+                    path,
+                    serde_json::to_string(record)?
+                ],
+            )?;
+        }
     }
     for event in &lineage.events {
         tx.execute(
@@ -1023,6 +1100,18 @@ pub(super) fn publish_catalog_v2(
 }
 
 pub(super) fn catalog_page_budget(reserved: u64, physical: u64, pointer: u64) -> Result<u64> {
+    let required = pointer
+        .checked_add(16_384)
+        .context("minimum catalog and pointer allowance overflow")?;
+    if reserved < required {
+        return Err(crate::quota::QuotaPressure {
+            scope: crate::quota::PressureScope::Reservation,
+            required_bytes: required,
+            available_bytes: reserved,
+            protected_bytes: None,
+        }
+        .into());
+    }
     // SQLite's maximum representable page count is a format limit, not an
     // application catalog ceiling. Logical policy and observed capacity govern
     // every smaller admission.
@@ -1168,7 +1257,7 @@ fn save_inner(
             "PRAGMA journal_mode=OFF; PRAGMA temp_store=MEMORY; PRAGMA cache_size=-16384; PRAGMA cache_spill=ON;",
         )?;
     }
-    save_connection(&mut conn, snapshot, revision, source)
+    save_connection(&mut conn, snapshot, revision, source, None)
 }
 
 fn save_connection(
@@ -1176,6 +1265,7 @@ fn save_connection(
     snapshot: &Snapshot,
     revision: Option<&str>,
     source: &dyn ArtifactSource,
+    inventory: Option<&airk_core::publication::InventoryV2>,
 ) -> Result<()> {
     let payload = serde_json::to_string(snapshot)?;
     ensure!(
@@ -1277,8 +1367,14 @@ fn save_connection(
         };
         for path in snapshot.artifacts.keys() {
             let a = source.load_artifact(path)?;
-            for f in &a.facts {
+            let keys = airk_core::continuity::FactKeyIndex::new(
+                inventory
+                    .and_then(|inventory| inventory.files.get(path))
+                    .map_or(&[], |file| file.continuity.as_slice()),
+            );
+            for (ordinal, f) in a.facts.iter().enumerate() {
                 insert(&FactHit {
+                    continuity_key: keys.key(ordinal, f),
                     name: f.name.clone(),
                     kind: f.kind.clone(),
                     syntax_kind: f.syntax_kind.clone(),
@@ -1296,7 +1392,9 @@ fn save_connection(
             }
         }
         for f in &snapshot.imported_facts {
-            insert(f)?;
+            let mut imported = f.clone();
+            imported.continuity_key = None;
+            insert(&imported)?;
         }
 
         for edge in &snapshot.imported_relationships {
@@ -1585,8 +1683,23 @@ mod tests {
         assert!(maximum + pointer <= physical);
         assert!(physical - maximum - pointer < 4096);
         assert_eq!(catalog_page_budget(32_768, u64::MAX, 16_384)?, 16_384);
-        assert!(catalog_page_budget(logical, pointer + 16_383, pointer).is_err());
-        assert!(catalog_page_budget(pointer + 16_383, physical, pointer).is_err());
+        let physical_error = catalog_page_budget(logical, pointer + 16_383, pointer).unwrap_err();
+        assert!(
+            physical_error
+                .downcast_ref::<crate::quota::QuotaPressure>()
+                .is_none()
+        );
+        let logical_error = catalog_page_budget(pointer + 16_383, physical, pointer).unwrap_err();
+        let pressure = logical_error
+            .downcast_ref::<crate::quota::QuotaPressure>()
+            .expect("logical admission retains the typed quota cause");
+        assert!(matches!(
+            pressure.scope,
+            crate::quota::PressureScope::Reservation
+        ));
+        assert_eq!(pressure.required_bytes, pointer + 16_384);
+        assert_eq!(pressure.available_bytes, pointer + 16_383);
+        assert!(pressure.protected_bytes.is_none());
         assert!(
             catalog_page_budget(8 * 1024 * 1024 * 1024, u64::MAX, pointer)?
                 > 4 * 1024 * 1024 * 1024

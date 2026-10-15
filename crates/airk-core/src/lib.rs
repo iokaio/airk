@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 pub mod binding;
 pub mod changes;
 pub mod code;
+pub mod continuity;
 pub mod embedding;
 pub mod evidence;
 pub mod extraction;
@@ -296,6 +297,8 @@ pub struct DocumentQuantity {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FactHit {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub continuity_key: Option<continuity::ContinuityKey>,
     pub name: String,
     pub kind: String,
     pub syntax_kind: String,

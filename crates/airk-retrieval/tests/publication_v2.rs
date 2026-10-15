@@ -35,6 +35,8 @@ fn inventory(source: &Snapshot) -> Result<InventoryV2> {
     let artifact = &source.artifacts["one.txt"];
     let source_hash = artifact.content_hash.parse()?;
     Ok(InventoryV2 {
+        embedding_pipeline_digest: None,
+        extraction_policy_digest: None,
         version: 2,
         incarnation: Incarnation::from_bytes([1; 16]),
         generation: source.generation,
@@ -46,6 +48,8 @@ fn inventory(source: &Snapshot) -> Result<InventoryV2> {
         files: BTreeMap::from([(
             "one.txt".into(),
             InventoryFile {
+                continuity: Vec::new(),
+                continuity_coverage: Default::default(),
                 state: FileState {
                     artifact_id: ArtifactId::from_bytes([2; 16]),
                     stamps: FileStamps {

@@ -44,6 +44,7 @@ fn prepare(
         configuration_inputs: BTreeMap::new(),
     };
     let payload = ExtractionPayload {
+        continuity_coverage: BTreeMap::new(),
         contract_version: 1,
         extraction_method: "utf8".into(),
         parse_status: "plain".into(),
@@ -111,6 +112,8 @@ fn prepare(
         resolvers: vec![],
     };
     let inventory = InventoryV2 {
+        embedding_pipeline_digest: None,
+        extraction_policy_digest: None,
         version: 2,
         incarnation,
         generation,
@@ -122,6 +125,8 @@ fn prepare(
         files: BTreeMap::from([(
             "note.txt".into(),
             InventoryFile {
+                continuity: Vec::new(),
+                continuity_coverage: Default::default(),
                 state: FileState {
                     artifact_id: ArtifactId::from_bytes([2; 16]),
                     stamps: FileStamps {

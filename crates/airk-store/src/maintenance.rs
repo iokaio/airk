@@ -644,6 +644,7 @@ fn gc(
     }
     let mut sources = BTreeSet::new();
     let mut artifacts = BTreeSet::new();
+    let mut embeddings = BTreeSet::new();
     let base = store.directory().join("generations");
     plain(&base)?;
     for entry in fs::read_dir(&base)? {
@@ -691,10 +692,30 @@ fn gc(
             .symlink_metadata()?
             .len();
         work.metadata(inventory_size)?;
+        let sidecar_path = entry.path().join("embedding-cache.json");
+        match sidecar_path.symlink_metadata() {
+            Ok(metadata) => {
+                ensure!(
+                    metadata.is_file()
+                        && !metadata.file_type().is_symlink()
+                        && metadata.len() <= crate::vector_cache::MAX_CACHE_MANIFEST_BYTES as u64,
+                    "invalid embedding sidecar during GC"
+                );
+                work.metadata(metadata.len())?;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
         let inventory = crate::blobs::verify_v2_generation(store.directory(), &receipt)?;
+        let embedding_references = store.embedding_cache_references(&receipt)?;
         if excluded.contains(&name) {
             continue;
         }
+        embeddings.extend(
+            embedding_references
+                .into_iter()
+                .map(|reference| reference.key.to_string()),
+        );
         for file in inventory.files.values() {
             artifacts.insert(file.state.payload_digest.to_string());
             if file.raw_source {
@@ -702,7 +723,11 @@ fn gc(
             }
         }
     }
-    for (kind, retained) in [("sources", sources), ("artifacts", artifacts)] {
+    for (kind, retained) in [
+        ("sources", sources),
+        ("artifacts", artifacts),
+        ("embeddings", embeddings),
+    ] {
         let path = store.directory().join("objects").join(kind);
         if !path.exists() {
             continue;
@@ -1476,6 +1501,10 @@ impl FileStore {
                 receipt.reclaimed_bytes = work.removed;
                 receipt.pending |= objects.pending;
                 result?;
+            } else {
+                // The deadline may cross after the remaining-generation
+                // preview. Unexamined objects still require a continuation.
+                receipt.pending = true;
             }
             receipt.state = if receipt.pending {
                 MaintenanceState::Pending

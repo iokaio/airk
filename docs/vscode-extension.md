@@ -31,8 +31,11 @@ Implemented settings and commands:
 | Pause Auto-index / Resume | Persist native pause state and retain pending revisions; explicit indexing remains available |
 | Manage Collections / Trim | Preview usage and reclaim plan; remove selected derived state |
 | Choose Index Storage Folder | Select a new location; reindex there and retain prior collections without moving/deleting them |
+| Show Extraction Policy / Configure Extraction Policy | Inspect configured versus published selection; validate a bounded JSON policy and confirm saving it for the next successful index |
 
 The indexing-mode Quick Pick offers Manual, After edits settle, On save and When idle. Advanced timings remain separate settings. The footer shows active-folder coverage or scanning/indexing/failure/storage-budget state; the tooltip explains queued work and automatic pause. **AIRK: Show Local Usage and Estimated Savings** opens collection-scoped aggregate reports with explicit counterfactual-estimate labels.
+
+The [extraction-policy controls](extraction-policy.md) show the configured digest, published applied digest and pending-index state. Configuration captures a private copy of the selected JSON file, validates and previews it, then saves those same bytes only after confirmation. It offers an explicit **Index now** action afterward. Reading policy does not index; saving does not reinterpret existing evidence. The selected file and workspace/client settings are unchanged, and temporary input is removed on cancellation or failure. Existing native adapter capabilities remain the limit of each override.
 
 [Workspace coverage](index-coverage.md) implements the current/eligible file percentage with a native, bounded inventory. Clicking queues **Index Now** for the active editor's folder; multi-root workspaces without an active match prompt for a folder. The tooltip shows stale/missing/extraction-failed/capacity counts and unsaved editor documents. Incomplete scans and new disk events show unknown coverage; zero eligibility never becomes 100%. **AIRK: Open Controls** remains a separate palette command.
 

@@ -189,10 +189,18 @@ impl Kernel {
             .as_deref()
             .context("resolved path missing")?;
         let artifact = catalog.load_artifact(resolved)?;
+        let continuity = catalog
+            .inventory
+            .as_ref()
+            .and_then(|inventory| inventory.files.get(resolved))
+            .map_or(&[][..], |file| file.continuity.as_slice());
+        let continuity = airk_core::continuity::FactKeyIndex::new(continuity);
         let mut facts: Vec<_> = artifact
             .facts
             .iter()
-            .map(|fact| FactHit {
+            .enumerate()
+            .map(|(ordinal, fact)| FactHit {
+                continuity_key: continuity.key(ordinal, fact),
                 name: fact.name.clone(),
                 kind: fact.kind.clone(),
                 syntax_kind: fact.syntax_kind.clone(),
@@ -213,7 +221,11 @@ impl Kernel {
                     .imported_facts
                     .iter()
                     .filter(|fact| fact.citation.path == resolved)
-                    .cloned(),
+                    .cloned()
+                    .map(|mut fact| {
+                        fact.continuity_key = None;
+                        fact
+                    }),
             )
             .collect();
         facts.sort_by(|a, b| {
@@ -266,10 +278,7 @@ impl Kernel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use airk_core::{
-        SnapshotStore,
-        changes::{ChangeCause, ChangesRequest, PublicationReason},
-    };
+    use airk_core::changes::{ChangeCause, ChangesRequest, PublicationReason};
 
     #[test]
     fn validators_survive_unrelated_publications_but_bind_profile_and_selection() -> Result<()> {
@@ -312,12 +321,16 @@ mod tests {
         );
         let baseline = kernel.catalog()?.receipt.as_ref().unwrap().token;
         let _writer = kernel.store.lock()?;
-        let mut snapshot = kernel.store.load()?.unwrap();
+        let mut snapshot = kernel.store.catalog()?.unwrap().snapshot;
         let artifact = kernel.store.load_retained(&snapshot.artifacts["one.rs"])?;
         let mut profile = airk_ingest::adapters::legacy::legacy_profile(&artifact)?;
-        let payload =
-            airk_ingest::adapters::legacy::convert_native_legacy(&artifact, source, &profile)?;
+        let mut payload = kernel
+            .store
+            .load_extraction_payload(&snapshot.artifacts["one.rs"])?;
         profile.adapter_version = "original-test-profile/2".into();
+        for descriptor in &mut payload.continuity {
+            descriptor.profile = profile.identity()?;
+        }
         let reservation = kernel.publication_reservation()?;
         let compact = kernel.store.retain_payload_with_budget(
             &artifact,

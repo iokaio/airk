@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Immutable bounded history assembled only at successful publication.
-use airk_core::{changes::*, identity::RevisionToken, publication::InventoryV2};
+use airk_core::{
+    changes::*, continuity::ContinuityFamily, identity::RevisionToken, publication::InventoryV2,
+};
 use anyhow::Result;
 use std::collections::BTreeMap;
 
@@ -50,11 +52,27 @@ pub(crate) fn build(
         events: previous.map(|p| p.events.clone()).unwrap_or_default(),
         resolvers: previous.map(|p| p.resolvers.clone()).unwrap_or_default(),
     };
-    lineage.coverage.code = CoverageFloor {
-        complete_after: generation,
-        reason: Some(CoverageReason::Unsupported),
-    };
-    lineage.coverage.documents = lineage.coverage.code.clone();
+    for (family, floor) in [
+        (ContinuityFamily::Code, &mut lineage.coverage.code),
+        (ContinuityFamily::Documents, &mut lineage.coverage.documents),
+    ] {
+        let gap = family_gap(inventory, family, &new_events);
+        // A newly supported observation establishes a baseline. It cannot
+        // reconstruct changes from the preceding unsupported/partial payload.
+        let recovering = previous.is_some_and(|previous| {
+            floor.complete_after == previous.observation.generation
+                && matches!(
+                    floor.reason,
+                    Some(CoverageReason::Unsupported | CoverageReason::Omitted)
+                )
+        });
+        if let Some(reason) = gap.or(recovering.then_some(CoverageReason::BaselineUnavailable)) {
+            *floor = CoverageFloor {
+                complete_after: generation,
+                reason: Some(reason),
+            };
+        }
+    }
     if let (Some(previous), Some(parent)) = (previous, parent) {
         lineage.ancestry.push(RetainedPublicationHeader {
             token: parent,
@@ -69,6 +87,13 @@ pub(crate) fn build(
             reason: Some(CoverageReason::Overflow),
         };
         lineage.coverage.resolution = lineage.coverage.files.clone();
+        advance_family_gaps(
+            &mut lineage.coverage,
+            generation,
+            CoverageReason::Overflow,
+            true,
+            true,
+        );
         new_events.retain(|event| matches!(event.subject, ChangeSubject::Global { .. }));
         lineage.resolvers.clear();
     } else {
@@ -178,6 +203,14 @@ pub(crate) fn build(
                 .generation;
             evict_through(&mut lineage, through, CoverageReason::Overflow);
         } else {
+            let code_removed = lineage
+                .events
+                .iter()
+                .any(|event| matches!(event.subject, ChangeSubject::Symbol { .. }));
+            let documents_removed = lineage
+                .events
+                .iter()
+                .any(|event| matches!(event.subject, ChangeSubject::Document { .. }));
             lineage
                 .events
                 .retain(|event| matches!(event.subject, ChangeSubject::Global { .. }));
@@ -187,6 +220,13 @@ pub(crate) fn build(
                 reason: Some(CoverageReason::Overflow),
             };
             lineage.coverage.resolution = lineage.coverage.files.clone();
+            advance_family_gaps(
+                &mut lineage.coverage,
+                generation,
+                CoverageReason::Overflow,
+                code_removed,
+                documents_removed,
+            );
             break;
         }
     }
@@ -194,14 +234,103 @@ pub(crate) fn build(
     Ok(lineage)
 }
 
+fn family_gap(
+    inventory: &InventoryV2,
+    family: ContinuityFamily,
+    events: &[ChangeEvent],
+) -> Option<CoverageReason> {
+    if inventory.version <= 2
+        || inventory.files.values().any(|file| {
+            file.continuity_coverage
+                .get(&family)
+                .is_none_or(|coverage| !coverage.supported)
+        })
+    {
+        return Some(CoverageReason::Unsupported);
+    }
+    let partial = inventory.files.values().any(|file| {
+        file.continuity_coverage
+            .get(&family)
+            .is_some_and(|coverage| !coverage.complete)
+            || file
+                .continuity
+                .iter()
+                .any(|record| record.descriptor.family == family && !record.descriptor.complete)
+    });
+    let unknown = events.iter().any(|event| {
+        let relevant = match event.subject {
+            ChangeSubject::Symbol { .. } => family == ContinuityFamily::Code,
+            ChangeSubject::Document { .. } => family == ContinuityFamily::Documents,
+            ChangeSubject::Artifact { .. } | ChangeSubject::Global { .. } => true,
+        };
+        relevant
+            && (matches!(
+                event.cause,
+                ChangeCause::RemovedUnknown
+                    | ChangeCause::Unsupported
+                    | ChangeCause::Oversize
+                    | ChangeCause::ExtractionOmitted
+                    | ChangeCause::ProfileChanged
+                    | ChangeCause::ProviderInvalidated
+            ) || event
+                .before
+                .as_ref()
+                .zip(event.after.as_ref())
+                .is_some_and(|(before, after)| before.profile_id != after.profile_id))
+    });
+    (partial || unknown).then_some(CoverageReason::Omitted)
+}
+
+fn advance_family_gaps(
+    coverage: &mut ChangeCoverage,
+    generation: u64,
+    reason: CoverageReason,
+    code: bool,
+    documents: bool,
+) {
+    for (floor, affected) in [
+        (&mut coverage.code, code),
+        (&mut coverage.documents, documents),
+    ] {
+        // Legacy/unsupported projections stay explicitly unsupported even when
+        // an independently bounded event buffer also overflows.
+        if affected
+            && floor.complete_after <= generation
+            && floor.reason != Some(CoverageReason::Unsupported)
+        {
+            *floor = CoverageFloor {
+                complete_after: generation,
+                reason: Some(reason),
+            };
+        }
+    }
+}
+
 fn evict_through(lineage: &mut LineageEnvelope, generation: u64, reason: CoverageReason) {
     lineage
         .ancestry
         .retain(|header| header.token.generation > generation);
-    let events_removed = lineage
-        .events
-        .iter()
-        .any(|event| event.generation <= generation);
+    let events_removed = lineage.events.iter().any(|event| {
+        event.generation <= generation
+            && matches!(
+                event.subject,
+                ChangeSubject::Artifact { .. } | ChangeSubject::Global { .. }
+            )
+    });
+    let code_removed = lineage.events.iter().any(|event| {
+        event.generation <= generation
+            && matches!(
+                event.subject,
+                ChangeSubject::Symbol { .. } | ChangeSubject::Global { .. }
+            )
+    });
+    let documents_removed = lineage.events.iter().any(|event| {
+        event.generation <= generation
+            && matches!(
+                event.subject,
+                ChangeSubject::Document { .. } | ChangeSubject::Global { .. }
+            )
+    });
     let resolvers_removed = lineage
         .resolvers
         .iter()
@@ -210,6 +339,13 @@ fn evict_through(lineage: &mut LineageEnvelope, generation: u64, reason: Coverag
     lineage
         .resolvers
         .retain(|resolver| resolver.observed_generation > generation);
+    advance_family_gaps(
+        &mut lineage.coverage,
+        generation,
+        reason,
+        code_removed,
+        documents_removed,
+    );
     for (floor, affected) in [
         (&mut lineage.coverage.files, events_removed),
         (&mut lineage.coverage.resolution, resolvers_removed),
@@ -227,10 +363,300 @@ fn evict_through(lineage: &mut LineageEnvelope, generation: u64, reason: Coverag
 #[cfg(test)]
 mod tests {
     use super::*;
-    use airk_core::identity::{ArtifactId, Incarnation, Sha256Digest};
+    use airk_core::{
+        DocumentLocation,
+        continuity::{
+            ContinuityCoverage, ContinuityDescriptor, ContinuityKey, ContinuityRecord,
+            ContinuitySubject,
+        },
+        extraction::LocalSpan,
+        identity::{ArtifactId, DocumentKey, Incarnation, Sha256Digest, SymbolKey},
+        publication::InventoryFile,
+    };
+
+    fn supported_inventory(generation: u64) -> InventoryV2 {
+        let mut inventory = inventory(generation);
+        inventory.version = 3;
+        inventory.files.insert(
+            "note.txt".into(),
+            InventoryFile {
+                continuity: vec![],
+                continuity_coverage: [ContinuityFamily::Code, ContinuityFamily::Documents]
+                    .into_iter()
+                    .map(|family| {
+                        (
+                            family,
+                            ContinuityCoverage {
+                                supported: true,
+                                complete: true,
+                            },
+                        )
+                    })
+                    .collect(),
+                state: FileState {
+                    artifact_id: ArtifactId::from_bytes([2; 16]),
+                    stamps: FileStamps {
+                        first_generation: 1,
+                        path_generation: 1,
+                        content_generation: 1,
+                        evidence_generation: 1,
+                    },
+                    source_hash: Sha256Digest::from_bytes([3; 32]),
+                    profile_id: Sha256Digest::from_bytes([4; 32]),
+                    payload_digest: Sha256Digest::from_bytes([5; 32]),
+                    evidence_digest: Sha256Digest::from_bytes([6; 32]),
+                    root: inventory.root.clone(),
+                    path: "note.txt".into(),
+                },
+                source_bytes: 1,
+                payload_bytes: 1,
+                extracted_bytes: 1,
+                chunks: 1,
+                indexed_lines: 1,
+                facts: 0,
+                raw_source: true,
+                language: "fixture".into(),
+                extraction_method: "fixture".into(),
+                parse_status: "ok".into(),
+            },
+        );
+        inventory
+    }
+
+    fn observe(
+        previous: Option<&LineageEnvelope>,
+        inventory: &InventoryV2,
+        events: Vec<ChangeEvent>,
+        complete: bool,
+    ) -> Result<LineageEnvelope> {
+        build(
+            previous,
+            previous.map(|previous| token(previous.observation.generation)),
+            inventory,
+            inventory.generation,
+            PublicationReason::Index,
+            PendingLineage {
+                events,
+                resolvers: vec![],
+                complete,
+            },
+        )
+    }
+
+    fn family_event(generation: u64, family: ContinuityFamily) -> ChangeEvent {
+        let mut event = event(generation, 1);
+        event.subject = match family {
+            ContinuityFamily::Code => ChangeSubject::Symbol {
+                artifact_id: ArtifactId::from_bytes([2; 16]),
+                symbol_key: SymbolKey::from_bytes([7; 16]),
+            },
+            ContinuityFamily::Documents => ChangeSubject::Document {
+                artifact_id: ArtifactId::from_bytes([2; 16]),
+                document_key: DocumentKey::from_bytes([8; 16]),
+            },
+        };
+        event
+    }
+
+    #[test]
+    fn supported_families_keep_baseline_and_partial_family_advances_alone() -> Result<()> {
+        let first = observe(None, &supported_inventory(1), vec![], true)?;
+        let second = observe(Some(&first), &supported_inventory(2), vec![], true)?;
+        assert_eq!(second.coverage.code.complete_after, 1);
+        assert_eq!(second.coverage.documents.complete_after, 1);
+        let mut partial = supported_inventory(3);
+        partial
+            .files
+            .get_mut("note.txt")
+            .unwrap()
+            .continuity_coverage
+            .get_mut(&ContinuityFamily::Code)
+            .unwrap()
+            .complete = false;
+        let third = observe(Some(&second), &partial, vec![], true)?;
+        assert_eq!(
+            third.coverage.code,
+            CoverageFloor {
+                complete_after: 3,
+                reason: Some(CoverageReason::Omitted)
+            }
+        );
+        assert_eq!(third.coverage.documents.complete_after, 1);
+        let recovered = observe(Some(&third), &supported_inventory(4), vec![], true)?;
+        assert_eq!(
+            recovered.coverage.code,
+            CoverageFloor {
+                complete_after: 4,
+                reason: Some(CoverageReason::BaselineUnavailable)
+            }
+        );
+        let next = observe(Some(&recovered), &supported_inventory(5), vec![], true)?;
+        assert_eq!(next.coverage.code.complete_after, 4);
+        assert_eq!(next.coverage.documents.complete_after, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn missing_support_and_incomplete_descriptor_cannot_claim_complete() -> Result<()> {
+        let first = observe(None, &supported_inventory(1), vec![], true)?;
+        let mut partial = supported_inventory(2);
+        let file = partial.files.get_mut("note.txt").unwrap();
+        file.continuity_coverage.remove(&ContinuityFamily::Code);
+        file.continuity.push(ContinuityRecord {
+            ambiguous_predecessor: false,
+            key: ContinuityKey::Document(DocumentKey::from_bytes([8; 16])),
+            first_generation: 2,
+            changed: BTreeMap::new(),
+            descriptor: ContinuityDescriptor {
+                algorithm_version: 1,
+                subject: ContinuitySubject::Unit(0),
+                owner: None,
+                region: None,
+                family: ContinuityFamily::Documents,
+                category: "paragraph".into(),
+                name: None,
+                explicit_identity: None,
+                profile: file.state.profile_id,
+                provenance: file.state.evidence_digest,
+                dimensions: BTreeMap::new(),
+                unsupported_dimensions: vec![],
+                span: LocalSpan { start: 0, end: 1 },
+                location: DocumentLocation::Block { number: 1 },
+                complete: false,
+                body_informative: false,
+            },
+        });
+        let result = observe(Some(&first), &partial, vec![], true)?;
+        assert_eq!(
+            result.coverage.code,
+            CoverageFloor {
+                complete_after: 2,
+                reason: Some(CoverageReason::Unsupported)
+            }
+        );
+        assert_eq!(
+            result.coverage.documents,
+            CoverageFloor {
+                complete_after: 2,
+                reason: Some(CoverageReason::Omitted)
+            }
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn eviction_advances_only_the_family_of_removed_events() -> Result<()> {
+        for reason in [CoverageReason::Expired, CoverageReason::Overflow] {
+            let first = observe(None, &supported_inventory(1), vec![], true)?;
+            let second = observe(
+                Some(&first),
+                &supported_inventory(2),
+                vec![family_event(2, ContinuityFamily::Code)],
+                true,
+            )?;
+            let mut third = observe(
+                Some(&second),
+                &supported_inventory(3),
+                vec![family_event(3, ContinuityFamily::Documents)],
+                true,
+            )?;
+            evict_through(&mut third, 2, reason);
+            assert_eq!(
+                third.coverage.code,
+                CoverageFloor {
+                    complete_after: 2,
+                    reason: Some(reason)
+                }
+            );
+            assert_eq!(third.coverage.documents.complete_after, 1);
+            assert_eq!(third.coverage.files.complete_after, 1);
+            assert_eq!(third.events.len(), 1);
+            third.validate()?;
+            evict_through(&mut third, 3, reason);
+            assert_eq!(third.coverage.documents.complete_after, 3);
+            assert_eq!(third.coverage.code.complete_after, 2);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn profile_transition_and_unknown_subject_events_create_explicit_gaps() -> Result<()> {
+        let first = observe(None, &supported_inventory(1), vec![], true)?;
+        let mut unknown = family_event(2, ContinuityFamily::Documents);
+        unknown.cause = ChangeCause::RemovedUnknown;
+        unknown.before = unknown.after.take();
+        let second = observe(Some(&first), &supported_inventory(2), vec![unknown], true)?;
+        assert_eq!(
+            second.coverage.documents.reason,
+            Some(CoverageReason::Omitted)
+        );
+        assert_eq!(second.coverage.code.complete_after, 1);
+        let mut changed = event(3, 1);
+        changed.before = changed.after.clone();
+        changed.after.as_mut().unwrap().profile_id = Sha256Digest::from_bytes([9; 32]);
+        let third = observe(Some(&second), &supported_inventory(3), vec![changed], true)?;
+        assert_eq!(third.coverage.code.complete_after, 3);
+        assert_eq!(third.coverage.documents.complete_after, 3);
+        assert_eq!(third.coverage.code.reason, Some(CoverageReason::Omitted));
+        Ok(())
+    }
+
+    #[test]
+    fn oversized_code_observation_does_not_erase_document_coverage() -> Result<()> {
+        let first = observe(None, &supported_inventory(1), vec![], true)?;
+        let events = (1..=MAX_LINEAGE_RECORDS)
+            .map(|id| {
+                let mut event = family_event(2, ContinuityFamily::Code);
+                event.event_id = id as u64;
+                event
+            })
+            .collect();
+        let result = observe(Some(&first), &supported_inventory(2), events, true)?;
+        assert!(result.events.is_empty());
+        assert_eq!(
+            result.coverage.code,
+            CoverageFloor {
+                complete_after: 2,
+                reason: Some(CoverageReason::Overflow),
+            }
+        );
+        assert_eq!(result.coverage.documents.complete_after, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn lost_current_events_gap_both_families_but_legacy_stays_unsupported() -> Result<()> {
+        let first = observe(None, &supported_inventory(1), vec![], true)?;
+        let result = observe(
+            Some(&first),
+            &supported_inventory(2),
+            vec![family_event(2, ContinuityFamily::Code)],
+            false,
+        )?;
+        assert_eq!(
+            result.coverage.code,
+            CoverageFloor {
+                complete_after: 2,
+                reason: Some(CoverageReason::Overflow)
+            }
+        );
+        assert_eq!(result.coverage.documents, result.coverage.code);
+        let legacy = observe(None, &inventory(1), vec![], false)?;
+        assert_eq!(
+            legacy.coverage.code.reason,
+            Some(CoverageReason::Unsupported)
+        );
+        assert_eq!(
+            legacy.coverage.documents.reason,
+            Some(CoverageReason::Unsupported)
+        );
+        Ok(())
+    }
 
     fn inventory(generation: u64) -> InventoryV2 {
         InventoryV2 {
+            embedding_pipeline_digest: None,
+            extraction_policy_digest: None,
             version: 2,
             incarnation: Incarnation::from_bytes([1; 16]),
             generation,
