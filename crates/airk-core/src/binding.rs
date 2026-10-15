@@ -41,10 +41,8 @@ pub fn bind_payload(
         4_194_304
     })?;
     ensure!(
-        payload.regions.is_empty()
-            && payload.relationships.is_empty()
-            && payload.continuity.is_empty(),
-        "legacy artifact binding cannot represent regions, explicit relationships or continuity"
+        payload.regions.is_empty() && payload.relationships.is_empty(),
+        "legacy artifact binding cannot represent regions or explicit relationships"
     );
     ensure!(
         payload
@@ -78,6 +76,7 @@ pub fn bind_payload(
             location: fact.location.clone(),
             document: fact.document.clone(),
             code: fact.code.as_ref().map(|code| CodeEvidence {
+                fingerprints: code.fingerprints.clone(),
                 symbol_id: identities[&code.syntax_id].clone(),
                 owner_id: code.owner_id.map(|id| identities[&id].clone()),
                 qualified_name: code.qualified_name.clone(),

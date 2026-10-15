@@ -8,6 +8,8 @@ use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, fs::File, io::Read, path::Path};
 
 pub mod adapters;
+pub mod chunking;
+pub mod continuity;
 pub mod observations;
 
 pub const MAX_FILE_BYTES: usize = 16_777_216;
@@ -83,6 +85,19 @@ mod tables;
 
 #[derive(Default, Debug, Serialize, Deserialize)]
 pub struct IndexReport {
+    /// Selection warnings do not imply that an eligible file was skipped.
+    #[serde(default)]
+    pub selection_diagnostics: Vec<SkippedFile>,
+    #[serde(default)]
+    pub selection_diagnostics_truncated: usize,
+    #[serde(default)]
+    pub embedding_cache_hits: u64,
+    #[serde(default)]
+    pub embedding_cache_misses: u64,
+    #[serde(default)]
+    pub embedding_inferences: u64,
+    #[serde(default)]
+    pub embedding_no_vector: u64,
     #[serde(default)]
     pub scan_extract_us: u64,
     #[serde(default)]
@@ -457,6 +472,32 @@ fn scan_observed_profiled(
             profile = adapters::legacy::legacy_profile(old)?;
         }
         profile.identity()?;
+        if !selection.ambiguity.is_empty() {
+            let mut reason = format!(
+                "Ambiguous selection; selected adapter {}: {}",
+                profile.adapter_id,
+                selection
+                    .ambiguity
+                    .iter()
+                    .take(8)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            );
+            let mut end = reason.len().min(4096);
+            while !reason.is_char_boundary(end) {
+                end -= 1;
+            }
+            reason.truncate(end);
+            if report.selection_diagnostics.len() < 1000 {
+                report.selection_diagnostics.push(SkippedFile {
+                    path: path.clone(),
+                    reason,
+                });
+            } else {
+                report.selection_diagnostics_truncated += 1;
+            }
+        }
         let cached = if full_reindex {
             None
         } else {
@@ -783,6 +824,35 @@ pub fn chunk(text: &str) -> Vec<Chunk> {
 #[cfg(test)]
 mod scan_budget_tests {
     use super::*;
+
+    #[test]
+    fn selection_warnings_survive_reuse_without_replacing_native_parse_status() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let data = tempfile::tempdir()?;
+        std::fs::write(root.path().join("original.h"), "int original(\n")?;
+        let empty = Snapshot::empty(root.path().canonicalize()?.to_string_lossy().into_owned());
+        let (first, cold) = scan(root.path(), data.path(), &empty)?;
+        assert_eq!(cold.selection_diagnostics.len(), 1);
+        assert!(
+            cold.selection_diagnostics[0]
+                .reason
+                .contains("selected adapter c")
+        );
+        assert!(cold.skipped.is_empty());
+        assert_eq!(first.artifacts["original.h"].parse_status, "partial-syntax");
+        let (second, warm) = scan(root.path(), data.path(), &first)?;
+        assert_eq!(warm.reused, 1);
+        assert_eq!(warm.selection_diagnostics.len(), 1);
+        assert_eq!(
+            second.artifacts["original.h"].parse_status,
+            first.artifacts["original.h"].parse_status
+        );
+        assert_eq!(
+            warm.selection_diagnostics[0].reason,
+            cold.selection_diagnostics[0].reason
+        );
+        Ok(())
+    }
 
     #[test]
     fn selected_profile_precedes_reuse_and_full_rebuild_bypasses_lookup() -> Result<()> {

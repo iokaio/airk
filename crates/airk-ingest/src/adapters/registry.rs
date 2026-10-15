@@ -149,13 +149,37 @@ impl AdapterRegistry {
         id: &str,
         grammar: Option<&str>,
         suffixes: &str,
-        capabilities: AdapterCapabilities,
+        mut capabilities: AdapterCapabilities,
     ) {
-        self.entries.insert(id.into(), AdapterDescriptor {
-            profile: ExtractionProfile { contract_version: 1, adapter_id: id.into(), adapter_version: "native-facts/7".into(), language: id.into(), dialect: None, grammar_identity: grammar.map(|g| format!("tree-sitter/0.25.10:{g}")), mapping_version: 1, chunk_version: 1, options: BTreeMap::new(), configuration_inputs: BTreeMap::new() },
-            capabilities,
-            limitations: vec!["Existing bounded extraction only; no resolved references, embedded mapping or continuity qualification".into()],
-        });
+        capabilities.continuity = capabilities.definitions
+            || matches!(
+                id,
+                "markdown" | "text" | "csv" | "pdf" | "docx" | "xlsx" | "pptx"
+            );
+        let limitations = if capabilities.continuity {
+            vec!["Conservative native continuity within established artifact/owner identity; unsupported dimensions and partial extraction remain unknown. No resolved references or embedded-host extraction qualification.".into()]
+        } else {
+            vec!["Existing bounded extraction only; no resolved references, embedded-host extraction or general continuity qualification.".into()]
+        };
+        self.entries.insert(
+            id.into(),
+            AdapterDescriptor {
+                profile: ExtractionProfile {
+                    contract_version: 1,
+                    adapter_id: id.into(),
+                    adapter_version: "native-facts/7".into(),
+                    language: id.into(),
+                    dialect: None,
+                    grammar_identity: grammar.map(|g| format!("tree-sitter/0.25.10:{g}")),
+                    mapping_version: 1,
+                    chunk_version: 2,
+                    options: BTreeMap::new(),
+                    configuration_inputs: BTreeMap::new(),
+                },
+                capabilities,
+                limitations,
+            },
+        );
         for suffix in suffixes.split_whitespace() {
             self.suffixes.insert(suffix.into(), id.into());
         }

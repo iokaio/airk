@@ -14,6 +14,8 @@ pub enum EvidenceBasis {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CodeEvidence {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fingerprints: Option<crate::continuity::CodeFingerprints>,
     pub symbol_id: String,
     pub qualified_name: String,
     pub scope: Vec<String>,

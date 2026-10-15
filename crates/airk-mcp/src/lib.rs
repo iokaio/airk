@@ -184,6 +184,8 @@ impl FactArgs {
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DocumentFactArgs {
+    /// Durable document key from indexed evidence; exclusive of name/kind/language/path filters.
+    pub document_key: Option<String>,
     /// Literal collection-relative path prefix, not a glob.
     #[serde(default)]
     pub path_prefix: String,
@@ -235,6 +237,8 @@ fn default_radius() -> usize {
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CodeFactArgs {
+    /// Durable symbol key from indexed evidence; exclusive of name/kind/language/path filters.
+    pub symbol_key: Option<String>,
     /// Exact written name, qualified name or symbol_id; omit to list.
     pub name: Option<String>,
     /// Exact category: definition, import, call, inherits, reference, route_registration, route_annotation, database_call, dependency_injection, test_registration, test_declaration or exception_handler.
@@ -268,6 +272,25 @@ pub struct RelationshipArgs {
     #[serde(default = "default_budget")]
     pub max_bytes: usize,
 }
+
+fn continuity_selector(
+    key: Option<&str>,
+    symbol: bool,
+    has_filters: bool,
+) -> anyhow::Result<Option<airk_core::continuity::ContinuityKey>> {
+    let Some(key) = key else {
+        return Ok(None);
+    };
+    anyhow::ensure!(
+        !has_filters,
+        "a continuity key cannot be combined with name, kind, language or path filters"
+    );
+    Ok(Some(if symbol {
+        airk_core::continuity::ContinuityKey::Symbol(key.parse()?)
+    } else {
+        airk_core::continuity::ContinuityKey::Document(key.parse()?)
+    }))
+}
 fn default_direction() -> String {
     "incoming".into()
 }
@@ -292,7 +315,7 @@ impl AirkServer {
 
     #[tool(
         name = "airk_code_facts",
-        description = "Retrieve compact code evidence by exact name, qualified name or symbol ID. Includes scopes, signatures and written types, call/framework candidates, and optional hash-bound SCIP producer assertions. Check code.basis/coverage; syntax does not resolve targets or establish runtime behavior. Use symbol IDs with airk_relationships.",
+        description = "Retrieve compact code evidence by exact name, qualified name, symbol ID, or a durable symbol_key exclusive of textual filters. Includes scopes, signatures and written types, call/framework candidates, and optional hash-bound SCIP producer assertions. Check code.basis/coverage; syntax does not resolve targets or establish runtime behavior. Use symbol IDs with airk_relationships.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -308,6 +331,16 @@ impl AirkServer {
             &self.kernel,
             span,
             tokio::task::spawn_blocking(move || {
+                if let Some(key) = continuity_selector(
+                    args.symbol_key.as_deref(),
+                    true,
+                    args.name.is_some()
+                        || args.kind.is_some()
+                        || args.language.is_some()
+                        || !args.path_prefix.is_empty(),
+                )? {
+                    return kernel.continuity_facts(key, args.limit, args.max_bytes);
+                }
                 kernel.code_facts(&FactQuery {
                     path_prefix: args.path_prefix,
                     name: args.name,
@@ -576,7 +609,7 @@ impl AirkServer {
 
     #[tool(
         name = "airk_document_facts",
-        description = "Find repository requirements, dates, features, architecture/design/decision language, headings, configuration keys and asset facts. Filter by exact kind, language/profile, literal path prefix or statement/name substring. Prose cues include heading context, written bounds/units and modality; they are evidence candidates, not inferred obligations. Documents retain original locations; explicitly published local OCR evidence carries its own provenance and recognition limitations.",
+        description = "Find repository requirements, dates, features, architecture/design/decision language, headings, configuration keys and asset facts. Select a durable document_key alone, or filter by exact kind, language/profile, literal path prefix or statement/name substring. Prose cues include heading context, written bounds/units and modality; they are evidence candidates, not inferred obligations. Documents retain original locations; explicitly published local OCR evidence carries its own provenance and recognition limitations.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -595,6 +628,16 @@ impl AirkServer {
             &self.kernel,
             span,
             tokio::task::spawn_blocking(move || {
+                if let Some(key) = continuity_selector(
+                    args.document_key.as_deref(),
+                    false,
+                    args.name.is_some()
+                        || args.kind.is_some()
+                        || args.language.is_some()
+                        || !args.path_prefix.is_empty(),
+                )? {
+                    return kernel.continuity_facts(key, args.limit, args.max_bytes);
+                }
                 kernel.facts(&FactQuery {
                     path_prefix: args.path_prefix,
                     name: args.name,
@@ -779,6 +822,30 @@ pub async fn serve(kernel: Kernel) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn continuity_selectors_are_exact_typed_and_exclusive() {
+        let key = "01".repeat(16);
+        assert!(matches!(
+            continuity_selector(Some(&key), true, false).unwrap(),
+            Some(airk_core::continuity::ContinuityKey::Symbol(_))
+        ));
+        assert!(matches!(
+            continuity_selector(Some(&key), false, false).unwrap(),
+            Some(airk_core::continuity::ContinuityKey::Document(_))
+        ));
+        assert!(continuity_selector(Some(&key), true, true).is_err());
+        assert!(continuity_selector(Some("short"), false, false).is_err());
+        let code: CodeFactArgs =
+            serde_json::from_value(serde_json::json!({"symbol_key":key})).unwrap();
+        assert!(code.symbol_key.is_some());
+        assert!(
+            serde_json::from_value::<CodeFactArgs>(serde_json::json!({"document_key":key}))
+                .is_err()
+        );
+        let schema = serde_json::to_value(schemars::schema_for!(DocumentFactArgs)).unwrap();
+        assert!(schema["properties"].get("document_key").is_some());
+    }
 
     #[test]
     fn changes_and_conditional_schemas_preserve_scope_and_bounds() {

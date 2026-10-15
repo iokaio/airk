@@ -23,6 +23,10 @@ test('retention status distinguishes unknown bytes, pending work and failed clea
 test('retention controls preview before explicit mutation and never rewrite client settings', async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'airk-retention-controls-'));
     const root = path.join(directory, 'Original Workspace'); await fs.mkdir(root);
+    const policyFile = path.join(directory, 'original-policy.json');
+    const policyBytes = '{ "version": 1, "rules": [] }\n';
+    await fs.writeFile(policyFile, policyBytes);
+    const extractionInputs: string[] = [], snapshots: string[] = [];
     const commands = new Map<string, () => Promise<unknown>>(), calls: string[][] = [], documents: any[] = [];
     const disposable = { dispose() {} }, event = () => disposable;
     let confirm = false; const warnings: string[] = [], information: string[] = [];
@@ -37,7 +41,8 @@ test('retention controls preview before explicit mutation and never rewrite clie
         window: { createOutputChannel: () => ({ ...disposable, appendLine() {}, show() {} }), createStatusBarItem: () => ({ ...disposable, show() {} }),
             onDidChangeTextEditorSelection: event, onDidChangeActiveTextEditor: event, showErrorMessage: (error: string) => { throw new Error(error); },
             showTextDocument: async () => {}, showInformationMessage: (message: string) => { information.push(message); }, showQuickPick: async (choices: any[]) => choices.find(choice => choice.mode === 'automatic') ?? choices[0],
-            showWarningMessage: async (message: string, _options: unknown, action: string) => { warnings.push(message); return confirm ? action : undefined; } },
+            showOpenDialog: async () => [{ fsPath: policyFile }],
+            showWarningMessage: async (message: string, _options: unknown, action: string) => { warnings.push(message); if (message.includes('extraction policy')) { await fs.writeFile(policyFile, '{"version":2}'); } return confirm ? action : undefined; } },
         commands: { registerCommand: (name: string, handler: () => Promise<unknown>) => { commands.set(name, handler); return disposable; } },
         StatusBarAlignment: { Left: 1 }, EventEmitter: class { event = event; fire() {} dispose() {} }, lm: {}
     };
@@ -46,6 +51,10 @@ test('retention controls preview before explicit mutation and never rewrite clie
     native.prepareHelper = async () => '/original/helper';
     native.runJson = async (_spec: unknown, command: string, extra: string[] = []) => {
         calls.push([command, ...extra]);
+        if (extra[0] === 'extraction') {
+            if (extra[1] !== 'show') { snapshots.push(extra[3]); extractionInputs.push(await fs.readFile(extra[3], 'utf8')); }
+            return { policy: { version: 1, rules: [] }, digest: 'configured', applied_digest: 'published', pending_reindex: true, origin: extra[1] === 'validate' ? 'preview' : 'explicit' };
+        }
         if (extra[0] === 'prune') { return { dry_run: !extra.includes('--apply'), candidates: [], pinned: [], reclaimable_bytes: 123, removed_bytes: 0, ...pruneExtra }; }
         if (extra[1] === 'show') { return structuredClone(status); }
         if (extra[1] === 'preview') { return { status, candidates: [], legacy_candidates: [{ revision: 'original-legacy-digest', bytes: 456, reasons: [] }], candidates_truncated: false, estimated_reclaimable_bytes: null }; }
@@ -89,6 +98,18 @@ test('retention controls preview before explicit mutation and never rewrite clie
         await commands.get('airk.prune')!();
         assert.equal(pruneApplies(), 2, 'Pending receipt cleanup reaches apply without generation candidates');
         assert.ok(warnings.some(message => message.includes('Receipt cleanup')));
+        await commands.get('airk.extractionPolicy')!();
+        confirm = false; await commands.get('airk.configureExtractionPolicy')!();
+        assert.equal(calls.filter(call => call[1] === 'extraction' && call[2] === 'set').length, 0);
+        await fs.writeFile(policyFile, policyBytes);
+        confirm = true; await commands.get('airk.configureExtractionPolicy')!();
+        assert.deepEqual(extractionInputs, [policyBytes, policyBytes, policyBytes], 'Validate and set use identical captured bytes despite source file edits');
+        const extractionSet = calls.findIndex(call => call[1] === 'extraction' && call[2] === 'set');
+        assert.equal(calls[extractionSet - 1][2], 'validate');
+        assert.equal(calls[extractionSet - 1][4], calls[extractionSet][4]);
+        for (const snapshot of snapshots) { await assert.rejects(fs.stat(snapshot), { code: 'ENOENT' }); }
+        assert.ok(documents.some(document => document.proposed?.pending_reindex === true));
+        assert.equal(calls.filter(call => call[0] === 'index').length, 0, 'Saving policy does not implicitly index');
     } finally {
         context.subscriptions.forEach(item => item.dispose()); loader._load = original;
         native.prepareHelper = priorPrepare; native.runJson = priorRun;

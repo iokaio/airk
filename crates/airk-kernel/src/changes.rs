@@ -374,7 +374,90 @@ impl Kernel {
         let inventory = catalog.inventory.as_ref().context("v2 inventory missing")?;
         let file = match selector {
             RememberedSelector::Symbol { .. } | RememberedSelector::Document { .. } => {
-                result.reason = Some("continuity capability unsupported".into());
+                use airk_core::continuity::ContinuityKey;
+                let key = match selector {
+                    RememberedSelector::Symbol { symbol_key } => ContinuityKey::Symbol(*symbol_key),
+                    RememberedSelector::Document { document_key } => {
+                        ContinuityKey::Document(*document_key)
+                    }
+                    _ => unreachable!(),
+                };
+                let Some((path, record)) = catalog.continuity_by_key(key)? else {
+                    let events = catalog.events_since(since.map_or(0, |token| token.generation))?;
+                    if let Some(event) =
+                        events
+                            .iter()
+                            .rev()
+                            .find(|event| match (key, &event.subject) {
+                                (
+                                    ContinuityKey::Symbol(key),
+                                    ChangeSubject::Symbol { symbol_key, .. },
+                                ) => key == *symbol_key,
+                                (
+                                    ContinuityKey::Document(key),
+                                    ChangeSubject::Document { document_key, .. },
+                                ) => key == *document_key,
+                                _ => false,
+                            })
+                        && event.after.is_none()
+                        && event
+                            .before
+                            .as_ref()
+                            .and_then(|endpoint| citation_path(catalog, endpoint))
+                            .is_some_and(|path| path.starts_with(path_prefix))
+                    {
+                        result.outcome = ValidationOutcome::RemovedFromIndex;
+                        result.artifact_id = match event.subject {
+                            ChangeSubject::Symbol { artifact_id, .. }
+                            | ChangeSubject::Document { artifact_id, .. } => Some(artifact_id),
+                            _ => None,
+                        };
+                        result.reason = Some("retained observation removed this key from the index; this does not establish source deletion".into());
+                        return Ok(result);
+                    }
+                    result.reason = Some("continuity key is not in the current inventory; absence does not establish deletion".into());
+                    return Ok(result);
+                };
+                if !path.starts_with(path_prefix) {
+                    result.reason =
+                        Some("continuity key is outside the requested path scope".into());
+                    return Ok(result);
+                }
+                let file = inventory
+                    .files
+                    .get(&path)
+                    .context("continuity file missing")?;
+                result.artifact_id = Some(file.state.artifact_id);
+                result.current = Some(file.state.clone());
+                result.resolved_path = Some(path);
+                result.basis = ContinuityBasis::SamePathObservation;
+                result.validated_dimensions = record.changed.keys().copied().collect();
+                result.outcome = ValidationOutcome::Current;
+                if record.ambiguous_predecessor {
+                    result.reason = Some(
+                        "a new key was assigned because predecessor matching was ambiguous".into(),
+                    );
+                }
+                if baseline_status == BaselineStatus::Verified
+                    && let Some(since) = since
+                {
+                    result.outcome = if record.first_generation > since.generation
+                        || record
+                            .changed
+                            .values()
+                            .any(|stamp| *stamp > since.generation)
+                    {
+                        ValidationOutcome::Modified
+                    } else if record.descriptor.complete
+                        && record.descriptor.unsupported_dimensions.is_empty()
+                    {
+                        ValidationOutcome::Unchanged
+                    } else {
+                        result.reason =
+                            Some("some continuity dimensions are unsupported or incomplete".into());
+                        ValidationOutcome::Unknown
+                    };
+                }
                 return Ok(result);
             }
             RememberedSelector::Artifact { artifact_id } => {
@@ -602,11 +685,6 @@ impl Kernel {
             .context("v2 lineage missing")?
             .coverage
             .clone();
-        coverage.code = CoverageFloor {
-            complete_after: target.generation,
-            reason: Some(CoverageReason::Unsupported),
-        };
-        coverage.documents = coverage.code.clone();
         if response.baseline_status == BaselineStatus::BaselineUnavailable {
             coverage.ancestry.reason = Some(CoverageReason::BaselineUnavailable);
         }

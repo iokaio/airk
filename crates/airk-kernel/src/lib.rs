@@ -10,7 +10,9 @@ use airk_ingest::IndexReport;
 pub mod analysis;
 pub mod changes;
 mod conditional;
+mod continuity;
 pub mod coverage;
+pub mod extraction;
 pub mod limits;
 mod lineage;
 pub mod maintenance;
@@ -360,13 +362,26 @@ impl Kernel {
             previous.extractor_version.clear();
         }
         let desired_model = self.configured_model()?;
+        let desired_pipeline = if desired_model.is_some() {
+            Some(
+                airk_retrieval::model::inspect_cache_descriptor(
+                    &self.data_root.join("models/local"),
+                )?
+                .identity()?,
+            )
+        } else {
+            None
+        };
+        let prior_pipeline = self
+            .store
+            .catalog()?
+            .and_then(|catalog| catalog.inventory)
+            .and_then(|inventory| inventory.embedding_pipeline_digest);
         let roots = self.configured_roots()?;
         let reservation = self.publication_reservation()?;
         let scan_started = std::time::Instant::now();
-        let policy = airk_ingest::adapters::profile::ExtractionPolicy {
-            version: 1,
-            rules: vec![],
-        };
+        let configured_policy = self.extraction_policy()?;
+        let policy = configured_policy.policy;
         let mut prior_content = std::collections::BTreeMap::new();
         if !full {
             for old in previous.artifacts.values() {
@@ -476,11 +491,18 @@ impl Kernel {
                     return Ok(artifact.clone());
                 }
                 let hydrated = self.store.load_retained(artifact)?;
-                let payload = airk_ingest::adapters::legacy::convert_native_legacy(
-                    &hydrated, bytes, profile,
+                let payload = airk_ingest::continuity::prepare_native(&hydrated, bytes, profile)?;
+                let prepared = airk_core::binding::bind_payload(
+                    &payload,
+                    profile,
+                    airk_core::binding::ArtifactBinding {
+                        path: &hydrated.path,
+                        source_hash: hydrated.content_hash.parse()?,
+                        source_bytes: hydrated.bytes,
+                    },
                 )?;
                 self.store.retain_payload_with_budget(
-                    &hydrated,
+                    &prepared,
                     &payload,
                     profile,
                     Some(bytes),
@@ -493,7 +515,10 @@ impl Kernel {
         snapshot.persistent_indexes = true;
         snapshot.storage_format = 2;
         snapshot.embedding_model = desired_model;
-        if (snapshot.embedding_model != previous.embedding_model || previous.storage_format != 2)
+        if (snapshot.embedding_model != previous.embedding_model
+            || previous.storage_format != 2
+            || configured_policy.pending_reindex
+            || desired_pipeline != prior_pipeline)
             && snapshot.generation == previous.generation
         {
             snapshot.generation = snapshot
@@ -507,7 +532,7 @@ impl Kernel {
             || !self.store.directory().join("index.sqlite3").exists()
             || self.store.persistent_revision()?.is_none()
         {
-            report.generation = self.publish_v2_observed(
+            let (generation, embedding) = self.publish_v2_observed_metrics(
                 writer,
                 &snapshot,
                 reservation,
@@ -518,6 +543,11 @@ impl Kernel {
                 },
                 Some(&observation),
             )?;
+            report.generation = generation;
+            report.embedding_cache_hits = embedding.hits;
+            report.embedding_cache_misses = embedding.misses;
+            report.embedding_inferences = embedding.inferences;
+            report.embedding_no_vector = embedding.no_vector;
         } else {
             // Reuse must not report success for a corrupt retained component.
             self.pin_revision(
@@ -1040,6 +1070,7 @@ impl Kernel {
                 }
                 remaining -= bytes;
                 response.facts.push(FactHit {
+                    continuity_key: None,
                     name: fact.name.clone(),
                     kind: fact.kind.clone(),
                     syntax_kind: fact.syntax_kind.clone(),

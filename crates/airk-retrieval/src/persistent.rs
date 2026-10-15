@@ -2,7 +2,7 @@
 //! Immutable Tantivy/DiskANN components, selected by the complete revision digest.
 use crate::{
     bounded::{BoundedDirectory, BudgetWriter, Charge},
-    model::EmbeddingModel,
+    model::{EmbeddingCacheContext, EmbeddingModel},
     terms, truncate_utf8,
     vector::DiskIndex,
 };
@@ -204,6 +204,8 @@ pub fn prepare_streaming(
         source,
         charge.clone(),
         revision_id(snapshot)?,
+        None,
+        None,
     )?;
     let mut inventory = BudgetWriter::new(
         File::create(staging.path().join("inventory.json"))?,
@@ -245,6 +247,7 @@ pub fn prepare_streaming(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_streaming_components(
     directory: &Path,
     snapshot: &Snapshot,
@@ -252,6 +255,8 @@ fn build_streaming_components(
     source: &dyn ArtifactSource,
     charge: Charge,
     revision: String,
+    mut cache: Option<&mut EmbeddingCacheContext<'_>>,
+    expected_pipeline: Option<Sha256Digest>,
 ) -> Result<Manifest> {
     let lexical = directory.join("lexical");
     fs::create_dir(&lexical)?;
@@ -266,6 +271,20 @@ fn build_streaming_components(
     )?;
     let mut writer = index.writer_with_num_threads::<TantivyDocument>(1, 20_000_000)?;
     let model = model_directory.map(EmbeddingModel::open).transpose()?;
+    let descriptor = model
+        .as_ref()
+        .map(EmbeddingModel::cache_descriptor)
+        .transpose()?;
+    if let Some(expected) = expected_pipeline {
+        ensure!(
+            descriptor
+                .as_ref()
+                .map(|value| value.identity())
+                .transpose()?
+                == Some(expected),
+            "model pipeline changed after inventory finalization"
+        );
+    }
     ensure!(
         snapshot.embedding_model.as_deref() == model.as_ref().map(EmbeddingModel::identity),
         "model identity changed while preparing components"
@@ -291,11 +310,24 @@ fn build_streaming_components(
             }
             document.add_text(fields.path, path);
             document.add_u64(fields.ordinal, ordinal);
-            if let (Some(model), Some(graph)) = (&model, &mut graph)
-                && let Some(vector) = model.embed_text(&chunk.text)?
-            {
-                document.add_u64(fields.vector, u64::from(graph.insert(&vector)?));
-                vectors += 1;
+            if let (Some(model), Some(graph)) = (&model, &mut graph) {
+                let vector = if let Some(context) = cache.as_mut() {
+                    model.embed_cached(
+                        &chunk.text,
+                        descriptor
+                            .as_ref()
+                            .context("embedding descriptor missing")?,
+                        context.cache,
+                        context.bypass,
+                        context.stats,
+                    )?
+                } else {
+                    model.embed_text(&chunk.text)?
+                };
+                if let Some(vector) = vector {
+                    document.add_u64(fields.vector, u64::from(graph.insert(&vector)?));
+                    vectors += 1;
+                }
             }
             let hit = Hit {
                 citation: Citation {
@@ -338,6 +370,12 @@ fn build_streaming_components(
         ensure!(
             Some(copied.identity.as_str()) == model.as_ref().map(EmbeddingModel::identity),
             "model changed while building revision"
+        );
+        ensure!(
+            Some(crate::model::inspect_cache_descriptor(
+                &directory.join("model")
+            )?) == descriptor,
+            "model pipeline changed while copying revision assets"
         );
     }
     Ok(Manifest {
@@ -425,7 +463,11 @@ fn component_digests_expected(
             ensure!(
                 matches!(
                     name.as_str(),
-                    "inventory.json" | "lineage.json" | "catalog.sqlite" | "vectors.bin"
+                    "inventory.json"
+                        | "lineage.json"
+                        | "catalog.sqlite"
+                        | "vectors.bin"
+                        | "embedding-cache.json"
                 ) || name.starts_with("lexical/")
                     || name.starts_with("model/"),
                 "foreign generation component"
@@ -604,8 +646,9 @@ fn open_components_v2(directory: &Path, manifest: &ManifestV2) -> Result<(IndexR
 
 /// Build a private v2 revision; this does not advance any committed pointer.
 /// The callback must quota-charge, sync, verify and close catalog.sqlite and
-/// lineage.json before returning. It may not alter existing components or add
-/// sidecars. An existing target requires a trusted receipt and is never adopted.
+/// lineage.json before returning. It may additionally write embedding-cache.json,
+/// but may not alter existing components or add other sidecars. An existing
+/// target requires a trusted receipt and is never adopted.
 pub fn prepare_streaming_v2(
     base: &Path,
     preparation: &V2Preparation<'_>,
@@ -613,6 +656,29 @@ pub fn prepare_streaming_v2(
     source: &dyn ArtifactSource,
     charge: Option<Charge>,
     staging_parent: Option<&Path>,
+    prepare_catalog: impl FnOnce(&Path) -> Result<()>,
+) -> Result<PublicationReceipt> {
+    prepare_streaming_v2_cached(
+        base,
+        preparation,
+        model_directory,
+        source,
+        charge,
+        staging_parent,
+        None,
+        prepare_catalog,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn prepare_streaming_v2_cached(
+    base: &Path,
+    preparation: &V2Preparation<'_>,
+    model_directory: Option<&Path>,
+    source: &dyn ArtifactSource,
+    charge: Option<Charge>,
+    staging_parent: Option<&Path>,
+    cache: Option<&mut EmbeddingCacheContext<'_>>,
     prepare_catalog: impl FnOnce(&Path) -> Result<()>,
 ) -> Result<PublicationReceipt> {
     let snapshot = preparation.snapshot;
@@ -668,6 +734,8 @@ pub fn prepare_streaming_v2(
         source,
         charge.clone(),
         preparation.token.revision.to_string(),
+        cache,
+        authoritative.embedding_pipeline_digest,
     )?;
     let mut inventory = BudgetWriter::new(
         File::create(staging.path().join("inventory.json"))?,
@@ -684,7 +752,10 @@ pub fn prepare_streaming_v2(
     );
     let components = component_digests(staging.path())?;
     ensure!(
-        components.len() == before_catalog.len() + 2
+        components.len()
+            == before_catalog.len()
+                + 2
+                + usize::from(components.contains_key("embedding-cache.json"))
             && components.contains_key("catalog.sqlite")
             && components.contains_key("lineage.json")
             && before_catalog
@@ -1066,5 +1137,120 @@ impl PersistentIndex {
             response.hits.push(hit);
         }
         response
+    }
+}
+
+#[cfg(test)]
+mod pipeline_tests {
+    use super::*;
+    use airk_core::{Artifact, Chunk, DocumentLocation};
+    use std::path::PathBuf;
+
+    struct ChangingSource {
+        snapshot: Snapshot,
+        model: PathBuf,
+        change: bool,
+    }
+    impl ArtifactSource for ChangingSource {
+        fn load_artifact(&self, path: &str) -> Result<Artifact> {
+            if self.change {
+                let manifest = self.model.join("model.json");
+                let mut value: serde_json::Value = serde_json::from_slice(&fs::read(&manifest)?)?;
+                value["name"] = "changed while building".into();
+                fs::write(manifest, serde_json::to_vec(&value)?)?;
+            }
+            self.snapshot.load_artifact(path)
+        }
+    }
+
+    #[test]
+    fn prepared_pipeline_must_match_inventory_and_copied_assets() -> Result<()> {
+        let temporary = tempfile::tempdir()?;
+        let model = temporary.path().join("model");
+        fs::create_dir(&model)?;
+        let vocabulary = br#"{"original":[1.0,0.0]}"#;
+        fs::write(model.join("vocabulary.json"), vocabulary)?;
+        fs::write(
+            model.join("model.json"),
+            serde_json::to_vec(
+                &serde_json::json!({"schema":1,"name":"original race fixture","license":"Apache-2.0","dimensions":2,"sha256":format!("{:x}",Sha256::digest(vocabulary))}),
+            )?,
+        )?;
+        let expected = crate::model::inspect_cache_descriptor(&model)?.identity()?;
+        let mut snapshot = Snapshot::empty("original pipeline fixture".into());
+        snapshot.embedding_model = Some(crate::model::inspect(&model)?.identity);
+        snapshot.artifacts.insert(
+            "original.txt".into(),
+            Artifact {
+                path: "original.txt".into(),
+                content_hash: format!("{:x}", Sha256::digest(b"original")),
+                bytes: 8,
+                chunks: vec![Chunk {
+                    start_line: 1,
+                    end_line: 1,
+                    text: "original".into(),
+                    location: DocumentLocation::Lines { start: 1, end: 1 },
+                }],
+                language: "text".into(),
+                extraction_method: "utf8".into(),
+                parse_status: "complete".into(),
+                facts: vec![],
+                retained: None,
+            },
+        );
+        let charge: Charge = std::sync::Arc::new(|_| Ok(()));
+        let wrong = temporary.path().join("wrong");
+        fs::create_dir(&wrong)?;
+        let error = build_streaming_components(
+            &wrong,
+            &snapshot,
+            Some(&model),
+            &snapshot,
+            charge.clone(),
+            "fixture".into(),
+            None,
+            Some(Sha256Digest::from_bytes([0; 32])),
+        )
+        .err()
+        .context("mismatched inventory pipeline accepted")?;
+        assert!(error.to_string().contains("inventory finalization"));
+        let legacy = temporary.path().join("legacy");
+        fs::create_dir(&legacy)?;
+        build_streaming_components(
+            &legacy,
+            &snapshot,
+            Some(&model),
+            &snapshot,
+            charge.clone(),
+            "fixture".into(),
+            None,
+            None,
+        )?;
+        let race = temporary.path().join("race");
+        fs::create_dir(&race)?;
+        let source = ChangingSource {
+            snapshot: snapshot.clone(),
+            model: model.clone(),
+            change: true,
+        };
+        let error = build_streaming_components(
+            &race,
+            &snapshot,
+            Some(&model),
+            &source,
+            charge,
+            "fixture".into(),
+            None,
+            Some(expected),
+        )
+        .err()
+        .context("model metadata race accepted")?;
+        assert!(error.to_string().contains("copying revision assets"));
+        assert_eq!(
+            crate::model::inspect(&model)?.identity,
+            snapshot.embedding_model.unwrap(),
+            "legacy vocabulary identity cannot detect this race"
+        );
+        Ok(())
     }
 }

@@ -75,6 +75,101 @@ impl Drop for Session {
 }
 
 #[test]
+fn durable_key_reads_match_cli_and_mcp_and_reject_filter_combinations() -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let state = tempfile::tempdir()?;
+    fs::write(
+        root.path().join("original.rs"),
+        "pub fn original_evidence() -> u32 { 7 }\n",
+    )?;
+    fs::write(
+        root.path().join("original.md"),
+        "# Original evidence\n\nThe original client must retain its local evidence.\n",
+    )?;
+    let run = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_airk"))
+            .arg("--root")
+            .arg(root.path())
+            .arg("--data-dir")
+            .arg(state.path())
+            .args(["--collection", "project-a"])
+            .env("AIRK_USAGE_MODE", "disabled")
+            .args(args)
+            .output()
+    };
+    let cli = |args: &[&str]| -> anyhow::Result<Value> {
+        let output = run(args)?;
+        anyhow::ensure!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(serde_json::from_slice(&output.stdout)?)
+    };
+    cli(&["index"])?;
+    let code = cli(&["code-facts", "--name", "original_evidence"])?;
+    let symbol_key = code["facts"][0]["continuity_key"]["key"]
+        .as_str()
+        .expect("qualified symbol key");
+    let documents = cli(&["facts", "--kind", "section"])?;
+    let document_key = documents["facts"][0]["continuity_key"]["key"]
+        .as_str()
+        .expect("qualified document key");
+    let mut session = Session::start(root.path(), state.path())?;
+    session.send(json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"original-key-parity","version":"1"}}}))?;
+    session.receive(1)?;
+    session.send(json!({"jsonrpc":"2.0","method":"notifications/initialized"}))?;
+    session.send(json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}))?;
+    assert_eq!(
+        session.receive(2)?["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .len(),
+        15
+    );
+    for (id, command, option, tool, field, key) in [
+        (
+            3,
+            "code-facts",
+            "--symbol-key",
+            "airk_code_facts",
+            "symbol_key",
+            symbol_key,
+        ),
+        (
+            4,
+            "facts",
+            "--document-key",
+            "airk_document_facts",
+            "document_key",
+            document_key,
+        ),
+    ] {
+        let mut expected = cli(&[command, option, key, "--limit", "10"])?;
+        let result = session.call(id, tool, json!({(field):key,"limit":10}))?;
+        assert_ne!(result["result"]["isError"], true, "{result}");
+        let mut actual: Value = serde_json::from_str(
+            result["result"]["content"][0]["text"]
+                .as_str()
+                .expect("tool payload"),
+        )?;
+        for response in [&mut expected, &mut actual] {
+            response.as_object_mut().unwrap().remove("request_id");
+        }
+        assert_eq!(actual, expected);
+        assert!(!actual["facts"].as_array().unwrap().is_empty());
+        assert!(
+            !run(&[command, option, key, "--name", "original"])?
+                .status
+                .success()
+        );
+        let invalid = session.call(id + 10, tool, json!({(field):key,"name":"original"}))?;
+        assert!(invalid["result"]["isError"] == true || invalid.get("error").is_some());
+    }
+    Ok(())
+}
+
+#[test]
 fn changes_cli_and_mcp_share_results_and_conditional_validators() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let state = tempfile::tempdir()?;
@@ -234,7 +329,7 @@ fn concurrent_mcp_agents_share_one_index_and_refresh_after_publication() -> anyh
                         evidence(agent.call(2, "airk_search", json!({"query":"authenticate"}))?)?;
                     assert_eq!(payload["generation"], old_generation);
                     assert_eq!(payload["collection"], "project-a");
-                    assert_eq!(payload["hits"][0]["text"], old_text);
+                    assert_eq!(payload["hits"][0]["text"], old_text.trim_end_matches('\n'));
                     Ok(())
                 })
             })
@@ -268,9 +363,9 @@ fn concurrent_mcp_agents_share_one_index_and_refresh_after_publication() -> anyh
                         assert_eq!(
                             payload["hits"][0]["text"],
                             if generation == old_generation {
-                                old_text
+                                old_text.trim_end_matches('\n')
                             } else {
-                                new_text
+                                new_text.trim_end_matches('\n')
                             }
                         );
                     }
@@ -290,7 +385,7 @@ fn concurrent_mcp_agents_share_one_index_and_refresh_after_publication() -> anyh
     for agent in &mut agents {
         let payload = evidence(agent.call(100, "airk_search", json!({"query":"authenticate"}))?)?;
         assert_eq!(payload["generation"], published["generation"]);
-        assert_eq!(payload["hits"][0]["text"], new_text);
+        assert_eq!(payload["hits"][0]["text"], new_text.trim_end_matches('\n'));
         let hash = payload["hits"][0]["citation"]["content_hash"].clone();
         assert!(hash.as_str().is_some());
         if let Some(expected) = &shared_hash {

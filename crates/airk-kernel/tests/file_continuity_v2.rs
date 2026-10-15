@@ -44,6 +44,8 @@ fn inventory(generation: u64, files: &[(&str, &str)]) -> Result<InventoryV2> {
         .clone();
     let profile_id = profile.identity()?;
     let mut inventory = InventoryV2 {
+        embedding_pipeline_digest: None,
+        extraction_policy_digest: None,
         version: 2,
         incarnation: Incarnation::from_bytes([1; 16]),
         generation,
@@ -68,6 +70,8 @@ fn inventory(generation: u64, files: &[(&str, &str)]) -> Result<InventoryV2> {
         inventory.files.insert(
             (*path).into(),
             InventoryFile {
+                continuity: Vec::new(),
+                continuity_coverage: Default::default(),
                 state: FileState {
                     artifact_id: ArtifactId::from_bytes(identity),
                     stamps: FileStamps {

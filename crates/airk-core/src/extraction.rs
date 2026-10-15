@@ -179,6 +179,8 @@ pub struct LocalSyntaxIdentity {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LocalCodeEvidence {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fingerprints: Option<crate::continuity::CodeFingerprints>,
     pub syntax_id: LocalSyntaxId,
     pub owner_id: Option<LocalSyntaxId>,
     pub qualified_name: String,
@@ -238,14 +240,7 @@ pub struct LocalRegion {
     pub location: crate::location::RegionLocation,
 }
 
-/// Full-span fingerprints, never hashes of truncated display strings.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ContinuityDescriptor {
-    pub local_id: u32,
-    pub algorithm_version: u32,
-    pub dimensions: BTreeMap<String, crate::identity::Sha256Digest>,
-}
+pub use crate::continuity::ContinuityDescriptor;
 
 /// Artifact-level provenance remains present even when extraction emits no facts.
 /// Attributes preserve bounded producer options/coverage; immutable assets use
@@ -264,6 +259,9 @@ pub struct ExtractionProvenance {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExtractionPayload {
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub continuity_coverage:
+        BTreeMap<crate::continuity::ContinuityFamily, crate::continuity::ContinuityCoverage>,
     pub contract_version: u32,
     pub extraction_method: String,
     /// Exact original parse status, including legacy serialized OCR provenance.
@@ -329,7 +327,7 @@ impl ExtractionPayload {
         anyhow::ensure!(
             self.regions.len() <= 256
                 && self.relationships.len() <= 10_000
-                && self.continuity.len() <= 10_000
+                && self.continuity.len() <= crate::continuity::MAX_CONTINUITY_UNITS
                 && self.syntax_identities.len() <= 20_000,
             "payload metadata exceeds limits"
         );
@@ -563,12 +561,60 @@ impl ExtractionPayload {
                 );
             }
         }
+        let mut descriptors = BTreeMap::new();
         for descriptor in &self.continuity {
+            use crate::continuity::ContinuitySubject;
             anyhow::ensure!(
-                owners.contains_key(&descriptor.local_id) && descriptor.dimensions.len() <= 32,
+                descriptor.algorithm_version == crate::continuity::CONTINUITY_VERSION
+                    && descriptors.insert(descriptor.subject, descriptor).is_none()
+                    && !descriptor.category.is_empty()
+                    && descriptor.category.len() <= 256
+                    && descriptor.dimensions.len() <= 12
+                    && descriptor.unsupported_dimensions.len() <= 12
+                    && descriptor
+                        .unsupported_dimensions
+                        .iter()
+                        .all(|dimension| !descriptor.dimensions.contains_key(dimension)),
                 "invalid continuity descriptor"
             );
+            anyhow::ensure!(
+                match descriptor.subject {
+                    ContinuitySubject::Syntax(id) => syntax_identities
+                        .get(&id)
+                        .is_some_and(|item| item.region == descriptor.region),
+                    ContinuitySubject::Fact(id) => owners
+                        .get(&id)
+                        .is_some_and(|item| item.region == descriptor.region),
+                    ContinuitySubject::Region(id) => regions.contains_key(&id),
+                    ContinuitySubject::Unit(_) => true,
+                },
+                "continuity subject is missing or in a foreign region"
+            );
+            crate::location::ByteSpan {
+                start: descriptor.span.start,
+                end: descriptor.span.end,
+            }
+            .validate(local_text(descriptor.region)?)?;
         }
+        for descriptor in &self.continuity {
+            let mut owner = descriptor.owner;
+            let mut depth = 0;
+            while let Some(id) = owner {
+                depth += 1;
+                anyhow::ensure!(
+                    id != descriptor.subject && depth <= 128,
+                    "cyclic continuity owner"
+                );
+                owner = descriptors
+                    .get(&id)
+                    .ok_or_else(|| anyhow::anyhow!("missing continuity owner"))?
+                    .owner;
+            }
+        }
+        anyhow::ensure!(
+            serde_json::to_vec(&self.continuity)?.len() <= crate::continuity::MAX_CONTINUITY_BYTES,
+            "continuity descriptor byte budget exceeded"
+        );
         // Includes nested document/table/code evidence in the durable bound.
         anyhow::ensure!(
             serde_json::to_vec(self)?.len() <= 67_108_864,
@@ -594,6 +640,7 @@ mod tests {
 
     fn empty_payload() -> ExtractionPayload {
         ExtractionPayload {
+            continuity_coverage: BTreeMap::new(),
             contract_version: 1,
             extraction_method: "ocr-tesseract".into(),
             parse_status: "{\"schema\":1,\"pages_with_text\":0,\"first_page\":2,\"last_page\":2}"
@@ -660,6 +707,7 @@ mod tests {
             },
         ];
         let code = LocalCodeEvidence {
+            fingerprints: None,
             syntax_id: LocalSyntaxId(2),
             owner_id: Some(LocalSyntaxId(1)),
             qualified_name: "A::run".into(),
@@ -783,6 +831,7 @@ mod tests {
     #[test]
     fn payload_rejects_invalid_utf8_spans_and_owner_cycles() {
         let mut p = ExtractionPayload {
+            continuity_coverage: BTreeMap::new(),
             contract_version: 1,
             extraction_method: "fixture".into(),
             parse_status: "syntax".into(),

@@ -377,12 +377,13 @@ fn add_document(
                 end.saturating_sub(start)
             })
             .map(|c| c.symbol_id.clone());
-        let code=CodeEvidence {span:Some(CodeSpan {start_byte:start,end_byte:end}),signature_span:None,symbol_id:id.clone(),qualified_name:qualified,scope,owner_id:owner.clone(),signature:info.and_then(|i|i.signature_documentation.as_ref()).map(|s|bounded(&s.text)),parameters:None,return_type:None,modifiers:Vec::new(),documentation:info.and_then(|i|i.documentation.first()).map(|s|bounded(s)),target:None,basis:EvidenceBasis::Imported,producer:m.producer.clone(),producer_version:m.producer_version.clone(),coverage:"Hash-bound producer assertion; precision depends on producer/build, not AIRK type analysis".into(),details_truncated:info.is_some_and(|i|i.signature_documentation.as_ref().is_some_and(|s|s.text.len()>1024) || i.documentation.iter().any(|s|s.len()>1024))};
+        let code=CodeEvidence {fingerprints:None,span:Some(CodeSpan {start_byte:start,end_byte:end}),signature_span:None,symbol_id:id.clone(),qualified_name:qualified,scope,owner_id:owner.clone(),signature:info.and_then(|i|i.signature_documentation.as_ref()).map(|s|bounded(&s.text)),parameters:None,return_type:None,modifiers:Vec::new(),documentation:info.and_then(|i|i.documentation.first()).map(|s|bounded(s)),target:None,basis:EvidenceBasis::Imported,producer:m.producer.clone(),producer_version:m.producer_version.clone(),coverage:"Hash-bound producer assertion; precision depends on producer/build, not AIRK type analysis".into(),details_truncated:info.is_some_and(|i|i.signature_documentation.as_ref().is_some_and(|s|s.text.len()>1024) || i.documentation.iter().any(|s|s.len()>1024))};
         ensure!(
             code.qualified_name.len() <= 1024,
             "SCIP display name too long"
         );
         snapshot.imported_facts.push(FactHit {
+            continuity_key: None,
             name: name.into(),
             kind: if is_definition {
                 "definition"

@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Deliberately provisioned local embedding adapters; no runtime asset downloads.
 use crate::{onnx::OnnxModel, vector::LocalModel};
+use airk_core::{
+    embedding::{EmbeddingCache, EmbeddingDescriptor, lookup_embedding, store_embedding},
+    identity::framed_digest,
+};
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -49,6 +53,21 @@ pub struct ModelInfo {
 pub enum EmbeddingModel {
     WordVectors(LocalModel),
     Onnx(Box<OnnxModel>),
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct EmbeddingCacheStats {
+    pub hits: u64,
+    pub misses: u64,
+    pub inferences: u64,
+    pub no_vector: u64,
+}
+
+pub struct EmbeddingCacheContext<'a> {
+    pub cache: Option<&'a dyn EmbeddingCache>,
+    /// Full rebuild skips lookup, but verifies/stores recomputed entries.
+    pub bypass: bool,
+    pub stats: &'a mut EmbeddingCacheStats,
 }
 
 pub(crate) fn read_asset(directory: &Path, name: &str, maximum: u64) -> Result<Vec<u8>> {
@@ -146,21 +165,17 @@ pub(crate) fn onnx_manifest(bytes: &[u8]) -> Result<(OnnxManifest, String)> {
     Ok((manifest, format!("{:x}", digest.finalize())))
 }
 
-/// Inspect and verify all assets without compiling an inference plan.
-pub fn inspect(directory: &Path) -> Result<ModelInfo> {
+enum VerifiedManifest {
+    Word(crate::vector::ModelManifest),
+    Onnx(Box<OnnxManifest>, String),
+}
+
+fn inspect_assets(directory: &Path) -> Result<VerifiedManifest> {
     let bytes = read_asset(directory, "model.json", 16_384)?;
     let value: serde_json::Value = serde_json::from_slice(&bytes)?;
     if value["schema"] == 1 {
         let model = LocalModel::open(directory)?;
-        return Ok(ModelInfo {
-            identity: model.manifest.sha256,
-            name: model.manifest.name,
-            license: model.manifest.license,
-            backend: "local-word-vectors/mean/l2-normalized",
-            dimensions: model.manifest.dimensions,
-            max_tokens: None,
-            max_input_bytes: None,
-        });
+        return Ok(VerifiedManifest::Word(model.manifest));
     }
     let (manifest, identity) = onnx_manifest(&bytes)?;
     verified_asset(
@@ -176,15 +191,44 @@ pub fn inspect(directory: &Path) -> Result<ModelInfo> {
         &manifest.tokenizer_sha256,
     )?;
     verified_asset(directory, "LICENSE", 65_536, &manifest.license_sha256)?;
-    Ok(ModelInfo {
-        identity,
-        name: manifest.name,
-        license: manifest.license,
-        backend: ONNX_RUNTIME,
-        dimensions: manifest.dimensions,
-        max_tokens: Some(manifest.max_tokens),
-        max_input_bytes: Some(MAX_INPUT_BYTES),
+    Ok(VerifiedManifest::Onnx(Box::new(manifest), identity))
+}
+
+/// Inspect and verify all assets without compiling an inference plan.
+pub fn inspect(directory: &Path) -> Result<ModelInfo> {
+    Ok(match inspect_assets(directory)? {
+        VerifiedManifest::Word(manifest) => ModelInfo {
+            identity: manifest.sha256,
+            name: manifest.name,
+            license: manifest.license,
+            backend: "local-word-vectors/mean/l2-normalized",
+            dimensions: manifest.dimensions,
+            max_tokens: None,
+            max_input_bytes: None,
+        },
+        VerifiedManifest::Onnx(manifest, identity) => ModelInfo {
+            identity,
+            name: manifest.name,
+            license: manifest.license,
+            backend: ONNX_RUNTIME,
+            dimensions: manifest.dimensions,
+            max_tokens: Some(manifest.max_tokens),
+            max_input_bytes: Some(MAX_INPUT_BYTES),
+        },
     })
+}
+
+/// Verify the complete cache pipeline without compiling ONNX inference.
+/// Returns the same descriptor as an opened model with these verified assets.
+pub fn inspect_cache_descriptor(directory: &Path) -> Result<EmbeddingDescriptor> {
+    match inspect_assets(directory)? {
+        VerifiedManifest::Word(manifest) => {
+            descriptor_from_manifest(DescriptorManifest::Word(&manifest))
+        }
+        VerifiedManifest::Onnx(manifest, _) => {
+            descriptor_from_manifest(DescriptorManifest::Onnx(&manifest))
+        }
+    }
 }
 
 impl EmbeddingModel {
@@ -227,6 +271,102 @@ impl EmbeddingModel {
             Self::Onnx(model) => model.embed_text(text),
         }
     }
+
+    /// Complete pipeline identity, separate from the legacy model display identity.
+    pub fn cache_descriptor(&self) -> Result<EmbeddingDescriptor> {
+        descriptor_from_manifest(match self {
+            Self::WordVectors(model) => DescriptorManifest::Word(&model.manifest),
+            Self::Onnx(model) => DescriptorManifest::Onnx(&model.manifest),
+        })
+    }
+
+    pub fn embed_cached(
+        &self,
+        text: &str,
+        descriptor: &EmbeddingDescriptor,
+        cache: Option<&dyn EmbeddingCache>,
+        bypass: bool,
+        stats: &mut EmbeddingCacheStats,
+    ) -> Result<Option<Vec<f32>>> {
+        airk_core::embedding::embedding_key(descriptor, text.as_bytes())?;
+        if let Some(cache) = cache.filter(|_| !bypass) {
+            if let Some(vector) = lookup_embedding(cache, descriptor, text.as_bytes())? {
+                stats.hits += 1;
+                return Ok(Some(vector));
+            }
+            stats.misses += 1;
+        }
+        stats.inferences += 1;
+        let vector = self.embed_text(text)?;
+        if let Some(vector) = &vector {
+            if let Some(cache) = cache {
+                store_embedding(cache, descriptor, text.as_bytes(), vector.clone())?;
+            }
+        } else {
+            stats.no_vector += 1;
+        }
+        Ok(vector)
+    }
+}
+
+#[derive(Clone, Copy)]
+enum DescriptorManifest<'a> {
+    Word(&'a crate::vector::ModelManifest),
+    Onnx(&'a OnnxManifest),
+}
+
+fn descriptor_from_manifest(source: DescriptorManifest<'_>) -> Result<EmbeddingDescriptor> {
+    let (manifest, tokenizer, preprocessing, pooling, runtime, dimensions) = match source {
+        DescriptorManifest::Word(manifest) => (
+            serde_json::to_vec(manifest)?,
+            serde_json::to_vec(&(
+                "unicode-alphanumeric-or-underscore/split/unicode-lowercase/1",
+                std::char::UNICODE_VERSION,
+            ))?,
+            b"exact-utf8/no-truncation/unknown-token-skip/1".to_vec(),
+            b"sum-f64/l2-f64/cast-f32/zero-or-empty-none/1".to_vec(),
+            b"airk-local-word-vectors/1".to_vec(),
+            manifest.dimensions,
+        ),
+        DescriptorManifest::Onnx(manifest) => (
+            serde_json::to_vec(manifest)?,
+            manifest.tokenizer_sha256.as_bytes().to_vec(),
+            serde_json::to_vec(&(
+                MAX_INPUT_BYTES,
+                manifest.max_tokens,
+                "tokenizers-0.23.2/fancy-regex/utf8-boundary-prefix/trim-empty-none/add-special-tokens/right-longest-first-truncation-stride0/right-fixed-padding-PAD-type0/1",
+            ))?,
+            manifest.pooling.as_bytes().to_vec(),
+            ONNX_RUNTIME.as_bytes().to_vec(),
+            manifest.dimensions,
+        ),
+    };
+    let digest = |domain: &[u8], value: &[u8]| framed_digest(domain, &[value]);
+    let descriptor = EmbeddingDescriptor {
+        version: 1,
+        model: digest(b"airk-model-manifest/1", &manifest),
+        tokenizer: digest(b"airk-tokenizer/1", &tokenizer),
+        preprocessing: digest(b"airk-preprocessing/1", &preprocessing),
+        pooling: digest(b"airk-pooling/1", &pooling),
+        normalization: digest(
+            b"airk-normalization/1",
+            match source {
+                DescriptorManifest::Word(_) => b"l2-f64-to-f32/zero-norm-none/1",
+                DescriptorManifest::Onnx(_) => b"l2-f64-to-f32/zero-norm-error/1",
+            },
+        ),
+        inference: framed_digest(
+            b"airk-inference/1",
+            &[
+                &runtime,
+                std::env::consts::ARCH.as_bytes(),
+                std::env::consts::OS.as_bytes(),
+            ],
+        ),
+        dimensions: dimensions as u32,
+    };
+    descriptor.validate()?;
+    Ok(descriptor)
 }
 
 impl airk_core::EmbeddingProvider for EmbeddingModel {
@@ -247,6 +387,147 @@ impl airk_core::EmbeddingProvider for EmbeddingModel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use airk_core::{embedding::CachedEmbedding, identity::Sha256Digest};
+    use std::{collections::BTreeMap, sync::Mutex};
+
+    #[derive(Default)]
+    struct Cache(Mutex<BTreeMap<Sha256Digest, CachedEmbedding>>);
+    impl EmbeddingCache for Cache {
+        fn lookup(&self, key: &Sha256Digest) -> Result<Option<CachedEmbedding>> {
+            Ok(self.0.lock().unwrap().get(key).cloned())
+        }
+        fn store(&self, entry: &CachedEmbedding) -> Result<()> {
+            self.0.lock().unwrap().insert(entry.key, entry.clone());
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn actual_model_cache_avoids_inference_and_full_bypass_matches() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let vocabulary = br#"{"original":[1.0,0.0],"fixture":[0.0,1.0]}"#;
+        fs::write(directory.path().join("vocabulary.json"), vocabulary)?;
+        let mut manifest = crate::vector::ModelManifest {
+            schema: 1,
+            name: "original fixture".into(),
+            license: "Apache-2.0".into(),
+            sha256: format!("{:x}", Sha256::digest(vocabulary)),
+            dimensions: 2,
+        };
+        fs::write(
+            directory.path().join("model.json"),
+            serde_json::to_vec(&manifest)?,
+        )?;
+        let model = EmbeddingModel::open(directory.path())?;
+        let descriptor = model.cache_descriptor()?;
+        let tokenizer_contract = serde_json::to_vec(&(
+            "unicode-alphanumeric-or-underscore/split/unicode-lowercase/1",
+            std::char::UNICODE_VERSION,
+        ))?;
+        assert_eq!(
+            descriptor.tokenizer,
+            framed_digest(b"airk-tokenizer/1", &[&tokenizer_contract]),
+            "cache identity binds the actual Rust Unicode tables"
+        );
+        assert_eq!(inspect_cache_descriptor(directory.path())?, descriptor);
+        assert_eq!(inspect(directory.path())?.identity, model.identity());
+        let cache = Cache::default();
+        let mut stats = EmbeddingCacheStats::default();
+        let cold = model.embed_cached(
+            "original fixture",
+            &descriptor,
+            Some(&cache),
+            false,
+            &mut stats,
+        )?;
+        assert!(cold.is_some());
+        assert_eq!((stats.hits, stats.misses, stats.inferences), (0, 1, 1));
+        assert_eq!(
+            model.embed_cached(
+                "original fixture",
+                &descriptor,
+                Some(&cache),
+                false,
+                &mut stats
+            )?,
+            cold
+        );
+        assert_eq!((stats.hits, stats.misses, stats.inferences), (1, 1, 1));
+        assert_eq!(
+            model.embed_cached(
+                "original fixture",
+                &descriptor,
+                Some(&cache),
+                true,
+                &mut stats
+            )?,
+            cold
+        );
+        assert_eq!(stats.inferences, 2);
+        model.embed_cached(
+            "original fixture\n",
+            &descriptor,
+            Some(&cache),
+            false,
+            &mut stats,
+        )?;
+        assert_eq!(stats.misses, 2, "exact byte differences cannot hit");
+        for _ in 0..2 {
+            assert!(
+                model
+                    .embed_cached("unknown", &descriptor, Some(&cache), false, &mut stats)?
+                    .is_none()
+            );
+        }
+        assert_eq!(stats.no_vector, 2);
+        assert_eq!(
+            stats.inferences, 5,
+            "no-vector outcome is not fabricated or cached as a vector"
+        );
+        manifest.name = "different manifest".into();
+        fs::write(
+            directory.path().join("model.json"),
+            serde_json::to_vec(&manifest)?,
+        )?;
+        assert_ne!(
+            EmbeddingModel::open(directory.path())?.cache_descriptor()?,
+            descriptor
+        );
+        assert_eq!(
+            inspect_cache_descriptor(directory.path())?,
+            EmbeddingModel::open(directory.path())?.cache_descriptor()?
+        );
+        assert_eq!(
+            EmbeddingModel::open(directory.path())?.identity(),
+            model.identity(),
+            "legacy word identity remains vocabulary digest"
+        );
+        let renamed = inspect_cache_descriptor(directory.path())?;
+        manifest.license = "Original additional provenance".into();
+        fs::write(
+            directory.path().join("model.json"),
+            serde_json::to_vec(&manifest)?,
+        )?;
+        assert_ne!(inspect_cache_descriptor(directory.path())?, renamed);
+        cache
+            .0
+            .lock()
+            .unwrap()
+            .values_mut()
+            .for_each(|entry| entry.vector[0] = 123.0);
+        assert!(
+            model
+                .embed_cached(
+                    "original fixture",
+                    &descriptor,
+                    Some(&cache),
+                    false,
+                    &mut stats
+                )
+                .is_err()
+        );
+        Ok(())
+    }
     fn manifest() -> OnnxManifest {
         OnnxManifest {
             schema: 2,
@@ -286,6 +567,89 @@ mod tests {
         spec = manifest();
         spec.attention_mask = spec.input_ids.clone();
         assert!(onnx_manifest(&serde_json::to_vec(&spec)?).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn onnx_pipeline_inspection_verifies_assets_without_compiling_fake_model() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        // Original opaque assets exercise inspection only, not ONNX execution.
+        let assets: [(&str, &[u8]); 3] = [
+            ("model.onnx", b"original non-ONNX inspection fixture"),
+            (
+                "tokenizer.json",
+                b"original non-tokenizer inspection fixture",
+            ),
+            ("LICENSE", b"original fixture license"),
+        ];
+        for (name, bytes) in assets {
+            fs::write(directory.path().join(name), bytes)?;
+        }
+        let mut spec = manifest();
+        spec.model_sha256 = format!("{:x}", Sha256::digest(assets[0].1));
+        spec.tokenizer_sha256 = format!("{:x}", Sha256::digest(assets[1].1));
+        spec.license_sha256 = format!("{:x}", Sha256::digest(assets[2].1));
+        let write = |value: &OnnxManifest| -> Result<()> {
+            fs::write(
+                directory.path().join("model.json"),
+                serde_json::to_vec(value)?,
+            )?;
+            Ok(())
+        };
+        write(&spec)?;
+        let original = inspect_cache_descriptor(directory.path())?;
+        assert_eq!(
+            original,
+            descriptor_from_manifest(DescriptorManifest::Onnx(&spec))?
+        );
+        assert_eq!(
+            inspect(directory.path())?.identity,
+            onnx_manifest(&serde_json::to_vec(&spec)?)?.1
+        );
+        let mut changed = spec.clone();
+        changed.max_tokens = 16;
+        write(&changed)?;
+        let context = inspect_cache_descriptor(directory.path())?;
+        assert_ne!(context.preprocessing, original.preprocessing);
+        assert_eq!(context.tokenizer, original.tokenizer);
+        for changed in [
+            OnnxManifest {
+                name: "changed name".into(),
+                ..spec.clone()
+            },
+            OnnxManifest {
+                revision: "changed revision".into(),
+                ..spec.clone()
+            },
+            OnnxManifest {
+                source: "https://example.invalid/changed".into(),
+                ..spec.clone()
+            },
+            OnnxManifest {
+                token_type_ids: Some("token_types".into()),
+                ..spec.clone()
+            },
+            OnnxManifest {
+                output: "different_output".into(),
+                ..spec.clone()
+            },
+        ] {
+            write(&changed)?;
+            assert_ne!(inspect_cache_descriptor(directory.path())?, original);
+            assert_eq!(
+                inspect_cache_descriptor(directory.path())?,
+                descriptor_from_manifest(DescriptorManifest::Onnx(&changed))?
+            );
+        }
+        write(&spec)?;
+        for (name, bytes) in assets {
+            fs::write(directory.path().join(name), b"corrupt")?;
+            assert!(
+                inspect_cache_descriptor(directory.path()).is_err(),
+                "asset {name} must verify before a cache identity is trusted"
+            );
+            fs::write(directory.path().join(name), bytes)?;
+        }
         Ok(())
     }
     #[test]

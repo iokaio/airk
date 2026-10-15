@@ -1,0 +1,104 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Explicit extraction-policy controls; saved policy takes effect on indexing.
+use crate::Kernel;
+use airk_core::{
+    extraction::AdapterDescriptor,
+    identity::{RevisionToken, Sha256Digest, framed_digest},
+};
+pub use airk_ingest::adapters::profile::ExtractionPolicy;
+use anyhow::Result;
+use serde::Serialize;
+
+#[derive(Serialize)]
+pub struct ExtractionPolicyStatus {
+    pub policy: ExtractionPolicy,
+    pub digest: Sha256Digest,
+    pub origin: String,
+    pub applied_digest: Option<Sha256Digest>,
+    pub pending_reindex: bool,
+    pub publication: Option<RevisionToken>,
+    pub adapters: Vec<AdapterDescriptor>,
+}
+
+pub(crate) fn policy_digest(policy: &ExtractionPolicy) -> Result<Sha256Digest> {
+    Ok(framed_digest(
+        b"extraction-policy/1",
+        &[&serde_json::to_vec(policy)?],
+    ))
+}
+impl Kernel {
+    pub fn extraction_policy(&self) -> Result<ExtractionPolicyStatus> {
+        let bytes = self.store.extraction_policy_bytes(&self.root_id())?;
+        let registry = airk_ingest::adapters::registry::AdapterRegistry::baseline();
+        let policy = match &bytes {
+            Some(bytes) => ExtractionPolicy::parse(bytes, &registry)?,
+            None => ExtractionPolicy {
+                version: 1,
+                rules: vec![],
+            },
+        };
+        self.extraction_policy_status(
+            policy,
+            if bytes.is_some() {
+                "explicit"
+            } else {
+                "default"
+            },
+        )
+    }
+    fn extraction_policy_status(
+        &self,
+        policy: ExtractionPolicy,
+        origin: &str,
+    ) -> Result<ExtractionPolicyStatus> {
+        let registry = airk_ingest::adapters::registry::AdapterRegistry::baseline();
+        policy.validate(&registry)?;
+        let catalog = self.store.catalog()?;
+        if let Some(catalog) = &catalog {
+            anyhow::ensure!(
+                catalog.snapshot.root == self.root_id()
+                    && catalog.snapshot.collection == self.collection,
+                "foreign extraction policy collection"
+            );
+        }
+        let applied_digest = catalog
+            .as_ref()
+            .and_then(|catalog| catalog.inventory.as_ref())
+            .and_then(|inventory| inventory.extraction_policy_digest);
+        let digest = policy_digest(&policy)?;
+        let publication = catalog
+            .as_ref()
+            .and_then(|catalog| catalog.receipt.as_ref())
+            .map(|receipt| receipt.token);
+        Ok(ExtractionPolicyStatus {
+            policy,
+            digest,
+            origin: origin.into(),
+            applied_digest,
+            pending_reindex: applied_digest != Some(digest),
+            publication,
+            adapters: registry.descriptors().cloned().collect(),
+        })
+    }
+    pub fn validate_extraction_policy(
+        &self,
+        policy: &ExtractionPolicy,
+    ) -> Result<ExtractionPolicyStatus> {
+        self.extraction_policy_status(policy.clone(), "preview")
+    }
+    pub fn configure_extraction_policy(
+        &self,
+        policy: ExtractionPolicy,
+    ) -> Result<ExtractionPolicyStatus> {
+        let writer = self.store.lock()?;
+        self.validate_extraction_policy(&policy)?;
+        let quota = airk_store::quota::Quota::open(&self.data_root)?;
+        self.store.configure_extraction_policy_bytes(
+            &writer,
+            &quota,
+            &self.root_id(),
+            &serde_json::to_vec(&policy)?,
+        )?;
+        self.extraction_policy_status(policy, "explicit")
+    }
+}
