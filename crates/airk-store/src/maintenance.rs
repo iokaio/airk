@@ -86,7 +86,7 @@ impl Default for MaintenanceBudget {
     }
 }
 impl MaintenanceBudget {
-    fn validate(self) -> Result<()> {
+    pub(crate) fn validate(self) -> Result<()> {
         ensure!(
             (1..=256).contains(&self.max_candidates)
                 && (16 * 1024..=64 * 1024 * 1024).contains(&self.max_metadata_bytes)
@@ -104,6 +104,8 @@ pub enum ProtectionReason {
     Active,
     Predecessor,
     Reader,
+    History,
+    Conversion,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ProtectedRevision {
@@ -236,7 +238,7 @@ fn collection(store: &FileStore) -> Result<String> {
         .context("collection name missing")?
         .into())
 }
-fn check_writer(store: &FileStore, writer: &WriterLock, quota: &Quota) -> Result<()> {
+pub(crate) fn check_writer(store: &FileStore, writer: &WriterLock, quota: &Quota) -> Result<()> {
     ensure!(
         writer.path == store.directory().canonicalize()?.join("writer.lock"),
         "foreign collection writer guard"
@@ -281,7 +283,7 @@ fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Option<T>> {
     );
     Ok(Some(serde_json::from_slice(&bytes)?))
 }
-fn sync_parent(path: &Path) -> Result<()> {
+pub(crate) fn sync_parent(path: &Path) -> Result<()> {
     #[cfg(unix)]
     {
         File::open(path)?.sync_all()?;
@@ -292,7 +294,7 @@ fn sync_parent(path: &Path) -> Result<()> {
     }
     Ok(())
 }
-fn write_json<T: Serialize>(
+pub(crate) fn write_json<T: Serialize>(
     store: &FileStore,
     path: &Path,
     value: &T,
@@ -501,7 +503,7 @@ fn process_locked(
 /// Verify every remaining component against the separately retained anchored
 /// manifest. Missing components are allowed only after durable authorization;
 /// this makes interruption halfway through physical deletion resumable.
-fn delete_verified_remaining(
+pub(crate) fn delete_verified_remaining(
     store: &FileStore,
     directory: &Path,
     saved_manifest: &Path,
@@ -632,19 +634,33 @@ fn gc(
     dry_run: bool,
     report: &mut ObjectProjection,
 ) -> Result<()> {
-    if !intent_paths(store)?.is_empty() || !legacy::paths(store)?.is_empty() {
+    if !intent_paths(store)?.is_empty()
+        || !legacy::paths(store)?.is_empty()
+        || crate::history::pending_count(store)? > 0
+    {
         report.pending = true;
         return Ok(());
     }
-    for unsupported in ["history", "checkpoints"] {
-        ensure!(
-            !store.directory().join(unsupported).exists(),
-            "history/checkpoint roots require a qualified GC adapter"
-        );
-    }
+    ensure!(
+        !store.directory().join("checkpoints").exists(),
+        "checkpoint roots require a qualified GC adapter"
+    );
     let mut sources = BTreeSet::new();
     let mut artifacts = BTreeSet::new();
     let mut embeddings = BTreeSet::new();
+    for history in crate::history::verified_roots(store, &mut |bytes| work.metadata(bytes))? {
+        for dependency in history.descriptor.dependencies {
+            match dependency.kind {
+                crate::history::DependencyKind::Source => {
+                    sources.insert(dependency.digest.to_string());
+                }
+                crate::history::DependencyKind::Payload => {
+                    artifacts.insert(dependency.digest.to_string());
+                }
+                _ => anyhow::bail!("unsupported historical GC dependency"),
+            }
+        }
+    }
     let base = store.directory().join("generations");
     plain(&base)?;
     for entry in fs::read_dir(&base)? {
@@ -866,7 +882,7 @@ struct ScanCursor {
     after_generation: Option<u64>,
 }
 
-struct WorkBudget {
+pub(crate) struct WorkBudget {
     limit: MaintenanceBudget,
     started: Instant,
     metadata: u64,
@@ -877,7 +893,18 @@ struct WorkBudget {
     scanned_through: Option<u64>,
 }
 impl WorkBudget {
-    fn new(limit: MaintenanceBudget) -> Result<Self> {
+    pub(crate) fn remove_file(&mut self, path: &Path, bytes: u64) -> Result<bool> {
+        if self.expired() || bytes > self.limit.max_removal_bytes.saturating_sub(self.removed) {
+            return Ok(false);
+        }
+        fs::remove_file(path)?;
+        self.removed += bytes;
+        Ok(true)
+    }
+    pub(crate) fn removed_bytes(&self) -> u64 {
+        self.removed
+    }
+    pub(crate) fn new(limit: MaintenanceBudget) -> Result<Self> {
         limit.validate()?;
         Ok(Self {
             limit,
@@ -890,10 +917,10 @@ impl WorkBudget {
             scanned_through: None,
         })
     }
-    fn expired(&self) -> bool {
+    pub(crate) fn expired(&self) -> bool {
         self.started.elapsed() >= Duration::from_millis(self.limit.max_duration_ms)
     }
-    fn metadata(&mut self, bytes: u64) -> Result<()> {
+    pub(crate) fn metadata(&mut self, bytes: u64) -> Result<()> {
         self.metadata = self
             .metadata
             .checked_add(bytes)
@@ -903,7 +930,7 @@ impl WorkBudget {
         }
         Ok(())
     }
-    fn entry(&mut self) -> Result<()> {
+    pub(crate) fn entry(&mut self) -> Result<()> {
         self.entries += 1;
         if self.entries > MAX_SCAN_ENTRIES {
             return Err(WorkLimit.into());
@@ -1072,14 +1099,16 @@ fn preview_work(
         collection: collection(store)?,
         active: Some(active.token),
         policy,
-        history_supported: false,
+        history_supported: true,
         checkpoints_supported: false,
         logical_bytes: None,
         protected_bytes: None,
         protected: vec![],
         legacy_protected: vec![],
         protected_truncated: false,
-        pending_intents: intent_paths(store)?.len() + legacy::paths(store)?.len(),
+        pending_intents: intent_paths(store)?.len()
+            + legacy::paths(store)?.len()
+            + crate::history::pending_count(store)?,
         pending_bytes: None,
         last_maintenance: store.last_maintenance()?,
         pressure: store
@@ -1139,6 +1168,47 @@ fn preview_work(
             .directory()
             .join("generations")
             .join(receipt.token.revision.to_string());
+        if let Some(binding) = crate::sqlite::history_binding(store.directory(), &receipt.token)? {
+            if !crate::history::retired_package(store, &binding, &mut |bytes| work.metadata(bytes))?
+            {
+                crate::history::verify_package(
+                    store,
+                    &store
+                        .directory()
+                        .join("history")
+                        .join(receipt.token.revision.to_string()),
+                    &binding,
+                    &mut |bytes| work.metadata(bytes),
+                )?;
+            }
+            work.scanned_through = Some(
+                work.scanned_through
+                    .unwrap_or(0)
+                    .max(receipt.token.generation),
+            );
+            if status.protected.len() < 256 {
+                status.protected.push(ProtectedRevision {
+                    token: receipt.token,
+                    reasons: vec![ProtectionReason::History],
+                    bytes: None,
+                });
+            } else {
+                status.protected_truncated = true;
+            }
+            continue;
+        }
+        if crate::history::conversion_intent(store, &receipt.token)?.is_some() {
+            if status.protected.len() < 256 {
+                status.protected.push(ProtectedRevision {
+                    token: receipt.token,
+                    reasons: vec![ProtectionReason::Conversion],
+                    bytes: None,
+                });
+            } else {
+                status.protected_truncated = true;
+            }
+            continue;
+        }
         ensure!(
             path.is_dir(),
             "committed representation missing without retirement proof"
@@ -1333,13 +1403,28 @@ impl FileStore {
             ) && self.retention_policy()?.policy.mode == RetentionMode::Manual
             {
                 receipt.state = MaintenanceState::Disabled;
-                receipt.pending =
-                    !intent_paths(self)?.is_empty() || !legacy::paths(self)?.is_empty();
+                receipt.pending = !intent_paths(self)?.is_empty()
+                    || !legacy::paths(self)?.is_empty()
+                    || crate::history::pending_count(self)? > 0;
                 return Ok(None);
             }
             let reservation =
                 quota.reserve_available(&collection(self)?, budget.max_metadata_bytes)?;
             let mut work = WorkBudget::new(budget)?;
+            if crate::history::pending_count(self)? > 0 {
+                let predecessor = active_parent(self, &active, &mut work)?;
+                let result = crate::history::recover_conversions(
+                    self,
+                    active.token,
+                    predecessor,
+                    &reservation,
+                    &mut work,
+                    budget.max_candidates,
+                )?;
+                receipt.examined += result.conversions.len() + result.removals.len();
+                receipt.pending |= result.pending;
+                receipt.reclaimed_bytes = work.removed_bytes();
+            }
             work.planning = trigger != MaintenanceTrigger::ExplicitLegacyPrune;
             let cursor_path = self.directory().join("maintenance/scan-cursor.json");
             if work.planning
@@ -1491,7 +1576,8 @@ impl FileStore {
                         .any(|reason| matches!(reason, ProtectionReason::Reader))
                 })
                 || !intent_paths(self)?.is_empty()
-                || !legacy::paths(self)?.is_empty();
+                || !legacy::paths(self)?.is_empty()
+                || crate::history::pending_count(self)? > 0;
             // Unselected obsolete generations remain GC roots. A retirement
             // backlog must not postpone reclaim of already unreferenced objects.
             if !work.expired() {

@@ -226,6 +226,28 @@ fn validate_workspace_boundaries(
                 roots.insert(format!("published:{alias}"), path);
             }
         }
+        let mut verified_bytes = 0u64;
+        for historical in
+            crate::history::verified_roots(&crate::FileStore::new(&directory), &mut |bytes| {
+                verified_bytes = verified_bytes
+                    .checked_add(bytes)
+                    .context("historical relocation verification overflow")?;
+                ensure!(
+                    verified_bytes <= 64 * 1024 * 1024,
+                    "historical relocation verification exceeds bound"
+                );
+                Ok(())
+            })?
+        {
+            let token = historical.descriptor.publication.token;
+            roots.insert(
+                format!("historical:{token}:primary"),
+                historical.inventory.root,
+            );
+            for (alias, path) in historical.inventory.roots {
+                roots.insert(format!("historical:{token}:{alias}"), path);
+            }
+        }
         for root in roots.values() {
             let root = Path::new(root);
             ensure!(
@@ -596,8 +618,10 @@ fn finish(marker: &Marker, manifest: &Manifest) -> Result<RelocationResult> {
         let retirement = if parts.len() == 5
             && parts[0] == "collections"
             && parts[2] == "maintenance"
-            && matches!(parts[3], "intents" | "legacy-intents")
-        {
+            && matches!(
+                parts[3],
+                "intents" | "legacy-intents" | "history-intents" | "history-retirements"
+            ) {
             parts[4]
                 .strip_suffix(".json")
                 .filter(|revision| crate::blobs::valid_digest(revision))
@@ -617,7 +641,7 @@ fn finish(marker: &Marker, manifest: &Manifest) -> Result<RelocationResult> {
         }
         if parts.len() >= 5
             && parts[0] == "collections"
-            && parts[2] == "generations"
+            && matches!(parts[2], "generations" | "history")
             && crate::blobs::valid_digest(parts[3])
         {
             let lease = checked_target(

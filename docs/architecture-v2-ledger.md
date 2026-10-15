@@ -110,7 +110,7 @@ All rows require section 15 acceptance, including profile/move reuse, original c
 
 | ID | Scope | Status | Owner | Prerequisite / next action | Changed files / receipts | Platforms / outstanding failures |
 |---|---|---|---|---|---|---|
-| H1 | historical storage | in_progress | lifecycle worker + integrator | P5; frozen history V1/root-pointer v4 with explicit v3 readers | history.rs, SQLite binding, lease/GC/lifecycle integration and original crash fixtures | Native focused compile/testing underway; not qualified |
+| H1 | historical storage | qualified | lifecycle worker + integrator | P5; D10 history V1/root-pointer v4; proceed H2 | [Storage contract and fault receipts](v2-history-storage.md) | Windows 12+1/Linux-container 13 tests passed; macOS/final qualification P12 |
 | H2 | historical API/controls | pending | integrator / worker TBD | After H1 / by 8; freeze prerequisite contracts | None | Unqualified |
 | O1b | shared model ownership | pending | integrator / worker TBD | After 5 and verified object-reference contract / by 8; freeze prerequisite contracts | None | Unqualified |
 | O2a | incremental catalog | pending | integrator / worker TBD | After 7 and stable catalog schema / by 11; freeze prerequisite contracts | None | Unqualified |
@@ -264,3 +264,5 @@ Migration-preparation review also found syntax owners can exist without emitted 
 - H1 is implemented for qualification with separate authenticated history descriptors, original receipt identity, conversion/removal intents, canonical leases and explicit v3/v4 root-pointer dispatch. No history capability is advertised until its fault/GC/lease tests pass. P8 helpers are prepared but remain unwired and outside P7/H1 commits.
 
 - Accepted P7 Linux receipts: 132 ingest unit tests passed, one intentional helper ignored; 12 kernel tests passed across six new test targets. The final correction run reran only the schema and repair targets (five tests): both passed. The original composer fixture was below the conservative 64-byte move floor; meaningful project metadata corrected the fixture without changing identity rules. Outline fixtures now obey existing public budgets. No dependencies changed; notice regeneration and broad workspace/platform matrices remain scheduled for their owning gates. D9: [project profiles](v2-project-profiles.md).
+
+- H1 accepted: [D10 storage contract](v2-history-storage.md), Windows 12+1 and Linux-container 13 focused tests passed; Windows store clippy and relevant lineage/maintenance/publication regressions passed. P7 committed as bd02cad. H2 public controls remain pending; no automatic history capability or push/PR implied.
