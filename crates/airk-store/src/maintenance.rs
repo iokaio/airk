@@ -1716,6 +1716,10 @@ impl FileStore {
         match attempt {
             Ok(value) => reservation = value,
             Err(error) => {
+                // A later bounded GC/receipt step may fail after the remaining
+                // generation preview cleared this flag. The pass did not prove
+                // completion, so a subsequent maintenance run must remain due.
+                receipt.pending = true;
                 receipt.pressure = error
                     .chain()
                     .find_map(|cause| cause.downcast_ref::<QuotaPressure>())

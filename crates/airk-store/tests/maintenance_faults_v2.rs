@@ -105,7 +105,11 @@ fn every_durable_retirement_boundary_recovers_idempotently() -> Result<()> {
             },
         );
         assert!(visited.get(), "did not reach {stage:?}");
-        assert!(run.receipt.pending || run.receipt.error.is_some());
+        assert!(
+            run.receipt.pending,
+            "interrupted maintenance needs continuation"
+        );
+        assert!(run.receipt.error.is_some());
         assert_eq!(
             fixture.store.persistent_revision()?.unwrap().token,
             fixture.tokens.last().copied()
