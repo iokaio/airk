@@ -179,6 +179,109 @@ fn finish_pending_objects(fixture: &Fixture) -> Result<()> {
     anyhow::bail!("bounded maintenance continuations did not converge to exact retained objects")
 }
 
+fn finish_pending_generations(fixture: &Fixture) -> Result<usize> {
+    if generations(&fixture.store)?.len() <= 2 {
+        return Ok(0);
+    }
+    let catalog = fixture
+        .store
+        .catalog()?
+        .context("published catalog missing")?;
+    let head = catalog
+        .receipt
+        .as_ref()
+        .context("publication receipt missing")?
+        .token;
+    let mut protected = BTreeSet::from([head.revision.to_string()]);
+    if let Some(parent) = catalog
+        .lineage
+        .as_ref()
+        .and_then(|lineage| lineage.observation.parent)
+    {
+        protected.insert(parent.revision.to_string());
+    }
+    drop(catalog);
+    for continuation in 0..=8 {
+        let retained = generations(&fixture.store)?;
+        ensure!(
+            protected.iter().all(|revision| retained.contains(revision)),
+            "maintenance removed active/predecessor generation"
+        );
+        ensure!(
+            fixture.store.persistent_revision()?.unwrap().token == Some(head),
+            "maintenance advanced publication head"
+        );
+        if retained.len() <= 2 {
+            return Ok(continuation);
+        }
+        let receipt = fixture
+            .kernel
+            .retention_status()?
+            .last_maintenance
+            .context("deferred generation cleanup has no receipt")?;
+        ensure!(
+            receipt.head == Some(head)
+                && receipt.pending
+                && receipt.state == airk_store::retention::MaintenanceState::Pending
+                && receipt.pressure.is_none(),
+            "extra generations require truthful, same-publication bounded-work deferral: {receipt:?}"
+        );
+        ensure!(
+            continuation < 8,
+            "bounded generation continuations failed to reach two retained revisions: {retained:?}"
+        );
+        let run = fixture.kernel.maintain_retention_with_budget(
+            airk_store::retention::MaintenanceBudget {
+                max_duration_ms: 10_000,
+                ..Default::default()
+            },
+        )?;
+        ensure!(
+            run.receipt_persisted,
+            "continuation receipt was not persisted"
+        );
+    }
+    unreachable!("bounded continuation loop returns or fails")
+}
+
+#[test]
+fn deferred_postcommit_generation_retirement_is_pending_and_converges_without_publication()
+-> Result<()> {
+    let mut fixture = Fixture::new()?;
+    fixture.automatic()?;
+    fixture.edit(0)?;
+    fixture.edit(1)?;
+    finish_pending_generations(&fixture)?;
+    let ordinary = fixture.kernel.clone();
+    let observed = Arc::new(AtomicUsize::new(0));
+    let calls = observed.clone();
+    fixture.kernel = fixture
+        .kernel
+        .with_retention_observer(Arc::new(move |stage| {
+            if stage == MaintenanceStage::IntentDurable {
+                calls.fetch_add(1, Ordering::SeqCst);
+                // Deadline exhaustion before authorization must leave the full
+                // representation intact, with a recoverable pending receipt.
+                std::thread::sleep(std::time::Duration::from_millis(1100));
+            }
+            Ok(())
+        }));
+    let head = fixture.edit(2)?;
+    fixture.kernel = ordinary;
+    assert_eq!(observed.load(Ordering::SeqCst), 1);
+    assert_eq!(generations(&fixture.store)?.len(), 3);
+    assert!(finish_pending_generations(&fixture)? > 0);
+    assert_eq!(generations(&fixture.store)?.len(), 2);
+    assert_eq!(
+        fixture.store.persistent_revision()?.unwrap().token,
+        Some(head)
+    );
+    finish_pending_objects(&fixture)?;
+    assert_eq!(files(&fixture.store.directory().join("objects"))?.len(), 4);
+    assert_eq!(fixture.kernel.retention_status()?.pending_intents, 0);
+    Ok(())
+}
+
 #[test]
 fn deferred_postcommit_object_gc_is_pending_and_converges_without_publication() -> Result<()> {
     let mut fixture = Fixture::new()?;
@@ -225,12 +328,18 @@ fn two_hundred_real_edits_reach_searchable_and_content_plateau() -> Result<()> {
     let mut previous = None;
     let mut tail = vec![];
     let mut total_tail = vec![];
+    let mut continuations = 0;
     for edit in 0..200 {
         let token = fixture.edit(edit)?;
         if let Some(previous) = previous {
             assert_eq!(token.generation, previous + 1);
         }
         previous = Some(token.generation);
+        // The postcommit deadline is cooperative, not a promise that all
+        // retirement completes synchronously under arbitrary build contention.
+        // Require truthful pending state and bounded convergence before measuring
+        // the same strict two-generation/content plateau.
+        continuations += finish_pending_generations(&fixture)?;
         let retained = generations(&fixture.store)?;
         assert!(
             retained.len() <= 2,
@@ -270,8 +379,9 @@ fn two_hundred_real_edits_reach_searchable_and_content_plateau() -> Result<()> {
         "only two source/payload pairs should survive"
     );
     let status = fixture.kernel.retention_status()?;
-    assert!(!status.history_supported && !status.checkpoints_supported);
+    assert!(status.history_supported && status.checkpoints_supported);
     assert_eq!(status.pending_intents, 0);
+    eprintln!("200-edit retention: {continuations} bounded generation cleanup continuations");
     eprintln!(
         "200-edit retention: content/search tail={min}..{max}; total logical tail={}..{} (includes independently bounded growing lineage/catalog)",
         total_tail.iter().min().unwrap(),
@@ -643,6 +753,8 @@ fn retention_default_for_new_collection_is_automatic_with_recorded_origin() -> R
     kernel.initialize()?;
     let status = kernel.retention_status()?;
     assert_eq!(status.policy.policy.mode, RetentionMode::Automatic);
+    assert!(status.history_supported && status.checkpoints_supported);
+    assert_eq!(status.pending_intents, 0);
     assert_eq!(
         status.policy.origin,
         airk_store::retention::PolicyOrigin::NewCollectionDefault
