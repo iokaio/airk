@@ -21,7 +21,7 @@ export function coverageLabel(view: CoverageView | undefined): string {
 }
 export function coverageDetails(name: string, view: CoverageView | undefined, unsaved: number): string {
     const report = view?.report;
-    const rows = [`${name} — click to Index Now`];
+    const rows = [`${name} — click to open AIRK controls`];
     if (report) {
         rows.push(`${report.current} of ${report.eligible} eligible files current; ${report.stale} stale; ${report.missing} awaiting indexing`,
             `${report.extraction_failed} extraction failed; ${report.capacity_blocked} capacity blocked; ${report.unreadable} unreadable`,

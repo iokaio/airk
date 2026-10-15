@@ -46,7 +46,7 @@ class Controller implements vscode.Disposable {
     private disposed = false;
 
     constructor(private readonly context: vscode.ExtensionContext) {
-        this.status.command = 'airk.index'; this.status.show();
+        this.status.command = 'airk.menu'; this.status.show();
         this.scheduler = new Scheduler(this.options(), (spec, full, automatic) => this.index(spec, full, automatic),
             () => this.updateStatus(), (spec, error) => this.output.appendLine(`${spec.name}: ${String(error)}`));
         this.coverage = new CoverageQueue(spec => this.writeNative<Coverage>(spec, 'coverage', ['--refresh']), () => this.updateStatus());
@@ -151,8 +151,8 @@ class Controller implements vscode.Disposable {
         const unsaved = spec ? (vscode.workspace.textDocuments ?? []).filter(document => document.isDirty && eligibleEvent(this.sourcePath(document.uri.fsPath), spec.root, spec.dataDir)).length : 0;
         this.status.tooltip = spec ? coverageDetails(spec.name, view || undefined, unsaved)
             + `\n${retentionSummary(this.retentionViews.get(JSON.stringify([spec.dataDir, spec.collection])))}`
-            + `\nAuto-indexing: ${this.scheduler?.isPaused ? 'paused' : this.options().mode}${state?.pending ? '; indexing pending' : ''}\nAIRK: Open Controls is available in the command palette.`
-            : 'Select a workspace folder to index. AIRK: Open Controls is available in the command palette.';
+            + `\nAuto-indexing: ${this.scheduler?.isPaused ? 'paused' : this.options().mode}${state?.pending ? '; indexing pending' : ''}\nClick to open AIRK controls.`
+            : 'Select a workspace folder to index. Click to open AIRK controls.';
     }
     private sourcePath(file: string): string {
         // Editors/events retain opened aliases (including Windows short paths).
@@ -442,19 +442,30 @@ class Controller implements vscode.Disposable {
         this.trusted(); return definition;
     }
     async menu(): Promise<void> {
-        const commands = [
-            ['Index Now', 'airk.index'], ['Reindex Collection', 'airk.reindex'], ['Choose Indexing Mode', 'airk.indexMode'],
-            ['Pause Auto-indexing', 'airk.pause'], ['Resume Auto-indexing', 'airk.resume'], ['Choose Index Storage', 'airk.chooseStorage'],
-            ['Manage Collections and Disk Space', 'airk.collections'], ['Remove Unneeded Collection', 'airk.removeCollection'],
-            ['Trim Obsolete Index Generations', 'airk.prune'],
-            ['Show Retention Status', 'airk.retention'], ['Choose Retention Policy', 'airk.retentionPolicy'], ['Run Retention Maintenance', 'airk.retentionRun'],
-            ['Show History Status', 'airk.history'], ['Choose History Policy', 'airk.historyPolicy'], ['Run History Maintenance', 'airk.historyRun'],
-            ['List Retained Publication Identities', 'airk.historyAvailable'], ['Show Checkpoints', 'airk.checkpoints'], ['Create Checkpoint', 'airk.createCheckpoint'], ['Remove Checkpoint', 'airk.removeCheckpoint'], ['Preview Logical History Purge', 'airk.purgeHistory'],
-            ['Show Extraction Policy', 'airk.extractionPolicy'], ['Configure Extraction Policy', 'airk.configureExtractionPolicy'],
-            ['Set Up Coding Agent', 'airk.setupAgent'], ['Verify Native MCP Connection', 'airk.verifyMcp'], ['Workspace Coverage', 'airk.status'], ['Local Usage and Estimated Savings', 'airk.usage'], ['Show Output', 'airk.logs']
+        const groups: { label: string; commands: [string, string][] }[] = [
+            { label: 'Indexing', commands: [
+                ['Index Now', 'airk.index'], ['Reindex Collection', 'airk.reindex'], ['Choose Indexing Mode', 'airk.indexMode'],
+                ['Pause Auto-indexing', 'airk.pause'], ['Resume Auto-indexing', 'airk.resume']] },
+            { label: 'Collections and storage', commands: [
+                ['Choose Index Storage', 'airk.chooseStorage'], ['Manage Collections and Disk Space', 'airk.collections'],
+                ['Remove Unneeded Collection', 'airk.removeCollection'], ['Trim Obsolete Index Generations', 'airk.prune']] },
+            { label: 'Retention and history', commands: [
+                ['Show Retention Status', 'airk.retention'], ['Choose Retention Policy', 'airk.retentionPolicy'], ['Run Retention Maintenance', 'airk.retentionRun'],
+                ['Show History Status', 'airk.history'], ['Choose History Policy', 'airk.historyPolicy'], ['Run History Maintenance', 'airk.historyRun'],
+                ['List Retained Publication Identities', 'airk.historyAvailable'], ['Show Checkpoints', 'airk.checkpoints'],
+                ['Create Checkpoint', 'airk.createCheckpoint'], ['Remove Checkpoint', 'airk.removeCheckpoint'], ['Preview Logical History Purge', 'airk.purgeHistory']] },
+            { label: 'Extraction', commands: [['Show Extraction Policy', 'airk.extractionPolicy'], ['Configure Extraction Policy', 'airk.configureExtractionPolicy']] },
+            { label: 'Reports and setup', commands: [
+                ['Workspace Coverage', 'airk.status'], ['Local Usage and Estimated Savings', 'airk.usage'],
+                ['Set Up Coding Agent', 'airk.setupAgent'], ['Verify Native MCP Connection', 'airk.verifyMcp'], ['Show Output', 'airk.logs']] }
         ];
-        const choice = await vscode.window.showQuickPick(commands.map(([label, command]) => ({ label, command })), { title: 'AIRK controls' });
-        if (choice) { await vscode.commands.executeCommand(choice.command); }
+        const items: (vscode.QuickPickItem & { command?: string })[] = [];
+        for (const group of groups) {
+            items.push({ label: group.label, kind: vscode.QuickPickItemKind.Separator });
+            items.push(...group.commands.map(([label, command]) => ({ label, command })));
+        }
+        const choice = await vscode.window.showQuickPick(items, { title: 'AIRK controls' });
+        if (choice?.command) { await vscode.commands.executeCommand(choice.command); }
     }
     configure(): void { const options = this.options(); this.scheduler.configure(options); this.coverage?.configure(options.quietMs, options.mode === 'idle' ? options.idleMs : 0); }
     dispose(): void { this.disposed = true; clearInterval(this.rescan); this.coverage.dispose(); this.scheduler.dispose(); this.definitions.dispose(); this.status.dispose(); this.output.dispose(); }

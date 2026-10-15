@@ -37,7 +37,7 @@ The indexing-mode Quick Pick offers Manual, After edits settle, On save and When
 
 The [extraction-policy controls](extraction-policy.md) show the configured digest, published applied digest and pending-index state. Configuration captures a private copy of the selected JSON file, validates and previews it, then saves those same bytes only after confirmation. It offers an explicit **Index now** action afterward. Reading policy does not index; saving does not reinterpret existing evidence. The selected file and workspace/client settings are unchanged, and temporary input is removed on cancellation or failure. Existing native adapter capabilities remain the limit of each override.
 
-[Workspace coverage](index-coverage.md) implements the current/eligible file percentage with a native, bounded inventory. Clicking queues **Index Now** for the active editor's folder; multi-root workspaces without an active match prompt for a folder. The tooltip shows stale/missing/extraction-failed/capacity counts and unsaved editor documents. Incomplete scans and new disk events show unknown coverage; zero eligibility never becomes 100%. **AIRK: Open Controls** remains a separate palette command.
+[Workspace coverage](index-coverage.md) implements the current/eligible file percentage with a native, bounded inventory. Clicking the status item opens grouped AIRK controls, including **Index Now** for the active editor's folder; multi-root workspaces without an active match prompt for a folder. The tooltip shows stale/missing/extraction-failed/capacity counts and unsaved editor documents. Incomplete scans and new disk events show unknown coverage; zero eligibility never becomes 100%. **AIRK: Open Controls** is also a palette command.
 
 ## Scheduler and space behavior
 

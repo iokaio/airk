@@ -16,7 +16,7 @@ Document facts include heading context, dates, requirement IDs and modality, num
 
 Extension identity: **iokaio.airk**. Display name: **AIRK — Artifact Indexing and Retrieval Kernel** (beta). Version **0.1.0** has platform-specific packages; check the package's preview/stable channel before installing. The Windows package is **airk-0.1.0-win32-x64.vsix**; Linux and macOS use the matching platform suffix.
 
-Install the VSIX for your platform through **Extensions: Install from VSIX**. Open a folder and grant workspace trust. The **AIRK** status item shows measured coverage for the active folder; click it to index. Use **AIRK: Open Controls** in the command palette for other controls. Each workspace folder gets an isolated collection. VS Code discovers the collection through AIRK's MCP provider; use **MCP: List Servers** to enable it.
+Install the VSIX for your platform through **Extensions: Install from VSIX**. Open a folder and grant workspace trust. The **AIRK** status item shows measured coverage for the active folder; click it to open grouped controls, including **Index Now**. The controls are also available through **AIRK: Open Controls** in the command palette. Each workspace folder gets an isolated collection. VS Code discovers the collection through AIRK's MCP provider; use **MCP: List Servers** to enable it.
 
 - **Index Now / Reindex Collection**: incremental indexing or full re-extraction.
 - **Choose Indexing Mode**: after edits settle (default), when idle, on save, or manual.
