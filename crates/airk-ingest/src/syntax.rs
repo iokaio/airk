@@ -32,6 +32,15 @@ pub(crate) fn analyze_selected(
     adapter_id: &str,
 ) -> anyhow::Result<Analysis> {
     match adapter_id {
+        "ocaml" | "ocaml-interface" | "haskell" | "erlang" | "fsharp" | "fsharp-signature" => {
+            return crate::languages_b_functional::analyze(path, text, adapter_id);
+        }
+        "nix" | "zig" | "julia" | "clojure" | "edn" => {
+            return crate::languages_b_data::analyze(path, text, adapter_id);
+        }
+        "r" | "perl" | "groovy" | "gradle-groovy" => {
+            return crate::languages_b_r_perl_groovy::analyze(path, text, adapter_id);
+        }
         "dart" | "scala" | "elixir" | "objc" | "objcpp" => {
             return crate::languages_a::analyze(path, text, adapter_id);
         }
@@ -67,6 +76,18 @@ pub(crate) fn analyze_selected_budgeted(
     );
     if adapter_id == "scss" {
         return crate::scss::analyze_budgeted(path, text, budget);
+    }
+    if matches!(
+        adapter_id,
+        "ocaml" | "ocaml-interface" | "haskell" | "erlang" | "fsharp" | "fsharp-signature"
+    ) {
+        return crate::languages_b_functional::analyze_budgeted(path, text, adapter_id, budget);
+    }
+    if matches!(adapter_id, "nix" | "zig" | "julia" | "clojure" | "edn") {
+        return crate::languages_b_data::analyze_budgeted(path, text, adapter_id, budget);
+    }
+    if matches!(adapter_id, "r" | "perl" | "groovy" | "gradle-groovy") {
+        return crate::languages_b_r_perl_groovy::analyze_budgeted(path, text, adapter_id, budget);
     }
     anyhow::ensure!(
         !matches!(

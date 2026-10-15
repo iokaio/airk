@@ -1,0 +1,11 @@
+// SPDX-License-Identifier: Apache-2.0
+plugins {
+  id 'java-library'
+}
+dependencies {
+  implementation 'example:archive:1.0'
+}
+tasks.register('render') {
+  doLast { println 'café 🦀' }
+}
+include 'archive-core'

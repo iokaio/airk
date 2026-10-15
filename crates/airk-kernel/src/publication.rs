@@ -246,7 +246,7 @@ impl Kernel {
                     indexed_lines: if reference
                         .profile
                         .as_ref()
-                        .is_some_and(|profile| profile.adapter_version == "composite-facts/1")
+                        .is_some_and(|profile| profile.contract_version == 2)
                         && artifact.extraction_method == "utf8"
                     {
                         std::str::from_utf8(&self.store.read_retained_source(artifact)?)?

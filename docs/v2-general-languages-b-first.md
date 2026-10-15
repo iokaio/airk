@@ -1,0 +1,25 @@
+# General languages B: first batch
+
+This adapter batch covers written R, Perl and Groovy syntax, a distinct Gradle Groovy overlay, and mapped R Markdown chunks. The focused P10 gate passed the six original first-batch unit tests on Windows and five kernel pipeline cases on Linux. These are bounded extraction and reuse receipts, not complete language or platform qualification.
+
+Pinned dependencies admitted for this batch are:
+
+| Crate pin | Archive SHA-256 | Provenance and native build |
+| --- | --- | --- |
+| [tree-sitter-r 1.3.0](https://static.crates.io/crates/tree-sitter-r/tree-sitter-r-1.3.0.crate) | `ffc9954ec870dcad6cffdd302b405306c68cf031ed79a78cd9746f6740d9fe20` | MIT license included; revision `f2289db204dda2bf7c7ea720de5c2a2c3eff2530`; ABI 14, C11 parser and C scanner. |
+| [ts-parser-perl 2.0.0](https://static.crates.io/crates/ts-parser-perl/ts-parser-perl-2.0.0.crate), aliased as `tree-sitter-perl` | `db3cd8574afc19af4d3db44fe0cf94a5e8fc3f4056c0326baf5ba01a29666129` | MIT license included; revision `50904961d6a87c5191e611276aa2ecb9d66ca4ff`, dirty archive marker; ABI 15, C parser/scanner. Archive checksum is authoritative. |
+| [dekobon-tree-sitter-groovy 0.3.0](https://static.crates.io/crates/dekobon-tree-sitter-groovy/dekobon-tree-sitter-groovy-0.3.0.crate), aliased as `tree-sitter-groovy` | `ad65fc9637f84f0baf90c88ac337ab068dd7a9260390e473d9496e380685e2d9` | Apache-2.0 OR MIT, both license files included; revision `654e4c2d736571dbc512043a1dc26017c7aedc85`; ABI 15, C parser/scanner; Rust 1.85 minimum. |
+
+All expose `LanguageFn` through `tree-sitter-language` 0.1 and include conditional MSVC UTF-8 flags. None requires a second Tree-sitter runtime or executing R, Perl, Groovy, Gradle or Node. The similarly named `tree-sitter-perl` 1.1.2 has a normal runtime dependency on Tree-sitter 0.26 and was not selected. The original Groovy 0.1.2 archive and exact upstream tree omit their license file; the approved fork includes explicit license texts. The grammars compiled and their original adapter unit fixtures passed on Windows. Final P12 platform and release qualification remains pending.
+
+R facts cover simple written assignment targets, function assignments, selected calls and structural literal `library`/`require`/`requireNamespace` package-load candidates. Rightward assignments preserve written direction. Calls do not resolve package exports or evaluate argument expressions. Perl facts cover packages, named subroutines/methods, `use`, selected literal `require` expressions and selected calls. Ambiguous `.pl`, `.pm` and `.t` selection must use explicit policy or a bounded strong Perl discriminator, such as a Perl shebang; suffix alone is insufficient. R uses case-preserving `.r`/`.R`, and R Markdown uses `.Rmd` under its own host profile.
+
+Groovy facts cover packages/imports, classes/methods, selected named closures and calls. `.gradle` has a separate effective profile and adds structural plugins/tasks/dependencies/modules/configurations candidates. Written arguments remain expressions, without project evaluation, dependency resolution, task execution or Jenkins-specific detection. Literal comments and string contents are not declaration sources. All adapters use a shared 500,000-node, 10,000-fact allowance and a 16 MiB source ceiling; evidence/display and fingerprint work are additionally bounded.
+
+Native declarations use the shared complete-input fingerprint helper where their grammar supplies a name/body; unsupported documentation stays unknown. Structural Gradle and package-load cues do not become native declarations. The Linux pipeline fixtures verified bounded native key lookup for the qualified declaration profiles, warm reuse, compatible move reuse and profile invalidation without reparsing an unrelated file. Structural cues retain their explicit continuity limits.
+
+R Markdown discovery uses Markdown parser fence ranges and verifies original opening/closing delimiters. It returns exact raw body byte spans for unindented labeled `{r ...}` chunks and a finite list of supported Python, JavaScript, TypeScript and shell chunks. Root orchestration constructs the shared verbatim source maps and parses children under the same host allowance. Original CRLF bytes remain intact. Chunk labels/options are structural metadata and are never executed. Ordinary code examples are not executable regions. Unsupported engines, unclosed fences or indentation requiring transformation are explicitly partial; failed and empty attempts consume the shared region allowance. Host prose must exclude the recognized chunk extents while preserving surrounding Markdown facts.
+
+## Focused validation receipt
+
+Windows: all 18 P10 adapter unit tests passed across the first (6), data (5) and functional (7) batches. Linux: all 19 kernel pipeline cases passed across those batches (5/5/9), including mapped R Markdown and literate Haskell. The earlier Linux ingest run passed 186 tests with one helper ignored; the later required-fact correction was explicitly included in the Windows 18-test gate. Final broad checks and P12 cross-platform qualification remain separate ledger gates.
