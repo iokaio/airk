@@ -118,7 +118,7 @@ pub(super) fn snapshot(
         "legacy inspection manifest exceeds bound"
     );
     let manifest: serde_json::Value = serde_json::from_slice(&manifest_bytes)?;
-    if manifest["schema"].as_u64() == Some(2) {
+    if matches!(manifest["schema"].as_u64(), Some(2 | 3)) {
         return Ok(None);
     }
     let revision = directory

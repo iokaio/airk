@@ -9,6 +9,8 @@ use std::path::PathBuf;
 #[derive(clap::Args, Default)]
 struct EvidenceOptions {
     #[arg(long)]
+    revision: Option<airk_core::identity::RevisionToken>,
+    #[arg(long)]
     if_evidence: Option<airk_core::identity::Sha256Digest>,
     #[arg(long)]
     follow_moves: bool,
@@ -21,6 +23,7 @@ struct EvidenceOptions {
 impl From<EvidenceOptions> for airk_core::evidence::EvidenceReadOptions {
     fn from(value: EvidenceOptions) -> Self {
         Self {
+            revision: value.revision,
             if_evidence: value.if_evidence,
             follow_moves: value.follow_moves,
             known_hash: value.known_hash,
@@ -523,6 +526,16 @@ enum AnalysisCommand {
 
 #[derive(Subcommand)]
 enum CollectionCommand {
+    /// Inspect or explicitly administer optional retained history.
+    History {
+        #[command(subcommand)]
+        action: HistoryCommand,
+    },
+    /// Pin already committed evidence; never captures unsaved source files.
+    Checkpoint {
+        #[command(subcommand)]
+        action: CheckpointCommand,
+    },
     /// Inspect or persist extraction selection; changes apply on successful indexing.
     Extraction {
         #[command(subcommand)]
@@ -556,6 +569,53 @@ enum CollectionCommand {
     Prune {
         #[arg(long)]
         apply: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum CheckpointCommand {
+    List,
+    Create {
+        label: String,
+        #[arg(long)]
+        revision: airk_core::identity::RevisionToken,
+    },
+    Remove {
+        label: String,
+        #[arg(long)]
+        revision: airk_core::identity::RevisionToken,
+    },
+}
+#[derive(Subcommand)]
+enum HistoryCommand {
+    Show,
+    Set {
+        #[arg(long)]
+        json: String,
+    },
+    Preview,
+    Run {
+        #[arg(long)]
+        apply: bool,
+    },
+    Available {
+        #[arg(long)]
+        revision: Option<airk_core::identity::RevisionToken>,
+        #[arg(long)]
+        cursor: Option<String>,
+        #[arg(long, default_value_t = 64)]
+        limit: usize,
+        #[arg(long, default_value_t = 65536)]
+        max_bytes: usize,
+    },
+    /// Preview logical purge; apply requires the exact preview digest.
+    Purge {
+        #[arg(long)]
+        json: String,
+        #[arg(long)]
+        apply: bool,
+        #[arg(long, requires = "apply")]
+        expected_plan: Option<airk_core::identity::Sha256Digest>,
     },
 }
 
@@ -1022,6 +1082,33 @@ async fn main() -> anyhow::Result<()> {
                     if apply { recorder.print(&kernel.maintain_retention_with_budget(budget)?) }
                     else { recorder.print(&kernel.retention_preview_with_budget(None, budget)?) }
                 },
+            },
+            CollectionCommand::History { action } => {
+                use airk_kernel::history_controls::*;
+                let budget = HistoryWorkBudget::default();
+                match action {
+                    HistoryCommand::Show => recorder.print(&kernel.history_policy()?),
+                    HistoryCommand::Set { json } => { let bytes = retention_policy_bytes(None, Some(json))?.unwrap(); recorder.print(&kernel.configure_history(serde_json::from_slice(&bytes)?)?) },
+                    HistoryCommand::Preview => recorder.print(&kernel.history_preview(&HistorySelectionRequest::default(), budget)?),
+                    HistoryCommand::Run { apply } => if apply { recorder.print(&kernel.maintain_history(budget)?) } else { recorder.print(&kernel.history_preview(&HistorySelectionRequest::default(), budget)?) },
+                    HistoryCommand::Available { revision, cursor, limit, max_bytes } => recorder.print(&kernel.history_availability(&airk_kernel::HistoryAvailabilityRequest {revision,cursor,limit,max_bytes})?),
+                    HistoryCommand::Purge { json, apply, expected_plan } => {
+                        let bytes = retention_policy_bytes(None, Some(json))?.unwrap();
+                        let request: PurgeRequest = serde_json::from_slice(&bytes)?;
+                        if apply {
+                            let expected_plan_digest = expected_plan.ok_or_else(|| anyhow::anyhow!("--apply requires --expected-plan from the preview"))?;
+                            recorder.print(&kernel.purge_history(&PurgeApplyRequest {request,expected_plan_digest}, budget)?)
+                        } else { recorder.print(&kernel.purge_history_preview(&request, budget)?) }
+                    },
+                }
+            },
+            CollectionCommand::Checkpoint { action } => {
+                use airk_kernel::history_controls::*;
+                match action {
+                    CheckpointCommand::List => recorder.print(&kernel.checkpoints()?),
+                    CheckpointCommand::Create { label, revision } => recorder.print(&kernel.create_checkpoint(&CreateCheckpoint {label,revision}, HistoryWorkBudget::default())?),
+                    CheckpointCommand::Remove { label, revision } => recorder.print(&kernel.remove_checkpoint(&RemoveCheckpoint {label,expected_revision: revision}, HistoryWorkBudget::default())?),
+                }
             },
             CollectionCommand::Prune { apply } => recorder.print(&kernel.prune_indexes(!apply)?),
         },

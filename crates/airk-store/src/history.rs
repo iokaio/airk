@@ -424,6 +424,27 @@ struct OriginalManifest {
     components: BTreeMap<String, StoredDigest>,
 }
 
+impl OriginalManifest {
+    fn supported_format(&self) -> bool {
+        match self.schema {
+            2 => {
+                self.engine == "tantivy-0.26.2/diskann-0.59.0/airk-file-1/generation-4/inventory-2"
+            }
+            3 => {
+                self.engine
+                    == "tantivy-0.26.2/diskann-0.59.0/airk-file-1/generation-5/inventory-2/model-objects-1"
+                    && !self
+                        .components
+                        .keys()
+                        .any(|name| name.starts_with("model/"))
+                    && self.components.contains_key("model-objects.json")
+                        == self.model_sha256.is_some()
+            }
+            _ => false,
+        }
+    }
+}
+
 fn plain(path: &Path) -> Result<fs::Metadata> {
     let metadata = path.symlink_metadata()?;
     ensure!(
@@ -547,6 +568,7 @@ fn verify_dependencies(
         let mut remaining = dependency.bytes;
         let mut buffer = [0u8; 65536];
         while remaining > 0 {
+            charge(0)?;
             let length = remaining.min(buffer.len() as u64) as usize;
             let read = file.read(&mut buffer[..length])?;
             ensure!(read > 0, "historical dependency truncated");
@@ -563,6 +585,29 @@ fn verify_dependencies(
 }
 
 pub(crate) fn verify_package(
+    store: &crate::FileStore,
+    package: &Path,
+    binding: &HistoryBinding,
+    charge: &mut dyn FnMut(u64) -> Result<()>,
+) -> Result<VerifiedHistory> {
+    let verified = verify_package_metadata(store, package, binding, charge)?;
+    verify_dependencies(store, &verified.descriptor, charge)?;
+    Ok(verified)
+}
+
+pub(crate) fn verify_package_work(
+    store: &crate::FileStore,
+    package: &Path,
+    binding: &HistoryBinding,
+    work: &mut crate::maintenance::WorkBudget,
+) -> Result<VerifiedHistory> {
+    let verified =
+        verify_package_metadata(store, package, binding, &mut |bytes| work.metadata(bytes))?;
+    verify_dependencies(store, &verified.descriptor, &mut |bytes| work.verify(bytes))?;
+    Ok(verified)
+}
+
+fn verify_package_metadata(
     store: &crate::FileStore,
     package: &Path,
     binding: &HistoryBinding,
@@ -662,7 +707,7 @@ pub(crate) fn verify_package(
         charge,
     )?)?;
     ensure!(
-        manifest.schema == 2
+        manifest.supported_format()
             && manifest.token == token
             && manifest.inventory_digest == descriptor.publication.inventory_digest
             && manifest.engine == inventory.retrieval_specification
@@ -684,7 +729,6 @@ pub(crate) fn verify_package(
             "historical copied component differs from original manifest"
         );
     }
-    verify_dependencies(store, &descriptor, charge)?;
     Ok(VerifiedHistory {
         descriptor,
         inventory,
@@ -693,10 +737,24 @@ pub(crate) fn verify_package(
 }
 
 /// Caller holds the writer or collection lifecycle exclusion while traversing roots.
-pub(crate) fn verified_roots(
+pub(crate) fn verified_roots_work(
     store: &crate::FileStore,
-    charge: &mut dyn FnMut(u64) -> Result<()>,
+    work: &mut crate::maintenance::WorkBudget,
 ) -> Result<Vec<VerifiedHistory>> {
+    root_bindings(store)?
+        .into_iter()
+        .map(|binding| {
+            verify_package_work(
+                store,
+                &directory(store, &binding.publication.token),
+                &binding,
+                work,
+            )
+        })
+        .collect()
+}
+
+fn root_bindings(store: &crate::FileStore) -> Result<Vec<HistoryBinding>> {
     let bindings = crate::sqlite::history_bindings(store.directory())?;
     let root = store.directory().join("history");
     if !root.exists() {
@@ -726,17 +784,7 @@ pub(crate) fn verified_roots(
         found.insert(name);
     }
     ensure!(found == expected, "committed history package missing");
-    bindings
-        .into_iter()
-        .map(|binding| {
-            verify_package(
-                store,
-                &directory(store, &binding.publication.token),
-                &binding,
-                charge,
-            )
-        })
-        .collect()
+    Ok(bindings)
 }
 
 pub(crate) fn lease_tokens(store: &crate::FileStore) -> Result<Vec<RevisionToken>> {
@@ -763,6 +811,19 @@ pub(crate) fn lease_tokens(store: &crate::FileStore) -> Result<Vec<RevisionToken
         let token = intent.binding.publication.token;
         if !tokens.contains(&token) {
             tokens.push(token);
+        }
+    }
+    if crate::sqlite::persistent_revision(store.directory())?
+        .and_then(|head| head.token)
+        .is_some()
+    {
+        for checkpoint in crate::sqlite::history_admin(store.directory())?
+            .checkpoints
+            .values()
+        {
+            if !tokens.contains(&checkpoint.publication.token) {
+                tokens.push(checkpoint.publication.token);
+            }
         }
     }
     Ok(tokens)
@@ -1223,7 +1284,7 @@ fn process_conversion(
             reservation,
             intent.stage == ConversionStage::IntentDurable,
         )?;
-        verify_package(store, &staging, &binding, &mut |bytes| work.metadata(bytes))?;
+        verify_package_work(store, &staging, &binding, work)?;
         crate::maintenance::sync_parent(&staging)?;
         intent.stage = ConversionStage::PackageVerified;
         persist_intent(store, &intent, reservation, observer)?;
@@ -1234,7 +1295,7 @@ fn process_conversion(
         intent.stage = ConversionStage::PackagePublished;
         persist_intent(store, &intent, reservation, observer)?;
     }
-    verify_package(store, &package, &binding, &mut |bytes| work.metadata(bytes))?;
+    verify_package_work(store, &package, &binding, work)?;
     if work.expired() {
         return Ok(outcome(ConversionStatus::Pending, intent.stage, work));
     }
@@ -1300,12 +1361,12 @@ impl crate::FileStore {
         self.history_convert_with_observer(writer, quota, token, budget, &|_, _| Ok(()))
     }
 
-    pub fn history_convert_with_observer(
+    pub fn history_convert_metered(
         &self,
         writer: &crate::WriterLock,
         quota: &crate::quota::Quota,
         token: &RevisionToken,
-        budget: crate::retention::MaintenanceBudget,
+        budget: crate::history_policy::HistoryWorkBudget,
         observer: &dyn Fn(ConversionStage, &ConversionIntent) -> Result<()>,
     ) -> Result<HistoryConversion> {
         crate::maintenance::check_writer(self, writer, quota)?;
@@ -1313,7 +1374,8 @@ impl crate::FileStore {
             !self.directory().join("checkpoints").exists(),
             "checkpoint protections require qualified history policy adapter"
         );
-        let mut work = crate::maintenance::WorkBudget::new(budget)?;
+        let mut work = crate::maintenance::WorkBudget::history(budget)?;
+        let budget = budget.maintenance;
         let current = self
             .catalog()?
             .context("history requires an indexed collection")?;
@@ -1346,9 +1408,7 @@ impl crate::FileStore {
             });
         };
         if let Some(binding) = crate::sqlite::history_binding(self.directory(), token)? {
-            verify_package(self, &directory(self, token), &binding, &mut |bytes| {
-                work.metadata(bytes)
-            })?;
+            verify_package_work(self, &directory(self, token), &binding, &mut work)?;
             if conversion_intent(self, token)?.is_none() {
                 ensure!(
                     !source.exists() && !detached_path(self, token).exists(),
@@ -1587,6 +1647,10 @@ fn process_removal(
     intent.validate()?;
     intent.authorized_head.validate_against(&head)?;
     let token = intent.binding.publication.token;
+    ensure!(
+        !crate::checkpoints::protected(store, &token)?,
+        "checkpoint history cannot be retired"
+    );
     let package = directory(store, &token);
     let detached = removal_directory(store, &intent);
     let witness = removal_witness(store, &token);
@@ -1622,9 +1686,7 @@ fn process_removal(
             "historical retirement authority changed"
         );
         if intent.stage == HistoryRemovalStage::IntentDurable && package.exists() {
-            let verified = verify_package(store, &package, &intent.binding, &mut |bytes| {
-                work.metadata(bytes)
-            })?;
+            let verified = verify_package_work(store, &package, &intent.binding, work)?;
             ensure_directory(store, witness.parent().unwrap())?;
             write_component(
                 store,
@@ -1653,9 +1715,7 @@ fn process_removal(
                 intent.stage == HistoryRemovalStage::IntentDurable,
                 "historical package reappeared after detachment"
             );
-            verify_package(store, &package, &intent.binding, &mut |bytes| {
-                work.metadata(bytes)
-            })?;
+            verify_package_work(store, &package, &intent.binding, work)?;
             fs::rename(&package, &detached)?;
             crate::maintenance::sync_parent(package.parent().unwrap())?;
         }
@@ -1751,20 +1811,25 @@ impl crate::FileStore {
         self.history_remove_with_observer(writer, quota, token, budget, &|_, _| Ok(()))
     }
     #[doc(hidden)]
-    pub fn history_remove_with_observer(
+    pub fn history_remove_metered(
         &self,
         writer: &crate::WriterLock,
         quota: &crate::quota::Quota,
         token: &RevisionToken,
-        budget: crate::retention::MaintenanceBudget,
+        budget: crate::history_policy::HistoryWorkBudget,
         observer: &dyn Fn(HistoryRemovalStage, &HistoryRemovalIntent) -> Result<()>,
     ) -> Result<HistoryRemoval> {
         crate::maintenance::check_writer(self, writer, quota)?;
         ensure!(
+            !crate::checkpoints::protected(self, token)?,
+            "checkpoint history cannot be retired"
+        );
+        ensure!(
             !self.directory().join("checkpoints").exists(),
             "checkpoint protections require qualified history policy adapter"
         );
-        let mut work = crate::maintenance::WorkBudget::new(budget)?;
+        let mut work = crate::maintenance::WorkBudget::history(budget)?;
+        let budget = budget.maintenance;
         let current = self
             .catalog()?
             .context("historical retirement requires indexed collection")?;
@@ -1823,9 +1888,7 @@ impl crate::FileStore {
                 conversion_intent(self, token)?.is_none() && !lease_path.exists(),
                 "conversion must finish before historical retirement"
             );
-            verify_package(self, &directory(self, token), &binding, &mut |bytes| {
-                work.metadata(bytes)
-            })?;
+            verify_package_work(self, &directory(self, token), &binding, &mut work)?;
             let intent = HistoryRemovalIntent::new(binding, head)?;
             persist_removal(self, &intent, &reservation, observer)?;
             intent
@@ -1916,6 +1979,136 @@ pub(crate) fn pending_count(store: &crate::FileStore) -> Result<usize> {
     Ok(intents(store)?.len() + removal_intents(store)?.len())
 }
 
+pub(crate) fn convert_selected(
+    store: &crate::FileStore,
+    token: RevisionToken,
+    head: RevisionToken,
+    parent: Option<RevisionToken>,
+    reservation: &crate::quota::Reservation,
+    work: &mut crate::maintenance::WorkBudget,
+) -> Result<HistoryConversion> {
+    token.validate_against(&head)?;
+    ensure!(
+        token != head && Some(token) != parent,
+        "cannot demote searchable revision"
+    );
+    crate::sqlite::validate_retained_token(store.directory(), &token)?;
+    let source = store
+        .directory()
+        .join("generations")
+        .join(token.revision.to_string());
+    let Some(_lease) = crate::retention::exclusive(&source)? else {
+        return Ok(HistoryConversion {
+            token,
+            status: ConversionStatus::Protected,
+            stage: None,
+            removed_bytes: 0,
+        });
+    };
+    let existing = conversion_intent(store, &token)?;
+    if existing.is_none()
+        && let Some(binding) = crate::sqlite::history_binding(store.directory(), &token)?
+    {
+        verify_package_work(store, &directory(store, &token), &binding, work)?;
+        ensure!(
+            !source.exists() && !detached_path(store, &token).exists(),
+            "history binding has unowned full representation"
+        );
+        return Ok(HistoryConversion {
+            token,
+            status: ConversionStatus::Complete,
+            stage: Some(ConversionStage::IntentComplete),
+            removed_bytes: 0,
+        });
+    }
+    let descriptor = if existing.is_none() {
+        let receipt = store
+            .receipt(&token)?
+            .context("historical candidate unavailable")?;
+        Some(descriptor_from_full(store, &receipt, work)?)
+    } else {
+        None
+    };
+    let intent = if let Some(intent) = existing {
+        intent
+    } else {
+        ensure!(
+            intents(store)?.len() < MAX_HISTORY_INTENTS,
+            "history intent limit reached"
+        );
+        let descriptor = descriptor.as_ref().unwrap();
+        let intent = ConversionIntent::new(
+            descriptor.publication.clone(),
+            head,
+            descriptor.binding_digest()?,
+        )?;
+        persist_intent(store, &intent, reservation, &|_, _| Ok(()))?;
+        intent
+    };
+    process_conversion(
+        store,
+        intent,
+        descriptor,
+        head,
+        reservation,
+        work,
+        &|_, _| Ok(()),
+    )
+}
+
+pub(crate) fn remove_selected(
+    store: &crate::FileStore,
+    token: RevisionToken,
+    head: RevisionToken,
+    parent: Option<RevisionToken>,
+    reservation: &crate::quota::Reservation,
+    work: &mut crate::maintenance::WorkBudget,
+) -> Result<HistoryRemoval> {
+    token.validate_against(&head)?;
+    ensure!(
+        token != head && Some(token) != parent,
+        "cannot retire searchable revision"
+    );
+    ensure!(
+        !crate::checkpoints::protected(store, &token)?,
+        "checkpoint protects historical revision"
+    );
+    let source = store
+        .directory()
+        .join("generations")
+        .join(token.revision.to_string());
+    let Some(_lease) = crate::retention::exclusive(&source)? else {
+        return Ok(HistoryRemoval {
+            token,
+            status: ConversionStatus::Protected,
+            stage: None,
+            removed_bytes: 0,
+        });
+    };
+    let intent = if let Some(intent) = removal_intents(store)?
+        .into_iter()
+        .find(|intent| intent.binding.publication.token == token)
+    {
+        intent
+    } else {
+        ensure!(
+            removal_intents(store)?.len() < MAX_HISTORY_INTENTS,
+            "history retirement intent limit reached"
+        );
+        ensure!(
+            conversion_intent(store, &token)?.is_none() && !source.exists(),
+            "conversion must finish before retirement"
+        );
+        let binding = crate::sqlite::history_binding(store.directory(), &token)?
+            .context("historical representation unavailable")?;
+        verify_package_work(store, &directory(store, &token), &binding, work)?;
+        let intent = HistoryRemovalIntent::new(binding, head)?;
+        persist_removal(store, &intent, reservation, &|_, _| Ok(()))?;
+        intent
+    };
+    process_removal(store, intent, head, reservation, work, &|_, _| Ok(()))
+}
+
 fn verify_full_bounded(
     store: &crate::FileStore,
     receipt: &PublicationReceipt,
@@ -1939,11 +2132,138 @@ fn verify_full_bounded(
         "invalid candidate manifest identity or bound"
     );
     for component in manifest.components.values() {
-        work.metadata(component.bytes)?;
+        work.verify(component.bytes)?;
     }
     ensure!(
         !work.expired(),
         "history conversion verification deadline exceeded"
     );
     crate::blobs::verify_v2_generation(store.directory(), receipt)
+}
+
+impl crate::FileStore {
+    #[doc(hidden)]
+    pub fn history_convert_with_observer(
+        &self,
+        writer: &crate::WriterLock,
+        quota: &crate::quota::Quota,
+        token: &RevisionToken,
+        budget: crate::retention::MaintenanceBudget,
+        observer: &dyn Fn(ConversionStage, &ConversionIntent) -> Result<()>,
+    ) -> Result<HistoryConversion> {
+        self.history_convert_metered(
+            writer,
+            quota,
+            token,
+            crate::history_policy::HistoryWorkBudget {
+                maintenance: budget,
+                verification_bytes: budget.max_metadata_bytes,
+            },
+            observer,
+        )
+    }
+    #[doc(hidden)]
+    pub fn history_remove_with_observer(
+        &self,
+        writer: &crate::WriterLock,
+        quota: &crate::quota::Quota,
+        token: &RevisionToken,
+        budget: crate::retention::MaintenanceBudget,
+        observer: &dyn Fn(HistoryRemovalStage, &HistoryRemovalIntent) -> Result<()>,
+    ) -> Result<HistoryRemoval> {
+        self.history_remove_metered(
+            writer,
+            quota,
+            token,
+            crate::history_policy::HistoryWorkBudget {
+                maintenance: budget,
+                verification_bytes: budget.max_metadata_bytes,
+            },
+            observer,
+        )
+    }
+}
+
+pub(crate) fn describe_revision(
+    store: &crate::FileStore,
+    token: &RevisionToken,
+    work: &mut crate::maintenance::WorkBudget,
+) -> Result<HistoryDescriptor> {
+    let receipt = store
+        .receipt(token)?
+        .context("historical candidate receipt missing")?;
+    if let Some(binding) = crate::sqlite::history_binding(store.directory(), token)? {
+        ensure!(
+            binding.publication == receipt,
+            "historical candidate receipt mismatch"
+        );
+        Ok(verify_package_work(store, &directory(store, token), &binding, work)?.descriptor)
+    } else {
+        let descriptor = descriptor_from_full(store, &receipt, work)?;
+        verify_dependencies(store, &descriptor, &mut |bytes| work.verify(bytes))?;
+        Ok(descriptor)
+    }
+}
+
+pub(crate) fn observation(
+    store: &crate::FileStore,
+    receipt: &PublicationReceipt,
+    work: &mut crate::maintenance::WorkBudget,
+) -> Result<crate::history_policy::Observation> {
+    let historical = crate::sqlite::history_binding(store.directory(), &receipt.token)?;
+    let path = if let Some(binding) = &historical {
+        ensure!(
+            &binding.publication == receipt,
+            "historical observation receipt changed"
+        );
+        directory(store, &receipt.token)
+    } else {
+        store
+            .directory()
+            .join("generations")
+            .join(receipt.token.revision.to_string())
+    };
+    plain_ancestors(store, &path)?;
+    let manifest_path = path.join("manifest.json");
+    let length = plain(&manifest_path)?.len();
+    ensure!(
+        length <= 131072,
+        "historical observation manifest exceeds bound"
+    );
+    work.metadata(length)?;
+    let manifest: OriginalManifest = serde_json::from_slice(&crate::blobs::read_verified(
+        &manifest_path,
+        &receipt.manifest_digest.to_string(),
+        131072,
+    )?)?;
+    ensure!(
+        manifest.supported_format()
+            && manifest.token == receipt.token
+            && manifest.inventory_digest == receipt.inventory_digest
+            && manifest.components.len() <= 1024,
+        "historical observation manifest binding invalid"
+    );
+    let lineage = manifest
+        .components
+        .get("lineage.json")
+        .context("historical observation lineage missing")?;
+    ensure!(
+        lineage.bytes <= airk_core::changes::MAX_LINEAGE_BYTES as u64,
+        "historical observation lineage exceeds bound"
+    );
+    let bytes = metadata_bytes(&path.join("lineage.json"), lineage, &mut |bytes| {
+        work.metadata(bytes)
+    })?;
+    let lineage: airk_core::changes::LineageEnvelope = serde_json::from_slice(&bytes)?;
+    lineage.validate()?;
+    ensure!(
+        lineage.incarnation == receipt.token.incarnation
+            && lineage.observation.generation == receipt.token.generation,
+        "historical observation lineage scope mismatch"
+    );
+    Ok(crate::history_policy::Observation {
+        publication: receipt.clone(),
+        observed_unix_seconds: lineage.observation.observed_unix_seconds,
+        historical: historical.is_some(),
+    })
 }

@@ -106,6 +106,8 @@ pub enum ProtectionReason {
     Reader,
     History,
     Conversion,
+    Checkpoint,
+    HistorySelection,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ProtectedRevision {
@@ -348,6 +350,16 @@ fn intent_path(store: &FileStore, token: &RevisionToken) -> std::path::PathBuf {
         .directory()
         .join("maintenance/intents")
         .join(format!("{}.json", token.revision))
+}
+
+pub(crate) fn retirement_pending(store: &FileStore, token: &RevisionToken) -> Result<bool> {
+    Ok(intent_paths(store)?
+        .iter()
+        .any(|path| *path == intent_path(store, token)))
+}
+
+pub(crate) fn retirement_count(store: &FileStore) -> Result<usize> {
+    Ok(intent_paths(store)?.len())
 }
 fn manifest_path(store: &FileStore, token: &RevisionToken) -> std::path::PathBuf {
     store
@@ -648,7 +660,14 @@ fn gc(
     let mut sources = BTreeSet::new();
     let mut artifacts = BTreeSet::new();
     let mut embeddings = BTreeSet::new();
-    for history in crate::history::verified_roots(store, &mut |bytes| work.metadata(bytes))? {
+    let mut models = BTreeSet::new();
+    for checkpoint in crate::sqlite::history_admin(store.directory())?
+        .checkpoints
+        .values()
+    {
+        crate::history::describe_revision(store, &checkpoint.publication.token, work)?;
+    }
+    for history in crate::history::verified_roots_work(store, work)? {
         for dependency in history.descriptor.dependencies {
             match dependency.kind {
                 crate::history::DependencyKind::Source => {
@@ -722,6 +741,37 @@ fn gc(
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(error.into()),
         }
+        let model_references =
+            if manifest["schema"].as_u64() == Some(3) && !manifest["model_sha256"].is_null() {
+                let sidecar = entry.path().join("model-objects.json");
+                let size = sidecar.symlink_metadata()?.len();
+                work.metadata(size)?;
+                let references = store.model_object_references_with_budget(
+                    &receipt,
+                    work.verification_limit.saturating_sub(work.verification),
+                )?;
+                let bytes = references.iter().try_fold(0u64, |sum, reference| {
+                    sum.checked_add(reference.bytes)
+                        .context("model dependency size overflow")
+                })?;
+                work.verify(bytes)?;
+                // Full representation verification below authenticates these assets again.
+                work.verify(bytes)?;
+                references
+            } else {
+                vec![]
+            };
+        for component in manifest["components"]
+            .as_object()
+            .context("GC components missing")?
+            .values()
+        {
+            work.verify(
+                component["bytes"]
+                    .as_u64()
+                    .context("GC component size missing")?,
+            )?;
+        }
         let inventory = crate::blobs::verify_v2_generation(store.directory(), &receipt)?;
         let embedding_references = store.embedding_cache_references(&receipt)?;
         if excluded.contains(&name) {
@@ -731,6 +781,11 @@ fn gc(
             embedding_references
                 .into_iter()
                 .map(|reference| reference.key.to_string()),
+        );
+        models.extend(
+            model_references
+                .into_iter()
+                .map(|reference| reference.sha256.to_string()),
         );
         for file in inventory.files.values() {
             artifacts.insert(file.state.payload_digest.to_string());
@@ -743,6 +798,7 @@ fn gc(
         ("sources", sources),
         ("artifacts", artifacts),
         ("embeddings", embeddings),
+        ("models", models),
     ] {
         let path = store.directory().join("objects").join(kind);
         if !path.exists() {
@@ -868,7 +924,7 @@ impl FileStore {
 }
 
 #[derive(Debug)]
-struct WorkLimit;
+pub(crate) struct WorkLimit;
 impl std::fmt::Display for WorkLimit {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("maintenance metadata or entry budget exhausted")
@@ -886,6 +942,8 @@ pub(crate) struct WorkBudget {
     limit: MaintenanceBudget,
     started: Instant,
     metadata: u64,
+    verification: u64,
+    verification_limit: u64,
     entries: usize,
     removed: u64,
     planning: bool,
@@ -893,6 +951,22 @@ pub(crate) struct WorkBudget {
     scanned_through: Option<u64>,
 }
 impl WorkBudget {
+    pub(crate) fn history(limit: crate::history_policy::HistoryWorkBudget) -> Result<Self> {
+        limit.validate()?;
+        let mut work = Self::new(limit.maintenance)?;
+        work.verification_limit = limit.verification_bytes;
+        Ok(work)
+    }
+    pub(crate) fn verify(&mut self, bytes: u64) -> Result<()> {
+        self.verification = self
+            .verification
+            .checked_add(bytes)
+            .context("verification accounting overflow")?;
+        if self.verification > self.verification_limit || self.expired() {
+            return Err(WorkLimit.into());
+        }
+        Ok(())
+    }
     pub(crate) fn remove_file(&mut self, path: &Path, bytes: u64) -> Result<bool> {
         if self.expired() || bytes > self.limit.max_removal_bytes.saturating_sub(self.removed) {
             return Ok(false);
@@ -910,6 +984,8 @@ impl WorkBudget {
             limit,
             started: Instant::now(),
             metadata: 0,
+            verification: 0,
+            verification_limit: limit.max_metadata_bytes,
             entries: 0,
             removed: 0,
             planning: false,
@@ -1095,12 +1171,29 @@ fn preview_work(
     }
     let active = current_receipt(store)?;
     let parent_result = active_parent(store, &active, work);
+    let history_state = crate::sqlite::history_admin(store.directory())?;
+    let history_plan = if history_state.policy.policy.enabled {
+        match crate::history_policy::preview_work(
+            store,
+            crate::history_policy::effective_collection_limit(store)?,
+            &crate::history_policy::HistorySelectionRequest::default(),
+            work,
+        ) {
+            Ok(plan) => Some(plan),
+            Err(error) if error.is::<WorkLimit>() => None,
+            Err(error) => return Err(error),
+        }
+    } else {
+        None
+    };
+    let history_incomplete = history_state.policy.policy.enabled
+        && history_plan.as_ref().is_none_or(|plan| !plan.complete);
     let mut status = RetentionStatus {
         collection: collection(store)?,
         active: Some(active.token),
         policy,
         history_supported: true,
-        checkpoints_supported: false,
+        checkpoints_supported: true,
         logical_bytes: None,
         protected_bytes: None,
         protected: vec![],
@@ -1215,6 +1308,22 @@ fn preview_work(
         );
         plain(&path)?;
         let mut reasons = vec![];
+        if history_state
+            .checkpoints
+            .values()
+            .any(|pin| pin.publication.token == receipt.token)
+        {
+            reasons.push(ProtectionReason::Checkpoint);
+        }
+        if history_incomplete
+            || history_plan.as_ref().is_some_and(|plan| {
+                plan.retained
+                    .iter()
+                    .any(|entry| entry.revision == receipt.token)
+            })
+        {
+            reasons.push(ProtectionReason::HistorySelection);
+        }
         if receipt.token != active.token && Some(receipt.token) != parent {
             work.scanned_through = Some(
                 work.scanned_through
@@ -1410,21 +1519,24 @@ impl FileStore {
             }
             let reservation =
                 quota.reserve_available(&collection(self)?, budget.max_metadata_bytes)?;
-            let mut work = WorkBudget::new(budget)?;
-            if crate::history::pending_count(self)? > 0 {
-                let predecessor = active_parent(self, &active, &mut work)?;
-                let result = crate::history::recover_conversions(
-                    self,
-                    active.token,
-                    predecessor,
-                    &reservation,
-                    &mut work,
-                    budget.max_candidates,
-                )?;
-                receipt.examined += result.conversions.len() + result.removals.len();
-                receipt.pending |= result.pending;
-                receipt.reclaimed_bytes = work.removed_bytes();
+            let mut work = WorkBudget::history(crate::history_policy::HistoryWorkBudget {
+                maintenance: budget,
+                verification_bytes: crate::history_policy::HistoryWorkBudget::default()
+                    .verification_bytes,
+            })?;
+            let history = crate::history_policy::maintain_work(
+                self,
+                crate::history_policy::effective_collection_limit(self)?,
+                &reservation,
+                &mut work,
+                budget.max_candidates,
+            )?;
+            receipt.examined += history.conversions.len() + history.removals.len();
+            receipt.reclaimed_bytes = work.removed_bytes();
+            if let Some(error) = history.error {
+                anyhow::bail!("history maintenance pending: {error}");
             }
+            receipt.pending |= history.pending;
             work.planning = trigger != MaintenanceTrigger::ExplicitLegacyPrune;
             let cursor_path = self.directory().join("maintenance/scan-cursor.json");
             if work.planning
@@ -1562,7 +1674,8 @@ impl FileStore {
                 trigger == MaintenanceTrigger::ExplicitLegacyPrune,
                 &mut work,
             )?;
-            receipt.pending = remaining.candidates_truncated
+            receipt.pending = history.pending
+                || remaining.candidates_truncated
                 || !remaining.candidates.is_empty()
                 || !remaining.legacy_candidates.is_empty()
                 || remaining.status.protected.iter().any(|item| {

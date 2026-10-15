@@ -125,7 +125,7 @@ fn durable_key_reads_match_cli_and_mcp_and_reject_filter_combinations() -> anyho
             .as_array()
             .unwrap()
             .len(),
-        15
+        16
     );
     for (id, command, option, tool, field, key) in [
         (
@@ -505,7 +505,7 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
     session.send(json!({"jsonrpc":"2.0","id":2,"method":"tools/list"}))?;
     let listed = session.receive(2)?;
     let tools = listed["result"]["tools"].as_array().expect("tools");
-    assert_eq!(tools.len(), 15);
+    assert_eq!(tools.len(), 16);
     assert!(
         tools
             .iter()
@@ -551,6 +551,7 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
             "airk_changes",
             json!({"selectors":[{"kind":"path","path":"auth.py"}]}),
         ),
+        (18, "airk_history", json!({"limit": 2, "max_bytes": 4096})),
     ] {
         let result = session.call(i, name, args)?;
         assert!(result.get("error").is_none(), "{name}: {result}");
@@ -565,7 +566,8 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
                 payload
                     .get("collection")
                     .or_else(|| payload["evidence"].get("collection"))
-                    .or_else(|| payload["publication"].get("collection")),
+                    .or_else(|| payload["publication"].get("collection"))
+                    .or_else(|| payload["current_publication"].get("collection")),
                 Some(&json!("project-a"))
             );
         }

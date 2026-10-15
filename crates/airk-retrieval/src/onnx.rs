@@ -177,11 +177,23 @@ fn validate_plan(model: &TypedModel) -> Result<()> {
 
 impl OnnxModel {
     pub(crate) fn open(directory: &Path, manifest_bytes: &[u8]) -> Result<Self> {
+        Self::open_assets(&model::DirectoryAssets(directory), manifest_bytes)
+    }
+    pub(crate) fn open_assets(
+        source: &dyn airk_core::model_objects::ModelAssetSource,
+        manifest_bytes: &[u8],
+    ) -> Result<Self> {
+        use airk_core::model_objects::ModelAssetName;
         let (manifest, identity) = model::onnx_manifest(manifest_bytes)?;
-        model::verified_asset(directory, "LICENSE", 65_536, &manifest.license_sha256)?;
-        let tokenizer_bytes = model::verified_asset(
-            directory,
-            "tokenizer.json",
+        model::verified_source_asset(
+            source,
+            ModelAssetName::License,
+            65_536,
+            &manifest.license_sha256,
+        )?;
+        let tokenizer_bytes = model::verified_source_asset(
+            source,
+            ModelAssetName::TokenizerJson,
             MAX_TOKENIZER_BYTES,
             &manifest.tokenizer_sha256,
         )?;
@@ -258,9 +270,9 @@ impl OnnxModel {
             pad_token: "[PAD]".into(),
             ..Default::default()
         }));
-        let bytes = model::verified_asset(
-            directory,
-            "model.onnx",
+        let bytes = model::verified_source_asset(
+            source,
+            ModelAssetName::ModelOnnx,
             MAX_MODEL_BYTES,
             &manifest.model_sha256,
         )?;

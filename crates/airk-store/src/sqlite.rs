@@ -17,7 +17,17 @@ struct PinnedConnection {
 }
 
 fn is_v2_root(version: u32) -> bool {
-    matches!(version, 3 | 4)
+    matches!(version, 3..=5)
+}
+
+fn publication_root_version(conn: &Connection) -> Result<u32> {
+    let version: u32 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    let administrative = table_exists(conn, "history_admin")?;
+    ensure!(
+        version < 5 || administrative,
+        "history administrative authority missing"
+    );
+    Ok(if administrative { 5 } else { 4 })
 }
 
 fn history_schema(conn: &Connection) -> Result<()> {
@@ -135,7 +145,7 @@ pub(crate) fn commit_history_binding(
             ],
         )?;
     }
-    tx.pragma_update(None, "user_version", crate::ROOT_POINTER_VERSION)?;
+    tx.pragma_update(None, "user_version", publication_root_version(&tx)?)?;
     tx.commit()?;
     Ok(())
 }
@@ -884,6 +894,13 @@ fn authorize_representation_retirement(
     ))?;
     let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     ensure!(
+        !history_admin_connection(directory, &tx)?
+            .checkpoints
+            .values()
+            .any(|pin| pin.publication.token == proof.token),
+        "checkpoint publication cannot be retired"
+    );
+    ensure!(
         expected_head_connection(directory, &tx)? == crate::ExpectedHead::V2(proof.authorized_head),
         "pointer changed before retirement authorization"
     );
@@ -1253,7 +1270,7 @@ pub(super) fn publish_catalog_v2(
         [&header_payload],
     )?;
     history_schema(&tx)?;
-    tx.pragma_update(None, "user_version", crate::ROOT_POINTER_VERSION)?;
+    tx.pragma_update(None, "user_version", publication_root_version(&tx)?)?;
     tx.commit()?;
     if let Some(private_root) = private_root {
         let (busy, _, _): (i64, i64, i64) =
@@ -1757,6 +1774,276 @@ impl FileStore {
         }
         Ok(response)
     }
+}
+
+fn history_admin_connection(
+    directory: &Path,
+    conn: &Connection,
+) -> Result<crate::history_policy::AdminState> {
+    let crate::ExpectedHead::V2(head) = expected_head_connection(directory, conn)? else {
+        anyhow::bail!("history controls require v2 migration");
+    };
+    let version: u32 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    ensure!(
+        is_v2_root(version),
+        "history controls require supported publication root"
+    );
+    if !table_exists(conn, "history_admin")? {
+        ensure!(version < 5, "history administrative authority missing");
+        return crate::history_policy::AdminState::empty(head.incarnation);
+    }
+    ensure!(
+        version == 5,
+        "administrative table has unsupported root version"
+    );
+    let encoded: Option<Vec<u8>> = conn
+        .query_row(
+            "SELECT substr(CAST(payload AS BLOB),1,65537) FROM history_admin WHERE id=1",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let encoded = encoded.context("history administrative row missing")?;
+    ensure!(
+        encoded.len() <= crate::history_policy::MAX_HISTORY_ADMIN_BYTES,
+        "oversized history administrative state"
+    );
+    let state: crate::history_policy::AdminState = serde_json::from_slice(&encoded)?;
+    state.validate()?;
+    ensure!(
+        state.incarnation == head.incarnation,
+        "foreign administrative incarnation"
+    );
+    for checkpoint in state.checkpoints.values() {
+        ensure!(
+            receipt_connection(conn, &checkpoint.publication.token)?.as_ref()
+                == Some(&checkpoint.publication),
+            "checkpoint publication receipt missing or changed"
+        );
+    }
+    Ok(state)
+}
+
+pub(crate) fn history_admin(directory: &Path) -> Result<crate::history_policy::AdminState> {
+    retry_wal_protocol(|| {
+        history_admin_connection(directory, &connect_root_once(directory, false)?)
+    })
+}
+
+pub(crate) fn commit_history_admin(
+    directory: &Path,
+    expected: &crate::history_policy::AdminState,
+    next: &crate::history_policy::AdminState,
+    expected_head: &airk_core::identity::RevisionToken,
+    reservation: &crate::quota::Reservation,
+) -> Result<()> {
+    expected.validate()?;
+    next.validate()?;
+    ensure!(
+        next.incarnation == expected.incarnation
+            && next.sequence
+                == expected
+                    .sequence
+                    .checked_add(1)
+                    .context("operator sequence exhausted")?,
+        "invalid operator mutation sequence"
+    );
+    let (maximum, allowance) = pointer_budget(directory)?;
+    reservation.charge(allowance)?;
+    let mut conn = connect_root(directory, true)?;
+    conn.execute_batch(&format!(
+        "PRAGMA max_page_count={maximum}; PRAGMA cache_spill=OFF; PRAGMA temp_store=MEMORY;"
+    ))?;
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    ensure!(
+        expected_head_connection(directory, &tx)? == crate::ExpectedHead::V2(*expected_head),
+        "publication changed before operator mutation"
+    );
+    ensure!(
+        &history_admin_connection(directory, &tx)? == expected,
+        "history administrative state changed"
+    );
+    for checkpoint in next.checkpoints.values() {
+        ensure!(
+            receipt_connection(&tx, &checkpoint.publication.token)?.as_ref()
+                == Some(&checkpoint.publication),
+            "checkpoint admission receipt changed"
+        );
+    }
+    let encoded = serde_json::to_vec(next)?;
+    ensure!(
+        encoded.len() <= crate::history_policy::MAX_HISTORY_ADMIN_BYTES,
+        "history administrative state exceeds bound"
+    );
+    tx.execute_batch("CREATE TABLE IF NOT EXISTS history_admin(id INTEGER PRIMARY KEY CHECK(id=1),payload BLOB NOT NULL);")?;
+    tx.execute("INSERT INTO history_admin VALUES(1,?1) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload", [encoded])?;
+    tx.pragma_update(None, "user_version", 5u32)?;
+    tx.commit()?;
+    Ok(())
+}
+
+pub(crate) fn history_receipt_count(directory: &Path) -> Result<u64> {
+    let conn = connect_root(directory, false)?;
+    let count: i64 = conn.query_row("SELECT count(*) FROM publication_receipts", [], |row| {
+        row.get(0)
+    })?;
+    Ok(u64::try_from(count)?)
+}
+pub(crate) fn history_selection(
+    directory: &Path,
+) -> Result<Option<crate::history_policy::SelectionScan>> {
+    let conn = connect_root(directory, false)?;
+    if !table_exists(&conn, "history_selection")? {
+        return Ok(None);
+    }
+    let bytes: Option<Vec<u8>> = conn
+        .query_row(
+            "SELECT substr(CAST(payload AS BLOB),1,262145) FROM history_selection WHERE id=1",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+    bytes
+        .map(|bytes| {
+            ensure!(
+                bytes.len() <= 262144,
+                "history selection cache exceeds bound"
+            );
+            let scan: crate::history_policy::SelectionScan = serde_json::from_slice(&bytes)?;
+            scan.validate()?;
+            Ok(scan)
+        })
+        .transpose()
+}
+pub(crate) fn history_scan_receipts(
+    directory: &Path,
+    before: Option<u64>,
+    limit: usize,
+) -> Result<Vec<airk_core::identity::PublicationReceipt>> {
+    ensure!(limit <= 256, "history scan page exceeds bound");
+    let conn = connect_root(directory, false)?;
+    let mut stmt = conn.prepare("SELECT generation,revision,substr(CAST(payload AS BLOB),1,4097) FROM publication_receipts WHERE ?1 IS NULL OR generation<?1 ORDER BY generation DESC,revision LIMIT ?2")?;
+    let rows = stmt.query_map(
+        params![
+            before.map(i64::try_from).transpose()?,
+            i64::try_from(limit)?
+        ],
+        |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Vec<u8>>(2)?,
+            ))
+        },
+    )?;
+    rows.map(|row| {
+        let (generation, revision, bytes) = row?;
+        ensure!(bytes.len() <= 4096, "oversized selection receipt");
+        let receipt: airk_core::identity::PublicationReceipt = serde_json::from_slice(&bytes)?;
+        ensure!(
+            receipt.token.generation == u64::try_from(generation)?
+                && receipt.token.revision.to_string() == revision,
+            "selection receipt index mismatch"
+        );
+        Ok(receipt)
+    })
+    .collect()
+}
+pub(crate) fn commit_history_selection(
+    directory: &Path,
+    scan: &crate::history_policy::SelectionScan,
+    reservation: &crate::quota::Reservation,
+) -> Result<()> {
+    scan.validate()?;
+    let (maximum, allowance) = pointer_budget(directory)?;
+    reservation.charge(allowance)?;
+    let mut conn = connect_root(directory, true)?;
+    conn.execute_batch(&format!(
+        "PRAGMA max_page_count={maximum}; PRAGMA cache_spill=OFF; PRAGMA temp_store=MEMORY;"
+    ))?;
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    ensure!(
+        expected_head_connection(directory, &tx)? == crate::ExpectedHead::V2(scan.head),
+        "head changed during historical selection"
+    );
+    let state = history_admin_connection(directory, &tx)?;
+    ensure!(
+        state.sequence == scan.operator_sequence && state.policy.digest == scan.policy_digest,
+        "operator policy changed during selection"
+    );
+    let count: i64 = tx.query_row("SELECT count(*) FROM publication_receipts", [], |row| {
+        row.get(0)
+    })?;
+    ensure!(
+        u64::try_from(count)? == scan.receipt_count,
+        "retained receipt set changed during selection"
+    );
+    tx.execute_batch("CREATE TABLE IF NOT EXISTS history_selection(id INTEGER PRIMARY KEY CHECK(id=1),payload BLOB NOT NULL);")?;
+    tx.execute("INSERT INTO history_selection VALUES(1,?1) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload", [serde_json::to_vec(scan)?])?;
+    tx.commit()?;
+    Ok(())
+}
+
+pub(crate) fn retained_receipts(
+    directory: &Path,
+    before: Option<u64>,
+    limit: usize,
+) -> Result<crate::history_policy::RetainedReceiptPage> {
+    ensure!(
+        (1..=64).contains(&limit),
+        "retained receipt page limit must be 1..64"
+    );
+    retry_wal_protocol(|| {
+        let mut conn = connect_root(directory, false)?;
+        let tx = conn.transaction()?;
+        let crate::ExpectedHead::V2(head) = expected_head_connection(directory, &tx)? else {
+            anyhow::bail!("retained receipt listing requires v2 migration");
+        };
+        ensure!(
+            before.is_none_or(|generation| generation <= head.generation),
+            "receipt cursor exceeds current generation"
+        );
+        let mut stmt = tx.prepare("SELECT generation,revision,substr(CAST(payload AS BLOB),1,4097) FROM publication_receipts WHERE ?1 IS NULL OR generation<?1 ORDER BY generation DESC,revision LIMIT ?2")?;
+        let rows = stmt.query_map(
+            params![
+                before.map(i64::try_from).transpose()?,
+                i64::try_from(limit + 1)?
+            ],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Vec<u8>>(2)?,
+                ))
+            },
+        )?;
+        let mut receipts = vec![];
+        for row in rows {
+            let (generation, revision, bytes) = row?;
+            ensure!(bytes.len() <= 4096, "retained receipt exceeds row bound");
+            let receipt: airk_core::identity::PublicationReceipt = serde_json::from_slice(&bytes)?;
+            receipt.token.validate_against(&head)?;
+            ensure!(
+                receipt.token.generation == u64::try_from(generation)?
+                    && receipt.token.revision.to_string() == revision,
+                "retained receipt index mismatch"
+            );
+            receipts.push(receipt);
+        }
+        let complete = receipts.len() <= limit;
+        receipts.truncate(limit);
+        let next_before_generation = if complete {
+            None
+        } else {
+            receipts.last().map(|receipt| receipt.token.generation)
+        };
+        Ok(crate::history_policy::RetainedReceiptPage {
+            head,
+            receipts,
+            next_before_generation,
+            complete,
+        })
+    })
 }
 
 #[cfg(test)]

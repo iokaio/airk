@@ -13,6 +13,7 @@ pub mod extraction;
 pub mod identity;
 pub mod location;
 pub mod mapped_binding;
+pub mod model_objects;
 pub mod publication;
 pub mod usage;
 pub use code::*;

@@ -63,6 +63,9 @@ impl Kernel {
         path: &str,
         options: &EvidenceReadOptions,
     ) -> Result<ConditionalRead<FileInfo>> {
+        if options.revision.is_some() {
+            return self.historical_info(path, options);
+        }
         let catalog = self.catalog()?;
         let read = self.resolve_evidence_path(&catalog, path, options)?;
         if read.status != EvidenceReadStatus::Content {
@@ -89,6 +92,9 @@ impl Kernel {
     ) -> Result<ConditionalRead<SearchResponse>> {
         validate_budget(1, max_bytes)?;
         ensure!(start > 0 && end >= start, "invalid line range");
+        if options.revision.is_some() {
+            return self.historical_file(path, start, end, max_bytes, options);
+        }
         let catalog = self.catalog()?;
         let read = self.resolve_evidence_path(&catalog, path, options)?;
         if read.status != EvidenceReadStatus::Content {
@@ -136,6 +142,9 @@ impl Kernel {
             "context radius must be 0..100"
         );
         ensure!(line > 0, "line is outside indexed source");
+        if options.revision.is_some() {
+            return self.historical_context(path, line, before, after, max_bytes, options);
+        }
         let catalog = self.catalog()?;
         let read = self.resolve_evidence_path(&catalog, path, options)?;
         if read.status != EvidenceReadStatus::Content {
@@ -183,6 +192,9 @@ impl Kernel {
         options: &EvidenceReadOptions,
     ) -> Result<ConditionalRead<FactsResponse>> {
         validate_budget(limit, max_bytes)?;
+        if options.revision.is_some() {
+            return self.historical_outline(path, limit, max_bytes, options);
+        }
         let catalog = self.catalog()?;
         let read = self.resolve_evidence_path(&catalog, path, options)?;
         if read.status != EvidenceReadStatus::Content {
@@ -253,6 +265,7 @@ impl Kernel {
         for fact in facts {
             let bytes = fact.name.len()
                 + fact.citation.path.len()
+                + serde_json::to_vec(&fact.citation.location)?.len()
                 + fact
                     .document
                     .as_ref()

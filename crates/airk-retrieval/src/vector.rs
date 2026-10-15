@@ -47,8 +47,14 @@ impl LocalModel {
     /// `model.json` declares the digest of `vocabulary.json` in this directory.
     /// Vocabulary is a JSON map of lowercase tokens to finite pretrained vectors.
     pub fn open(directory: &Path) -> Result<Self> {
+        Self::open_assets(&crate::model::DirectoryAssets(directory))
+    }
+    pub(crate) fn open_assets(
+        source: &dyn airk_core::model_objects::ModelAssetSource,
+    ) -> Result<Self> {
+        use airk_core::model_objects::ModelAssetName;
         let manifest: ModelManifest =
-            serde_json::from_slice(&read_capped(&directory.join("model.json"), 16_384)?)
+            serde_json::from_slice(&source.read_asset(ModelAssetName::ModelJson, 16_384)?)
                 .context("local embeddings not ready: missing/invalid model manifest")?;
         ensure!(
             manifest.schema == 1 && (1..=MAX_DIMENSIONS).contains(&manifest.dimensions),
@@ -58,7 +64,7 @@ impl LocalModel {
             !manifest.name.trim().is_empty() && !manifest.license.trim().is_empty(),
             "model name and license required"
         );
-        let bytes = read_capped(&directory.join("vocabulary.json"), 268_435_456)?;
+        let bytes = source.read_asset(ModelAssetName::VocabularyJson, 268_435_456)?;
         ensure!(
             format!("{:x}", Sha256::digest(&bytes)) == manifest.sha256,
             "local model digest mismatch"
@@ -119,16 +125,6 @@ impl airk_core::EmbeddingProvider for LocalModel {
             })
             .collect()
     }
-}
-
-fn read_capped(path: &Path, limit: u64) -> Result<Vec<u8>> {
-    let mut bytes = Vec::new();
-    File::open(path)?.take(limit + 1).read_to_end(&mut bytes)?;
-    ensure!(
-        bytes.len() as u64 <= limit,
-        "local asset exceeds byte limit"
-    );
-    Ok(bytes)
 }
 
 fn validate_vector(vector: &[f32], dimensions: usize) -> Result<()> {

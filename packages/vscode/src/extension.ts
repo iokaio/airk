@@ -8,6 +8,7 @@ import { CapacityError, Options, PausedError, Scheduler } from './scheduler';
 import { Coverage, CoverageQueue, coverageDetails, coverageLabel } from './coverage';
 import { RetentionStatus, RetentionPreview, retentionSummary, retentionPolicyForMode } from './retention';
 import { withPolicySnapshot } from './extractionPolicy';
+import { historyControl, HistoryAction } from './history';
 
 interface KnownCollection { name: string; root: string; lastIndexed?: string }
 interface PruneReport { dry_run: boolean; reclaimable_bytes: number; removed_bytes: number; candidates: string[]; pinned: string[]; unreferenced_objects?: number; receipt_cleanup_pending?: boolean }
@@ -318,7 +319,20 @@ class Controller implements vscode.Disposable {
         const status = await this.refreshRetention(spec);
         await this.showJson('AIRK retention status', { collection: spec.collection, root: spec.root, dataDir: spec.dataDir,
             retention: status ?? null, statusUnavailable: !status,
-            explanation: 'Retention concerns searchable index revisions. History and checkpoints are unavailable. Reader leases and the active revision remain protected. Indexing mode is separate from retention mode.' });
+            explanation: 'Retention concerns searchable index revisions. History and checkpoint controls manage retained committed evidence separately. Reader leases and the active revision remain protected. Indexing mode is separate from retention mode.' });
+    }
+    async history(action: HistoryAction): Promise<void> {
+        const spec = await this.chooseSpec(); if (!spec) { return; }
+        this.trusted();
+        await historyControl({
+            collection: `${spec.name} (${spec.collection})`,
+            read: <T>(args: string[]) => { this.trusted(); return runJson<T>(spec, 'collections', args); },
+            write: <T>(args: string[]) => this.writeNative<T>(spec, 'collections', args),
+            show: (title, value) => this.showJson(title, { collection: spec.collection, root: spec.root, dataDir: spec.dataDir, result: value }),
+            confirm: async (message, action) => await vscode.window.showWarningMessage(message, { modal: true }, action) === action,
+            pick: async (choices, title) => (await vscode.window.showQuickPick(choices, { title }))?.value,
+            input: (prompt, value) => Promise.resolve(vscode.window.showInputBox({ prompt, value, ignoreFocusOut: true }))
+        }, action);
     }
     async extractionPolicy(configure = false): Promise<void> {
         const spec = await this.chooseSpec(); if (!spec) { return; }
@@ -434,6 +448,8 @@ class Controller implements vscode.Disposable {
             ['Manage Collections and Disk Space', 'airk.collections'], ['Remove Unneeded Collection', 'airk.removeCollection'],
             ['Trim Obsolete Index Generations', 'airk.prune'],
             ['Show Retention Status', 'airk.retention'], ['Choose Retention Policy', 'airk.retentionPolicy'], ['Run Retention Maintenance', 'airk.retentionRun'],
+            ['Show History Status', 'airk.history'], ['Choose History Policy', 'airk.historyPolicy'], ['Run History Maintenance', 'airk.historyRun'],
+            ['List Retained Publication Identities', 'airk.historyAvailable'], ['Show Checkpoints', 'airk.checkpoints'], ['Create Checkpoint', 'airk.createCheckpoint'], ['Remove Checkpoint', 'airk.removeCheckpoint'], ['Preview Logical History Purge', 'airk.purgeHistory'],
             ['Show Extraction Policy', 'airk.extractionPolicy'], ['Configure Extraction Policy', 'airk.configureExtractionPolicy'],
             ['Set Up Coding Agent', 'airk.setupAgent'], ['Verify Native MCP Connection', 'airk.verifyMcp'], ['Workspace Coverage', 'airk.status'], ['Local Usage and Estimated Savings', 'airk.usage'], ['Show Output', 'airk.logs']
         ];
@@ -459,6 +475,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<{ getS
         resume: async () => { await controller.refresh(); await controller.pauseAuto(false); },
         chooseStorage: () => controller.chooseStorage(), collections: () => controller.collections(), removeCollection: () => controller.collections(true), prune: () => controller.prune(),
         retention: () => controller.retention(), retentionPolicy: () => controller.retentionPolicy(), retentionRun: () => controller.retentionRun(),
+        history: () => controller.history('show'), historyPolicy: () => controller.history('policy'), historyRun: () => controller.history('run'),
+        historyAvailable: () => controller.history('available'), checkpoints: () => controller.history('checkpoints'), createCheckpoint: () => controller.history('create'), removeCheckpoint: () => controller.history('remove'), purgeHistory: () => controller.history('purge'),
         extractionPolicy: () => controller.extractionPolicy(), configureExtractionPolicy: () => controller.extractionPolicy(true),
         status: () => controller.collectionStatus(), usage: () => controller.usage(), setupAgent: () => controller.setupAgent(), verifyMcp: () => controller.verify(), logs: () => controller.output.show()
     };

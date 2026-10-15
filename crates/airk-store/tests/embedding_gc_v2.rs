@@ -82,7 +82,8 @@ fn publish(
         lineage_digest: digest(&serde_json::to_vec(&lineage)?),
         profiles: BTreeMap::new(),
         files: BTreeMap::new(),
-        retrieval_specification: "original-cache-fixture/1".into(),
+        retrieval_specification:
+            "tantivy-0.26.2/diskann-0.59.0/airk-file-1/generation-4/inventory-2".into(),
         embedding_model: None,
         extractor_version: "original-fixture/1".into(),
         analysis: None,

@@ -41,7 +41,7 @@ def check_stdio(name):
         assert receive(1)["result"]["serverInfo"]["name"] == "airk"
         send({"jsonrpc": "2.0", "method": "notifications/initialized"})
         send({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
-        assert len(receive(2)["result"]["tools"]) == 15
+        assert len(receive(2)["result"]["tools"]) == 16
         send({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
             "name": "airk_symbols", "arguments": {"name": "authenticate"}}})
         result = receive(3)["result"]
