@@ -159,6 +159,8 @@ fn quota_failure_preserves_published_evidence_and_orphans_are_reclaimed() -> Res
     let data = tempfile::tempdir()?;
     fs::write(root.path().join("a.rs"), "fn previous_fact() {}\n")?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    // This fixture exercises explicit orphan reclamation after a manual failure.
+    kernel.configure_retention(airk_store::retention::RetentionPolicy::default())?;
     kernel.index()?;
     let generation = kernel.status()?.generation;
     let quota = Quota::open(data.path())?;

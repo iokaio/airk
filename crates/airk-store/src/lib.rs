@@ -12,6 +12,7 @@ use std::{
 };
 pub mod blobs;
 pub mod capacity;
+pub mod maintenance;
 pub mod quota;
 pub mod relocation;
 pub mod retention;

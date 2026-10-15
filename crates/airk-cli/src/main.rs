@@ -479,6 +479,11 @@ enum AnalysisCommand {
 
 #[derive(Subcommand)]
 enum CollectionCommand {
+    /// Inspect or explicitly configure searchable revision retention.
+    Retention {
+        #[command(subcommand)]
+        action: RetentionCommand,
+    },
     /// Inspect or explicitly replace collection ingestion bounds.
     Limits {
         #[command(subcommand)]
@@ -503,6 +508,67 @@ enum CollectionCommand {
         #[arg(long)]
         apply: bool,
     },
+}
+
+#[derive(Subcommand)]
+enum RetentionCommand {
+    /// Read effective policy, protected storage and pending maintenance; never clean up.
+    Show,
+    /// Preview the current or proposed policy without changing managed state.
+    Preview {
+        #[arg(long, conflicts_with = "json")]
+        file: Option<PathBuf>,
+        #[arg(long, conflicts_with = "file")]
+        json: Option<String>,
+    },
+    /// Persist an explicit policy; does not immediately remove generations.
+    Set {
+        #[arg(required_unless_present = "json", conflicts_with = "json")]
+        file: Option<PathBuf>,
+        #[arg(long, conflicts_with = "file")]
+        json: Option<String>,
+    },
+    /// Preview policy maintenance; --apply performs one bounded pass.
+    Run {
+        #[arg(long)]
+        apply: bool,
+        /// Maximum removal bytes for this pass (1..64 GiB); does not change policy.
+        #[arg(long, value_parser = clap::value_parser!(u64).range(1..=68_719_476_736))]
+        max_removal_bytes: Option<u64>,
+        /// Cooperative elapsed-time budget for this pass (1..60000 ms).
+        #[arg(long, value_parser = clap::value_parser!(u64).range(1..=60_000))]
+        max_duration_ms: Option<u64>,
+        /// Maximum surviving inventory metadata examined (16 KiB..64 MiB).
+        #[arg(long, value_parser = clap::value_parser!(u64).range(16_384..=67_108_864))]
+        max_metadata_bytes: Option<u64>,
+    },
+}
+
+fn retention_policy_bytes(
+    file: Option<PathBuf>,
+    json: Option<String>,
+) -> anyhow::Result<Option<Vec<u8>>> {
+    const MAXIMUM: u64 = 65_536;
+    let bytes = if let Some(file) = file {
+        use std::io::Read;
+        let input = std::fs::File::open(file)?;
+        anyhow::ensure!(
+            input.metadata()?.len() <= MAXIMUM,
+            "retention policy exceeds 64 KiB"
+        );
+        let mut bytes = Vec::new();
+        input.take(MAXIMUM + 1).read_to_end(&mut bytes)?;
+        Some(bytes)
+    } else {
+        json.map(String::into_bytes)
+    };
+    anyhow::ensure!(
+        bytes
+            .as_ref()
+            .is_none_or(|bytes| bytes.len() <= MAXIMUM as usize),
+        "retention policy exceeds 64 KiB"
+    );
+    Ok(bytes)
 }
 
 #[derive(Subcommand)]
@@ -698,9 +764,9 @@ async fn main() -> anyhow::Result<()> {
                     }
                     let worker = kernel.clone();
                     let outcome = tokio::task::spawn_blocking(move || worker.run_scheduled_once()).await??;
-                    if !watch || matches!(outcome.state, "indexed" | "failed") { print_json(&outcome)?; }
+                    if !watch || matches!(outcome.state, "indexed" | "failed" | "maintained" | "maintenance_failed") { print_json(&outcome)?; }
                     if !watch { break; }
-                    if matches!(outcome.state, "idle" | "indexed" | "failed") {
+                    if matches!(outcome.state, "idle" | "indexed" | "failed" | "maintained" | "maintenance_failed") {
                         let worker = kernel.clone();
                         let reconciliation = tokio::task::spawn_blocking(move || worker.reconcile_scheduled_once()).await??;
                         if !matches!(reconciliation.state, "idle" | "busy") { print_json(&reconciliation)?; }
@@ -838,6 +904,26 @@ async fn main() -> anyhow::Result<()> {
             },
             CollectionCommand::List => recorder.print(&kernel.collections()?),
             CollectionCommand::Remove { id } => recorder.print(&kernel.remove_collection(&id)?),
+            CollectionCommand::Retention { action } => match action {
+                RetentionCommand::Show => recorder.print(&kernel.retention_status()?),
+                RetentionCommand::Preview { file, json } => {
+                    let bytes = retention_policy_bytes(file, json)?;
+                    let policy = bytes.as_ref().map(|bytes| serde_json::from_slice(bytes)).transpose()?;
+                    recorder.print(&kernel.retention_preview(policy.as_ref())?)
+                },
+                RetentionCommand::Set { file, json } => {
+                    let bytes = retention_policy_bytes(file, json)?.expect("clap requires policy input");
+                    recorder.print(&kernel.configure_retention(serde_json::from_slice(&bytes)?)?)
+                },
+                RetentionCommand::Run { apply, max_removal_bytes, max_duration_ms, max_metadata_bytes } => {
+                    let mut budget = airk_kernel::maintenance::MaintenanceBudget::default();
+                    if let Some(bytes) = max_removal_bytes { budget.max_removal_bytes = bytes; }
+                    if let Some(milliseconds) = max_duration_ms { budget.max_duration_ms = milliseconds; }
+                    if let Some(bytes) = max_metadata_bytes { budget.max_metadata_bytes = bytes; }
+                    if apply { recorder.print(&kernel.maintain_retention_with_budget(budget)?) }
+                    else { recorder.print(&kernel.retention_preview_with_budget(None, budget)?) }
+                },
+            },
             CollectionCommand::Prune { apply } => recorder.print(&kernel.prune_indexes(!apply)?),
         },
         Command::Host => {

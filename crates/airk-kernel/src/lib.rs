@@ -13,6 +13,7 @@ mod conditional;
 pub mod coverage;
 pub mod limits;
 mod lineage;
+pub mod maintenance;
 mod publication;
 mod reconciliation;
 mod resources;
@@ -44,6 +45,7 @@ pub struct Kernel {
     store: FileStore,
     cache: Arc<Mutex<Option<Arc<CachedIndex>>>>,
     catalog_cache: Arc<Mutex<Option<Arc<airk_store::blobs::Catalog>>>>,
+    retention_observer: Option<Arc<maintenance::RetentionObserver>>,
 }
 
 struct CachedIndex {
@@ -92,6 +94,7 @@ enum CachedBackend {
 
 #[derive(Serialize)]
 pub struct Status {
+    pub retention: maintenance::RetentionObservation,
     pub publication: Option<airk_core::evidence::RevisionEnvelope>,
     pub source_roots: std::collections::BTreeMap<String, String>,
     pub generation: u64,
@@ -184,6 +187,7 @@ impl Kernel {
             store: FileStore::new(directory.join("collections").join(collection)),
             cache: Arc::new(Mutex::new(None)),
             catalog_cache: Arc::new(Mutex::new(None)),
+            retention_observer: None,
         })
     }
 
@@ -217,18 +221,15 @@ impl Kernel {
         airk_store::remove_collection(&self.data_root, id)
     }
     pub fn prune_indexes(&self, dry_run: bool) -> Result<airk_store::retention::PruneReport> {
-        let _lock = self.store.lock()?;
+        let writer = self.store.lock()?;
         let snapshot = self.load()?;
         ensure!(
             snapshot.persistent_indexes,
             "reindex before pruning legacy state"
         );
-        let active = self
-            .store
-            .persistent_revision()?
-            .context("active revision missing")?
-            .revision;
-        airk_store::retention::prune(self.store.directory(), &active, dry_run)
+        let quota = airk_store::quota::Quota::open(&self.data_root)?;
+        self.release_idle_pins();
+        self.store.prune_retention(&writer, &quota, dry_run)
     }
     fn empty_snapshot(&self) -> Snapshot {
         let mut snapshot = Snapshot::empty(self.root_id());
@@ -309,20 +310,25 @@ impl Kernel {
     }
 
     pub fn initialize(&self) -> Result<Status> {
-        let _lock = self.store.lock()?;
+        let writer = self.store.lock()?;
         ensure!(
             !self.root.starts_with(self.data_root.canonicalize()?),
             "data directory must not contain the workspace root"
         );
         if self.load_optional()?.is_none() {
-            let mut snapshot = self.empty_snapshot();
-            snapshot.embedding_model = self.configured_model()?;
-            let reservation = self.publication_reservation()?;
-            self.publish_v2(
-                &snapshot,
-                &reservation,
-                airk_core::changes::PublicationReason::Initialization,
-            )?;
+            self.prepare_retention(&writer)?;
+            self.with_pressure_retry(&writer, || {
+                let mut snapshot = self.empty_snapshot();
+                snapshot.embedding_model = self.configured_model()?;
+                let reservation = self.publication_reservation()?;
+                self.publish_v2(
+                    &writer,
+                    &snapshot,
+                    reservation,
+                    airk_core::changes::PublicationReason::Initialization,
+                )?;
+                Ok(())
+            })?;
         }
         self.status()
     }
@@ -337,11 +343,16 @@ impl Kernel {
     }
 
     fn index_with_mode(&self, full: bool) -> Result<IndexReport> {
-        let _lock = self.store.lock()?;
+        let writer = self.store.lock()?;
         ensure!(
             !self.root.starts_with(self.data_root.canonicalize()?),
             "data directory must not contain the workspace root"
         );
+        self.prepare_retention(&writer)?;
+        self.with_pressure_retry(&writer, || self.index_attempt(full, &writer))
+    }
+
+    fn index_attempt(&self, full: bool, writer: &airk_store::WriterLock) -> Result<IndexReport> {
         let mut previous = self
             .load_optional()?
             .unwrap_or_else(|| self.empty_snapshot());
@@ -497,8 +508,9 @@ impl Kernel {
             || self.store.persistent_revision()?.is_none()
         {
             report.generation = self.publish_v2_observed(
+                writer,
                 &snapshot,
-                &reservation,
+                reservation,
                 if full {
                     airk_core::changes::PublicationReason::FullReindex
                 } else {
@@ -512,6 +524,8 @@ impl Kernel {
                 self.persistent_revision()?
                     .context("active revision missing")?,
             )?;
+            drop(reservation);
+            self.after_publication(writer, &airk_store::quota::Quota::open(&self.data_root)?);
         }
         report.publish_us =
             u64::try_from(publish_started.elapsed().as_micros()).unwrap_or(u64::MAX);
@@ -522,6 +536,7 @@ impl Kernel {
         if let Some(revision) = self.persistent_revision()? {
             let (revision, index) = self.pin_revision(revision)?;
             return Ok(Status {
+                retention: self.retention_observation(revision.token),
                 publication: revision.token.map(|token| {
                     airk_core::evidence::RevisionEnvelope::new(revision.collection.clone(), token)
                 }),
@@ -554,6 +569,7 @@ impl Kernel {
             None
         };
         Ok(Status {
+            retention: self.retention_observation(None),
             publication: None,
             source_roots: snapshot
                 .roots
@@ -1124,7 +1140,7 @@ impl Kernel {
     }
 
     pub fn import_scip(&self, index: &Path, manifest: &Path) -> Result<Status> {
-        let _lock = self.store.lock()?;
+        let writer = self.store.lock()?;
         let catalog = self.catalog()?;
         let mut snapshot = catalog.snapshot.clone();
         ensure!(
@@ -1155,19 +1171,32 @@ impl Kernel {
             .checked_add(1)
             .context("generation overflow")?;
         snapshot.persistent_indexes = true;
-        let reservation = self.publication_reservation()?;
-        for artifact in snapshot.artifacts.values_mut() {
-            *artifact =
-                self.store
-                    .retain_artifact_with_budget(artifact, None, Some(&reservation))?;
-        }
-        snapshot.storage_format = 1;
-        snapshot.embedding_model = self.configured_model()?;
-        self.publish_v2(
-            &snapshot,
-            &reservation,
-            airk_core::changes::PublicationReason::ScipImport,
-        )?;
+        let verified = snapshot;
+        self.with_pressure_retry(&writer, || {
+            airk_ingest::semantic::validate_build_inputs(&self.root, &binding)?;
+            let current = self.verify_source_inventory(&verified)?;
+            ensure!(
+                airk_ingest::semantic::source_inventory(&current)
+                    == airk_ingest::semantic::source_inventory(&verified),
+                "source changed before SCIP publication; previous generation retained"
+            );
+            let mut snapshot = verified.clone();
+            let reservation = self.publication_reservation()?;
+            for artifact in snapshot.artifacts.values_mut() {
+                *artifact =
+                    self.store
+                        .retain_artifact_with_budget(artifact, None, Some(&reservation))?;
+            }
+            snapshot.storage_format = 1;
+            snapshot.embedding_model = self.configured_model()?;
+            self.publish_v2(
+                &writer,
+                &snapshot,
+                reservation,
+                airk_core::changes::PublicationReason::ScipImport,
+            )?;
+            Ok(())
+        })?;
         self.status()
     }
 

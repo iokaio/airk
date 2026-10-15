@@ -18,6 +18,7 @@ pub struct RunOutcome {
     pub revision: Option<u64>,
     pub report: Option<IndexReport>,
     pub error: Option<String>,
+    pub maintenance: Option<airk_store::retention::MaintenanceRun>,
 }
 
 #[derive(Serialize)]
@@ -160,15 +161,40 @@ impl Kernel {
                 revision: None,
                 report: None,
                 error: None,
+                maintenance: None,
             });
         };
         let Some(job) = queue.claim(&worker, now()?)? else {
+            match self.continue_retention(&queue.list()?) {
+                Ok(Some((collection, maintenance))) => {
+                    return Ok(RunOutcome {
+                        state: "maintained",
+                        collection: Some(collection),
+                        revision: None,
+                        report: None,
+                        error: maintenance.receipt.error.clone(),
+                        maintenance: Some(maintenance),
+                    });
+                }
+                Err(error) => {
+                    return Ok(RunOutcome {
+                        state: "maintenance_failed",
+                        collection: None,
+                        revision: None,
+                        report: None,
+                        error: Some(format!("{error:#}").chars().take(4096).collect()),
+                        maintenance: None,
+                    });
+                }
+                Ok(None) => {}
+            }
             return Ok(RunOutcome {
                 state: "idle",
                 collection: None,
                 revision: None,
                 report: None,
                 error: None,
+                maintenance: None,
             });
         };
         let result =
@@ -219,6 +245,7 @@ impl Kernel {
                     revision: Some(job.requested_revision),
                     report: Some(report),
                     error: None,
+                    maintenance: None,
                 }
             }
             Err(error) => {
@@ -230,6 +257,7 @@ impl Kernel {
                     revision: Some(job.requested_revision),
                     report: None,
                     error: Some(error),
+                    maintenance: None,
                 }
             }
         };

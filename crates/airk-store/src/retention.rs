@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Explicit pruning of obsolete immutable components, respecting live reader leases.
+pub use crate::maintenance::{
+    MaintenanceBudget, MaintenanceIntent, MaintenanceReceipt, MaintenanceRun, MaintenanceStage,
+    MaintenanceState, MaintenanceTrigger, PolicyOrigin, PolicyReceipt, ProtectedRevision,
+    ProtectionReason, RetentionCandidate, RetentionMode, RetentionPolicy, RetentionPreview,
+    RetentionStatus,
+};
 use anyhow::{Context, Result, ensure};
 use serde::Serialize;
 use std::{
@@ -21,7 +27,7 @@ pub struct PruneReport {
     pub receipt_cleanup_error: Option<String>,
 }
 
-fn generations(directory: &Path) -> Result<Vec<PathBuf>> {
+pub(crate) fn generations(directory: &Path) -> Result<Vec<PathBuf>> {
     let base = directory.join("generations");
     if !base.exists() {
         return Ok(Vec::new());
@@ -50,7 +56,7 @@ fn generations(directory: &Path) -> Result<Vec<PathBuf>> {
     Ok(result)
 }
 
-fn exclusive(path: &Path) -> Result<Option<File>> {
+pub(crate) fn exclusive(path: &Path) -> Result<Option<File>> {
     let base = path
         .parent()
         .and_then(Path::parent)
@@ -90,7 +96,22 @@ fn exclusive(path: &Path) -> Result<Option<File>> {
 
 /// Collection removal must acquire every lease before deleting any evidence.
 pub fn exclusive_collection_leases(directory: &Path) -> Result<Vec<File>> {
-    generations(directory)?
+    let mut paths = generations(directory)?;
+    for revision in crate::maintenance::legacy_intent_revisions(directory)? {
+        let path = directory.join("generations").join(revision);
+        if !paths.contains(&path) {
+            paths.push(path);
+        }
+    }
+    for token in crate::maintenance::intent_tokens(directory)? {
+        let path = directory
+            .join("generations")
+            .join(token.revision.to_string());
+        if !paths.contains(&path) {
+            paths.push(path);
+        }
+    }
+    paths
         .iter()
         .map(|path| {
             exclusive(path)?
@@ -101,6 +122,12 @@ pub fn exclusive_collection_leases(directory: &Path) -> Result<Vec<File>> {
 
 /// Caller holds the collection writer lock from active-ID lookup through completion.
 pub fn prune(directory: &Path, active: &str, dry_run: bool) -> Result<PruneReport> {
+    if directory.join("index.sqlite3").exists()
+        && crate::sqlite::persistent_revision(directory)?
+            .is_some_and(|revision| revision.token.is_some())
+    {
+        return crate::maintenance::prune_compat(directory, active, dry_run);
+    }
     ensure!(
         active.len() == 64 && active.bytes().all(|c| c.is_ascii_hexdigit()),
         "invalid active revision identity"

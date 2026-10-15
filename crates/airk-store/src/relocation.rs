@@ -593,6 +593,28 @@ fn finish(marker: &Marker, manifest: &Manifest) -> Result<RelocationResult> {
     // Recreate empty lease files with fresh OS ownership; never copy an active lock.
     for entry in &manifest.files {
         let parts: Vec<_> = entry.path.split('/').collect();
+        let retirement = if parts.len() == 5
+            && parts[0] == "collections"
+            && parts[2] == "maintenance"
+            && matches!(parts[3], "intents" | "legacy-intents")
+        {
+            parts[4]
+                .strip_suffix(".json")
+                .filter(|revision| crate::blobs::valid_digest(revision))
+        } else {
+            None
+        };
+        if let Some(revision) = retirement {
+            let lease = checked_target(
+                destination,
+                &format!("collections/.reader-locks/{}/{revision}", parts[1]),
+            )?;
+            OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(lease)?;
+        }
         if parts.len() >= 5
             && parts[0] == "collections"
             && parts[2] == "generations"

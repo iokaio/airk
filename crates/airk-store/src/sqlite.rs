@@ -585,8 +585,151 @@ pub(crate) fn validate_retained_token(
                     .is_none_or(|revision| revision == &token.revision.to_string()),
             "forked retained revision token"
         );
+        if table_exists(&conn, "retired_representations")? {
+            let mut statement=conn.prepare("SELECT revision FROM retired_representations WHERE incarnation=?1 AND generation=?2 LIMIT 2")?;
+            let retired = statement
+                .query_map(
+                    params![
+                        token.incarnation.to_string(),
+                        i64::try_from(token.generation)?
+                    ],
+                    |row| row.get::<_, String>(0),
+                )?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            ensure!(
+                retired.len() <= 1
+                    && retired
+                        .first()
+                        .is_none_or(|revision| revision == &token.revision.to_string()),
+                "forked retired revision token"
+            );
+        }
         Ok(())
     })
+}
+
+fn table_exists(conn: &Connection, name: &str) -> Result<bool> {
+    Ok(conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",
+        [name],
+        |row| row.get(0),
+    )?)
+}
+
+pub(crate) fn maintenance_receipts(
+    directory: &Path,
+    after_generation: Option<u64>,
+    limit: usize,
+) -> Result<Vec<airk_core::identity::PublicationReceipt>> {
+    let conn = connect_root(directory, false)?;
+    let mut statement = conn.prepare(
+        "SELECT payload FROM publication_receipts WHERE ?1 IS NULL OR generation>?1 ORDER BY generation ASC,revision ASC LIMIT ?2",
+    )?;
+    let rows = statement
+        .query_map(
+            params![
+                after_generation.map(i64::try_from).transpose()?,
+                i64::try_from(limit)?
+            ],
+            |row| row.get::<_, String>(0),
+        )?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    rows.into_iter()
+        .map(|row| {
+            ensure!(row.len() <= 16384, "oversized publication receipt");
+            Ok(serde_json::from_str(&row)?)
+        })
+        .collect()
+}
+
+pub(crate) fn retirement_proof(
+    directory: &Path,
+    token: &airk_core::identity::RevisionToken,
+) -> Result<Option<crate::maintenance::RetirementProof>> {
+    let conn = connect_root(directory, false)?;
+    if !table_exists(&conn, "retired_representations")? {
+        return Ok(None);
+    }
+    let row: Option<String> = conn
+        .query_row(
+            "SELECT proof FROM retired_representations WHERE revision=?1",
+            [token.revision.to_string()],
+            |row| row.get(0),
+        )
+        .optional()?;
+    row.map(|row| {
+        ensure!(row.len() <= 16384, "oversized retirement proof");
+        let proof: crate::maintenance::RetirementProof = serde_json::from_str(&row)?;
+        ensure!(proof.token == *token, "foreign retirement proof");
+        Ok(proof)
+    })
+    .transpose()
+}
+
+pub(crate) fn authorize_retirement(
+    directory: &Path,
+    proof: &crate::maintenance::RetirementProof,
+    expected: &airk_core::identity::PublicationReceipt,
+    reservation: &crate::quota::Reservation,
+) -> Result<()> {
+    let (maximum, allowance) = pointer_budget(directory)?;
+    reservation.charge(allowance)?;
+    let mut conn = connect_root(directory, true)?;
+    conn.execute_batch(&format!(
+        "PRAGMA max_page_count={maximum}; PRAGMA cache_spill=OFF; PRAGMA temp_store=MEMORY;"
+    ))?;
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    ensure!(
+        expected_head_connection(directory, &tx)? == crate::ExpectedHead::V2(proof.authorized_head),
+        "pointer changed before retirement authorization"
+    );
+    ensure!(
+        proof.token != proof.authorized_head
+            && proof.token.incarnation == proof.authorized_head.incarnation,
+        "invalid retirement scope"
+    );
+    ensure!(
+        receipt_connection(&tx, &proof.token)?.as_ref() == Some(expected),
+        "retirement receipt changed"
+    );
+    tx.execute_batch("CREATE TABLE IF NOT EXISTS retired_representations(revision TEXT PRIMARY KEY,incarnation TEXT NOT NULL,generation INTEGER NOT NULL,proof TEXT NOT NULL); CREATE INDEX IF NOT EXISTS retired_scope ON retired_representations(incarnation,generation); CREATE TABLE IF NOT EXISTS retirement_floors(incarnation TEXT PRIMARY KEY,generation INTEGER NOT NULL);")?;
+    let encoded = serde_json::to_string(proof)?;
+    ensure!(encoded.len() <= 16384, "retirement proof exceeds bound");
+    tx.execute("INSERT INTO retired_representations(revision,incarnation,generation,proof) VALUES(?1,?2,?3,?4)",params![proof.token.revision.to_string(),proof.token.incarnation.to_string(),i64::try_from(proof.token.generation)?,encoded])?;
+    tx.execute(
+        "DELETE FROM publication_receipts WHERE revision=?1",
+        [proof.token.revision.to_string()],
+    )?;
+    // Proofs for unfinished intents cannot be evicted. Select only completed
+    // rows whose intent file is absent; old identities then become unverifiable.
+    loop {
+        let (count, bytes): (i64, i64) = tx.query_row(
+            "SELECT count(*),coalesce(sum(length(proof)),0) FROM retired_representations",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        ensure!(count >= 0 && bytes >= 0, "negative retirement accounting");
+        if count <= 10_000 && bytes <= 16 * 1024 * 1024 {
+            break;
+        }
+        let oldest:Option<(String,String,i64)>=tx.query_row("SELECT revision,incarnation,generation FROM retired_representations ORDER BY generation,revision LIMIT 1",[],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?))).optional()?;
+        let (revision, incarnation, generation) =
+            oldest.context("retirement proof accounting mismatch")?;
+        ensure!(
+            !directory
+                .join("maintenance/intents")
+                .join(format!("{revision}.json"))
+                .exists(),
+            "retirement proof cap protected by unfinished maintenance"
+        );
+        tx.execute("INSERT INTO retirement_floors(incarnation,generation) VALUES(?1,?2) ON CONFLICT(incarnation) DO UPDATE SET generation=max(generation,excluded.generation)",params![incarnation,generation])?;
+        tx.execute(
+            "DELETE FROM retired_representations WHERE revision=?1",
+            [revision],
+        )?;
+    }
+    tx.commit()?;
+    Ok(())
 }
 
 fn receipt_once(
@@ -601,113 +744,16 @@ fn receipt_once(
     receipt_connection(&conn, token)
 }
 
-/// Caller holds the collection writer lock. Receipt removal is separately charged
-/// and occurs only after the last representation has actually disappeared.
+/// Legacy pruning has no v2 receipt authority. Only durable retirement may remove it.
 pub(crate) fn retire_unrepresented_receipts(directory: &Path) -> Result<usize> {
-    let exists = |path: &Path| -> Result<bool> {
-        match std::fs::symlink_metadata(path) {
-            Ok(metadata) => {
-                ensure!(
-                    !metadata.file_type().is_symlink(),
-                    "linked receipt representation"
-                );
-                Ok(true)
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
-            Err(error) => Err(error.into()),
-        }
-    };
     let conn = connect_root(directory, false)?;
     let version: u32 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    if version != crate::ROOT_POINTER_VERSION {
-        return Ok(0);
-    }
     ensure!(
-        !exists(&directory.join("maintenance"))? && !exists(&directory.join("checkpoints"))?,
-        "receipt retirement awaits maintenance/checkpoint-aware cleanup"
+        version != crate::ROOT_POINTER_VERSION,
+        "v2 receipt retirement requires durable maintenance authorization"
     );
-    exists(&directory.join("history"))?;
-    let header =
-        persistent_revision(directory)?.context("active pointer missing during receipt cleanup")?;
-    let revisions: Vec<String> = {
-        let mut statement = conn.prepare("SELECT revision FROM publication_receipts WHERE revision<>?1 ORDER BY revision LIMIT 10001")?;
-        statement
-            .query_map([&header.revision], |row| row.get(0))?
-            .collect::<rusqlite::Result<_>>()?
-    };
-    ensure!(
-        revisions.len() <= 10_000,
-        "receipt cleanup candidate bound exceeded"
-    );
-    let mut candidates = Vec::new();
-    let mut leases = Vec::new();
-    for revision in revisions {
-        ensure!(
-            crate::blobs::valid_digest(&revision),
-            "invalid retained receipt identity"
-        );
-        if exists(&directory.join("generations").join(&revision))?
-            || exists(
-                &directory
-                    .join("generations")
-                    .join(format!("removing-{revision}")),
-            )?
-            || exists(&directory.join("history").join(&revision))?
-        {
-            continue;
-        }
-        let lease = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(crate::blobs::reader_lease_path(directory, &revision)?)?;
-        match lease.try_lock() {
-            Ok(()) => {
-                leases.push(lease);
-                candidates.push(revision);
-            }
-            Err(std::fs::TryLockError::WouldBlock) => {
-                anyhow::bail!("detached receipt remains reader-protected")
-            }
-            Err(error) => return Err(error.into()),
-        }
-    }
-    if candidates.is_empty() {
-        return Ok(0);
-    }
-    drop(conn);
-    let root = directory
-        .parent()
-        .and_then(Path::parent)
-        .context("receipt cleanup data root missing")?;
-    let collection = directory
-        .file_name()
-        .and_then(|value| value.to_str())
-        .context("receipt cleanup collection missing")?;
-    let (maximum, allowance) = pointer_budget(directory)?;
-    let reservation = crate::quota::Quota::open(root)?.reserve(collection, allowance)?;
-    reservation.charge(allowance)?;
-    let mut conn = connect_root(directory, true)?;
-    conn.execute_batch(&format!(
-        "PRAGMA max_page_count={maximum}; PRAGMA cache_spill=OFF; PRAGMA temp_store=MEMORY;"
-    ))?;
-    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-    ensure!(
-        expected_head_connection(directory, &tx)?
-            == crate::ExpectedHead::V2(header.token.context("active v2 token missing")?),
-        "active pointer changed during receipt cleanup"
-    );
-    let mut removed = 0;
-    for revision in &candidates {
-        removed += tx.execute(
-            "DELETE FROM publication_receipts WHERE revision=?1",
-            [revision],
-        )?;
-    }
-    tx.commit()?;
-    drop(leases);
-    Ok(removed)
+    Ok(0)
 }
-
 #[allow(clippy::too_many_arguments)]
 pub(super) fn save_catalog_v2(
     directory: &Path,
@@ -1442,6 +1488,60 @@ impl FileStore {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn maintenance_pages_include_generation_zero_and_advance_past_prefix() -> anyhow::Result<()> {
+        use airk_core::identity::{Incarnation, PublicationReceipt, RevisionToken, Sha256Digest};
+        let root = tempfile::tempdir()?;
+        let connection = super::connect_root(root.path(), true)?;
+        connection.pragma_update(None, "user_version", crate::ROOT_POINTER_VERSION)?;
+        connection.execute_batch(
+            "CREATE TABLE publication_receipts(generation INTEGER, revision TEXT, payload TEXT);",
+        )?;
+        for generation in 0..6u64 {
+            let digest = Sha256Digest::from_bytes([generation as u8; 32]);
+            let receipt = PublicationReceipt {
+                token: RevisionToken {
+                    incarnation: Incarnation::from_bytes([7; 16]),
+                    generation,
+                    revision: digest,
+                },
+                inventory_digest: digest,
+                manifest_digest: digest,
+            };
+            connection.execute(
+                "INSERT INTO publication_receipts VALUES(?1,?2,?3)",
+                rusqlite::params![
+                    generation as i64,
+                    digest.to_string(),
+                    serde_json::to_string(&receipt)?
+                ],
+            )?;
+        }
+        let page = super::maintenance_receipts(root.path(), None, 2)?;
+        assert_eq!(
+            page.iter().map(|r| r.token.generation).collect::<Vec<_>>(),
+            vec![0, 1]
+        );
+        let next = super::maintenance_receipts(root.path(), Some(1), 2)?;
+        assert_eq!(
+            next.iter().map(|r| r.token.generation).collect::<Vec<_>>(),
+            vec![2, 3]
+        );
+        assert_eq!(
+            super::maintenance_receipts(root.path(), Some(0), 1)?[0]
+                .token
+                .generation,
+            1
+        );
+        assert!(super::maintenance_receipts(root.path(), Some(5), 2)?.is_empty());
+        assert_eq!(
+            super::maintenance_receipts(root.path(), None, 1)?[0]
+                .token
+                .generation,
+            0
+        );
+        Ok(())
+    }
     use super::*;
     use crate::FileStore;
 
