@@ -1,6 +1,8 @@
 # AIRK documentation
 
 - [Architecture and code boundaries](architecture.md)
+- [Architecture v2: combined implementation and subagent plan](architecture-v2.md)
+- [Proposed change tracing and bounded development indexes](change-tracing-plan.md)
 - [Decision 001: focused local retrieval](decisions/001-local-retrieval-kernel.md)
 - [Design inspiration and independent implementation](inspiration.md)
 - [Implemented format support](formats.md)
