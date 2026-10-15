@@ -237,6 +237,10 @@ fn verify_file(path: &Path, reference: &ModelObjectRef) -> Result<()> {
 mod tests {
     use super::*;
     use airk_core::model_objects::ModelAssetName;
+    fn unlinked_tempdir() -> Result<tempfile::TempDir> {
+        // The model source and target guards reject macOS's linked /var path.
+        Ok(tempfile::Builder::new().tempdir_in(std::env::temp_dir().canonicalize()?)?)
+    }
     fn fixture(source: &Path) -> Result<ModelObjectSet> {
         fs::create_dir_all(source)?;
         let mut assets = BTreeMap::new();
@@ -265,7 +269,7 @@ mod tests {
     }
     #[test]
     fn reuse_is_charged_once_and_tampering_is_explicit() -> Result<()> {
-        let root = tempfile::tempdir()?;
+        let root = unlinked_tempdir()?;
         let source = root.path().join("source");
         let set = fixture(&source)?;
         let collection = root.path().join("collection");
@@ -289,7 +293,7 @@ mod tests {
     }
     #[test]
     fn reservation_failure_and_source_change_publish_no_asset() -> Result<()> {
-        let root = tempfile::tempdir()?;
+        let root = unlinked_tempdir()?;
         let source = root.path().join("source");
         let set = fixture(&source)?;
         let objects = ModelObjects::new(&root.path().join("collection"));
@@ -311,7 +315,7 @@ mod tests {
 
     #[test]
     fn metadata_change_reuses_identical_weight_bytes_and_keeps_old_objects() -> Result<()> {
-        let root = tempfile::tempdir()?;
+        let root = unlinked_tempdir()?;
         let source = root.path().join("source");
         let mut set = fixture(&source)?;
         let objects = ModelObjects::new(&root.path().join("collection"));
@@ -342,7 +346,7 @@ mod tests {
 
     #[test]
     fn source_change_after_open_fails_checksum_before_immutable_install() -> Result<()> {
-        let root = tempfile::tempdir()?;
+        let root = unlinked_tempdir()?;
         let source = root.path().join("source");
         let set = fixture(&source)?;
         let objects = ModelObjects::new(&root.path().join("collection"));
@@ -372,7 +376,7 @@ mod tests {
     #[test]
     fn linked_source_parent_and_object_parent_are_rejected() -> Result<()> {
         use std::os::unix::fs::symlink;
-        let root = tempfile::tempdir()?;
+        let root = unlinked_tempdir()?;
         let source = root.path().join("real/source");
         let set = fixture(&source)?;
         symlink(root.path().join("real"), root.path().join("linked"))?;

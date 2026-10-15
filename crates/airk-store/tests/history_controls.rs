@@ -875,7 +875,7 @@ fn checkpoint_limit_and_utf8_label_bound_do_not_install_failed_mutations() -> Re
 fn shared_model_assets_follow_full_reader_roots_but_not_historical_packages() -> Result<()> {
     use airk_core::model_objects::{ModelAssetName, ModelObjectRef, ModelObjectSet};
     use airk_store::history::ConversionStatus;
-    let root = tempfile::tempdir()?;
+    let root = tempfile::Builder::new().tempdir_in(std::env::temp_dir().canonicalize()?)?;
     let store = FileStore::new(root.path().join("collections/fixture"));
     let writer = store.lock()?;
     let quota = Quota::open(root.path())?;

@@ -30,6 +30,11 @@ use std::{
     time::Instant,
 };
 
+fn unlinked_tempdir() -> Result<tempfile::TempDir> {
+    // The staging writer rejects linked ancestors; macOS /var is a symlink.
+    Ok(tempfile::Builder::new().tempdir_in(std::env::temp_dir().canonicalize()?)?)
+}
+
 fn raw(bytes: &[u8]) -> Sha256Digest {
     Sha256Digest::from_bytes(Sha256::digest(bytes).into())
 }
@@ -250,7 +255,7 @@ fn queries() -> Vec<SearchQuery> {
 
 #[test]
 fn sparse_edit_early_insert_and_chunk_count_shift_match_full_queries() -> Result<()> {
-    let temporary = tempfile::tempdir()?;
+    let temporary = unlinked_tempdir()?;
     let base = temporary.path().join("base");
     let source = source(16);
     let (old, lineage, token) = inventory(&source, None)?;
@@ -333,7 +338,7 @@ fn sparse_edit_early_insert_and_chunk_count_shift_match_full_queries() -> Result
 
 #[test]
 fn copy_quota_failure_and_tampering_leave_base_readable_and_private_staging_clean() -> Result<()> {
-    let temporary = tempfile::tempdir()?;
+    let temporary = unlinked_tempdir()?;
     let base = temporary.path().join("base");
     let staging = temporary.path().join("staging");
     fs::create_dir(&staging)?;
@@ -400,7 +405,7 @@ fn copy_quota_failure_and_tampering_leave_base_readable_and_private_staging_clea
 #[ignore = "explicit original-fixture timing campaign; no automatic strategy adoption"]
 fn measure_sparse_and_ordinal_shift_workloads() -> Result<()> {
     for count in [16, 1000] {
-        let temporary = tempfile::tempdir()?;
+        let temporary = unlinked_tempdir()?;
         let base = temporary.path().join("base");
         let source = source(count);
         let (old, lineage, token) = inventory(&source, None)?;
