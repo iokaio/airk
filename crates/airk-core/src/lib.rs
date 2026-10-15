@@ -12,6 +12,7 @@ pub mod evidence;
 pub mod extraction;
 pub mod identity;
 pub mod location;
+pub mod mapped_binding;
 pub mod publication;
 pub mod usage;
 pub use code::*;
@@ -204,12 +205,31 @@ pub struct Symbol {
 /// PDF/DOCX adapters use native page/block locations, not invented source lines.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum DocumentLocation {
-    Lines { start: usize, end: usize },
-    Page { number: usize },
-    Block { number: usize },
-    Slide { number: usize },
-    TableRow { table: usize, row: usize },
-    WorksheetRow { sheet: String, row: usize },
+    /// Original host coordinates with explicitly region-local code spans.
+    Mapped {
+        region: location::RegionLocation,
+    },
+    Lines {
+        start: usize,
+        end: usize,
+    },
+    Page {
+        number: usize,
+    },
+    Block {
+        number: usize,
+    },
+    Slide {
+        number: usize,
+    },
+    TableRow {
+        table: usize,
+        row: usize,
+    },
+    WorksheetRow {
+        sheet: String,
+        row: usize,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

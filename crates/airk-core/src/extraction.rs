@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-pub const EXTRACTION_CONTRACT_VERSION: u32 = 1;
+pub const EXTRACTION_CONTRACT_VERSION: u32 = 2;
 /// Preserves legacy 40-line chunks across the bounded native source ceiling.
 /// The independent 64 MiB encoded payload limit remains authoritative.
 pub const MAX_EXTRACTION_CHUNKS: usize = 500_000;
@@ -98,7 +98,7 @@ pub struct ExtractionProfile {
 impl ExtractionProfile {
     pub fn identity(&self) -> anyhow::Result<crate::identity::Sha256Digest> {
         anyhow::ensure!(
-            self.contract_version == EXTRACTION_CONTRACT_VERSION,
+            matches!(self.contract_version, 1 | EXTRACTION_CONTRACT_VERSION),
             "unsupported profile contract"
         );
         let bytes = serde_json::to_vec(self)?;
@@ -290,7 +290,7 @@ impl ExtractionPayload {
             "adapter text limit exceeded"
         );
         anyhow::ensure!(
-            self.contract_version == EXTRACTION_CONTRACT_VERSION,
+            matches!(self.contract_version, 1 | EXTRACTION_CONTRACT_VERSION),
             "unsupported extraction contract"
         );
         anyhow::ensure!(

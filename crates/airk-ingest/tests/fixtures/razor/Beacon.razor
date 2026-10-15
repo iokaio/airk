@@ -1,0 +1,8 @@
+@page "/beacon"
+@inject IBeaconService BeaconService
+@using Example.Written
+<BeaconCard Title="Written component" />
+@code {
+    private string BeaconText = "original 🛰";
+    private string BeaconValue() { return BeaconText; }
+}

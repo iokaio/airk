@@ -74,6 +74,63 @@ pub enum RegionLocation {
 }
 
 impl RegionLocation {
+    /// Validate bounded locator metadata when original bytes are unavailable.
+    /// Exact source-map verification still happens when binding retained payloads.
+    pub fn validate_shape(&self) -> Result<()> {
+        let spans = match self {
+            Self::Embedded {
+                region_id,
+                local_span,
+                original_spans,
+            } => {
+                ensure!(
+                    !region_id.is_empty() && region_id.len() <= 4096 && !region_id.contains('\0'),
+                    "invalid region locator"
+                );
+                ensure!(
+                    local_span.start < local_span.end && local_span.end <= 16_777_216,
+                    "invalid region span"
+                );
+                original_spans
+            }
+            Self::NotebookCell {
+                cell_id,
+                position,
+                local_start_line,
+                local_end_line,
+                original_spans,
+            } => {
+                ensure!((1..=10_000).contains(position), "invalid notebook position");
+                ensure!(
+                    cell_id
+                        .as_ref()
+                        .is_none_or(|id| !id.is_empty() && id.len() <= 4096 && !id.contains('\0')),
+                    "invalid notebook ID"
+                );
+                ensure!(
+                    *local_start_line > 0
+                        && local_start_line <= local_end_line
+                        && *local_end_line <= 16_777_217,
+                    "invalid notebook lines"
+                );
+                original_spans
+            }
+        };
+        ensure!(
+            !spans.is_empty() && spans.len() <= MAX_MAP_SEGMENTS,
+            "invalid mapped citation count"
+        );
+        let mut prior = 0;
+        for span in spans {
+            ensure!(
+                span.start >= prior && span.start < span.end && span.end <= 16_777_216,
+                "invalid original citation span"
+            );
+            prior = span.end;
+        }
+        Ok(())
+    }
+
     /// Validate coordinates against the supplied immediate host mapping.
     /// Nested adapters must compose each parent map before emitting a public
     /// original-source citation; this method does not skip that binding step.
@@ -264,7 +321,7 @@ impl SourceMap {
 
     /// The caller validates a map once, then maps ordered pieces without
     /// rescanning every preceding segment for each discontiguous piece.
-    fn original_spans_validated(
+    pub(crate) fn original_spans_validated(
         &self,
         span: ByteSpan,
         local: &str,
@@ -315,6 +372,7 @@ pub struct HostBudget {
     remaining_nodes: usize,
     remaining_facts: usize,
     remaining_text_bytes: usize,
+    remaining_fingerprint_bytes: usize,
 }
 
 impl HostBudget {
@@ -329,6 +387,7 @@ impl HostBudget {
             remaining_nodes: nodes,
             remaining_facts: facts,
             remaining_text_bytes: text_bytes,
+            remaining_fingerprint_bytes: crate::continuity::MAX_CONTINUITY_HASH_BYTES,
         })
     }
 
@@ -342,6 +401,15 @@ impl HostBudget {
             (1..=MAX_REGION_DEPTH).contains(&depth),
             "region nesting limit"
         );
+        Ok(())
+    }
+
+    /// Complete fingerprint inputs across all sibling regions share one ceiling.
+    /// This is work accounting, independent of admitted decoded/source text bytes.
+    pub fn charge_fingerprints(&mut self, bytes: usize) -> Result<()> {
+        let fits = bytes <= self.remaining_fingerprint_bytes;
+        self.remaining_fingerprint_bytes = self.remaining_fingerprint_bytes.saturating_sub(bytes);
+        ensure!(fits, "shared host fingerprint budget exhausted");
         Ok(())
     }
 
@@ -369,6 +437,16 @@ impl HostBudget {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fingerprint_work_is_shared_and_failed_charge_exhausts_it() {
+        let mut budget = HostBudget::new(0, 0, 0).unwrap();
+        budget
+            .charge_fingerprints(crate::continuity::MAX_CONTINUITY_HASH_BYTES - 2)
+            .unwrap();
+        assert!(budget.charge_fingerprints(3).is_err());
+        assert!(budget.charge_fingerprints(1).is_err());
+    }
 
     fn verbatim(local_len: usize, host_start: usize) -> SourceMap {
         SourceMap {

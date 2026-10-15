@@ -9,10 +9,18 @@ pub fn prepare(
     payload: &mut airk_core::extraction::ExtractionPayload,
     profile: &airk_core::extraction::ExtractionProfile,
 ) -> anyhow::Result<()> {
+    prepare_with_prose_text(payload, profile, None)
+}
+
+pub(crate) fn prepare_with_prose_text(
+    payload: &mut airk_core::extraction::ExtractionPayload,
+    profile: &airk_core::extraction::ExtractionProfile,
+    prose_text: Option<&str>,
+) -> anyhow::Result<()> {
     use airk_core::continuity::*;
     let mut budget = ContinuityBudget::default();
     let code = code::describe(payload, profile, &mut budget)?;
-    let documents = documents::describe(payload, profile, &mut budget)?;
+    let documents = documents::describe_with_prose_text(payload, profile, &mut budget, prose_text)?;
     let mut hints = Vec::new();
     let mut bytes = 2usize;
     payload.continuity.clear();

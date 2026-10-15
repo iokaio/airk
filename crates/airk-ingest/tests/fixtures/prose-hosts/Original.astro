@@ -1,0 +1,9 @@
+---
+// SPDX-License-Identifier: Apache-2.0
+import ArchiveCard from "./ArchiveCard.astro";
+export const title: string = "café";
+const hidden = "<script>not_a_child()</script>";
+---
+<main><ArchiveCard title={title} /></main>
+<script>function activate() { return 17; }</script>
+<style>.archive { color: navy; }</style>

@@ -45,6 +45,16 @@ pub fn describe(
         "duplicate syntax identity"
     );
     let regions: BTreeMap<_, _> = payload.regions.iter().map(|item| (item.id, item)).collect();
+    let mut mapping_budget = airk_core::location::HostBudget::new(500_000, 10_000, 16_777_216)?;
+    let mapper = if payload.regions.is_empty() {
+        None
+    } else {
+        Some(airk_core::mapped_binding::MappedBinding::new(
+            payload,
+            profile,
+            &mut mapping_budget,
+        )?)
+    };
     let mut declarations: BTreeMap<_, &LocalFact> = BTreeMap::new();
     let mut duplicate = BTreeSet::new();
     for fact in &payload.facts {
@@ -120,7 +130,17 @@ pub fn describe(
                 unsupported.push(dimension);
             }
         }
-        let location = serde_json::to_vec(&fact.location)?;
+        let public_location = match fact.region {
+            Some(region) => {
+                mapper
+                    .as_ref()
+                    .context("missing mapped binder")?
+                    .mapped_location(region, identity.span.clone(), &mut mapping_budget)?
+                    .0
+            }
+            None => fact.location.clone(),
+        };
+        let location = serde_json::to_vec(&public_location)?;
         dimensions.insert(
             ChangeDimension::Location,
             framed_digest(
@@ -161,7 +181,7 @@ pub fn describe(
             dimensions,
             unsupported_dimensions: unsupported,
             span: identity.span.clone(),
-            location: fact.location.clone(),
+            location: public_location,
             complete,
             body_informative: fingerprints
                 .is_some_and(|value| value.body_informative && value.body.is_some()),

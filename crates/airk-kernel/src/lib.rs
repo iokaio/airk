@@ -405,7 +405,7 @@ impl Kernel {
                 }
             }
         }
-        let (mut snapshot, mut report, observation) = airk_ingest::scan_observed_v2_with_budgets(
+        let (mut snapshot, mut report, observation) = airk_ingest::scan_payloads_with_budgets(
             &self.root,
             &self.data_root,
             &previous,
@@ -447,7 +447,8 @@ impl Kernel {
                     .retained
                     .as_ref()
                     .is_none_or(|reference| reference.profile.is_none())
-                    && previous.extractor_version != airk_core::EXTRACTOR_VERSION
+                    && (previous.extractor_version != airk_core::EXTRACTOR_VERSION
+                        || profile.adapter_version != "native-facts/7")
                 {
                     return Ok(None);
                 }
@@ -482,7 +483,7 @@ impl Kernel {
                     basis,
                 }))
             },
-            |profile, artifact, bytes| {
+            |profile, artifact, bytes, fresh_payload| {
                 if artifact
                     .retained
                     .as_ref()
@@ -491,7 +492,10 @@ impl Kernel {
                     return Ok(artifact.clone());
                 }
                 let hydrated = self.store.load_retained(artifact)?;
-                let payload = airk_ingest::continuity::prepare_native(&hydrated, bytes, profile)?;
+                let payload = match fresh_payload {
+                    Some(payload) => payload.clone(),
+                    None => airk_ingest::continuity::prepare_native(&hydrated, bytes, profile)?,
+                };
                 let prepared = airk_core::binding::bind_payload(
                     &payload,
                     profile,
@@ -843,6 +847,7 @@ impl Kernel {
     ) -> Result<SearchResponse> {
         let catalog = self.catalog()?;
         let artifact = catalog.load_artifact(path)?;
+        let artifact = self.source_line_artifact(&catalog, artifact)?;
         Self::read_snapshot(
             Self::catalog_envelope(&catalog),
             &catalog.snapshot,
@@ -852,6 +857,34 @@ impl Kernel {
             end_line,
             max_bytes,
         )
+    }
+
+    pub(crate) fn source_line_artifact(
+        &self,
+        catalog: &airk_store::blobs::Catalog,
+        mut artifact: Artifact,
+    ) -> Result<Artifact> {
+        if matches!(
+            artifact.language.as_str(),
+            "html" | "vue" | "svelte" | "astro" | "mdx" | "notebook" | "razor"
+        ) && artifact.extraction_method == "utf8"
+            && catalog
+                .snapshot
+                .artifacts
+                .get(&artifact.path)
+                .and_then(|entry| entry.retained.as_ref())
+                .and_then(|r| r.profile.as_ref())
+                .is_some_and(|profile| profile.adapter_version == "composite-facts/1")
+        {
+            let entry = catalog
+                .snapshot
+                .artifacts
+                .get(&artifact.path)
+                .context("original source entry missing")?;
+            let bytes = self.store.read_retained_source(entry)?;
+            artifact.chunks = airk_ingest::chunk(std::str::from_utf8(&bytes)?);
+        }
+        Ok(artifact)
     }
 
     fn read_snapshot(
@@ -973,6 +1006,13 @@ impl Kernel {
             });
         }
         let a = catalog.load_artifact(path)?;
+        let source_lines = self
+            .source_line_artifact(catalog, a.clone())?
+            .chunks
+            .iter()
+            .map(|chunk| chunk.end_line)
+            .max()
+            .unwrap_or(0);
         Ok(FileInfo {
             publication: Self::catalog_envelope(catalog),
             source: airk_store::roots::source_location(&snapshot.root, &snapshot.roots, path)?,
@@ -986,7 +1026,7 @@ impl Kernel {
             parse_status: a.parse_status.clone(),
             chunks: a.chunks.len(),
             facts: a.facts.len(),
-            indexed_lines: a.chunks.last().map_or(0, |c| c.end_line),
+            indexed_lines: source_lines,
             line_basis: if a.extraction_method == "utf8" {
                 "source"
             } else {
@@ -1262,6 +1302,7 @@ impl Kernel {
         let catalog = self.catalog()?;
         let snapshot = &catalog.snapshot;
         let artifact = catalog.load_artifact(path)?;
+        let artifact = self.source_line_artifact(&catalog, artifact)?;
         let indexed_lines = artifact.chunks.last().map_or(0, |chunk| chunk.end_line);
         ensure!(
             line > 0 && line <= indexed_lines,

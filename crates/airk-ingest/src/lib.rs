@@ -14,15 +14,22 @@ mod build_facts;
 mod build_make;
 pub mod chunking;
 mod compose;
+mod composite;
 pub mod continuity;
 pub mod header_context;
+mod host_components;
+mod host_html;
+mod host_prose;
 mod instruction_documents;
 mod msbuild;
+mod notebook;
 pub mod observations;
 mod project_build;
 mod project_schemas;
+mod razor;
 mod repository_binding;
 mod repository_syntax;
+mod scss;
 mod structured_view;
 mod structured_yaml;
 mod syntax_repairs;
@@ -297,7 +304,11 @@ fn scan_streaming_profiled(
         &airk_core::identity::Sha256Digest,
         &airk_core::extraction::ExtractionProfile,
     ) -> Result<Option<Artifact>>,
-    emit: impl FnMut(&airk_core::extraction::ExtractionProfile, &Artifact, &[u8]) -> Result<Artifact>,
+    mut emit: impl FnMut(
+        &airk_core::extraction::ExtractionProfile,
+        &Artifact,
+        &[u8],
+    ) -> Result<Artifact>,
 ) -> Result<(Snapshot, IndexReport)> {
     let (snapshot, report, _) = scan_observed_profiled(
         root,
@@ -317,7 +328,7 @@ fn scan_streaming_profiled(
                 }),
             )
         },
-        emit,
+        |profile, artifact, bytes, _| emit(profile, artifact, bytes),
     )?;
     Ok((snapshot, report))
 }
@@ -335,7 +346,44 @@ pub fn scan_observed_v2_with_budgets(
     policy: &adapters::profile::ExtractionPolicy,
     full_reindex: bool,
     lookup: impl FnMut(observations::ReuseRequest<'_>) -> Result<Option<observations::VerifiedReuse>>,
-    emit: impl FnMut(&airk_core::extraction::ExtractionProfile, &Artifact, &[u8]) -> Result<Artifact>,
+    mut emit: impl FnMut(
+        &airk_core::extraction::ExtractionProfile,
+        &Artifact,
+        &[u8],
+    ) -> Result<Artifact>,
+) -> Result<(Snapshot, IndexReport, observations::ScanObservation)> {
+    limits.validate()?;
+    scan_observed_profiled(
+        root,
+        data_dir,
+        previous,
+        roots,
+        limits,
+        policy,
+        full_reindex,
+        lookup,
+        |profile, artifact, bytes, _| emit(profile, artifact, bytes),
+    )
+}
+
+/// Preserve mapped path-free payloads through persistence without flattening them
+/// into the legacy artifact representation and reparsing source.
+#[allow(clippy::too_many_arguments)]
+pub fn scan_payloads_with_budgets(
+    root: &Path,
+    data_dir: &Path,
+    previous: &Snapshot,
+    roots: &BTreeMap<String, String>,
+    limits: ScanLimits,
+    policy: &adapters::profile::ExtractionPolicy,
+    full_reindex: bool,
+    lookup: impl FnMut(observations::ReuseRequest<'_>) -> Result<Option<observations::VerifiedReuse>>,
+    emit: impl FnMut(
+        &airk_core::extraction::ExtractionProfile,
+        &Artifact,
+        &[u8],
+        Option<&airk_core::extraction::ExtractionPayload>,
+    ) -> Result<Artifact>,
 ) -> Result<(Snapshot, IndexReport, observations::ScanObservation)> {
     limits.validate()?;
     scan_observed_profiled(
@@ -367,6 +415,7 @@ fn scan_observed_profiled(
         &airk_core::extraction::ExtractionProfile,
         &Artifact,
         &[u8],
+        Option<&airk_core::extraction::ExtractionPayload>,
     ) -> Result<Artifact>,
 ) -> Result<(Snapshot, IndexReport, observations::ScanObservation)> {
     use observations::{DisappearanceCause, ReuseBasis};
@@ -543,6 +592,7 @@ fn scan_observed_profiled(
                 profile: &profile,
             })?
         };
+        let mut fresh_payload = None;
         let artifact = match cached {
             Some(reused) => {
                 let old = reused.artifact;
@@ -573,7 +623,29 @@ fn scan_observed_profiled(
                     "retained OCR payload unavailable; explicit OCR operation required"
                 );
                 observation.usage.parser_calls += 1;
-                let extracted = match documents::extract_selected(&path, &bytes, &profile) {
+                let extracted = match (|| -> Result<documents::Extracted> {
+                    if composite::is_host(&profile.adapter_id) {
+                        let payload = composite::extract(&path, &bytes, &profile)?;
+                        let bound = airk_core::binding::bind_payload(
+                            &payload,
+                            &profile,
+                            airk_core::binding::ArtifactBinding {
+                                path: &path,
+                                source_hash: hash,
+                                source_bytes: bytes.len(),
+                            },
+                        )?;
+                        fresh_payload = Some(payload);
+                        return Ok(documents::Extracted {
+                            chunks: bound.chunks,
+                            facts: bound.facts,
+                            language: bound.language,
+                            method: bound.extraction_method,
+                            parse_status: bound.parse_status,
+                        });
+                    }
+                    documents::extract_selected(&path, &bytes, &profile)
+                })() {
                     Ok(extracted) => extracted,
                     Err(error) => {
                         if previous.artifacts.contains_key(&path) {
@@ -629,7 +701,7 @@ fn scan_observed_profiled(
             artifacts.len() < limits.files,
             "corpus exceeds configured file count; previous generation retained"
         );
-        let artifact = emit(&profile, &artifact, &bytes)?;
+        let artifact = emit(&profile, &artifact, &bytes, fresh_payload.as_ref())?;
         ensure!(
             artifact.path == path && artifact.content_hash == content_hash,
             "retention changed artifact identity"
