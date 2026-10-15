@@ -46,8 +46,9 @@ jobs:
           - os: macos-15-intel
             target: x86_64-apple-darwin
             executable: airk
+            timeout_minutes: 120
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 90
+    timeout-minutes: ${{ matrix.timeout_minutes || 90 }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -85,7 +86,12 @@ jobs:
         run: node -e "const p=require('./packages/vscode/package.json'); const v=process.env.AIRK_EXPECTED_VERSION; if(v && p.version!==v) throw Error('Requested version differs from package.json')"
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --locked --target ${{ matrix.target }} -- -D warnings
-      - run: cargo test --workspace --locked --target ${{ matrix.target }}
+      - name: Run workspace tests
+        if: matrix.target != 'x86_64-apple-darwin'
+        run: cargo test --workspace --locked --target ${{ matrix.target }}
+      - name: Run workspace tests without Intel macOS fixture contention
+        if: matrix.target == 'x86_64-apple-darwin'
+        run: cargo test --workspace --locked --target ${{ matrix.target }} -- --test-threads=1
       - name: Packaging contract tests
         run: python -m unittest discover -s scripts/tests -v
       - name: Repository checks
