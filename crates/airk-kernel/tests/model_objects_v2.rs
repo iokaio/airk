@@ -15,6 +15,11 @@ use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
 use std::{fs, path::Path};
 
+fn unlinked_tempdir() -> Result<tempfile::TempDir> {
+    // Keep model fixtures below a physical temporary parent on macOS.
+    Ok(tempfile::Builder::new().tempdir_in(std::env::temp_dir().canonicalize()?)?)
+}
+
 fn model(data: &Path, name: &str, alternate: bool) -> Result<()> {
     let directory = data.join("models/local");
     fs::create_dir_all(&directory)?;
@@ -72,7 +77,7 @@ fn object(store: &FileStore, digest: impl std::fmt::Display) -> std::path::PathB
 #[test]
 fn equal_assets_and_metadata_only_edits_share_bytes_across_relocation() -> Result<()> {
     let source = tempfile::tempdir()?;
-    let parent = tempfile::tempdir()?;
+    let parent = unlinked_tempdir()?;
     let data = parent.path().join("data");
     model(&data, "original metadata", false)?;
     fs::write(
@@ -124,7 +129,7 @@ fn lineage_publications_keep_authenticated_assets_when_provisioned_model_changes
 -> Result<()> {
     use airk_kernel::history_controls::{HistoryWorkBudget, PurgeApplyRequest, PurgeRequest};
     let source = tempfile::tempdir()?;
-    let data = tempfile::tempdir()?;
+    let data = unlinked_tempdir()?;
     model(data.path(), "published original model", false)?;
     fs::write(
         source.path().join("original.txt"),
@@ -188,7 +193,7 @@ fn lineage_publications_keep_authenticated_assets_when_provisioned_model_changes
 #[test]
 fn pinned_old_generation_keeps_its_model_until_reader_release() -> Result<()> {
     let source = tempfile::tempdir()?;
-    let data = tempfile::tempdir()?;
+    let data = unlinked_tempdir()?;
     model(data.path(), "first model", false)?;
     fs::write(source.path().join("original.txt"), "login original\n")?;
     let kernel = Kernel::open(source.path(), Some(data.path().into()))?;
@@ -225,7 +230,7 @@ fn pinned_old_generation_keeps_its_model_until_reader_release() -> Result<()> {
 #[test]
 fn corrupt_object_and_quota_failure_do_not_advance_head() -> Result<()> {
     let source = tempfile::tempdir()?;
-    let data = tempfile::tempdir()?;
+    let data = unlinked_tempdir()?;
     model(data.path(), "original model", false)?;
     fs::write(source.path().join("original.txt"), "login original\n")?;
     let kernel = Kernel::open(source.path(), Some(data.path().into()))?;
@@ -266,7 +271,7 @@ fn corrupt_object_and_quota_failure_do_not_advance_head() -> Result<()> {
 #[test]
 fn lexical_only_generation_has_no_model_objects_or_model_requirement() -> Result<()> {
     let source = tempfile::tempdir()?;
-    let data = tempfile::tempdir()?;
+    let data = unlinked_tempdir()?;
     fs::write(
         source.path().join("original.txt"),
         "login original lexical evidence\n",
@@ -295,8 +300,8 @@ fn schema_two_retrieval_reader_keeps_authentic_inline_model_compatibility() -> R
         V2Preparation, prepare_streaming_v2, retrieval_specification_v2,
     };
     let source = tempfile::tempdir()?;
-    let data = tempfile::tempdir()?;
-    let legacy_base = tempfile::tempdir()?;
+    let data = unlinked_tempdir()?;
+    let legacy_base = unlinked_tempdir()?;
     model(data.path(), "original legacy model", false)?;
     fs::write(source.path().join("original.txt"), "login original\n")?;
     let kernel = Kernel::open(source.path(), Some(data.path().into()))?;

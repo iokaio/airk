@@ -10,6 +10,12 @@ use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
 use std::{fs, path::Path};
 
+fn unlinked_tempdir() -> Result<tempfile::TempDir> {
+    // macOS presents the default temporary directory through /var, a symlink.
+    // Model source ancestors must be real directories on every platform.
+    Ok(tempfile::Builder::new().tempdir_in(std::env::temp_dir().canonicalize()?)?)
+}
+
 fn model(data: &Path, name: &str) -> Result<()> {
     let directory = data.join("models/local");
     fs::create_dir_all(&directory)?;
@@ -47,7 +53,7 @@ fn references(store: &FileStore) -> Result<Vec<airk_store::vector_cache::VectorC
 #[test]
 fn exact_chunks_reuse_vectors_across_publications_moves_and_line_insertions() -> Result<()> {
     let root = tempfile::tempdir()?;
-    let data = tempfile::tempdir()?;
+    let data = unlinked_tempdir()?;
     model(data.path(), "original embedding fixture")?;
     let original = "pub fn authenticate() -> u32 {\n    let original = 7;\n    original + 3\n}\n";
     fs::write(root.path().join("auth.rs"), original)?;
@@ -137,7 +143,7 @@ fn exact_chunks_reuse_vectors_across_publications_moves_and_line_insertions() ->
 #[test]
 fn forged_self_consistent_cache_entry_cannot_advance_publication() -> Result<()> {
     let root = tempfile::tempdir()?;
-    let data = tempfile::tempdir()?;
+    let data = unlinked_tempdir()?;
     model(data.path(), "original corruption fixture")?;
     fs::write(
         root.path().join("auth.txt"),
@@ -182,7 +188,7 @@ fn forged_self_consistent_cache_entry_cannot_advance_publication() -> Result<()>
 fn manual_history_retains_vector_objects_and_automatic_gc_preserves_live_references() -> Result<()>
 {
     let root = tempfile::tempdir()?;
-    let data = tempfile::tempdir()?;
+    let data = unlinked_tempdir()?;
     model(data.path(), "original GC fixture")?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
     manual(&kernel)?;
