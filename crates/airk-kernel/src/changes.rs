@@ -188,6 +188,210 @@ fn baseline(catalog: &Catalog, token: Option<&RevisionToken>) -> Result<Baseline
 }
 
 impl Kernel {
+    fn change_suggestions(
+        &self,
+        catalog: &Catalog,
+        request: &ChangesRequest,
+        baseline_status: BaselineStatus,
+    ) -> Result<(Vec<ChangeSuggestion>, SuggestionCoverage)> {
+        let mut coverage = SuggestionCoverage {
+            version: crate::suggestions::SKETCH_VERSION,
+            status: SuggestionStatus::Unavailable,
+            baseline_representation: None,
+            compared_pairs: 0,
+            examined_files: 0,
+            examined_text_bytes: 0,
+            reason: Some(
+                "suggestions require verified ancestry and an exact retained baseline".into(),
+            ),
+        };
+        let Some(since) = request
+            .since
+            .filter(|_| baseline_status == BaselineStatus::Verified)
+        else {
+            return Ok((vec![], coverage));
+        };
+        // Retain either lease for the entire source read and comparison. No live
+        // workspace paths are consulted, even when original bytes are absent.
+        let full = self
+            .store
+            .catalog_at(&since, airk_store::blobs::MAX_CATALOG_BYTES)?;
+        let history = if full.is_none() {
+            self.store
+                .history_at(&since, airk_store::blobs::MAX_CATALOG_BYTES)?
+        } else {
+            None
+        };
+        let (snapshot, inventory, representation) = if let Some(full) = &full {
+            (
+                &full.snapshot,
+                full.inventory
+                    .as_ref()
+                    .context("suggestion baseline inventory missing")?,
+                "full",
+            )
+        } else if let Some(history) = &history {
+            (&history.snapshot, &history.inventory, "history")
+        } else {
+            return Ok((vec![], coverage));
+        };
+        coverage.baseline_representation = Some(representation.into());
+        let current = catalog
+            .inventory
+            .as_ref()
+            .context("suggestion target inventory missing")?;
+        let mut loaded_bytes = 0;
+        let mut omitted = false;
+        let before = self.suggestion_inputs(
+            snapshot,
+            inventory,
+            &catalog.snapshot,
+            current,
+            &request.path_prefix,
+            &mut loaded_bytes,
+            &mut omitted,
+        )?;
+        let after = self.suggestion_inputs(
+            &catalog.snapshot,
+            current,
+            snapshot,
+            inventory,
+            &request.path_prefix,
+            &mut loaded_bytes,
+            &mut omitted,
+        )?;
+        let old_views = suggestion_views(&before);
+        let new_views = suggestion_views(&after);
+        let result = crate::suggestions::suggest(&old_views, &new_views);
+        coverage.status = if omitted || result.partial {
+            SuggestionStatus::Partial
+        } else {
+            SuggestionStatus::Complete
+        };
+        coverage.reason = (omitted || result.partial).then(|| "some endpoints, source bytes, sketches, pairs or outputs exceeded eligibility or bounds".into());
+        coverage.compared_pairs = result.compared_pairs;
+        coverage.examined_files = result.examined_files;
+        coverage.examined_text_bytes = loaded_bytes;
+        let mut output = result
+            .files
+            .iter()
+            .map(|candidate| ChangeSuggestion::File {
+                before: before[candidate.before].endpoint.clone(),
+                after: after[candidate.after].endpoint.clone(),
+                score_basis_points: candidate.score_basis_points,
+                shared_shingles: candidate.shared_shingles,
+                union_shingles: candidate.union_shingles,
+            })
+            .collect::<Vec<_>>();
+        if !omitted {
+            output.extend(result.directories.into_iter().map(|directory| {
+                ChangeSuggestion::Directory {
+                    root: directory.root,
+                    before: directory.before,
+                    after: directory.after,
+                    children: directory
+                        .children
+                        .into_iter()
+                        .map(|(a, b)| (before[a].path.clone(), after[b].path.clone()))
+                        .collect(),
+                }
+            }));
+        }
+        Ok((output, coverage))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn suggestion_inputs(
+        &self,
+        snapshot: &airk_core::Snapshot,
+        inventory: &airk_core::publication::InventoryV2,
+        other_snapshot: &airk_core::Snapshot,
+        other: &airk_core::publication::InventoryV2,
+        prefix: &str,
+        loaded_bytes: &mut usize,
+        omitted: &mut bool,
+    ) -> Result<Vec<SuggestionInput>> {
+        let exact: std::collections::BTreeSet<_> = other
+            .files
+            .values()
+            .map(|file| {
+                (
+                    file.state.root.as_str(),
+                    file.state.profile_id,
+                    file.state.source_hash,
+                )
+            })
+            .collect();
+        let identities: std::collections::BTreeSet<_> = other
+            .files
+            .values()
+            .map(|file| file.state.artifact_id)
+            .collect();
+        let mut output = vec![];
+        let mut attempted = 0;
+        for (path, file) in &inventory.files {
+            if !path.starts_with(prefix)
+                || other_snapshot.artifacts.contains_key(path)
+                || identities.contains(&file.state.artifact_id)
+                || exact.contains(&(
+                    file.state.root.as_str(),
+                    file.state.profile_id,
+                    file.state.source_hash,
+                ))
+            {
+                continue;
+            }
+            if attempted == 256 {
+                *omitted = true;
+                break;
+            }
+            attempted += 1;
+            let artifact = snapshot
+                .artifacts
+                .get(path)
+                .context("suggestion artifact missing from projection")?;
+            if !file.raw_source
+                || artifact.extraction_method != "utf8"
+                || file.source_bytes > 65_536
+                || file.source_bytes > 8 * 1024 * 1024 - *loaded_bytes
+            {
+                *omitted = true;
+                continue;
+            }
+            let bytes = match self.store.read_retained_source_bounded(artifact, 65_536) {
+                Ok(bytes) => bytes,
+                Err(error)
+                    if error.chain().any(|cause| {
+                        cause
+                            .downcast_ref::<std::io::Error>()
+                            .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound)
+                    }) =>
+                {
+                    *omitted = true;
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
+            *loaded_bytes += bytes.len();
+            let Ok(text) = String::from_utf8(bytes) else {
+                *omitted = true;
+                continue;
+            };
+            output.push(SuggestionInput {
+                path: path.clone(),
+                text,
+                endpoint: ChangeEndpoint {
+                    citation_path: Some(path.clone()),
+                    root: file.state.root.clone(),
+                    path: file.state.path.clone(),
+                    source_hash: file.state.source_hash,
+                    profile_id: file.state.profile_id,
+                },
+            });
+        }
+        Ok(output)
+    }
+
     pub(crate) fn resolve_evidence_path(
         &self,
         catalog: &Catalog,
@@ -670,6 +874,8 @@ impl Kernel {
             changes: vec![],
             invalidations: vec![],
             validations: vec![],
+            suggestions: vec![],
+            suggestion_coverage: None,
             freshness: self.changes_freshness(),
             record_bytes: 0,
             truncated: false,
@@ -688,6 +894,32 @@ impl Kernel {
             }
         }
         response.baseline_status = baseline(&catalog, request.since.as_ref())?;
+        let suggestion_records = if request.include_suggestions {
+            let (records, coverage) =
+                self.change_suggestions(&catalog, request, response.baseline_status)?;
+            response.suggestion_coverage = Some(coverage);
+            records
+        } else {
+            vec![]
+        };
+        let suggestion_digest = if request.include_suggestions {
+            Some(framed_digest(
+                b"change-suggestions/1",
+                &[&serde_json::to_vec(&(
+                    &response.suggestion_coverage,
+                    &suggestion_records,
+                ))?],
+            ))
+        } else {
+            None
+        };
+        if cursor
+            .as_ref()
+            .is_some_and(|cursor| cursor.suggestion_digest != suggestion_digest)
+        {
+            response.status = ChangesStatus::CursorExpired;
+            return Ok(response);
+        }
         let mut coverage = catalog
             .lineage
             .as_ref()
@@ -773,6 +1005,8 @@ impl Kernel {
             stage: CursorStage::Changes,
             after_change: None,
             next_validation: 0,
+            next_suggestion: 0,
+            suggestion_digest,
         });
         if let Some(after) = &state.after_change {
             ensure!(
@@ -782,7 +1016,10 @@ impl Kernel {
                 "cursor change position is not in bound result list"
             );
         }
-        if state.stage == CursorStage::Validations {
+        if matches!(
+            state.stage,
+            CursorStage::Validations | CursorStage::Suggestions
+        ) {
             ensure!(
                 state.after_change.as_ref().map(position)
                     == changes.last().map(|change| position(&change.last)),
@@ -868,6 +1105,30 @@ impl Kernel {
                 response.validations.push(validation);
                 state.next_validation += 1;
             }
+            if !response.truncated {
+                state.stage = CursorStage::Suggestions;
+            }
+        }
+        if state.stage == CursorStage::Suggestions {
+            ensure!(
+                state.next_suggestion <= suggestion_records.len(),
+                "invalid suggestion cursor position"
+            );
+            while let Some(suggestion) = suggestion_records.get(state.next_suggestion) {
+                let bytes = serde_json::to_vec(suggestion)?.len();
+                ensure!(
+                    bytes <= request.max_bytes,
+                    "suggestion record needs {bytes} bytes; increase max_bytes"
+                );
+                if count == request.limit || response.record_bytes + bytes > request.max_bytes {
+                    response.truncated = true;
+                    break;
+                }
+                response.record_bytes += bytes;
+                count += 1;
+                response.suggestions.push(suggestion.clone());
+                state.next_suggestion += 1;
+            }
         }
         if response.truncated {
             ensure!(count > 0, "max_bytes cannot fit the next record");
@@ -882,4 +1143,22 @@ impl Kernel {
         );
         Ok(response)
     }
+}
+
+struct SuggestionInput {
+    path: String,
+    text: String,
+    endpoint: ChangeEndpoint,
+}
+
+fn suggestion_views(values: &[SuggestionInput]) -> Vec<crate::suggestions::FileView<'_>> {
+    values
+        .iter()
+        .map(|value| crate::suggestions::FileView {
+            root: value.endpoint.root.as_str(),
+            path: value.endpoint.path.as_str(),
+            profile: value.endpoint.profile_id,
+            text: value.text.as_str(),
+        })
+        .collect()
 }

@@ -101,6 +101,9 @@ enum Command {
         include_symbols: bool,
         #[arg(long)]
         include_documents: bool,
+        /// Bounded similarity/directory hints; never follow or promote identity.
+        #[arg(long)]
+        include_suggestions: bool,
         #[arg(long, default_value_t = 10)]
         limit: usize,
         #[arg(long, default_value_t = 8192)]
@@ -1175,10 +1178,10 @@ async fn main() -> anyhow::Result<()> {
             end_line,
             max_bytes,
         } => recorder.print(&kernel.read_file_conditional(&path, start_line, end_line, max_bytes, &evidence.into())?),
-        Command::Changes { since, selectors, paths, path_prefix, include_symbols, include_documents, limit, max_bytes, cursor } => {
+        Command::Changes { since, selectors, paths, path_prefix, include_symbols, include_documents, include_suggestions, limit, max_bytes, cursor } => {
             let mut selectors = selectors.iter().map(|value| serde_json::from_str(value)).collect::<Result<Vec<airk_core::changes::RememberedSelector>, _>>()?;
             selectors.extend(paths.into_iter().map(|path| airk_core::changes::RememberedSelector::Path { path }));
-            recorder.print(&kernel.changes(&airk_core::changes::ChangesRequest { since, selectors, path_prefix, include_symbols, include_documents, limit, max_bytes, cursor })?)
+            recorder.print(&kernel.changes(&airk_core::changes::ChangesRequest { since, selectors, path_prefix, include_symbols, include_documents, include_suggestions, limit, max_bytes, cursor })?)
         },
         Command::Mcp => airk_mcp::serve(kernel.clone()).await,
         Command::Info { path, evidence } => recorder.print(&kernel.file_info_conditional(&path, &evidence.into())?),

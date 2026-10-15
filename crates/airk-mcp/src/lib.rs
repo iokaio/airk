@@ -73,6 +73,9 @@ pub struct ChangesArgs {
     pub include_symbols: bool,
     #[serde(default)]
     pub include_documents: bool,
+    /// Bounded similarity/directory hints from retained evidence; never identity proof.
+    #[serde(default)]
+    pub include_suggestions: bool,
     #[serde(default = "default_limit")]
     pub limit: usize,
     #[serde(default = "default_budget")]
