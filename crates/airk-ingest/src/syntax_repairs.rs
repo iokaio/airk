@@ -2,7 +2,7 @@
 //! Conservative grammar repairs over the same parsed source as native extraction.
 mod php;
 mod ruby;
-mod sql;
+pub(crate) mod sql;
 
 use crate::{build_facts::Facts, syntax::Analysis};
 use airk_core::{EvidenceBasis, Fact};

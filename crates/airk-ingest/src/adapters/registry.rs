@@ -102,6 +102,70 @@ impl AdapterRegistry {
             ("java", "tree-sitter-java/0.23.5", "java", true, true),
             ("dart", "tree-sitter-dart/0.2.0", "dart", true, true),
             ("r", "tree-sitter-r/1.3.0", "r", true, true),
+            ("cuda", "tree-sitter-cuda/0.21.1", "cu cuh", true, true),
+            ("wgsl", "tree-sitter-wgsl-bevy/0.1.4", "wgsl", false, true),
+            (
+                "glsl",
+                "tree-sitter-glsl/0.2.0",
+                "vert frag glsl",
+                false,
+                true,
+            ),
+            ("assembly", "tree-sitter-asm/0.24.0", "asm s", true, false),
+            ("assembly-x86-att", "tree-sitter-asm/0.24.0", "", true, true),
+            (
+                "assembly-x86-intel",
+                "tree-sitter-asm/0.24.0",
+                "",
+                true,
+                true,
+            ),
+            ("assembly-aarch64", "tree-sitter-asm/0.24.0", "", true, true),
+            (
+                "fortran-free",
+                "tree-sitter-fortran/0.6.0",
+                "f90 f95",
+                true,
+                true,
+            ),
+            (
+                "fortran-fixed",
+                "tree-sitter-fortran/0.6.0",
+                "f for",
+                true,
+                true,
+            ),
+            (
+                "cobol-fixed",
+                "arborium-cobol/2.18.2",
+                "cob cbl cpy",
+                true,
+                true,
+            ),
+            (
+                "delphi",
+                "tree-sitter-pascal/0.10.2",
+                "pas dpr dpk",
+                true,
+                true,
+            ),
+            (
+                "apex",
+                "tree-sitter-sfapex/2.4.0/apex",
+                "trigger",
+                true,
+                true,
+            ),
+            ("solidity", "tree-sitter-solidity/1.2.13", "sol", true, true),
+            ("vhdl", "tree-sitter-vhdl/1.4.0", "vhd vhdl", true, true),
+            ("verilog", "tree-sitter-verilog/1.0.3", "", true, true),
+            (
+                "systemverilog",
+                "tree-sitter-verilog/1.0.3",
+                "sv svh",
+                true,
+                true,
+            ),
             ("ocaml", "tree-sitter-ocaml/0.26.0/ocaml", "ml", true, true),
             (
                 "ocaml-interface",
@@ -319,6 +383,11 @@ impl AdapterRegistry {
             );
         }
         for (id, suffixes) in [
+            ("cobol-free", ""),
+            ("vbnet", "vb"),
+            ("plsql", "pls pks pkb"),
+            ("tsql", ""),
+            ("abap", "abap"),
             ("markdown", "md markdown"),
             ("csv", "csv"),
             ("tsv", "tsv"),
@@ -341,10 +410,19 @@ impl AdapterRegistry {
         ] {
             registry.add_baseline(
                 id,
-                matches!(id, "github-actions" | "compose").then_some("tree-sitter-yaml/0.7.2"),
+                match id {
+                    "github-actions" | "compose" => Some("tree-sitter-yaml/0.7.2"),
+                    "plsql" | "tsql" => Some("tree-sitter-sequel/0.3.11"),
+                    _ => None,
+                },
                 suffixes,
                 AdapterCapabilities {
                     lexical: true,
+                    imports: matches!(id, "vbnet" | "cobol-free" | "plsql" | "tsql" | "abap"),
+                    call_candidates: matches!(
+                        id,
+                        "vbnet" | "cobol-free" | "plsql" | "tsql" | "abap"
+                    ),
                     structural_facts: true,
                     native_locations: true,
                     ..Default::default()
@@ -461,6 +539,31 @@ impl AdapterRegistry {
                             | "fsharp-signature"
                     ) {
                         "general-b-facts/1"
+                    } else if matches!(
+                        id,
+                        "fortran-free"
+                            | "fortran-fixed"
+                            | "cobol-fixed"
+                            | "cobol-free"
+                            | "delphi"
+                            | "vbnet"
+                    ) {
+                        "specialist-facts/1"
+                    } else if matches!(id, "plsql" | "tsql" | "abap" | "apex") {
+                        "vendor-facts/1"
+                    } else if matches!(id, "solidity" | "vhdl" | "verilog" | "systemverilog") {
+                        "specialist-hardware-facts/1"
+                    } else if matches!(
+                        id,
+                        "cuda"
+                            | "wgsl"
+                            | "glsl"
+                            | "assembly"
+                            | "assembly-x86-att"
+                            | "assembly-x86-intel"
+                            | "assembly-aarch64"
+                    ) {
+                        "specialist-gpu-facts/1"
                     } else if matches!(id, "dart" | "scala" | "elixir" | "objc" | "objcpp") {
                         "general-facts/1"
                     } else if matches!(id, "php" | "ruby" | "sql" | "sql-postgresql" | "sql-mysql")
@@ -501,6 +604,46 @@ impl AdapterRegistry {
             .ok_or_else(|| anyhow::anyhow!("unknown adapter"))?
             .profile
             .clone();
+        if id.starts_with("assembly") {
+            profile.options.insert(
+                "isa".into(),
+                match id {
+                    "assembly-x86-att" | "assembly-x86-intel" => "x86",
+                    "assembly-aarch64" => "aarch64",
+                    _ => "unknown",
+                }
+                .into(),
+            );
+            profile.options.insert(
+                "syntax".into(),
+                match id {
+                    "assembly-x86-att" => "att",
+                    "assembly-x86-intel" => "intel",
+                    _ => "unspecified",
+                }
+                .into(),
+            );
+            profile.options.insert(
+                "preprocessing".into(),
+                if path.ends_with(".S") {
+                    "written-unexpanded"
+                } else {
+                    "unspecified"
+                }
+                .into(),
+            );
+        }
+        if id == "glsl" {
+            profile.options.insert(
+                "stage".into(),
+                match path.rsplit_once('.').map(|(_, suffix)| suffix) {
+                    Some("vert") => "vertex",
+                    Some("frag") => "fragment",
+                    _ => "unknown",
+                }
+                .into(),
+            );
+        }
         if matches!(
             id,
             "kubernetes" | "openapi" | "gitlab-ci" | "project-manifest"
@@ -647,6 +790,24 @@ impl AdapterRegistry {
             selected.basis = "bounded_perl_shebang".into();
             return Ok(selected);
         }
+        for (suffix, id, recognized) in [
+            (
+                ".cls",
+                "apex",
+                crate::specialist_vendor::qualifies_class(source),
+            ),
+            (
+                ".v",
+                "verilog",
+                crate::specialist_hardware::recognize_verilog(source),
+            ),
+        ] {
+            if path.to_ascii_lowercase().ends_with(suffix) && recognized {
+                selected.profile = self.effective_profile(path, id)?;
+                selected.basis = "bounded_specialist_discriminator".into();
+                return Ok(selected);
+            }
+        }
         if path.to_ascii_lowercase().ends_with(".m") && objective_c_prefix(source) {
             selected.profile = self.effective_profile(path, "objc")?;
             selected.basis = "bounded_objective_c_discriminator".into();
@@ -748,7 +909,11 @@ impl AdapterRegistry {
                 "SQL dialect unselected; written syntax does not establish dialect semantics"
                     .into(),
             ],
-            "m" | "pl" | "pm" | "t" | "cls" | "v" | "s" | "S" => vec![format!(
+            "s" | "S" | "asm" => vec![
+                "Assembly ISA is unknown unless explicitly configured; directives are unexpanded"
+                    .into(),
+            ],
+            "m" | "pl" | "pm" | "t" | "cls" | "v" => vec![format!(
                 "Ambiguous suffix .{suffix}; no qualified default language"
             )],
             _ => vec![],
@@ -766,6 +931,39 @@ impl AdapterRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn specialist_source_forms_and_shader_stages_bind_profile_identity() {
+        let registry = AdapterRegistry::baseline();
+        let assembly = registry.effective_profile("sample.s", "assembly").unwrap();
+        let preprocessed = registry.effective_profile("sample.S", "assembly").unwrap();
+        assert_eq!(assembly.options["isa"], "unknown");
+        assert_ne!(assembly, preprocessed);
+        assert_eq!(preprocessed.options["preprocessing"], "written-unexpanded");
+        assert_eq!(
+            registry
+                .effective_profile("sample.asm", "assembly-x86-att")
+                .unwrap()
+                .options["syntax"],
+            "att"
+        );
+        assert_ne!(
+            registry.effective_profile("shader.vert", "glsl").unwrap(),
+            registry.effective_profile("shader.frag", "glsl").unwrap()
+        );
+        for id in ["cobol-free", "vbnet", "plsql", "tsql", "abap"] {
+            let descriptor = registry.get(id).unwrap();
+            assert!(descriptor.capabilities.structural_facts);
+            assert!(!descriptor.capabilities.continuity);
+        }
+        assert_eq!(
+            registry.select_default("example.cob").profile.adapter_id,
+            "cobol-fixed"
+        );
+        assert_eq!(
+            registry.select_default("example.sql").profile.adapter_id,
+            "sql"
+        );
+    }
     #[test]
     fn repository_conventions_are_scoped_and_do_not_capture_generic_files() {
         let registry = AdapterRegistry::baseline();
@@ -824,7 +1022,8 @@ mod tests {
         ] {
             assert_eq!(r.select_default(path).profile.language, language);
         }
-        assert_eq!(r.select_default("x.S").profile.language, "text");
+        assert_eq!(r.select_default("x.S").profile.language, "assembly");
+        assert_eq!(r.select_default("x.S").profile.options["isa"], "unknown");
         assert!(!r.select_default("x.S").ambiguity.is_empty());
     }
 

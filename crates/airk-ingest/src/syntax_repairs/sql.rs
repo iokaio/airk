@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
 
-pub(super) fn visit(node: Node<'_>, source: &str, output: &mut Facts<'_>) -> Result<()> {
+pub(crate) fn visit(node: Node<'_>, source: &str, output: &mut Facts<'_>) -> Result<()> {
     match node.kind() {
         "statement" | "subquery" if child(node, "select").is_some() => {
             emit(output, node, "query_scope", text(node, source))?
@@ -53,21 +53,21 @@ pub(super) fn visit(node: Node<'_>, source: &str, output: &mut Facts<'_>) -> Res
 }
 
 #[derive(Clone, Copy, PartialEq)]
-enum TokenKind {
+pub(crate) enum TokenKind {
     Word,
     Quoted,
     Literal,
     Symbol,
 }
 #[derive(Clone, Copy)]
-struct Token<'a> {
-    raw: &'a str,
-    start: usize,
-    end: usize,
-    kind: TokenKind,
+pub(crate) struct Token<'a> {
+    pub(crate) raw: &'a str,
+    pub(crate) start: usize,
+    pub(crate) end: usize,
+    pub(crate) kind: TokenKind,
 }
 impl Token<'_> {
-    fn is(self, value: &str) -> bool {
+    pub(crate) fn is(self, value: &str) -> bool {
         self.kind == TokenKind::Word && self.raw.eq_ignore_ascii_case(value)
     }
 }
@@ -266,6 +266,41 @@ fn procedure(
 }
 
 fn tokenize(source: &str, postgres: bool) -> Result<Option<Vec<Token<'_>>>> {
+    tokenize_mode(
+        source,
+        if postgres {
+            LexMode::Postgres
+        } else {
+            LexMode::Mysql
+        },
+    )
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum LexMode {
+    Postgres,
+    Mysql,
+    Oracle,
+    Tsql,
+}
+
+pub(crate) fn tokenize_vendor<'a>(
+    source: &'a str,
+    dialect: &str,
+) -> Result<Option<Vec<Token<'a>>>> {
+    let mode = match dialect {
+        "plsql" => LexMode::Oracle,
+        "tsql" => LexMode::Tsql,
+        _ => anyhow::bail!("unknown vendor SQL lexer mode"),
+    };
+    ensure!(
+        source.len() <= crate::MAX_FILE_BYTES,
+        "SQL source byte limit"
+    );
+    tokenize_mode(source, mode)
+}
+
+fn tokenize_mode(source: &str, mode: LexMode) -> Result<Option<Vec<Token<'_>>>> {
     let bytes = source.as_bytes();
     let mut at = 0usize;
     let mut tokens = Vec::new();
@@ -274,7 +309,7 @@ fn tokenize(source: &str, postgres: bool) -> Result<Option<Vec<Token<'_>>>> {
             at += 1;
             continue;
         }
-        if bytes[at..].starts_with(b"--") || (!postgres && bytes[at] == b'#') {
+        if bytes[at..].starts_with(b"--") || (mode == LexMode::Mysql && bytes[at] == b'#') {
             at = source[at..]
                 .find('\n')
                 .map_or(bytes.len(), |end| at + end + 1);
@@ -304,7 +339,71 @@ fn tokenize(source: &str, postgres: bool) -> Result<Option<Vec<Token<'_>>>> {
         }
         let start = at;
         let kind;
-        if matches!(bytes[at], b'\'' | b'"' | b'`') {
+        let q_prefix = if mode == LexMode::Oracle {
+            if bytes
+                .get(at..at + 2)
+                .is_some_and(|b| b.eq_ignore_ascii_case(b"q'"))
+            {
+                Some(2)
+            } else if bytes
+                .get(at..at + 3)
+                .is_some_and(|b| b.eq_ignore_ascii_case(b"nq'"))
+            {
+                Some(3)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if let Some(prefix) = q_prefix {
+            let Some(&opening) = bytes.get(at + prefix) else {
+                return Ok(None);
+            };
+            if !opening.is_ascii() || opening.is_ascii_whitespace() || opening == b'\'' {
+                return Ok(None);
+            }
+            let closing = match opening {
+                b'[' => b']',
+                b'{' => b'}',
+                b'(' => b')',
+                b'<' => b'>',
+                other => other,
+            };
+            at += prefix + 1;
+            let mut closed = false;
+            while at + 1 < bytes.len() {
+                if bytes[at] == closing && bytes[at + 1] == b'\'' {
+                    at += 2;
+                    closed = true;
+                    break;
+                }
+                at += 1;
+            }
+            if !closed {
+                return Ok(None);
+            }
+            kind = TokenKind::Literal;
+        } else if mode == LexMode::Tsql && bytes[at] == b'[' {
+            at += 1;
+            let mut closed = false;
+            while at < bytes.len() {
+                if bytes[at] == b']' {
+                    at += 1;
+                    if bytes.get(at) == Some(&b']') {
+                        at += 1;
+                        continue;
+                    }
+                    closed = true;
+                    break;
+                }
+                at += 1;
+            }
+            if !closed {
+                return Ok(None);
+            }
+            kind = TokenKind::Quoted;
+        } else if matches!(bytes[at], b'\'' | b'"' | b'`') {
             let quote = bytes[at];
             kind = if quote == b'\'' {
                 TokenKind::Literal
@@ -314,7 +413,7 @@ fn tokenize(source: &str, postgres: bool) -> Result<Option<Vec<Token<'_>>>> {
             at += 1;
             let mut closed = false;
             while at < bytes.len() {
-                if bytes[at] == b'\\' {
+                if bytes[at] == b'\\' && matches!(mode, LexMode::Postgres | LexMode::Mysql) {
                     // SQL modes change backslash meaning: decline the whole source.
                     return Ok(None);
                 }
@@ -332,7 +431,7 @@ fn tokenize(source: &str, postgres: bool) -> Result<Option<Vec<Token<'_>>>> {
             if !closed {
                 return Ok(None);
             }
-        } else if postgres && bytes[at] == b'$' {
+        } else if mode == LexMode::Postgres && bytes[at] == b'$' {
             let Some(length) = source[at + 1..].find('$').filter(|length| *length <= 128) else {
                 return Ok(None);
             };
@@ -353,11 +452,16 @@ fn tokenize(source: &str, postgres: bool) -> Result<Option<Vec<Token<'_>>>> {
             };
             at += end + delimiter.len();
             kind = TokenKind::Literal;
-        } else if bytes[at].is_ascii_alphabetic() || bytes[at] == b'_' || bytes[at] >= 128 {
+        } else if bytes[at].is_ascii_alphabetic()
+            || bytes[at] == b'_'
+            || bytes[at] >= 128
+            || (mode == LexMode::Tsql && bytes[at] == b'#')
+        {
             at += 1;
             while at < bytes.len()
                 && (bytes[at].is_ascii_alphanumeric()
                     || matches!(bytes[at], b'_' | b'$')
+                    || (mode == LexMode::Tsql && bytes[at] == b'#')
                     || bytes[at] >= 128)
             {
                 at += 1;
@@ -381,6 +485,49 @@ fn tokenize(source: &str, postgres: bool) -> Result<Option<Vec<Token<'_>>>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn vendor_modes_preserve_brackets_hash_names_and_alternative_literals() -> Result<()> {
+        let source = "SELECT * FROM #pending JOIN [archive].[odd]]name] ON 1=1;";
+        let tokens = tokenize_vendor(source, "tsql")?.unwrap();
+        assert!(
+            tokens
+                .iter()
+                .any(|t| t.raw == "#pending" && t.kind == TokenKind::Word)
+        );
+        assert!(
+            tokens
+                .iter()
+                .any(|t| t.raw == "[odd]]name]" && t.kind == TokenKind::Quoted)
+        );
+        for source in [
+            "q'[SELECT * FROM fake]'",
+            "nq'{CREATE PROCEDURE fake}'",
+            "Q'!café!'",
+        ] {
+            let tokens = tokenize_vendor(source, "plsql")?.unwrap();
+            assert_eq!(tokens.len(), 1);
+            assert!(tokens[0].kind == TokenKind::Literal);
+            assert_eq!(tokens[0].raw, source);
+        }
+        assert!(tokenize_vendor("q'[unfinished", "plsql")?.is_none());
+        assert!(tokenize_vendor("[unfinished", "tsql")?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn vendor_options_do_not_change_legacy_lexical_modes() -> Result<()> {
+        assert_eq!(
+            tokenize("# comment\nSELECT 1", false)?.unwrap()[0].raw,
+            "SELECT"
+        );
+        assert_eq!(tokenize("#name", true)?.unwrap()[0].raw, "#");
+        assert!(tokenize("'back\\slash'", true)?.is_none());
+        assert!(tokenize("'back\\slash'", false)?.is_none());
+        assert!(tokenize_vendor("'back\\slash'", "tsql")?.is_some());
+        assert!(tokenize_vendor("'back\\slash'", "plsql")?.is_some());
+        Ok(())
+    }
 
     #[test]
     fn postgres_dollar_body_and_quoted_name_keep_original_bytes() -> Result<()> {

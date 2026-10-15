@@ -1,0 +1,4 @@
+package ArchivePackage;
+requires rtl;
+contains Archive in 'original.pas';
+end.

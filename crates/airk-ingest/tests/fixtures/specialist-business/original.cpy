@@ -1,0 +1,3 @@
+       01 ARCHIVE-RECORD.
+          05 ARCHIVE-ID PIC 9(6).
+          05 ARCHIVE-TITLE PIC X(40).

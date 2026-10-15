@@ -138,6 +138,19 @@ pub fn convert_native_legacy(
                             == format!("airk-language-structure/{}", profile.adapter_id))
                             || (profile.adapter_id == "rmd"
                                 && code.producer == "airk-host-structure/rmd")))
+                    || (code.basis == EvidenceBasis::StructuralRule
+                        && matches!(
+                            profile.adapter_id.as_str(),
+                            "vbnet" | "delphi" | "cobol-free"
+                        )
+                        && code.producer_version == "specialist-facts/1"
+                        && code.producer
+                            == format!("airk-business-structure/{}", profile.adapter_id))
+                    || (code.basis == EvidenceBasis::StructuralRule
+                        && matches!(profile.adapter_id.as_str(), "plsql" | "tsql" | "abap")
+                        && code.producer_version == "vendor-facts/1"
+                        && code.producer
+                            == format!("airk-vendor-structure/{}", profile.adapter_id))
                     || (profile.adapter_id == "elixir"
                         && code.basis == EvidenceBasis::StructuralRule
                         && code.producer == "airk-language-structure/elixir"

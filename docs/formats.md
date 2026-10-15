@@ -43,7 +43,29 @@ These are bounded grammar profiles, not complete compiler/type-system semantics.
 
 P10 focused qualification passed 18 adapter unit tests and native grammar builds on Windows, and 19 kernel pipeline cases on Linux. Those cases cover original retained bytes, warm and compatible-move reuse, bounded key queries where native continuity is qualified, and profile changes without unrelated-file reparsing. Final P12 platform qualification remains pending. Clojure/EDN and Gradle structural cues do not imply native declaration continuity; unknown body/documentation dimensions remain unknown. See the [first](v2-general-languages-b-first.md), [data](v2-general-languages-b-data.md), and [functional](v2-general-languages-b-functional.md) batch receipts for exact dependencies and limits.
 
-Explicit PostgreSQL/MySQL profiles add separately labeled structural procedure evidence for selected complete headers and bodies. PostgreSQL accepts qualified SQL/PLpgSQL literal or dollar-quoted bodies; MySQL accepts selected nested BEGIN/END bodies with ordinary semicolon framing. Delimiter changes, unsupported control-flow and quote modes remain partial. This does not qualify Oracle or SQL Server procedural dialects.
+Explicit PostgreSQL/MySQL profiles add separately labeled structural procedure evidence for selected complete headers and bodies. PostgreSQL accepts qualified SQL/PLpgSQL literal or dollar-quoted bodies; MySQL accepts selected nested BEGIN/END bodies with ordinary semicolon framing. Delimiter changes, unsupported control-flow and quote modes remain partial. Oracle and SQL Server written evidence requires the separate specialist profiles below; those also retain explicit procedural limits.
+
+### Specialist source profiles
+
+| Language / selection | Selected evidence and explicit limits |
+|---|---|
+| Fortran: `.f` fixed; `.f90`, `.f95` free; explicit source-form overrides | Programs/modules/subroutines/functions, use/include, declarations and calls; original source retained, unsupported fixed continuations/columns and conditional directives partial |
+| COBOL: `.cob`, `.cbl`, `.cpy` default fixed; explicit `cobol-free` | Programs/divisions/sections/paragraphs/data/COPY/written CALL targets; fixed grammar and separate structural free-source adapter; no copybook expansion |
+| VB.NET: `.vb` | Structural namespaces/imports/types/modules/Sub/Function/Property and receiver calls; line-form, attribute/XML and continuation limits; no compiler resolution or native continuity |
+| Delphi/Object Pascal: `.pas`, `.dpr`, `.dpk` | Units/programs/types/routines/members/uses; separately labeled structural package/requires/contains; conditional branches not evaluated |
+| PL/SQL: `.pks`, `.pkb`, `.pls`; explicit `plsql` for `.sql` | Package spec/body, procedure/function/trigger/cursor headers and selected SQL queries/references; procedural body semantics remain partial |
+| T-SQL: explicit `tsql` for `.sql` | GO batch boundaries, procedure/function/trigger/table/view headers and selected query/CTE/join/alias facts; no SQLCMD or database execution |
+| ABAP: `.abap` | Structural period-delimited report/program/class/interface/method/form/module/include and selected references; chained declarations/templates remain partial |
+| Apex: `.trigger`; strong marker or explicit policy for `.cls` | Classes/interfaces/enums/methods/constructors/triggers, receiver calls and selected SOQL/SOSL references; no Salesforce schema resolution |
+| Solidity: `.sol` | Contracts/interfaces/libraries/structs/functions/events/errors/imports and written inheritance/calls; Yul partial, no execution or security analysis |
+| VHDL: `.vhd`, `.vhdl` | Entities/architectures/packages/components, named processes, ports/signals/library/use and instantiations; no elaboration/simulation |
+| Verilog/SystemVerilog: qualified `.v`; `.sv`, `.svh` | Modules/interfaces/packages/classes/programs/functions/tasks/ports/signals/includes/instantiations; macros/directives/generate partial |
+| CUDA: `.cu`, `.cuh` | Written C++ declarations, kernel qualifiers, launch bounds/attributes and kernel launch syntax; no NVCC, preprocessing evaluation or device execution |
+| WGSL: `.wgsl` | Structs/functions/variables, entry-point stage attributes and written group/binding/location attributes; Bevy preprocessing/import extensions remain partial and unexpanded |
+| GLSL: `.vert`, `.frag`, `.glsl` | Declarations, interface blocks, uniforms/storage qualifiers, layouts, functions and written directives; filename-bound vertex/fragment/unknown stage, no shader validation or preprocessing evaluation |
+| Assembly: `.asm`, `.s`, `.S` | Labels/constants, directives/sections/linkage and written instructions/operands; default ISA unknown with partial coverage, explicit x86 AT&T/Intel or AArch64 policy profiles enable finite mnemonic classification; `.S` remains unexpanded |
+
+Specialist dialect/source-form choices enter effective profile identity. Ambiguous `.cls` and `.v` use bounded visible markers or explicit overrides; unconfigured `.sql` retains generic SQL. Syntax and structural provenance are distinct, references remain written candidates, and source is never executed. See [business](v2-specialist-business.md), [vendor](v2-specialist-vendor.md), [hardware](v2-specialist-hardware.md) and [GPU/assembly](v2-specialist-gpu.md) receipts for native/integration evidence and remaining platform limits. These profiles do not imply universal dialect or toolchain support.
 
 ## Structured text and documents
 

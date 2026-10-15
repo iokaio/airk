@@ -32,6 +32,17 @@ pub(crate) fn analyze_selected(
     adapter_id: &str,
 ) -> anyhow::Result<Analysis> {
     match adapter_id {
+        "cuda" | "wgsl" | "glsl" | "assembly" | "assembly-x86-att" | "assembly-x86-intel"
+        | "assembly-aarch64" => return crate::specialist_gpu::analyze(path, text, adapter_id),
+        "solidity" | "vhdl" | "verilog" | "systemverilog" => {
+            return crate::specialist_hardware::analyze(path, text, adapter_id);
+        }
+        "plsql" | "tsql" | "abap" | "apex" => {
+            return crate::specialist_vendor::analyze(path, text, adapter_id);
+        }
+        "fortran-free" | "fortran-fixed" | "cobol-fixed" | "cobol-free" | "delphi" | "vbnet" => {
+            return crate::specialist_business::analyze(path, text, adapter_id);
+        }
         "ocaml" | "ocaml-interface" | "haskell" | "erlang" | "fsharp" | "fsharp-signature" => {
             return crate::languages_b_functional::analyze(path, text, adapter_id);
         }
@@ -74,6 +85,33 @@ pub(crate) fn analyze_selected_budgeted(
         text.len() <= crate::MAX_FILE_BYTES,
         "child source exceeds native ceiling"
     );
+    if matches!(
+        adapter_id,
+        "fortran-free" | "fortran-fixed" | "cobol-fixed" | "cobol-free" | "delphi" | "vbnet"
+    ) {
+        return crate::specialist_business::analyze_budgeted(path, text, adapter_id, budget);
+    }
+    if matches!(adapter_id, "plsql" | "tsql" | "abap" | "apex") {
+        return crate::specialist_vendor::analyze_budgeted(path, text, adapter_id, budget);
+    }
+    if matches!(
+        adapter_id,
+        "solidity" | "vhdl" | "verilog" | "systemverilog"
+    ) {
+        return crate::specialist_hardware::analyze_budgeted(path, text, adapter_id, budget);
+    }
+    if matches!(
+        adapter_id,
+        "cuda"
+            | "wgsl"
+            | "glsl"
+            | "assembly"
+            | "assembly-x86-att"
+            | "assembly-x86-intel"
+            | "assembly-aarch64"
+    ) {
+        return crate::specialist_gpu::analyze_budgeted(path, text, adapter_id, budget);
+    }
     if adapter_id == "scss" {
         return crate::scss::analyze_budgeted(path, text, budget);
     }
