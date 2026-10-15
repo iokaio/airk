@@ -14,6 +14,7 @@ mod continuity;
 pub mod coverage;
 pub mod extraction;
 mod historical;
+mod suggestions;
 pub use historical::{HistoryAvailability, HistoryAvailabilityRequest};
 pub mod history_controls;
 pub mod limits;

@@ -837,15 +837,25 @@ impl FileStore {
     }
 
     pub fn read_retained_source(&self, entry: &Artifact) -> Result<Vec<u8>> {
+        self.read_retained_source_bounded(entry, 16_777_216)
+    }
+
+    pub fn read_retained_source_bounded(&self, entry: &Artifact, maximum: u64) -> Result<Vec<u8>> {
+        let maximum = maximum.min(16_777_216);
+        ensure!(
+            u64::try_from(entry.bytes)? <= maximum,
+            "retained source exceeds read budget"
+        );
         ensure!(
             entry.retained.as_ref().is_some_and(|r| r.raw_source),
             "original source bytes unavailable in legacy retained state; reindex from source"
         );
-        let bytes = read_verified(
-            &object_path(self.directory(), "sources", &entry.content_hash)?,
-            &entry.content_hash,
-            16_777_216,
-        )?;
+        let path = object_path(self.directory(), "sources", &entry.content_hash)?;
+        ensure!(
+            path.symlink_metadata()?.is_file(),
+            "retained source is not a regular file"
+        );
+        let bytes = read_verified(&path, &entry.content_hash, maximum)?;
         ensure!(
             bytes.len() == entry.bytes,
             "retained source byte count mismatch"

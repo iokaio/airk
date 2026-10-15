@@ -24,6 +24,7 @@ pub struct ChangesRequest {
     pub path_prefix: String,
     pub include_symbols: bool,
     pub include_documents: bool,
+    pub include_suggestions: bool,
     pub limit: usize,
     pub max_bytes: usize,
     pub cursor: Option<String>,
@@ -37,6 +38,7 @@ impl Default for ChangesRequest {
             path_prefix: String::new(),
             include_symbols: false,
             include_documents: false,
+            include_suggestions: false,
             limit: 10,
             max_bytes: 8192,
             cursor: None,
@@ -165,11 +167,53 @@ pub struct ChangesResponse {
     pub changes: Vec<CoalescedChange>,
     pub invalidations: Vec<CoalescedChange>,
     pub validations: Vec<EvidenceValidation>,
+    pub suggestions: Vec<ChangeSuggestion>,
+    pub suggestion_coverage: Option<SuggestionCoverage>,
     pub freshness: FreshnessObservation,
     /// Exact sum of serialized change/invalidation/validation records.
     pub record_bytes: usize,
     pub truncated: bool,
     pub cursor: Option<String>,
+}
+
+/// Optional hints only: never identity, resolved movement, or read redirects.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ChangeSuggestion {
+    File {
+        before: ChangeEndpoint,
+        after: ChangeEndpoint,
+        score_basis_points: u32,
+        shared_shingles: usize,
+        union_shingles: usize,
+    },
+    Directory {
+        root: String,
+        /// Root-relative directory paths; children retain collection citation paths.
+        before: String,
+        after: String,
+        children: Vec<(String, String)>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SuggestionStatus {
+    Complete,
+    Partial,
+    Unavailable,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SuggestionCoverage {
+    pub version: u32,
+    pub status: SuggestionStatus,
+    pub baseline_representation: Option<String>,
+    pub compared_pairs: usize,
+    pub examined_files: usize,
+    pub examined_text_bytes: usize,
+    pub reason: Option<String>,
 }
 
 /// Count events, resolver records and ancestry together, including detail records.
@@ -715,6 +759,7 @@ pub fn validate_selectors(
 pub enum CursorStage {
     Changes,
     Validations,
+    Suggestions,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -737,6 +782,10 @@ pub struct ChangeCursor {
     pub after_change: Option<ChangePosition>,
     /// Next selector ordinal. One bounded validation record per input selector.
     pub next_validation: usize,
+    #[serde(default)]
+    pub next_suggestion: usize,
+    #[serde(default)]
+    pub suggestion_digest: Option<Sha256Digest>,
 }
 
 impl ChangeCursor {
@@ -774,6 +823,18 @@ impl ChangeCursor {
         ensure!(
             self.stage != CursorStage::Validations || self.next_validation < selector_count,
             "completed validation list must not emit a cursor"
+        );
+        ensure!(
+            self.next_suggestion <= 128,
+            "invalid suggestion cursor position"
+        );
+        ensure!(
+            self.stage == CursorStage::Suggestions || self.next_suggestion == 0,
+            "suggestion position before prior lists completed"
+        );
+        ensure!(
+            self.stage != CursorStage::Suggestions || self.next_validation == selector_count,
+            "suggestion cursor skipped validations"
         );
         if let Some(baseline) = baseline {
             baseline.validate_against(target)?;
@@ -973,6 +1034,8 @@ mod tests {
                 event_id: 9,
             }),
             next_validation: 0,
+            next_suggestion: 0,
+            suggestion_digest: None,
         };
         assert!(cursor.validate_binding(&target, None, &digest, 2).is_ok());
         let newer = RevisionToken {
