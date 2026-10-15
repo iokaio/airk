@@ -52,6 +52,24 @@ pub(crate) fn build(
         events: previous.map(|p| p.events.clone()).unwrap_or_default(),
         resolvers: previous.map(|p| p.resolvers.clone()).unwrap_or_default(),
     };
+    if reason == PublicationReason::LineagePurge {
+        let floor = CoverageFloor {
+            complete_after: generation,
+            reason: Some(CoverageReason::Purged),
+        };
+        lineage.coverage = ChangeCoverage {
+            files: floor.clone(),
+            code: floor.clone(),
+            documents: floor.clone(),
+            ancestry: floor.clone(),
+            resolution: floor,
+        };
+        lineage.ancestry.clear();
+        lineage.events.clear();
+        lineage.resolvers.clear();
+        lineage.validate()?;
+        return Ok(lineage);
+    }
     for (family, floor) in [
         (ContinuityFamily::Code, &mut lineage.coverage.code),
         (ContinuityFamily::Documents, &mut lineage.coverage.documents),

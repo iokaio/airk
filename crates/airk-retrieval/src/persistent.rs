@@ -7,6 +7,7 @@ use crate::{
     vector::DiskIndex,
 };
 use airk_core::identity::{PublicationReceipt, RevisionToken, Sha256Digest, revision_digest};
+use airk_core::model_objects::{MAX_MODEL_OBJECT_SET_BYTES, ModelObjectSet};
 use airk_core::publication::InventoryV2;
 use airk_core::{ArtifactSource, Citation, Hit, SearchQuery, SearchResponse, Snapshot};
 use anyhow::{Context, Result, ensure};
@@ -28,12 +29,17 @@ use tantivy::{
 
 const ENGINE: &str = "tantivy-0.26.2/diskann-0.59.0/airk-file-1/generation-3";
 const ENGINE_V2: &str = "tantivy-0.26.2/diskann-0.59.0/airk-file-1/generation-4/inventory-2";
+const ENGINE_V3: &str =
+    "tantivy-0.26.2/diskann-0.59.0/airk-file-1/generation-5/inventory-2/model-objects-1";
 const MAX_MANIFEST_V2_BYTES: usize = 128 * 1024;
 const MAX_COMPONENTS_V2: usize = 1024;
 const MAX_INVENTORY_V2_BYTES: usize = 128 * 1024 * 1024;
 
 pub fn retrieval_specification_v2() -> &'static [u8] {
     ENGINE_V2.as_bytes()
+}
+pub fn retrieval_specification_v3() -> &'static [u8] {
+    ENGINE_V3.as_bytes()
 }
 
 /// Kernel-finalized identity plus the bound artifact projection needed to build
@@ -206,6 +212,7 @@ pub fn prepare_streaming(
         revision_id(snapshot)?,
         None,
         None,
+        None,
     )?;
     let mut inventory = BudgetWriter::new(
         File::create(staging.path().join("inventory.json"))?,
@@ -257,6 +264,7 @@ fn build_streaming_components(
     revision: String,
     mut cache: Option<&mut EmbeddingCacheContext<'_>>,
     expected_pipeline: Option<Sha256Digest>,
+    model_objects: Option<(&Path, &ModelObjectSet)>,
 ) -> Result<Manifest> {
     let lexical = directory.join("lexical");
     fs::create_dir(&lexical)?;
@@ -270,7 +278,14 @@ fn build_streaming_components(
         tantivy::IndexSettings::default(),
     )?;
     let mut writer = index.writer_with_num_threads::<TantivyDocument>(1, 20_000_000)?;
-    let model = model_directory.map(EmbeddingModel::open).transpose()?;
+    ensure!(
+        model_directory.is_none() || model_objects.is_none(),
+        "conflicting model inputs"
+    );
+    let model = match model_objects {
+        Some((collection, set)) => Some(EmbeddingModel::open_objects(collection, set)?),
+        None => model_directory.map(EmbeddingModel::open).transpose()?,
+    };
     let descriptor = model
         .as_ref()
         .map(EmbeddingModel::cache_descriptor)
@@ -378,6 +393,14 @@ fn build_streaming_components(
             "model pipeline changed while copying revision assets"
         );
     }
+    if let Some((_, set)) = model_objects {
+        let mut output = BudgetWriter::new(
+            File::create(directory.join("model-objects.json"))?,
+            charge.clone(),
+        );
+        output.write_all(&set.canonical_bytes()?)?;
+        output.get_ref().sync_all()?;
+    }
     Ok(Manifest {
         schema: 1,
         engine: ENGINE.into(),
@@ -468,6 +491,7 @@ fn component_digests_expected(
                         | "catalog.sqlite"
                         | "vectors.bin"
                         | "embedding-cache.json"
+                        | "model-objects.json"
                 ) || name.starts_with("lexical/")
                     || name.starts_with("model/"),
                 "foreign generation component"
@@ -554,8 +578,8 @@ fn read_manifest_v2(
     );
     let manifest: ManifestV2 = serde_json::from_slice(&bytes)?;
     ensure!(
-        manifest.schema == 2
-            && manifest.engine == ENGINE_V2
+        ((manifest.schema == 2 && manifest.engine == ENGINE_V2)
+            || (manifest.schema == 3 && manifest.engine == ENGINE_V3))
             && manifest.token == receipt.token
             && manifest.collection == collection
             && manifest.inventory_digest == receipt.inventory_digest
@@ -563,6 +587,14 @@ fn read_manifest_v2(
         "v2 manifest identity mismatch"
     );
     for name in manifest.components.keys() {
+        ensure!(
+            if manifest.schema == 3 {
+                !name.starts_with("model/")
+            } else {
+                name != "model-objects.json"
+            },
+            "model storage disagrees with generation schema"
+        );
         ensure!(
             name.len() <= 4096
                 && !name.contains('\\')
@@ -602,13 +634,65 @@ fn verify_directory_v2(
     );
     let inventory = bounded_file(&directory.join("inventory.json"), MAX_INVENTORY_V2_BYTES)?;
     ensure!(
-        revision_digest(retrieval_specification_v2(), &inventory) == receipt.token.revision,
+        revision_digest(manifest.engine.as_bytes(), &inventory) == receipt.token.revision,
         "v2 revision input mismatch"
     );
+    if manifest.schema == 3 {
+        ensure!(
+            !directory.join("model").exists(),
+            "shared-model generation contains inline model directory"
+        );
+        let objects = read_model_objects(directory, &manifest)?;
+        let inventory: InventoryV2 = serde_json::from_slice(&inventory)?;
+        ensure!(
+            objects.as_ref().map(|set| set.pipeline_digest) == inventory.embedding_pipeline_digest,
+            "model object pipeline differs from authoritative inventory"
+        );
+    }
     Ok(manifest)
 }
 
-fn open_components_v2(directory: &Path, manifest: &ManifestV2) -> Result<(IndexReader, Fields)> {
+fn read_model_objects(directory: &Path, manifest: &ManifestV2) -> Result<Option<ModelObjectSet>> {
+    if manifest.schema != 3 {
+        return Ok(None);
+    }
+    match &manifest.model_sha256 {
+        None => {
+            ensure!(
+                !manifest.components.contains_key("model-objects.json")
+                    && !directory.join("model-objects.json").exists(),
+                "lexical-only generation contains model references"
+            );
+            Ok(None)
+        }
+        Some(identity) => {
+            let expected = manifest
+                .components
+                .get("model-objects.json")
+                .context("model object sidecar missing")?;
+            let bytes = bounded_file(
+                &directory.join("model-objects.json"),
+                MAX_MODEL_OBJECT_SET_BYTES,
+            )?;
+            ensure!(
+                bytes.len() as u64 == expected.bytes && raw_digest(&bytes) == expected.sha256,
+                "model object sidecar checksum mismatch"
+            );
+            let set = ModelObjectSet::from_bytes(&bytes)?;
+            ensure!(
+                set.legacy_identity == *identity,
+                "model object display identity mismatch"
+            );
+            Ok(Some(set))
+        }
+    }
+}
+
+fn open_components_v2(
+    directory: &Path,
+    collection: &Path,
+    manifest: &ManifestV2,
+) -> Result<(IndexReader, Fields)> {
     let (expected, fields) = schema();
     let index = Index::open_in_dir(directory.join("lexical"))?;
     ensure!(index.schema() == expected, "unsupported lexical schema");
@@ -625,10 +709,15 @@ fn open_components_v2(directory: &Path, manifest: &ManifestV2) -> Result<(IndexR
         "vector inventory exceeds lexical inventory"
     );
     if let Some(identity) = &manifest.model_sha256 {
-        ensure!(
-            crate::model::inspect(&directory.join("model"))?.identity == *identity,
-            "v2 model identity mismatch"
-        );
+        if manifest.schema == 3 {
+            let set = read_model_objects(directory, manifest)?.context("model objects missing")?;
+            crate::model::inspect_objects_cache_descriptor(collection, &set)?;
+        } else {
+            ensure!(
+                crate::model::inspect(&directory.join("model"))?.identity == *identity,
+                "v2 model identity mismatch"
+            );
+        }
         ensure!(
             DiskIndex::open(&directory.join("vectors.bin"))?.len() == manifest.vectors,
             "vector inventory mismatch"
@@ -639,6 +728,10 @@ fn open_components_v2(directory: &Path, manifest: &ManifestV2) -> Result<(IndexR
                 && !directory.join("vectors.bin").exists()
                 && !directory.join("model").exists(),
             "model-free revision contains vector/model state"
+        );
+        ensure!(
+            !directory.join("model-objects.json").exists(),
+            "model-free generation contains model references"
         );
     }
     Ok((reader, fields))
@@ -681,19 +774,83 @@ pub fn prepare_streaming_v2_cached(
     cache: Option<&mut EmbeddingCacheContext<'_>>,
     prepare_catalog: impl FnOnce(&Path) -> Result<()>,
 ) -> Result<PublicationReceipt> {
+    prepare_streaming_owned(
+        base,
+        preparation,
+        model_directory,
+        None,
+        false,
+        source,
+        charge,
+        staging_parent,
+        cache,
+        prepare_catalog,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn prepare_streaming_v3_cached(
+    base: &Path,
+    preparation: &V2Preparation<'_>,
+    model_objects: Option<&ModelObjectSet>,
+    source: &dyn ArtifactSource,
+    charge: Option<Charge>,
+    staging_parent: Option<&Path>,
+    cache: Option<&mut EmbeddingCacheContext<'_>>,
+    prepare_catalog: impl FnOnce(&Path) -> Result<()>,
+) -> Result<PublicationReceipt> {
+    prepare_streaming_owned(
+        base,
+        preparation,
+        None,
+        model_objects,
+        true,
+        source,
+        charge,
+        staging_parent,
+        cache,
+        prepare_catalog,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_streaming_owned(
+    base: &Path,
+    preparation: &V2Preparation<'_>,
+    model_directory: Option<&Path>,
+    model_objects: Option<&ModelObjectSet>,
+    shared_models: bool,
+    source: &dyn ArtifactSource,
+    charge: Option<Charge>,
+    staging_parent: Option<&Path>,
+    cache: Option<&mut EmbeddingCacheContext<'_>>,
+    prepare_catalog: impl FnOnce(&Path) -> Result<()>,
+) -> Result<PublicationReceipt> {
+    let engine = if shared_models { ENGINE_V3 } else { ENGINE_V2 };
     let snapshot = preparation.snapshot;
     ensure!(
         preparation.canonical_inventory.len() <= MAX_INVENTORY_V2_BYTES,
         "oversized v2 inventory"
     );
     let authoritative: InventoryV2 = serde_json::from_slice(preparation.canonical_inventory)?;
+    if shared_models {
+        if let Some(set) = model_objects {
+            set.validate()?;
+        }
+        ensure!(
+            model_objects.map(|set| set.pipeline_digest) == authoritative.embedding_pipeline_digest
+                && model_objects.map(|set| set.legacy_identity.as_str())
+                    == authoritative.embedding_model.as_deref(),
+            "model object input differs from finalized inventory"
+        );
+    }
     ensure!(
         authoritative.canonical_bytes()? == preparation.canonical_inventory,
         "noncanonical v2 inventory bytes"
     );
     ensure!(
         authoritative.incarnation == preparation.token.incarnation
-            && authoritative.retrieval_specification.as_bytes() == retrieval_specification_v2(),
+            && authoritative.retrieval_specification == engine,
         "v2 inventory identity/specification mismatch"
     );
     ensure!(
@@ -706,10 +863,7 @@ pub fn prepare_streaming_v2_cached(
     );
     ensure!(
         preparation.token.revision
-            == revision_digest(
-                retrieval_specification_v2(),
-                preparation.canonical_inventory
-            ),
+            == revision_digest(engine.as_bytes(), preparation.canonical_inventory),
         "v2 revision input mismatch"
     );
     let generations = base.join("generations");
@@ -736,6 +890,7 @@ pub fn prepare_streaming_v2_cached(
         preparation.token.revision.to_string(),
         cache,
         authoritative.embedding_pipeline_digest,
+        model_objects.map(|set| (base, set)),
     )?;
     let mut inventory = BudgetWriter::new(
         File::create(staging.path().join("inventory.json"))?,
@@ -781,8 +936,8 @@ pub fn prepare_streaming_v2_cached(
         "streamed chunk inventory mismatch"
     );
     let manifest = ManifestV2 {
-        schema: 2,
-        engine: ENGINE_V2.into(),
+        schema: if shared_models { 3 } else { 2 },
+        engine: engine.into(),
         token: preparation.token,
         collection: snapshot.collection.clone(),
         chunks: built.chunks,
@@ -808,7 +963,7 @@ pub fn prepare_streaming_v2_cached(
         manifest_digest: raw_digest(&bytes),
     };
     let verified = verify_directory_v2(staging.path(), &receipt, &snapshot.collection)?;
-    let (probe, _) = open_components_v2(staging.path(), &verified)?;
+    let (probe, _) = open_components_v2(staging.path(), base, &verified)?;
     drop(probe);
     // Reopening must not introduce an unbound file before directory publication.
     verify_directory_v2(staging.path(), &receipt, &snapshot.collection)?;
@@ -839,6 +994,8 @@ pub struct PersistentIndex {
     pub vectors: usize,
     pub model_sha256: Option<String>,
     v2_receipt: Option<PublicationReceipt>,
+    model_objects: Option<ModelObjectSet>,
+    collection_directory: PathBuf,
 }
 
 impl PersistentIndex {
@@ -848,7 +1005,8 @@ impl PersistentIndex {
         let lease = File::open(reader_lease_path(base, &revision)?)?;
         lease.lock_shared()?;
         let manifest = verify_directory_v2(&directory, receipt, collection)?;
-        let (reader, fields) = open_components_v2(&directory, &manifest)?;
+        let (reader, fields) = open_components_v2(&directory, base, &manifest)?;
+        let model_objects = read_model_objects(&directory, &manifest)?;
         Ok(Self {
             model: Mutex::new(None),
             _lease: lease,
@@ -860,6 +1018,8 @@ impl PersistentIndex {
             vectors: manifest.vectors,
             model_sha256: manifest.model_sha256,
             v2_receipt: Some(receipt.clone()),
+            model_objects,
+            collection_directory: base.into(),
         })
     }
 
@@ -928,6 +1088,8 @@ impl PersistentIndex {
             vectors: manifest.vectors,
             model_sha256: manifest.model_sha256,
             v2_receipt: None,
+            model_objects: None,
+            collection_directory: base.into(),
         })
     }
 
@@ -994,7 +1156,10 @@ impl PersistentIndex {
             .lock()
             .map_err(|_| anyhow::anyhow!("local model cache poisoned"))?;
         if cached.is_none() {
-            *cached = Some(EmbeddingModel::open(&self.directory.join("model"))?);
+            *cached = Some(match &self.model_objects {
+                Some(set) => EmbeddingModel::open_objects(&self.collection_directory, set)?,
+                None => EmbeddingModel::open(&self.directory.join("model"))?,
+            });
         }
         let model = cached.as_ref().context("local model unavailable")?;
         ensure!(
@@ -1210,6 +1375,7 @@ mod pipeline_tests {
             "fixture".into(),
             None,
             Some(Sha256Digest::from_bytes([0; 32])),
+            None,
         )
         .err()
         .context("mismatched inventory pipeline accepted")?;
@@ -1223,6 +1389,7 @@ mod pipeline_tests {
             &snapshot,
             charge.clone(),
             "fixture".into(),
+            None,
             None,
             None,
         )?;
@@ -1242,6 +1409,7 @@ mod pipeline_tests {
             "fixture".into(),
             None,
             Some(expected),
+            None,
         )
         .err()
         .context("model metadata race accepted")?;

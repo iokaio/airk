@@ -226,19 +226,19 @@ fn validate_workspace_boundaries(
                 roots.insert(format!("published:{alias}"), path);
             }
         }
-        let mut verified_bytes = 0u64;
-        for historical in
-            crate::history::verified_roots(&crate::FileStore::new(&directory), &mut |bytes| {
-                verified_bytes = verified_bytes
-                    .checked_add(bytes)
-                    .context("historical relocation verification overflow")?;
-                ensure!(
-                    verified_bytes <= 64 * 1024 * 1024,
-                    "historical relocation verification exceeds bound"
-                );
-                Ok(())
-            })?
-        {
+        let mut history_work =
+            crate::maintenance::WorkBudget::history(crate::history_policy::HistoryWorkBudget {
+                maintenance: crate::retention::MaintenanceBudget {
+                    max_metadata_bytes: 64 * 1024 * 1024,
+                    max_duration_ms: 60_000,
+                    ..Default::default()
+                },
+                verification_bytes: 8 * 1024 * 1024 * 1024,
+            })?;
+        for historical in crate::history::verified_roots_work(
+            &crate::FileStore::new(&directory),
+            &mut history_work,
+        )? {
             let token = historical.descriptor.publication.token;
             roots.insert(
                 format!("historical:{token}:primary"),

@@ -27,6 +27,12 @@ pub(crate) fn policy_digest(policy: &ExtractionPolicy) -> Result<Sha256Digest> {
     ))
 }
 impl Kernel {
+    pub fn extraction_adapters() -> Vec<AdapterDescriptor> {
+        airk_ingest::adapters::registry::AdapterRegistry::baseline()
+            .descriptors()
+            .cloned()
+            .collect()
+    }
     pub fn extraction_policy(&self) -> Result<ExtractionPolicyStatus> {
         let bytes = self.store.extraction_policy_bytes(&self.root_id())?;
         let registry = airk_ingest::adapters::registry::AdapterRegistry::baseline();

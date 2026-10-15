@@ -14,6 +14,8 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Default, Deserialize, Serialize, schemars::JsonSchema)]
 pub struct EvidenceArgs {
+    /// Exact retained revision token; unavailable history never falls back to current bytes.
+    pub revision: Option<String>,
     /// Representation validator returned by this same read and options.
     pub if_evidence: Option<String>,
     /// Follow only a unique compatible exact-content move; false by default.
@@ -28,6 +30,23 @@ impl EvidenceArgs {
     fn options(&self) -> anyhow::Result<airk_core::evidence::EvidenceReadOptions> {
         Ok(serde_json::from_value(serde_json::to_value(self)?)?)
     }
+}
+
+#[derive(Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HistoryArgs {
+    pub revision: Option<String>,
+    pub cursor: Option<String>,
+    #[serde(default = "history_limit")]
+    pub limit: usize,
+    #[serde(default = "history_bytes")]
+    pub max_bytes: usize,
+}
+fn history_limit() -> usize {
+    64
+}
+fn history_bytes() -> usize {
+    65536
 }
 
 #[derive(Deserialize, Serialize, schemars::JsonSchema)]
@@ -731,6 +750,35 @@ impl AirkServer {
     }
 
     #[tool(
+        name = "airk_history",
+        description = "List bounded retained publication receipts or verify availability of one exact revision. Listing verifies receipt identity; exact file/context/outline/info reads verify retained bytes. Historical graph/full-text/vector search is unsupported. No live or current byte fallback.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            open_world_hint = false
+        )
+    )]
+    async fn history(&self, Parameters(args): Parameters<HistoryArgs>) -> CallToolResult {
+        let kernel = self.kernel.clone();
+        let span = self
+            .kernel
+            .usage_span(UsageOperation::Status, ClientFamily::Unknown);
+        render(
+            &self.kernel,
+            span,
+            tokio::task::spawn_blocking(move || {
+                kernel.history_availability(&airk_kernel::HistoryAvailabilityRequest {
+                    revision: args.revision.as_deref().map(str::parse).transpose()?,
+                    cursor: args.cursor,
+                    limit: args.limit,
+                    max_bytes: args.max_bytes,
+                })
+            })
+            .await,
+        )
+    }
+
+    #[tool(
         name = "airk_capabilities",
         description = "Check native formats, explicitly provisioned local model/OCR/code-provider adapters and their limits before planning exploration. Works before indexing. Reports available capabilities, not whether optional providers or this collection are ready.",
         annotations(
@@ -744,7 +792,9 @@ impl AirkServer {
             .kernel
             .usage_span(UsageOperation::Capabilities, ClientFamily::Unknown);
         let value = serde_json::json!({
-            "changes": {"observed_indexed_changes":true,"selectors":64,"selector_bytes":32768,"max_payload_bytes":65536,"exact_revision_tokens":true,"live_source_verified":false,"symbol_continuity":false,"document_continuity":false},
+            "adapters": Kernel::extraction_adapters(),
+            "history": {"exact_reads":["airk_file_info","airk_read_file","airk_outline","airk_context"],"availability":"airk_history","optional_retention":true,"search":false,"live_fallback":false,"mutations":"CLI/extension only"},
+            "changes": {"observed_indexed_changes":true,"selectors":64,"selector_bytes":32768,"max_payload_bytes":65536,"exact_revision_tokens":true,"live_source_verified":false,"symbol_continuity":"adapter-specific conservative coverage","document_continuity":"adapter-specific conservative coverage"},
             "conditional_reads": {"tools":["airk_file_info","airk_read_file","airk_outline","airk_context"],"validator":"representation-specific if_evidence","follow_moves_default":false,"move_basis":"unique compatible exact content; not filesystem intent"},
             "code": ["rust","python","javascript/jsx","typescript/tsx","go","java","c","cpp","csharp","ruby","php","bash","powershell","lua","swift","kotlin","sql"],
             "structured": ["markdown","json","yaml","toml","html","css","xml","svg","csv","tsv","ini","dockerfile"],
@@ -759,7 +809,7 @@ impl AirkServer {
             "local_usage": "Content-free local aggregates are enabled by default; AIRK_USAGE_MODE=disabled opts out. CLI reports include measured stages, logical disk growth and process CPU where the host supports it; physical I/O remains unknown. Optional client/session imports, local tokenizer calibration and user-supplied price scenarios stay labeled; estimates are counterfactual context, never provider bills.",
             "search_modes": ["lexical", "vector", "hybrid"],
             "semantic_search": "Vector/hybrid modes support explicitly provisioned local static word vectors or schema-2 CPU ONNX transformer models with a local BERT WordPiece tokenizer. Assets/specification bind the indexed generation. DiskANN retrieval remains approximate; no network fallback or automatic download. Small real-model tests do not establish production corpus quality. semantic=true aliases vector.",
-            "limitations": ["No universal native type/name resolution or complete caller graph","Optional providers/models require deliberate local provisioning and qualification","LSP evidence queries selected symbol positions; external/unindexed locations are rejected","OCR covers selected pages and may misrecognize layout/text","No legacy binary Office formats","No SVG rendering","No embedded code parsing in HTML/Vue/Svelte"]
+            "limitations": ["No universal native type/name resolution or complete caller graph","Optional providers/models require deliberate local provisioning and qualification","LSP evidence queries selected symbol positions; external/unindexed locations are rejected","OCR covers selected pages and may misrecognize layout/text","No legacy binary Office formats","No SVG rendering","Composite child evidence has explicit mapping, grammar and resource limits"]
         });
         render(&self.kernel, span, Ok(Ok(value)))
     }

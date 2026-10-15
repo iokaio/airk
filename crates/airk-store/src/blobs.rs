@@ -97,6 +97,80 @@ struct ManifestV2 {
     components: std::collections::BTreeMap<String, ComponentDigest>,
 }
 
+impl ManifestV2 {
+    fn supported_format(&self) -> bool {
+        match self.schema {
+            2 => {
+                self.engine == "tantivy-0.26.2/diskann-0.59.0/airk-file-1/generation-4/inventory-2"
+                    && !self.components.contains_key("model-objects.json")
+            }
+            3 => {
+                self.engine
+                    == "tantivy-0.26.2/diskann-0.59.0/airk-file-1/generation-5/inventory-2/model-objects-1"
+                    && !self
+                        .components
+                        .keys()
+                        .any(|path| path.starts_with("model/"))
+                    && self.components.contains_key("model-objects.json")
+                        == self.model_sha256.is_some()
+            }
+            _ => false,
+        }
+    }
+}
+
+fn model_set(
+    directory: &Path,
+    manifest: &ManifestV2,
+    inventory: &airk_core::publication::InventoryV2,
+) -> Result<Option<airk_core::model_objects::ModelObjectSet>> {
+    let Some(component) = manifest.components.get("model-objects.json") else {
+        return Ok(None);
+    };
+    ensure!(
+        manifest.schema == 3
+            && component.bytes <= airk_core::model_objects::MAX_MODEL_OBJECT_SET_BYTES as u64,
+        "invalid model object sidecar format or bound"
+    );
+    let path = directory.join("model-objects.json");
+    let metadata = path.symlink_metadata()?;
+    ensure!(
+        metadata.is_file()
+            && !metadata.file_type().is_symlink()
+            && metadata.len() == component.bytes,
+        "invalid model object sidecar file"
+    );
+    let set = airk_core::model_objects::ModelObjectSet::from_bytes(&read_verified(
+        &path,
+        &component.sha256.to_string(),
+        component.bytes,
+    )?)?;
+    ensure!(
+        Some(set.legacy_identity.as_str()) == manifest.model_sha256.as_deref()
+            && inventory.embedding_model.as_deref() == Some(set.legacy_identity.as_str())
+            && inventory.embedding_pipeline_digest == Some(set.pipeline_digest),
+        "model objects disagree with publication identity or pipeline"
+    );
+    Ok(Some(set))
+}
+
+fn verify_model_objects(
+    base: &Path,
+    directory: &Path,
+    manifest: &ManifestV2,
+    inventory: &airk_core::publication::InventoryV2,
+) -> Result<Vec<airk_core::model_objects::ModelObjectRef>> {
+    let Some(set) = model_set(directory, manifest, inventory)? else {
+        return Ok(vec![]);
+    };
+    let maximum = set.assets.values().try_fold(0u64, |total, asset| {
+        total
+            .checked_add(asset.bytes)
+            .context("model verification length overflow")
+    })?;
+    crate::model_objects::ModelObjects::new(base).verify(&set, maximum)
+}
+
 /// Verify against a committed receipt (or a newly prepared receipt before commit),
 /// never against an untrusted manifest's self-asserted identity alone.
 pub(crate) fn verify_v2_generation(
@@ -110,6 +184,161 @@ pub(crate) fn verify_v2_generation(
 }
 
 impl FileStore {
+    /// Receipt-authenticated full-generation model dependencies. Historical
+    /// representations deliberately do not retain these retrieval assets.
+    pub fn model_object_references(
+        &self,
+        receipt: &airk_core::identity::PublicationReceipt,
+    ) -> Result<Vec<airk_core::model_objects::ModelObjectRef>> {
+        self.model_object_references_with_budget(receipt, 8 * 1024 * 1024 * 1024)
+    }
+
+    pub(crate) fn model_object_references_with_budget(
+        &self,
+        receipt: &airk_core::identity::PublicationReceipt,
+        maximum: u64,
+    ) -> Result<Vec<airk_core::model_objects::ModelObjectRef>> {
+        let Some(set) = self.authenticated_model_set(receipt)? else {
+            return Ok(vec![]);
+        };
+        crate::model_objects::ModelObjects::new(self.directory()).verify(&set, maximum)
+    }
+
+    pub fn model_object_set(
+        &self,
+        receipt: &airk_core::identity::PublicationReceipt,
+    ) -> Result<Option<airk_core::model_objects::ModelObjectSet>> {
+        let set = self.authenticated_model_set(receipt)?;
+        if let Some(set) = &set {
+            crate::model_objects::ModelObjects::new(self.directory())
+                .verify(set, 8 * 1024 * 1024 * 1024)?;
+        }
+        Ok(set)
+    }
+
+    fn authenticated_model_set(
+        &self,
+        receipt: &airk_core::identity::PublicationReceipt,
+    ) -> Result<Option<airk_core::model_objects::ModelObjectSet>> {
+        ensure!(
+            self.receipt(&receipt.token)?.as_ref() == Some(receipt),
+            "model references require committed receipt"
+        );
+        let directory = self
+            .directory()
+            .join("generations")
+            .join(receipt.token.revision.to_string());
+        for path in [
+            self.directory().join("generations"),
+            directory.clone(),
+            directory.join("manifest.json"),
+            directory.join("inventory.json"),
+        ] {
+            ensure!(
+                !path.symlink_metadata()?.file_type().is_symlink(),
+                "linked model publication metadata"
+            );
+        }
+        let manifest: ManifestV2 = serde_json::from_slice(&read_verified(
+            &directory.join("manifest.json"),
+            &receipt.manifest_digest.to_string(),
+            131072,
+        )?)?;
+        ensure!(
+            manifest.supported_format()
+                && manifest.token == receipt.token
+                && manifest.inventory_digest == receipt.inventory_digest
+                && manifest.components.len() <= 1024,
+            "model manifest receipt mismatch"
+        );
+        let bytes = read_verified(
+            &directory.join("inventory.json"),
+            &receipt.inventory_digest.to_string(),
+            MAX_CATALOG_BYTES,
+        )?;
+        ensure!(
+            airk_core::identity::revision_digest(manifest.engine.as_bytes(), &bytes)
+                == receipt.token.revision,
+            "model publication revision mismatch"
+        );
+        let inventory: airk_core::publication::InventoryV2 = serde_json::from_slice(&bytes)?;
+        inventory.validate()?;
+        ensure!(
+            inventory.incarnation == receipt.token.incarnation
+                && inventory.generation == receipt.token.generation
+                && inventory.retrieval_specification == manifest.engine
+                && inventory.collection == manifest.collection
+                && inventory.embedding_model == manifest.model_sha256
+                && self.directory().file_name().and_then(|name| name.to_str())
+                    == Some(inventory.collection.as_str()),
+            "model publication scope mismatch"
+        );
+        let Some(set) = model_set(&directory, &manifest, &inventory)? else {
+            ensure!(
+                !directory.join("model-objects.json").exists(),
+                "unanchored model object sidecar"
+            );
+            return Ok(None);
+        };
+        Ok(Some(set))
+    }
+
+    pub fn legacy_model_components(
+        &self,
+        receipt: &airk_core::identity::PublicationReceipt,
+    ) -> Result<
+        std::collections::BTreeMap<
+            airk_core::model_objects::ModelAssetName,
+            airk_core::model_objects::ModelObjectRef,
+        >,
+    > {
+        use airk_core::model_objects::{ModelAssetName, ModelObjectRef};
+        ensure!(
+            self.receipt(&receipt.token)?.as_ref() == Some(receipt),
+            "legacy model requires committed receipt"
+        );
+        verify_v2_generation(self.directory(), receipt)?;
+        let path = self
+            .directory()
+            .join("generations")
+            .join(receipt.token.revision.to_string())
+            .join("manifest.json");
+        let manifest: ManifestV2 = serde_json::from_slice(&read_verified(
+            &path,
+            &receipt.manifest_digest.to_string(),
+            131072,
+        )?)?;
+        let mut result = std::collections::BTreeMap::new();
+        if manifest.schema != 2 {
+            return Ok(result);
+        }
+        for (name, component) in manifest.components {
+            let Some(name) = name.strip_prefix("model/") else {
+                continue;
+            };
+            let asset = match name {
+                "model.json" => ModelAssetName::ModelJson,
+                "vocabulary.json" => ModelAssetName::VocabularyJson,
+                "model.onnx" => ModelAssetName::ModelOnnx,
+                "tokenizer.json" => ModelAssetName::TokenizerJson,
+                "LICENSE" => ModelAssetName::License,
+                _ => anyhow::bail!("unknown legacy model component"),
+            };
+            ensure!(
+                component.bytes <= asset.maximum_bytes(),
+                "legacy model asset exceeds bound"
+            );
+            result.insert(
+                asset,
+                ModelObjectRef {
+                    sha256: component.sha256,
+                    bytes: component.bytes,
+                },
+            );
+        }
+        Ok(result)
+    }
+
     /// Authenticate reusable embedding references against a committed receipt.
     /// The caller keeps its catalog reader lease alive while using the result.
     pub fn embedding_cache_references(
@@ -141,7 +370,7 @@ impl FileStore {
             131_072,
         )?)?;
         ensure!(
-            manifest.schema == 2
+            manifest.supported_format()
                 && manifest.token == receipt.token
                 && manifest.inventory_digest == receipt.inventory_digest
                 && manifest.components.len() <= 1024
@@ -203,7 +432,7 @@ pub(crate) fn verify_v2_directory(
     )?;
     let manifest: ManifestV2 = serde_json::from_slice(&bytes)?;
     ensure!(
-        manifest.schema == 2
+        manifest.supported_format()
             && manifest.token == receipt.token
             && manifest.inventory_digest == receipt.inventory_digest
             && manifest.components.len() <= 1024,
@@ -345,6 +574,7 @@ pub(crate) fn verify_v2_directory(
             && inventory.generation == receipt.token.generation
             && inventory.collection == manifest.collection
             && inventory.retrieval_specification == manifest.engine
+            && inventory.embedding_model == manifest.model_sha256
             && inventory
                 .files
                 .values()
@@ -354,6 +584,7 @@ pub(crate) fn verify_v2_directory(
             && inventory.lineage_digest == manifest.components["lineage.json"].sha256,
         "v2 inventory manifest binding mismatch"
     );
+    verify_model_objects(base, &directory, &manifest, &inventory)?;
     crate::sqlite::verify_prepared_catalog(&directory, receipt)?;
     Ok(inventory)
 }

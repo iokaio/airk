@@ -207,6 +207,9 @@ impl Kernel {
             let present = catalog.snapshot.artifacts.contains_key(path);
             return Ok(ReadEvidence {
                 publication: None,
+                current_publication: None,
+                historical: false,
+                original_root: None,
                 status: if present {
                     EvidenceReadStatus::Content
                 } else {
@@ -224,6 +227,12 @@ impl Kernel {
             });
         };
         let mut result = ReadEvidence {
+            current_publication: Some(RevisionEnvelope::new(
+                self.collection.clone(),
+                receipt.token,
+            )),
+            historical: false,
+            original_root: None,
             publication: Some(RevisionEnvelope::new(
                 self.collection.clone(),
                 receipt.token,

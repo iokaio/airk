@@ -65,8 +65,8 @@ fn retention_preview_set_and_apply_preserve_source_and_manual_prune_semantics() 
         state.path(),
         &["collections", "retention", "show"],
     )?;
-    assert_eq!(status["history_supported"], false);
-    assert_eq!(status["checkpoints_supported"], false);
+    assert_eq!(status["history_supported"], true);
+    assert_eq!(status["checkpoints_supported"], true);
     assert_eq!(status["policy"]["digest"], receipt["digest"]);
     let automatic = policy("automatic");
     let preview = call(

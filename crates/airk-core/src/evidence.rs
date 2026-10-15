@@ -28,6 +28,8 @@ impl RevisionEnvelope {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct EvidenceReadOptions {
+    /// Exact retained publication; never a generation-only or live-source fallback.
+    pub revision: Option<RevisionToken>,
     pub if_evidence: Option<Sha256Digest>,
     pub follow_moves: bool,
     /// Source-byte identity only; never substitutes for an evidence validator.
@@ -38,6 +40,7 @@ pub struct EvidenceReadOptions {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EvidenceReadStatus {
+    HistoryUnavailable,
     Content,
     NotModified,
     MoveCandidate,
@@ -50,6 +53,12 @@ pub enum EvidenceReadStatus {
 #[serde(deny_unknown_fields)]
 pub struct ReadEvidence {
     pub publication: Option<RevisionEnvelope>,
+    #[serde(default)]
+    pub current_publication: Option<RevisionEnvelope>,
+    #[serde(default)]
+    pub historical: bool,
+    #[serde(default)]
+    pub original_root: Option<String>,
     pub status: EvidenceReadStatus,
     pub requested_path: String,
     pub resolved_path: Option<String>,

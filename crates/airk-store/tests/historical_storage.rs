@@ -328,7 +328,8 @@ mod original {
                     parse_status: "plain".into(),
                 },
             )]),
-            retrieval_specification: "fixture-engine/4".into(),
+            retrieval_specification:
+                "tantivy-0.26.2/diskann-0.59.0/airk-file-1/generation-4/inventory-2".into(),
             embedding_model: None,
             extractor_version: "native-facts/7".into(),
             analysis: Some(airk_core::AnalysisManifest {

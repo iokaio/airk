@@ -30,11 +30,12 @@ test('untrusted workspaces expose no MCP servers and commands cannot launch a he
         const extension = require('../extension');
         const context = { subscriptions: [] as { dispose(): void }[], extensionPath: '/nonexistent-helper-fixture' };
         const exported = await extension.activate(context);
-        assert.equal(commands.size, 20); assert.deepEqual(await exported.getServerDefinitions(), []);
+        const contributed = (require('../../package.json').contributes.commands as { command: string }[]).map(item => item.command);
+        assert.deepEqual([...commands.keys()].sort(), contributed.sort()); assert.deepEqual(await exported.getServerDefinitions(), []);
         assert.deepEqual(await provider.provideMcpServerDefinitions(), []);
         await assert.rejects(commands.get('airk.index')!(), /Trust this workspace/);
         assert.equal(errors.length, 1); assert.match(errors[0], /Trust this workspace/);
-        for (const name of ['airk.retention', 'airk.retentionPolicy', 'airk.retentionRun', 'airk.extractionPolicy', 'airk.configureExtractionPolicy']) {
+        for (const name of ['airk.retention', 'airk.retentionPolicy', 'airk.retentionRun', 'airk.extractionPolicy', 'airk.configureExtractionPolicy', 'airk.history', 'airk.historyPolicy', 'airk.historyRun', 'airk.historyAvailable', 'airk.checkpoints', 'airk.createCheckpoint', 'airk.removeCheckpoint', 'airk.purgeHistory']) {
             await assert.rejects(commands.get(name)!(), /Trust this workspace/);
         }
         await assert.rejects(provider.resolveMcpServerDefinition({}), /Trust this workspace/);

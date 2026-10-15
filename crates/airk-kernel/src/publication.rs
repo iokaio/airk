@@ -269,17 +269,72 @@ impl Kernel {
                 },
             );
         }
-        let mut inventory = InventoryV2 {
-            embedding_pipeline_digest: if projection.embedding_model.is_some() {
-                Some(
-                    airk_retrieval::model::inspect_cache_descriptor(
-                        &self.data_root.join("models/local"),
-                    )?
-                    .identity()?,
-                )
+        let model_objects = if projection.embedding_model.is_none() {
+            None
+        } else if matches!(
+            reason,
+            PublicationReason::Initialization
+                | PublicationReason::Index
+                | PublicationReason::FullReindex
+        ) {
+            let directory = self.data_root.join("models/local");
+            let objects = airk_retrieval::model::inspect_object_plan(&directory)?;
+            airk_store::model_objects::ModelObjects::new(self.store.directory()).retain(
+                &directory,
+                &objects,
+                &reservation,
+            )?;
+            Some(objects)
+        } else {
+            // Metadata publications preserve the indexed model, even when user
+            // provisioning has changed or disappeared. `old` keeps its reader
+            // lease alive throughout authentication, inference and publication.
+            let catalog = old
+                .as_ref()
+                .context("model publication requires prior catalog")?;
+            ensure!(
+                catalog.snapshot.embedding_model == projection.embedding_model,
+                "non-index publication cannot change embedding model"
+            );
+            let receipt = catalog
+                .receipt
+                .as_ref()
+                .context("metadata publication requires a receipt-authenticated prior model")?;
+            if let Some(objects) = self.store.model_object_set(receipt)? {
+                Some(objects)
             } else {
-                None
-            },
+                // Schema-two generations retain inline assets. Bind the plan
+                // to their receipt-authenticated bytes before copying anything
+                // into the immutable pool; never use current provisioning.
+                let components = self.store.legacy_model_components(receipt)?;
+                let directory = self
+                    .store
+                    .directory()
+                    .join("generations")
+                    .join(receipt.token.revision.to_string())
+                    .join("model");
+                let objects = airk_retrieval::model::inspect_object_plan(&directory)?;
+                ensure!(
+                    objects.assets == components
+                        && Some(objects.legacy_identity.as_str())
+                            == projection.embedding_model.as_deref()
+                        && prior
+                            .and_then(|inventory| inventory.embedding_pipeline_digest)
+                            .is_none_or(|pipeline| pipeline == objects.pipeline_digest),
+                    "prior inline model disagrees with authenticated publication"
+                );
+                airk_store::model_objects::ModelObjects::new(self.store.directory()).retain(
+                    &directory,
+                    &objects,
+                    &reservation,
+                )?;
+                Some(objects)
+            }
+        };
+        let mut inventory = InventoryV2 {
+            embedding_pipeline_digest: model_objects
+                .as_ref()
+                .map(|objects| objects.pipeline_digest),
             version: airk_core::publication::INVENTORY_VERSION,
             extraction_policy_digest: if matches!(
                 reason,
@@ -299,7 +354,7 @@ impl Kernel {
             lineage_digest: Sha256Digest::from_bytes([0; 32]),
             profiles,
             files,
-            retrieval_specification: std::str::from_utf8(persistent::retrieval_specification_v2())?
+            retrieval_specification: std::str::from_utf8(persistent::retrieval_specification_v3())?
                 .into(),
             embedding_model: projection.embedding_model.clone(),
             extractor_version: projection.extractor_version.clone(),
@@ -541,9 +596,8 @@ impl Kernel {
         let token = RevisionToken {
             incarnation,
             generation,
-            revision: revision_digest(persistent::retrieval_specification_v2(), &canonical),
+            revision: revision_digest(persistent::retrieval_specification_v3(), &canonical),
         };
-        let model = self.data_root.join("models/local");
         let source = airk_store::blobs::RetainedSource {
             store: &self.store,
             snapshot: &projection,
@@ -574,14 +628,14 @@ impl Kernel {
             bypass: reason == PublicationReason::FullReindex,
             stats: &mut cache_stats,
         };
-        let receipt = persistent::prepare_streaming_v2_cached(
+        let receipt = persistent::prepare_streaming_v3_cached(
             self.store.directory(),
             &persistent::V2Preparation {
                 snapshot: &projection,
                 canonical_inventory: &canonical,
                 token,
             },
-            model.exists().then_some(model.as_path()),
+            model_objects.as_ref(),
             &source,
             Some(charge),
             Some(&staging),

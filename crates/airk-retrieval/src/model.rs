@@ -3,16 +3,77 @@
 use crate::{onnx::OnnxModel, vector::LocalModel};
 use airk_core::{
     embedding::{EmbeddingCache, EmbeddingDescriptor, lookup_embedding, store_embedding},
-    identity::framed_digest,
+    identity::{Sha256Digest, framed_digest},
+    model_objects::{ModelAssetName, ModelAssetSource, ModelObjectRef, ModelObjectSet},
 };
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
+    collections::BTreeMap,
     fs::{self, File},
     io::Read,
     path::Path,
 };
+
+pub(crate) struct DirectoryAssets<'a>(pub &'a Path);
+impl ModelAssetSource for DirectoryAssets<'_> {
+    fn read_asset(&self, name: ModelAssetName, maximum: u64) -> Result<Vec<u8>> {
+        read_asset(self.0, name.filename(), maximum.min(name.maximum_bytes()))
+    }
+}
+
+struct ObjectAssets<'a> {
+    collection: &'a Path,
+    set: &'a ModelObjectSet,
+}
+impl ModelAssetSource for ObjectAssets<'_> {
+    fn read_asset(&self, name: ModelAssetName, maximum: u64) -> Result<Vec<u8>> {
+        let reference = self
+            .set
+            .assets
+            .get(&name)
+            .context("model object asset missing")?;
+        ensure!(
+            reference.bytes <= maximum.min(name.maximum_bytes()),
+            "model object asset exceeds read budget"
+        );
+        let directory = self.collection.join("objects").join("models");
+        for ancestor in directory
+            .ancestors()
+            .filter(|path| !path.as_os_str().is_empty())
+        {
+            let metadata = fs::symlink_metadata(ancestor)?;
+            ensure!(
+                metadata.is_dir() && !metadata.file_type().is_symlink(),
+                "linked model object ancestor"
+            );
+        }
+        let bytes = read_asset(&directory, &reference.sha256.to_string(), reference.bytes)?;
+        ensure!(
+            bytes.len() as u64 == reference.bytes
+                && Sha256Digest::from_bytes(Sha256::digest(&bytes).into()) == reference.sha256,
+            "model object digest or length mismatch"
+        );
+        Ok(bytes)
+    }
+}
+
+pub(crate) fn verified_source_asset(
+    source: &dyn ModelAssetSource,
+    name: ModelAssetName,
+    maximum: u64,
+    digest: &str,
+) -> Result<Vec<u8>> {
+    ensure!(valid_digest(digest), "invalid asset SHA-256");
+    let bytes = source.read_asset(name, maximum)?;
+    ensure!(
+        bytes.len() as u64 <= maximum && format!("{:x}", Sha256::digest(&bytes)) == digest,
+        "local model asset digest mismatch: {}",
+        name.filename()
+    );
+    Ok(bytes)
+}
 
 pub const ONNX_RUNTIME: &str = "tract-cpu-onnx/0.23.8/airk-1";
 pub const MAX_MODEL_BYTES: u64 = 268_435_456;
@@ -82,12 +143,19 @@ pub(crate) fn read_asset(directory: &Path, name: &str, maximum: u64) -> Result<V
         "local model asset exceeds byte limit"
     );
     let mut bytes = Vec::new();
-    File::open(path)?
-        .take(maximum + 1)
-        .read_to_end(&mut bytes)?;
+    let mut input = File::open(path)?;
+    ensure!(
+        input.metadata()?.len() == metadata.len(),
+        "local model asset changed before read"
+    );
+    (&mut input).take(maximum + 1).read_to_end(&mut bytes)?;
     ensure!(
         bytes.len() as u64 <= maximum,
         "local model asset exceeds byte limit"
+    );
+    ensure!(
+        bytes.len() as u64 == metadata.len() && input.metadata()?.len() == metadata.len(),
+        "local model asset changed while reading"
     );
     Ok(bytes)
 }
@@ -99,6 +167,7 @@ fn valid_digest(value: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
+#[cfg(test)]
 pub(crate) fn verified_asset(
     directory: &Path,
     name: &str,
@@ -171,26 +240,35 @@ enum VerifiedManifest {
 }
 
 fn inspect_assets(directory: &Path) -> Result<VerifiedManifest> {
-    let bytes = read_asset(directory, "model.json", 16_384)?;
+    inspect_source_assets(&DirectoryAssets(directory))
+}
+
+fn inspect_source_assets(source: &dyn ModelAssetSource) -> Result<VerifiedManifest> {
+    let bytes = source.read_asset(ModelAssetName::ModelJson, 16_384)?;
     let value: serde_json::Value = serde_json::from_slice(&bytes)?;
     if value["schema"] == 1 {
-        let model = LocalModel::open(directory)?;
+        let model = LocalModel::open_assets(source)?;
         return Ok(VerifiedManifest::Word(model.manifest));
     }
     let (manifest, identity) = onnx_manifest(&bytes)?;
-    verified_asset(
-        directory,
-        "model.onnx",
+    verified_source_asset(
+        source,
+        ModelAssetName::ModelOnnx,
         MAX_MODEL_BYTES,
         &manifest.model_sha256,
     )?;
-    verified_asset(
-        directory,
-        "tokenizer.json",
+    verified_source_asset(
+        source,
+        ModelAssetName::TokenizerJson,
         MAX_TOKENIZER_BYTES,
         &manifest.tokenizer_sha256,
     )?;
-    verified_asset(directory, "LICENSE", 65_536, &manifest.license_sha256)?;
+    verified_source_asset(
+        source,
+        ModelAssetName::License,
+        65_536,
+        &manifest.license_sha256,
+    )?;
     Ok(VerifiedManifest::Onnx(Box::new(manifest), identity))
 }
 
@@ -231,7 +309,98 @@ pub fn inspect_cache_descriptor(directory: &Path) -> Result<EmbeddingDescriptor>
     }
 }
 
+pub fn inspect_object_plan(directory: &Path) -> Result<ModelObjectSet> {
+    for ancestor in directory
+        .ancestors()
+        .filter(|path| !path.as_os_str().is_empty())
+    {
+        let metadata = fs::symlink_metadata(ancestor)?;
+        ensure!(
+            metadata.is_dir() && !metadata.file_type().is_symlink(),
+            "linked model source ancestor"
+        );
+    }
+    let descriptor = inspect_cache_descriptor(directory)?;
+    let info = inspect(directory)?;
+    let manifest = read_asset(directory, "model.json", 16_384)?;
+    let schema = serde_json::from_slice::<serde_json::Value>(&manifest)?["schema"].as_u64();
+    let names: &[ModelAssetName] = match schema {
+        Some(1) => &[ModelAssetName::ModelJson, ModelAssetName::VocabularyJson],
+        Some(2) => &[
+            ModelAssetName::ModelJson,
+            ModelAssetName::ModelOnnx,
+            ModelAssetName::TokenizerJson,
+            ModelAssetName::License,
+        ],
+        _ => anyhow::bail!("unsupported model object schema"),
+    };
+    let mut assets = BTreeMap::new();
+    for name in names {
+        let bytes = DirectoryAssets(directory).read_asset(*name, name.maximum_bytes())?;
+        assets.insert(
+            *name,
+            ModelObjectRef {
+                sha256: Sha256Digest::from_bytes(Sha256::digest(&bytes).into()),
+                bytes: bytes.len() as u64,
+            },
+        );
+    }
+    ensure!(
+        inspect_cache_descriptor(directory)? == descriptor
+            && inspect(directory)?.identity == info.identity,
+        "model changed during object planning"
+    );
+    let set = ModelObjectSet {
+        version: 1,
+        pipeline_digest: descriptor.identity()?,
+        legacy_identity: info.identity,
+        assets,
+    };
+    set.validate()?;
+    Ok(set)
+}
+
+pub fn inspect_objects_cache_descriptor(
+    collection: &Path,
+    set: &ModelObjectSet,
+) -> Result<EmbeddingDescriptor> {
+    set.validate()?;
+    let source = ObjectAssets { collection, set };
+    let (descriptor, identity) = match inspect_source_assets(&source)? {
+        VerifiedManifest::Word(manifest) => (
+            descriptor_from_manifest(DescriptorManifest::Word(&manifest))?,
+            manifest.sha256,
+        ),
+        VerifiedManifest::Onnx(manifest, identity) => (
+            descriptor_from_manifest(DescriptorManifest::Onnx(&manifest))?,
+            identity,
+        ),
+    };
+    ensure!(
+        descriptor.identity()? == set.pipeline_digest && identity == set.legacy_identity,
+        "model objects disagree with authenticated pipeline"
+    );
+    Ok(descriptor)
+}
+
 impl EmbeddingModel {
+    pub fn open_objects(collection: &Path, set: &ModelObjectSet) -> Result<Self> {
+        set.validate()?;
+        let source = ObjectAssets { collection, set };
+        let bytes = source.read_asset(ModelAssetName::ModelJson, 16_384)?;
+        let value: serde_json::Value = serde_json::from_slice(&bytes)?;
+        let model = match value["schema"].as_u64() {
+            Some(1) => Self::WordVectors(LocalModel::open_assets(&source)?),
+            Some(2) => Self::Onnx(Box::new(OnnxModel::open_assets(&source, &bytes)?)),
+            _ => anyhow::bail!("unsupported local embedding model schema"),
+        };
+        ensure!(
+            model.identity() == set.legacy_identity
+                && model.cache_descriptor()?.identity()? == set.pipeline_digest,
+            "model objects disagree with authenticated pipeline"
+        );
+        Ok(model)
+    }
     pub fn open(directory: &Path) -> Result<Self> {
         let bytes = read_asset(directory, "model.json", 16_384)?;
         let value: serde_json::Value = serde_json::from_slice(&bytes)?;
@@ -389,6 +558,57 @@ mod tests {
     use super::*;
     use airk_core::{embedding::CachedEmbedding, identity::Sha256Digest};
     use std::{collections::BTreeMap, sync::Mutex};
+
+    #[test]
+    fn immutable_objects_preserve_pipeline_without_source_directory_or_scratch_copies() -> Result<()>
+    {
+        let source = tempfile::tempdir()?;
+        let collection = tempfile::tempdir()?;
+        let vocabulary = br#"{"original":[1.0,0.0],"beacon":[0.0,1.0]}"#;
+        fs::write(source.path().join("vocabulary.json"), vocabulary)?;
+        fs::write(
+            source.path().join("model.json"),
+            serde_json::to_vec(&crate::vector::ModelManifest {
+                schema: 1,
+                name: "original immutable fixture".into(),
+                license: "Apache-2.0".into(),
+                sha256: format!("{:x}", Sha256::digest(vocabulary)),
+                dimensions: 2,
+            })?,
+        )?;
+        let expected = EmbeddingModel::open(source.path())?.embed_text("original beacon")?;
+        let set = inspect_object_plan(source.path())?;
+        let directory = collection.path().join("objects/models");
+        fs::create_dir_all(&directory)?;
+        for (name, reference) in &set.assets {
+            fs::copy(
+                source.path().join(name.filename()),
+                directory.join(reference.sha256.to_string()),
+            )?;
+        }
+        source.close()?;
+        assert_eq!(
+            inspect_objects_cache_descriptor(collection.path(), &set)?.identity()?,
+            set.pipeline_digest
+        );
+        assert_eq!(
+            EmbeddingModel::open_objects(collection.path(), &set)?.embed_text("original beacon")?,
+            expected
+        );
+        assert!(!collection.path().join("model").exists());
+        let mut forged = set.clone();
+        forged.pipeline_digest = Sha256Digest::from_bytes([8; 32]);
+        assert!(EmbeddingModel::open_objects(collection.path(), &forged).is_err());
+        let reference = &set.assets[&ModelAssetName::VocabularyJson];
+        fs::write(
+            directory.join(reference.sha256.to_string()),
+            vec![b'x'; reference.bytes as usize],
+        )?;
+        assert!(EmbeddingModel::open_objects(collection.path(), &set).is_err());
+        let other = tempfile::tempdir()?;
+        assert!(EmbeddingModel::open_objects(other.path(), &set).is_err());
+        Ok(())
+    }
 
     #[derive(Default)]
     struct Cache(Mutex<BTreeMap<Sha256Digest, CachedEmbedding>>);

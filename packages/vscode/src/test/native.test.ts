@@ -74,7 +74,7 @@ test('cached old helper survives extension replacement and a changed trusted hel
         assert.equal(createHash('sha256').update(await fs.readFile(oldCached)).digest('hex'), oldDigest);
         assert.equal((await runText(newCached, ['--version'])).trim(), `airk ${newVersion}`);
         assert.equal((await probeMcp(oldAgent, previousToolCount)).tools.length, previousToolCount, 'Existing agent command still works after replacement');
-        assert.equal((await probeMcp({ ...oldAgent, command: newCached })).tools.length, 15);
+        assert.equal((await probeMcp({ ...oldAgent, command: newCached })).tools.length, 16);
     } finally { await removeFixture(directory, 'airk-helper-upgrade-'); }
 });
 
@@ -111,8 +111,9 @@ test('extension native adapter indexes, rebuilds, probes MCP, isolates and remov
         await runJson(spec, 'schedule', ['resume']);
         assert.equal((await runJson<IndexReport>(spec, 'index')).reused, 1);
         const full = await runJson<IndexReport>(spec, 'index', ['--full']); assert.equal(full.reused, 0); assert.ok(full.generation > first.generation);
-        const probe = await probeMcp(spec); assert.equal(probe.tools.length, 15);
+        const probe = await probeMcp(spec); assert.equal(probe.tools.length, 16);
         assert.ok(probe.tools.includes('airk_changes'));
+        assert.ok(probe.tools.includes('airk_history'));
         const retention = await runJson<{ policy: { policy: { version: number; mode: string; searchable_predecessors: number } }; history_supported: boolean }>(spec, 'collections', ['retention', 'show']);
         assert.equal(retention.history_supported, false);
         assert.equal(retention.policy.policy.mode, 'automatic', 'New collections visibly use the qualified automatic default');
