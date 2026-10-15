@@ -12,6 +12,38 @@ spec.loader.exec_module(package)
 
 
 class VsixContracts(unittest.TestCase):
+    def test_runtime_import_closure_includes_controls_without_test_extras(self):
+        with tempfile.TemporaryDirectory() as directory:
+            compiled = Path(directory) / "compiled"
+            compiled.mkdir()
+            for name in package.MODULES:
+                (compiled / name).write_text('"use strict";\n', encoding="utf-8")
+            (compiled / "extension.js").write_text(
+                'require("vscode"); require("./retention"); require("./extractionPolicy"); require("./history");', encoding="utf-8")
+            (compiled / "history.js").write_text('require("./native.js");', encoding="utf-8")
+            (compiled / "native.js").write_text('require("node:fs"); require("./model");', encoding="utf-8")
+            (compiled / "test").mkdir()
+            (compiled / "test" / "private.test.js").write_text("not runtime", encoding="utf-8")
+            (compiled / "extension.js.map").write_text("not runtime", encoding="utf-8")
+            stage = Path(directory) / "stage"
+            package.stage_runtime_modules(compiled, stage)
+            self.assertEqual({p.name for p in stage.iterdir()}, set(package.MODULES))
+            for name in package.MODULES:
+                self.assertEqual((stage / name).read_bytes(), (compiled / name).read_bytes())
+            for missing in ("./futureControl", "./test/private.test", "../outside"):
+                (compiled / "history.js").write_text('require("' + missing + '");', encoding="utf-8")
+                rejected = Path(directory) / "rejected"
+                with self.assertRaisesRegex(ValueError, "Runtime import outside allowlisted stage"):
+                    package.stage_runtime_modules(compiled, rejected)
+                self.assertFalse(rejected.exists(), "Validate closure before staging any runtime modules")
+
+    @unittest.skipUnless((package.EXTENSION / "out" / "extension.js").is_file(), "compiled extension unavailable")
+    def test_actual_compiled_runtime_imports_are_all_staged(self):
+        with tempfile.TemporaryDirectory() as directory:
+            stage = Path(directory) / "out"
+            package.stage_runtime_modules(package.EXTENSION / "out", stage)
+            self.assertEqual({p.name for p in stage.iterdir()}, set(package.MODULES))
+
     def test_platform_identity_payload_tampering_and_permission_checks(self):
         with tempfile.TemporaryDirectory() as directory:
             archive = Path(directory) / "fixture.vsix"

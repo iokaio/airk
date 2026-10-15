@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import re
 import shutil
 import stat
 import subprocess
@@ -14,7 +15,8 @@ ROOT = Path(__file__).resolve().parent.parent
 EXTENSION = ROOT / "packages" / "vscode"
 TARGETS = {"x86_64-pc-windows-msvc": "win32-x64", "x86_64-unknown-linux-gnu": "linux-x64",
            "aarch64-apple-darwin": "darwin-arm64", "x86_64-apple-darwin": "darwin-x64"}
-MODULES = ("extension.js", "model.js", "native.js", "scheduler.js", "coverage.js")
+MODULES = ("extension.js", "model.js", "native.js", "scheduler.js", "coverage.js",
+           "retention.js", "extractionPolicy.js", "history.js")
 ILLUSTRATIONS = ("local-evidence.png", "index-to-context.png")
 
 
@@ -26,6 +28,34 @@ def safe_name(name):
     parts = name.split("/")
     if not name or "\\" in name or ":" in name or any(p in ("", ".", "..") for p in parts):
         raise ValueError("Unsafe archive path: " + name)
+
+
+def stage_runtime_modules(compiled, destination):
+    """Stage only reviewed CommonJS modules after checking literal local imports.
+
+    The compiler emits require("./module") for runtime TypeScript imports. This
+    conservative check deliberately does not discover or package extra files.
+    """
+    modules = {}
+    for name in MODULES:
+        source = compiled / name
+        if source.is_symlink() or not source.is_file() or source.stat().st_size > 4_194_304:
+            raise ValueError("Invalid or oversized runtime module: " + name)
+        with source.open("rb") as stream:
+            data = stream.read(4_194_305)
+        if len(data) > 4_194_304:
+            raise ValueError("Oversized runtime module: " + name)
+        for match in re.finditer(r'''\b(?:require|import)\s*\(\s*(["'])(\.[^"']*)\1\s*\)''', data.decode("utf-8")):
+            relative = match.group(2)
+            target = relative.removeprefix("./")
+            if not target.endswith(".js"):
+                target += ".js"
+            if not relative.startswith("./") or target not in MODULES:
+                raise ValueError("Runtime import outside allowlisted stage: " + name + " -> " + relative)
+        modules[name] = data
+    destination.mkdir(parents=True, exist_ok=True)
+    for name, data in modules.items():
+        (destination / name).write_bytes(data)
 
 
 def verify_vsix(archive, expected, executable, platform=None, version=None, pre_release=None, display_name=None):
@@ -114,12 +144,7 @@ def main():
             destination.write_bytes(data)
     (stage / "native" / executable).chmod(0o755)
     shutil.copyfile(native / "manifest.json", stage / "native" / "manifest.json")
-    for name in MODULES:
-        source = EXTENSION / "out" / name
-        if source.is_symlink():
-            raise SystemExit("Linked runtime module forbidden")
-        (stage / "out").mkdir(exist_ok=True)
-        shutil.copyfile(source, stage / "out" / name)
+    stage_runtime_modules(EXTENSION / "out", stage / "out")
     for key in ("scripts", "devDependencies"):
         package.pop(key, None)
     (stage / "package.json").write_text(json.dumps(package, indent=2) + "\n", encoding="utf-8")
