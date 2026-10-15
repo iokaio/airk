@@ -128,7 +128,7 @@ fn policy_inputs_are_bounded_validated_and_scope_checked() -> Result<()> {
                     "extraction",
                     action,
                     "--json",
-                    r#"{"version":2,"rules":[]}"#
+                    r#"{"version":99,"rules":[]}"#
                 ]
             )?
             .status
