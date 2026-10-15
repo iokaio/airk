@@ -16,6 +16,130 @@ struct PinnedConnection {
     publication: Option<airk_core::evidence::RevisionEnvelope>,
 }
 
+fn is_v2_root(version: u32) -> bool {
+    matches!(version, 3 | 4)
+}
+
+fn history_schema(conn: &Connection) -> Result<()> {
+    conn.execute_batch("CREATE TABLE IF NOT EXISTS history_bindings(revision TEXT PRIMARY KEY,incarnation TEXT NOT NULL,generation INTEGER NOT NULL,payload TEXT NOT NULL); CREATE INDEX IF NOT EXISTS history_scope ON history_bindings(incarnation,generation);")?;
+    Ok(())
+}
+
+pub(crate) fn history_binding(
+    directory: &Path,
+    token: &airk_core::identity::RevisionToken,
+) -> Result<Option<crate::history::HistoryBinding>> {
+    retry_wal_protocol(|| {
+        let conn = connect_root_once(directory, false)?;
+        if !table_exists(&conn, "history_bindings")? {
+            return Ok(None);
+        }
+        let encoded: Option<String> = conn.query_row("SELECT CAST(substr(CAST(payload AS BLOB),1,4097) AS TEXT) FROM history_bindings WHERE revision=?1", [token.revision.to_string()], |row| row.get(0)).optional()?;
+        encoded
+            .map(|encoded| {
+                let binding: crate::history::HistoryBinding = serde_json::from_str(&encoded)?;
+                binding.validate()?;
+                ensure!(
+                    binding.publication.token == *token,
+                    "foreign historical binding"
+                );
+                Ok(binding)
+            })
+            .transpose()
+    })
+}
+
+pub(crate) fn history_bindings(directory: &Path) -> Result<Vec<crate::history::HistoryBinding>> {
+    retry_wal_protocol(|| {
+        let conn = connect_root_once(directory, false)?;
+        if !table_exists(&conn, "history_bindings")? {
+            return Ok(vec![]);
+        }
+        let mut statement = conn.prepare("SELECT CAST(substr(CAST(payload AS BLOB),1,4097) AS TEXT) FROM history_bindings ORDER BY generation,revision LIMIT 257")?;
+        let rows = statement
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        ensure!(rows.len() <= 256, "historical binding count limit exceeded");
+        rows.into_iter()
+            .map(|encoded| {
+                ensure!(
+                    encoded.len() <= 4096,
+                    "historical binding byte limit exceeded"
+                );
+                let binding: crate::history::HistoryBinding = serde_json::from_str(&encoded)?;
+                binding.validate()?;
+                ensure!(
+                    receipt_connection(&conn, &binding.publication.token)?.as_ref()
+                        == Some(&binding.publication),
+                    "historical publication receipt changed"
+                );
+                Ok(binding)
+            })
+            .collect()
+    })
+}
+
+pub(crate) fn commit_history_binding(
+    directory: &Path,
+    binding: &crate::history::HistoryBinding,
+    expected_head: &airk_core::identity::RevisionToken,
+    reservation: &crate::quota::Reservation,
+) -> Result<()> {
+    binding.validate()?;
+    let (maximum, allowance) = pointer_budget(directory)?;
+    reservation.charge(allowance)?;
+    let mut conn = connect_root(directory, true)?;
+    conn.execute_batch(&format!(
+        "PRAGMA max_page_count={maximum}; PRAGMA cache_spill=OFF; PRAGMA temp_store=MEMORY;"
+    ))?;
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    let version: u32 = tx.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    ensure!(
+        is_v2_root(version),
+        "history requires a committed v2 publication"
+    );
+    ensure!(
+        expected_head_connection(directory, &tx)? == crate::ExpectedHead::V2(*expected_head),
+        "pointer changed before historical binding commit"
+    );
+    binding.publication.token.validate_against(expected_head)?;
+    ensure!(
+        binding.publication.token != *expected_head,
+        "active publication cannot become historical"
+    );
+    ensure!(
+        receipt_connection(&tx, &binding.publication.token)?.as_ref() == Some(&binding.publication),
+        "history conversion publication receipt changed"
+    );
+    history_schema(&tx)?;
+    let encoded = serde_json::to_string(binding)?;
+    ensure!(encoded.len() <= 4096, "historical binding too large");
+    let existing: Option<String> = tx.query_row("SELECT CAST(substr(CAST(payload AS BLOB),1,4097) AS TEXT) FROM history_bindings WHERE revision=?1", [binding.publication.token.revision.to_string()], |row| row.get(0)).optional()?;
+    if let Some(existing) = existing {
+        ensure!(
+            existing == encoded,
+            "conflicting historical representation binding"
+        );
+    } else {
+        let count: i64 = tx.query_row("SELECT count(*) FROM history_bindings", [], |row| {
+            row.get(0)
+        })?;
+        ensure!(count < 256, "historical binding count limit reached");
+        tx.execute(
+            "INSERT INTO history_bindings VALUES(?1,?2,?3,?4)",
+            params![
+                binding.publication.token.revision.to_string(),
+                binding.publication.token.incarnation.to_string(),
+                i64::try_from(binding.publication.token.generation)?,
+                encoded
+            ],
+        )?;
+    }
+    tx.pragma_update(None, "user_version", crate::ROOT_POINTER_VERSION)?;
+    tx.commit()?;
+    Ok(())
+}
+
 /// Percent-encode the entire native UTF-8 filename, including separators. SQLite
 /// decodes it after URI parsing, preserving Windows extended paths without treating
 /// UNC prefixes as URI authorities or filename '?'/'#' bytes as URI syntax.
@@ -102,7 +226,7 @@ fn connect_root_once(directory: &Path, write: bool) -> Result<Connection> {
 fn connect(directory: &Path, write: bool) -> Result<PinnedConnection> {
     let conn = connect_root(directory, write)?;
     let version: u32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-    if !write && version == crate::ROOT_POINTER_VERSION {
+    if !write && is_v2_root(version) {
         drop(conn);
         return read_transaction(directory);
     }
@@ -180,12 +304,12 @@ fn read_transaction_once(directory: &Path) -> Result<PinnedConnection> {
                 .join("generations")
                 .join(&header.revision)
                 .join("catalog.sqlite");
-            let inner = if version == crate::ROOT_POINTER_VERSION {
+            let inner = if is_v2_root(version) {
                 open_immutable_catalog(&catalog_path)?
             } else {
                 Connection::open_with_flags(catalog_path, OpenFlags::SQLITE_OPEN_READ_ONLY)?
             };
-            if version == crate::ROOT_POINTER_VERSION {
+            if is_v2_root(version) {
                 let token = header.token.context("v2 catalog token missing")?;
                 let receipt = receipt_connection(&conn, &token)?.context("v2 receipt missing")?;
                 crate::blobs::verify_v2_generation(directory, &receipt)?;
@@ -201,12 +325,9 @@ fn read_transaction_once(directory: &Path) -> Result<PinnedConnection> {
             Ok(PinnedConnection {
                 conn: inner,
                 _lease: Some(lease),
-                publication: header
-                    .token
-                    .filter(|_| version == crate::ROOT_POINTER_VERSION)
-                    .map(|token| {
-                        airk_core::evidence::RevisionEnvelope::new(header.collection.clone(), token)
-                    }),
+                publication: header.token.filter(|_| is_v2_root(version)).map(|token| {
+                    airk_core::evidence::RevisionEnvelope::new(header.collection.clone(), token)
+                }),
             })
         };
         let result = open();
@@ -274,15 +395,13 @@ fn persistent_revision_once(directory: &Path) -> Result<Option<PersistentRevisio
             let header: PersistentRevision = serde_json::from_str(&payload)?;
             ensure!(
                 ((schema == SCHEMA_VERSION && header.storage_format <= 1 && version <= 2)
-                    || (schema == 4
-                        && header.storage_format == 2
-                        && version == crate::ROOT_POINTER_VERSION))
+                    || (schema == 4 && header.storage_format == 2 && is_v2_root(version)))
                     && header.root == root
                     && header.collection == collection
                     && header.generation == u64::try_from(generation)?,
                 "component header does not match active revision"
             );
-            if version == crate::ROOT_POINTER_VERSION {
+            if is_v2_root(version) {
                 let token = header.token.context("v2 header missing token")?;
                 ensure!(
                     token.generation == header.generation
@@ -566,7 +685,7 @@ fn expected_head_connection(directory: &Path, conn: &Connection) -> Result<crate
         None
     };
     let version: u32 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    if version == crate::ROOT_POINTER_VERSION {
+    if is_v2_root(version) {
         let header: PersistentRevision =
             serde_json::from_str(components.as_deref().context("v2 head missing")?)?;
         return Ok(crate::ExpectedHead::V2(
@@ -732,6 +851,31 @@ pub(crate) fn authorize_retirement(
     expected: &airk_core::identity::PublicationReceipt,
     reservation: &crate::quota::Reservation,
 ) -> Result<()> {
+    authorize_representation_retirement(directory, proof, expected, reservation, None)
+}
+
+pub(crate) fn retire_history_binding(
+    directory: &Path,
+    proof: &crate::maintenance::RetirementProof,
+    binding: &crate::history::HistoryBinding,
+    reservation: &crate::quota::Reservation,
+) -> Result<()> {
+    authorize_representation_retirement(
+        directory,
+        proof,
+        &binding.publication,
+        reservation,
+        Some(binding),
+    )
+}
+
+fn authorize_representation_retirement(
+    directory: &Path,
+    proof: &crate::maintenance::RetirementProof,
+    expected: &airk_core::identity::PublicationReceipt,
+    reservation: &crate::quota::Reservation,
+    history: Option<&crate::history::HistoryBinding>,
+) -> Result<()> {
     let (maximum, allowance) = pointer_budget(directory)?;
     reservation.charge(allowance)?;
     let mut conn = connect_root(directory, true)?;
@@ -752,6 +896,32 @@ pub(crate) fn authorize_retirement(
         receipt_connection(&tx, &proof.token)?.as_ref() == Some(expected),
         "retirement receipt changed"
     );
+    if table_exists(&tx, "history_bindings")? {
+        let retained: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM history_bindings WHERE revision=?1)",
+            [proof.token.revision.to_string()],
+            |row| row.get(0),
+        )?;
+        if let Some(binding) = history {
+            ensure!(retained, "historical binding missing before retirement");
+            let encoded: String = tx.query_row("SELECT CAST(substr(CAST(payload AS BLOB),1,4097) AS TEXT) FROM history_bindings WHERE revision=?1", [proof.token.revision.to_string()], |row| row.get(0))?;
+            ensure!(
+                encoded == serde_json::to_string(binding)?,
+                "historical binding changed before retirement"
+            );
+            tx.execute(
+                "DELETE FROM history_bindings WHERE revision=?1",
+                [proof.token.revision.to_string()],
+            )?;
+        } else {
+            ensure!(
+                !retained,
+                "historical publication receipt cannot be retired by full-generation cleanup"
+            );
+        }
+    } else {
+        ensure!(history.is_none(), "historical binding table missing");
+    }
     tx.execute_batch("CREATE TABLE IF NOT EXISTS retired_representations(revision TEXT PRIMARY KEY,incarnation TEXT NOT NULL,generation INTEGER NOT NULL,proof TEXT NOT NULL); CREATE INDEX IF NOT EXISTS retired_scope ON retired_representations(incarnation,generation); CREATE TABLE IF NOT EXISTS retirement_floors(incarnation TEXT PRIMARY KEY,generation INTEGER NOT NULL);")?;
     let encoded = serde_json::to_string(proof)?;
     ensure!(encoded.len() <= 16384, "retirement proof exceeds bound");
@@ -779,7 +949,11 @@ pub(crate) fn authorize_retirement(
             !directory
                 .join("maintenance/intents")
                 .join(format!("{revision}.json"))
-                .exists(),
+                .exists()
+                && !directory
+                    .join("maintenance/history-retirements")
+                    .join(format!("{revision}.json"))
+                    .exists(),
             "retirement proof cap protected by unfinished maintenance"
         );
         tx.execute("INSERT INTO retirement_floors(incarnation,generation) VALUES(?1,?2) ON CONFLICT(incarnation) DO UPDATE SET generation=max(generation,excluded.generation)",params![incarnation,generation])?;
@@ -798,7 +972,7 @@ fn receipt_once(
 ) -> Result<Option<airk_core::identity::PublicationReceipt>> {
     let conn = connect_root_once(directory, false)?;
     let version: u32 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    if version != crate::ROOT_POINTER_VERSION {
+    if !is_v2_root(version) {
         return Ok(None);
     }
     receipt_connection(&conn, token)
@@ -809,7 +983,7 @@ pub(crate) fn retire_unrepresented_receipts(directory: &Path) -> Result<usize> {
     let conn = connect_root(directory, false)?;
     let version: u32 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
     ensure!(
-        version != crate::ROOT_POINTER_VERSION,
+        !is_v2_root(version),
         "v2 receipt retirement requires durable maintenance authorization"
     );
     Ok(0)
@@ -1078,6 +1252,7 @@ pub(super) fn publish_catalog_v2(
         "INSERT OR REPLACE INTO index_components VALUES(1,?1)",
         [&header_payload],
     )?;
+    history_schema(&tx)?;
     tx.pragma_update(None, "user_version", crate::ROOT_POINTER_VERSION)?;
     tx.commit()?;
     if let Some(private_root) = private_root {

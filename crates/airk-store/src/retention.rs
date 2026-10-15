@@ -97,6 +97,14 @@ pub(crate) fn exclusive(path: &Path) -> Result<Option<File>> {
 /// Collection removal must acquire every lease before deleting any evidence.
 pub fn exclusive_collection_leases(directory: &Path) -> Result<Vec<File>> {
     let mut paths = generations(directory)?;
+    for token in crate::history::lease_tokens(&crate::FileStore::new(directory))? {
+        let path = directory
+            .join("generations")
+            .join(token.revision.to_string());
+        if !paths.contains(&path) {
+            paths.push(path);
+        }
+    }
     for revision in crate::maintenance::legacy_intent_revisions(directory)? {
         let path = directory.join("generations").join(revision);
         if !paths.contains(&path) {

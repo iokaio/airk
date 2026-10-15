@@ -853,6 +853,42 @@ impl FileStore {
                 "invalid retained generation directory"
             ),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                if let Some(binding) = crate::sqlite::history_binding(self.directory(), token)? {
+                    ensure!(binding.publication == receipt, "historical receipt changed");
+                    let mut consumed = 0u64;
+                    if crate::history::retired_package(self, &binding, &mut |bytes| {
+                        consumed = consumed
+                            .checked_add(bytes)
+                            .context("historical verification overflow")?;
+                        ensure!(
+                            consumed <= maximum,
+                            "historical verification exceeds byte limit"
+                        );
+                        Ok(())
+                    })? {
+                        return Ok(None);
+                    }
+                    crate::history::verify_package(
+                        self,
+                        &self
+                            .directory()
+                            .join("history")
+                            .join(token.revision.to_string()),
+                        &binding,
+                        &mut |bytes| {
+                            consumed = consumed
+                                .checked_add(bytes)
+                                .context("historical verification overflow")?;
+                            ensure!(
+                                consumed <= maximum,
+                                "historical verification exceeds byte limit"
+                            );
+                            Ok(())
+                        },
+                    )?;
+                    ensure!(binding.publication == receipt, "historical receipt changed");
+                    return Ok(None);
+                }
                 ensure!(
                     self.receipt(token)?.is_none(),
                     "retained generation missing for committed receipt"

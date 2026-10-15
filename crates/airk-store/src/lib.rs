@@ -13,6 +13,7 @@ use std::{
 pub mod blobs;
 pub mod capacity;
 pub mod extraction_policy;
+pub mod history;
 pub mod maintenance;
 pub mod quota;
 pub mod relocation;
@@ -54,7 +55,7 @@ pub struct PersistentRevision {
     pub imported_relationships: usize,
 }
 
-pub const ROOT_POINTER_VERSION: u32 = 3;
+pub const ROOT_POINTER_VERSION: u32 = 4;
 pub const IMMUTABLE_CATALOG_VERSION: u32 = 3;
 
 #[derive(Clone, Debug)]
