@@ -161,7 +161,7 @@ pub(crate) fn extract_selected(
                 analysis.language = adapter.into();
                 analysis.status = "structured-xml".into();
                 analysis.facts = xml_facts(text)?;
-            } else if matches!(adapter, "dockerfile" | "ini") {
+            } else if adapter == "ini" {
                 analysis.language = adapter.into();
                 analysis.status = "line-structured".into();
                 analysis.facts = line_facts(text, &analysis.language)?;

@@ -38,7 +38,7 @@ These are initial grammar profiles, not complete compiler/type-system semantics.
 | XML / SVG | Elements and selected identity/reference/drawing attributes | Source lines; no rendering, scripts, external resource/entity loading |
 | CSV / TSV | Parsed records and column headers | Source lines; header assumption, validates record consistency |
 | INI/config/properties | Sections and simple key/value lines | Source lines; initial line adapter, not every configuration dialect |
-| Dockerfile | Instruction facts | Source lines; initial line adapter, no image/build execution |
+| Dockerfile | Instructions, stages/aliases, images, COPY sources, ARG/ENV, workdir/ports | Original byte/line spans, including supported multiline commands; no image/build execution |
 | Plain/other UTF-8 | Deterministic text chunks, conservative headings and prose candidates | Source lines; English cue parsing, not inferred semantics |
 | PDF | Native text-layer extraction by page plus shared prose candidates | Original page; normalized extracted-text lines are secondary coordinates |
 | DOCX | Main-body paragraphs, run/entity decoding, built-in headings; table rows/cells, header mapping, merge markers and shared prose candidates | Original paragraph block or table/row ordinal, no page-layout claim |
@@ -46,6 +46,24 @@ These are initial grammar profiles, not complete compiler/type-system semantics.
 | PPTX | OOXML slide text, title placeholders and shared prose candidates; relationship order | Original presentation-order slide number; title context isolated per slide |
 
 Explicit local OCR supports selected PDF pages and PNG/JPEG/BMP inputs using provisioned Tesseract models and, for PDFs, Poppler. It is not run automatically and does not promise table/layout reconstruction. Image-only slides, encrypted documents requiring passwords, legacy DOC/PPT/XLS, XLSB/XLSM, ODT, EPUB and RTF decoding are not implemented. DOCX headers/footers/comments/embedded objects and PPTX notes/charts/image contents are not extracted. XLSX charts, drawings, comments, pivot caches and embedded objects are not extracted. SVG path geometry is retrievable source but is not interpreted as visual meaning.
+
+### Repository and build formats
+
+| Profile / selection | Selected evidence |
+|---|---|
+| HCL: `.tf`, `.tfvars`, `.hcl` | Written block declarations/labels, attributes and traversal references |
+| Dockerfile: `Dockerfile`, `Dockerfile.*`, `.dockerfile` | Instructions and stage-scoped configuration; LF multiline and CRLF single-line locations |
+| Protobuf: `.proto` | Packages/imports, messages/enums/fields/numbers, services/RPCs and written type references |
+| GraphQL: `.graphql`, `.gql` | Schema/type/field/argument declarations, operations/fragments, spreads and written references |
+| CMake: `CMakeLists.txt`, `.cmake` | Targets, sources, libraries, includes, variables and unevaluated expressions |
+| Make: `Makefile`, `.mk` | Targets, prerequisites, variables, includes and recipe spans |
+| MSBuild: `.csproj`, `.fsproj`, `.vbproj`, `.props`, `.targets`, `.sln`, `.slnx` | Projects/packages/frameworks, imports/targets/properties/conditions and solution membership |
+| Actions: source-root `.github/workflows/*.yml` or `*.yaml` | Triggers/jobs/steps/needs/uses, permissions, environment/configuration and written commands |
+| Compose: `compose.yaml`, `compose.yml`, `docker-compose.yml`, `docker-compose.yaml` | Services/images/build contexts/dependencies/networks/volumes and written configuration |
+
+These profiles preserve original source locations and never evaluate builds, resolve references, expand variables or fetch dependencies. The four repository grammars expose conservative declaration continuity; CMake, Make, MSBuild, Actions and Compose expose structural-rule evidence without continuity. Explicit extraction-policy overrides take precedence, including for additional source roots.
+
+Unsupported constructs remain explicit: Docker CRLF line continuations and Make custom recipe prefixes are partial syntax; malformed declarations are omitted. Workflow/Compose YAML aliases, anchors, tags, merges, duplicate keys and multiple documents produce diagnostics without expansion or key overwriting. MSBuild XML forbids DTDs and limits nesting to 128, events to 500,000 and attributes to 256 per element with 4,096-byte attribute values. YAML limits structure to 100,000 nodes, depth 128 and 64 documents; all profiles retain file/fact/query budgets. Display truncation preserves the full original span. Platform qualification is recorded in the [v2 ledger](architecture-v2-ledger.md), independently of implementation.
 
 OOXML entries are read in memory, not unpacked to the filesystem. External slide/worksheet relationships and XML document type declarations are refused; unused external links are never followed. Extraction skips are explicit, rather than replacement-character text pretending to be evidence. Spreadsheet formulas and cached results are labeled separately; caches can be stale or absent. AIRK does not launch Office, recalculate formulas or fetch linked workbooks.
 

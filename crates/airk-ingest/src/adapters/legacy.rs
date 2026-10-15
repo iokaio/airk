@@ -122,7 +122,12 @@ pub fn convert_native_legacy(
             );
             ensure!(
                 code.producer.starts_with("airk-tree-sitter/")
-                    || code.producer == "airk-framework-cues",
+                    || code.producer == "airk-framework-cues"
+                    || (matches!(
+                        profile.adapter_id.as_str(),
+                        "cmake" | "make" | "msbuild" | "github-actions" | "compose"
+                    ) && code.basis == EvidenceBasis::StructuralRule
+                        && code.producer == format!("airk-build-structure/{}", profile.adapter_id)),
                 "unknown code producer requires separate domain"
             );
             for id in std::iter::once(&code.symbol_id).chain(code.owner_id.iter()) {

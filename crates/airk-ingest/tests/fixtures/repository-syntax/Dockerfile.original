@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: Apache-2.0
+# syntax=docker/dockerfile:1
+ARG BASE=scratch
+FROM ${BASE} AS compile
+ARG RELEASE=local
+ENV SERVICE=café MODE=local
+WORKDIR /work
+RUN printf '%s\n' one \
+    two
+FROM scratch AS release
+COPY --from=compile /work/result /app/result
+EXPOSE 8087/tcp
+CMD ["/app/result"]

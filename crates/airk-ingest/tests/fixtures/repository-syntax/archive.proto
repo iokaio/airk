@@ -1,0 +1,13 @@
+// SPDX-License-Identifier: Apache-2.0
+syntax = "proto3";
+package fictional.archive;
+import "shared.proto";
+message Envelope {
+  message Entry { string label = 1; }
+  map<string, Entry> entries = 1;
+  oneof result { Entry item = 2; string error = 3; }
+}
+enum State { UNKNOWN = 0; READY = 1; }
+service Archive {
+  rpc Watch(Envelope) returns (stream Envelope);
+}

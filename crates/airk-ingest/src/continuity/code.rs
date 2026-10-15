@@ -20,6 +20,12 @@ pub fn describe(
         "code continuity input exceeds record limits"
     );
     let profile_id = profile.identity()?;
+    if matches!(
+        profile.adapter_id.as_str(),
+        "cmake" | "make" | "msbuild" | "github-actions" | "compose"
+    ) {
+        return Ok(ContinuityDraft::default());
+    }
     let identities: BTreeMap<_, _> = payload
         .syntax_identities
         .iter()
