@@ -184,14 +184,28 @@ fn checkpoint_conversion_and_explicit_purge_publish_lineage_without_reindexing()
     )?;
     fixture.publish(29)?;
     let head = fixture.publish(31)?;
+    let conversion_budget = HistoryWorkBudget {
+        maintenance: airk_store::retention::MaintenanceBudget {
+            max_duration_ms: 10_000,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut conversion_complete = false;
     for _ in 0..8 {
-        fixture
-            .kernel
-            .maintain_history(HistoryWorkBudget::default())?;
-        if fixture.store.history_at(&old, 268_435_456)?.is_some() {
+        let run = fixture.kernel.maintain_history(conversion_budget)?;
+        assert!(run.error.is_none(), "{run:?}");
+        // A verified package can be readable while full-generation retirement
+        // is still pending. Purge requires the conversion to finish as well.
+        if !run.pending {
+            conversion_complete = true;
             break;
         }
     }
+    assert!(
+        conversion_complete,
+        "bounded history conversion did not finish"
+    );
     assert!(
         fixture.store.history_at(&old, 268_435_456)?.is_some(),
         "checkpoint must retain a verified historical representation"

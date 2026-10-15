@@ -20,4 +20,6 @@ AIRK's extension controls show the selected collection, workspace root and stora
 
 Purging is logical removal of eligible managed evidence, not secure erasure. Active and predecessor revisions, reader leases, checkpoints and in-progress conversions can keep evidence available. Removing a pin does not override other protection. Clearing lineage is a separate explicit publication action performed by the kernel; inspect its returned outcome. Original source files are untouched. Backups, previously relocated storage roots, external copies, filesystem snapshots and SSD remnants are outside this operation. Manage those separately if privacy requirements call for their removal.
 
+A historical package can become readable before conversion finishes retiring its full searchable representation. Purge previews report conversion protection until that work completes. Continue bounded history maintenance and preview again before applying a purge; historical readability alone does not establish conversion completion.
+
 The controls do not modify coding-agent settings, instructions, trust policy or approval configuration. They invoke the native helper for the selected collection and show its bounded results.
