@@ -559,11 +559,17 @@ mod tests {
     use airk_core::{embedding::CachedEmbedding, identity::Sha256Digest};
     use std::{collections::BTreeMap, sync::Mutex};
 
+    fn unlinked_tempdir() -> Result<tempfile::TempDir> {
+        // macOS presents the default temporary directory through /var.
+        // Object planning intentionally rejects symlinked model ancestors.
+        Ok(tempfile::Builder::new().tempdir_in(std::env::temp_dir().canonicalize()?)?)
+    }
+
     #[test]
     fn immutable_objects_preserve_pipeline_without_source_directory_or_scratch_copies() -> Result<()>
     {
-        let source = tempfile::tempdir()?;
-        let collection = tempfile::tempdir()?;
+        let source = unlinked_tempdir()?;
+        let collection = unlinked_tempdir()?;
         let vocabulary = br#"{"original":[1.0,0.0],"beacon":[0.0,1.0]}"#;
         fs::write(source.path().join("vocabulary.json"), vocabulary)?;
         fs::write(

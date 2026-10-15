@@ -5,6 +5,11 @@ use anyhow::Result;
 use sha2::{Digest, Sha256};
 use std::fs;
 
+fn unlinked_tempdir() -> Result<tempfile::TempDir> {
+    // Model object planning rejects symlinked ancestors such as macOS /var.
+    Ok(tempfile::Builder::new().tempdir_in(std::env::temp_dir().canonicalize()?)?)
+}
+
 fn query(text: &str) -> SearchQuery {
     SearchQuery {
         text: text.into(),
@@ -33,7 +38,7 @@ fn model(data: &std::path::Path) -> Result<()> {
 #[test]
 fn persistent_lexical_and_real_disk_vector_candidates_keep_revision_identity() -> Result<()> {
     let root = tempfile::tempdir()?;
-    let data = tempfile::tempdir()?;
+    let data = unlinked_tempdir()?;
     fs::write(root.path().join("auth.rs"), "fn authenticate() {}\n")?;
     fs::write(root.path().join("billing.rs"), "fn invoice() {}\n")?;
     model(data.path())?;
@@ -86,7 +91,7 @@ fn persistent_lexical_and_real_disk_vector_candidates_keep_revision_identity() -
 #[test]
 fn model_changes_advance_revision_and_reader_leases_protect_previous_components() -> Result<()> {
     let root = tempfile::tempdir()?;
-    let data = tempfile::tempdir()?;
+    let data = unlinked_tempdir()?;
     fs::write(root.path().join("auth.rs"), "fn authenticate() {}\n")?;
     let writer = Kernel::open(root.path(), Some(data.path().into()))?;
     writer.index()?;
@@ -120,7 +125,7 @@ fn model_changes_advance_revision_and_reader_leases_protect_previous_components(
 #[test]
 fn missing_model_and_missing_persistent_generation_fail_explicitly() -> Result<()> {
     let root = tempfile::tempdir()?;
-    let data = tempfile::tempdir()?;
+    let data = unlinked_tempdir()?;
     fs::write(root.path().join("test.txt"), "needle\n")?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
     kernel.index()?;
