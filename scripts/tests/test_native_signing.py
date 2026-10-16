@@ -42,12 +42,16 @@ class SigningContracts(unittest.TestCase):
             source.parent.mkdir(parents=True)
             source.write_bytes(b"fictional executable")
             (root / "Cargo.lock").write_bytes(b"fictional lock")
-            output = root / "artifacts/signed"
+            # Exercise canonicalization even when the host temp path has no
+            # alias (macOS /var, Windows short names, or a directory symlink).
+            (root / "artifacts/staging").mkdir(parents=True)
+            output = root / "artifacts/staging/../signed"
+            self.assertNotEqual(output, output.resolve())
             keychain = root / "airk keychain"
             def run(command, **kwargs):
                 if command[0] == "/usr/bin/codesign":
                     self.assertIn("--force", command)
-                    self.assertEqual(command[-1], output / "airk")
+                    self.assertEqual(command[-1], (output / "airk").resolve())
                     self.assertEqual(source.read_bytes(), b"fictional executable")
                     command[-1].write_bytes(b"fictional Developer ID signed executable")
                 if "notarytool" in command:
