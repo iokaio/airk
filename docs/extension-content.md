@@ -50,7 +50,7 @@ Caption: **Saved edits become evidence through indexing.** Coverage describes a 
 
 ## Agent integration copy
 
-The listing should show these routes prominently. Keep the complete, version-sensitive matrix in [agent integration](agent-integration.md), with client testing recorded separately.
+The bundled listing's **Coding agent setup** section contains the complete manual instructions for every setup-picker client, plus Antigravity's compatible Gemini-format route. Users can read the merge location, schema, approval/reload steps and connection checks in the installed extension's Details page. The walkthrough points to that section. Keep these instructions synchronized with the version-sensitive matrix in [agent integration](agent-integration.md), with client testing recorded separately.
 
 | Client | What AIRK shows or registers | What the user completes |
 |---|---|---|
@@ -58,6 +58,7 @@ The listing should show these routes prominently. Keep the complete, version-sen
 | Claude Code | A project `.mcp.json` fragment using `mcpServers` | Merge the entry without replacing other servers; approve/load it in Claude Code. |
 | Codex CLI / IDE / desktop | A `[mcp_servers.<name>]` TOML entry for shared Codex configuration | Add it to the user config or trusted project's `.codex/config.toml`, then check client discovery. |
 | Gemini CLI | A `mcpServers` fragment for project/user `.gemini/settings.json` | Preserve the existing settings and Gemini's trust/tool policy, then reload/check the client. |
+| Google Antigravity IDE / CLI | Reuse the `gemini` preview; there is no dedicated picker entry yet | Merge into `.agents/mcp_config.json` or `~/.gemini/config/mcp_config.json`, using the installed client's raw-config view to confirm its location. Follow the bundled connection checks; live-client qualification remains outstanding. |
 | Cursor, Cline, Roo, Junie, Copilot CLI, OpenCode and Kilo | The appropriate supported configuration preview, with version guidance | Merge and enable using the client's own MCP controls. |
 | Amazon Q and Windsurf/Devin | Command/arguments and guidance tied to the installed client/version | Follow that client's setup UI; do not imply direct registration. |
 
