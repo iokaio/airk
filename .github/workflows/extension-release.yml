@@ -3,6 +3,10 @@ name: Extension release
 on:
   workflow_dispatch:
     inputs:
+      candidate_run_id:
+        description: Optional successful manual CI run on this exact main commit
+        type: string
+        default: ''
       version:
         description: Exact checked-in extension version (for example 0.2.1)
         type: string
@@ -22,6 +26,7 @@ on:
         default: false
 permissions:
   contents: read
+  actions: read
 concurrency:
   group: airk-extension-release
   cancel-in-progress: false
@@ -37,8 +42,8 @@ jobs:
           AIRK_REF: ${{ github.ref }}
           AIRK_VERSION: ${{ inputs.version }}
         run: |
-          if { [ "$AIRK_PUBLISH" = true ] || [ "$AIRK_VERIFY_IDENTITY" = true ]; } && [ "$AIRK_REF" != refs/heads/main ]; then
-            echo 'Marketplace identity access requires protected main.' >&2
+          if [ "$AIRK_REF" != refs/heads/main ]; then
+            echo 'Candidate promotion and Marketplace identity access require protected main.' >&2
             exit 1
           fi
           if [ "$AIRK_PUBLISH" = true ] && [ "$AIRK_VERIFY_IDENTITY" = true ]; then
@@ -46,6 +51,28 @@ jobs:
             exit 1
           fi
           [[ "$AIRK_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        if: ${{ !inputs.verify_identity }}
+        with:
+          persist-credentials: false
+      - name: Select tested main artifacts and verify requested version
+        if: ${{ !inputs.verify_identity }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AIRK_CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          AIRK_VERSION: ${{ inputs.version }}
+        run: |
+          python -c 'import json, os; assert json.load(open("packages/vscode/package.json"))["version"] == os.environ["AIRK_VERSION"]'
+          python scripts/ci-candidates.py resolve
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !inputs.verify_identity }}
+        with:
+          name: airk-producer-${{ github.sha }}-${{ github.run_id }}
+          path: artifacts/producer.json
+          overwrite: true
+          if-no-files-found: error
+          retention-days: 7
+
   verify-identity:
     if: ${{ inputs.verify_identity }}
     needs: preflight
@@ -75,10 +102,43 @@ jobs:
   build:
     if: ${{ !inputs.verify_identity }}
     needs: preflight
-    uses: ./.github/workflows/ci.yml
-    with:
-      channel: ${{ inputs.channel }}
-      expected_version: ${{ inputs.version }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x86_64-unknown-linux-gnu, x86_64-pc-windows-msvc, aarch64-apple-darwin, x86_64-apple-darwin]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '24.15.0'
+          package-manager-cache: false
+      - run: npm ci --ignore-scripts --no-audit --no-fund --prefix packages/vscode
+      - run: npm run compile --prefix packages/vscode
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: airk-producer-${{ github.sha }}-${{ github.run_id }}
+          path: artifacts
+      - name: Authenticate and restore the tested native package
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/ci-candidates.py download --target ${{ matrix.target }} --output artifacts/native/${{ matrix.target }}/publish
+      - name: Repackage the selected channel without compiling native code
+        env:
+          AIRK_CHANNEL: ${{ inputs.channel }}
+        run: python scripts/package-extension.py --target ${{ matrix.target }} --channel "$AIRK_CHANNEL"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: airk-vsix-${{ matrix.target }}-${{ github.sha }}-${{ github.run_id }}
+          path: artifacts/extension/${{ matrix.target }}/publish/
+          overwrite: true
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
   publish:
     if: ${{ inputs.publish }}
     needs: build
@@ -108,7 +168,7 @@ jobs:
           allow-no-subscriptions: true
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          pattern: airk-vsix-*-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          pattern: airk-vsix-*-${{ github.sha }}-${{ github.run_id }}
           path: artifacts/release
           merge-multiple: false
       - name: Verify complete platform set, payloads, version and source provenance
