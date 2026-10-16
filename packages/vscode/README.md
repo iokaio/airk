@@ -49,6 +49,7 @@ Document extraction keeps heading context, dates, requirement IDs and modality (
 4. **Connect an agent.**
    - *VS Code and Copilot Chat:* AIRK registers each trusted workspace folder as an MCP server. Run **MCP: List Servers** and enable it.
    - *Claude Code, Codex, Gemini CLI, Cursor, Cline, Roo Code, Junie, Copilot CLI, OpenCode or Kilo Code:* run **AIRK: Set Up Coding Agent**, pick the client, and merge the previewed entry into that client's MCP configuration. Amazon Q and Windsurf/Devin get the command and arguments plus setup guidance. AIRK never writes another agent's settings or approves its tools.
+   - *Google Antigravity:* choose `gemini` to generate compatible JSON, then use Antigravity's configuration location below. There is no dedicated Antigravity picker entry yet.
 5. **Verify.** **AIRK: Verify Native MCP Connection** confirms that the helper starts, lists its tools and reports collection status. Then ask your agent about a file you know and check that its answer cites a path. Verification proves AIRK is healthy; it does not prove that a particular agent has enabled the server.
 
 The **Get Started with AIRK** walkthrough (**Help › Welcome**) links these steps.
@@ -56,6 +57,99 @@ The **Get Started with AIRK** walkthrough (**Help › Welcome**) links these ste
 ![Saved files are indexed into a complete published revision, then an agent retrieves bounded evidence. Coverage, controls and citations make freshness and scope visible.](https://raw.githubusercontent.com/iokaio/airk/main/docs/images/index-to-context.png)
 
 These illustrations are explanatory diagrams, not screenshots.
+
+## Coding agent setup
+
+These instructions are included in the installed extension's **Details** page. The configuration routes below match AIRK's setup previews; they do not establish that every client/version has been tested end to end. Client paths and controls can change, so each route includes its official reference.
+
+### Prepare and share the correct collection
+
+1. Open and trust the intended workspace folder, choose storage if needed, and run **AIRK: Index Now**.
+2. Run **AIRK: Set Up Coding Agent** from the Command Palette. Select the workspace folder if prompted, then the client choice listed below. AIRK indexes the selected collection and opens an untitled JSON or TOML preview. **Copy configuration** copies that preview without installing it.
+3. Merge only the generated server entry into the client's configuration. Preserve other servers, settings, comments and tool policies. Do not paste a second top-level `mcpServers`, `servers` or `mcp` object into an existing file.
+4. Keep the generated executable path and all `--root`, `--data-dir` and `--collection` arguments. The bundled helper need not be on PATH. Different agents share the extension's index only when these values match; a separate CLI setup using defaults can create a different collection.
+5. Reload/enable the server in the client and complete its normal trust and tool-approval prompts. Then follow [Verify the agent connection](#verify-the-agent-connection).
+
+Prefer project configuration where the client supports it. `~` below means your user home directory. For user-wide settings, retain the generated collection-specific server name so another workspace cannot overwrite its entry. AIRK always reads the configured collection; changing the editor's active folder does not redirect an existing MCP connection. After changing AIRK's storage location, regenerate the affected client entries and reconnect.
+
+### VS Code / GitHub Copilot Chat
+
+AIRK registers a native stdio MCP definition for each trusted workspace folder. Run **MCP: List Servers**, choose the AIRK entry for the intended folder, and start/enable it using VS Code's controls. Complete any trust or tool-approval prompts in Copilot Chat.
+
+If automatic registration is unavailable, choose `vscode` in **Set Up Coding Agent** and merge the generated entry under `servers` in the workspace's `.vscode/mcp.json`. Avoid enabling both a manual duplicate and the registered provider for the same collection. Registration in VS Code does not configure a separate Codex, Claude Code or other agent extension. [VS Code MCP guide](https://code.visualstudio.com/docs/copilot/customization/mcp-servers)
+
+### Claude Code
+
+Choose `claude`. Merge the generated entry under `mcpServers` in `.mcp.json` at the project root. Load/approve the project's server in Claude Code, then use its `/mcp` controls to confirm the connection. For user or local scope, follow Claude Code's own registration controls rather than moving the project file blindly. [Claude Code MCP guide](https://code.claude.com/docs/en/mcp)
+
+### Codex CLI / IDE extension / desktop
+
+Choose `codex`. Merge the generated `[mcp_servers.<name>]` table into a trusted project's `.codex/config.toml` or your user `~/.codex/config.toml`. Keep its `command` string and `args` array together; this preview is TOML, not JSON. Reload the client and check its MCP server list. Codex reads its own configuration independently of VS Code's MCP registry. [Codex MCP guide](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)
+
+### Gemini CLI
+
+Choose `gemini`. Merge the generated entry under `mcpServers` in the project's `.gemini/settings.json`, or the user counterpart `~/.gemini/settings.json`. Preserve the rest of Gemini's settings and trust/allowlist policy. Reload the client and use `/mcp` to inspect AIRK's connection. [Gemini CLI MCP guide](https://geminicli.com/docs/tools/mcp-server/)
+
+### Google Antigravity IDE / CLI
+
+Choose `gemini` to obtain the compatible `mcpServers` JSON. This choice only selects the output format: ignore the Gemini-specific destination shown by that picker notification. Merge the entry into the workspace's `.agents/mcp_config.json` or the global `~/.gemini/config/mcp_config.json`, not Gemini CLI's settings file.
+
+In Antigravity IDE, use the agent panel's **… → MCP Servers → Manage MCP Servers → View raw config** to locate the active file. If the installed version uses a different location, follow that view. Reload/enable AIRK; Antigravity CLI provides status, reload and connection logs through `/mcp`. Keep the client's approval policy.
+
+No HTTP bridge, API key or Google Cloud credentials are needed for AIRK's local stdio server. There is no dedicated Antigravity entry in AIRK's picker yet. This manual configuration has not been qualified in an installed Antigravity session; use the connection checks below. [Google MCP guide](https://antigravity.google/docs/mcp)
+
+### Cursor
+
+Choose `cursor`. Merge the generated `mcpServers` entry into the project's `.cursor/mcp.json` or your user `~/.cursor/mcp.json`. Enable/reload AIRK in Cursor's MCP settings and inspect its tools. AIRK currently provides a configuration preview for Cursor; it does not directly register through Cursor's separate extension API. [Cursor MCP guide](https://prod.cursor.com/docs/mcp)
+
+### Cline CLI / IDE extension
+
+Choose `cline`. In the IDE extension, open **Configure MCP Servers** in Cline and merge the `mcpServers` entry into the file it opens. Do not guess a VS Code extension-storage path. Cline CLI's documented default is `~/.cline/data/settings/cline_mcp_settings.json`, with a configurable path. Reload/enable the server in the client you actually use, then check its connection and tool list. [Cline MCP guide](https://docs.cline.bot/mcp/mcp-overview)
+
+### Roo Code
+
+Choose `roo`. Use Roo's **Edit Project MCP** controls and merge the entry under `mcpServers` in `.roo/mcp.json`. Project configuration overrides the global `mcp_settings.json`; check for a same-named global entry before troubleshooting an unexpected connection. Enable/reload AIRK in Roo and confirm the intended collection. [Roo Code MCP guide](https://roocodeinc.github.io/Roo-Code/features/mcp/using-mcp-in-roo/)
+
+### JetBrains Junie / Junie CLI
+
+Choose `junie`. Merge the `mcpServers` entry into the project's `.junie/mcp/mcp.json` or the user counterpart. Use Junie's MCP controls, including `/mcp` where available, to reload and verify it. AIRK's VS Code extension supplies the launch configuration; registration and approval remain in Junie. [Junie MCP guide](https://junie.jetbrains.com/docs/junie-cli-mcp-configuration.html)
+
+### GitHub Copilot CLI
+
+Choose `copilot-cli`. Merge the generated entry into the active MCP configuration, such as `~/.copilot/mcp-config.json`. Supported project configuration includes `.mcp.json` and `.github/mcp.json`; check the installed CLI's precedence before creating a duplicate. Preserve the generated local transport fields and review its `tools` selection under your existing policy. Reload/check the CLI's MCP servers; Copilot Chat's VS Code registration does not configure this separate CLI. [Copilot CLI MCP guide](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-mcp-servers)
+
+### OpenCode / OpenCode V2
+
+Check the installed major version before choosing the preview:
+
+- Choose `opencode` for the stable schema: merge into `opencode.json` under `mcp.<name>`.
+- Choose `opencode-v2` when the installed version uses the V2 schema: merge under `mcp.servers.<name>` in that version's configuration.
+
+Both previews use `type: "local"` and a `command` array containing the executable followed by each argument. Keep that array intact; do not convert it to a single shell command or a `mcpServers` entry. Reload and check AIRK in the client's MCP controls. [Stable guide](https://opencode.ai/docs/en/mcp-servers/) · [V2 guide](https://dev.opencode.ai/v2/docs/mcp-servers/)
+
+### Kilo Code
+
+Choose `kilo`. Merge the local entry under `mcp` in the active `kilo.json`/`kilo.jsonc` or `.kilo/kilo.json`/`.kilo/kilo.jsonc`. Preserve the executable-plus-arguments `command` array and existing JSONC comments. Check **Settings → MCP** to enable/verify AIRK. Older Roo-derived paths are not interchangeable with this configuration; confirm the installed version. [Kilo Code MCP guide](https://kilo.ai/docs/automate/mcp/using-in-kilo-code)
+
+### Amazon Q Developer IDE
+
+Choose `amazon-q`. The preview contains **connection details**, not a complete agent settings file. In Amazon Q, use **Tools → Add stdio server**, give the server a collection-specific name, and supply the preview's executable and separate arguments. Select project scope where appropriate and save/enable it through the UI.
+
+Amazon Q manages project `.amazonq/default.json` or user `~/.aws/amazonq/default.json`; do not replace either with AIRK's connection-details JSON. Legacy `mcp.json` support is separately controlled. Confirm tool discovery in Amazon Q after saving. [Amazon Q MCP guide](https://docs.aws.amazon.com/amazonq/latest/qdeveloper-ug/mcp-ide.html)
+
+### Windsurf legacy Cascade / Devin Desktop
+
+Choose `windsurf` to get the stdio executable and arguments. Identify the installed agent/version, open its MCP configuration UI, and register a local server using those details. This preview is not a complete client configuration.
+
+Legacy Cascade uses `mcpServers` in its own `mcp_config.json`; Devin Local uses a different CLI configuration. Use the file/schema opened or documented by the installed agent rather than assuming an old `~/.codeium` path or copying one agent's settings into another. Enable/reload the server there and verify its tools. [Current official Cascade guide](https://docs.devin.ai/desktop/cascade/mcp)
+
+### Verify the agent connection
+
+Run **AIRK: Verify Native MCP Connection** for the intended folder. A successful result confirms AIRK's stdio handshake, sixteen-tool inventory and collection status. It does not prove the selected coding agent has loaded or approved the entry.
+
+In that agent, explicitly request `airk_status` and `airk_capabilities` from the configured AIRK server. Confirm the collection, then request a lexical `airk_search` for a known indexed phrase and check its source path and original location. Use **AIRK: Index Now** after edits if automatic indexing is paused or set to Manual; MCP retrieval does not initiate reindexing.
+
+If no tools appear, check the active client config, server enablement, trust, executable permissions and connection logs. If results come from the wrong folder or are stale, compare the preview's root/storage/collection arguments and AIRK's coverage report. After an extension upgrade, regenerate the preview if the helper path changed. For SSH/WSL/container clients, the command and index paths must be accessible on the host running that MCP process; those setups remain unqualified.
 
 ## How indexing works
 

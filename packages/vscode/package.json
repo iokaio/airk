@@ -50,7 +50,7 @@
         {
           "id": "airk.setupAgentStep",
           "title": "Connect a coding agent",
-          "description": "VS Code and Copilot Chat discover AIRK automatically; enable it with **MCP: List Servers**. For Claude Code, Codex, Gemini CLI, Cursor and other clients, preview a configuration scoped to this folder and merge it into that client yourself. AIRK never edits another agent's settings.\n[Set Up Coding Agent](command:airk.setupAgent)",
+          "description": "VS Code and Copilot Chat discover AIRK automatically; enable it with **MCP: List Servers**. For other clients, preview the selected folder's configuration and merge it into that client's settings. Open AIRK in the Extensions view and read **Details → Coding agent setup** for complete instructions for every supported client. Antigravity uses the gemini preview but its own mcp_config.json location. Amazon Q and Windsurf/Devin receive connection details to enter in their own UI. AIRK never edits another agent's settings.\n[Set Up Coding Agent](command:airk.setupAgent)",
           "media": { "image": "images/local-evidence.png", "altText": "Several coding agents connect to the same workspace-scoped AIRK collection." },
           "completionEvents": ["onCommand:airk.setupAgent"]
         },
