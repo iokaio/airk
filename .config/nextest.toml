@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: Apache-2.0
+[profile.ci]
+test-threads = 4
+retries = 0
+fail-fast = false
+slow-timeout = { period = "120s", terminate-after = 30 }
+
+[profile.ci.junit]
+path = "junit.xml"
+store-success-output = false
+store-failure-output = false
+
+[test-groups.storage-heavy]
+max-threads = 2
+
+[[profile.ci.overrides]]
+filter = 'test(two_hundred_real_edits)'
+priority = 100
+test-group = "storage-heavy"
+threads-required = 2
+
+[[profile.ci.overrides]]
+filter = 'package(airk-kernel) | package(airk-store) | package(airk-retrieval)'
+test-group = "storage-heavy"
+

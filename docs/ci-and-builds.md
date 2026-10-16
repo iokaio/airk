@@ -1,8 +1,8 @@
 # GitHub CI, native artifacts and spending controls
 
-The [CI workflow](../.github/workflows/ci.yml) uses standard GitHub-hosted runners. No self-hosted machine, Docker account, Azure account, Apple account, custom repository secret or repository variable is needed for the current builds. GitHub supplies the job token and artifact-upload authorization automatically. Repository Actions must be enabled and permitted to use the pinned official actions.
+The [CI workflow](../.github/workflows/ci.yml) uses standard GitHub-hosted runners. No self-hosted machine, Docker account, Azure account, Apple account, custom repository secret or repository variable is needed for the current builds. GitHub supplies the job token and artifact-upload authorization automatically. Repository Actions must be enabled and permitted to use the SHA-pinned actions, including rust-cache, install-action and the Docker cache-mount adapter.
 
-Main now requires PRs and the stable `Required checks` / `signed-off` gates. For manual builds and optional Marketplace publication, use **Actions → Extension release** with an explicit version/channel and `publish` false/true. The [release workflow guide](release-workflow.md) describes the live PR policy, artifact verification and external Entra identity/publisher membership prerequisites. The publishing job is separate from these read-only build jobs.
+Main requires PRs and the stable `Required checks` / `signed-off` gates. Use **Actions → CI** for manual builds and **Extension release** to promote a successful main candidate into the chosen Marketplace channel. The [release workflow guide](release-workflow.md) describes artifact verification and external Entra identity/publisher membership prerequisites. Publishing jobs are separate from read-only builds.
 
 ## Build matrix
 
@@ -52,17 +52,42 @@ python scripts/package-native.py --target x86_64-pc-windows-msvc
 
 Use Python 3.9+ locally. Output is under ignored `artifacts/native/<target>/`. Retain or deliberately remove only that generated candidate directory before packaging again. Local uncommitted work is recorded as a dirty checkout.
 
+## Checks selected by the change
+
+Every PR starts the complete-diff classifier and quick checks. The classifier uses the PR merge base and both paths of moves/deletions. Unknown paths, workflow/build inputs and Rust changes select full validation. Main pushes and manual CI always build complete candidates.
+
+| PR change | Required work |
+|---|---|
+| Markdown documentation only | Formatting, workflow validation, repository/link checks, classifier tests and whitespace |
+| Extension README/media or listing illustrations | Quick checks plus extension compilation/tests and packaging contracts; illustrations also select platform script contracts |
+| Extension TypeScript/package configuration | Real native adapter and candidate checks on all four platforms, plus extension checks |
+| Script contract tests only | Quick checks and Python contracts on all four platforms |
+| Rust, dependency, Docker, workflow, executable script or unknown input | Complete four-platform native checks, Python/extension contracts and container validation |
+
+`Required checks` always runs. It requires success for every selected job and an intentional skip for every unselected job. A failed plan, cancellation, unexpected skip or missing result cannot pass. `signed-off` remains independently required; branch protection is unchanged.
+
+## Test execution and measurements
+
+Nextest **0.9.148** runs each test in its own process on all four native targets and in Docker. [The checked-in profile](../.config/nextest.toml) disables retries, bounds storage-heavy concurrency, starts the 200-publication retention test early and produces a JUnit report without captured test payloads. Doctests run separately with Cargo. Existing ignored tests retain their explicit fixture requirements. The 200 real edits, exact retained-object checks, quota/lease exclusion and crash-recovery assertions remain required.
+
+The kernel's integration modules share one executable instead of 45. Self-spawning test selectors include the module name; the usage child must report that it executed one test. Fixture includes and documentation links follow the new layout. The other crates retain their existing targets pending measurements of this pilot. Ordinary `cargo test` defaults to two libtest threads through the Cargo configuration, preventing high-core developer machines from starting dozens of storage fixtures together; explicit environment/command-line overrides remain available. Nextest independently controls its process scheduler.
+
+The relocation regression models an inherited Unix open file description with a duplicate descriptor. Closing the original alone left the exclusive lifecycle lock held. The relocation guard now explicitly unlocks after subordinate locks are dropped; shared entrants still fail immediately during an active relocation. The regression failed before the change and passed afterward in Linux, followed by 20 clean parallel relocation repetitions.
+
+Native job summaries and `airk-ci-timings-*` artifacts separate clippy, test compilation, execution, doctests and optimized compilation, and list the slowest tests. Docker prints the same phases and exports reports after a successful build. Failed container builds retain their phase/test diagnostics in the build log. Cache actions report transfer sizes and durations separately. Compare cold and warm runs on the same platform; local timings and cache hits are not reproducibility attestations or cross-platform qualification.
+
 ## Controls that reduce unnecessary work
 
-- Push builds run for `main` and `v*` tags; other branch pushes run through their pull requests. Manual dispatch remains available. There is no schedule.
-- New commits cancel an older run for the same branch or pull request.
-- All four native matrix jobs may run together, plus the container job, so one platform does not wait for another platform's build. Each native compiler still uses two workers to bound memory pressure.
-- Pinned official cache actions retain Cargo registry/git dependencies. Linux and macOS also cache explicitly selected compiler output directories, with keys isolating OS, target, compiler/workflow configuration and dependency manifests. Windows caches downloaded dependencies only: archiving its compiler outputs produced a 13.8 GB cache and consumed almost 44 minutes after all checks passed, exhausting the job limit. Its explicit restore/save steps each have a five-minute timeout and tolerate cache failure. Every check, build and artifact verification remains required. Incremental compilation is disabled; cache misses or eviction cause ordinary fresh builds. Local models, corpora, index state and candidate staging directories are outside the cache paths.
-- Native and container jobs have 90-minute limits to accommodate clean compiler, debug-test and optimized ONNX-runtime builds. Timings remain subject to runner capacity.
-- Candidate artifacts expire after seven days and exclude compiler outputs and intermediate staging directories. Compiler caches are separate from downloadable candidates. Docker BuildKit keeps local dependency/target caches for repeated builds within a job; generated distributions are copied out of cache mounts and verified normally.
-- Jobs have read-only repository permissions and do not receive publishing or signing credentials. Fork contributions use `pull_request`, not a privileged `pull_request_target` build.
+- Branch pushes outside main use PR validation; newer commits cancel superseded runs for that PR. There is no schedule.
+- Main produces the complete authoritative candidate once. GitHub and Marketplace release workflows authenticate and promote its exact artifacts instead of invoking the Rust matrix again. A separate tag workflow verifies published release provenance; unverified tags fail with an instruction to validate a main candidate.
+- The native matrix runs together. Compiler concurrency is four on x64 and remains two on Apple Silicon for memory headroom. Test scheduling is independently bounded. Platform clippy checks remain; formatting runs once. Intel's existing 120-minute job ceiling remains until hosted measurements justify reducing it; other full jobs retain 90 minutes.
+- SHA-pinned `rust-cache` keeps dependency outputs, excludes workspace crates and writes only from main push CI. PRs may restore main caches but cannot update them. Incremental compilation remains disabled; runtime/release optimization settings are unchanged.
+- Docker tests precede optimized compilation. BuildKit layer caching is supplemented by explicit registry/git/target cache-mount injection and extraction. Workspace outputs are pruned before exporting dependency caches. PR builds do not write shared Docker caches. A cache miss performs the same required checks.
+- Dispatch **CI** with `fresh_build` enabled to disable both native and Docker restores for cold qualification. For a release, supply that successful run's ID as `candidate_run_id`. Missing/expired candidates fail early with this rebuild instruction; releases never silently start another long build.
+- Candidates, producer records and numeric timing reports expire after seven days. Public release assets have independent retention. Cache paths exclude corpora, models, private state, credentials and release staging directories.
+- Builds have read-only repository permissions and no signing or publishing credentials. Forks use `pull_request`, never privileged `pull_request_target` execution.
 
-Concurrency and time limits bound work per run; they do not impose a monthly spending cap. All four native builds still run for every admitted code change. Documentation-only changes also run CI so repository checks remain required.
+Concurrency and timeouts bound each run; they do not enforce monthly spending. Measure several cold/warm runs before promising a duration. The documentation-only target is under five minutes excluding queue time; full-matrix speedups remain subject to hosted evidence.
 
 ## Repository-owner spending setup
 
@@ -83,6 +108,6 @@ Under repository **Settings → Actions → General**, require approval for work
 | GitHub Release publication | Manual numbered GitHub release workflow; automatic token with `contents: write` only in the final `github-releases` publishing job. No personal token needed. |
 | Downloads website | GitHub Pages for `airk.ioka.io`, main-only `github-pages` environment; automatic token with `pages: write` and `id-token: write` only for deployment. Refreshes after release publication, website changes on main, or a manual dispatch. |
 
-The separate [Signed macOS candidates workflow](../.github/workflows/macos-signing.yml) consumes only the four documented macOS environment secrets, on an explicit dispatch from main. The [GitHub release workflow](../.github/workflows/github-release.yml) runs full CI without compiler caches, signs Windows through Azure OIDC and both Mac architectures through the Apple environment, then optionally publishes the complete verified download set under an automatically numbered release tag. [Native signing instructions](native-signing.md) describe provisioning, cleanup and artifact verification. Ordinary CI and Extension release do not consume signing secrets. Marketplace publication remains separate. See [release workflow](release-workflow.md), [extension deployment](extension-deployment.md) and [macOS build instructions](macos-build.md).
+The separate [Signed macOS candidates workflow](../.github/workflows/macos-signing.yml) consumes only the four documented macOS environment secrets, on an explicit dispatch from main. The [GitHub release workflow](../.github/workflows/github-release.yml) promotes authenticated main CI artifacts, signs Windows through Azure OIDC and both Mac architectures through the Apple environment, then optionally publishes the complete verified download set under an automatically numbered release tag. [Native signing instructions](native-signing.md) describe provisioning, cleanup and artifact verification. Ordinary CI and Extension release do not consume signing secrets. Marketplace publication remains separate. See [release workflow](release-workflow.md), [extension deployment](extension-deployment.md) and [macOS build instructions](macos-build.md).
 
 The separate [Extended qualification workflow](../.github/workflows/qualification.yml) is manual only. It measures a configurable original corpus on Windows/Linux, runs process-kill recovery, and optionally downloads the pinned public CPython corpus or MiniLM model. It uploads numeric reports only, never source trees, model assets or index state. This longer workflow is separate from required PR checks and is not automatically started by a code change. macOS installed-service qualification remains separate from signing.

@@ -1,23 +1,52 @@
 # SPDX-License-Identifier: Apache-2.0
-FROM rust:1.98.0-slim-bookworm AS build
-RUN apt-get update && apt-get install -y --no-install-recommends build-essential python3 \
+FROM rust:1.98.0-slim-bookworm AS toolchain
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential python3 curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /build
 ENV CARGO_BUILD_JOBS=2
+ENV CARGO_INCREMENTAL=0
+# Verify the pinned test tool for the build host; CI qualifies Linux x64.
+RUN case "$(uname -m)" in \
+      x86_64) nextest_arch=x86_64; nextest_sha=223ba936714cc861a9cdedad5a8eb664dfdd69d6fbdf6cea6aa8184f523290dc ;; \
+      aarch64) nextest_arch=aarch64; nextest_sha=81469eb963ef883fd590e60189e77d6aba3d91b418591d3391f50fe3e9480d2b ;; \
+      *) exit 1 ;; esac \
+    && curl --fail --location --retry 3 -o /tmp/nextest.tar.gz \
+      "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.148/cargo-nextest-0.9.148-${nextest_arch}-unknown-linux-gnu.tar.gz" \
+    && echo "${nextest_sha}  /tmp/nextest.tar.gz" | sha256sum -c - \
+    && tar -xzf /tmp/nextest.tar.gz -C /usr/local/cargo/bin cargo-nextest \
+    && rm /tmp/nextest.tar.gz
+FROM toolchain AS source
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates ./crates
+COPY .config/nextest.toml ./.config/nextest.toml
+COPY scripts/ci-metrics.py scripts/ci-prune-target.py ./scripts/
 COPY scripts/license-notices.py ./scripts/license-notices.py
 COPY third_party/licenses ./third_party/licenses
-RUN --mount=type=cache,id=airk-cargo-registry,target=/usr/local/cargo/registry \
-    --mount=type=cache,id=airk-linux-target,target=/build/target \
-    cargo build --release --locked -p airk-cli \
-    && python3 scripts/license-notices.py --output /build/notices \
-    && mkdir -p /build/out && cp /build/target/release/airk /build/out/airk
 
-FROM build AS test
+FROM source AS test
 RUN --mount=type=cache,id=airk-cargo-registry,target=/usr/local/cargo/registry \
+    --mount=type=cache,id=airk-cargo-git,target=/usr/local/cargo/git \
     --mount=type=cache,id=airk-linux-target,target=/build/target \
-    cargo test --workspace --locked --offline
+    cargo fetch --locked \
+    && python3 scripts/ci-metrics.py run --name test-compile -- cargo nextest run --profile ci --workspace --locked --offline --no-run \
+    && python3 scripts/ci-metrics.py run --name test-execution -- cargo nextest run --profile ci --workspace --locked --offline \
+    && python3 scripts/ci-metrics.py run --name doctests -- cargo test --doc --workspace --locked --offline \
+    && python3 scripts/ci-metrics.py summary \
+    && mkdir -p /build/ci-report \
+    && cp target/nextest/ci/junit.xml artifacts/ci/timings.jsonl /build/ci-report/
+
+FROM test AS build
+RUN --mount=type=cache,id=airk-cargo-registry,target=/usr/local/cargo/registry \
+    --mount=type=cache,id=airk-cargo-git,target=/usr/local/cargo/git \
+    --mount=type=cache,id=airk-linux-target,target=/build/target \
+    python3 scripts/ci-metrics.py run --name release-compile -- cargo build --release --locked --offline -p airk-cli \
+    && python3 scripts/license-notices.py --output /build/notices \
+    && mkdir -p /build/out && cp /build/target/release/airk /build/out/airk \
+    && cp artifacts/ci/timings.jsonl /build/ci-report/ \
+    && python3 scripts/ci-prune-target.py
+
+FROM scratch AS report
+COPY --from=build /build/ci-report/ /
 
 FROM debian:bookworm-slim AS runtime
 RUN groupadd --gid 10001 airk && useradd --uid 10001 --gid airk --no-create-home airk \

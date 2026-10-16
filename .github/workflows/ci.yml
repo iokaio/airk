@@ -3,9 +3,13 @@ name: CI
 on:
   push:
     branches: [main]
-    tags: ['v*']
   pull_request:
   workflow_dispatch:
+    inputs:
+      fresh_build:
+        description: Disable native and container cache restores for a cold qualification build
+        type: boolean
+        default: false
   workflow_call:
     inputs:
       channel:
@@ -27,7 +31,81 @@ env:
   CARGO_BUILD_JOBS: '2'
   CARGO_INCREMENTAL: '0'
 jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      plan: ${{ steps.plan.outputs.plan }}
+      native: ${{ steps.plan.outputs.native }}
+      container: ${{ steps.plan.outputs.container }}
+      extension: ${{ steps.plan.outputs.extension }}
+      contracts: ${{ steps.plan.outputs.contracts }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: plan
+        run: python scripts/ci-plan.py plan
+  quick:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - run: cargo fmt --all --check
+      - run: python -m unittest discover -s scripts/tests -p test_ci_plan.py -v
+      - name: Install pinned workflow validator
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
+        with:
+          tool: actionlint@1.7.12
+      - run: actionlint -shellcheck= -pyflakes=
+      - name: Public files, documentation links and contributor guidance
+        shell: pwsh
+        run: ./scripts/check-repo.ps1
+      - run: git diff --check
+  contracts:
+    name: Contracts / ${{ matrix.os }}
+    needs: [plan, quick]
+    if: needs.plan.outputs.contracts == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025, macos-15, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.11'
+      - run: python -m unittest discover -s scripts/tests -v
+  extension:
+    needs: [plan, quick]
+    if: needs.plan.outputs.extension == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '24.15.0'
+          package-manager-cache: false
+      - run: npm ci --ignore-scripts --no-audit --no-fund --prefix packages/vscode
+      - run: npm test --prefix packages/vscode
+      - name: Verify compiled extension staging and listing contracts
+        run: python -m unittest discover -s scripts/tests -p test_package_extension.py -v
   native:
+    needs: [plan, quick, contracts, extension]
+    if: ${{ !cancelled() && needs.plan.outputs.native == 'true' && needs.quick.result == 'success' && (needs.contracts.result == 'success' || needs.contracts.result == 'skipped') && (needs.extension.result == 'success' || needs.extension.result == 'skipped') }}
+    env:
+      CARGO_BUILD_JOBS: ${{ matrix.cargo_jobs }}
+      NEXTEST_TEST_THREADS: ${{ matrix.test_threads }}
     name: Native / ${{ matrix.target }}
     strategy:
       fail-fast: false
@@ -37,15 +115,23 @@ jobs:
           - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             executable: airk
+            cargo_jobs: 4
+            test_threads: 4
           - os: windows-2025
             target: x86_64-pc-windows-msvc
             executable: airk.exe
+            cargo_jobs: 4
+            test_threads: 4
           - os: macos-15
             target: aarch64-apple-darwin
             executable: airk
+            cargo_jobs: 2
+            test_threads: 2
           - os: macos-15-intel
             target: x86_64-apple-darwin
             executable: airk
+            cargo_jobs: 4
+            test_threads: 4
             timeout_minutes: 120
     runs-on: ${{ matrix.os }}
     timeout-minutes: ${{ matrix.timeout_minutes || 90 }}
@@ -58,39 +144,19 @@ jobs:
           python-version: '3.11'
       - name: Install pinned compiler and checks
         run: rustup show
-      - name: Restore Rust dependencies and compiler outputs
-        if: ${{ !inputs.fresh_build && runner.os != 'Windows' }}
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Restore dependency compiler cache
+        if: ${{ !inputs.fresh_build }}
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        timeout-minutes: 8
         with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/registry/src
-            ~/.cargo/git/db
-            target/debug
-            target/release
-            target/${{ matrix.target }}/debug
-            target/${{ matrix.target }}/release
-          key: airk-rust-v1-${{ runner.os }}-${{ matrix.target }}-${{ hashFiles('rust-toolchain.toml', '.github/workflows/ci.yml', '.cargo/**') }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}
-          restore-keys: |
-            airk-rust-v1-${{ runner.os }}-${{ matrix.target }}-${{ hashFiles('rust-toolchain.toml', '.github/workflows/ci.yml', '.cargo/**') }}-
-      # Windows compiler outputs produced a 13.8 GB archive and spent 44 minutes
-      # compressing it. Cache downloaded dependencies only, with bounded I/O.
-      - name: Restore Windows Rust dependencies
-        id: windows-rust-dependencies
-        if: ${{ !inputs.fresh_build && runner.os == 'Windows' }}
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        timeout-minutes: 5
-        continue-on-error: true
+          shared-key: native-${{ matrix.target }}
+          cache-workspace-crates: false
+          cache-on-failure: false
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      - name: Install pinned process-isolated test runner
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
         with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/registry/src
-            ~/.cargo/git/db
-          key: airk-rust-dependencies-v1-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: |
-            airk-rust-dependencies-v1-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}-
+          tool: cargo-nextest@0.9.148
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: '24.15.0'
@@ -101,22 +167,16 @@ jobs:
         env:
           AIRK_EXPECTED_VERSION: ${{ inputs.expected_version }}
         run: node -e "const p=require('./packages/vscode/package.json'); const v=process.env.AIRK_EXPECTED_VERSION; if(v && p.version!==v) throw Error('Requested version differs from package.json')"
-      - run: cargo fmt --all --check
-      - run: cargo clippy --workspace --all-targets --locked --target ${{ matrix.target }} -- -D warnings
-      - name: Run workspace tests
-        if: matrix.target != 'x86_64-apple-darwin'
-        run: cargo test --workspace --locked --target ${{ matrix.target }}
-      - name: Run workspace tests without Intel macOS fixture contention
-        if: matrix.target == 'x86_64-apple-darwin'
-        run: cargo test --workspace --locked --target ${{ matrix.target }} -- --test-threads=1
-      - name: Packaging contract tests
-        run: python -m unittest discover -s scripts/tests -v
-      - name: Repository checks
-        shell: pwsh
-        run: ./scripts/check-repo.ps1
-      - run: git diff --check
+      - name: Clippy for this native platform
+        run: python scripts/ci-metrics.py run --name clippy -- cargo clippy --workspace --all-targets --locked --target ${{ matrix.target }} -- -D warnings
+      - name: Compile workspace tests
+        run: python scripts/ci-metrics.py run --name test-compile -- cargo nextest run --profile ci --workspace --locked --target ${{ matrix.target }} --no-run
+      - name: Run isolated workspace tests
+        run: python scripts/ci-metrics.py run --name test-execution -- cargo nextest run --profile ci --workspace --locked --target ${{ matrix.target }}
+      - name: Run documentation tests
+        run: python scripts/ci-metrics.py run --name doctests -- cargo test --doc --workspace --locked --target ${{ matrix.target }}
       - name: Build pinned native candidate
-        run: cargo build --release --locked -p airk-cli --target ${{ matrix.target }}
+        run: python scripts/ci-metrics.py run --name release-compile -- cargo build --release --locked -p airk-cli --target ${{ matrix.target }}
       - name: Bounded code indexing correctness and measurement smoke
         run: python scripts/benchmark-code.py --binary target/${{ matrix.target }}/release/${{ matrix.executable }} --files 64 --output artifacts/benchmarks/${{ matrix.target }}.json
       - name: DOCX and XLSX table indexing through the public CLI
@@ -163,19 +223,22 @@ jobs:
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
-      - name: Save Windows Rust dependencies
-        if: ${{ !inputs.fresh_build && runner.os == 'Windows' && steps.windows-rust-dependencies.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        timeout-minutes: 5
-        continue-on-error: true
+      - name: Summarize phase durations and slow tests
+        if: always()
+        run: python scripts/ci-metrics.py summary
+      - name: Retain timing evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
+          name: airk-ci-timings-${{ matrix.target }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/registry/src
-            ~/.cargo/git/db
-          key: airk-rust-dependencies-v1-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('Cargo.lock') }}
+            artifacts/ci/
+            target/nextest/ci/junit.xml
+          if-no-files-found: warn
+          retention-days: 7
   container:
+    needs: [plan, quick]
+    if: needs.plan.outputs.container == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
@@ -185,20 +248,65 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.11'
-      - name: Test Linux container build stage
-        run: docker build --target test -t airk:local-test .
-      - run: docker compose build
+      - name: Create isolated BuildKit builder
+        id: buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Restore and save trusted dependency mounts
+        if: ${{ !inputs.fresh_build && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        id: docker-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: artifacts/docker-cache
+          key: airk-docker-deps-v2-${{ hashFiles('Dockerfile', 'rust-toolchain.toml', 'Cargo.lock', '**/Cargo.toml', 'scripts/ci-prune-target.py') }}
+      - name: Restore dependency mounts without writing PR caches
+        if: ${{ !inputs.fresh_build && (github.event_name != 'push' || github.ref != 'refs/heads/main') }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: artifacts/docker-cache
+          key: airk-docker-deps-v2-${{ hashFiles('Dockerfile', 'rust-toolchain.toml', 'Cargo.lock', '**/Cargo.toml', 'scripts/ci-prune-target.py') }}
+      - name: Persist the actual Cargo cache mounts
+        if: ${{ !inputs.fresh_build }}
+        uses: reproducible-containers/buildkit-cache-dance@5422eac04292c961a382e0f584ea0f03ad9da723 # v3
+        with:
+          builder: ${{ steps.buildx.outputs.name }}
+          cache-map: |
+            {
+              "artifacts/docker-cache/registry": {"target": "/usr/local/cargo/registry", "id": "airk-cargo-registry"},
+              "artifacts/docker-cache/git": {"target": "/usr/local/cargo/git", "id": "airk-cargo-git"},
+              "artifacts/docker-cache/target": {"target": "/build/target", "id": "airk-linux-target"}
+            }
+          skip-extraction: ${{ github.event_name != 'push' || github.ref != 'refs/heads/main' || steps.docker-cache.outputs.cache-hit == 'true' }}
+      - name: Test before building the runtime image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          target: runtime
+          load: true
+          tags: airk:dev
+          cache-from: ${{ !inputs.fresh_build && 'type=gha,scope=airk-container-v2' || '' }}
+          cache-to: ${{ !inputs.fresh_build && github.event_name == 'push' && github.ref == 'refs/heads/main' && 'type=gha,mode=max,scope=airk-container-v2' || '' }}
       - name: One-container collection smoke test
         run: python scripts/check-container.py --image airk:dev
+      - name: Export container phase and test timings
+        run: docker buildx build --target report --output type=local,dest=artifacts/container-ci .
+      - name: Summarize container measurements
+        run: python scripts/ci-metrics.py summary --file artifacts/container-ci/timings.jsonl --junit artifacts/container-ci/junit.xml
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: airk-container-timings-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/container-ci/
+          retention-days: 7
   required:
     name: Required checks
     if: ${{ always() }}
-    needs: [native, container]
+    needs: [plan, quick, contracts, extension, native, container]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Require every platform and container check
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Require exactly the checks selected by the complete diff
         env:
-          AIRK_NATIVE_RESULT: ${{ needs.native.result }}
-          AIRK_CONTAINER_RESULT: ${{ needs.container.result }}
-        run: test "$AIRK_NATIVE_RESULT" = success && test "$AIRK_CONTAINER_RESULT" = success
+          AIRK_NEEDS: ${{ toJSON(needs) }}
+        run: python scripts/ci-plan.py gate
