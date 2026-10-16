@@ -76,6 +76,24 @@ The relocation regression models an inherited Unix open file description with a 
 
 Native job summaries and `airk-ci-timings-*` artifacts separate clippy, test compilation, execution, doctests and optimized compilation, and list the slowest tests. Docker prints the same phases and exports reports after a successful build. Failed container builds retain their phase/test diagnostics in the build log. Cache actions report transfer sizes and durations separately. Compare cold and warm runs on the same platform; local timings and cache hits are not reproducibility attestations or cross-platform qualification.
 
+### First hosted pilot: 2026-10-16
+
+[PR #13 CI run 38967989160](https://github.com/iokaio/airk/actions/runs/38967989160) passed all four native platforms, container smoke, extension and script contracts, and the required gate. Its critical path was approximately 54 minutes. The following phase durations come from its numeric timing artifacts, rounded to the nearest second; job totals also include tool installation, packaging and artifact transfer.
+
+| Platform | Clippy | Test compilation | Test execution | Optimized compilation | Whole job |
+|---|---:|---:|---:|---:|---:|
+| Linux x64 | 2:10 | 2:23 | 10:50 | 8:29 | 25:02 |
+| Windows x64 | 3:46 | 5:33 | 21:39 | 17:23 | 50:58 |
+| macOS Apple Silicon | 3:31 | 4:09 | 15:34 | 13:46 | 38:20 |
+| macOS Intel | 5:45 | 4:54 | 23:39 | 16:20 | 53:18 |
+| Linux container | — | 3:17 | 6:36 | 7:31 | 19:00 |
+
+The new native cache namespace had not yet been populated by a main push; the Windows and Intel logs explicitly report no cache found. This is a first-run measurement, not a warm-cache result. The [previous PR run 38956054308](https://github.com/iokaio/airk/actions/runs/38956054308) took 51:45 on Windows and 53:43 on Intel; its container job failed after 25:39. Those runs had different cache conditions, so their totals do not isolate the effect of consolidation or scheduling. The pilot establishes a passing full matrix and working measurements, not a 25-minute full-CI target.
+
+The unchanged 200-edit retention test remains the slowest test: 7:12 on Linux, 11:22 on Windows, 9:55 on Apple Silicon and 15:06 on Intel. It performs real publications and verifies the retained-object plateau. These observations do not justify reducing its edit count, weakening assertions or removing Intel's timeout headroom.
+
+After merging, main CI must produce its own exact-commit candidate and populate trusted dependency caches. Subsequent measurements should establish cache save/restore sizes and time, a warm run on the same platform, and successful candidate authentication before release promotion. A documentation-only PR can independently verify that the classifier skips native/container jobs while the required gate and DCO still pass. Preserve these distinctions when reporting pipeline improvements; release promotion and publication need their own evidence.
+
 ## Controls that reduce unnecessary work
 
 - Branch pushes outside main use PR validation; newer commits cancel superseded runs for that PR. There is no schedule.
