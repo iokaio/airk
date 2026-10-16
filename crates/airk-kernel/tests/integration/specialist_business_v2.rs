@@ -100,7 +100,7 @@ fn cobol_free_requires_explicit_profile_and_survives_move() -> Result<()> {
     qualify_profile(
         "free.cob",
         "moved-free.cob",
-        include_str!("../../airk-ingest/tests/fixtures/specialist-business/free.cob"),
+        include_str!("../../../airk-ingest/tests/fixtures/specialist-business/free.cob"),
         "FREE-ARCHIVE",
         Some("cobol-free"),
     )

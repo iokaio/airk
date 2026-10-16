@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Original pure matching fixtures; public publication coverage is added at wiring.
-#[path = "../src/reconciliation.rs"]
+#[path = "../../src/reconciliation.rs"]
 mod reconciliation;
 
 use airk_core::{
