@@ -26,6 +26,7 @@ def module(name, filename):
 extension = module("extension_release", "verify-extension-release.py")
 native = module("native_package", "package-native.py")
 signer = module("native_signer", "sign-native.py")
+producers = module("ci_candidates", "ci-candidates.py")
 SIGNED_TARGETS = {"x86_64-pc-windows-msvc", "aarch64-apple-darwin", "x86_64-apple-darwin"}
 REPOSITORY = "iokaio/airk"
 WORKFLOW = REPOSITORY + "/.github/workflows/github-release.yml@refs/heads/main"
@@ -152,10 +153,14 @@ def stage_signing(directory, target, commit, version):
     (output / executable).chmod(0o755)
 
 
-def assemble(directory, output, commit, version, tag, channel, run_id, attempt):
+def assemble(directory, output, commit, version, tag, channel, run_id, attempt, producer=None):
     if tag != identity(version, tag.rsplit(".", 1)[-1]) or channel not in ("preview", "stable"):
         raise ValueError("Invalid release identity/channel")
-    suffix = f"{commit}-{run_id}-{attempt}"
+    suffix = f"{commit}-{run_id}-{attempt}" if producer is None else f"{commit}-{run_id}"
+    producer_suffix = suffix
+    if producer is not None:
+        producers.verify_record(producer, commit)
+        producer_suffix = f"{commit}-{producer['run_id']}-{producer['attempt']}"
     selected = []
     extensions = []
     for target in native.TARGETS:
@@ -168,10 +173,14 @@ def assemble(directory, output, commit, version, tag, channel, run_id, attempt):
                 or vsix_receipt["native_archive_sha256"] != receipt["archive_sha256"]):
             raise ValueError("VSIX and native download are not the same build")
         if target in SIGNED_TARGETS:
-            original, _ = verify_native(directory / f"airk-native-{target}-{suffix}", target, commit, version, False)
+            original, _ = verify_native(directory / f"airk-native-{target}-{producer_suffix}", target, commit, version, False)
             executable = "airk.exe" if "windows" in target else "airk"
             if receipt["signing"]["source_sha256"] != original["payload"][executable]:
                 raise ValueError("Signed binary did not originate in the tested candidate")
+        elif producer is not None:
+            original, _ = verify_native(directory / f"airk-native-{target}-{producer_suffix}", target, commit, version, False)
+            if receipt != original:
+                raise ValueError("Linux native package differs from the tested producer")
         extensions.append(vsix_dir / "manifest.json")
         selected.extend(((archive, archive.name), (vsix, vsix.name),
                          (native_dir / "manifest.json", f"airk-{version}-{target}.native-manifest.json"),
@@ -183,9 +192,14 @@ def assemble(directory, output, commit, version, tag, channel, run_id, attempt):
     record = {"schema": "airk-github-release/1", "tag": tag, "package_version": version,
               "commit": commit, "channel": channel, "run_id": str(run_id), "attempt": str(attempt),
               "assets": {name: digest(output / name) for _, name in selected}}
+    if producer is not None:
+        record["producer"] = producer
     (output / "release.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+    build_run = producer["run_id"] if producer else run_id
+    build_attempt = producer["attempt"] if producer else attempt
     notes = (f"AIRK {tag} ({channel})\n\nPackage version: {version}. Source commit: {commit}.\n"
-             f"Build and checks: https://github.com/{REPOSITORY}/actions/runs/{run_id}/attempts/{attempt}\n\n"
+             f"Build and checks: https://github.com/{REPOSITORY}/actions/runs/{build_run}/attempts/{build_attempt}\n"
+             f"Signing and assembly: https://github.com/{REPOSITORY}/actions/runs/{run_id}/attempts/{attempt}\n\n"
              "Downloads include native ZIPs and matching platform VSIX files. Windows uses Ioka LLC "
              "Azure Artifact Signing. Both macOS helpers use Developer ID signing and accepted Apple "
              "notarization; the standalone CLI has no stapled offline ticket. Linux is unsigned.\n\n"
@@ -260,21 +274,46 @@ def verify_bundle(directory, commit, version, tag, run_id, attempt):
     return record
 
 
-def publish(directory):
+def publish(directory, resume=False):
     commit, version, tag = context()
-    record = verify_bundle(directory, commit, version, tag, os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"])
-    require_unused_tag(tag)
+    attempt = os.environ["GITHUB_RUN_ATTEMPT"]
+    if resume:
+        attempt = extension.read_receipt(directory / "release.json")["attempt"]
+        if not 0 < producers.positive(attempt) <= producers.positive(os.environ["GITHUB_RUN_ATTEMPT"]):
+            raise ValueError("Release bundle comes from a future attempt")
+    record = verify_bundle(directory, commit, version, tag, os.environ["GITHUB_RUN_ID"], attempt)
     assets = sorted(directory.iterdir())
-    command = ["gh", "release", "create", tag, "--repo", REPOSITORY, "--draft",
-               "--target", commit, "--title", f"AIRK {tag}", "--notes-file", str(directory / "release-notes.md")]
-    if record["channel"] == "preview":
-        command.append("--prerelease")
-    subprocess.run(command + [str(p) for p in assets], check=True)
-    release_id = release_id_for_tag(tag)
-    if release_id is None:
-        raise ValueError("Uploaded draft not found; inspect releases before dispatching a new build")
-    uploaded = github(f"releases/{release_id}")
+    release_id = release_id_for_tag(tag) if resume else None
     expected = {p.name: "sha256:" + digest(p) for p in assets}
+    if release_id is not None:
+        uploaded = github(f"releases/{release_id}")
+        actual = {p["name"]: p.get("digest") for p in uploaded["assets"]}
+        if (uploaded.get("id") != release_id or uploaded.get("tag_name") != tag
+                or uploaded.get("target_commitish") != commit
+                or uploaded.get("prerelease") is not (record["channel"] == "preview")
+                or len(uploaded["assets"]) != len(actual)
+                or any(name not in expected or expected[name] != value for name, value in actual.items())):
+            raise ValueError("Existing release identity/assets differ; draft retained for inspection")
+        tag_ref = github(f"git/ref/tags/{tag}", missing=True)
+        if tag_ref is not None and tag_ref.get("object", {}).get("sha") != commit:
+            raise ValueError("Release tag points at another commit; draft retained for inspection")
+        if uploaded.get("draft") is False:
+            if actual != expected or tag_ref is None:
+                raise ValueError("Published release is incomplete or has no matching tag")
+            print("Verified release already published")
+            return
+        if uploaded.get("draft") is not True:
+            raise ValueError("Invalid remote draft state")
+        missing = [str(p) for p in assets if p.name not in actual]
+        if missing:
+            subprocess.run(["gh", "release", "upload", tag, "--repo", REPOSITORY, *missing], check=True)
+    else:
+        require_unused_tag(tag)
+        create_draft(tag, commit, record["channel"], directory, assets)
+        release_id = release_id_for_tag(tag)
+    if release_id is None:
+        raise ValueError("Uploaded draft not found; rerun the failed publish job after inspection")
+    uploaded = github(f"releases/{release_id}")
     actual = {p["name"]: p.get("digest") for p in uploaded["assets"]}
     if (uploaded.get("id") != release_id or uploaded.get("tag_name") != tag
             or uploaded["draft"] is not True or uploaded["target_commitish"] != commit
@@ -289,12 +328,22 @@ def publish(directory):
                    check=True)
 
 
+def create_draft(tag, commit, channel, directory, assets):
+    command = ["gh", "release", "create", tag, "--repo", REPOSITORY, "--draft",
+               "--target", commit, "--title", f"AIRK {tag}", "--notes-file", str(directory / "release-notes.md")]
+    if channel == "preview":
+        command.append("--prerelease")
+    subprocess.run(command + [str(p) for p in assets], check=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("preflight", "stage-signing", "assemble", "publish"))
     parser.add_argument("--directory", type=Path)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--target", choices=native.TARGETS)
+    parser.add_argument("--producer", type=Path)
+    parser.add_argument("--resume", action="store_true")
     parser.add_argument("--channel", choices=("preview", "stable"), default="preview")
     args = parser.parse_args()
     commit, version, tag = context()
@@ -307,10 +356,11 @@ def main():
         stage_signing(args.directory, args.target, commit, version)
     elif args.command == "assemble":
         assemble(args.directory, args.output, commit, version, tag, args.channel,
-                 os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"])
+                 os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"],
+                 json.loads(args.producer.read_text(encoding="utf-8")) if args.producer else None)
         print(f"Verified release assets: {args.output}")
     else:
-        publish(args.directory)
+        publish(args.directory, resume=args.resume)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: Apache-2.0
+name: Verify release tag
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  provenance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Verify the published release and its tested main producer
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/ci-candidates.py tag

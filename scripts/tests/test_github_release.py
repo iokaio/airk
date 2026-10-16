@@ -2,6 +2,7 @@
 import importlib.util
 import json
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import tempfile
@@ -99,6 +100,62 @@ def fixtures(directory, channel="preview"):
 class GithubReleaseContracts(unittest.TestCase):
     def assemble(self, directory, output, channel="preview"):
         return release.assemble(directory, output, COMMIT, VERSION, TAG, channel, "123", "1")
+
+    def test_promotion_keeps_producer_and_signing_run_distinct(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            fixtures(root / "in")
+            for path in list((root / "in").iterdir()):
+                if path.name.startswith("airk-signed-") or "x86_64-unknown-linux-gnu" in path.name:
+                    shutil.copytree(path, path.with_name(path.name.replace(SUFFIX, COMMIT + "-456")))
+            producer = dict(schema="airk-ci-producer/1", commit=COMMIT, run_id="123", attempt="1")
+            with patch.object(release.producers, "verify_record") as verify:
+                record = release.assemble(root / "in", root / "out", COMMIT, VERSION, TAG, "preview", "456", "2", producer)
+                verify.assert_called_once_with(producer, COMMIT)
+            self.assertEqual(record["producer"], producer)
+            self.assertEqual(record["run_id"], "456")
+            self.assertEqual(record["attempt"], "2")
+            release.verify_bundle(root / "out", COMMIT, VERSION, TAG, "456", "2")
+
+    def test_resume_uses_original_assembly_and_never_overwrites_conflicts(self):
+        for state in ("draft", "missing", "published", "conflicting", "extra", "future"):
+            with self.subTest(state=state), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                fixtures(root / "in")
+                self.assemble(root / "in", root / "out")
+                assets = [{"name": p.name, "digest": "sha256:" + release.digest(p)} for p in (root / "out").iterdir()]
+                complete = dict(id=7, tag_name=TAG, draft=True, target_commitish=COMMIT, prerelease=True, assets=assets)
+                remote = {**complete, "assets": list(assets)}
+                if state == "missing":
+                    remote["assets"].pop()
+                elif state == "published":
+                    remote["draft"] = False
+                elif state == "conflicting":
+                    remote["assets"][0] = {**assets[0], "digest": "sha256:" + "0" * 64}
+                elif state == "extra":
+                    remote["assets"].append(dict(name="unrecognized", digest=None))
+                responses = iter([remote, complete])
+                def api(path, **kwargs):
+                    if path == "releases/7":
+                        return next(responses)
+                    if path.startswith("git/ref/"):
+                        return {"object": {"sha": COMMIT}} if state == "published" else None
+                    self.fail(path)
+                with patch.object(release, "context", return_value=(COMMIT, VERSION, TAG)), \
+                        patch.dict(os.environ, {"GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "0" if state == "future" else "2"}), \
+                        patch.object(release, "release_id_for_tag", return_value=7), \
+                        patch.object(release, "github", side_effect=api), \
+                        patch.object(release.subprocess, "run") as run:
+                    if state in ("conflicting", "extra", "future"):
+                        with self.assertRaises(ValueError):
+                            release.publish(root / "out", resume=True)
+                        run.assert_not_called()
+                    else:
+                        release.publish(root / "out", resume=True)
+                        self.assertEqual(run.call_count, {"draft": 1, "missing": 2, "published": 0}[state])
+                        for call in run.call_args_list:
+                            self.assertNotIn("--clobber", call.args[0])
+                            self.assertNotIn("create", call.args[0])
 
     def test_complete_platforms_form_verifiable_public_bundle(self):
         for channel in ("preview", "stable"):
