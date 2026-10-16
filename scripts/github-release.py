@@ -200,8 +200,11 @@ def assemble(directory, output, commit, version, tag, channel, run_id, attempt):
     return record
 
 
-def github(path, *, missing=False):
-    result = subprocess.run(["gh", "api", f"repos/{REPOSITORY}/{path}"],
+def github(path, *, missing=False, paginate=False):
+    command = ["gh", "api", f"repos/{REPOSITORY}/{path}"]
+    if paginate:
+        command.extend(("--paginate", "--slurp"))
+    result = subprocess.run(command,
                             capture_output=True, text=True, check=False)
     if result.returncode:
         if missing and "(HTTP 404)" in result.stderr:
@@ -210,8 +213,21 @@ def github(path, *, missing=False):
     return json.loads(result.stdout)
 
 
+def release_id_for_tag(tag):
+    # The by-tag endpoint returns published releases only. Include drafts and
+    # every page, so an earlier partial publication cannot be overwritten.
+    pages = github("releases?per_page=100", paginate=True)
+    matches = [entry for page in pages for entry in page if entry.get("tag_name") == tag]
+    if not matches:
+        return None
+    if len(matches) != 1 or type(matches[0].get("id")) is not int or matches[0]["id"] <= 0:
+        raise ValueError("Ambiguous or invalid release identity; inspect retained drafts")
+    return matches[0]["id"]
+
+
 def require_unused_tag(tag):
     if (github(f"releases/tags/{tag}", missing=True) is not None
+            or release_id_for_tag(tag) is not None
             or github(f"git/ref/tags/{tag}", missing=True) is not None):
         raise ValueError("Release/tag already exists; dispatch a new build rather than overwrite it")
 
@@ -254,18 +270,23 @@ def publish(directory):
     if record["channel"] == "preview":
         command.append("--prerelease")
     subprocess.run(command + [str(p) for p in assets], check=True)
-    uploaded = github(f"releases/tags/{tag}")
+    release_id = release_id_for_tag(tag)
+    if release_id is None:
+        raise ValueError("Uploaded draft not found; inspect releases before dispatching a new build")
+    uploaded = github(f"releases/{release_id}")
     expected = {p.name: "sha256:" + digest(p) for p in assets}
     actual = {p["name"]: p.get("digest") for p in uploaded["assets"]}
-    if (uploaded["draft"] is not True or uploaded["target_commitish"] != commit
+    if (uploaded.get("id") != release_id or uploaded.get("tag_name") != tag
+            or uploaded["draft"] is not True or uploaded["target_commitish"] != commit
             or uploaded["prerelease"] is not (record["channel"] == "preview")
             or len(uploaded["assets"]) != len(expected) or actual != expected):
         raise ValueError("Uploaded draft identity/assets differ; draft retained for inspection")
     tag_ref = github(f"git/ref/tags/{tag}", missing=True)
     if tag_ref is not None and tag_ref.get("object", {}).get("sha") != commit:
         raise ValueError("Release tag points at another commit; draft retained for inspection")
-    subprocess.run(["gh", "release", "edit", tag, "--repo", REPOSITORY, "--draft=false",
-                    "--latest=" + ("true" if record["channel"] == "stable" else "false")], check=True)
+    subprocess.run(["gh", "api", f"repos/{REPOSITORY}/releases/{release_id}", "--method", "PATCH",
+                    "-F", "draft=false", "-f", "make_latest=" + ("true" if record["channel"] == "stable" else "false")],
+                   check=True)
 
 
 def main():

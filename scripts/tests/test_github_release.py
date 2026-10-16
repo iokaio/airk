@@ -203,31 +203,99 @@ class GithubReleaseContracts(unittest.TestCase):
                     release.context()
 
     def test_publish_checks_uploaded_assets_before_making_draft_public(self):
-        for corrupted in (False, True):
-            with self.subTest(corrupted=corrupted), tempfile.TemporaryDirectory() as temporary:
+        cases = ((channel, corruption) for channel in ("preview", "stable")
+                 for corruption in (None, "missing_asset", "digest", "tag", "id", "commit", "channel", "published", "tag_ref"))
+        for channel, corruption in cases:
+            with self.subTest(channel=channel, corruption=corruption), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
-                fixtures(root / "in")
-                self.assemble(root / "in", root / "out")
+                fixtures(root / "in", channel)
+                self.assemble(root / "in", root / "out", channel)
                 assets = [{"name": p.name, "digest": "sha256:" + release.digest(p)} for p in (root / "out").iterdir()]
-                if corrupted:
+                if corruption == "missing_asset":
                     assets.pop()
-                remote = {"draft": True, "target_commitish": COMMIT, "prerelease": True, "assets": assets}
+                elif corruption == "digest":
+                    assets[0]["digest"] = "sha256:" + "0" * 64
+                remote = {"id": 7, "tag_name": TAG, "draft": True, "target_commitish": COMMIT,
+                          "prerelease": channel == "preview", "assets": assets}
+                changes = {"tag": ("tag_name", "other-tag"), "id": ("id", 8),
+                           "commit": ("target_commitish", "b" * 40), "channel": ("prerelease", channel != "preview"),
+                           "published": ("draft", False)}
+                if corruption in changes:
+                    key, value = changes[corruption]
+                    remote[key] = value
+
+                def api(path, **kwargs):
+                    if path == "releases?per_page=100":
+                        self.assertTrue(kwargs.get("paginate"))
+                        return [[{"id": 6, "tag_name": "unrelated"}], [{"id": 7, "tag_name": TAG}]]
+                    if path == "releases/7":
+                        return remote
+                    if path == f"git/ref/tags/{TAG}":
+                        return {"object": {"sha": "b" * 40}} if corruption == "tag_ref" else None
+                    self.fail("Unexpected API endpoint (drafts cannot be fetched by tag): " + path)
+
                 with patch.object(release, "context", return_value=(COMMIT, VERSION, TAG)), \
                         patch.dict(os.environ, {"GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1"}), \
                         patch.object(release, "require_unused_tag"), \
-                        patch.object(release, "github", side_effect=lambda path, **kw: None if path.startswith("git/") else remote), \
+                        patch.object(release, "github", side_effect=api), \
                         patch.object(release.subprocess, "run") as run:
-                    if corrupted:
+                    if corruption:
                         with self.assertRaisesRegex(ValueError, "draft retained"):
                             release.publish(root / "out")
                         self.assertEqual(run.call_count, 1)
                     else:
                         release.publish(root / "out")
                         self.assertEqual(run.call_count, 2)
-                        self.assertIn("--draft=false", run.call_args.args[0])
+                        self.assertEqual(run.call_args.args[0], [
+                            "gh", "api", f"repos/{release.REPOSITORY}/releases/7", "--method", "PATCH",
+                            "-F", "draft=false", "-f", "make_latest=" + ("true" if channel == "stable" else "false")])
                     creation = run.call_args_list[0].args[0]
                     self.assertIn("--draft", creation)
                     self.assertEqual(creation[creation.index("--target") + 1], COMMIT)
+
+    def test_existing_draft_without_git_tag_blocks_creation(self):
+        def api(path, **kwargs):
+            if path == "releases?per_page=100":
+                return [[{"id": 1, "tag_name": "unrelated"}], [{"id": 7, "tag_name": TAG, "draft": True}]]
+            return None
+
+        with patch.object(release, "github", side_effect=api), patch.object(release.subprocess, "run") as run:
+            with self.assertRaisesRegex(ValueError, "already exists"):
+                release.require_unused_tag(TAG)
+            run.assert_not_called()
+
+    def test_release_lookup_paginates_and_rejects_ambiguous_or_invalid_ids(self):
+        response = subprocess.CompletedProcess([], 0, json.dumps([
+            [{"id": 1, "tag_name": "unrelated"}], [{"id": 7, "tag_name": TAG, "draft": True}]]), "")
+        with patch.object(release.subprocess, "run", return_value=response) as run:
+            self.assertEqual(release.release_id_for_tag(TAG), 7)
+            self.assertEqual(run.call_args.args[0], ["gh", "api", f"repos/{release.REPOSITORY}/releases?per_page=100",
+                                                   "--paginate", "--slurp"])
+        for entries in ([{"tag_name": TAG, "id": 7}] * 2,
+                        [{"tag_name": TAG, "id": "7"}], [{"tag_name": TAG, "id": True}],
+                        [{"tag_name": TAG, "id": 0}], [{"tag_name": TAG}]):
+            with self.subTest(entries=entries), patch.object(release, "github", return_value=[entries]):
+                with self.assertRaisesRegex(ValueError, "release identity"):
+                    release.release_id_for_tag(TAG)
+        with patch.object(release, "github", return_value=[[]]):
+            self.assertIsNone(release.release_id_for_tag(TAG))
+
+    def test_failed_draft_discovery_never_publishes(self):
+        for failure in (None, RuntimeError("network unavailable")):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                fixtures(root / "in")
+                self.assemble(root / "in", root / "out")
+                with patch.object(release, "context", return_value=(COMMIT, VERSION, TAG)), \
+                        patch.dict(os.environ, {"GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1"}), \
+                        patch.object(release, "require_unused_tag"), \
+                        patch.object(release, "release_id_for_tag", return_value=None,
+                                     side_effect=failure), \
+                        patch.object(release.subprocess, "run") as run:
+                    with self.assertRaises((ValueError, RuntimeError)):
+                        release.publish(root / "out")
+                    self.assertEqual(run.call_count, 1)
+                    self.assertIn("create", run.call_args.args[0])
 
     def test_signing_stage_restores_only_tested_executable_and_refuses_reuse(self):
         with tempfile.TemporaryDirectory() as temporary:
