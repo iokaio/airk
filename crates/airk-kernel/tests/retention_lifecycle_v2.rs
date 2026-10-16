@@ -28,6 +28,15 @@ impl Fixture {
     fn new() -> Result<Self> {
         let source = tempfile::tempdir()?;
         let data = tempfile::tempdir()?;
+        // Size the entire fixture, including initialization and other collections,
+        // before any SQLite catalog is admitted. The default 4 GiB allowance
+        // tests physical free-space races on hosted runners instead of retention.
+        let quota = Quota::open(data.path())?;
+        quota.configure(airk_store::quota::QuotaPolicy {
+            root_bytes: 512 * 1024 * 1024,
+            default_collection_bytes: 128 * 1024 * 1024,
+            collections: BTreeMap::new(),
+        })?;
         let kernel = Kernel::open(source.path(), Some(data.path().into()))?;
         kernel.initialize()?;
         let store = FileStore::new(data.path().join("collections/default"));
@@ -325,14 +334,6 @@ fn two_hundred_real_edits_reach_searchable_and_content_plateau() -> Result<()> {
     let fixture = Fixture::new()?;
     fixture.automatic()?;
     let quota = Quota::open(fixture.data.path())?;
-    // Private SQLite admission precharges its maximum page allowance. This tiny
-    // fixture needs no multi-GiB default allowance competing with other tests
-    // for point-in-time free space on a shared hosted runner.
-    let mut policy = quota.policy()?;
-    policy
-        .collections
-        .insert("default".into(), 128 * 1024 * 1024);
-    quota.configure(policy)?;
     let mut previous = None;
     let mut tail = vec![];
     let mut total_tail = vec![];
@@ -544,7 +545,7 @@ fn manual_quota_exhaustion_is_typed_and_never_prunes_or_advances() -> Result<()>
 
 #[test]
 fn automatic_pressure_rebuilds_with_fresh_admission_after_reclaim() -> Result<()> {
-    let fixture = Fixture::new()?;
+    let mut fixture = Fixture::new()?;
     let body =
         "Original bounded large evidence with distinct observed source bytes.\n".repeat(50_000);
     for generation in 0..3 {
@@ -557,7 +558,6 @@ fn automatic_pressure_rebuilds_with_fresh_admission_after_reclaim() -> Result<()
     // Retire the empty initialization revision so the first pressure candidate
     // contains real payload bytes rather than only a tiny empty catalog.
     fixture.kernel.maintain_retention()?;
-    fixture.automatic()?;
     let quota = Quota::open(fixture.data.path())?;
     let used = quota.status()?.collections["default"].used_bytes;
     let mut policy = quota.policy()?;
@@ -570,7 +570,44 @@ fn automatic_pressure_rebuilds_with_fresh_admission_after_reclaim() -> Result<()
         fixture.source.path().join("evidence.md"),
         format!("# Revision 9999\n{body}"),
     )?;
+    // Prove that this exact publication cannot fit before reclamation, and
+    // that the failed attempt releases admission without advancing authority.
+    let retained = generations(&fixture.store)?;
+    let error = fixture
+        .kernel
+        .index()
+        .expect_err("fixture must hit quota pressure");
+    assert!(
+        error
+            .chain()
+            .any(|cause| cause.is::<airk_store::quota::QuotaPressure>()),
+        "expected logical quota pressure, not physical exhaustion: {error:#}"
+    );
+    assert_eq!(
+        fixture.store.persistent_revision()?.unwrap().token,
+        Some(before)
+    );
+    assert_eq!(generations(&fixture.store)?, retained);
+    assert_eq!(quota.status()?.active_reservations, 0);
+    fixture.automatic()?;
+    let reclaimed_before_publication = Arc::new(AtomicUsize::new(0));
+    let observed = reclaimed_before_publication.clone();
+    let store = fixture.store.clone();
+    fixture.kernel = fixture
+        .kernel
+        .with_retention_observer(Arc::new(move |stage| {
+            if stage == MaintenanceStage::IntentComplete
+                && store.persistent_revision()?.unwrap().token == Some(before)
+            {
+                observed.fetch_add(1, Ordering::SeqCst);
+            }
+            Ok(())
+        }));
     fixture.kernel.index()?;
+    assert!(
+        reclaimed_before_publication.load(Ordering::SeqCst) > 0,
+        "the successful publication must require pressure reclamation, not just postcommit cleanup"
+    );
     let after = fixture.store.persistent_revision()?.unwrap().token.unwrap();
     assert_eq!(after.generation, before.generation + 1);
     assert!(generations(&fixture.store)?.len() <= 2);
