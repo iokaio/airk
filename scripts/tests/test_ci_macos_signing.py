@@ -3,6 +3,7 @@ import base64
 import importlib.util
 import os
 from pathlib import Path
+import shlex
 import subprocess
 import tempfile
 import unittest
@@ -14,6 +15,56 @@ spec.loader.exec_module(signing)
 
 
 class HostedSigningContracts(unittest.TestCase):
+    def test_signer_can_resolve_chain_and_restores_search_list_on_success_or_failure(self):
+        values = {"MACOS_CERTIFICATE_P12": base64.b64encode(b"fictional p12").decode(),
+                  "MACOS_CERTIFICATE_PASSWORD": "fixture", "APPLE_ID": "fixture@example.invalid",
+                  "APPLE_APP_SPECIFIC_PASSWORD": "fixture-notary"}
+        original = ["/Users/runner/Library/Keychains/login.keychain-db", "/tmp/existing keychain"]
+        for failure in (None, "notary", "signer", "search-list"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temporary:
+                directory = Path(temporary) / "credentials"
+                keychain = str(directory / "signing.keychain-db")
+                search_list = original.copy()
+
+                def security(*args):
+                    if args[0] == "create-keychain":
+                        Path(args[-1]).touch()
+                    elif args[0] == "list-keychains":
+                        if "-s" not in args:
+                            return shlex.join(search_list)
+                        search_list[:] = map(str, args[4:])
+                        if failure == "search-list" and keychain in search_list:
+                            raise RuntimeError("search-list failed")
+                    elif args[0] == "find-identity":
+                        return signing.IDENTITY
+                    return ""
+
+                def notary(*args, **kwargs):
+                    if failure == "notary":
+                        raise RuntimeError("notary failed")
+
+                def signer(*args, **kwargs):
+                    self.assertIn(keychain, search_list)
+                    self.assertEqual(search_list[1:], original)
+                    self.assertTrue(Path(keychain).exists())
+                    self.assertFalse(any(name in os.environ for name in signing.SECRET_NAMES))
+                    if failure == "signer":
+                        raise RuntimeError("signer failed")
+
+                with patch.dict(os.environ, values), \
+                        patch.object(signing, "runner_directory", return_value=directory), \
+                        patch.object(signing, "security", side_effect=security), \
+                        patch.object(signing, "private_run", side_effect=notary), \
+                        patch.object(signing.subprocess, "run", side_effect=signer) as run:
+                    if failure:
+                        with self.assertRaisesRegex(RuntimeError, failure + " failed"):
+                            signing.sign("aarch64-apple-darwin")
+                    else:
+                        signing.sign("aarch64-apple-darwin")
+                    self.assertEqual(run.call_count, int(failure in (None, "signer")))
+                    self.assertEqual(search_list, original)
+                    self.assertFalse(directory.exists())
+
     def test_ref_event_and_host_guards_reject_untrusted_context(self):
         with tempfile.TemporaryDirectory() as temporary:
             environment = {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted",

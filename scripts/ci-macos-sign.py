@@ -70,6 +70,7 @@ def sign(target):
     if any(any(c in value for c in "\r\n\0") for value in values.values()):
         raise ValueError("Signing secrets must be single-line values")
     certificate = base64.b64decode(values["MACOS_CERTIFICATE_P12"], validate=True)
+    original_keychains = shlex.split(security("list-keychains", "-d", "user"))
     directory.mkdir(mode=0o700, exist_ok=False)
     keychain = directory / "signing.keychain-db"
     p12 = directory / "certificate.p12"
@@ -84,6 +85,9 @@ def sign(target):
                  "-T", "/usr/bin/codesign", "-T", "/usr/bin/security")
         p12.unlink()
         security("set-key-partition-list", "-S", "apple-tool:,apple:", "-s", "-k", password, keychain)
+        # codesign's --keychain restricts identity lookup, but certificate-chain
+        # resolution also needs the keychain in the user's search list.
+        security("list-keychains", "-d", "user", "-s", keychain, *original_keychains)
         identities = security("find-identity", "-v", "-p", "codesigning", keychain)
         if IDENTITY not in identities:
             raise ValueError("The imported keychain lacks the expected Ioka Developer ID identity")
@@ -96,7 +100,10 @@ def sign(target):
                         "--notarize", "--keychain-profile", "airk-ci", "--keychain", str(keychain),
                         "--output", f"artifacts/signed/{target}"], cwd=ROOT, check=True)
     finally:
-        cleanup(directory)
+        try:
+            security("list-keychains", "-d", "user", "-s", *original_keychains)
+        finally:
+            cleanup(directory)
 
 
 def main():

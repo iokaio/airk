@@ -45,6 +45,11 @@ class SigningContracts(unittest.TestCase):
             output = root / "artifacts/signed"
             keychain = root / "airk keychain"
             def run(command, **kwargs):
+                if command[0] == "/usr/bin/codesign":
+                    self.assertIn("--force", command)
+                    self.assertEqual(command[-1], output / "airk")
+                    self.assertEqual(source.read_bytes(), b"fictional executable")
+                    command[-1].write_bytes(b"fictional Developer ID signed executable")
                 if "notarytool" in command:
                     return json.dumps({"id": "fixture-submission", "status": "Accepted"})
                 return "fixture-commit"
@@ -61,6 +66,10 @@ class SigningContracts(unittest.TestCase):
                 invocation = next(call for call in calls if call[0] == tool)
                 self.assertEqual(invocation[invocation.index("--keychain") + 1], str(keychain))
             receipt = json.loads((output / "signing.json").read_text())
+            self.assertEqual(source.read_bytes(), b"fictional executable")
+            self.assertEqual(receipt["source_sha256"], signing.digest(source))
+            self.assertEqual(receipt["binary_sha256"], signing.digest(output / "airk"))
+            self.assertNotEqual(receipt["source_sha256"], receipt["binary_sha256"])
             self.assertEqual(receipt["notarization"]["status"], "Accepted")
             self.assertNotIn("keychain", receipt)
 
