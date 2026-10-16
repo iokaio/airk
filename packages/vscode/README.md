@@ -4,7 +4,7 @@
 
 Everything runs on your machine. There is no cloud service, API key, Docker, Rust or Python to install: the native helper is bundled in the extension.
 
-> **Beta 0.2.0.** Packages target Windows x64, Linux x64 and macOS (Intel and Apple Silicon). Large-repository performance, macOS and remote-host qualification, and semantic-search quality are still being measured. See [Known limits](#known-limits).
+> **Beta 0.2.1.** Packages target Windows x64, Linux x64 and macOS (Intel and Apple Silicon). Large-repository performance, macOS and remote-host qualification, and semantic-search quality are still being measured. See [Known limits](#known-limits).
 
 ![Workspace code and documents flow through AIRK's local collection to independently configured Claude Code, Codex, Gemini CLI and other MCP clients.](https://raw.githubusercontent.com/iokaio/airk/main/docs/images/local-evidence.png)
 
@@ -43,7 +43,7 @@ Document extraction keeps heading context, dates, requirement IDs and modality (
 
 ## Get started
 
-1. **Install the package for your platform** with **Extensions: Install from VSIX…**. Files are named `airk-0.2.0-<platform>.vsix` (`win32-x64`, `linux-x64`, `darwin-x64` or `darwin-arm64`). Check whether the package is from the preview or stable channel before installing.
+1. **Install the package for your platform** with **Extensions: Install from VSIX…**. Files are named `airk-0.2.1-<platform>.vsix` (`win32-x64`, `linux-x64`, `darwin-x64` or `darwin-arm64`). Check whether the package is from the preview or stable channel before installing.
 2. **Open a folder and trust it.** AIRK does not start its helper or read files in an untrusted window.
 3. **Index.** Click the **AIRK** status-bar item and choose **Index Now**, or run **AIRK: Index Now**. The status item then shows measured coverage, for example `AIRK: 97%`, and its tooltip lists stale, missing and failed files.
 4. **Connect an agent.**

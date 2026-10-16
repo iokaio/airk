@@ -1,8 +1,10 @@
 # VS Code extension content and illustrations
 
-This is the content specification for AIRK's extension details/Marketplace page, its first-use guidance and the material shown from its commands for the current beta (0.2.0). The shipped listing is [packages/vscode/README.md](../packages/vscode/README.md); the command/settings source is [package.json](../packages/vscode/package.json). Review this page against the actual release candidate, then capture editor screenshots for the [release checklist](release-checklist-0.1.0.md).
+This is the content specification for AIRK's extension details/Marketplace page, its first-use guidance and the material shown from its commands for the current beta (0.2.1). The shipped listing is [packages/vscode/README.md](../packages/vscode/README.md); the command/settings source is [package.json](../packages/vscode/package.json). Review this page against the actual release candidate, then capture editor screenshots for the [release checklist](release-checklist-0.1.0.md).
 
 The package includes the two original PNG illustrations and rewrites their listing links to those bundled assets. The installed listing can display them without fetching repository images; package verification includes their exact digests.
+
+The Marketplace icon is [icon.png](../packages/vscode/images/icon.png), a 256×256 transparent PNG rendered from the website's [SVG mark](../site/favicon.svg). The site header, favicon and Marketplace listing share the AIRK mark in Ioka's navy, warm white and gold palette. The separate monochrome activity-bar icon follows the editor theme. The packager explicitly includes both extension icons in its verified payload.
 
 ## Lead with the purpose
 

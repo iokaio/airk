@@ -18,7 +18,7 @@ TARGETS = {"x86_64-pc-windows-msvc": "win32-x64", "x86_64-unknown-linux-gnu": "l
 MODULES = ("extension.js", "model.js", "native.js", "scheduler.js", "coverage.js",
            "retention.js", "extractionPolicy.js", "history.js", "report.js")
 ILLUSTRATIONS = ("local-evidence.png", "index-to-context.png")
-ICONS = ("airk.svg",)
+ICONS = ("airk.svg", "icon.png")
 
 
 def digest(data):
