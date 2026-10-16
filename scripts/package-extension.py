@@ -177,7 +177,7 @@ def main():
                "native_manifest_sha256": digest((native / "manifest.json").read_bytes()),
                "npm_lock_sha256": digest((EXTENSION / "package-lock.json").read_bytes()),
                "node": subprocess.check_output(["node", "--version"], text=True).strip(),
-               "vsce": "4.0.0", "archive": vsix.name, "archive_sha256": digest(vsix.read_bytes()),
+               "vsce": "4.0.1-3", "archive": vsix.name, "archive_sha256": digest(vsix.read_bytes()),
                "payload": expected, "qualification": "verified package; installed-editor lifecycle qualification separate"}
     receipt_path = publish / "manifest.json"
     receipt_path.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
