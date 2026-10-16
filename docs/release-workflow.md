@@ -4,7 +4,9 @@
 
 The [GitHub release workflow](../.github/workflows/github-release.yml) builds, signs and prepares downloads on GitHub-hosted machines. Run **Actions → GitHub release → Run workflow** on **main**, choose **preview** or **stable**, and enable **publish** to publish the verified downloads. Leave publish disabled for a full build/signing rehearsal with downloadable Actions artifacts.
 
-The release tag is automatically numbered from this workflow's run number: for example, `v0.1.0-build.42`. The base version comes from the checked-in Cargo workspace and must match the VS Code extension. App/extension versions remain the checked-in version (currently `0.2.1`); no commit, lockfile or package metadata is rewritten. Every new dispatch advances the build number, including failed/rehearsal runs. Reruns retain the number and change the attempt. An existing release or tag is never overwritten; after a partial publication, inspect the retained draft and dispatch a new build.
+Changes to the release workflow or its release/signing contracts on `main` also run a short validation job without signing credentials. This explicit push event registers and validates the workflow independently of manual dispatch. Push runs skip release preflight and all dependent build, signing, publication and deployment jobs; those remain available only through manual dispatch.
+
+The release tag is automatically numbered from this workflow's run number: for example, `v0.1.0-build.42`. The base version comes from the checked-in Cargo workspace and must match the VS Code extension. App/extension versions remain the checked-in version (currently `0.2.1`); no commit, lockfile or package metadata is rewritten. Every workflow run advances the build number, including validation, failed and rehearsal runs. Reruns retain the number and change the attempt. An existing release or tag is never overwritten; after a partial publication, inspect the retained draft and dispatch a new build.
 
 Before a draft exists, retry with **Re-run all jobs** so every input belongs to the new attempt. Re-running only failed signing/publishing jobs cannot consume artifacts from an older attempt.
 
