@@ -1,51 +1,56 @@
 // SPDX-License-Identifier: Apache-2.0
 import { strict as assert } from 'node:assert';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { test } from 'node:test';
+import { runInNewContext } from 'node:vm';
 
-// Test the pinned build tool itself: 4.0.0 sent an obsolete exchange request.
-const { getOIDCCredential } = require('@vscode/vsce/out/oidc');
-const environment = {
-    GITHUB_ACTIONS: 'true',
-    ACTIONS_ID_TOKEN_REQUEST_URL: 'https://pipelines.actions.githubusercontent.com/fixture?api-version=2',
-    ACTIONS_ID_TOKEN_REQUEST_TOKEN: 'fixture-request-token'
-};
-type Request = { method: string; headers: Record<string, string>; body?: string };
-const response = (body: object, statusCode = 200) => ({
-    statusCode, statusMessage: statusCode === 200 ? 'OK' : 'Forbidden',
-    readBody: async () => JSON.stringify(body)
-});
+const script = readFileSync(join(__dirname, '../../scripts/publish.cjs'), 'utf8');
+const packages = ['linux-x64', 'win32-x64', 'darwin-x64', 'darwin-arm64'].map(p => `verified/${p}.vsix`);
 
-test('pinned VSCE uses the final Marketplace OIDC exchange contract', async () => {
-    const calls: { url: string; request: Request }[] = [];
-    const credential = await getOIDCCredential('iokaio', {
-        environment,
-        request: async (url: string, request: Request) => {
-            calls.push({ url, request });
-            return calls.length === 1
-                ? response({ value: 'fixture-workflow-identity' })
-                : response({ credential: 'fixture-short-lived-session' });
+function runPublisher(paths: unknown, channel: string, failure?: Error) {
+    const calls: unknown[] = [];
+    const errors: unknown[] = [];
+    const process = { argv: ['node', 'publish.cjs', 'verified.json', channel], exitCode: 0 };
+    const completion = runInNewContext(script, {
+        process,
+        console: { error: (error: unknown) => errors.push(error) },
+        require: (name: string) => {
+            if (name === 'node:fs') { return { readFileSync: () => JSON.stringify(paths) }; }
+            assert.equal(name, '@vscode/vsce');
+            return { publishVSIX: (files: unknown, options: unknown) => {
+                calls.push(JSON.parse(JSON.stringify({ files, options })));
+                return failure ? Promise.reject(failure) : Promise.resolve();
+            } };
         }
     });
-    assert.equal(credential, 'fixture-short-lived-session');
-    assert.equal(calls.length, 2);
-    const issuer = new URL(calls[0].url);
-    assert.equal(issuer.searchParams.get('audience'), 'marketplace.visualstudio.com');
-    assert.equal(issuer.searchParams.get('api-version'), '2');
-    assert.equal(calls[0].request.method, 'GET');
-    assert.equal(calls[0].request.headers.Authorization, 'Bearer fixture-request-token');
-    assert.equal(calls[1].url, 'https://marketplace.visualstudio.com/_apis/gallery/token?api-version=7.2-preview.1');
-    assert.equal(calls[1].request.method, 'POST');
-    assert.equal(calls[1].request.headers.Authorization, 'FederatedToken fixture-workflow-identity');
-    assert.deepEqual(JSON.parse(calls[1].request.body!), { publisherName: 'iokaio' });
+    return { calls, errors, process, completion };
+}
+
+test('publishing submits the verified packages with Entra authentication and the selected channel', async () => {
+    for (const channel of ['preview', 'stable']) {
+        const result = runPublisher(packages, channel);
+        await result.completion;
+        assert.deepEqual(result.calls, [{ files: packages, options: {
+            azureCredential: true, preRelease: channel === 'preview'
+        } }]);
+        assert.equal(result.process.exitCode, 0);
+        assert.deepEqual(result.errors, []);
+    }
 });
 
-test('pinned VSCE reports a rejected Marketplace identity without returning a credential', async () => {
-    let calls = 0;
-    await assert.rejects(getOIDCCredential('iokaio', {
-        environment,
-        request: async () => ++calls === 1
-            ? response({ value: 'fixture-workflow-identity' })
-            : response({ message: 'Fixture trust policy rejects this identity' }, 403)
-    }), /Marketplace OIDC token exchange failed with 403 Forbidden/);
-    assert.equal(calls, 2);
+test('authentication or publication failure stops without retrying through another credential', async () => {
+    const failure = new Error('Fixture publisher identity rejected');
+    const result = runPublisher(packages, 'preview', failure);
+    await result.completion;
+    assert.equal(result.calls.length, 1);
+    assert.equal(result.process.exitCode, 1);
+    assert.deepEqual(result.errors, [failure]);
+});
+
+test('invalid package inventory or channel cannot reach the publisher', () => {
+    for (const paths of [null, [], packages.slice(1), [...packages, packages[0]], [1, 2, 3, 4]]) {
+        assert.throws(() => runPublisher(paths, 'preview'), /Expected four verified platform packages/);
+    }
+    assert.throws(() => runPublisher(packages, 'other'), /Expected verified inventory and channel/);
 });

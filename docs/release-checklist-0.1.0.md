@@ -152,7 +152,7 @@ For each client, record exact version, configuration scope, startup/tool-list/st
 
 - [ ] Merge the reviewed workflow changes through a PR. Run **Actions → Extension release → Run workflow**, choose the exact checked-in version/channel and leave **publish** false. Inspect all four verified native/VSIX artifacts and receipts.
 - [ ] Verify deliberate wrong version/platform/channel/digest/incomplete-set inputs fail before publication. Build-only and PR jobs must have no publishing identity.
-- [ ] Configure the `iokaio` Marketplace publisher's trusted-publishing policy for `iokaio/airk` and `.github/workflows/extension-release.yml`, including the `vscode-marketplace` environment/appropriate claims. The workflow requests a short-lived OIDC credential; no silent PAT fallback.
+- [ ] Configure the dedicated Entra publisher application's GitHub federation for AIRK's immutable `vscode-marketplace` environment subject, set its client/tenant environment variables, verify its profile ID, and add that ID to publisher `iokaio` as Contributor. Follow the [publication setup](release-workflow.md#configure-publication-once). Publication uses short-lived Entra credentials; no client secret or PAT fallback.
 - [ ] Verify the `vscode-marketplace` GitHub environment permits only `main`. A publisher account/trust policy is an external prerequisite; workflow code cannot prove it exists.
 - [ ] Review pinned dependency notices and a complete SBOM/license record, including native parsers, storage/vector engine, embedding assets and distributed binaries.
 - [ ] Human approves the exact release candidate, public description, version/channel and known limitations.

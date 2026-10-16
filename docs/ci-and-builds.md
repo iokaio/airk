@@ -2,7 +2,7 @@
 
 The [CI workflow](../.github/workflows/ci.yml) uses standard GitHub-hosted runners. No self-hosted machine, Docker account, Azure account, Apple account, custom repository secret or repository variable is needed for the current builds. GitHub supplies the job token and artifact-upload authorization automatically. Repository Actions must be enabled and permitted to use the pinned official actions.
 
-Main now requires PRs and the stable `Required checks` / `signed-off` gates. For manual builds and optional Marketplace publication, use **Actions → Extension release** with an explicit version/channel and `publish` false/true. The [release workflow guide](release-workflow.md) describes the live PR policy, artifact verification and external Marketplace trusted-publisher prerequisite. The publishing job is separate from these read-only build jobs.
+Main now requires PRs and the stable `Required checks` / `signed-off` gates. For manual builds and optional Marketplace publication, use **Actions → Extension release** with an explicit version/channel and `publish` false/true. The [release workflow guide](release-workflow.md) describes the live PR policy, artifact verification and external Entra identity/publisher membership prerequisites. The publishing job is separate from these read-only build jobs.
 
 ## Build matrix
 
@@ -79,7 +79,7 @@ Under repository **Settings → Actions → General**, require approval for work
 | Windows signing using VCP's Azure OIDC pattern | Variables `AZURE_SIGNING_CLIENT_ID`, `AZURE_SIGNING_TENANT_ID`, `AZURE_SIGNING_SUBSCRIPTION_ID`; AIRK-specific federated identity, signing permissions and protected environment. No Azure client secret is needed with OIDC. |
 | macOS Developer ID signing | Manual Signed macOS candidates workflow uses `MACOS_CERTIFICATE_P12` (base64 certificate and private key) and `MACOS_CERTIFICATE_PASSWORD` in the main-only `macos-signing` environment. |
 | macOS notarization | The same environment supplies `APPLE_ID` and `APPLE_APP_SPECIFIC_PASSWORD`; the runner creates a temporary validated notarytool profile. |
-| VS Code Marketplace publishing | Implemented manual workflow uses pinned VSCE 4.0.1-3 OIDC trusted publishing and the `vscode-marketplace` GitHub environment restricted to main. Configure the Marketplace publisher's trust policy first; no PAT secret/fallback is consumed. |
+| VS Code Marketplace publishing | Pinned VSCE 4.0.1-3 uses Microsoft Entra authentication after GitHub OIDC login in the main-only `vscode-marketplace` environment. Configure `AZURE_MARKETPLACE_CLIENT_ID`, `AZURE_MARKETPLACE_TENANT_ID`, federation and publisher Contributor membership. The explicit `verify_identity` mode reports the Marketplace profile ID without building or publishing. No client secret or PAT fallback is consumed. |
 | GitHub Release publication | Manual numbered GitHub release workflow; automatic token with `contents: write` only in the final `github-releases` publishing job. No personal token needed. |
 | Downloads website | GitHub Pages for `airk.ioka.io`, main-only `github-pages` environment; automatic token with `pages: write` and `id-token: write` only for deployment. Refreshes after release publication, website changes on main, or a manual dispatch. |
 
