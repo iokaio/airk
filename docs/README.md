@@ -17,6 +17,7 @@
 - [Durable native scheduling and crash recovery](native-scheduler.md)
 - [MCP tool contracts](mcp.md)
 - [Coding-agent setup compatibility research](agent-integration.md)
+- [Google Antigravity manual MCP setup](antigravity-mcp.md)
 - [Coding-agent tool alignment and online documentation review](agent-tool-alignment.md)
 - [Workspace indexing coverage and clickable footer](index-coverage.md)
 - [Native VS Code extension preview and limits](vscode-extension.md)

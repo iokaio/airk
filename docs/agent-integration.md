@@ -10,6 +10,8 @@ To share a workspace index between agents, reuse its root, data directory and co
 
 ## Verified client routes
 
+The Antigravity route was additionally reviewed on **16 October 2026**; see its [manual MCP setup and validation steps](antigravity-mcp.md).
+
 | Client | Official configuration/registration | Extension setup route / remaining work |
 |---|---|---|
 | VS Code / Copilot Chat | Workspace .vscode/mcp.json uses servers; extensions can register an MCP definition provider | Register through vscode.lm.registerMcpServerDefinitionProvider with a scoped native stdio definition. Offer a config preview fallback. [Official extension guide](https://code.visualstudio.com/api/extension-guides/ai/mcp) |
@@ -17,6 +19,7 @@ To share a workspace index between agents, reuse its root, data directory and co
 | Claude Code | Project .mcp.json with mcpServers, or claude mcp add with project/local/user scope | Preview/merge a project entry or guide the CLI command, then leave the project's server approval to Claude Code. [Official setup](https://code.claude.com/docs/en/mcp) |
 | Cursor | Project .cursor/mcp.json/global ~/.cursor/mcp.json; Cursor also exposes its own extension registration API | Feature-detect vscode.cursor.mcp.registerServer; otherwise preview the project file. The API is Cursor-specific. [MCP setup](https://prod.cursor.com/docs/mcp), [extension API](https://prod.cursor.com/docs/extension-api) |
 | Gemini CLI | Project/user .gemini/settings.json uses mcpServers; gemini mcp add supports scope selection | Generate the scoped entry or guide project CLI registration; preserve existing trust/allowlist policy. [Official MCP guide](https://geminicli.com/docs/tools/mcp-server/) |
+| Google Antigravity IDE / CLI | Workspace .agents/mcp_config.json or global ~/.gemini/config/mcp_config.json; mcpServers with a stdio command and args | Manual setup can reuse AIRK's --client gemini JSON output at the Antigravity location. No dedicated AIRK picker/flag or live-client qualification yet. [AIRK instructions](antigravity-mcp.md), [Google MCP guide](https://antigravity.google/docs/mcp) |
 | Cline CLI / IDE extension | CLI ~/.cline/data/settings/cline_mcp_settings.json, configurable path; IDE Configure MCP Servers opens its actual settings JSON | Offer the mcpServers fragment and guide the IDE picker. Avoid assuming an OS-specific extension storage path. [Official configuration](https://docs.cline.bot/mcp/mcp-overview) |
 | Roo Code | Project .roo/mcp.json overrides global mcp_settings.json | Preview a project mcpServers merge or guide Edit Project MCP. [Official project documentation](https://roocodeinc.github.io/Roo-Code/features/mcp/using-mcp-in-roo/) |
 | OpenCode | Stable docs use mcp.<name>, type local, executable-plus-arguments command array; V2 docs use mcp.servers.<name> | Detect/configure the installed major version; do not overwrite a V2 schema with V1. [Stable guide](https://opencode.ai/docs/en/mcp-servers/), [V2 guide](https://dev.opencode.ai/v2/docs/mcp-servers/) |
