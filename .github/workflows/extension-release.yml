@@ -16,6 +16,10 @@ on:
         description: Publish the verified packages to Visual Studio Marketplace
         type: boolean
         default: false
+      verify_identity:
+        description: Check Entra login and report the Marketplace member ID without building or publishing
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -29,15 +33,46 @@ jobs:
       - name: Publication requires the protected main branch
         env:
           AIRK_PUBLISH: ${{ inputs.publish }}
+          AIRK_VERIFY_IDENTITY: ${{ inputs.verify_identity }}
           AIRK_REF: ${{ github.ref }}
           AIRK_VERSION: ${{ inputs.version }}
         run: |
-          if [ "$AIRK_PUBLISH" = true ] && [ "$AIRK_REF" != refs/heads/main ]; then
-            echo 'Publish from protected main only.' >&2
+          if { [ "$AIRK_PUBLISH" = true ] || [ "$AIRK_VERIFY_IDENTITY" = true ]; } && [ "$AIRK_REF" != refs/heads/main ]; then
+            echo 'Marketplace identity access requires protected main.' >&2
+            exit 1
+          fi
+          if [ "$AIRK_PUBLISH" = true ] && [ "$AIRK_VERIFY_IDENTITY" = true ]; then
+            echo 'Identity verification and publication are separate operations.' >&2
             exit 1
           fi
           [[ "$AIRK_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+  verify-identity:
+    if: ${{ inputs.verify_identity }}
+    needs: preflight
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: vscode-marketplace
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Authenticate the Marketplace publisher identity
+        uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2
+        with:
+          client-id: ${{ vars.AZURE_MARKETPLACE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_MARKETPLACE_TENANT_ID }}
+          allow-no-subscriptions: true
+      - name: Report Marketplace member ID without exposing credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          profile_id=$(az rest --method get \
+            --url https://app.vssps.visualstudio.com/_apis/profile/profiles/me \
+            --resource 499b84ac-1321-427f-aa17-267ca6975798 --query id --output tsv)
+          [[ "$profile_id" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]
+          printf 'Marketplace member ID: `%s`\n\nAdd this ID to publisher **iokaio** with the **Contributor** role. This check does not verify publisher membership or publish an extension.\n' "$profile_id" >> "$GITHUB_STEP_SUMMARY"
   build:
+    if: ${{ !inputs.verify_identity }}
     needs: preflight
     uses: ./.github/workflows/ci.yml
     with:
@@ -64,6 +99,12 @@ jobs:
           node-version: '24.15.0'
           package-manager-cache: false
       - run: npm ci --ignore-scripts --no-audit --no-fund --prefix packages/vscode
+      - name: Authenticate the Marketplace publisher identity
+        uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2
+        with:
+          client-id: ${{ vars.AZURE_MARKETPLACE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_MARKETPLACE_TENANT_ID }}
+          allow-no-subscriptions: true
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: airk-vsix-*-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -75,7 +116,8 @@ jobs:
           AIRK_VERSION: ${{ inputs.version }}
           AIRK_CHANNEL: ${{ inputs.channel }}
         run: python scripts/verify-extension-release.py --directory artifacts/release --commit "$AIRK_COMMIT" --version "$AIRK_VERSION" --channel "$AIRK_CHANNEL" --output artifacts/verified-vsix.json
-      - name: Publish verified VSIX packages using Marketplace trusted publishing
+      - name: Publish verified VSIX packages using Microsoft Entra
         env:
           AIRK_CHANNEL: ${{ inputs.channel }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_MARKETPLACE_TENANT_ID }}
         run: node packages/vscode/scripts/publish.cjs artifacts/verified-vsix.json "$AIRK_CHANNEL"

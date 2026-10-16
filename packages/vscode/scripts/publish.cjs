@@ -8,5 +8,5 @@ const paths = JSON.parse(fs.readFileSync(inventory, 'utf8'));
 if (!Array.isArray(paths) || paths.length !== 4 || paths.some(p => typeof p !== 'string' || !p.endsWith('.vsix'))) {
     throw new Error('Expected four verified platform packages.');
 }
-publishVSIX(paths, { oidc: true, preRelease: channel === 'preview' })
+publishVSIX(paths, { azureCredential: true, preRelease: channel === 'preview' })
     .catch(error => { console.error(error); process.exitCode = 1; });
