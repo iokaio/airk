@@ -52,6 +52,8 @@ pub struct Kernel {
     cache: Arc<Mutex<Option<Arc<CachedIndex>>>>,
     catalog_cache: Arc<Mutex<Option<Arc<airk_store::blobs::Catalog>>>>,
     retention_observer: Option<Arc<maintenance::RetentionObserver>>,
+    #[cfg(test)]
+    retention_test_budget: Option<maintenance::MaintenanceBudget>,
 }
 
 struct CachedIndex {
@@ -194,6 +196,8 @@ impl Kernel {
             cache: Arc::new(Mutex::new(None)),
             catalog_cache: Arc::new(Mutex::new(None)),
             retention_observer: None,
+            #[cfg(test)]
+            retention_test_budget: None,
         })
     }
 

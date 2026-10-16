@@ -156,7 +156,12 @@ impl Kernel {
         quota: &Quota,
         trigger: MaintenanceTrigger,
     ) -> MaintenanceRun {
-        self.run_retention_with_budget(writer, quota, trigger, MaintenanceBudget::default())
+        let budget = MaintenanceBudget::default();
+        // Unit qualification controls elapsed-time exhaustion independently of
+        // host speed. Release builds always use the production default above.
+        #[cfg(test)]
+        let budget = self.retention_test_budget.unwrap_or(budget);
+        self.run_retention_with_budget(writer, quota, trigger, budget)
     }
 
     fn run_retention_with_budget(
@@ -312,6 +317,10 @@ impl Kernel {
 }
 
 #[cfg(test)]
+#[path = "maintenance_pressure_tests.rs"]
+mod pressure_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use airk_store::quota::PressureScope;
@@ -444,11 +453,29 @@ mod tests {
             unrelated.store.directory().join("retention.json"),
             b"invalid original neighboring policy",
         )?;
-        let outcome = kernel.run_scheduled_once()?;
-        assert_eq!(outcome.state, "maintained");
-        assert!(outcome.report.is_none());
-        assert!(!outcome.maintenance.unwrap().receipt.pending);
-        assert_eq!(kernel.status()?.publication.unwrap().token, head);
+        let mut complete = false;
+        for _ in 0..8 {
+            let outcome = kernel.run_scheduled_once()?;
+            assert_eq!(outcome.state, "maintained");
+            assert!(outcome.report.is_none());
+            let maintenance = outcome.maintenance.unwrap();
+            assert!(maintenance.receipt_persisted);
+            assert_eq!(maintenance.receipt.head, Some(head));
+            assert!(maintenance.receipt.pressure.is_none());
+            assert!(matches!(
+                maintenance.receipt.state,
+                MaintenanceState::Complete | MaintenanceState::Pending
+            ));
+            assert_eq!(kernel.status()?.publication.unwrap().token, head);
+            if !maintenance.receipt.pending {
+                assert_eq!(maintenance.receipt.state, MaintenanceState::Complete);
+                assert!(maintenance.receipt.error.is_none());
+                complete = true;
+                break;
+            }
+            assert_eq!(maintenance.receipt.state, MaintenanceState::Pending);
+        }
+        assert!(complete, "idle maintenance did not converge");
         let neighbor_failure = kernel.run_scheduled_once()?;
         assert_eq!(neighbor_failure.state, "maintenance_failed");
         assert!(neighbor_failure.error.unwrap().contains("broken_neighbor"));
