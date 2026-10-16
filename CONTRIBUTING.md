@@ -19,7 +19,7 @@ python -m unittest discover -s scripts/tests -v
 git diff --check
 ```
 
-CI builds/tests native binaries on Windows, macOS and Linux and checks the container recipe on Linux. Report what actually ran, including unavailable checks. The local Windows result alone does not qualify all platforms. See [CI and downloadable native candidates](docs/ci-and-builds.md) for the explicit architecture matrix, build credentials and spending controls.
+Full CI uses pinned cargo-nextest 0.9.148 with the checked-in `ci` profile, followed by `cargo test --doc --workspace --locked`; local `cargo test` remains supported. CI builds/tests native binaries on Windows, macOS and Linux and checks the container recipe on Linux. Report what actually ran, including unavailable checks. The local Windows result alone does not qualify all platforms. See [CI and downloadable native candidates](docs/ci-and-builds.md) for the explicit architecture matrix, build credentials and spending controls.
 
 With Docker available, use `docker build --target test -t airk:local-test .` for the Linux test stage, then `docker build -t airk:dev .` and `python scripts/check-container.py --image airk:dev` for an isolated one-container smoke test. It creates/removes only its uniquely named test container and volume.
 
