@@ -70,6 +70,7 @@ jobs:
             --url https://app.vssps.visualstudio.com/_apis/profile/profiles/me \
             --resource 499b84ac-1321-427f-aa17-267ca6975798 --query id --output tsv)
           [[ "$profile_id" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]
+          printf 'Marketplace member ID: %s\n' "$profile_id"
           printf 'Marketplace member ID: `%s`\n\nAdd this ID to publisher **iokaio** with the **Contributor** role. This check does not verify publisher membership or publish an extension.\n' "$profile_id" >> "$GITHUB_STEP_SUMMARY"
   build:
     if: ${{ !inputs.verify_identity }}
