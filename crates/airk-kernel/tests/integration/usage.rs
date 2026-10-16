@@ -540,13 +540,14 @@ fn native_jobs_record_actual_work_once_in_the_jobs_collection() -> anyhow::Resul
             let output = std::process::Command::new(std::env::current_exe()?)
                 .args([
                     "--exact",
-                    "native_jobs_record_actual_work_once_in_the_jobs_collection",
+                    "usage::native_jobs_record_actual_work_once_in_the_jobs_collection",
                     "--nocapture",
                 ])
                 .env(CHILD_MODE, mode)
                 .output()?;
             assert!(
-                output.status.success(),
+                output.status.success()
+                    && String::from_utf8_lossy(&output.stdout).contains("running 1 test"),
                 "{mode}: {}\n{}",
                 String::from_utf8_lossy(&output.stdout),
                 String::from_utf8_lossy(&output.stderr)

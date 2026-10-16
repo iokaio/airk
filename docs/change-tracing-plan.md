@@ -341,7 +341,7 @@ Cover every mutation path in the migration inventory: initialization, ordinary/f
 
 ## 13. Acceptance and measurement
 
-Use original synthetic/public fixtures, never private indexed material or reference repositories. Extend existing [kernel persistence](../crates/airk-kernel/tests/persistent.rs), [streaming](../crates/airk-kernel/tests/streaming.rs), [root](../crates/airk-kernel/tests/roots.rs), [scheduler](../crates/airk-kernel/tests/scheduler.rs) and [code graph](../crates/airk-kernel/tests/code_graph.rs) tests, plus store and MCP contract tests.
+Use original synthetic/public fixtures, never private indexed material or reference repositories. Extend existing [kernel persistence](../crates/airk-kernel/tests/integration/persistent.rs), [streaming](../crates/airk-kernel/tests/integration/streaming.rs), [root](../crates/airk-kernel/tests/integration/roots.rs), [scheduler](../crates/airk-kernel/tests/integration/scheduler.rs) and [code graph](../crates/airk-kernel/tests/integration/code_graph.rs) tests, plus store and MCP contract tests.
 
 | Area | Required evidence |
 |---|---|

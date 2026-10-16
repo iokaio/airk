@@ -118,7 +118,7 @@ fn crashed_worker_releases_native_locks_and_pending_revision_can_resume() -> any
     fs::write(root.path().join("fixture.txt"), "recoverable fixture")?;
     let canonical = root.path().canonicalize()?;
     let status = Command::new(std::env::current_exe()?)
-        .args(["--exact", "scheduler_crash_child", "--nocapture"])
+        .args(["--exact", "scheduler::scheduler_crash_child", "--nocapture"])
         .env("AIRK_SCHEDULER_CRASH_STATE", state.path())
         .env("AIRK_SCHEDULER_CRASH_ROOT", &canonical)
         .status()?;
