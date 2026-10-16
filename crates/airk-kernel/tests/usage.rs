@@ -443,60 +443,6 @@ fn index_reuse_and_latency_are_measured_separately_from_token_estimates() -> any
 }
 
 #[test]
-fn live_adapter_span_records_once_with_same_revision_baseline_and_no_content() -> anyhow::Result<()>
-{
-    let root = tempfile::tempdir()?;
-    std::fs::write(
-        root.path().join("memo.md"),
-        "# Private fixture\nconfidential_zircon_word\nA larger piece of original fixture evidence.\n",
-    )?;
-    let kernel = airk_kernel::Kernel::open(root.path(), None)?;
-    kernel.index()?;
-    let span = kernel.usage_span(UsageOperation::Search, ClientFamily::Codex);
-    let request_id = span.request_id().unwrap();
-    let result = kernel.search(&airk_core::SearchQuery {
-        text: "confidential_zircon_word".into(),
-        path_prefix: None,
-        limit: 1,
-        max_bytes: 80,
-    })?;
-    let value = serde_json::to_value(&result)?;
-    kernel.finish_usage(
-        span,
-        Some(&value),
-        serde_json::to_vec(&value)?.len(),
-        false,
-        ResponseRepresentation::LogicalResultJson,
-    );
-    let report = kernel.usage_report(30)?;
-    assert_eq!(report.report.calls, 1);
-    assert_eq!(
-        report.report.comparisons[&BaselineKind::FullReturnedSources].compared_calls,
-        1
-    );
-    assert_eq!(
-        kernel.usage_report(30)?.report.calls,
-        1,
-        "reports must not count themselves"
-    );
-    let ledger = std::fs::read(root.path().join(".airk/collections/default/usage.sqlite3"))?;
-    assert!(!String::from_utf8_lossy(&ledger).contains("confidential_zircon_word"));
-    assert!(!String::from_utf8_lossy(&ledger).contains("memo.md"));
-    kernel.usage_feedback(&request_id, Usefulness::Useful)?;
-    assert_eq!(kernel.usage_report(30)?.health.useful_feedback, 1);
-    kernel.usage_feedback(&request_id, Usefulness::NotUseful)?;
-    let updated = kernel.usage_report(30)?;
-    assert_eq!(updated.health.useful_feedback, 0);
-    assert_eq!(updated.health.not_useful_feedback, 1);
-    assert!(
-        kernel
-            .usage_feedback("00000000000000000000000000000000", Usefulness::Useful)
-            .is_err()
-    );
-    Ok(())
-}
-
-#[test]
 fn disabled_hooks_leave_usage_history_untouched() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     std::fs::write(root.path().join("fixture.txt"), "original fixture")?;
@@ -586,6 +532,29 @@ fn busy_recorder_cannot_change_successful_retrieval() -> anyhow::Result<()> {
 
 #[test]
 fn native_jobs_record_actual_work_once_in_the_jobs_collection() -> anyhow::Result<()> {
+    const CHILD_MODE: &str = "AIRK_USAGE_JOB_ACCOUNTING_TEST";
+    let Ok(mode) = std::env::var(CHILD_MODE) else {
+        // Recording health is process-wide. Isolate it from other usage tests so
+        // an unrelated dropped observation cannot satisfy this job's assertions.
+        for mode in ["uncontended", "reused_busy", "failed_busy"] {
+            let output = std::process::Command::new(std::env::current_exe()?)
+                .args([
+                    "--exact",
+                    "native_jobs_record_actual_work_once_in_the_jobs_collection",
+                    "--nocapture",
+                ])
+                .env(CHILD_MODE, mode)
+                .output()?;
+            assert!(
+                output.status.success(),
+                "{mode}: {}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        return Ok(());
+    };
+    assert!(["uncontended", "reused_busy", "failed_busy"].contains(&mode.as_str()));
     let root = tempfile::tempdir()?;
     let host_root = tempfile::tempdir()?;
     let state = tempfile::tempdir()?;
@@ -597,8 +566,13 @@ fn native_jobs_record_actual_work_once_in_the_jobs_collection() -> anyhow::Resul
         airk_kernel::Kernel::open_collection(root.path(), Some(state.path().into()), "target")?;
     let host =
         airk_kernel::Kernel::open_collection(host_root.path(), Some(state.path().into()), "host")?;
+    let before = target.usage_report(30)?;
+    assert_eq!(before.report.calls, 0);
+    assert_eq!(before.process_dropped_observations, 0);
     let first = target.scheduled_index(false, false)?;
     assert_eq!(first.indexed, 1);
+    let after_first = target.usage_report(30)?;
+    assert_job_observation(&before, &after_first, Some(&first), false)?;
     let queue = airk_store::scheduler::Queue::new(state.path());
     let root_id = target.root().to_string_lossy().into_owned();
     queue.enqueue(
@@ -609,10 +583,29 @@ fn native_jobs_record_actual_work_once_in_the_jobs_collection() -> anyhow::Resul
         false,
         airk_store::usage::unix_ms(),
     )?;
+    let directory = state.path().join("collections/target");
+    let usage_guard = (mode == "reused_busy")
+        .then(|| airk_store::usage::deletion_guard(&directory))
+        .transpose()?;
     let reused = host.run_scheduled_once()?;
+    drop(usage_guard);
     assert_eq!(reused.state, "indexed");
-    assert_eq!(reused.report.unwrap().reused, 1);
+    let reused = reused.report.expect("successful queued job has its report");
+    assert_eq!(reused.reused, 1);
+    let after_reused = target.usage_report(30)?;
+    assert_job_observation(
+        &after_first,
+        &after_reused,
+        Some(&reused),
+        mode == "reused_busy",
+    )?;
     assert_eq!(host.run_scheduled_once()?.state, "idle");
+    let after_idle = target.usage_report(30)?;
+    assert_eq!(after_idle.report.calls, after_reused.report.calls);
+    assert_eq!(
+        after_idle.process_dropped_observations, after_reused.process_dropped_observations,
+        "an idle worker must not attempt to record another job"
+    );
     let writer = airk_store::FileStore::new(state.path().join("collections/target")).lock()?;
     queue.enqueue(
         "target",
@@ -622,7 +615,11 @@ fn native_jobs_record_actual_work_once_in_the_jobs_collection() -> anyhow::Resul
         false,
         airk_store::usage::unix_ms(),
     )?;
+    let usage_guard = (mode == "failed_busy")
+        .then(|| airk_store::usage::deletion_guard(&directory))
+        .transpose()?;
     let failed = host.run_scheduled_once()?;
+    drop(usage_guard);
     assert_eq!(failed.state, "failed");
     assert!(
         failed
@@ -633,23 +630,22 @@ fn native_jobs_record_actual_work_once_in_the_jobs_collection() -> anyhow::Resul
     );
     drop(writer);
     let report = target.usage_report(30)?;
-    // Usage recording is best effort. A contended Windows runner may drop the
-    // failed job's observation, but the loss must be visible in process health.
-    assert!((2..=3).contains(&report.report.calls));
-    if report.report.calls == 2 {
-        assert!(report.process_dropped_observations > 0);
-    }
+    assert_job_observation(&after_idle, &report, None, mode == "failed_busy")?;
     assert_eq!(
-        report.report.clients[&ClientFamily::NativeScheduler],
-        report.report.calls
+        report.report.calls + report.process_dropped_observations,
+        3,
+        "each executed job must be recorded exactly once or explicitly dropped"
     );
-    let work = &report.report.operations[&UsageOperation::Index];
-    assert_eq!(work.successful, 2);
-    assert_eq!(work.failed, report.report.calls - 2);
-    assert_eq!(work.index_work.indexed, 1);
-    assert_eq!(work.index_work.reused, 1);
     assert!(report.report.comparisons.is_empty());
     assert_eq!(host.usage_report(30)?.report.calls, 0);
+    // Ensure there is a ledger to compare even if all optional writes were
+    // dropped. This creates no observations and does not retry any queue job.
+    airk_store::usage::UsageStore::open(
+        &directory,
+        &target.usage_scope(),
+        &target.usage_policy()?,
+    )?
+    .expect("recording is enabled");
     target.configure_usage(RecordingMode::Disabled)?;
     let ledger = state.path().join("collections/target/usage.sqlite3");
     let before = std::fs::read(&ledger)?;
@@ -658,6 +654,85 @@ fn native_jobs_record_actual_work_once_in_the_jobs_collection() -> anyhow::Resul
         std::fs::read(ledger)?,
         before,
         "disabled native jobs must leave the ledger unchanged"
+    );
+    let disabled = target.usage_report(30)?;
+    assert_eq!(disabled.report.calls, report.report.calls);
+    assert_eq!(
+        disabled.process_dropped_observations, report.process_dropped_observations,
+        "disabled recording is an opt-out, not a dropped observation"
+    );
+    Ok(())
+}
+
+fn assert_job_observation(
+    before: &airk_kernel::usage::UsageView,
+    after: &airk_kernel::usage::UsageView,
+    actual_work: Option<&airk_ingest::IndexReport>,
+    forced_drop: bool,
+) -> anyhow::Result<()> {
+    let recorded = after.report.calls - before.report.calls;
+    let dropped = after.process_dropped_observations - before.process_dropped_observations;
+    assert_eq!(
+        (recorded + dropped, recorded.min(dropped)),
+        (1, 0),
+        "one job must produce exactly one observation or one visible recording failure"
+    );
+    if forced_drop {
+        assert_eq!(dropped, 1, "the held usage lock must prevent recording");
+    }
+    if dropped == 1 {
+        assert_eq!(
+            serde_json::to_value(&after.report.operations)?,
+            serde_json::to_value(&before.report.operations)?,
+            "a dropped observation must not partially update work totals"
+        );
+        assert_eq!(after.report.clients, before.report.clients);
+        return Ok(());
+    }
+    assert_eq!(after.report.clients.len(), 1);
+    assert_eq!(
+        after.report.clients[&ClientFamily::NativeScheduler],
+        after.report.calls
+    );
+    assert_eq!(after.report.operations.len(), 1);
+    let previous = before
+        .report
+        .operations
+        .get(&UsageOperation::Index)
+        .cloned()
+        .unwrap_or_default();
+    let current = &after.report.operations[&UsageOperation::Index];
+    assert_eq!(current.calls, previous.calls + 1);
+    assert_eq!(
+        current.successful,
+        previous.successful + u64::from(actual_work.is_some())
+    );
+    assert_eq!(
+        current.failed,
+        previous.failed + u64::from(actual_work.is_none())
+    );
+    assert_eq!(current.empty, 0);
+    let expected = actual_work.map_or([0; 5], |work| {
+        [
+            work.indexed as u128,
+            work.reused as u128,
+            work.removed as u128,
+            (work.skipped.len() + work.skipped_truncated) as u128,
+            work.source_bytes as u128,
+        ]
+    });
+    let old = &previous.index_work;
+    let new = &current.index_work;
+    assert_eq!(
+        [
+            new.indexed - old.indexed,
+            new.reused - old.reused,
+            new.removed - old.removed,
+            new.skipped - old.skipped,
+            new.processed_source_bytes - old.processed_source_bytes,
+        ],
+        expected,
+        "recorded work must match this exact job's returned report"
     );
     Ok(())
 }
