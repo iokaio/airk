@@ -144,8 +144,21 @@ pub(crate) fn lifecycle_lease(root: &Path, exclusive: bool) -> Result<File> {
 }
 
 /// Only the initial relocation root lock may wait; callers hold no other locks.
-pub(crate) fn relocation_lifecycle_lease(root: &Path) -> Result<File> {
-    acquire_lifecycle(root, true, true)
+pub(crate) fn relocation_lifecycle_lease(root: &Path) -> Result<RelocationLease> {
+    acquire_lifecycle(root, true, true).map(RelocationLease)
+}
+
+/// The exclusive lease belongs to this operation, not to incidental descriptors
+/// inherited by another thread's child between fork and exec. Closing alone can
+/// leave flock held until that child closes its duplicate open file description.
+pub(crate) struct RelocationLease(File);
+
+impl Drop for RelocationLease {
+    fn drop(&mut self) {
+        // File close remains the fallback if unlock fails. Do not introduce a
+        // retry for shared entrants: they must reject an active relocation.
+        let _ = self.0.unlock();
+    }
 }
 
 fn acquire_lifecycle(root: &Path, exclusive: bool, retry_readers: bool) -> Result<File> {
@@ -1105,6 +1118,22 @@ mod tests {
         drop(lock);
         assert!(quota.try_reserve("fixture", 1, Duration::ZERO).is_err());
         assert_eq!(quota.status()?.active_reservations, 0);
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn relocation_unlocks_even_while_an_inherited_description_remains_open() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let exclusive = relocation_lifecycle_lease(root.path())?;
+        // dup and fork share the same open file description on Unix. Keeping
+        // this duplicate alive deterministically models a child before exec.
+        let inherited = exclusive.0.try_clone()?;
+        assert!(lifecycle_lease(root.path(), false).is_err());
+        drop(exclusive);
+        let shared = lifecycle_lease(root.path(), false)?;
+        drop(shared);
+        drop(inherited);
         Ok(())
     }
 
