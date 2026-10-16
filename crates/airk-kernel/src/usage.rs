@@ -898,3 +898,139 @@ impl LocalByteBpe {
         Ok(count)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn strict_span(
+        kernel: &crate::Kernel,
+        operation: UsageOperation,
+        client: ClientFamily,
+    ) -> Result<RequestSpan> {
+        let mut span = kernel.usage_span(operation, client);
+        // Exact payload assertions use the strict store path. Integration tests
+        // separately exercise real best-effort admission and visible recording loss.
+        span.store = UsageStore::open(
+            kernel.store.directory(),
+            &kernel.usage_scope(),
+            &kernel.usage_policy()?,
+        )?;
+        assert!(span.enabled && span.store.is_some());
+        Ok(span)
+    }
+
+    #[test]
+    fn index_observations_record_exact_work_and_failures() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        std::fs::write(
+            root.path().join("fixture.txt"),
+            "original accounting fixture",
+        )?;
+        let kernel = crate::Kernel::open(root.path(), None)?;
+        kernel.initialize()?;
+        let mut source_bytes = 0;
+        for attempt in 0..3 {
+            let writer = (attempt == 2).then(|| kernel.store.lock()).transpose()?;
+            let span = strict_span(
+                &kernel,
+                UsageOperation::Index,
+                ClientFamily::NativeScheduler,
+            )?;
+            let result = kernel.index();
+            if attempt == 2 {
+                assert!(
+                    result
+                        .as_ref()
+                        .unwrap_err()
+                        .to_string()
+                        .contains("index writer locked")
+                );
+            } else {
+                let report = result.as_ref().unwrap();
+                assert_eq!(
+                    (report.indexed, report.reused),
+                    if attempt == 0 { (1, 0) } else { (0, 1) }
+                );
+                source_bytes += report.source_bytes as u128;
+            }
+            let logical = result.as_ref().ok().map(serde_json::to_value).transpose()?;
+            let bytes = logical
+                .as_ref()
+                .map(serde_json::to_vec)
+                .transpose()?
+                .map_or(0, |value| value.len());
+            kernel.finish_usage(
+                span,
+                logical.as_ref(),
+                bytes,
+                result.is_err(),
+                ResponseRepresentation::LogicalResultJson,
+            );
+            drop(writer);
+            assert_eq!(kernel.usage_report(30)?.report.calls, attempt + 1);
+        }
+        let report = kernel.usage_report(30)?;
+        assert_eq!(report.report.clients[&ClientFamily::NativeScheduler], 3);
+        let work = &report.report.operations[&UsageOperation::Index];
+        assert_eq!((work.successful, work.failed, work.empty), (2, 1, 0));
+        assert_eq!((work.index_work.indexed, work.index_work.reused), (1, 1));
+        assert_eq!(work.index_work.processed_source_bytes, source_bytes);
+        assert!(report.report.comparisons.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn adapter_observation_preserves_revision_baseline_feedback_and_privacy() -> anyhow::Result<()>
+    {
+        let root = tempfile::tempdir()?;
+        std::fs::write(
+            root.path().join("memo.md"),
+            "# Private fixture\nconfidential_zircon_word\nA larger piece of original fixture evidence.\n",
+        )?;
+        let kernel = crate::Kernel::open(root.path(), None)?;
+        kernel.index()?;
+        let span = strict_span(&kernel, UsageOperation::Search, ClientFamily::Codex)?;
+        let request_id = span.request_id().unwrap();
+        let result = kernel.search(&airk_core::SearchQuery {
+            text: "confidential_zircon_word".into(),
+            path_prefix: None,
+            limit: 1,
+            max_bytes: 80,
+        })?;
+        let value = serde_json::to_value(&result)?;
+        kernel.finish_usage(
+            span,
+            Some(&value),
+            serde_json::to_vec(&value)?.len(),
+            false,
+            ResponseRepresentation::LogicalResultJson,
+        );
+        let report = kernel.usage_report(30)?;
+        assert_eq!(report.report.calls, 1);
+        assert_eq!(
+            report.report.comparisons[&BaselineKind::FullReturnedSources].compared_calls,
+            1
+        );
+        assert_eq!(
+            kernel.usage_report(30)?.report.calls,
+            1,
+            "reports must not count themselves"
+        );
+        let ledger = std::fs::read(root.path().join(".airk/collections/default/usage.sqlite3"))?;
+        assert!(!String::from_utf8_lossy(&ledger).contains("confidential_zircon_word"));
+        assert!(!String::from_utf8_lossy(&ledger).contains("memo.md"));
+        kernel.usage_feedback(&request_id, Usefulness::Useful)?;
+        assert_eq!(kernel.usage_report(30)?.health.useful_feedback, 1);
+        kernel.usage_feedback(&request_id, Usefulness::NotUseful)?;
+        let updated = kernel.usage_report(30)?;
+        assert_eq!(updated.health.useful_feedback, 0);
+        assert_eq!(updated.health.not_useful_feedback, 1);
+        assert!(
+            kernel
+                .usage_feedback("00000000000000000000000000000000", Usefulness::Useful)
+                .is_err()
+        );
+        Ok(())
+    }
+}
