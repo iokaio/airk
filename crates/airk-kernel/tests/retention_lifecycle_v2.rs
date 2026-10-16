@@ -5,7 +5,9 @@ use airk_kernel::Kernel;
 use airk_store::{
     FileStore,
     quota::Quota,
-    retention::{MaintenanceStage, RetentionMode, RetentionPolicy},
+    retention::{
+        MaintenanceRun, MaintenanceStage, MaintenanceState, RetentionMode, RetentionPolicy,
+    },
 };
 use anyhow::{Context, Result, ensure};
 use std::{
@@ -253,6 +255,38 @@ fn finish_pending_generations(fixture: &Fixture) -> Result<usize> {
     unreachable!("bounded continuation loop returns or fails")
 }
 
+fn check_maintenance_receipt(run: &MaintenanceRun, head: RevisionToken) -> Result<()> {
+    let receipt = &run.receipt;
+    ensure!(
+        run.receipt_persisted,
+        "maintenance receipt was not persisted: {run:?}"
+    );
+    ensure!(
+        receipt.head == Some(head),
+        "maintenance receipt changed head: {run:?}"
+    );
+    ensure!(
+        receipt.pressure.is_none(),
+        "unexpected maintenance quota pressure: {run:?}"
+    );
+    ensure!(
+        matches!(
+            receipt.state,
+            MaintenanceState::Complete | MaintenanceState::Pending
+        ),
+        "maintenance failed rather than deferring bounded work: {run:?}"
+    );
+    ensure!(
+        receipt.pending == (receipt.state == MaintenanceState::Pending),
+        "maintenance state and pending flag disagree: {run:?}"
+    );
+    ensure!(
+        receipt.pending || receipt.error.is_none(),
+        "completed maintenance has an error: {run:?}"
+    );
+    Ok(())
+}
+
 #[test]
 fn deferred_postcommit_generation_retirement_is_pending_and_converges_without_publication()
 -> Result<()> {
@@ -447,7 +481,9 @@ fn long_lived_reader_pins_evidence_until_explicit_maintenance_after_release() ->
             .any(|revision| revision.token == first)
     );
     drop(pinned);
-    fixture.kernel.maintain_retention()?;
+    let head = fixture.store.persistent_revision()?.unwrap().token.unwrap();
+    check_maintenance_receipt(&fixture.kernel.maintain_retention()?, head)?;
+    finish_pending_generations(&fixture)?;
     assert!(
         fixture
             .store
@@ -495,13 +531,52 @@ fn postcommit_cleanup_failure_keeps_new_publication_and_recovers_after_reopen() 
     assert!(status.pending_intents > 0);
     drop(worker);
     let reopened = Kernel::open(fixture.source.path(), Some(fixture.data.path().into()))?;
-    reopened.maintain_retention()?;
+    let delayed = reopened.with_retention_observer(Arc::new(|stage| {
+        if stage == MaintenanceStage::RetirementAuthorized {
+            // Recovery is bounded too. Expire its ordinary one-second pass
+            // after authorization, leaving durable work for another reopen.
+            std::thread::sleep(std::time::Duration::from_millis(1100));
+        }
+        Ok(())
+    }));
+    let recovery = delayed.maintain_retention()?;
+    check_maintenance_receipt(&recovery, after)?;
+    assert!(recovery.receipt.pending, "{recovery:?}");
+    assert!(reopened.retention_status()?.pending_intents > 0);
     assert_eq!(
         fixture.store.persistent_revision()?.unwrap().token,
         Some(after)
     );
-    assert_eq!(reopened.retention_status()?.pending_intents, 0);
-    Ok(())
+    drop((delayed, reopened));
+    let reopened = Kernel::open(fixture.source.path(), Some(fixture.data.path().into()))?;
+    let protected = BTreeSet::from([before.revision.to_string(), after.revision.to_string()]);
+    let expected_objects = retained_object_paths(&fixture.store)?;
+    let quota = Quota::open(fixture.data.path())?;
+    for _ in 0..8 {
+        let run = reopened.maintain_retention()?;
+        check_maintenance_receipt(&run, after)?;
+        assert_eq!(
+            fixture.store.persistent_revision()?.unwrap().token,
+            Some(after)
+        );
+        let retained: BTreeSet<_> = generations(&fixture.store)?.into_iter().collect();
+        assert!(protected.is_subset(&retained));
+        let objects: BTreeSet<_> = files(&fixture.store.directory().join("objects"))?
+            .into_keys()
+            .collect();
+        assert!(expected_objects.is_subset(&objects));
+        assert_eq!(quota.status()?.active_reservations, 0);
+        if !run.receipt.pending {
+            assert_eq!(reopened.retention_status()?.pending_intents, 0);
+            assert_eq!(retained, protected);
+            assert_eq!(objects, expected_objects);
+            return Ok(());
+        }
+    }
+    anyhow::bail!(
+        "bounded recovery did not converge: {:?}",
+        reopened.retention_status()?
+    )
 }
 
 #[test]
@@ -749,12 +824,7 @@ fn main() {
         before.generation + 1
     );
     // The inherited manual backlog is drained in bounded maintenance passes.
-    for _ in 0..4 {
-        if generations(&fixture.store)?.len() <= 2 {
-            break;
-        }
-        fixture.kernel.maintain_retention()?;
-    }
+    finish_pending_generations(&fixture)?;
     assert!(generations(&fixture.store)?.len() <= 2);
     assert_eq!(quota.status()?.active_reservations, 0);
     Ok(())
@@ -787,7 +857,9 @@ fn concurrent_reader_remains_consistent_while_automatic_retirement_runs() -> Res
         fixture.edit(edit)?;
     }
     worker.join().expect("concurrent reader panicked")?;
-    fixture.kernel.maintain_retention()?;
+    let head = fixture.store.persistent_revision()?.unwrap().token.unwrap();
+    check_maintenance_receipt(&fixture.kernel.maintain_retention()?, head)?;
+    finish_pending_generations(&fixture)?;
     assert!(fixture.store.catalog_at(&first, 1_000_000)?.is_none());
     assert!(generations(&fixture.store)?.len() <= 2);
     Ok(())
@@ -882,23 +954,31 @@ fn idle_worker_reclaims_released_obsolete_reader_without_new_publication() -> Re
     );
     assert!(reader.file("evidence.md")?.is_some());
     drop(reader);
-    let outcome = fixture.kernel.run_scheduled_once()?;
-    assert_eq!(outcome.state, "maintained");
-    assert!(
-        outcome.report.is_none(),
-        "idle maintenance must not reindex sources"
-    );
-    let maintenance = outcome.maintenance.context("maintenance receipt missing")?;
-    assert!(!maintenance.receipt.pending, "{:?}", maintenance.receipt);
-    assert_eq!(
-        fixture.store.persistent_revision()?.unwrap().token,
-        Some(head)
-    );
-    assert!(
-        fixture
-            .store
-            .catalog_at(&first, airk_store::blobs::MAX_CATALOG_BYTES)?
-            .is_none()
-    );
-    Ok(())
+    for _ in 0..8 {
+        let outcome = fixture.kernel.run_scheduled_once()?;
+        assert_eq!(outcome.state, "maintained");
+        assert!(
+            outcome.report.is_none(),
+            "idle maintenance must not reindex sources"
+        );
+        let maintenance = outcome.maintenance.context("maintenance receipt missing")?;
+        check_maintenance_receipt(&maintenance, head)?;
+        assert_eq!(
+            fixture.store.persistent_revision()?.unwrap().token,
+            Some(head)
+        );
+        if !maintenance.receipt.pending {
+            assert!(
+                fixture
+                    .store
+                    .catalog_at(&first, airk_store::blobs::MAX_CATALOG_BYTES)?
+                    .is_none()
+            );
+            return Ok(());
+        }
+    }
+    anyhow::bail!(
+        "idle maintenance did not converge: {:?}",
+        fixture.kernel.retention_status()?
+    )
 }
