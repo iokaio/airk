@@ -132,11 +132,12 @@ fn collections(source: &Path) -> Result<Vec<String>> {
 }
 
 struct Freeze {
-    _lifecycle: File,
     _worker: File,
     _writers: Vec<File>,
     _usage: Vec<crate::usage::UsageLock>,
     _readers: Vec<File>,
+    // Drop the root exclusion last, after all subordinate locks are released.
+    _lifecycle: crate::quota::RelocationLease,
 }
 fn freeze(source: &Path) -> Result<(Freeze, Vec<String>)> {
     let lifecycle = crate::quota::relocation_lifecycle_lease(source)?;
