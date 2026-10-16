@@ -25,6 +25,8 @@ Windows concurrent publication exposed `SQLITE_PROTOCOL` with the bundled SQLite
 
 Retention lifecycle fixtures configure a 512 MiB root and 128 MiB default collection allowance **before initialization**. SQLite precharges its maximum page allowance, so leaving a tiny fixture at the production 4 GiB default can instead fail on changing hosted-runner physical capacity. All fixture collections share the explicit policy; pressure tests then set their deliberate tighter limits. The automatic-pressure test first verifies that the same publication fails with typed logical quota pressure in manual mode, leaves its head/generations intact and releases its reservation, before verifying automatic reclamation and publication. The 200-edit plateau and exact retained-object assertions remain in place. Physical admission and production default quotas are unchanged.
 
+Recovery and idle-worker tests inspect maintenance receipts and continue explicitly reported pending work within a finite pass limit. A single default one-second pass does not promise complete cleanup. The recovery test deliberately exhausts that deadline after retirement authorization, reopens again, and requires complete cleanup with zero pending intents, the exact protected generations/objects, unchanged publication identity and no leaked reservations. Failed or quota-blocked maintenance is rejected instead of retried. Reader-release tests likewise require eventual removal while preserving the active and predecessor revisions.
+
 ## Downloadable candidates
 
 Successful native jobs upload an artifact named `airk-native-<target>-<commit>-<run-id>-<attempt>` to the workflow run's Artifacts section. It contains:

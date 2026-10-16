@@ -21,7 +21,7 @@ use airk_store::{
         RetentionPolicy,
     },
 };
-use anyhow::Result;
+use anyhow::{Result, ensure};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, fs};
@@ -81,6 +81,43 @@ impl Fixture {
     }
 }
 
+fn complete_recovery(store: &FileStore, writer: &WriterLock, quota: &Quota) -> Result<()> {
+    let head = store.persistent_revision()?.unwrap().token;
+    for _ in 0..8 {
+        let run = store.maintain_retention(
+            writer,
+            quota,
+            MaintenanceTrigger::ExplicitMaintenance,
+            MaintenanceBudget::default(),
+        );
+        ensure!(
+            run.receipt_persisted && run.receipt.head == head && run.receipt.pressure.is_none(),
+            "invalid recovery receipt: {run:?}"
+        );
+        ensure!(
+            matches!(
+                run.receipt.state,
+                MaintenanceState::Complete | MaintenanceState::Pending
+            ) && run.receipt.pending == (run.receipt.state == MaintenanceState::Pending),
+            "recovery failed rather than deferring bounded work: {run:?}"
+        );
+        assert_eq!(store.persistent_revision()?.unwrap().token, head);
+        assert_eq!(quota.status()?.active_reservations, 0);
+        if !run.receipt.pending {
+            ensure!(
+                run.receipt.error.is_none(),
+                "completed recovery has an error: {run:?}"
+            );
+            assert_eq!(store.retention_status()?.pending_intents, 0);
+            return Ok(());
+        }
+    }
+    anyhow::bail!(
+        "bounded recovery did not converge: {:?}",
+        store.retention_status()?
+    )
+}
+
 #[test]
 fn every_durable_retirement_boundary_recovers_idempotently() -> Result<()> {
     for stage in [
@@ -134,14 +171,8 @@ fn every_durable_retirement_boundary_recovers_idempotently() -> Result<()> {
             );
             drop(remaining_readers);
         }
-        let recovered = fixture.maintain();
-        assert!(
-            recovered.receipt.error.is_none(),
-            "{stage:?}: {:?}",
-            recovered.receipt.error
-        );
-        let again = fixture.maintain();
-        assert!(again.receipt.error.is_none());
+        complete_recovery(&fixture.store, &fixture.writer, &fixture.quota)?;
+        complete_recovery(&fixture.store, &fixture.writer, &fixture.quota)?;
         assert_eq!(fixture.store.retention_status()?.pending_intents, 0);
         for token in &fixture.tokens[..2] {
             assert!(fixture.store.catalog_at(token, 1_000_000)?.is_none());
@@ -322,7 +353,7 @@ fn borrowed_reader_lease_defers_retirement_and_preserves_payload() -> Result<()>
     assert!(reader.file("note.txt")?.is_some());
     assert!(fixture.store.catalog_at(&first, 1_000_000)?.is_some());
     drop(reader);
-    assert!(fixture.maintain().receipt.error.is_none());
+    complete_recovery(&fixture.store, &fixture.writer, &fixture.quota)?;
     assert!(fixture.store.catalog_at(&first, 1_000_000)?.is_none());
     Ok(())
 }
@@ -354,17 +385,7 @@ fn process_exit_at_each_retirement_boundary_recovers_without_drop_cleanup() -> R
             .status()?;
         assert_eq!(status.code(), Some(81), "child did not reach {stage:?}");
         let writer = store.lock()?;
-        let run = store.maintain_retention(
-            &writer,
-            &quota,
-            MaintenanceTrigger::ExplicitMaintenance,
-            MaintenanceBudget::default(),
-        );
-        assert!(
-            run.receipt.error.is_none(),
-            "{stage:?}: {:?}",
-            run.receipt.error
-        );
+        complete_recovery(&store, &writer, &quota)?;
         assert_eq!(
             store.persistent_revision()?.unwrap().token,
             tokens.last().copied()
