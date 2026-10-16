@@ -59,7 +59,7 @@ jobs:
       - name: Install pinned compiler and checks
         run: rustup show
       - name: Restore Rust dependencies and compiler outputs
-        if: ${{ !inputs.fresh_build }}
+        if: ${{ !inputs.fresh_build && runner.os != 'Windows' }}
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -74,6 +74,23 @@ jobs:
           key: airk-rust-v1-${{ runner.os }}-${{ matrix.target }}-${{ hashFiles('rust-toolchain.toml', '.github/workflows/ci.yml', '.cargo/**') }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}
           restore-keys: |
             airk-rust-v1-${{ runner.os }}-${{ matrix.target }}-${{ hashFiles('rust-toolchain.toml', '.github/workflows/ci.yml', '.cargo/**') }}-
+      # Windows compiler outputs produced a 13.8 GB archive and spent 44 minutes
+      # compressing it. Cache downloaded dependencies only, with bounded I/O.
+      - name: Restore Windows Rust dependencies
+        id: windows-rust-dependencies
+        if: ${{ !inputs.fresh_build && runner.os == 'Windows' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        timeout-minutes: 5
+        continue-on-error: true
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/src
+            ~/.cargo/git/db
+          key: airk-rust-dependencies-v1-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            airk-rust-dependencies-v1-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}-
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: '24.15.0'
@@ -146,6 +163,18 @@ jobs:
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
+      - name: Save Windows Rust dependencies
+        if: ${{ !inputs.fresh_build && runner.os == 'Windows' && steps.windows-rust-dependencies.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        timeout-minutes: 5
+        continue-on-error: true
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/src
+            ~/.cargo/git/db
+          key: airk-rust-dependencies-v1-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('Cargo.lock') }}
   container:
     runs-on: ubuntu-24.04
     timeout-minutes: 90
