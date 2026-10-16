@@ -19,6 +19,12 @@ Jobs install the repository-pinned Rust compiler/components, Python 3.11 and Nod
 
 Each native job also runs public CLI checks for DOCX/XLSX table facts, source aliases and quota/relocation rollback, and optional usage imports/calibration/price scenarios. These use original temporary fixtures and the exact release helper that is packaged. The VSIX includes the original listing illustrations as digest-verified assets.
 
+## Storage concurrency and fixture capacity
+
+Windows concurrent publication exposed `SQLITE_PROTOCOL` with the bundled SQLite 3.53.2: its VFS classified canonical extended local paths (`\\?\C:\...`) as UNC network paths and selected shared-handle WAL locking. The exact upstream SQLite 3.53.3 bundle in [Cargo.toml](../Cargo.toml) includes the [path classification fix](https://github.com/sqlite/sqlite/commit/2429af2e0ce2e4c643786f8d2533f79d974e3270). The [dependency notice](../THIRD_PARTY_NOTICES.md) records the source pin and package versions. The store's `sqlite_wal` integration test exercises concurrent read transactions and connection churn on a canonical path longer than 260 characters, without AIRK retries. The kernel's `publication_v2` test additionally checks publication, pinned metadata and search consistency.
+
+Retention lifecycle fixtures configure a 512 MiB root and 128 MiB default collection allowance **before initialization**. SQLite precharges its maximum page allowance, so leaving a tiny fixture at the production 4 GiB default can instead fail on changing hosted-runner physical capacity. All fixture collections share the explicit policy; pressure tests then set their deliberate tighter limits. The automatic-pressure test first verifies that the same publication fails with typed logical quota pressure in manual mode, leaves its head/generations intact and releases its reservation, before verifying automatic reclamation and publication. The 200-edit plateau and exact retained-object assertions remain in place. Physical admission and production default quotas are unchanged.
+
 ## Downloadable candidates
 
 Successful native jobs upload an artifact named `airk-native-<target>-<commit>-<run-id>-<attempt>` to the workflow run's Artifacts section. It contains:
