@@ -131,7 +131,9 @@ def main():
         run([args.signtool,"sign","/sha1",args.identity,"/fd","SHA256","/tr",args.timestamp_url,"/td","SHA256",binary])
     else:
         keychain = ["--keychain", str(args.keychain)] if args.keychain else []
-        run(["/usr/bin/codesign","--sign",args.identity,"--options","runtime","--timestamp",*keychain,binary])
+        # Apple Silicon linkers emit an ad-hoc signature. Replace it only on
+        # this fresh copy, then require the Developer ID signature below.
+        run(["/usr/bin/codesign","--force","--sign",args.identity,"--options","runtime","--timestamp",*keychain,binary])
     receipt["binary_sha256"] = digest(binary)
     receipt["verification"] = verify(binary,receipt,args.signtool)
     if args.notarize:
