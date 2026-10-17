@@ -239,6 +239,31 @@ fn within_deadline(deadline: Option<Instant>) -> Result<()> {
     Ok(())
 }
 
+fn inventory_read<T>(
+    deadline: Option<Instant>,
+    mut read: impl FnMut() -> io::Result<T>,
+) -> Result<Option<T>> {
+    for attempt in 0..=10 {
+        within_deadline(deadline)?;
+        match read() {
+            Ok(value) => return Ok(Some(value)),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            // Windows delete-pending directories can transiently report access
+            // denied or a sharing violation. Retry, never treat denial as empty:
+            // persistent ACL failures must still prevent quota admission.
+            Err(error)
+                if attempt < 10
+                    && (error.kind() == io::ErrorKind::PermissionDenied
+                        || (cfg!(windows) && error.raw_os_error() == Some(32))) =>
+            {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+    unreachable!("the final inventory read returns its result")
+}
+
 impl Quota {
     /// Canonicalizing aliases ensures all cooperating processes share one ledger.
     pub fn open(root: impl AsRef<Path>) -> Result<Self> {
@@ -684,10 +709,10 @@ impl Quota {
             // writer markers can disappear while this inventory is walking.
             // Removed bytes no longer consume quota; outstanding reservations
             // still account for concurrent growth. Other I/O failures stay fatal.
-            let entries = match fs::read_dir(&directory) {
-                Ok(entries) => entries,
-                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-                Err(error) => return Err(error).context("read quota inventory directory"),
+            let Some(entries) = inventory_read(deadline, || fs::read_dir(&directory))
+                .context("read quota inventory directory")?
+            else {
+                continue;
             };
             for entry in entries {
                 within_deadline(deadline)?;
@@ -701,10 +726,10 @@ impl Quota {
                 if path == self.root.join(".quota") {
                     continue;
                 }
-                let kind = match entry.file_type() {
-                    Ok(kind) => kind,
-                    Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-                    Err(error) => return Err(error).context("read quota inventory entry type"),
+                let Some(kind) = inventory_read(deadline, || entry.file_type())
+                    .context("read quota inventory entry type")?
+                else {
+                    continue;
                 };
                 ensure!(!kind.is_symlink(), "quota inventory contains linked state");
                 if kind.is_dir() {
@@ -729,11 +754,12 @@ impl Quota {
                     continue;
                 }
                 ensure!(kind.is_file(), "quota inventory contains nonregular state");
-                let bytes = match entry.metadata() {
-                    Ok(metadata) => metadata.len(),
-                    Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-                    Err(error) => return Err(error).context("read quota inventory file length"),
+                let Some(metadata) = inventory_read(deadline, || entry.metadata())
+                    .context("read quota inventory file length")?
+                else {
+                    continue;
                 };
+                let bytes = metadata.len();
                 result.used_bytes = checked_add(result.used_bytes, bytes)?;
                 if let Ok(relative) = path.strip_prefix(self.root.join("collections"))
                     && let Some(Component::Normal(collection)) = relative.components().next()
@@ -1130,6 +1156,43 @@ impl Drop for ReservationInner {
 mod tests {
     use super::*;
 
+    #[test]
+    fn inventory_retry_distinguishes_deletion_from_persistent_denial() -> Result<()> {
+        for removed in [false, true] {
+            let mut attempts = 0;
+            let observed = inventory_read(None, || {
+                attempts += 1;
+                if attempts == 1 {
+                    Err(io::Error::from(io::ErrorKind::PermissionDenied))
+                } else if removed {
+                    Err(io::Error::from(io::ErrorKind::NotFound))
+                } else {
+                    Ok(7)
+                }
+            })?;
+            assert_eq!(observed, if removed { None } else { Some(7) });
+            assert_eq!(attempts, 2);
+        }
+        let error = inventory_read::<()>(None, || {
+            Err(io::Error::from(io::ErrorKind::PermissionDenied))
+        })
+        .unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<io::Error>().unwrap().kind(),
+            io::ErrorKind::PermissionDenied
+        );
+        let mut attempts = 0;
+        assert!(
+            inventory_read::<()>(Some(Instant::now()), || {
+                attempts += 1;
+                Ok(())
+            })
+            .is_err()
+        );
+        assert_eq!(attempts, 0, "optional accounting respects its deadline");
+        Ok(())
+    }
+
     fn policy(root_bytes: u64, collection_bytes: u64) -> QuotaPolicy {
         QuotaPolicy {
             root_bytes,
@@ -1302,8 +1365,10 @@ mod tests {
         let ready = barrier.clone();
         let writer = std::thread::spawn(move || -> Result<()> {
             ready.wait();
-            for _ in 0..1000 {
-                let directory = stage.join("temporary");
+            for ordinal in 0..1000 {
+                // Staging names are unique in production. Recreating a still
+                // delete-pending name tests the fixture writer, not accounting.
+                let directory = stage.join(format!("temporary-{ordinal}"));
                 fs::create_dir(&directory)?;
                 let marker = directory.join("marker");
                 fs::write(&marker, [1])?;
