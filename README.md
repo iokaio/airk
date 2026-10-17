@@ -1,6 +1,6 @@
-# AIRK
+# AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents
 
-**AIRK — Artifact Indexing and Retrieval Kernel** (beta)
+**Beta.**
 
 Local code and document evidence for coding agents. AIRK indexes files and returns bounded facts and passages with source paths, hashes and original locations. The agent supplies the reasoning. Runtime storage uses memory and local disk.
 
