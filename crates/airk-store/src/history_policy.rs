@@ -22,7 +22,10 @@ impl Default for HistoryWorkBudget {
     fn default() -> Self {
         Self {
             maintenance: MaintenanceBudget::default(),
-            verification_bytes: 256 * 1024 * 1024,
+            // Authentication streams whole surviving catalogs, not just their
+            // inventories. Keep this I/O allowance separate from the metadata
+            // reservation so a multi-GiB catalog can finish object GC.
+            verification_bytes: 8 * 1024 * 1024 * 1024,
         }
     }
 }
@@ -880,6 +883,28 @@ pub(crate) fn maintain_work(
     maximum: usize,
 ) -> Result<HistoryMaintenanceRun> {
     use anyhow::Context;
+    if !crate::sqlite::history_admin(store.directory())?
+        .policy
+        .policy
+        .enabled
+        && crate::history::pending_count(store)? == 0
+    {
+        // No conversion or recovery work needs an inventory. Loading the full
+        // catalog here used most of a cleanup pass merely to discover that
+        // history is disabled. Object GC still authenticates every live root.
+        let head = crate::sqlite::persistent_revision(store.directory())?
+            .and_then(|header| header.token)
+            .context("history requires v2 publication")?;
+        crate::sqlite::receipt(store.directory(), &head)?
+            .context("history publication receipt missing")?;
+        return Ok(HistoryMaintenanceRun {
+            head,
+            conversions: vec![],
+            removals: vec![],
+            pending: false,
+            error: None,
+        });
+    }
     let current = store
         .catalog()?
         .context("history requires indexed collection")?;

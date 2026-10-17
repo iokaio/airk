@@ -18,6 +18,22 @@ pub(crate) fn prepare_with_prose_text(
     prose_text: Option<&str>,
 ) -> anyhow::Result<()> {
     use airk_core::continuity::*;
+    use airk_core::extraction::IndexDetail;
+    let detail = IndexDetail::from_profile(profile)?;
+    crate::detail::select(payload, detail);
+    if detail == IndexDetail::Essential {
+        for family in [ContinuityFamily::Code, ContinuityFamily::Documents] {
+            payload.continuity_coverage.insert(
+                family,
+                ContinuityCoverage {
+                    supported: false,
+                    complete: false,
+                },
+            );
+        }
+        payload.chunks = crate::chunking::partition(payload, &[])?;
+        return payload.validate();
+    }
     if payload.parse_status.starts_with("partial-text-only:") {
         payload.partial = true;
         for family in [ContinuityFamily::Code, ContinuityFamily::Documents] {
@@ -34,7 +50,11 @@ pub(crate) fn prepare_with_prose_text(
     }
     let mut budget = ContinuityBudget::default();
     let code = code::describe(payload, profile, &mut budget)?;
-    let documents = documents::describe_with_prose_text(payload, profile, &mut budget, prose_text)?;
+    let documents = if detail == IndexDetail::Detailed {
+        documents::describe_with_prose_text(payload, profile, &mut budget, prose_text)?
+    } else {
+        ContinuityDraft::default()
+    };
     let mut hints = Vec::new();
     let mut bytes = 2usize;
     payload.continuity.clear();

@@ -39,6 +39,7 @@ fn readmission(cause: ChangeCause) -> Result<()> {
     let data = tempfile::tempdir()?;
     fs::write(root.path().join("original.rs"), SOURCE)?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    kernel.configure_index_detail(airk_core::extraction::IndexDetail::Detailed)?;
     manual(&kernel)?;
     kernel.index()?;
     let store = FileStore::new(data.path().join("collections/default"));
@@ -66,6 +67,7 @@ fn readmission(cause: ChangeCause) -> Result<()> {
         }
         ChangeCause::ExtractionOmitted => {
             kernel.configure_extraction_policy(ExtractionPolicy {
+                detail: None,
                 version: 1,
                 rules: vec![SelectionRule {
                     selector: RuleMatch::Exact {
@@ -103,6 +105,7 @@ fn readmission(cause: ChangeCause) -> Result<()> {
         }
         ChangeCause::ExtractionOmitted => {
             kernel.configure_extraction_policy(ExtractionPolicy {
+                detail: None,
                 version: 1,
                 rules: vec![],
             })?;
@@ -186,6 +189,7 @@ fn actual_case_only_rename_preserves_exact_observed_identity() -> Result<()> {
     let data = tempfile::tempdir()?;
     fs::write(root.path().join("Beacon.rs"), SOURCE)?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    kernel.configure_index_detail(airk_core::extraction::IndexDetail::Detailed)?;
     kernel.index()?;
     let store = FileStore::new(data.path().join("collections/default"));
     let old = store.catalog()?.unwrap();
@@ -238,6 +242,7 @@ fn two_reader_leases_survive_writer_then_guard_history_relocation_and_removal() 
     let data = tempfile::tempdir()?;
     fs::write(root.path().join("original.rs"), SOURCE)?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    kernel.configure_index_detail(airk_core::extraction::IndexDetail::Detailed)?;
     manual(&kernel)?;
     kernel.index()?;
     let store = FileStore::new(data.path().join("collections/default"));

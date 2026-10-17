@@ -150,7 +150,7 @@ fn policy_file_and_inline_inputs_are_bounded_and_invalid_updates_leave_policy_un
         state.path(),
         &["collections", "retention", "set", file_name],
     )?;
-    let invalid = json!({"version":1,"mode":"manual","searchable_predecessors":0}).to_string();
+    let invalid = json!({"version":1,"mode":"manual","searchable_predecessors":9}).to_string();
     for args in [
         vec!["collections", "retention", "set"],
         vec!["collections", "retention", "set", "--json", "{}"],
@@ -168,7 +168,7 @@ fn policy_file_and_inline_inputs_are_bounded_and_invalid_updates_leave_policy_un
             "run",
             "--apply",
             "--max-metadata-bytes",
-            "67108865",
+            "8589934593",
         ],
         vec![
             "collections",
@@ -239,5 +239,123 @@ fn policy_file_and_inline_inputs_are_bounded_and_invalid_updates_leave_policy_un
             "foreign root must not operate on bound collection"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn configurable_generation_counts_preserve_active_and_cannot_restore_retired_data() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let state = tempfile::tempdir()?;
+    fs::write(root.path().join("evidence.txt"), "original zero")?;
+    call(root.path(), state.path(), &["index"])?;
+    let initial = call(
+        root.path(),
+        state.path(),
+        &["collections", "retention", "show"],
+    )?;
+    assert_eq!(initial["policy"]["policy"]["searchable_predecessors"], 0);
+    let manual = json!({"version":1,"mode":"manual","searchable_predecessors":2}).to_string();
+    call(
+        root.path(),
+        state.path(),
+        &["collections", "retention", "set", "--json", &manual],
+    )?;
+    for value in 1..5 {
+        fs::write(
+            root.path().join("evidence.txt"),
+            format!("original {value}"),
+        )?;
+        call(root.path(), state.path(), &["index"])?;
+    }
+    for _ in 0..4 {
+        call(
+            root.path(),
+            state.path(),
+            &["collections", "retention", "run", "--apply"],
+        )?;
+    }
+    assert_eq!(generations(state.path())?, 3);
+    let active_only =
+        json!({"version":1,"mode":"automatic","searchable_predecessors":0}).to_string();
+    call(
+        root.path(),
+        state.path(),
+        &["collections", "retention", "set", "--json", &active_only],
+    )?;
+    for _ in 0..4 {
+        call(
+            root.path(),
+            state.path(),
+            &["collections", "retention", "run", "--apply"],
+        )?;
+    }
+    assert_eq!(generations(state.path())?, 1);
+    assert_eq!(
+        fs::read_to_string(root.path().join("evidence.txt"))?,
+        "original 4"
+    );
+    call(
+        root.path(),
+        state.path(),
+        &["collections", "retention", "set", "--json", &manual],
+    )?;
+    let preview = call(
+        root.path(),
+        state.path(),
+        &["collections", "retention", "preview"],
+    )?;
+    assert_eq!(preview["candidates"].as_array().unwrap().len(), 0);
+    Ok(())
+}
+
+#[test]
+fn quota_inline_edit_preserves_other_collections_and_rejects_stale_reviews() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let state = tempfile::tempdir()?;
+    let current = call(
+        root.path(),
+        state.path(),
+        &["collections", "quota", "policy"],
+    )?;
+    assert_eq!(current["root_bytes"], 500u64 * 1024 * 1024 * 1024);
+    assert_eq!(
+        current["default_collection_bytes"],
+        100u64 * 1024 * 1024 * 1024
+    );
+    let mut proposed = current.clone();
+    proposed["collections"]["other"] = json!(123456789);
+    call(
+        root.path(),
+        state.path(),
+        &[
+            "collections",
+            "quota",
+            "set",
+            "--json",
+            &proposed.to_string(),
+            "--expected-json",
+            &current.to_string(),
+        ],
+    )?;
+    let stale = run(
+        root.path(),
+        state.path(),
+        &[
+            "collections",
+            "quota",
+            "set",
+            "--json",
+            &current.to_string(),
+            "--expected-json",
+            &current.to_string(),
+        ],
+    )?;
+    assert!(!stale.status.success());
+    let saved = call(
+        root.path(),
+        state.path(),
+        &["collections", "quota", "policy"],
+    )?;
+    assert_eq!(saved, proposed);
     Ok(())
 }

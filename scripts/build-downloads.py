@@ -19,11 +19,11 @@ PLATFORMS = (
     ("linux-x64", "x86_64-unknown-linux-gnu", "Linux", "x64", "LINUX"),
 )
 NUMBER = r"(?:0|[1-9][0-9]*)"
-TAG = re.compile(rf"v({NUMBER}\.{NUMBER}\.{NUMBER})-build\.([1-9][0-9]*)")
+TAG = re.compile(rf"v({NUMBER}\.{NUMBER}\.{NUMBER})(?:-build\.([1-9][0-9]*))?")
 
 
 def release_metadata(release):
-    """Accept only complete numbered releases with direct AIRK asset URLs."""
+    """Accept only complete versioned releases with direct AIRK asset URLs."""
     tag = release["tag_name"]
     match = TAG.fullmatch(tag)
     version = match[1]
@@ -50,12 +50,12 @@ def release_metadata(release):
 
 
 def select_releases(catalog):
-    """Use the most recently published numbered release in each channel."""
+    """Use the most recently published versioned release in each channel."""
     selected = {}
     for release in catalog:
         if release.get("draft") is not False or not TAG.fullmatch(release.get("tag_name", "")):
             continue
-        # An incomplete numbered publication is an error, never a silent fallback.
+        # An incomplete versioned publication is an error, never a silent fallback.
         record = release_metadata(release)
         channel = record["channel"]
         if channel not in selected or record["published"] > selected[channel]["published"]:
@@ -96,7 +96,7 @@ def render_downloads(records):
           <a href="{base}/SHA256SUMS">SHA-256 checksums ↓</a>
           <a href="{base}/release.json">Build record ↓</a>
         </div>
-        <p class="release-note">{note}The build number identifies this download; the installed extension reports package version {version}.</p>
+        <p class="release-note">{note}The installed extension and native helper report version {version}.</p>
       </section>""")
     return "\n".join(sections)
 

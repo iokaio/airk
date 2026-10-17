@@ -23,8 +23,10 @@ fn qualify(
         "pub fn unaffected() -> u32 { 9 }\n",
     )?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    kernel.configure_index_detail(airk_core::extraction::IndexDetail::Detailed)?;
     if let Some(adapter) = profile {
         kernel.configure_extraction_policy(ExtractionPolicy {
+            detail: None,
             version: 1,
             rules: vec![SelectionRule {
                 selector: RuleMatch::Scoped {
@@ -107,6 +109,7 @@ fn qualify(
             .payload_digest
     );
     kernel.configure_extraction_policy(ExtractionPolicy {
+        detail: None,
         version: 1,
         rules: vec![SelectionRule {
             selector: RuleMatch::Exact { path: moved.into() },

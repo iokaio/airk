@@ -6,7 +6,7 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-function addTreeApi(stub: any, capture?: (provider: any) => void): void {
+function addTreeApi(stub: any, capture?: (provider: any) => void, dashboard?: (provider: any) => void): void {
     stub.TreeItem = class { constructor(public label: string) {} };
     stub.TreeItemCollapsibleState = { None: 0 };
     stub.ThemeIcon = class { constructor(public id: string) {} };
@@ -14,6 +14,7 @@ function addTreeApi(stub: any, capture?: (provider: any) => void): void {
         capture?.(options.treeDataProvider);
         return { dispose() {} };
     };
+    stub.window.registerWebviewViewProvider = (_id: string, provider: unknown) => { dashboard?.(provider); return { dispose() {} }; };
 }
 function addReportApi(stub: any): void {
     stub.ViewColumn = { Active: 1 };
@@ -24,6 +25,90 @@ function addReportApi(stub: any): void {
         onDidDispose: () => ({ dispose() {} })
     });
 }
+
+test('storage picker holds startup indexing, waits for active writes, and restores scheduling on cancellation or invalid paths', { timeout: 20000 }, async () => {
+    for (const scenario of ['startup', 'busy', 'cancel', 'invalid', 'root-added']) {
+        const busy = scenario === 'busy' || scenario === 'root-added';
+        const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'airk-vscode-storage-'));
+        const root = path.join(directory, 'Project'), storage = path.join(directory, 'Host'), destination = path.join(directory, 'NewStorage');
+        await fs.mkdir(root); await fs.mkdir(destination);
+        const commands = new Map<string, () => Promise<unknown>>(), state = new Map<string, unknown>();
+        const disposable = { dispose() {} }, event = () => disposable;
+        let configured: string | undefined, dialogs = 0, releaseIndex!: () => void, indexStarted!: () => void, progressStarted!: () => void;
+        let select!: (value: { fsPath: string }[] | undefined) => void;
+        const selected = new Promise<{ fsPath: string }[] | undefined>(resolve => { select = resolve; });
+        const started = new Promise<void>(resolve => { indexStarted = resolve; });
+        const waiting = new Promise<void>(resolve => { progressStarted = resolve; });
+        const indexing = new Promise<void>(resolve => { releaseIndex = resolve; });
+        const indexed: string[] = [], errors: string[] = [];
+        const stub = {
+            workspace: { isTrusted: true, workspaceFolders: [{ name: 'Project', uri: { scheme: 'file', fsPath: root } }],
+                getConfiguration: () => ({ get: (key: string, fallback: unknown) => key === 'index.quietMs' ? 250 : fallback,
+                    inspect: (key: string) => key === 'storage.path' ? { globalValue: configured } : undefined,
+                    update: async (key: string, value: string) => { assert.equal(key, 'storage.path'); configured = value; } }),
+                createFileSystemWatcher: () => ({ ...disposable, onDidChange: event, onDidCreate: event, onDidDelete: event }),
+                onDidSaveTextDocument: event, onDidChangeTextDocument: event, onDidGrantWorkspaceTrust: event,
+                onDidChangeWorkspaceFolders: event, onDidChangeConfiguration: event },
+            window: { createOutputChannel: () => ({ ...disposable, appendLine() {}, show() {} }),
+                createStatusBarItem: () => ({ ...disposable, show() {} }), onDidChangeTextEditorSelection: event, onDidChangeActiveTextEditor: event,
+                showOpenDialog: () => { dialogs++; return selected; }, showInformationMessage() {},
+                withProgress: async (_options: unknown, run: () => Promise<unknown>) => { progressStarted(); return run(); },
+                showErrorMessage: (error: string) => { errors.push(error); } },
+            commands: { registerCommand: (name: string, handler: () => Promise<unknown>) => { commands.set(name, handler); return disposable; } },
+            env: {}, ConfigurationTarget: { Global: 1 }, StatusBarAlignment: { Left: 1 }, ProgressLocation: { Notification: 1 },
+            EventEmitter: class { event = event; fire() {} dispose() {} }, lm: {}
+        };
+        addTreeApi(stub);
+        const loader = Module as unknown as { _load: (...args: any[]) => any }, original = loader._load;
+        const native = require('../native'), priorPrepare = native.prepareHelper, priorRun = native.runJson;
+        native.prepareHelper = async () => '/fixture/airk';
+        native.runJson = async (spec: { dataDir: string }, command: string) => {
+            if (command === 'index') {
+                indexed.push(spec.dataDir); indexStarted();
+                if (busy && indexed.length === 1) { await indexing; }
+                return { generation: indexed.length, indexed: 1, reused: 0, removed: 0, skipped: [] };
+            }
+            return { scan_complete: true, eligible: 1, current: 1, indexed: true };
+        };
+        loader._load = function(request: string, ...args: any[]) { return request === 'vscode' ? stub : original.call(this, request, ...args); };
+        const context = { subscriptions: [] as { dispose(): void }[], extensionPath: '/fixture/extension',
+            extension: { packageJSON: { version: '1.1.0' } }, globalStorageUri: { fsPath: storage },
+            globalState: { get: (key: string, fallback: unknown) => state.get(key) ?? fallback,
+                update: async (key: string, value: unknown) => { state.set(key, value); } } };
+        try {
+            delete require.cache[require.resolve('../extension')]; await require('../extension').activate(context);
+            if (busy) { await started; }
+            const choosing = commands.get('airk.chooseStorage')!();
+            const duplicate = commands.get('airk.chooseStorage')!();
+            assert.equal(dialogs, 1, 'Repeated clicks share one picker even during an active index');
+            await new Promise<void>(resolve => setTimeout(resolve, 350));
+            assert.equal(indexed.length, busy ? 1 : 0, 'Opening the picker holds startup indexing');
+            select(scenario === 'cancel' ? undefined : [{ fsPath: scenario === 'invalid' ? root : destination }]);
+            if (busy) {
+                await waiting; assert.equal(configured, undefined, 'Storage cannot switch before the writer finishes');
+                if (scenario === 'root-added') { stub.workspace.workspaceFolders.push({ name: 'Added', uri: { scheme: 'file', fsPath: destination } }); }
+                releaseIndex();
+            }
+            if (scenario === 'invalid' || scenario === 'root-added') {
+                const results = await Promise.allSettled([choosing, duplicate]);
+                assert.ok(results.every(result => result.status === 'rejected' && /must not be the workspace root/.test(String(result.reason))));
+            } else { await Promise.all([choosing, duplicate]); assert.deepEqual(errors, []); }
+            const changed = scenario === 'startup' || scenario === 'busy';
+            assert.equal(configured, changed ? await fs.realpath(destination) : undefined);
+            if (scenario === 'root-added') { stub.workspace.workspaceFolders.pop(); }
+            // Explicit requests also resume after the hold ends; no lingering suspension.
+            await commands.get('airk.index')!();
+            assert.equal(indexed.at(-1), await fs.realpath(changed ? destination : path.join(storage, 'indexes')));
+            if (changed) { assert.ok((state.get('storageHistory') as string[]).includes(await fs.realpath(path.join(storage, 'indexes')))); }
+        } finally {
+            select(undefined); releaseIndex(); context.subscriptions.forEach(item => item.dispose());
+            delete require.cache[require.resolve('../extension')];
+            loader._load = original; native.prepareHelper = priorPrepare; native.runJson = priorRun;
+            const resolved = await fs.realpath(directory); assert.equal(path.dirname(resolved), await fs.realpath(os.tmpdir()));
+            assert.ok(path.basename(resolved).startsWith('airk-vscode-storage-')); await fs.rm(resolved, { recursive: true, force: true });
+        }
+    }
+});
 
 test('untrusted workspaces expose no MCP servers and commands cannot launch a helper', async () => {
     const commands = new Map<string, () => Promise<unknown>>(); const errors: string[] = []; let provider: any;
@@ -67,7 +152,7 @@ test('trusted MCP definitions ignore workspace storage overrides and reconnect w
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'airk-vscode-provider-'));
     const root = path.join(directory, 'Project'), storage = path.join(directory, 'Host'); await fs.mkdir(root);
     const commands = new Map<string, () => Promise<unknown>>(); const state = new Map<string, unknown>();
-    const disposable = { dispose() {} }, event = () => disposable; let provider: any, tree: any, events = 0, emitters = 0, removals = 0;
+    const disposable = { dispose() {} }, event = () => disposable; let enabled = true; let provider: any, tree: any, events = 0, emitters = 0, removals = 0;
     class Definition {
         cwd?: { fsPath: string };
         constructor(public label: string, public command: string, public args: string[], public env: object, public version: string) {}
@@ -75,7 +160,7 @@ test('trusted MCP definitions ignore workspace storage overrides and reconnect w
     const stub = {
         workspace: { isTrusted: true, workspaceFolders: [{ name: 'Project', uri: { scheme: 'file', fsPath: root } }],
             getConfiguration: () => ({ get: (key: string, fallback: unknown) => key === 'index.mode' ? 'manual' : fallback,
-                inspect: () => ({ workspaceValue: path.join(root, 'untrusted-destination') }) }),
+                inspect: (key: string) => key === 'mcp.registrationEnabled' ? { globalValue: enabled, workspaceValue: false } : ({ workspaceValue: path.join(root, 'untrusted-destination') }) }),
             createFileSystemWatcher: () => ({ ...disposable, onDidChange: event, onDidCreate: event, onDidDelete: event }),
             onDidSaveTextDocument: event, onDidChangeTextDocument: event, onDidGrantWorkspaceTrust: event,
             onDidChangeWorkspaceFolders: event, onDidChangeConfiguration: event },
@@ -113,6 +198,13 @@ test('trusted MCP definitions ignore workspace storage overrides and reconnect w
         assert.equal(first[0].args[first[0].args.indexOf('--data-dir') + 1], await fs.realpath(path.join(storage, 'indexes')));
         const priorEvents = events; await api.getServerDefinitions(); assert.equal(events, priorEvents, 'No recursive definition-change loop');
         await provider.resolveMcpServerDefinition(first[0]); assert.deepEqual(calls, ['status']);
+        const beforeDisabled = calls.length;
+        enabled = false;
+        assert.deepEqual(await api.getServerDefinitions(), []);
+        await assert.rejects(provider.resolveMcpServerDefinition(first[0]), /registration is off/);
+        assert.equal(calls.length, beforeDisabled, 'Disabled registration cannot start a helper');
+        enabled = true;
+        assert.equal((await api.getServerDefinitions()).length, 1, 'Turning registration back on restores definitions');
         const rows = await tree.getChildren();
         assert.equal(rows.length, 2);
         const active = rows.find((row: any) => row.active), inactive = rows.find((row: any) => !row.active);
@@ -143,8 +235,11 @@ test('multi-root Index Now selects the active folder and coverage refresh never 
     roots.push(path.join(roots[1], 'Nested')); await fs.mkdir(roots[2]);
     const commands = new Map<string, () => Promise<unknown>>(); const state = new Map<string, unknown>();
     const disposable = { dispose() {} }, event = () => disposable;
-    let notifications = 0, choices = 0, emitters = 0;
+    let notifications = 0, choices = 0, emitters = 0, mode = 'manual', registration = true;
+    let dashboard: any;
     let saved!: (document: { uri: { fsPath: string } }) => void, changed!: (uri: { fsPath: string }) => void;
+    let availableMcpCommands = ['workbench.mcp.listServer'];
+    const invokedMcpCommands: string[] = [];
     const documents: { scheduling: { name: string; pending: boolean }[] }[] = [];
     const status = { ...disposable, show() {}, tooltip: '' };
     const storage = path.join(roots[1], 'Host'), managedFile = path.join(storage, 'indexes', 'state.json');
@@ -159,19 +254,21 @@ test('multi-root Index Now selects the active folder and coverage refresh never 
         workspace: { isTrusted: true, workspaceFolders: roots.map((root, index) => ({ name: String(index), uri: { scheme: 'file', fsPath: root } })),
             textDocuments: [path.join(roots[1], 'dirty.ts'), managedFile, path.join(roots[1], '.env'), path.join(roots[1] + '-outside', 'other.ts')]
                 .map(fsPath => ({ isDirty: true, uri: { fsPath } })),
-            getConfiguration: () => ({ get: (key: string, fallback: unknown) => key === 'index.mode' ? 'manual' : fallback, inspect: () => undefined }),
+            getConfiguration: () => ({ get: (key: string, fallback: unknown) => key === 'index.mode' ? mode : fallback, inspect: (key: string) => key === 'mcp.registrationEnabled' ? { globalValue: registration } : undefined,
+                update: async (key: string, value: unknown) => { if (key === 'mcp.registrationEnabled') { registration = value as boolean; } else { assert.equal(key, 'index.mode'); mode = value as string; } } }),
             createFileSystemWatcher: () => ({ ...disposable, onDidChange: (handler: typeof changed) => { changed = handler; return disposable; }, onDidCreate: event, onDidDelete: event }),
             onDidSaveTextDocument: (handler: typeof saved) => { saved = handler; return disposable; }, onDidChangeTextDocument: event, onDidGrantWorkspaceTrust: event,
             onDidChangeWorkspaceFolders: event, onDidChangeConfiguration: event,
             openTextDocument: async ({ content }: { content: string }) => { documents.push(JSON.parse(content)); return {}; } },
-        window, commands: { registerCommand: (name: string, handler: () => Promise<unknown>) => { commands.set(name, handler); return disposable; } },
+        window, commands: { getCommands: async () => availableMcpCommands, executeCommand: async (command: string) => { invokedMcpCommands.push(command); }, registerCommand: (name: string, handler: () => Promise<unknown>) => { commands.set(name, handler); return disposable; } },
+        ConfigurationTarget: { Global: 1 },
         env: {}, StatusBarAlignment: { Left: 1 }, ProgressLocation: { Notification: 1 },
         EventEmitter: class { private readonly ordinal = ++emitters; event = event; fire() { if (this.ordinal === 1) { notifications++; } } dispose() {} }, lm: {}
     };
-    addTreeApi(stub);
+    addTreeApi(stub, undefined, provider => { dashboard = provider; });
     addReportApi(stub);
     const loader = Module as unknown as { _load: (...args: any[]) => any }, original = loader._load;
-    const native = require('../native'), priorPrepare = native.prepareHelper, priorRun = native.runJson;
+    const native = require('../native'), priorPrepare = native.prepareHelper, priorRun = native.runJson, priorProbe = native.probeMcp;
     native.prepareHelper = async () => '/fixture/airk';
     native.runJson = async (spec: { root: string }, command: string, extra: string[] = []) => {
         calls.push({ spec, command, extra });
@@ -185,6 +282,11 @@ test('multi-root Index Now selects the active folder and coverage refresh never 
             update: async (key: string, value: unknown) => { state.set(key, value); } } };
     try {
         delete require.cache[require.resolve('../extension')]; await require('../extension').activate(context);
+        await commands.get('airk.manageMcp')!();
+        assert.deepEqual(invokedMcpCommands, ['workbench.mcp.listServer']);
+        availableMcpCommands = [];
+        await assert.rejects(commands.get('airk.manageMcp')!(), /does not expose MCP: List Servers/);
+        assert.equal(invokedMcpCommands.length, 1, 'Unavailable editor controls do not invoke a guessed fallback');
         const initialNotifications = notifications;
         await commands.get('airk.index')!();
         let indexes = calls.filter(call => call.command === 'index');
@@ -216,9 +318,65 @@ test('multi-root Index Now selects the active folder and coverage refresh never 
         changed({ fsPath: path.join(roots[2], 'changed.ts') });
         await commands.get('airk.status')!();
         assert.deepEqual(documents.at(-1)!.scheduling.filter(job => job.pending).map(job => job.name).sort(), ['1', '2'], 'A nested event reaches both containing collections');
+        let receive!: (message: unknown) => Promise<void>;
+        const webview = { html: '', options: {}, postMessage: async () => true,
+            onDidReceiveMessage: (handler: typeof receive) => { receive = handler; return disposable; } };
+        const beforePaint = calls.length;
+        dashboard.resolveWebviewView({ visible: true, webview, onDidChangeVisibility: event, onDidDispose: event });
+        assert.match(webview.html, /saved-file coverage/);
+        assert.equal(calls.length, beforePaint, 'Rendering the dashboard starts no native reads or writes');
+        const model = require('../model');
+        const collection = model.collectionId(await fs.realpath(roots[0])), dataDir = await fs.realpath(path.join(storage, 'indexes'));
+        const beforeChoice = choices;
+        await receive({ type: 'collection', action: 'index', collection, dataDir });
+        assert.equal(calls.filter(call => call.command === 'index').at(-1)!.spec.root, await fs.realpath(roots[0]),
+            'The dashboard button targets its card, not the different active editor folder');
+        assert.equal(choices, beforeChoice, 'Indexing from a card does not open a collection picker');
+        await assert.rejects(receive({ type: 'collection', action: 'index', collection, dataDir: '/old/storage' }), /storage changed/);
+        const beforeInvalid = calls.length;
+        await receive({ type: 'command', command: 'workbench.action.terminal.sendSequence' });
+        assert.equal(calls.length, beforeInvalid);
+        await receive({ type: 'mode', value: 'idle' }); assert.equal(mode, 'idle');
+        await receive({ type: 'mode', value: 'manual' });
+        const beforeToggle = calls.length;
+        await receive({ type: 'registration', enabled: false });
+        assert.equal(registration, false); assert.equal(dashboard.controller.sidebarState().registrationEnabled, false);
+        await receive({ type: 'registration', enabled: true });
+        assert.equal(registration, true); assert.equal(calls.length, beforeToggle, 'Registration does not index or probe');
+        const check = () => dashboard.controller.sidebarState().collections.find((item: any) => item.collection === collection)?.mcp;
+        let releaseProbe!: () => void, probeStarted!: () => void, probes = 0;
+        const started = new Promise<void>(resolve => { probeStarted = resolve; });
+        const held = new Promise<void>(resolve => { releaseProbe = resolve; });
+        native.probeMcp = async (spec: { root: string }) => { probes++; assert.equal(spec.root, await fs.realpath(roots[0])); probeStarted(); await held; return { tools: ['status', 'search'], status: {} }; };
+        const verifying = receive({ type: 'collection', action: 'verify', collection, dataDir });
+        assert.equal(check().phase, 'preparing');
+        await started; assert.equal(check().phase, 'checking');
+        const duplicate = receive({ type: 'collection', action: 'verify', collection, dataDir });
+        releaseProbe(); await Promise.all([verifying, duplicate]);
+        assert.equal(probes, 1); assert.equal(check().phase, 'verified'); assert.equal(check().tools.length, 2);
+        assert.ok(check().checkedAt); assert.ok(dashboard.controller.sidebarState().collections.filter((item: any) => item.collection !== collection).every((item: any) => !item.mcp));
+        const beforeDetails = calls.length;
+        await receive({ type: 'collection', action: 'mcpDetails', collection, dataDir });
+        assert.equal(calls.length, beforeDetails, 'Viewing cached details does not launch another helper');
+        native.probeMcp = async () => { throw new Error('Fixture handshake failed'); };
+        await receive({ type: 'collection', action: 'verify', collection, dataDir });
+        assert.equal(check().phase, 'failed'); assert.match(check().error, /handshake failed/);
+        let signalLate!: () => void, finishLate!: () => void;
+        const lateStarted = new Promise<void>(resolve => { signalLate = resolve; });
+        const late = new Promise<void>(resolve => { finishLate = resolve; });
+        native.probeMcp = async () => { signalLate(); await late; return { tools: ['status'], status: {} }; };
+        const closing = receive({ type: 'collection', action: 'verify', collection, dataDir });
+        await lateStarted;
+        stub.workspace.workspaceFolders = stub.workspace.workspaceFolders.slice(1);
+        await dashboard.controller.refresh(); finishLate(); await closing;
+        assert.equal(check(), undefined, 'A removed collection cannot receive a late verification result');
+        stub.workspace.isTrusted = false;
+        await assert.rejects(receive({ type: 'registration', enabled: false }), /Trust this workspace/);
+        assert.equal(registration, true);
+
     } finally {
         context.subscriptions.forEach(item => item.dispose()); loader._load = original;
-        native.prepareHelper = priorPrepare; native.runJson = priorRun;
+        native.prepareHelper = priorPrepare; native.runJson = priorRun; native.probeMcp = priorProbe;
         const resolved = await fs.realpath(directory); assert.equal(path.dirname(resolved), await fs.realpath(os.tmpdir()));
         assert.ok(path.basename(resolved).startsWith('airk-vscode-multiroot-')); await fs.rm(resolved, { recursive: true, force: true });
     }

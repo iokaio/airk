@@ -22,7 +22,7 @@ export function retentionSummary(status?: RetentionStatus): string {
     const pressure = status.pressure ? `; quota pressure (${status.pressure.required_bytes} needed, ${status.pressure.available_bytes} available)` : '';
     const observation = status.last_maintenance ? `; last pass ${status.last_maintenance.state ?? 'unknown'}` : '; maintenance not observed';
     const legacy = status.legacy_protected?.length ? `; ${status.legacy_protected.length} protected legacy revisions` : '';
-    return `Retention: ${status.policy.policy.mode} (${status.policy.origin}); ${bytes}${legacy}${pending}${error}${pressure}${observation}`;
+    return `Retention: ${status.policy.policy.mode} (${status.policy.origin}); target ${status.policy.policy.searchable_predecessors + 1} completed generation(s); ${bytes}${legacy}${pending}${error}${pressure}${observation}`;
 }
 
 export function retentionPolicyForMode(status: RetentionStatus, mode: 'manual' | 'automatic'): RetentionPolicy {

@@ -84,6 +84,8 @@ pub struct RelationshipQuery {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct RelationshipsResponse {
+    #[serde(default)]
+    pub indexing: crate::extraction::IndexCoverage,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub publication: Option<crate::evidence::RevisionEnvelope>,
     pub generation: u64,

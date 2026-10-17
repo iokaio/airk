@@ -1,6 +1,6 @@
 # Storage quotas
 
-AIRK enforces reservations for application-written logical bytes in one canonical data root. The default policy allows 20 GiB for the root and 4 GiB for each collection. Temporary publication files, content-addressed source/extraction objects, models, retained generations and database journals all consume capacity. A generation with a live reader still counts; a quota never authorizes deleting it.
+AIRK enforces reservations for application-written logical bytes in one canonical data root. The default policy allows 500 GiB for the root and 100 GiB for each collection. Temporary publication files, content-addressed source/extraction objects, models, retained generations and database journals all consume capacity. A generation with a live reader still counts; a quota never authorizes deleting it.
 
 ## Inspect and configure
 
@@ -10,13 +10,15 @@ airk --data-dir /path/to/state --collection project-a collections quota policy
 airk --data-dir /path/to/state --collection project-a collections quota set quota-policy.json
 ~~~
 
+`set` also accepts bounded `--json` input and an optional `--expected-json` policy, compared while holding the quota ledger lock to reject concurrent edits. The extension uses this comparison when editing limits.
+
 `set` replaces the complete shared policy, including overrides, from a JSON file of at most 64 KiB. Values are integer bytes:
 
 ~~~json
 {
-  "root_bytes": 21474836480,
-  "default_collection_bytes": 4294967296,
-  "collections": { "project-a": 8589934592 }
+  "root_bytes": 536870912000,
+  "default_collection_bytes": 107374182400,
+  "collections": { "project-a": 214748364800 }
 }
 ~~~
 
@@ -24,9 +26,11 @@ Status distinguishes existing `used_bytes` from outstanding `reserved_bytes`, wi
 
 `physical_capacity` separately reports the operating system's current total available to the caller, filesystem free bytes and caller-available bytes. Windows uses `GetDiskFreeSpaceExW`; Unix uses `statvfs`. OS user quotas may make caller-available bytes smaller than filesystem free space. AIRK leaves 16 MiB of physical safety headroom and reports the remaining `available_growth_bytes`. An absent-directory probe resolves its nearest existing ancestor without creating the requested directory.
 
+Private catalog admission also leaves 10% of observed growth available for filesystem activity between planning and the fresh pre-write capacity check. The catalog cap is the smaller of this physical allowance and the remaining logical reservation, with room retained for publishing the active pointer. This margin is not a reservation against other programs; subsequent allocation can still fail safely.
+
 ## Admission and publication
 
-[Retention](retention.md) and quota are separate policies. Manual retention never silently prunes to admit a publication. Automatic mode permits one typed quota-pressure cleanup/retry using a fresh reservation; protected evidence and other collections may still block admission. Status exposes available/required/protected bytes where known. Ordinary reads and status refreshes do not clean up, and cleanup failure after commitment does not invalidate the published revision.
+[Retention](retention.md) and quota are separate policies. Manual retention never silently prunes to admit a publication. Automatic mode first attempts eligible cleanup when shared or collection headroom is smaller than twice the last generation’s observed size plus 16 MiB. This estimate is a planning hint, not a prediction of arbitrary future edits. Per-write reservations still stop growth at the configured bound. A private SQLite catalog that reaches its page cap reports typed quota pressure. Automatic mode permits one typed quota-pressure cleanup/retry using a fresh reservation; protected evidence and other collections may still block admission. Status exposes available/required/protected bytes where known. Ordinary reads and status refreshes do not clean up, and cleanup failure after commitment does not invalidate the published revision.
 
 The native ledger serializes admission across processes. A reservation retains its entire allowance until the last handle closes. Writers charge before increasing a blob or graph file, copying a model, writing Tantivy data, or publishing metadata. Atomic replacements charge their temporary payload too. Private SQLite catalogs reserve a fixed page budget before creation; page growth and journal-changing operations cannot escape that allocation. Their journal is disabled only because unpublished catalogs are disposable. The active revision pointer retains transactional publication and a reserved database/journal allowance.
 
@@ -47,3 +51,7 @@ The small `.quota` control ledger is separately bounded rather than charged recu
 Managed current-version writers participate in this protocol; raw filesystem changes and older binaries cannot be made safe by an in-process reservation API. Protect the data directory accordingly. Tests cover shared root/collection admission, concurrent growth, sparse-write refusal, SQLite page exhaustion, root-only service allocations, nonblocking optional admission, native capacity observation, missing-directory read-only probes and child-process crash cleanup. Full-disk races, hostile filesystem, power-loss and platform qualification remain release work.
 
 See [collection retention](collections.md#retention-and-removal) and [transactional relocation](storage-relocation.md).
+
+In the sidebar, **Storage limits…** edits the selected collection and shared root limits in GiB, preserving other collection overrides. **Generations and cleanup…** selects manual/automatic retention and one through nine completed generations. **Reclaim eligible space…** previews a bounded retention pass. Lowering quotas may first run automatic retention for the selected collection; saving still refuses limits below live allocations. Other collections, readers or protected history can require a larger limit or separate cleanup. No disk space is preallocated. Existing explicitly saved quotas remain unchanged on upgrade.
+
+Failed capacity admission retains the published index. The extension stops automatic retries for that collection until Resume or Index now is selected, rather than retrying on every file change. Physical disk-space checks remain independent of logical quotas.

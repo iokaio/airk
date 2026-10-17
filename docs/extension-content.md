@@ -1,6 +1,6 @@
 # VS Code extension content and illustrations
 
-This is the content specification for AIRK's extension details/Marketplace page, its first-use guidance and the material shown from its commands for the 1.1.0 stable release. The shipped listing is [packages/vscode/README.md](../packages/vscode/README.md); the command/settings source is [package.json](../packages/vscode/package.json). Review this page against the actual release candidate, then capture editor screenshots for the [1.1.0 release checklist](release-1.1.0.md).
+This is the content specification for AIRK's extension details/Marketplace page, its first-use guidance and the material shown from its commands for the 1.1.1 stable release. The shipped listing is [packages/vscode/README.md](../packages/vscode/README.md); the command/settings source is [package.json](../packages/vscode/package.json). Review this page against the actual release candidate, then capture editor screenshots for the [1.1.1 release checklist](release-1.1.1.md).
 
 The package includes the two original PNG illustrations and rewrites their listing links to those bundled assets. The installed listing can display them without fetching repository images; package verification includes their exact digests.
 
@@ -10,11 +10,11 @@ The Marketplace icon is [icon.png](../packages/vscode/images/icon.png), a 256×2
 
 **AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents**
 
-“Give Claude Code, Codex, Gemini CLI and other coding agents a shared, local index of the workspace. AIRK returns bounded passages and facts with source paths, hashes and original locations. Your agent does the reasoning.”
+“Give Claude Code, Codex, Gemini CLI/Antigravity and other coding agents a shared, local index of the workspace. AIRK returns bounded passages and facts with source paths, hashes and original locations. Your agent does the reasoning.”
 
 Explain the benefit in practical terms: an agent can find a definition, inspect the surrounding lines, or retrieve a requirement from a document without first receiving an entire repository or document. AIRK makes the returned evidence inspectable and constrains each response. This is a capability statement; do not turn it into an unmeasured promise of lower bills, better answers or complete language understanding.
 
-![Diagram: workspace code and documents feed AIRK's isolated local collection, which provides cited evidence to Claude Code, Codex, Gemini CLI and other MCP clients.](images/local-evidence.png)
+![Diagram: workspace code and documents feed AIRK's isolated local collection, which provides cited evidence to Claude Code, Codex, Gemini CLI/Antigravity and other MCP clients.](images/local-evidence.png)
 
 Caption: **One collection, several independently configured agents.** Each client launches its own collection-scoped stdio MCP worker using the same root, data directory and collection ID. Display names can differ without creating separate indexes. AIRK's local operation does not prevent the selected agent from sending returned evidence to its model provider under that agent's policies.
 
@@ -86,7 +86,7 @@ Before publication, add genuine screenshots from the packaged extension using on
 
 ## Limits shown near installation
 
-State the tested host matrix and current capacity bounds, model readiness, source-read-only behavior, derived-state privacy, remote-host requirement, unsupported browser-only use, signing/publication status and extraction limitations. Link [formats](formats.md), [operations](operations.md), [security](../SECURITY.md) and the [1.1.0 release checklist](release-1.1.0.md). Clearly separate local runtime behavior from the selected agent's network behavior.
+State the tested host matrix and current capacity bounds, model readiness, source-read-only behavior, derived-state privacy, remote-host requirement, unsupported browser-only use, signing/publication status and extraction limitations. Link [formats](formats.md), [operations](operations.md), [security](../SECURITY.md) and the [1.1.1 release checklist](release-1.1.1.md). Clearly separate local runtime behavior from the selected agent's network behavior.
 
 The listing may describe configured native ingestion bounds, shared logical quotas and available-drive checks, while keeping the editor's soft storage setting distinct. Automatic defaults allow up to 256 MiB/source and 100,000 files, with eligible source sized to one eighth of detected memory and capped at 2 GiB. Extracted text gets twice that allowance; unknown memory uses 512 MiB eligible source. Existing explicit policies remain unchanged. Larger limits do not establish scale performance. Remote editor hosts require an actual test on supplied infrastructure; a matching package and local helper test alone do not qualify SSH, WSL, Containers or Codespaces.
 

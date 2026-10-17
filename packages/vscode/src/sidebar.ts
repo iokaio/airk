@@ -1,0 +1,187 @@
+// SPDX-License-Identifier: Apache-2.0
+import { randomBytes } from 'node:crypto';
+import { CoverageView, coverageLabel } from './coverage';
+import { IndexMode } from './model';
+
+export interface ControlGroup { label: string; commands: [string, string, string][] }
+export interface McpVerification {
+    phase: 'preparing' | 'checking' | 'verified' | 'failed'; checkedAt?: number; tools?: string[]; error?: string;
+}
+export type IndexDetail = 'essential' | 'balanced' | 'detailed';
+export interface DetailStatus {
+    configured_detail: IndexDetail; published_detail: IndexDetail | null; pending_reindex: boolean;
+}
+export interface SidebarCollection {
+    collection: string; name: string; root: string; dataDir: string; state: string;
+    coverage?: CoverageView; diskBytes?: number; lastIndexed?: string; error?: string;
+    mcp?: McpVerification; detail?: DetailStatus;
+}
+export interface SidebarState {
+    trusted: boolean; paused: boolean; mode: IndexMode; changingStorage: boolean;
+    collections: SidebarCollection[]; groups: ControlGroup[];
+    registrationEnabled?: boolean;
+}
+export type SidebarAction = { type: 'detail'; collection: string; dataDir: string; level: IndexDetail } | { type: 'ready' } | { type: 'mode'; value: IndexMode }
+    | { type: 'registration'; enabled: boolean }
+    | { type: 'command'; command: string }
+    | { type: 'collection'; action: 'index' | 'reindex' | 'status' | 'verify' | 'mcpDetails'; collection: string; dataDir: string };
+
+export function sidebarAction(value: unknown, allowed: Set<string>): SidebarAction | undefined {
+    if (!value || typeof value !== 'object') { return; }
+    const item = value as Record<string, unknown>;
+    if (item.type === 'detail' && typeof item.collection === 'string' && typeof item.dataDir === 'string'
+        && typeof item.level === 'string' && ['essential', 'balanced', 'detailed'].includes(item.level)) {
+        return { type: 'detail', collection: item.collection, dataDir: item.dataDir, level: item.level as IndexDetail };
+    }
+    if (item.type === 'ready') { return { type: 'ready' }; }
+    if (item.type === 'registration' && typeof item.enabled === 'boolean') { return { type: 'registration', enabled: item.enabled }; }
+    if (item.type === 'mode' && typeof item.value === 'string' && ['manual', 'onSave', 'debounced', 'idle'].includes(item.value)) {
+        return { type: 'mode', value: item.value as IndexMode };
+    }
+    if (item.type === 'command' && typeof item.command === 'string' && allowed.has(item.command)) {
+        return { type: 'command', command: item.command };
+    }
+    if (item.type === 'collection' && typeof item.action === 'string' && ['index', 'reindex', 'status', 'verify', 'mcpDetails'].includes(item.action)
+        && typeof item.collection === 'string' && typeof item.dataDir === 'string') {
+        return { type: 'collection', action: item.action as Extract<SidebarAction, { type: 'collection' }>['action'], collection: item.collection, dataDir: item.dataDir };
+    }
+}
+
+const escape = (value: string | number): string => String(value).replace(/[&<>"']/g,
+    character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]!);
+const bytes = (value?: number): string => value === undefined ? 'Not measured' : value < 1073741824
+    ? `${(value / 1048576).toFixed(1)} MiB` : `${(value / 1073741824).toFixed(2)} GiB`;
+const metric = (label: string, value: string | number | undefined): string => `<div class="metric"><strong>${escape(value ?? '—')}</strong><span>${escape(label)}</span></div>`;
+const button = (label: string, command: string, disabled = false, secondary = true): string =>
+    `<button id="${escape(command)}" data-command="${escape(command)}" class="${secondary ? 'secondary' : 'primary'}"${disabled ? ' disabled' : ''}>${escape(label)}</button>`;
+
+/** Bounded cached observations only; rendering never scans or starts a helper. */
+export function sidebarContent(state: SidebarState): string {
+    const disabled = !state.trusted;
+    const capacityBlocked = state.collections.some(item => item.state === 'capacity-limited');
+    const controls = state.trusted ? '' : '<p class="notice">Trust this workspace to enable indexing and agent connections.</p>';
+    const modes: [IndexMode, string][] = [['debounced', 'After edits settle'], ['idle', 'When idle'], ['onSave', 'On save'], ['manual', 'Manual']];
+    const mode = `<label for="mode">Automatic indexing</label><div class="row"><select id="mode"${disabled ? ' disabled' : ''}>${modes.map(([value, label]) => `<option value="${value}"${state.mode === value ? ' selected' : ''}>${label}</option>`).join('')}</select>${button(state.paused || capacityBlocked ? 'Resume' : 'Pause', state.paused || capacityBlocked ? 'airk.resume' : 'airk.pause', disabled)}</div>`;
+    const collections = state.collections.map(item => {
+        const view = item.coverage, report = view?.report, label = coverageLabel(view);
+        const indexing = item.state === 'indexing';
+        const status = indexing ? 'Indexing saved files' : state.paused ? 'Auto-indexing paused'
+            : item.state === 'current' && item.detail?.pending_reindex ? 'Detail change pending'
+            : item.state === 'current' && (view?.pending || (report && (report.stale || report.missing || report.pending_removals))) ? 'Changes detected'
+            : item.state === 'current' && (!report || !report.scan_complete || report.budget_exhausted) ? 'Indexed; coverage unverified' : ({
+            queued: 'Changes queued', current: 'Index current', partial: 'Indexed with exclusions', failed: 'Indexing failed',
+            'capacity-limited': 'Storage budget reached', paused: 'Auto-indexing paused'
+        } as Record<string, string>)[item.state] ?? 'Ready to index';
+        const attributes = `data-collection="${escape(item.collection)}" data-storage="${escape(item.dataDir)}"`;
+        const actions = `<div class="actions">${(['index', 'reindex', 'status'] as const).map(action =>
+            `<button id="${escape(item.collection)}-${action}" ${attributes} data-action="${action}" class="${action === 'index' ? 'primary' : 'secondary'}"${disabled || (action !== 'status' && (indexing || state.changingStorage)) ? ' disabled' : ''}>${action === 'index' ? 'Index now' : action === 'reindex' ? 'Reindex' : 'Details'}</button>`).join('')}</div>`;
+        const detail = `<div class="mcp"><h3>Index detail</h3><label for="${escape(item.collection)}-detail">Evidence to retain</label>
+            <select id="${escape(item.collection)}-detail" ${attributes} data-detail="true"${disabled || !item.detail || indexing || state.changingStorage ? ' disabled' : ''}>
+            ${!item.detail ? '<option>Loading current setting…</option>' : (['essential', 'balanced', 'detailed'] as const).map(level => `<option value="${level}"${item.detail?.configured_detail === level ? ' selected' : ''}>${level === 'balanced' ? 'Balanced (recommended)' : level[0].toUpperCase() + level.slice(1)}</option>`).join('')}</select>
+            <p class="muted">Essential: text and citations. Balanced: adds declarations, imports and document facts. Detailed: adds call occurrences and document change tracking.</p>
+            ${item.detail ? `<p role="status">Published: <strong>${escape(item.detail.published_detail ?? 'Not indexed')}</strong>${item.detail.pending_reindex ? ' · Change pending indexing' : ''}</p>` : '<p class="muted">Current detail is not available yet.</p>'}
+            <p class="muted">Changing detail rebuilds evidence. The published index remains available until success. History retention and optional models are separate.</p></div>`;
+        const percentage = /^\d+%$/.test(label) ? Number(label.slice(0, -1)) : undefined;
+        const progress = percentage === undefined ? '' : `<progress max="100" value="${percentage}" aria-label="Measured index coverage">${percentage}%</progress>`;
+        const last = item.lastIndexed ? new Date(item.lastIndexed).toLocaleString() : 'Not indexed in this editor yet';
+        const error = item.error || view?.error;
+        const mcp = item.mcp, checking = mcp?.phase === 'checking' || mcp?.phase === 'preparing';
+        const mcpLabel = !mcp ? 'Not checked' : mcp.phase === 'preparing' ? 'Preparing collection…' : mcp.phase === 'checking' ? 'Checking MCP…'
+            : mcp.phase === 'verified' ? `Verified · ${mcp.tools?.length ?? 0} tools available` : 'Verification failed';
+        const connection = `<div class="mcp"><h3>MCP connection</h3><p role="status" aria-live="polite">Helper: <strong>${escape(mcpLabel)}</strong></p>
+            ${mcp?.checkedAt ? `<p class="muted">Last checked: ${escape(new Date(mcp.checkedAt).toLocaleString())}</p>` : ''}
+            ${mcp?.error ? `<p class="error">${escape(mcp.error.slice(0, 600))}</p>` : ''}
+            <div class="actions"><button id="${escape(item.collection)}-verify" ${attributes} data-action="verify"${disabled || checking || state.changingStorage ? ' disabled' : ''}>Verify connection</button>
+            <button id="${escape(item.collection)}-mcpDetails" class="secondary" ${attributes} data-action="mcpDetails"${disabled || !mcp || checking ? ' disabled' : ''}>View details</button></div>
+            <p class="muted">Checks this collection’s helper, not whether an agent is connected. Verification updates the index first.</p></div>`;
+        return `<section class="collection"><div class="heading"><h2>${escape(item.name)}</h2><span class="badge${indexing ? ' working' : ''}">${escape(status)}</span></div>
+            <p class="path" title="${escape(item.root)}">${escape(item.root)}</p>
+            <div class="coverage"><strong>${escape(label)}</strong><span>saved-file coverage</span></div>${progress}
+            <div class="metrics">${metric('Current', report?.current)}${metric('Eligible', report?.eligible)}${metric('Stale', report?.stale)}${metric('Missing', report?.missing)}</div>
+            ${report ? `<p class="muted">${escape(report.extraction_failed)} extraction failures · ${escape(report.unsupported)} unsupported · ${escape(report.capacity_blocked)} capacity blocked</p>` : '<p class="muted">Coverage appears after the first inventory scan.</p>'}
+            ${view?.pending && report ? '<p class="muted">Files changed; these counts are from the previous scan.</p>' : ''}
+            ${error ? `<p class="error" role="status">${escape(error.slice(0, 600))}</p>` : ''}${actions}${detail}
+            <details id="location-${escape(item.collection)}"><summary>Storage and last index</summary><dl><dt>Index size</dt><dd>${bytes(item.diskBytes)}</dd><dt>Eligible source size</dt><dd>${bytes(report?.eligible_source_bytes)}</dd><dt>Last indexed</dt><dd>${escape(last)}</dd><dt>Index folder</dt><dd class="path">${escape(item.dataDir)}</dd></dl></details>${connection}</section>`;
+    }).join('');
+    const primaryCommands = new Set(['airk.index', 'airk.reindex', 'airk.indexMode', 'airk.pause', 'airk.resume', 'airk.chooseStorage', 'airk.status', 'airk.verifyMcp', 'airk.manageMcp', 'airk.storageLimits', 'airk.retentionPolicy', 'airk.retentionRun']);
+    const groups = state.groups.filter(group => group.label !== 'Indexing').map(group => {
+        const rows = group.commands.filter(([, command]) => !primaryCommands.has(command)).map(([label, command, help]) =>
+            `<div class="control">${button(label, command, disabled && command !== 'airk.logs')}<p class="muted">${escape(help)}</p></div>`).join('');
+        return `<details id="group-${escape(group.label)}"${group.label === 'Setup and reports' ? ' open' : ''}><summary>${escape(group.label)}</summary>${rows}</details>`;
+    }).join('');
+    return `<header><h1>AIRK</h1><span class="muted">Local workspace evidence</span></header>${controls}
+        <section>${mode}${state.paused ? '<p class="notice">Automatic jobs are paused. A current pass finishes safely; Index now still works.</p>' : ''}
+        ${capacityBlocked && !state.paused ? '<p class="notice">A collection reached its storage limit. Reclaim eligible space or adjust its quota, then Resume.</p>' : ''}
+        ${state.changingStorage ? '<p class="notice" role="status">Choosing storage. New indexing jobs are held until this finishes.</p>' : ''}</section>
+        ${collections || '<section><h2>No workspace collection</h2><p>Open a folder and trust the workspace to start indexing.</p></section>'}
+        <section><h2>Agent connections</h2><label class="toggle"><input id="registration" type="checkbox" role="switch"${state.registrationEnabled !== false ? ' checked' : ''}${disabled ? ' disabled' : ''}> VS Code registration: ${state.registrationEnabled !== false ? 'On' : 'Off'}</label>
+        <p class="muted">Automatically offer AIRK collections to VS Code on this extension host. This is not a connection status or a global MCP kill switch.</p>
+        ${button('Manage agent connections', 'airk.manageMcp', disabled)}
+        <p class="muted">Opens VS Code’s MCP server controls for start/stop and enable/disable. Manually configured servers and external agents keep their own settings.</p></section>
+        <section><h2>Index storage</h2><p class="muted">Choose a drive for new indexes. Existing indexes stay where they are.</p>${button('Choose storage folder…', 'airk.chooseStorage', disabled || state.changingStorage)}<div class="actions">${button('Storage limits…', 'airk.storageLimits', disabled)}${button('Generations and cleanup…', 'airk.retentionPolicy', disabled)}</div><div class="actions">${button('Reclaim eligible space…', 'airk.retentionRun', disabled)}</div><p class="muted">Defaults: 100 GiB per collection, 500 GiB total; target the active generation only. Readers, protected history and pending cleanup can temporarily retain more.</p></section>${groups}`;
+}
+
+export function renderSidebar(state: SidebarState): string {
+    const nonce = randomBytes(24).toString('hex');
+    return `<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}';"><title>AIRK dashboard</title>
+    <style nonce="${nonce}">
+    *{box-sizing:border-box}body{margin:0;padding:12px;font-family:var(--vscode-font-family);font-size:var(--vscode-font-size);color:var(--vscode-foreground);background:var(--vscode-sideBar-background);line-height:1.45}
+    header{margin:0 0 16px}h1{font-size:18px;margin:0}h2,h3{font-size:13px;margin:0 0 6px;font-weight:600}.mcp{margin-top:14px;padding-top:12px;border-top:1px solid var(--vscode-panel-border)}.mcp p{margin:6px 0}.toggle{display:flex;align-items:center;gap:6px}.toggle input{accent-color:var(--vscode-button-background)}section,details{margin:0 0 12px;padding:12px;border:1px solid var(--vscode-widget-border,var(--vscode-panel-border));border-radius:5px}section details{padding:0;border:0;margin:12px 0 0}
+    .heading{display:flex;flex-wrap:wrap;gap:6px;justify-content:space-between}.badge{font-size:11px;color:var(--vscode-descriptionForeground)}.working{color:var(--vscode-progressBar-background)}.working::before{content:'●';margin-right:4px}
+    .path{overflow-wrap:anywhere;color:var(--vscode-descriptionForeground);font-size:11px;margin:4px 0 12px}.muted{color:var(--vscode-descriptionForeground);font-size:11px;margin:6px 0}.coverage{display:flex;align-items:baseline;gap:7px;flex-wrap:wrap}.coverage strong{font-size:18px}.coverage span{font-size:11px;color:var(--vscode-descriptionForeground)}progress{width:100%;height:5px;accent-color:var(--vscode-progressBar-background)}
+    .metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin:12px 0}.metric strong,.metric span{display:block}.metric strong{font-size:16px}.metric span{font-size:11px;color:var(--vscode-descriptionForeground)}.row,.actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}.actions button{flex:1}.row select{flex:1;min-width:100px}button,select{font:inherit;font-size:12px;border:1px solid transparent;border-radius:2px;padding:6px 9px;min-height:28px}button{cursor:pointer;background:var(--vscode-button-background);color:var(--vscode-button-foreground)}button.secondary{background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground)}button:hover{filter:brightness(1.12)}button:disabled{opacity:.5;cursor:default}button:focus-visible,select:focus-visible,summary:focus-visible{outline:1px solid var(--vscode-focusBorder);outline-offset:2px}select{background:var(--vscode-dropdown-background);color:var(--vscode-dropdown-foreground);border-color:var(--vscode-dropdown-border)}
+    summary{cursor:pointer;font-weight:600}.control{margin-top:12px}.control button{text-align:left;width:100%}.notice{padding:8px;border-left:2px solid var(--vscode-focusBorder);background:var(--vscode-textBlockQuote-background)}.error{color:var(--vscode-errorForeground);overflow-wrap:anywhere}dl{margin:8px 0}dt{font-size:11px;color:var(--vscode-descriptionForeground)}dd{margin:0 0 6px;overflow-wrap:anywhere}@media(max-width:240px){body{padding:6px}section,details{padding:8px}.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}
+    </style></head><body><main id="dashboard">${sidebarContent(state)}</main><script nonce="${nonce}">
+    const vscode=acquireVsCodeApi(), dashboard=document.getElementById('dashboard');
+    function remember(){const details={};document.querySelectorAll('details').forEach(d=>details[d.id]=d.open);vscode.setState({details,scroll:window.scrollY});}
+    function restore(state){if(!state)return;Object.entries(state.details||{}).forEach(([id,open])=>{const el=document.getElementById(id);if(el)el.open=open;});window.scrollTo(0,state.scroll||0);}
+    restore(vscode.getState());
+    dashboard.addEventListener('toggle',remember,true);window.addEventListener('scroll',remember);
+    dashboard.addEventListener('click',event=>{const button=event.target.closest('button');if(!button||button.disabled)return;if(button.dataset.action){vscode.postMessage({type:'collection',action:button.dataset.action,collection:button.dataset.collection,dataDir:button.dataset.storage});}else if(button.dataset.command){vscode.postMessage({type:'command',command:button.dataset.command});}});
+    dashboard.addEventListener('change',event=>{if(event.target.dataset.detail)vscode.postMessage({type:'detail',collection:event.target.dataset.collection,dataDir:event.target.dataset.storage,level:event.target.value});if(event.target.id==='mode')vscode.postMessage({type:'mode',value:event.target.value});if(event.target.id==='registration')vscode.postMessage({type:'registration',enabled:event.target.checked});});
+    window.addEventListener('message',event=>{if(event.data.type!=='render')return;remember();const state=vscode.getState(),focus=document.activeElement?.id;dashboard.innerHTML=event.data.html;restore(state);if(focus)document.getElementById(focus)?.focus({preventScroll:true});});
+    vscode.postMessage({type:'ready'});
+    </script></body></html>`;
+}
+
+export function sidebarControlGroups(): ControlGroup[] {
+    // One command catalog serves the sidebar and status-bar menu.
+    return [
+        { label: 'Indexing', commands: [
+            ['Index Now', 'airk.index', 'Incremental update of this folder'],
+            ['Reindex Collection (Full Re-extraction)', 'airk.reindex', 'Re-extract every eligible file'],
+            ['Choose Indexing Mode…', 'airk.indexMode', 'After edits settle · When idle · On save · Manual'],
+            ['Pause Auto-indexing', 'airk.pause', 'Stop automatic jobs; keep queued changes'],
+            ['Resume Auto-indexing', 'airk.resume', 'Restart automatic jobs after a pause or budget stop']] },
+        { label: 'Setup and reports', commands: [
+            ['Set Up Coding Agent (Claude Code, Codex, Gemini CLI/Antigravity…)', 'airk.setupAgent', 'Preview a configuration to merge into your agent'],
+            ['Verify Native MCP Connection', 'airk.verifyMcp', 'Handshake with the helper and list its tools'],
+            ['Manage Agent Connections', 'airk.manageMcp', 'Open VS Code MCP server controls; other agents manage their own connections'],
+            ['Show Collection Status and Coverage', 'airk.status', 'Current, stale, missing and failed files'],
+            ['Show Local Usage Report', 'airk.usage', 'Content-free local aggregates and estimates'],
+            ['Show Output Log', 'airk.logs', 'Skipped files and failures']] },
+        { label: 'Collections and storage', commands: [
+            ['Choose Index Storage Folder…', 'airk.chooseStorage', 'Build new indexes on another drive'],
+            ['Configure Storage Limits…', 'airk.storageLimits', 'Collection and shared quotas in GiB'],
+            ['Manage Collections and Disk Space', 'airk.collections', 'Sizes, roots and free space'],
+            ['Remove Unneeded Collection…', 'airk.removeCollection', 'Delete a derived index; source files stay'],
+            ['Trim Obsolete Index Generations…', 'airk.prune', 'Preview, then reclaim superseded builds']] },
+        { label: 'Retention and history', commands: [
+            ['Show Retention Status', 'airk.retention', 'Policy, protected bytes and pending work'],
+            ['Choose Retention Policy…', 'airk.retentionPolicy', 'Generations to keep; manual or automatic cleanup'],
+            ['Run Retention Maintenance…', 'airk.retentionRun', 'Preview, then one bounded cleanup pass'],
+            ['Show History Status', 'airk.history', 'Retained history policy and plan'],
+            ['Choose History Policy…', 'airk.historyPolicy', 'Enable or disable bounded history'],
+            ['Run History Maintenance…', 'airk.historyRun', 'Preview, then one bounded pass'],
+            ['List Retained Publication Identities', 'airk.historyAvailable', 'Committed revisions you can pin'],
+            ['Show Checkpoints', 'airk.checkpoints', 'Pinned committed revisions'],
+            ['Create Checkpoint…', 'airk.createCheckpoint', 'Pin a committed revision under a label'],
+            ['Remove Checkpoint…', 'airk.removeCheckpoint', 'Release one pin'],
+            ['Preview Logical History Purge…', 'airk.purgeHistory', 'Plan, then confirm; not secure erasure']] },
+        { label: 'Extraction', commands: [
+            ['Show Ingestion Limits', 'airk.ingestionLimits', 'Machine sizing, measured source sizes, quotas and storage path'],
+            ['Configure Ingestion Limits…', 'airk.configureIngestionLimits', 'Restore automatic sizing or import explicit limits'],
+            ['Show Extraction Policy', 'airk.extractionPolicy', 'Configured versus applied policy'],
+            ['Configure Extraction Policy…', 'airk.configureExtractionPolicy', 'Validate a JSON policy for the next index']] }
+    ];
+}

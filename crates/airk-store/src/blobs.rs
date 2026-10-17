@@ -407,11 +407,11 @@ impl FileStore {
     }
 }
 
-pub(crate) fn verify_v2_directory(
+fn verify_components(
     base: &Path,
     directory: &Path,
     receipt: &airk_core::identity::PublicationReceipt,
-) -> Result<airk_core::publication::InventoryV2> {
+) -> Result<ManifestV2> {
     let directory = directory.to_path_buf();
     for path in [base.join("generations"), directory.clone()] {
         ensure!(
@@ -557,6 +557,35 @@ pub(crate) fn verify_v2_directory(
             "component checksum mismatch"
         );
     }
+    Ok(manifest)
+}
+
+/// Reuse semantic validation only after re-authenticating every component byte.
+/// No timestamp or filesystem identity substitutes for the anchored digests.
+/// The caller holds the generation lease for verification and subsequent reads.
+pub(crate) fn verify_v2_for_query(
+    base: &Path,
+    receipt: &airk_core::identity::PublicationReceipt,
+) -> Result<airk_core::extraction::IndexDetail> {
+    let directory = base
+        .join("generations")
+        .join(receipt.token.revision.to_string());
+    let key = directory.canonicalize()?;
+    if let Some(detail) = crate::verified_cache::get(&key, receipt) {
+        verify_components(base, &directory, receipt)?;
+        return Ok(detail);
+    }
+    Ok(verify_v2_directory(base, &directory, receipt)?
+        .index_detail
+        .unwrap_or_default())
+}
+
+pub(crate) fn verify_v2_directory(
+    base: &Path,
+    directory: &Path,
+    receipt: &airk_core::identity::PublicationReceipt,
+) -> Result<airk_core::publication::InventoryV2> {
+    let manifest = verify_components(base, directory, receipt)?;
     let bytes = read_verified(
         &directory.join("inventory.json"),
         &receipt.inventory_digest.to_string(),
@@ -584,8 +613,15 @@ pub(crate) fn verify_v2_directory(
             && inventory.lineage_digest == manifest.components["lineage.json"].sha256,
         "v2 inventory manifest binding mismatch"
     );
-    verify_model_objects(base, &directory, &manifest, &inventory)?;
-    crate::sqlite::verify_prepared_catalog(&directory, receipt)?;
+    verify_model_objects(base, directory, &manifest, &inventory)?;
+    crate::sqlite::verify_prepared_catalog(directory, receipt)?;
+    if manifest.model_sha256.is_none() {
+        crate::verified_cache::remember(
+            directory.canonicalize()?,
+            receipt.clone(),
+            inventory.index_detail.unwrap_or_default(),
+        );
+    }
     Ok(inventory)
 }
 

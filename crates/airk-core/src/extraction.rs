@@ -67,6 +67,64 @@ pub trait NativeAdapter {
     ) -> anyhow::Result<ExtractionPayload>;
 }
 
+/// Collection-level evidence selection. Missing legacy settings mean Detailed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IndexDetail {
+    Essential,
+    Balanced,
+    #[default]
+    Detailed,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct IndexCoverage {
+    pub level: IndexDetail,
+    pub note: String,
+}
+impl From<IndexDetail> for IndexCoverage {
+    fn from(level: IndexDetail) -> Self {
+        Self {
+            level,
+            note: level.coverage().into(),
+        }
+    }
+}
+impl Default for IndexCoverage {
+    fn default() -> Self {
+        IndexDetail::Detailed.into()
+    }
+}
+impl IndexDetail {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Essential => "essential",
+            Self::Balanced => "balanced",
+            Self::Detailed => "detailed",
+        }
+    }
+    pub fn from_profile(profile: &ExtractionProfile) -> anyhow::Result<Self> {
+        match profile.options.get("index_detail").map(String::as_str) {
+            None | Some("detailed") => Ok(Self::Detailed),
+            Some("essential") => Ok(Self::Essential),
+            Some("balanced") => Ok(Self::Balanced),
+            _ => anyhow::bail!("unsupported index detail"),
+        }
+    }
+    pub fn coverage(self) -> &'static str {
+        match self {
+            Self::Essential => {
+                "Native structured facts, relationships and fine-grained continuity are not indexed at Essential detail. Text and exact citations remain available. Explicit imported analysis is separate."
+            }
+            Self::Balanced => {
+                "Native call occurrences and document-unit continuity are not indexed at Balanced detail. Declarations, imports, other structural facts and declaration continuity are adapter-dependent. Explicit imported analysis is separate."
+            }
+            Self::Detailed => {
+                "Selected adapter-supported facts, relationships and continuity; not complete language understanding or resolved references."
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AdapterCapabilities {

@@ -25,6 +25,8 @@
 - [Native VS Code extension and limits](vscode-extension.md)
 - [Extension listing content, agent integration copy and illustrations](extension-content.md)
 - [1.0.0 stable release notes and publication checklist](release-1.0.0.md)
+- [Sidebar PNG renderings](ui/README.md)
+- [1.1.1 preparation: sidebar, storage and release versions](release-1.1.1.md)
 - [1.1.0 preparation: workstation file sizing and ingestion controls](release-1.1.0.md)
 - [Historical 0.1.0 release review and test checklist](release-checklist-0.1.0.md)
 - [0.1.0 implementation review and remaining roadmap work](review-0.1.0.md)

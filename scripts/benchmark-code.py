@@ -45,6 +45,8 @@ def main():
                                  "response_utf8_bytes": len(result.stdout)})
             return payload
 
+        # Call candidates belong to Detailed; Balanced is the user default.
+        run("configure_detail", "collections", "extraction", "detail", "detailed")
         index = run("index_initial", "index")
         assert index["indexed"] == args.files
         reused = run("index_unchanged", "index")
@@ -69,6 +71,7 @@ def main():
             "schema": "airk-code-benchmark/1", "platform": platform.platform(),
             "binary_version": subprocess.check_output([str(binary), "--version"], text=True).strip(),
             "files_initial": args.files, "files_final": status["files"],
+            "index_detail": "detailed",
             "derived_logical_disk_bytes": disk, "remaining_source_bytes": original_source_bytes,
             "observations": observations, "correctness_checks_passed": True,
             "limitations": ["Each query starts a new process; repeat is OS-page-cache reuse, not a shared warm worker",

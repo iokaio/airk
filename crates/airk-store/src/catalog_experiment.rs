@@ -281,7 +281,16 @@ pub fn prepare(request: ExperimentRequest<'_>) -> Result<ExperimentMetrics> {
         .chain(&input.replaced)
         .collect();
     for path in &changed {
-        for table in ["files", "facts", "relationships", "continuity_records"] {
+        if crate::normalized::present(&tx)? {
+            for table in ["fact_rows", "edge_rows"] {
+                tx.execute(&format!("DELETE FROM {table} WHERE file_id IN (SELECT id FROM evidence_files WHERE path=?1)"), [path])?;
+            }
+        } else {
+            for table in ["facts", "relationships"] {
+                tx.execute(&format!("DELETE FROM {table} WHERE path=?1"), [path])?;
+            }
+        }
+        for table in ["files", "continuity_records"] {
             tx.execute(&format!("DELETE FROM {table} WHERE path=?1"), [path])?;
         }
     }
@@ -320,7 +329,7 @@ pub fn prepare(request: ExperimentRequest<'_>) -> Result<ExperimentMetrics> {
         {
             let mut fact = fact.clone();
             fact.continuity_key = None;
-            insert_fact(&tx, &fact)?;
+            insert_fact(&tx, &fact, true)?;
         }
         for edge in request
             .inventory
@@ -328,7 +337,7 @@ pub fn prepare(request: ExperimentRequest<'_>) -> Result<ExperimentMetrics> {
             .iter()
             .filter(|edge| edge.citation.path == *path)
         {
-            insert_edge(&tx, edge)?;
+            insert_edge(&tx, edge, true)?;
         }
     }
     // Removing a native file does not erase independently imported evidence.
@@ -341,7 +350,7 @@ pub fn prepare(request: ExperimentRequest<'_>) -> Result<ExperimentMetrics> {
         {
             let mut fact = fact.clone();
             fact.continuity_key = None;
-            insert_fact(&tx, &fact)?;
+            insert_fact(&tx, &fact, true)?;
         }
         for edge in request
             .inventory
@@ -349,7 +358,7 @@ pub fn prepare(request: ExperimentRequest<'_>) -> Result<ExperimentMetrics> {
             .iter()
             .filter(|edge| edge.citation.path == *path)
         {
-            insert_edge(&tx, edge)?;
+            insert_edge(&tx, edge, true)?;
         }
     }
     replace_metadata(&tx, &request, &bytes)?;
@@ -419,28 +428,33 @@ fn insert_artifact(
                     location: fact.location.clone(),
                 },
             },
+            false,
         )?;
     }
     Ok(())
 }
-fn insert_fact(tx: &Transaction<'_>, hit: &FactHit) -> Result<()> {
+fn insert_fact(tx: &Transaction<'_>, hit: &FactHit, imported: bool) -> Result<()> {
     let code = hit.code.as_ref();
-    tx.execute(
-        "INSERT INTO facts VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
-        params![
-            hit.citation.path,
-            hit.name,
-            hit.name.to_lowercase(),
-            code.map_or("", |code| code.qualified_name.as_str()),
-            code.map_or("", |code| code.symbol_id.as_str()),
-            hit.kind,
-            hit.language,
-            code.is_some(),
-            code.is_none() && !matches!(hit.kind.as_str(), "definition" | "import"),
-            i64::try_from(hit.citation.start_line)?,
-            serde_json::to_string(hit)?
-        ],
-    )?;
+    if crate::normalized::present(tx)? {
+        crate::normalized::Writer::new(tx).fact(hit, imported)?;
+    } else {
+        tx.execute(
+            "INSERT INTO facts VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+            params![
+                hit.citation.path,
+                hit.name,
+                hit.name.to_lowercase(),
+                code.map_or("", |code| code.qualified_name.as_str()),
+                code.map_or("", |code| code.symbol_id.as_str()),
+                hit.kind,
+                hit.language,
+                code.is_some(),
+                code.is_none() && !matches!(hit.kind.as_str(), "definition" | "import"),
+                i64::try_from(hit.citation.start_line)?,
+                serde_json::to_string(hit)?
+            ],
+        )?;
+    }
     if let Some(code) = code {
         if let Some(owner) = &code.owner_id {
             insert_edge(
@@ -455,6 +469,7 @@ fn insert_fact(tx: &Transaction<'_>, hit: &FactHit) -> Result<()> {
                     producer_version: "native-facts/4".into(),
                     citation: hit.citation.clone(),
                 },
+                imported,
             )?;
         }
         if let Some(target) = &code.target {
@@ -473,12 +488,16 @@ fn insert_fact(tx: &Transaction<'_>, hit: &FactHit) -> Result<()> {
                     producer_version: code.producer_version.clone(),
                     citation: hit.citation.clone(),
                 },
+                imported,
             )?;
         }
     }
     Ok(())
 }
-fn insert_edge(tx: &Transaction<'_>, edge: &RelationshipHit) -> Result<()> {
+fn insert_edge(tx: &Transaction<'_>, edge: &RelationshipHit, imported: bool) -> Result<()> {
+    if crate::normalized::present(tx)? {
+        return crate::normalized::Writer::new(tx).edge(edge, imported);
+    }
     tx.execute(
         "INSERT INTO relationships VALUES(?1,?2,?3,?4,?5,?6)",
         params![

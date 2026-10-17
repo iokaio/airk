@@ -1072,6 +1072,7 @@ impl Kernel {
         }
         let snapshot = self.load()?;
         let mut response = FactsResponse {
+            indexing: airk_core::extraction::IndexCoverage::default(),
             publication: None,
             generation: snapshot.generation,
             collection: snapshot.collection.clone(),
@@ -1188,13 +1189,34 @@ impl Kernel {
             self.configured_roots()? == snapshot.roots,
             "index pending source root changes before preparing or publishing provider analysis"
         );
-        let (current, _) = airk_ingest::scan_streaming_with_budgets(
+        let policy = self.extraction_policy()?;
+        ensure!(
+            !policy.pending_reindex,
+            "index pending extraction policy before preparing provider analysis"
+        );
+        let (current, _) = airk_ingest::scan_streaming_v2_with_budgets(
             &self.root,
             &self.data_root,
             snapshot,
             &snapshot.roots,
             self.scan_limits()?,
-            |artifact, _| {
+            &policy.policy,
+            false,
+            |path, hash, profile| {
+                Ok(snapshot
+                    .artifacts
+                    .get(path)
+                    .filter(|artifact| {
+                        artifact.content_hash == hash.to_string()
+                            && artifact
+                                .retained
+                                .as_ref()
+                                .and_then(|r| r.profile.as_ref())
+                                .is_some_and(|p| p == profile)
+                    })
+                    .cloned())
+            },
+            |_, artifact, _| {
                 // Verification needs identities, never a second in-memory corpus.
                 let mut metadata = artifact.clone();
                 metadata.chunks.clear();

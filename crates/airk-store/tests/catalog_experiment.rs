@@ -371,6 +371,7 @@ impl Fixture {
             embedding_model: None,
             embedding_pipeline_digest: None,
             extractor_version: "native-facts/7".into(),
+            index_detail: None,
             extraction_policy_digest: None,
             analysis: None,
             imported_facts: vec![],
@@ -425,7 +426,15 @@ fn logical_rows(path: &Path) -> Result<BTreeMap<String, Vec<Vec<String>>>> {
             format!("schema:{name}"),
             vec![vec![kind.clone(), sql.unwrap_or_default()]],
         );
-        if kind != "table" {
+        // Internal dictionary ordinals and unused dictionary rows are physical
+        // layout, not evidence. Compare the reconstructed compatibility views.
+        if matches!(
+            name.as_str(),
+            "evidence_files" | "evidence_producers" | "fact_rows" | "edge_rows"
+        ) {
+            continue;
+        }
+        if kind != "table" && !matches!(name.as_str(), "facts" | "relationships") {
             continue;
         }
         let mut stmt = conn.prepare(&format!("SELECT * FROM \"{name}\""))?;
@@ -598,6 +607,127 @@ fn differential_noop_edit_add_delete_move_and_lineage_rows() -> Result<()> {
     assert_eq!(result.loaded_artifacts, 3);
     drop(reservation);
     drop(writer);
+    Ok(())
+}
+
+#[test]
+fn production_row_reuse_matches_full_build_and_reloads_changed_inputs_only() -> Result<()> {
+    let fixture = Fixture::new(4, 6)?;
+    let base = fixture.store.catalog()?.context("base missing")?;
+    let _writer = fixture.store.lock()?;
+    let reservation = fixture.quota.reserve("experiment", 256 * 1024 * 1024)?;
+    let stage = reservation.staging_directory()?;
+    let (mut inventory, lineage) = fixture.next()?;
+    for (case, expected_loads) in [
+        ("unchanged", 0),
+        ("edit", 1),
+        ("new_import", 1),
+        ("new_root", 4),
+    ] {
+        if case == "edit" {
+            add_file(
+                &fixture.store,
+                &mut inventory,
+                "src/file00000.rs",
+                1,
+                2,
+                9,
+                &reservation,
+            )?;
+        }
+        if case == "new_import" {
+            inventory.analysis = Some(airk_core::AnalysisManifest {
+                version: 1,
+                root: inventory.root.clone(),
+                collection: inventory.collection.clone(),
+                extractor_version: inventory.extractor_version.clone(),
+                source_hashes: inventory
+                    .files
+                    .iter()
+                    .map(|(p, f)| (p.clone(), f.state.source_hash.to_string()))
+                    .collect(),
+                build_inputs: BTreeMap::new(),
+                producer: "original provider".into(),
+                producer_version: "1".into(),
+                index_sha256: None,
+            });
+            inventory.imported_facts.push(FactHit {
+                continuity_key: None,
+                name: "new provider assertion".into(),
+                kind: "definition".into(),
+                syntax_kind: "original assertion".into(),
+                language: "rust".into(),
+                document: None,
+                code: None,
+                citation: airk_core::Citation {
+                    path: "src/file00000.rs".into(),
+                    content_hash: inventory.files["src/file00000.rs"]
+                        .state
+                        .source_hash
+                        .to_string(),
+                    start_line: 1,
+                    end_line: 1,
+                    location: DocumentLocation::Lines { start: 1, end: 1 },
+                },
+            });
+        }
+        if case == "new_root" {
+            inventory.roots.insert("notes".into(), "/secondary".into());
+        }
+        let full = stage.join(format!("{case}-full"));
+        let reused = stage.join(format!("{case}-reused"));
+        fs::create_dir_all(&full)?;
+        fs::create_dir_all(&reused)?;
+        let source = Source {
+            store: &fixture.store,
+            snapshot: inventory.projection()?,
+            loads: Cell::new(0),
+        };
+        let target = token(&inventory)?;
+        fixture.store.prepare_catalog_v2(
+            &full,
+            &inventory,
+            &lineage,
+            &target,
+            &source,
+            Some(&reservation),
+            16 * 1024 * 1024,
+        )?;
+        assert_eq!(source.loads.replace(0), 4);
+        fixture.store.prepare_catalog_v2_reusing(
+            &reused,
+            &inventory,
+            &lineage,
+            &target,
+            &source,
+            Some(&reservation),
+            16 * 1024 * 1024,
+            Some(&base),
+        )?;
+        assert_eq!(source.loads.get(), expected_loads, "{case}");
+        assert_eq!(
+            logical_rows(&full.join("catalog.sqlite"))?,
+            logical_rows(&reused.join("catalog.sqlite"))?,
+            "{case}"
+        );
+    }
+    let connection = Connection::open_with_flags(
+        fixture
+            .store
+            .directory()
+            .join("generations")
+            .join(base.receipt.as_ref().unwrap().token.revision.to_string())
+            .join("catalog.sqlite"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )?;
+    let files: i64 = connection.query_row(
+        "SELECT count(*) FROM evidence_files WHERE length(source_hash)=32",
+        [],
+        |r| r.get(0),
+    )?;
+    assert_eq!(files, 4);
+    let repeated: i64 = connection.query_row("SELECT count(*) FROM fact_rows WHERE json_type(payload,'$.citation.path') IS NOT NULL OR json_type(payload,'$.citation.content_hash') IS NOT NULL OR json_type(payload,'$.code.producer') IS NOT NULL",[],|r|r.get(0))?;
+    assert_eq!(repeated, 0);
     Ok(())
 }
 #[test]

@@ -50,7 +50,7 @@ impl std::fmt::Display for QuotaPressure {
 }
 impl std::error::Error for QuotaPressure {}
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct QuotaPolicy {
     pub root_bytes: u64,
@@ -61,8 +61,8 @@ pub struct QuotaPolicy {
 impl Default for QuotaPolicy {
     fn default() -> Self {
         Self {
-            root_bytes: 20 * 1024 * 1024 * 1024,
-            default_collection_bytes: 4 * 1024 * 1024 * 1024,
+            root_bytes: 500 * 1024 * 1024 * 1024,
+            default_collection_bytes: 100 * 1024 * 1024 * 1024,
             collections: BTreeMap::new(),
         }
     }
@@ -239,6 +239,31 @@ fn within_deadline(deadline: Option<Instant>) -> Result<()> {
     Ok(())
 }
 
+fn inventory_read<T>(
+    deadline: Option<Instant>,
+    mut read: impl FnMut() -> io::Result<T>,
+) -> Result<Option<T>> {
+    for attempt in 0..=10 {
+        within_deadline(deadline)?;
+        match read() {
+            Ok(value) => return Ok(Some(value)),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            // Windows delete-pending directories can transiently report access
+            // denied or a sharing violation. Retry, never treat denial as empty:
+            // persistent ACL failures must still prevent quota admission.
+            Err(error)
+                if attempt < 10
+                    && (error.kind() == io::ErrorKind::PermissionDenied
+                        || (cfg!(windows) && error.raw_os_error() == Some(32))) =>
+            {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+    unreachable!("the final inventory read returns its result")
+}
+
 impl Quota {
     /// Canonicalizing aliases ensures all cooperating processes share one ledger.
     pub fn open(root: impl AsRef<Path>) -> Result<Self> {
@@ -343,8 +368,19 @@ impl Quota {
         self.read_policy()
     }
     pub fn configure(&self, policy: QuotaPolicy) -> Result<QuotaStatus> {
+        self.configure_if_current(policy, None)
+    }
+    pub fn configure_if_current(
+        &self,
+        policy: QuotaPolicy,
+        expected: Option<&QuotaPolicy>,
+    ) -> Result<QuotaStatus> {
         policy.validate()?;
         let _lock = self.lock()?;
+        ensure!(
+            expected.is_none_or(|value| self.read_policy().is_ok_and(|current| current == *value)),
+            "storage quota policy changed; review it again"
+        );
         let records = self.live_records()?;
         let report = self.measure(&policy, &records, None)?;
         ensure!(
@@ -669,7 +705,16 @@ impl Quota {
         let mut visited = 0usize;
         while let Some(directory) = pending.pop() {
             within_deadline(deadline)?;
-            for entry in fs::read_dir(directory)? {
+            // Another collection may retire a generation, and short-lived
+            // writer markers can disappear while this inventory is walking.
+            // Removed bytes no longer consume quota; outstanding reservations
+            // still account for concurrent growth. Other I/O failures stay fatal.
+            let Some(entries) = inventory_read(deadline, || fs::read_dir(&directory))
+                .context("read quota inventory directory")?
+            else {
+                continue;
+            };
+            for entry in entries {
                 within_deadline(deadline)?;
                 let entry = entry?;
                 visited += 1;
@@ -681,26 +726,40 @@ impl Quota {
                 if path == self.root.join(".quota") {
                     continue;
                 }
-                ensure!(
-                    !entry.file_type()?.is_symlink(),
-                    "quota inventory contains linked state"
-                );
-                if entry.file_type()?.is_dir() {
+                let Some(kind) = inventory_read(deadline, || entry.file_type())
+                    .context("read quota inventory entry type")?
+                else {
+                    continue;
+                };
+                ensure!(!kind.is_symlink(), "quota inventory contains linked state");
+                if kind.is_dir() {
                     // Optional accounting retains its bounded logical inventory;
                     // per-directory volume queries would consume its entire short
                     // deadline on Windows. Its actual collection target is checked
                     // once below, and quota writers validate their destination.
                     if deadline.is_none() {
-                        crate::capacity::ensure_same_filesystem(&self.root, &path)?;
+                        match crate::capacity::ensure_same_filesystem(&self.root, &path) {
+                            Ok(()) => {}
+                            Err(error)
+                                if error.downcast_ref::<io::Error>().is_some_and(|error| {
+                                    error.kind() == io::ErrorKind::NotFound
+                                }) =>
+                            {
+                                continue;
+                            }
+                            Err(error) => return Err(error),
+                        }
                     }
                     pending.push(path);
                     continue;
                 }
-                ensure!(
-                    entry.file_type()?.is_file(),
-                    "quota inventory contains nonregular state"
-                );
-                let bytes = entry.metadata()?.len();
+                ensure!(kind.is_file(), "quota inventory contains nonregular state");
+                let Some(metadata) = inventory_read(deadline, || entry.metadata())
+                    .context("read quota inventory file length")?
+                else {
+                    continue;
+                };
+                let bytes = metadata.len();
                 result.used_bytes = checked_add(result.used_bytes, bytes)?;
                 if let Ok(relative) = path.strip_prefix(self.root.join("collections"))
                     && let Some(Component::Normal(collection)) = relative.components().next()
@@ -968,6 +1027,30 @@ pub struct PrivateDatabase {
     _reservation: Reservation,
 }
 impl PrivateDatabase {
+    pub(crate) fn write_error(&self, error: anyhow::Error) -> anyhow::Error {
+        let full = error.chain().any(|cause| matches!(cause.downcast_ref::<rusqlite::Error>(), Some(rusqlite::Error::SqliteFailure(code, _)) if code.code == rusqlite::ErrorCode::DiskFull));
+        if full {
+            let pages = self
+                .connection
+                .as_ref()
+                .and_then(|db| {
+                    db.query_row("PRAGMA page_count", [], |row| row.get::<_, u32>(0))
+                        .ok()
+                })
+                .unwrap_or(0);
+            let bytes = fs::metadata(&self.path).map_or(0, |entry| entry.len());
+            if bytes >= self.maximum || u64::from(pages).saturating_mul(4096) >= self.maximum {
+                return error.context(QuotaPressure {
+                    scope: PressureScope::Reservation,
+                    required_bytes: self.maximum.saturating_add(4096),
+                    available_bytes: self.maximum,
+                    protected_bytes: None,
+                });
+            }
+            return error.context(format!("private catalog cannot grow within its {}-byte database cap or available disk space; previous generation retained", self.maximum));
+        }
+        error
+    }
     pub fn connection(&self) -> &Connection {
         self.connection.as_ref().expect("private database open")
     }
@@ -1072,6 +1155,43 @@ impl Drop for ReservationInner {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inventory_retry_distinguishes_deletion_from_persistent_denial() -> Result<()> {
+        for removed in [false, true] {
+            let mut attempts = 0;
+            let observed = inventory_read(None, || {
+                attempts += 1;
+                if attempts == 1 {
+                    Err(io::Error::from(io::ErrorKind::PermissionDenied))
+                } else if removed {
+                    Err(io::Error::from(io::ErrorKind::NotFound))
+                } else {
+                    Ok(7)
+                }
+            })?;
+            assert_eq!(observed, if removed { None } else { Some(7) });
+            assert_eq!(attempts, 2);
+        }
+        let error = inventory_read::<()>(None, || {
+            Err(io::Error::from(io::ErrorKind::PermissionDenied))
+        })
+        .unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<io::Error>().unwrap().kind(),
+            io::ErrorKind::PermissionDenied
+        );
+        let mut attempts = 0;
+        assert!(
+            inventory_read::<()>(Some(Instant::now()), || {
+                attempts += 1;
+                Ok(())
+            })
+            .is_err()
+        );
+        assert_eq!(attempts, 0, "optional accounting respects its deadline");
+        Ok(())
+    }
 
     fn policy(root_bytes: u64, collection_bytes: u64) -> QuotaPolicy {
         QuotaPolicy {
@@ -1234,6 +1354,46 @@ mod tests {
     }
 
     #[test]
+    fn accounting_tolerates_concurrently_removed_managed_files_and_directories() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let quota = Quota::open(root.path())?;
+        let reservation = quota.reserve("fixture", 65536)?;
+        let stage = reservation.staging_directory()?;
+        let retained = root.path().join("collections/fixture/retained");
+        fs::write(&retained, [7; 7])?;
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+        let ready = barrier.clone();
+        let writer = std::thread::spawn(move || -> Result<()> {
+            ready.wait();
+            for ordinal in 0..1000 {
+                // Staging names are unique in production. Recreating a still
+                // delete-pending name tests the fixture writer, not accounting.
+                let directory = stage.join(format!("temporary-{ordinal}"));
+                fs::create_dir(&directory)?;
+                let marker = directory.join("marker");
+                fs::write(&marker, [1])?;
+                fs::remove_file(marker)?;
+                fs::remove_dir(directory)?;
+            }
+            Ok(())
+        });
+        barrier.wait();
+        let observed = (|| -> Result<()> {
+            for _ in 0..100 {
+                let status = quota.status()?;
+                assert!(status.used_bytes >= 7);
+                assert_eq!(status.reserved_bytes, 65536);
+            }
+            Ok(())
+        })();
+        writer.join().expect("temporary state writer")?;
+        observed?;
+        assert_eq!(fs::read(retained)?, [7; 7]);
+        assert_eq!(quota.status()?.used_bytes, 7);
+        Ok(())
+    }
+
+    #[test]
     fn concurrent_provider_growth_cannot_exceed_one_reservation() -> Result<()> {
         let root = tempfile::tempdir()?;
         let quota = Quota::open(root.path())?;
@@ -1335,6 +1495,34 @@ mod tests {
         // A SQLITE_FULL private build is disposable; its old published peer is
         // never updated, so no rollback-journal guarantee is assumed here.
         database.finish()?;
+        Ok(())
+    }
+
+    #[test]
+    fn full_private_catalog_reports_typed_pressure_only_at_its_cap() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let quota = Quota::open(root.path())?;
+        let reservation = quota.reserve("fixture", 16 * 1024)?;
+        let path = reservation.staging_directory()?.join("private.sqlite3");
+        let database = reservation.open_private_sqlite(&path, 16 * 1024)?;
+        database
+            .connection()
+            .execute_batch("CREATE TABLE payload(bytes BLOB);")?;
+        let failure = loop {
+            if let Err(error) = database
+                .connection()
+                .execute("INSERT INTO payload VALUES(zeroblob(1000))", [])
+            {
+                break error;
+            }
+        };
+        let failure = database.write_error(failure.into());
+        assert!(
+            failure.downcast_ref::<QuotaPressure>().is_some(),
+            "{failure:#}"
+        );
+        let other = database.write_error(anyhow::anyhow!("unrelated fixture error"));
+        assert!(!other.chain().any(|cause| cause.is::<QuotaPressure>()));
         Ok(())
     }
 

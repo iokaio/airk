@@ -41,6 +41,8 @@ pub struct InventoryFile {
 #[serde(deny_unknown_fields)]
 pub struct InventoryV2 {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub index_detail: Option<crate::extraction::IndexDetail>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub embedding_pipeline_digest: Option<Sha256Digest>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extraction_policy_digest: Option<Sha256Digest>,
@@ -322,6 +324,7 @@ mod tests {
         let digest = Sha256Digest::from_bytes([1; 32]);
         InventoryV2 {
             embedding_pipeline_digest: None,
+            index_detail: None,
             extraction_policy_digest: None,
             version: 2,
             incarnation: Incarnation::from_bytes([2; 16]),

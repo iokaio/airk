@@ -19,6 +19,7 @@ pub mod history;
 pub mod history_policy;
 pub mod maintenance;
 pub mod model_objects;
+mod normalized;
 pub mod quota;
 pub mod relocation;
 pub mod retention;
@@ -27,6 +28,7 @@ pub mod scheduler;
 mod sqlite;
 pub mod usage;
 pub mod vector_cache;
+mod verified_cache;
 
 #[derive(Clone, Debug)]
 pub struct FileStore {
@@ -129,6 +131,30 @@ impl FileStore {
         reservation: Option<&quota::Reservation>,
         maximum: u64,
     ) -> Result<()> {
+        self.prepare_catalog_v2_reusing(
+            directory,
+            inventory,
+            lineage,
+            token,
+            source,
+            reservation,
+            maximum,
+            None,
+        )
+    }
+    /// Reuse native catalog rows only from an authenticated, still-pinned base.
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_catalog_v2_reusing(
+        &self,
+        directory: &Path,
+        inventory: &airk_core::publication::InventoryV2,
+        lineage: &airk_core::changes::LineageEnvelope,
+        token: &RevisionToken,
+        source: &dyn airk_core::ArtifactSource,
+        reservation: Option<&quota::Reservation>,
+        maximum: u64,
+        previous: Option<&blobs::Catalog>,
+    ) -> Result<()> {
         // Unlike legacy builds, the final v2 manifest follows catalog checksums.
         // Reserve its full bound plus the lineage callback write before page admission.
         let pending = 131_072u64
@@ -147,6 +173,8 @@ impl FileStore {
             source,
             reservation,
             maximum,
+            self.directory(),
+            previous,
         )
     }
     pub fn publish_catalog_v2(
@@ -209,6 +237,24 @@ impl FileStore {
     /// active pointer's main-file, WAL and shared-memory growth uncharged until
     /// publication. Call after all other generation components have been written,
     /// while holding the collection writer lock.
+    /// Observed last-generation size is a planning hint, not a bound on future input.
+    pub fn active_generation_bytes(&self) -> Result<Option<u64>> {
+        let Some(head) = self.persistent_revision()? else {
+            return Ok(None);
+        };
+        let Some(token) = head.token else {
+            return Ok(None);
+        };
+        Ok(Some(
+            directory_usage(
+                &self
+                    .directory
+                    .join("generations")
+                    .join(token.revision.to_string()),
+            )?
+            .0,
+        ))
+    }
     pub fn catalog_budget(&self, reservation: &quota::Reservation) -> Result<u64> {
         let (_, pointer_bytes) = sqlite::pointer_budget(&self.directory)?;
         let available = reservation.remaining();

@@ -11,8 +11,39 @@ import { withPolicySnapshot } from './extractionPolicy';
 import { aboveNormal, authorizeLimitIncrease, indexWithLimitApproval, largerLimitsExplanation, LimitsDescription, ScanLimits } from './ingestionLimits';
 import { historyControl, HistoryAction } from './history';
 import { renderReport, ReportKind } from './report';
+import { ControlGroup, DetailStatus, IndexDetail, McpVerification, SidebarState, renderSidebar, sidebarContent, sidebarAction, sidebarControlGroups } from './sidebar';
 
 interface KnownCollection { name: string; root: string; lastIndexed?: string }
+class DashboardView implements vscode.WebviewViewProvider, vscode.Disposable {
+    private view?: vscode.WebviewView;
+    private timer?: NodeJS.Timeout;
+    private last = '';
+    private listeners: vscode.Disposable[] = [];
+    constructor(private readonly controller: Controller) {}
+    get visible(): boolean { return this.view?.visible ?? false; }
+    resolveWebviewView(view: vscode.WebviewView): void {
+        this.listeners.forEach(listener => listener.dispose());
+        this.view = view; this.last = '';
+        view.webview.options = { enableScripts: true, localResourceRoots: [] };
+        view.webview.html = renderSidebar(this.controller.sidebarState());
+        this.listeners = [view.webview.onDidReceiveMessage(message =>
+            this.controller.sidebarMessage(message).catch(error => {
+                this.controller.output.appendLine(String(error));
+                void vscode.window.showErrorMessage(`AIRK: ${error instanceof Error ? error.message : String(error)}`);
+            })), view.onDidChangeVisibility(() => { if (view.visible) { this.refresh(); } }),
+        view.onDidDispose(() => { if (this.view === view) { this.view = undefined; } })];
+    }
+    refresh(): void {
+        if (!this.visible || this.timer) { return; }
+        this.timer = setTimeout(() => {
+            this.timer = undefined;
+            if (!this.visible) { return; }
+            const html = sidebarContent(this.controller.sidebarState());
+            if (html !== this.last) { this.last = html; void this.view!.webview.postMessage({ type: 'render', html }); }
+        }, 100);
+    }
+    dispose(): void { clearTimeout(this.timer); this.listeners.forEach(listener => listener.dispose()); this.view = undefined; }
+}
 interface PruneReport { dry_run: boolean; reclaimable_bytes: number; removed_bytes: number; candidates: string[]; pinned: string[]; unreferenced_objects?: number; receipt_cleanup_pending?: boolean }
 class CollectionItem extends vscode.TreeItem {
     constructor(readonly collection: string, readonly dataDir: string, readonly active: boolean, removable: boolean, name: string,
@@ -57,28 +88,63 @@ class Controller implements vscode.Disposable {
     readonly status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 40);
     readonly definitions = new vscode.EventEmitter<void>();
     readonly collectionTree = new CollectionTree(this);
+    readonly sidebar = new DashboardView(this);
     readonly scheduler: Scheduler;
     private readonly coverage: CoverageQueue;
     private readonly nativeWrites = new NativeWriteQueue();
     private readonly retentionViews = new Map<string, RetentionStatus>();
     private readonly rescan: NodeJS.Timeout;
+    private readonly maintenanceTimer: NodeJS.Timeout;
+    private maintenanceBusy = false;
+    private maintenanceCursor = 0;
     private specs = new Map<string, LaunchSpec>();
     private rootBindings: { opened: string; canonical: string }[] = [];
     private helper?: Promise<string>;
     private refreshRevision = 0;
     private refreshing = false;
     private disposed = false;
+    private storageChoice?: Promise<void>;
+    private indexErrors = new Map<string, string>();
+    private detailViews = new Map<string, DetailStatus>();
+    private mcpChecks = new Map<string, McpVerification & { result?: { tools: string[]; status: unknown } }>();
+    private mcpPending = new Map<string, Promise<void>>();
     private treeUsage?: { dataDir: string; updated: number; entries: Usage[] };
 
     constructor(private readonly context: vscode.ExtensionContext) {
         this.status.command = 'airk.menu'; this.status.show();
         this.scheduler = new Scheduler(this.options(), (spec, full, automatic) => this.index(spec, full, automatic),
-            () => this.updateStatus(), (spec, error) => this.output.appendLine(`${spec.name}: ${String(error)}`));
+            () => this.updateStatus(), (spec, error) => {
+                this.indexErrors.set(JSON.stringify([spec.dataDir, spec.collection]), String(error));
+                this.output.appendLine(`${spec.name}: ${String(error)}`);
+            });
         this.coverage = new CoverageQueue(spec => this.writeNative<Coverage>(spec, 'coverage', ['--refresh']), () => this.updateStatus());
         this.configure();
         this.rescan = setInterval(() => {
             if (vscode.workspace.isTrusted) { for (const spec of this.specs.values()) { this.coverage.request(spec); } }
         }, 300000);
+        this.maintenanceTimer = setInterval(() => { void this.continueMaintenance(); }, 30000);
+    }
+    private async continueMaintenance(): Promise<void> {
+        if (this.disposed || !vscode.workspace.isTrusted || this.refreshing || this.storageChoice || this.maintenanceBusy || !this.scheduler.canRunMaintenance) { return; }
+        const specs = [...this.specs.values()];
+        if (!specs.length) { return; }
+        const spec = specs[this.maintenanceCursor++ % specs.length];
+        this.maintenanceBusy = true;
+        try {
+            await this.scheduler.holdWhile(async idle => {
+                await idle;
+                await this.nativeWrites.run(spec, async () => {
+                    if (this.disposed || !vscode.workspace.isTrusted || this.storageChoice
+                        || this.specs.get(spec.collection)?.dataDir !== spec.dataDir) { return; }
+                    // Native code rechecks policy/pending state under the collection
+                    // writer lock, including changes made by another VS Code window.
+                    const result = await runJson<unknown>(spec, 'collections', ['retention', 'continue']);
+                    if (result) { await this.refreshRetention(spec); this.invalidateCollectionTree(); }
+                });
+            });
+        } catch (error) {
+            if (!this.disposed) { this.output.appendLine(`${spec.name}: automatic cleanup continuation failed: ${String(error)}`); }
+        } finally { this.maintenanceBusy = false; }
     }
     private trusted(): void {
         if (!vscode.workspace.isTrusted) { throw new Error('Trust this workspace before starting AIRK or indexing files.'); }
@@ -121,6 +187,7 @@ class Controller implements vscode.Disposable {
     async refresh(): Promise<void> {
         const revision = ++this.refreshRevision;
         if (!vscode.workspace.isTrusted) {
+            this.mcpChecks.clear();
             for (const spec of this.specs.values()) { this.scheduler.forget(spec.collection); this.coverage.forget(spec.collection); }
             this.specs.clear(); this.rootBindings = []; this.definitions.fire(); this.updateStatus(); return;
         }
@@ -145,6 +212,8 @@ class Controller implements vscode.Disposable {
             }
             const prior = this.specs;
             this.specs = next;
+            const mcpBindings = new Set([...next.values()].map(spec => this.mcpKey(spec)));
+            for (const key of this.mcpChecks.keys()) { if (!mcpBindings.has(key)) { this.mcpChecks.delete(key); } }
             this.rootBindings = bindings.sort((a, b) => b.opened.length - a.opened.length);
             const known = this.context.globalState.get<Record<string, KnownCollection>>('collections', {});
             for (const spec of next.values()) {
@@ -175,6 +244,7 @@ class Controller implements vscode.Disposable {
             : coverageLabel(view || undefined);
         this.status.text = `$(database) AIRK: ${summary}`;
         this.collectionTree.refresh();
+        this.sidebar.refresh();
         const unsaved = spec ? (vscode.workspace.textDocuments ?? []).filter(document => document.isDirty && eligibleEvent(this.sourcePath(document.uri.fsPath), spec.root, spec.dataDir)).length : 0;
         this.status.tooltip = spec ? coverageDetails(spec.name, view || undefined, unsaved)
             + `\n${retentionSummary(this.retentionViews.get(JSON.stringify([spec.dataDir, spec.collection])))}`
@@ -224,6 +294,7 @@ class Controller implements vscode.Disposable {
     }
     private async index(spec: LaunchSpec, full: boolean, automatic: boolean): Promise<IndexReport> {
         this.trusted();
+        this.indexErrors.delete(JSON.stringify([spec.dataDir, spec.collection]));
         const maxBytes = this.machineValue('storage.maxBytes', 0);
         if (automatic && maxBytes > 0) {
             const usage = await runJson<Usage[]>(spec, 'collections', ['list']);
@@ -248,6 +319,9 @@ class Controller implements vscode.Disposable {
                 }, spec.name, error));
         }
         catch (error) {
+            if (error instanceof Error && /storage quota exhausted|quota_blocked|database or disk is full|private catalog cannot grow|physical.*(capacity|space|headroom)|insufficient.*space/i.test(error.message)) {
+                throw new CapacityError(`${error.message} Automatic indexing is stopped for this collection. Review Storage limits and retention, reclaim eligible old generations or increase the quota, then Resume or Index now.`);
+            }
             if (error instanceof Error && error.message.includes('native automatic scheduling is paused')) { throw new PausedError(error.message); }
             throw error;
         }
@@ -258,13 +332,60 @@ class Controller implements vscode.Disposable {
         known[spec.collection] = { name: spec.name, root: spec.root, lastIndexed: new Date().toISOString() };
         await this.context.globalState.update('collections', known);
         await this.refreshRetention(spec);
+        await this.refreshDetail(spec);
         this.invalidateCollectionTree();
         return report;
     }
-    invalidateCollectionTree(): void { this.treeUsage = undefined; this.collectionTree.refresh(); }
+    invalidateCollectionTree(): void {
+        this.treeUsage = undefined; this.collectionTree.refresh();
+        if (this.sidebar.visible) { void this.collectionTreeItems().then(() => this.sidebar.refresh()).catch(error => this.output.appendLine(String(error))); }
+    }
+    sidebarState(): SidebarState {
+        const states = this.scheduler.states();
+        const known = vscode.workspace.isTrusted ? this.context.globalState.get<Record<string, KnownCollection>>('collections', {}) : {};
+        return { trusted: vscode.workspace.isTrusted, paused: this.scheduler.isPaused || states.some(state => state.state === 'paused'),
+            registrationEnabled: this.registrationEnabled(),
+            mode: this.options().mode, changingStorage: !!this.storageChoice, groups: this.controlGroups(),
+            collections: vscode.workspace.isTrusted ? [...this.specs.values()].map(spec => ({ ...spec,
+                state: states.find(state => state.collection === spec.collection)?.state ?? 'queued',
+                coverage: this.coverage.get(spec.collection), lastIndexed: known[spec.collection]?.lastIndexed,
+                diskBytes: this.treeUsage?.dataDir === spec.dataDir ? this.treeUsage.entries.find(item => item.collection === spec.collection)?.disk_bytes : undefined,
+                error: this.indexErrors.get(JSON.stringify([spec.dataDir, spec.collection])), mcp: this.mcpChecks.get(this.mcpKey(spec)), detail: this.detailViews.get(this.mcpKey(spec)) })) : [] };
+    }
+    async sidebarMessage(message: unknown): Promise<void> {
+        const action = sidebarAction(message, new Set(this.controlGroups().flatMap(group => group.commands.map(([, command]) => command))));
+        if (!action || this.disposed) { return; }
+        if (action.type === 'ready') { await this.collectionTreeItems(); this.sidebar.refresh(); return; }
+        if (action.type === 'command') {
+            // Registered commands already report their own failures to the user.
+            await vscode.commands.executeCommand(action.command).then(undefined, () => undefined); return;
+        }
+        this.trusted();
+        if (action.type === 'registration') {
+            await vscode.workspace.getConfiguration('airk').update('mcp.registrationEnabled', action.enabled, vscode.ConfigurationTarget.Global);
+            this.registrationChanged(); return;
+        }
+        if (action.type === 'mode') {
+            await vscode.workspace.getConfiguration('airk').update('index.mode', action.value, vscode.ConfigurationTarget.Global);
+            this.configure(); this.updateStatus(); return;
+        }
+        const spec = this.specs.get(action.collection);
+        if (!spec || spec.dataDir !== action.dataDir) { throw new Error('Collection storage changed. Use the refreshed AIRK dashboard.'); }
+        if (action.type === 'detail') { await this.indexDetail(spec, action.level); return; }
+        if (action.action === 'verify') { await this.verify(spec); return; }
+        if (action.action === 'mcpDetails') {
+            const check = this.mcpChecks.get(this.mcpKey(spec));
+            if (check) { await this.showJson('AIRK helper verification; agent connection status is separate', { collection: spec.collection, root: spec.root, dataDir: spec.dataDir, ...check }); }
+            return;
+        }
+        if (action.action === 'status') { await this.collectionStatus(spec); return; }
+        await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Indexing ${spec.name}` },
+            () => this.scheduler.request(spec, true, action.action === 'reindex'));
+    }
     async collectionTreeItems(): Promise<CollectionItem[]> {
         if (!vscode.workspace.isTrusted || this.disposed) { return []; }
         const dataDir = await this.dataDir();
+        const refreshDetail = this.treeUsage?.dataDir !== dataDir || Date.now() - this.treeUsage.updated >= 30000;
         let usage: Usage[] = [];
         if (this.treeUsage?.dataDir === dataDir && Date.now() - this.treeUsage.updated < 30000) {
             usage = this.treeUsage.entries;
@@ -282,6 +403,8 @@ class Controller implements vscode.Disposable {
                 this.treeUsage = { dataDir, updated: Date.now(), entries: [] };
             }
         }
+        await Promise.all([...this.specs.values()].filter(spec => refreshDetail || !this.detailViews.has(this.mcpKey(spec)))
+            .map(spec => this.refreshDetail(spec)));
         const byId = new Map(usage.map(item => [item.collection, item]));
         const known = this.context.globalState.get<Record<string, KnownCollection>>('collections', {});
         const states = new Map(this.scheduler.states().map(item => [item.collection, item]));
@@ -334,18 +457,34 @@ class Controller implements vscode.Disposable {
         const choice = await vscode.window.showQuickPick(choices, { title: 'AIRK indexing mode' });
         if (choice) { await vscode.workspace.getConfiguration('airk').update('index.mode', choice.mode, vscode.ConfigurationTarget.Global); }
     }
-    async chooseStorage(): Promise<void> {
+    chooseStorage(): Promise<void> {
         this.trusted();
-        if (this.scheduler.isBusy) { throw new Error('Wait for indexing to finish before changing storage.'); }
+        this.storageChoice ??= this.scheduler.holdWhile(idle => this.chooseStorageWhenIdle(idle))
+            .finally(() => { this.storageChoice = undefined; this.updateStatus(); });
+        this.updateStatus();
+        return this.storageChoice;
+    }
+    private async chooseStorageWhenIdle(idle: Promise<void>): Promise<void> {
         const selected = await vscode.window.showOpenDialog({ canSelectFiles: false, canSelectFolders: true, canSelectMany: false, title: 'Choose AIRK index storage; existing collections remain in the previous location' });
         if (!selected?.[0]) { return; }
         const directory = await fs.realpath(selected[0].fsPath);
-        for (const folder of vscode.workspace.workspaceFolders ?? []) {
-            const root = await fs.realpath(folder.uri.fsPath), relative = path.relative(directory, root);
-            if (!relative || (!relative.startsWith('..' + path.sep) && relative !== '..' && !path.isAbsolute(relative))) {
-                throw new Error('Index storage must not be the workspace root or contain a workspace root.');
+        const validate = async () => {
+            for (const folder of vscode.workspace.workspaceFolders ?? []) {
+                const root = await fs.realpath(folder.uri.fsPath), relative = path.relative(directory, root);
+                if (!relative || (!relative.startsWith('..' + path.sep) && relative !== '..' && !path.isAbsolute(relative))) {
+                    throw new Error('Index storage must not be the workspace root or contain a workspace root.');
+                }
             }
-        }
+        };
+        await validate();
+        if (this.scheduler.isBusy) {
+            await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification,
+                title: 'AIRK: Waiting for the current indexing pass to finish before changing storage. New indexing jobs are held.' }, () => idle);
+        } else { await idle; }
+        this.trusted();
+        if (this.disposed) { throw new Error('AIRK extension closed.'); }
+        // Workspace folders may have changed while the current pass finished.
+        await validate();
         await this.rememberStorage(await this.dataDir());
         await vscode.workspace.getConfiguration('airk').update('storage.path', directory, vscode.ConfigurationTarget.Global);
         await this.refresh();
@@ -468,6 +607,34 @@ class Controller implements vscode.Disposable {
         }
         this.coverage.request(spec, true);
     }
+    private async refreshDetail(spec: LaunchSpec): Promise<void> {
+        try {
+            const result = await runJson<DetailStatus>(spec, 'collections', ['extraction', 'show']);
+            if (!['essential', 'balanced', 'detailed'].includes(result.configured_detail)
+                || (result.published_detail !== null && !['essential', 'balanced', 'detailed'].includes(result.published_detail))) {
+                throw new Error('Index detail requires the updated AIRK helper.');
+            }
+            if (vscode.workspace.isTrusted && this.specs.get(spec.collection)?.dataDir === spec.dataDir) {
+                this.detailViews.set(this.mcpKey(spec), result);
+            }
+        } catch (error) { this.output.appendLine(`Index detail unavailable: ${String(error)}`); }
+    }
+    async indexDetail(spec: LaunchSpec, level: IndexDetail): Promise<void> {
+        this.trusted();
+        const confirm = await vscode.window.showWarningMessage(
+            `Use ${level} detail for ${spec.name}? Essential keeps text and citations; Balanced adds declarations, imports and document facts; Detailed also keeps call occurrences and document change tracking. Rebuilding takes time and temporary disk space. The current index stays available until success.`,
+            { modal: true }, 'Save and index', 'Save for next index');
+        if (!confirm) { this.sidebar.refresh(); return; }
+        await this.scheduler.holdWhile(async idle => {
+            await idle;
+            this.trusted();
+            if (this.specs.get(spec.collection)?.dataDir !== spec.dataDir) { throw new Error('Collection storage changed.'); }
+            await this.writeNative(spec, 'collections', ['extraction', 'detail', level]);
+            await this.refreshDetail(spec);
+        });
+        this.sidebar.refresh();
+        if (confirm === 'Save and index') { await this.scheduler.request(spec, true, false); }
+    }
     async extractionPolicy(configure = false): Promise<void> {
         const spec = await this.chooseSpec(); if (!spec) { return; }
         const current = await runJson<object>(spec, 'collections', ['extraction', 'show']);
@@ -490,6 +657,41 @@ class Controller implements vscode.Disposable {
             }
         });
     }
+    async storageLimits(): Promise<void> {
+        const spec = await this.chooseSpec(); if (!spec) { return; }
+        const current = await runJson<{ root_bytes: number; default_collection_bytes: number; collections: Record<string, number> }>(spec, 'collections', ['quota', 'policy']);
+        const gib = 1073741824;
+        const validateInput = (text: string) => {
+            const bytes = Number(text) * gib;
+            return text.trim() && Number.isSafeInteger(bytes) && bytes >= 1048576 ? undefined : 'Enter a positive GiB value (at least 1 MiB) that converts to a whole, safe byte count.';
+        };
+        const collectionInput = await vscode.window.showInputBox({ title: `Storage quota for ${spec.name}`, prompt: 'Collection limit in GiB, including retained generations and temporary builds. Default: 100 GiB.', value: String((current.collections[spec.collection] ?? current.default_collection_bytes) / gib), validateInput, ignoreFocusOut: true });
+        if (collectionInput === undefined) { return; }
+        const rootInput = await vscode.window.showInputBox({ title: 'Shared AIRK storage quota', prompt: 'Total limit in GiB for all collections in this storage folder. Default: 500 GiB.', value: String(current.root_bytes / gib), validateInput, ignoreFocusOut: true });
+        if (rootInput === undefined) { return; }
+        if (validateInput(collectionInput) || validateInput(rootInput)) { throw new Error('Invalid storage quota.'); }
+        const proposed = { ...current, root_bytes: Number(rootInput) * gib, collections: { ...current.collections, [spec.collection]: Number(collectionInput) * gib } };
+        if (proposed.collections[spec.collection] > proposed.root_bytes) { throw new Error('The collection quota cannot exceed the shared storage quota.'); }
+        const message = `Save ${collectionInput} GiB for ${spec.name} and ${rootInput} GiB total? Automatic retention may trim eligible old generations before a build or after storage pressure. Active indexes, readers and protected history remain safe. If lowering a limit, an automatic-retention cleanup pass may run before saving; protected allocations can prevent the reduction. No disk space is preallocated.`;
+        if (await vscode.window.showWarningMessage(message, { modal: true }, 'Save storage limits') !== 'Save storage limits') { return; }
+        this.trusted();
+        if (this.specs.get(spec.collection)?.dataDir !== spec.dataDir) { throw new Error('Collection storage changed; review its current limits.'); }
+        await this.scheduler.holdWhile(async idle => {
+            await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'AIRK: Applying storage limits after current indexing finishes' }, async () => {
+                await idle;
+                this.trusted();
+                if (this.specs.get(spec.collection)?.dataDir !== spec.dataDir) { throw new Error('Collection storage changed; review its current limits.'); }
+                const status = await runJson<{ used_bytes: number; reserved_bytes: number; collections: Record<string, { used_bytes: number; reserved_bytes: number }> }>(spec, 'collections', ['quota', 'status']);
+                const used = status.collections[spec.collection];
+                if ((used && used.used_bytes + used.reserved_bytes > proposed.collections[spec.collection]) || status.used_bytes + status.reserved_bytes > proposed.root_bytes) {
+                    const retention = await this.refreshRetention(spec);
+                    if (retention?.policy.policy.mode === 'automatic') { await this.writeNative(spec, 'collections', ['retention', 'run', '--apply']); }
+                }
+                await this.showJson('AIRK saved storage quotas', await this.writeNative(spec, 'collections', ['quota', 'set', '--json', JSON.stringify(proposed), '--expected-json', JSON.stringify(current)]));
+            });
+        });
+        this.invalidateCollectionTree();
+    }
     async retentionPolicy(): Promise<void> {
         const spec = await this.chooseSpec(); if (!spec) { return; }
         const status = await this.refreshRetention(spec); if (!status) { throw new Error('Cannot configure retention without current policy status.'); }
@@ -498,10 +700,16 @@ class Controller implements vscode.Disposable {
             { label: 'Automatic retention', description: 'Bounded cleanup after publications; protected readers may delay convergence.', mode: 'automatic' as const }
         ], { title: `Retention policy for ${spec.name} (${spec.collection}) · current ${status.policy.policy.mode}` });
         if (!choice) { return; }
-        const json = JSON.stringify(retentionPolicyForMode(status, choice.mode));
+        const generations = await vscode.window.showQuickPick(Array.from({ length: 9 }, (_, predecessors) => ({
+            label: predecessors === 0 ? '1 generation: active only (default)' : `${predecessors + 1} generations: active + ${predecessors} previous`,
+            description: predecessors === status.policy.policy.searchable_predecessors ? 'Current setting' : undefined,
+            predecessors
+        })), { title: 'Completed generations to keep; live readers and protected history may retain more' });
+        if (!generations) { return; }
+        const json = JSON.stringify({ ...retentionPolicyForMode(status, choice.mode), searchable_predecessors: generations.predecessors });
         const preview = await runJson<RetentionPreview>(spec, 'collections', ['retention', 'preview', '--json', json]);
         await this.showJson('AIRK proposed retention policy', { collection: spec.collection, root: spec.root, dataDir: spec.dataDir, preview });
-        const confirm = await vscode.window.showWarningMessage(`Set ${choice.mode} retention for ${spec.name} (${spec.collection})? This persists the previewed policy without immediately deleting generations.`, { modal: true }, 'Save retention policy');
+        const confirm = await vscode.window.showWarningMessage(`Set ${choice.mode} retention and keep ${generations.predecessors + 1} completed generation(s) for ${spec.name} (${spec.collection})? This persists the previewed policy without immediately deleting generations.`, { modal: true }, 'Save retention policy');
         if (confirm !== 'Save retention policy') { return; }
         await this.writeNative(spec, 'collections', ['retention', 'set', '--json', json]);
         await this.refreshRetention(spec);
@@ -536,8 +744,8 @@ class Controller implements vscode.Disposable {
         });
         panel.onDidDispose(() => listener.dispose());
     }
-    async collectionStatus(): Promise<void> {
-        const spec = await this.chooseSpec(); if (!spec) { return; }
+    async collectionStatus(selected?: LaunchSpec): Promise<void> {
+        const spec = selected ?? await this.chooseSpec(); if (!spec) { return; }
         const coverage = await this.writeNative<Coverage>(spec, 'coverage', ['--refresh']);
         const retention = await this.refreshRetention(spec);
         this.showReport('coverage', 'AIRK workspace coverage', { coverage, retention: retention ?? null, scheduling: this.scheduler.states(), dataDir: spec.dataDir,
@@ -563,16 +771,53 @@ class Controller implements vscode.Disposable {
             await vscode.env.clipboard.writeText(content);
         }
     }
-    async verify(): Promise<void> {
-        const spec = await this.chooseSpec(); if (!spec) { return; }
-        await this.scheduler.request(spec, true);
-        const result = await probeMcp(spec);
-        await this.showJson('AIRK native stdio MCP verified; client approval is separate', result);
-        void vscode.window.showInformationMessage(`AIRK helper OK: ${result.tools.length} tools available for ${spec.name}. Each coding agent still needs the server enabled in its own settings.`);
+    private mcpKey(spec: LaunchSpec): string { return JSON.stringify([spec.collection, spec.root, spec.dataDir, spec.command]); }
+    registrationEnabled(): boolean { return this.machineValue('mcp.registrationEnabled', true) === true; }
+    registrationChanged(): void { this.definitions.fire(); this.updateStatus(); }
+    async manageMcp(): Promise<void> {
+        this.trusted();
+        const command = 'workbench.mcp.listServer';
+        if (!(await vscode.commands.getCommands(true)).includes(command)) {
+            throw new Error('This editor does not expose MCP: List Servers. Manage the AIRK server in your coding agent’s MCP settings.');
+        }
+        await vscode.commands.executeCommand(command);
+    }
+    async verify(selected?: LaunchSpec): Promise<void> {
+        this.trusted();
+        const spec = selected ?? await this.chooseSpec(); if (!spec) { return; }
+        if (this.storageChoice) { throw new Error('Finish choosing storage before verifying MCP.'); }
+        const key = this.mcpKey(spec), pending = this.mcpPending.get(key);
+        if (pending) { return pending; }
+        const check: McpVerification & { result?: { tools: string[]; status: unknown } } = { phase: 'preparing' };
+        this.mcpChecks.set(key, check); this.updateStatus();
+        const current = () => !this.disposed && vscode.workspace.isTrusted && this.mcpChecks.get(key) === check
+            && [...this.specs.values()].some(item => this.mcpKey(item) === key);
+        const operation = (async () => {
+            try {
+                await this.scheduler.request(spec, true);
+                if (!current()) { return; }
+                check.phase = 'checking'; this.updateStatus();
+                const result = await probeMcp(spec, 16, this.context.extension.packageJSON.version);
+                if (!current()) { return; }
+                check.phase = 'verified'; check.tools = result.tools; check.result = result; check.checkedAt = Date.now();
+                this.output.appendLine(`${spec.name}: MCP helper verified; ${result.tools.length} tools available. Agent connection status is separate.`);
+                if (!selected) { void vscode.window.showInformationMessage(`AIRK helper verified: ${result.tools.length} tools for ${spec.name}. See the dashboard for results.`); }
+            } catch (error) {
+                if (current()) {
+                    check.phase = 'failed'; check.checkedAt = Date.now(); check.error = String(error).slice(0, 600);
+                    this.output.appendLine(`${spec.name}: MCP verification failed: ${check.error}`);
+                }
+                // Sidebar failures remain inline; palette callers retain their normal error reporting.
+                if (!selected) { throw error; }
+            } finally { this.mcpPending.delete(key); this.updateStatus(); }
+        })();
+        this.mcpPending.set(key, operation);
+        return operation;
     }
     async provideDefinitions(): Promise<vscode.McpStdioServerDefinition[]> {
-        if (!vscode.workspace.isTrusted) { return []; }
+        if (!vscode.workspace.isTrusted || !this.registrationEnabled()) { return []; }
         await this.refresh();
+        if (!vscode.workspace.isTrusted || !this.registrationEnabled()) { return []; }
         return [...this.specs.values()].map(spec => {
             const definition = new vscode.McpStdioServerDefinition(`AIRK: ${spec.name} (${spec.collection})`, spec.command, launchArgs(spec), { AIRK_CLIENT: 'vscode' },
                 `${this.context.extension.packageJSON.version}:${spec.dataDir}`);
@@ -582,6 +827,7 @@ class Controller implements vscode.Disposable {
     }
     async resolveDefinition(definition: vscode.McpServerDefinition): Promise<vscode.McpServerDefinition> {
         this.trusted();
+        if (!this.registrationEnabled()) { throw new Error('AIRK automatic VS Code registration is off. Enable it in the AIRK dashboard.'); }
         if (!(definition instanceof vscode.McpStdioServerDefinition)) { throw new Error('AIRK requires native stdio.'); }
         const spec = [...this.specs.values()].find(item => item.command === definition.command && JSON.stringify(launchArgs(item)) === JSON.stringify(definition.args));
         if (!spec) { throw new Error('AIRK workspace/storage configuration changed. Refresh its MCP definitions.'); }
@@ -591,48 +837,14 @@ class Controller implements vscode.Disposable {
             if (!(error instanceof Error) || !error.message.includes('workspace is not indexed')) { throw error; }
             await this.scheduler.request(spec, true);
         }
-        this.trusted(); return definition;
+        this.trusted();
+        if (!this.registrationEnabled()) { throw new Error('AIRK automatic VS Code registration is off.'); }
+        return definition;
     }
+    controlGroups(): ControlGroup[] { return sidebarControlGroups(); }
     async menu(): Promise<void> {
-        // Labels match the Command Palette titles; descriptions double as inline help.
-        const groups: { label: string; commands: [string, string, string][] }[] = [
-            { label: 'Indexing', commands: [
-                ['Index Now', 'airk.index', 'Incremental update of this folder'],
-                ['Reindex Collection (Full Re-extraction)', 'airk.reindex', 'Re-extract every eligible file'],
-                ['Choose Indexing Mode…', 'airk.indexMode', 'After edits settle · When idle · On save · Manual'],
-                ['Pause Auto-indexing', 'airk.pause', 'Stop automatic jobs; keep queued changes'],
-                ['Resume Auto-indexing', 'airk.resume', 'Restart automatic jobs after a pause or budget stop']] },
-            { label: 'Setup and reports', commands: [
-                ['Set Up Coding Agent (Claude Code, Codex, Gemini CLI…)', 'airk.setupAgent', 'Preview a configuration to merge into your agent'],
-                ['Verify Native MCP Connection', 'airk.verifyMcp', 'Handshake with the helper and list its tools'],
-                ['Show Collection Status and Coverage', 'airk.status', 'Current, stale, missing and failed files'],
-                ['Show Local Usage Report', 'airk.usage', 'Content-free local aggregates and estimates'],
-                ['Show Output Log', 'airk.logs', 'Skipped files and failures']] },
-            { label: 'Collections and storage', commands: [
-                ['Choose Index Storage Folder…', 'airk.chooseStorage', 'Build new indexes on another drive'],
-                ['Manage Collections and Disk Space', 'airk.collections', 'Sizes, roots and free space'],
-                ['Remove Unneeded Collection…', 'airk.removeCollection', 'Delete a derived index; source files stay'],
-                ['Trim Obsolete Index Generations…', 'airk.prune', 'Preview, then reclaim superseded builds']] },
-            { label: 'Retention and history', commands: [
-                ['Show Retention Status', 'airk.retention', 'Policy, protected bytes and pending work'],
-                ['Choose Retention Policy…', 'airk.retentionPolicy', 'Manual or automatic cleanup'],
-                ['Run Retention Maintenance…', 'airk.retentionRun', 'Preview, then one bounded cleanup pass'],
-                ['Show History Status', 'airk.history', 'Retained history policy and plan'],
-                ['Choose History Policy…', 'airk.historyPolicy', 'Enable or disable bounded history'],
-                ['Run History Maintenance…', 'airk.historyRun', 'Preview, then one bounded pass'],
-                ['List Retained Publication Identities', 'airk.historyAvailable', 'Committed revisions you can pin'],
-                ['Show Checkpoints', 'airk.checkpoints', 'Pinned committed revisions'],
-                ['Create Checkpoint…', 'airk.createCheckpoint', 'Pin a committed revision under a label'],
-                ['Remove Checkpoint…', 'airk.removeCheckpoint', 'Release one pin'],
-                ['Preview Logical History Purge…', 'airk.purgeHistory', 'Plan, then confirm; not secure erasure']] },
-            { label: 'Extraction', commands: [
-                ['Show Ingestion Limits', 'airk.ingestionLimits', 'Machine sizing, measured source sizes, quotas and storage path'],
-                ['Configure Ingestion Limits…', 'airk.configureIngestionLimits', 'Restore automatic sizing or import explicit limits'],
-                ['Show Extraction Policy', 'airk.extractionPolicy', 'Configured versus applied policy'],
-                ['Configure Extraction Policy…', 'airk.configureExtractionPolicy', 'Validate a JSON policy for the next index']] }
-        ];
         const items: (vscode.QuickPickItem & { command?: string })[] = [];
-        for (const group of groups) {
+        for (const group of this.controlGroups()) {
             items.push({ label: group.label, kind: vscode.QuickPickItemKind.Separator });
             items.push(...group.commands.map(([label, command, description]) => ({ label, command, description })));
         }
@@ -640,12 +852,13 @@ class Controller implements vscode.Disposable {
         if (choice?.command) { await vscode.commands.executeCommand(choice.command); }
     }
     configure(): void { const options = this.options(); this.scheduler.configure(options); this.coverage?.configure(options.quietMs, options.mode === 'idle' ? options.idleMs : 0); }
-    dispose(): void { this.disposed = true; clearInterval(this.rescan); this.coverage.dispose(); this.scheduler.dispose(); this.definitions.dispose(); this.collectionTree.dispose(); this.status.dispose(); this.output.dispose(); }
+    dispose(): void { this.disposed = true; clearInterval(this.rescan); clearInterval(this.maintenanceTimer); this.sidebar.dispose(); this.coverage.dispose(); this.scheduler.dispose(); this.definitions.dispose(); this.collectionTree.dispose(); this.status.dispose(); this.output.dispose(); }
 }
 
 export async function activate(context: vscode.ExtensionContext): Promise<{ getServerDefinitions(): Promise<vscode.McpStdioServerDefinition[]> }> {
     const controller = new Controller(context); context.subscriptions.push(controller);
     context.subscriptions.push(vscode.window.createTreeView('airk.collectionsView', { treeDataProvider: controller.collectionTree }));
+    context.subscriptions.push(vscode.window.registerWebviewViewProvider('airk.dashboard', controller.sidebar));
     const safe = (action: () => void | Promise<unknown>, propagate = false) => async () => {
         try { await action(); } catch (error) {
             controller.output.appendLine(String(error)); controller.output.show(true);
@@ -657,13 +870,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<{ getS
         menu: () => controller.menu(), index: () => controller.manualIndex(), reindex: () => controller.manualIndex(true),
         indexMode: () => controller.chooseMode(), pause: () => controller.pauseAuto(true),
         resume: async () => { await controller.refresh(); await controller.pauseAuto(false); },
-        chooseStorage: () => controller.chooseStorage(), collections: () => controller.collections(), removeCollection: () => controller.collections(true), prune: () => controller.prune(),
+        chooseStorage: () => controller.chooseStorage(), storageLimits: () => controller.storageLimits(), collections: () => controller.collections(), removeCollection: () => controller.collections(true), prune: () => controller.prune(),
         retention: () => controller.retention(), retentionPolicy: () => controller.retentionPolicy(), retentionRun: () => controller.retentionRun(),
         history: () => controller.history('show'), historyPolicy: () => controller.history('policy'), historyRun: () => controller.history('run'),
         historyAvailable: () => controller.history('available'), checkpoints: () => controller.history('checkpoints'), createCheckpoint: () => controller.history('create'), removeCheckpoint: () => controller.history('remove'), purgeHistory: () => controller.history('purge'),
         extractionPolicy: () => controller.extractionPolicy(), configureExtractionPolicy: () => controller.extractionPolicy(true),
         ingestionLimits: () => controller.ingestionLimits(), configureIngestionLimits: () => controller.ingestionLimits(true),
-        status: () => controller.collectionStatus(), usage: () => controller.usage(), setupAgent: () => controller.setupAgent(), verifyMcp: () => controller.verify(), logs: () => controller.output.show()
+        status: () => controller.collectionStatus(), usage: () => controller.usage(), setupAgent: () => controller.setupAgent(), verifyMcp: () => controller.verify(), manageMcp: () => controller.manageMcp(), logs: () => controller.output.show()
     };
     for (const [name, action] of Object.entries(commands)) { context.subscriptions.push(vscode.commands.registerCommand(`airk.${name}`, safe(action, true))); }
     context.subscriptions.push(
@@ -687,6 +900,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<{ getS
         vscode.workspace.onDidGrantWorkspaceTrust(safe(() => controller.refresh())),
         vscode.workspace.onDidChangeWorkspaceFolders(safe(() => controller.refresh())),
         vscode.workspace.onDidChangeConfiguration(event => {
+            if (event.affectsConfiguration('airk.mcp.registrationEnabled')) { controller.registrationChanged(); }
             if (event.affectsConfiguration('airk')) { controller.configure(); void safe(() => controller.refresh())(); }
         }));
     await safe(() => controller.refresh())();

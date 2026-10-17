@@ -12,7 +12,7 @@ on:
         type: string
         default: ''
       version:
-        description: Exact checked-in extension version (for example 1.1.0)
+        description: Exact checked-in extension version (for example 1.1.1)
         type: string
         required: true
       channel:
@@ -32,12 +32,14 @@ permissions:
   contents: read
   actions: read
 concurrency:
-  group: airk-extension-release
+  group: airk-release-publication
   cancel-in-progress: false
 jobs:
   preflight:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    outputs:
+      action: ${{ steps.version.outputs.action }}
     steps:
       - name: Publication requires the protected main branch
         env:
@@ -67,8 +69,20 @@ jobs:
         if: ${{ !inputs.verify_identity }}
         with:
           persist-credentials: false
-      - name: Select tested main artifacts and verify requested version
+      - name: Select an unused version or finish the existing release
         if: ${{ !inputs.verify_identity }}
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AIRK_VERSION: ${{ inputs.version }}
+          AIRK_CHANNEL: ${{ inputs.channel }}
+          AIRK_PUBLISH: ${{ inputs.publish }}
+        run: |
+          args=()
+          if [ "$AIRK_PUBLISH" = true ]; then args+=(--publish); fi
+          python scripts/release-version.py plan --destination marketplace --channel "$AIRK_CHANNEL" "${args[@]}"
+      - name: Select tested main artifacts and verify requested version
+        if: ${{ !inputs.verify_identity && (steps.version.outputs.action == 'publish' || steps.version.outputs.action == 'rehearse') }}
         env:
           GH_TOKEN: ${{ github.token }}
           AIRK_CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
@@ -77,13 +91,13 @@ jobs:
           python -c 'import json, os; assert json.load(open("packages/vscode/package.json"))["version"] == os.environ["AIRK_VERSION"]'
           python scripts/ci-candidates.py resolve
       - name: Authenticate the exact successful rehearsal
-        if: ${{ inputs.rehearsal_run_id != '' }}
+        if: ${{ steps.version.outputs.action == 'publish' && inputs.rehearsal_run_id != '' }}
         env:
           GH_TOKEN: ${{ github.token }}
           AIRK_REHEARSAL_RUN_ID: ${{ inputs.rehearsal_run_id }}
         run: python scripts/ci-candidates.py rehearsal --run-id "$AIRK_REHEARSAL_RUN_ID" --record artifacts/rehearsal.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: ${{ inputs.rehearsal_run_id != '' }}
+        if: ${{ steps.version.outputs.action == 'publish' && inputs.rehearsal_run_id != '' }}
         with:
           name: airk-rehearsal-${{ github.sha }}-${{ github.run_id }}
           path: artifacts/rehearsal.json
@@ -91,13 +105,32 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: ${{ !inputs.verify_identity }}
+        if: ${{ steps.version.outputs.action == 'publish' || steps.version.outputs.action == 'rehearse' }}
         with:
           name: airk-producer-${{ github.sha }}-${{ github.run_id }}
           path: artifacts/producer.json
           overwrite: true
           if-no-files-found: error
           retention-days: 7
+
+  version-pr:
+    needs: preflight
+    if: ${{ inputs.publish && !inputs.verify_identity && needs.preflight.outputs.action == 'bump' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Prepare the next patch for human review and main CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AIRK_VERSION: ${{ inputs.version }}
+          AIRK_CHANNEL: ${{ inputs.channel }}
+        run: python scripts/release-version.py prepare-pr --destination marketplace --channel "$AIRK_CHANNEL" --publish
 
   verify-identity:
     if: ${{ inputs.verify_identity }}
@@ -126,7 +159,7 @@ jobs:
           printf 'Marketplace member ID: %s\n' "$profile_id"
           printf 'Marketplace member ID: `%s`\n\nAdd this ID to publisher **iokaio** with the **Contributor** role. This check does not verify publisher membership or publish an extension.\n' "$profile_id" >> "$GITHUB_STEP_SUMMARY"
   build:
-    if: ${{ !inputs.verify_identity && inputs.rehearsal_run_id == '' }}
+    if: ${{ !inputs.verify_identity && inputs.rehearsal_run_id == '' && (needs.preflight.outputs.action == 'publish' || needs.preflight.outputs.action == 'rehearse') }}
     needs: preflight
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -166,7 +199,7 @@ jobs:
           compression-level: 0
 
   publish:
-    if: ${{ !cancelled() && inputs.publish && needs.preflight.result == 'success' && (needs.build.result == 'success' || (needs.build.result == 'skipped' && inputs.rehearsal_run_id != '')) }}
+    if: ${{ !cancelled() && inputs.publish && needs.preflight.outputs.action == 'publish' && needs.preflight.result == 'success' && (needs.build.result == 'success' || (needs.build.result == 'skipped' && inputs.rehearsal_run_id != '')) }}
     needs: [preflight, build]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -219,4 +252,6 @@ jobs:
         env:
           AIRK_CHANNEL: ${{ inputs.channel }}
           AZURE_TENANT_ID: ${{ vars.AZURE_MARKETPLACE_TENANT_ID }}
-        run: node packages/vscode/scripts/publish.cjs artifacts/verified-vsix.json "$AIRK_CHANNEL"
+        run: |
+          python scripts/release-version.py pending --destination marketplace --channel "$AIRK_CHANNEL" --publish --inventory artifacts/verified-vsix.json --output artifacts/unpublished-vsix.json
+          node packages/vscode/scripts/publish.cjs artifacts/unpublished-vsix.json "$AIRK_CHANNEL"

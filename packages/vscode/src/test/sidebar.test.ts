@@ -1,0 +1,130 @@
+// SPDX-License-Identifier: Apache-2.0
+import { strict as assert } from 'node:assert';
+import { test } from 'node:test';
+import { Coverage } from '../coverage';
+import { SidebarState, renderSidebar, sidebarAction, sidebarContent, sidebarControlGroups } from '../sidebar';
+
+const report: Coverage = { collection: 'a', root: '/project/a', generation: 1, indexed: true, inventory_revision: 1,
+    scanned_at_unix_ms: 1, scan_complete: true, eligible: 1000, current: 999, stale: 1, missing: 0, extraction_failed: 0,
+    capacity_blocked: 0, unreadable: 0, excluded: 0, unsupported: 3, pending_removals: 0, budget_exhausted: false, percent: 99 };
+const state: SidebarState = { trusted: true, paused: false, changingStorage: false, mode: 'debounced',
+    groups: [{ label: 'Setup and reports', commands: [['Connect agent', 'airk.setupAgent', 'Preview configuration']] }],
+    collections: [{ collection: 'a', name: 'Project A', root: '/project/a', dataDir: '/data', state: 'indexing',
+        coverage: { report, scanning: false, pending: false }, diskBytes: 1048576 }] };
+
+test('sidebar shows measured coverage, direct collection controls and no invented indexing percentage', () => {
+    const html = sidebarContent(state);
+    assert.match(html, /Indexing saved files/); assert.match(html, /99%/);
+    assert.match(html, /data-collection="a" data-storage="\/data" data-action="index"[^>]*disabled/);
+    assert.match(html, /data-action="status"[^>]*>Details/);
+    assert.match(html, /<select id="mode"/); assert.match(html, /data-command="airk.pause"/);
+    assert.match(html, /1\.0 MiB/); assert.match(html, /Current/); assert.match(html, /Eligible/);
+    const changed = structuredClone(state); changed.collections[0].coverage!.pending = true;
+    assert.doesNotMatch(sidebarContent(changed), /<progress/);
+    assert.match(sidebarContent(changed), /previous scan/);
+    changed.collections[0].coverage = undefined;
+    assert.match(sidebarContent(changed), /Coverage unknown/); assert.doesNotMatch(sidebarContent(changed), /<progress/);
+});
+
+test('sidebar escapes workspace names, paths and errors and uses a nonce-only content policy', () => {
+    const hostile = structuredClone(state);
+    hostile.collections[0].name = '<img src=x onerror="attack()">';
+    hostile.collections[0].dataDir = '" onmouseover="attack()';
+    hostile.collections[0].error = '</p><script>attack()</script>';
+    const html = renderSidebar(hostile);
+    assert.doesNotMatch(html, /<img|<script>attack|data-storage="" onmouseover/);
+    assert.match(html, /&lt;img/); assert.match(html, /&lt;script&gt;/);
+    assert.match(html, /default-src 'none'/); assert.match(html, /script-src 'nonce-[0-9a-f]+'/);
+    assert.doesNotMatch(html, /unsafe-inline|https:\/\//);
+});
+
+test('sidebar preserves unknown coverage and exposes paused, empty and untrusted states', () => {
+    const paused = { ...state, paused: true, changingStorage: true };
+    assert.match(sidebarContent(paused), /data-command="airk.resume"/);
+    assert.match(sidebarContent(paused), /New indexing jobs are held/);
+    assert.match(sidebarContent({ ...state, trusted: false, collections: [] }), /Trust this workspace/);
+    assert.match(sidebarContent({ ...state, trusted: false, collections: [] }), /<select id="mode" disabled/);
+    assert.match(sidebarContent({ ...state, collections: [] }), /No workspace collection/);
+});
+
+test('sidebar accepts only known actions and never executes arbitrary editor commands', () => {
+    const allowed = new Set(['airk.pause', 'airk.chooseStorage']);
+    for (const value of [null, {}, { type: 'command', command: 'workbench.action.terminal.sendSequence' },
+        { type: 'mode', value: 'unbounded' }, { type: 'mode', value: ['idle'] }, { type: 'registration', enabled: 'false' },
+        { type: 'collection', action: ['index'], collection: 'a', dataDir: '/data' },
+        { type: 'collection', action: 'remove', collection: 'a', dataDir: '/data' },
+        { type: 'collection', action: 'index', collection: 'a' }]) {
+        assert.equal(sidebarAction(value, allowed), undefined);
+    }
+    assert.deepEqual(sidebarAction({ type: 'mode', value: 'idle' }, allowed), { type: 'mode', value: 'idle' });
+    assert.deepEqual(sidebarAction({ type: 'command', command: 'airk.pause', extra: 'discard' }, allowed), { type: 'command', command: 'airk.pause' });
+    assert.deepEqual(sidebarAction({ type: 'collection', action: 'index', collection: 'a', dataDir: '/data' }, allowed),
+        { type: 'collection', action: 'index', collection: 'a', dataDir: '/data' });
+});
+
+test('MCP verification states are collection-scoped and separate from registration and agent connections', () => {
+    const sample = structuredClone(state);
+    sample.registrationEnabled = false;
+    sample.collections[0].mcp = { phase: 'verified', checkedAt: 1000, tools: ['status', 'search'] };
+    sample.collections.push({ collection: 'b', name: 'Other', root: '/other', dataDir: '/data', state: 'current' });
+    let html = sidebarContent(sample);
+    assert.match(html, /Verified · 2 tools available/); assert.match(html, /Last checked:/);
+    assert.match(html, /Helper: <strong>Not checked/);
+    assert.match(html, /VS Code registration: Off/);
+    assert.doesNotMatch(html, /id="registration"[^>]* checked/);
+    assert.match(html, /not whether an agent is connected/);
+    assert.match(html, /data-command="airk.manageMcp"/);
+    for (const phase of ['preparing', 'checking'] as const) {
+        sample.collections[0].mcp = { phase };
+        html = sidebarContent(sample);
+        assert.match(html, /id="a-verify"[^>]* disabled/);
+        assert.match(html, /id="a-mcpDetails"[^>]* disabled/);
+    }
+    sample.collections[0].mcp = { phase: 'failed', error: '<script>failure</script>', checkedAt: 1000 };
+    html = sidebarContent(sample);
+    assert.match(html, /Verification failed/); assert.match(html, /&lt;script&gt;/);
+    assert.doesNotMatch(html, /id="a-verify"[^>]* disabled/);
+    assert.deepEqual(sidebarAction({ type: 'registration', enabled: false }, new Set()), { type: 'registration', enabled: false });
+});
+
+// Capacity blocks need an immediate recovery control without a pause/resume detour.
+test('capacity-blocked collections expose Resume and storage recovery controls', () => {
+    const html = renderSidebar({ trusted: true, paused: false, changingStorage: false, mode: 'debounced', groups: sidebarControlGroups(),
+        collections: [{ collection: 'fixture', name: 'Fixture', root: '/fixture', dataDir: '/state', state: 'capacity-limited' }] });
+    assert.match(html, /data-command="airk.resume"/);
+    assert.match(html, /data-command="airk.storageLimits"/);
+    assert.match(html, /data-command="airk.retentionPolicy"/);
+    assert.match(html, /data-command="airk.retentionRun"/);
+});
+
+
+test('detail selection shows configured and published levels and validates messages', () => {
+    const sample = structuredClone(state);
+    sample.collections[0].state = 'current';
+    sample.collections[0].detail = { configured_detail: 'balanced', published_detail: 'detailed', pending_reindex: true };
+    const html = sidebarContent(sample);
+    assert.match(html, /value="balanced" selected/);
+    assert.match(html, /Published: <strong>detailed/);
+    assert.match(html, /Change pending indexing/);
+    assert.match(html, /Detail change pending/);
+    assert.doesNotMatch(html, /Index current/);
+    assert.match(html, /data-detail="true"/);
+    assert.deepEqual(sidebarAction({ type: 'detail', collection: 'a', dataDir: '/data', level: 'essential' }, new Set()),
+        { type: 'detail', collection: 'a', dataDir: '/data', level: 'essential' });
+    assert.equal(sidebarAction({ type: 'detail', collection: 'a', dataDir: '/data', level: 'unbounded' }, new Set()), undefined);
+});
+
+test('successful indexing does not claim current coverage after new changes or an incomplete scan', () => {
+    const sample = structuredClone(state);
+    sample.collections[0].state = 'current';
+    assert.match(sidebarContent(sample), /Changes detected/);
+    sample.collections[0].coverage!.report = { ...report, stale: 0, current: 1000, percent: 100 };
+    assert.match(sidebarContent(sample), /Index current/);
+    sample.collections[0].coverage!.pending = true;
+    assert.match(sidebarContent(sample), /Changes detected/);
+    sample.collections[0].coverage!.pending = false;
+    sample.collections[0].coverage!.report!.scan_complete = false;
+    assert.match(sidebarContent(sample), /Indexed; coverage unverified/);
+    sample.collections[0].coverage = undefined;
+    assert.match(sidebarContent(sample), /Indexed; coverage unverified/);
+});

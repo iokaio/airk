@@ -82,6 +82,12 @@ impl Kernel {
     pub fn extract_ocr(&self, path: &str, request: &OcrRequest) -> Result<Value> {
         let writer = self.store.lock()?;
         let baseline = self.load()?;
+        let policy = self.extraction_policy()?;
+        ensure!(
+            !policy.pending_reindex,
+            "index pending extraction policy before OCR"
+        );
+        let detail = policy.published_detail.unwrap_or_default();
         ensure!(
             baseline.extractor_version == airk_core::EXTRACTOR_VERSION,
             "reindex the collection before adding OCR to an older extractor revision"
@@ -144,8 +150,26 @@ impl Kernel {
                 .artifacts
                 .get_mut(path)
                 .context("OCR artifact missing")?;
-            *artifact = self.store.retain_artifact_with_budget(
-                artifact,
+            let mut profile = airk_ingest::adapters::legacy::legacy_profile(artifact)?;
+            if detail != airk_core::extraction::IndexDetail::Detailed {
+                profile
+                    .options
+                    .insert("index_detail".into(), detail.as_str().into());
+            }
+            let payload = airk_ingest::continuity::prepare_native(artifact, &bytes, &profile)?;
+            let prepared = airk_core::binding::bind_payload(
+                &payload,
+                &profile,
+                airk_core::binding::ArtifactBinding {
+                    path,
+                    source_hash: artifact.content_hash.parse()?,
+                    source_bytes: bytes.len(),
+                },
+            )?;
+            *artifact = self.store.retain_payload_with_budget(
+                &prepared,
+                &payload,
+                &profile,
                 Some(&bytes),
                 Some(&reservation),
             )?;

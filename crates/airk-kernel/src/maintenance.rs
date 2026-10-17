@@ -66,6 +66,47 @@ impl Kernel {
         self.maintain_retention_with_budget(MaintenanceBudget::default())
     }
 
+    /// One automatic continuation for this collection only. Never scan sources,
+    /// enqueue indexing, override manual retention, or wait for another writer.
+    pub fn continue_automatic_retention(&self) -> Result<Option<MaintenanceRun>> {
+        if self.persistent_revision()?.is_none() {
+            return Ok(None);
+        }
+        let writer = match self.store.lock() {
+            Ok(writer) => writer,
+            Err(error)
+                if matches!(
+                    error.downcast_ref::<std::fs::TryLockError>(),
+                    Some(std::fs::TryLockError::WouldBlock)
+                ) =>
+            {
+                return Ok(None);
+            }
+            Err(error) => return Err(error),
+        };
+        self.verify_retention_scope()?;
+        let policy = self.store.retention_policy()?;
+        if policy.policy.mode != RetentionMode::Automatic {
+            return Ok(None);
+        }
+        let head = self.persistent_revision()?.and_then(|head| head.token);
+        if self.store.last_maintenance()?.is_some_and(|last| {
+            !last.pending
+                && last.head == head
+                && last.policy_digest == Some(policy.digest)
+                && last.state != MaintenanceState::Disabled
+        }) {
+            return Ok(None);
+        }
+        let quota = Quota::open(&self.data_root)?;
+        self.release_idle_pins();
+        Ok(Some(self.run_retention(
+            &writer,
+            &quota,
+            MaintenanceTrigger::PostCommit,
+        )))
+    }
+
     pub fn maintain_retention_with_budget(
         &self,
         budget: MaintenanceBudget,
@@ -116,6 +157,7 @@ impl Kernel {
         if let Some(receipt) = &observation.last_maintenance {
             observation.receipt_matches_publication = served.is_some() && receipt.head == served;
             observation.pending_or_unknown = !observation.receipt_matches_publication
+                || observation.policy.as_ref().map(|policy| policy.digest) != receipt.policy_digest
                 || receipt.pending
                 || observation.error.is_some();
         }
@@ -210,7 +252,8 @@ impl Kernel {
                     kernel.root_id() == job.root,
                     "registered root identity changed"
                 );
-                if kernel.store.retention_policy()?.policy.mode != RetentionMode::Automatic {
+                let policy = kernel.store.retention_policy()?;
+                if policy.policy.mode != RetentionMode::Automatic {
                     return Ok(None);
                 }
                 let Some(head) = kernel.persistent_revision()?.and_then(|head| head.token) else {
@@ -222,6 +265,7 @@ impl Kernel {
                     .is_none_or(|receipt| {
                         receipt.pending
                             || receipt.head != Some(head)
+                            || receipt.policy_digest != Some(policy.digest)
                             || receipt.state == MaintenanceState::Disabled
                     })
                     .then(|| {
@@ -280,13 +324,48 @@ impl Kernel {
         writer: &WriterLock,
         mut operation: impl FnMut() -> Result<T>,
     ) -> Result<T> {
+        let mut cleaned_before_build = false;
+        // Reclaim before building when a comparable generation is unlikely to fit.
+        // Admission and per-write charging remain authoritative for larger changes.
+        if self.store.retention_policy()?.policy.mode == RetentionMode::Automatic
+            && let Some(previous_bytes) = self.store.active_generation_bytes()?
+        {
+            let quota = Quota::open(&self.data_root)?;
+            let status = quota.status()?;
+            let root_free = status
+                .root_limit_bytes
+                .saturating_sub(status.used_bytes)
+                .saturating_sub(status.reserved_bytes);
+            let collection_free =
+                status
+                    .collections
+                    .get(&self.collection)
+                    .map_or(root_free, |item| {
+                        item.limit_bytes
+                            .saturating_sub(item.used_bytes)
+                            .saturating_sub(item.reserved_bytes)
+                    });
+            if root_free.min(collection_free)
+                < previous_bytes
+                    .saturating_mul(2)
+                    .saturating_add(16 * 1024 * 1024)
+            {
+                self.release_idle_pins();
+                self.run_retention(writer, &quota, MaintenanceTrigger::Pressure);
+                cleaned_before_build = true;
+            }
+        }
         match operation() {
             Ok(value) => Ok(value),
             Err(error)
-                if error
-                    .chain()
-                    .any(|cause| cause.downcast_ref::<QuotaPressure>().is_some()) =>
+                if error.downcast_ref::<QuotaPressure>().is_some()
+                    || error
+                        .chain()
+                        .any(|cause| cause.downcast_ref::<QuotaPressure>().is_some()) =>
             {
+                if cleaned_before_build {
+                    return Err(error.context("publication blocked after one automatic pre-build cleanup pass; reclaim eligible space or raise storage limits before retrying"));
+                }
                 if self.store.retention_policy()?.policy.mode != RetentionMode::Automatic {
                     return Err(error
                         .context("quota_blocked: manual retention does not prune automatically"));
@@ -410,6 +489,117 @@ mod tests {
                 .is_err()
         );
         assert_eq!(calls.get(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn lower_retention_target_runs_again_without_a_new_publication() -> Result<()> {
+        for scheduled in [false, true] {
+            let root = tempfile::tempdir()?;
+            let data = tempfile::tempdir()?;
+            let source = root.path().join("original.txt");
+            std::fs::write(&source, "First original observation.")?;
+            let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+            kernel.index()?;
+            kernel.configure_retention(RetentionPolicy {
+                searchable_predecessors: 1,
+                mode: RetentionMode::Automatic,
+                ..Default::default()
+            })?;
+            std::fs::write(&source, "Second original observation.")?;
+            kernel.index()?;
+            for _ in 0..8 {
+                if kernel.continue_automatic_retention()?.is_none() {
+                    break;
+                }
+            }
+            let last = kernel.store.last_maintenance()?.expect("completed pass");
+            assert!(!last.pending);
+            let generations = kernel.store.directory().join("generations");
+            assert_eq!(std::fs::read_dir(&generations)?.count(), 2);
+            kernel.configure_retention(RetentionPolicy {
+                mode: RetentionMode::Automatic,
+                ..Default::default()
+            })?;
+            let job = kernel.schedule_enqueue(false)?;
+            let mut ran = false;
+            for _ in 0..8 {
+                let result = if scheduled {
+                    kernel
+                        .continue_retention(std::slice::from_ref(&job))?
+                        .map(|(_, run)| run)
+                } else {
+                    kernel.continue_automatic_retention()?
+                };
+                let Some(run) = result else { break };
+                ran = true;
+                assert!(run.receipt.error.is_none());
+                if !run.receipt.pending {
+                    break;
+                }
+            }
+            assert!(ran, "changed policy must invalidate the completed pass");
+            assert_eq!(std::fs::read_dir(&generations)?.count(), 1);
+            assert_eq!(
+                kernel.persistent_revision()?.and_then(|head| head.token),
+                last.head
+            );
+            assert!(kernel.continue_automatic_retention()?.is_none());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn collection_continuation_respects_manual_policy_busy_writer_and_converges() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let data = tempfile::tempdir()?;
+        std::fs::write(
+            root.path().join("original.txt"),
+            "First original observation.",
+        )?;
+        let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+        kernel.index()?;
+        let failing = kernel.with_retention_observer(Arc::new(|stage| {
+            if stage == MaintenanceStage::IntentDurable {
+                anyhow::bail!("original deferred cleanup");
+            }
+            Ok(())
+        }));
+        std::fs::write(
+            root.path().join("original.txt"),
+            "Second original observation.",
+        )?;
+        failing.index()?;
+        let head = kernel.status()?.publication.unwrap().token;
+        assert!(kernel.retention_status()?.last_maintenance.unwrap().pending);
+        kernel.configure_retention(RetentionPolicy::default())?;
+        assert!(kernel.continue_automatic_retention()?.is_none());
+        kernel.configure_retention(RetentionPolicy {
+            mode: RetentionMode::Automatic,
+            ..Default::default()
+        })?;
+        let writer = kernel.store.lock()?;
+        assert!(kernel.continue_automatic_retention()?.is_none());
+        drop(writer);
+        let mut complete = false;
+        for _ in 0..8 {
+            let run = kernel
+                .continue_automatic_retention()?
+                .expect("pending cleanup");
+            assert_eq!(run.receipt.head, Some(head));
+            assert!(run.receipt.error.is_none());
+            if !run.receipt.pending {
+                complete = true;
+                break;
+            }
+        }
+        assert!(complete);
+        assert!(kernel.continue_automatic_retention()?.is_none());
+        assert_eq!(kernel.status()?.publication.unwrap().token, head);
+        assert_eq!(
+            std::fs::read_dir(kernel.store.directory().join("generations"))?.count(),
+            1
+        );
         Ok(())
     }
 

@@ -69,6 +69,7 @@ impl Fixture {
     fn automatic(&mut self, expire: bool) -> Result<Arc<AtomicUsize>> {
         self.kernel.configure_retention(RetentionPolicy {
             mode: RetentionMode::Automatic,
+            searchable_predecessors: 1,
             ..Default::default()
         })?;
         let head = self.head()?;
@@ -76,13 +77,16 @@ impl Fixture {
         let completed = Arc::new(AtomicUsize::new(0));
         let observed = completed.clone();
         self.kernel.retention_test_budget = if expire {
-            None
+            Some(MaintenanceBudget {
+                max_duration_ms: 1000,
+                ..Default::default()
+            })
         } else {
             Some(completion_budget())
         };
         self.kernel = self.kernel.with_retention_observer(Arc::new(move |stage| {
             if expire && stage == MaintenanceStage::IntentDurable {
-                // Exhaust the unchanged production budget before authorization.
+                // Exhaust the explicitly shortened test budget before authorization.
                 std::thread::sleep(std::time::Duration::from_millis(1100));
             }
             if stage == MaintenanceStage::IntentComplete
@@ -113,7 +117,10 @@ impl Fixture {
         ensure!(
             error
                 .to_string()
-                .contains("after one automatic quota cleanup-and-retry cycle"),
+                .contains("after one automatic quota cleanup-and-retry cycle")
+                || error
+                    .to_string()
+                    .contains("after one automatic pre-build cleanup pass"),
             "{error:#}"
         );
         assert_eq!(self.head()?, head);

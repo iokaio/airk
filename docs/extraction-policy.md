@@ -1,6 +1,6 @@
 # Collection extraction policy
 
-Extraction policy selects an existing native adapter for each eligible source file. It is persisted in collection state, separately from source files and editor settings. It does not install parsers, execute build files, follow imports, or enable an external producer.
+Extraction policy selects an existing native adapter for each eligible source file and, in version 3, the collection’s indexing detail. It is persisted in collection state, separately from source files and editor settings. It does not install parsers, execute build files, follow imports, or enable an external producer.
 
 ## Inspect, validate and save
 
@@ -13,19 +13,22 @@ airk index
 
 Global `--root`, `--data-dir` and `--collection` select the collection as on other commands. `show` observes current policy; `validate` checks a proposed policy without saving or indexing. `set` saves the policy under the collection writer lock. Its effect becomes visible only in the next successful index publication. Existing reads continue using their published profiles if indexing has not run or fails.
 
-Both `validate` and `set` require exactly one of `--file PATH` or `--json JSON`. Input is limited to 128 KiB and 256 rules. Versions 1 and 2 reject unknown fields and adapter IDs; version 2 additionally accepts captured header-context rules. For larger policies, use `--file` to avoid operating-system command-line limits. An explicit reset uses an empty rule list:
+Both `validate` and `set` require exactly one of `--file PATH` or `--json JSON`. Input is limited to 128 KiB and 256 rules. Versions 1 through 3 reject unknown fields and adapter IDs. Versions 2 and 3 accept captured header-context rules. Version 3 additionally accepts `detail`: `essential`, `balanced` or `detailed`. For larger policies, use `--file` to avoid operating-system command-line limits. An explicit reset to Balanced with no adapter overrides uses an empty rule list:
 
 ```powershell
-airk collections extraction set --json '{"version":1,"rules":[]}'
+airk collections extraction set --json '{"version":3,"detail":"balanced","rules":[]}'
 ```
 
-The default is also version 1 with no overrides. No policy file is automatically read from the source workspace.
+New collections default to version 3, Balanced detail and no overrides. Existing indexed collections without a saved policy keep their published detail; legacy indexes and version 1/2 policies use Detailed. A version 3 policy without `detail` also retains the legacy Detailed interpretation. No policy file is automatically read from the source workspace.
+
+Use `airk collections extraction detail balanced` (or `essential` / `detailed`) to change only detail while preserving adapter rules. The sidebar offers the same selection with a review of rebuild costs. Status includes `configured_detail`, `published_detail` and `pending_reindex`; [index detail](ingestion-limits.md#index-detail) explains the evidence retained at each level.
 
 ## Rules and selection
 
 ```json
 {
-  "version": 1,
+  "version": 3,
+  "detail": "balanced",
   "rules": [
     {
       "selector": {"kind": "exact", "path": "src/generated.rs"},

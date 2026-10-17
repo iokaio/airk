@@ -106,6 +106,7 @@ fn durable_key_reads_match_cli_and_mcp_and_reject_filter_combinations() -> anyho
         );
         Ok(serde_json::from_slice(&output.stdout)?)
     };
+    cli(&["collections", "extraction", "detail", "detailed"])?;
     cli(&["index"])?;
     let code = cli(&["code-facts", "--name", "original_evidence"])?;
     let symbol_key = code["facts"][0]["continuity_key"]["key"]

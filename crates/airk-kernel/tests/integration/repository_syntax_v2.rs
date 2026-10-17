@@ -40,6 +40,7 @@ fn qualify(path: &str, moved: &str, fixture: &str, expected: &[(&str, &str)]) ->
         "pub fn unaffected() -> u32 { 17 }\n",
     )?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    kernel.configure_index_detail(airk_core::extraction::IndexDetail::Detailed)?;
     let cold = kernel.index()?;
     assert_eq!(cold.indexed, 2);
     let store = FileStore::new(data.path().join("collections/default"));
@@ -130,6 +131,7 @@ fn qualify(path: &str, moved: &str, fixture: &str, expected: &[(&str, &str)]) ->
     assert_eq!((warm.indexed, warm.reused), (0, 2));
 
     kernel.configure_extraction_policy(ExtractionPolicy {
+        detail: None,
         version: 1,
         rules: vec![SelectionRule {
             selector: RuleMatch::Exact { path: path.into() },
@@ -149,6 +151,7 @@ fn qualify(path: &str, moved: &str, fixture: &str, expected: &[(&str, &str)]) ->
     assert_eq!(changed_files["unrelated.rs"].state, unrelated);
     drop(changed);
     kernel.configure_extraction_policy(ExtractionPolicy {
+        detail: None,
         version: 1,
         rules: vec![],
     })?;

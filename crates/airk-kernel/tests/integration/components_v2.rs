@@ -16,6 +16,7 @@ fn qualify(path: &str, moved: &str, source: &str, expected_marker: &str) -> Resu
         "pub fn unchanged() -> u32 { 41 }\n",
     )?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    kernel.configure_index_detail(airk_core::extraction::IndexDetail::Detailed)?;
     assert_eq!(kernel.index()?.indexed, 2);
     let store = FileStore::new(data.path().join("collections/default"));
     let before = store.catalog()?.context("catalog")?;
@@ -85,6 +86,7 @@ fn qualify(path: &str, moved: &str, source: &str, expected_marker: &str) -> Resu
             .all(|fact| fact.citation.path == moved)
     );
     kernel.configure_extraction_policy(ExtractionPolicy {
+        detail: None,
         version: 1,
         rules: vec![SelectionRule {
             selector: RuleMatch::Exact { path: moved.into() },

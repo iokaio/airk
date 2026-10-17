@@ -16,8 +16,10 @@ fn qualify(adapter: &str, path: &str, moved: &str, source: &str, expected: &str)
         "pub fn stable() -> u32 { 17 }\n",
     )?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    kernel.configure_index_detail(airk_core::extraction::IndexDetail::Detailed)?;
     if adapter == "tsql" {
         kernel.configure_extraction_policy(ExtractionPolicy {
+            detail: None,
             version: 1,
             rules: vec![SelectionRule {
                 selector: RuleMatch::Scoped {
@@ -74,6 +76,7 @@ fn qualify(adapter: &str, path: &str, moved: &str, source: &str, expected: &str)
         );
     }
     kernel.configure_extraction_policy(ExtractionPolicy {
+        detail: None,
         version: 1,
         rules: vec![SelectionRule {
             selector: RuleMatch::Exact { path: moved.into() },
@@ -149,6 +152,7 @@ fn sql_dialect_is_explicit_and_visual_basic_cls_does_not_select_apex() -> Result
         )),
     )?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    kernel.configure_index_detail(airk_core::extraction::IndexDetail::Detailed)?;
     kernel.index()?;
     let store = FileStore::new(data.path().join("collections/default"));
     let catalog = store.catalog()?.unwrap();

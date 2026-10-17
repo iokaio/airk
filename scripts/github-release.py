@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Verify, assemble and publish numbered AIRK GitHub Releases."""
+"""Verify, assemble and publish versioned AIRK GitHub Releases."""
 import argparse
 import hashlib
 import importlib.util
@@ -37,12 +37,10 @@ def digest(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def identity(version, build):
+def identity(version):
     if not re.fullmatch(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)", version):
         raise ValueError("Expected a numeric checked-in package version")
-    if not re.fullmatch(r"[1-9]\d*", str(build)):
-        raise ValueError("Expected a positive workflow build number")
-    return f"v{version}-build.{build}"
+    return f"v{version}"
 
 
 def context():
@@ -57,7 +55,7 @@ def context():
     version = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))["workspace"]["package"]["version"]
     if json.loads((ROOT / "packages/vscode/package.json").read_text(encoding="utf-8"))["version"] != version:
         raise ValueError("Native and extension source versions differ")
-    tag = identity(version, os.environ["GITHUB_RUN_NUMBER"])
+    tag = identity(version)
     for field in ("GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT"):
         if not re.fullmatch(r"[1-9]\d*", os.environ[field]):
             raise ValueError("Invalid workflow run identity")
@@ -154,7 +152,7 @@ def stage_signing(directory, target, commit, version):
 
 
 def assemble(directory, output, commit, version, tag, channel, run_id, attempt, producer=None):
-    if tag != identity(version, tag.rsplit(".", 1)[-1]) or channel not in ("preview", "stable"):
+    if tag != identity(version) or channel not in ("preview", "stable"):
         raise ValueError("Invalid release identity/channel")
     suffix = f"{commit}-{run_id}-{attempt}" if producer is None else f"{commit}-{run_id}"
     producer_suffix = suffix
@@ -197,7 +195,12 @@ def assemble(directory, output, commit, version, tag, channel, run_id, attempt, 
     (output / "release.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
     build_run = producer["run_id"] if producer else run_id
     build_attempt = producer["attempt"] if producer else attempt
-    notes = (f"AIRK {tag} ({channel})\n\nPackage version: {version}. Source commit: {commit}.\n"
+    notes = (f"AIRK {tag} ({channel})\n\n"
+             "**Give Claude Code, Codex, Gemini CLI/Antigravity, GitHub Copilot and other MCP-capable agents "
+             "a shared, local index of your workspace.** AIRK returns small, cited passages and facts, each "
+             "with its file path, content hash and original location, instead of whole files. Your agent "
+             "does the reasoning; you can check exactly what it used.\n\n"
+             f"Package version: {version}. Source commit: {commit}.\n"
              f"Build and checks: https://github.com/{REPOSITORY}/actions/runs/{build_run}/attempts/{build_attempt}\n"
              f"Signing and assembly: https://github.com/{REPOSITORY}/actions/runs/{run_id}/attempts/{attempt}\n\n"
              "Downloads include native ZIPs and matching platform VSIX files. Windows uses Ioka LLC "
@@ -205,7 +208,7 @@ def assemble(directory, output, commit, version, tag, channel, run_id, attempt, 
              "notarization; the standalone CLI has no stapled offline ticket. Linux is unsigned.\n\n"
              "Use the ZIP matching your OS/architecture, or install the matching VSIX from VS Code's "
              "Install from VSIX command. SHA256SUMS covers packages and build records. "
-             "The build number identifies this release; app/extension package versions are unchanged.\n\n"
+             "The release tag matches the installed app and extension version.\n\n"
              "Installed-editor and oldest-OS qualification remain separate. Review the release checklist "
              "and dependency notices. This release does not publish to Visual Studio Marketplace.\n")
     (output / "release-notes.md").write_text(notes, encoding="utf-8")
@@ -243,7 +246,7 @@ def require_unused_tag(tag):
     if (github(f"releases/tags/{tag}", missing=True) is not None
             or release_id_for_tag(tag) is not None
             or github(f"git/ref/tags/{tag}", missing=True) is not None):
-        raise ValueError("Release/tag already exists; dispatch a new build rather than overwrite it")
+        raise ValueError("Release/tag already exists; finish the existing release or select an unused package version")
 
 
 def verify_bundle(directory, commit, version, tag, run_id, attempt):

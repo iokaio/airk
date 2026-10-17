@@ -24,6 +24,68 @@ class FakeClock implements Clock {
     }
 }
 
+test('storage selection holds automatic and explicit jobs until the current write settles', async () => {
+    for (const fail of [false, true]) {
+        const clock = new FakeClock(); let finish!: () => void, finishSelection!: () => void;
+        const ran: string[] = [];
+        const scheduler = new Scheduler(options, async current => {
+            ran.push(current.dataDir);
+            if (ran.length === 1) {
+                await new Promise<void>(resolve => { finish = resolve; });
+                if (fail) { throw new Error('fixture indexing failure'); }
+            }
+            return report;
+        }, () => {}, () => {}, clock);
+        await scheduler.request(spec); await clock.advance(100);
+        let idle = false;
+        const held = scheduler.holdWhile(async ready => {
+            await ready; idle = true;
+            await new Promise<void>(resolve => { finishSelection = resolve; });
+        });
+        await scheduler.request(spec);
+        const explicit = scheduler.request({ ...spec, collection: 'other' }, true);
+        await clock.advance(1000); assert.equal(idle, false); assert.equal(ran.length, 1);
+        finish(); await flush(); await clock.advance(1000);
+        assert.equal(idle, true); assert.equal(ran.length, 1, 'No queued writer can start while choosing storage');
+        scheduler.forget(spec.collection);
+        await scheduler.request({ ...spec, dataDir: '/fixture/new-storage' });
+        finishSelection(); await held; await clock.advance(100); await explicit;
+        assert.deepEqual(ran, [spec.dataDir, spec.dataDir, '/fixture/new-storage']);
+        scheduler.dispose();
+    }
+});
+
+test('cancelled or failed storage selection restores scheduling and preserves an existing pause', async () => {
+    for (const paused of [false, true]) {
+        const clock = new FakeClock(); let count = 0;
+        const scheduler = new Scheduler(options, async () => { count++; return report; }, () => {}, () => {}, clock);
+        if (paused) { scheduler.pause(); }
+        await scheduler.request(spec);
+        await assert.rejects(scheduler.holdWhile(async idle => {
+            await idle; await clock.advance(1000); assert.equal(count, 0);
+            throw new Error('folder selection failed');
+        }), /folder selection failed/);
+        assert.equal(scheduler.isPaused, paused);
+        await clock.advance(1000); assert.equal(count, paused ? 0 : 1);
+        scheduler.dispose();
+    }
+});
+
+test('idle maintenance waits for activity, queued indexing and storage holds', async () => {
+    const clock = new FakeClock(); let finish!: () => void;
+    const scheduler = new Scheduler(options, async () => { await new Promise<void>(resolve => { finish = resolve; }); return report; }, () => {}, () => {}, clock);
+    assert.equal(scheduler.canRunMaintenance, false);
+    await clock.advance(10000); assert.equal(scheduler.canRunMaintenance, true);
+    scheduler.activity(); assert.equal(scheduler.canRunMaintenance, false);
+    await clock.advance(10000);
+    await scheduler.request(spec); assert.equal(scheduler.canRunMaintenance, false);
+    await clock.advance(100); assert.equal(scheduler.canRunMaintenance, false);
+    finish(); await flush(); assert.equal(scheduler.canRunMaintenance, true);
+    await scheduler.holdWhile(async idle => { await idle; assert.equal(scheduler.canRunMaintenance, false); });
+    assert.equal(scheduler.canRunMaintenance, true);
+    scheduler.dispose(); assert.equal(scheduler.canRunMaintenance, false);
+});
+
 test('100 rapid edits coalesce into one job after the quiet period', async () => {
     const clock = new FakeClock(); let count = 0;
     const scheduler = new Scheduler(options, async () => { count++; return report; }, () => {}, () => {}, clock);

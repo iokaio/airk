@@ -212,8 +212,8 @@ def release_bundle(commit, run_id, attempt, destination):
 
 
 def verify_tag(tag, commit):
-    if not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+-build\.[1-9][0-9]*", tag):
-        raise ValueError("Tag has no numbered release provenance; validate an explicit main CI candidate first")
+    if not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+(?:-build\.[1-9][0-9]*)?", tag):
+        raise ValueError("Tag has no versioned release provenance; validate an explicit main CI candidate first")
     release = api(f"releases/tags/{tag}")
     ref = api(f"git/ref/tags/{tag}")
     if (release.get("draft") is not False or release.get("tag_name") != tag

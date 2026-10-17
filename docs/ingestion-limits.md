@@ -14,6 +14,29 @@ Collections without a saved policy use machine-aware sizing. AIRK detects physic
 
 For 8 GiB RAM the source/extracted/read budgets are 1/2/4 GiB; for 4 GiB they are 512 MiB/1/2 GiB. The per-file admission limit never exceeds the source budget. These are admission limits, **not qualified workload sizes**. [Scale qualification](scale-qualification.md) records measurements.
 
+## Index detail
+
+Each collection selects how much derived evidence to retain. **Balanced is the default for new collections.** Existing indexed collections and older saved extraction policies keep Detailed until explicitly changed.
+
+| Level | Retained native evidence | Deliberate omissions |
+|---|---|---|
+| Essential | Searchable text, source paths/hashes, exact original locations | Structured facts, relationships and symbol/document-unit continuity |
+| Balanced | Essential plus adapter-supported declarations, signatures, imports, structural/configuration/document facts and declaration continuity | Individual call occurrences and document-unit continuity |
+| Detailed | The full existing adapter-supported fact/relationship and continuity output | Adapter limitations still apply; no claim of complete resolution |
+
+In the sidebar, choose **Index detail → Evidence to retain** on the collection card. Review the explanation and choose **Save and index** or **Save for next index**. The card distinguishes the configured level from the published level while a change is pending. Changing detail preserves adapter-selection overrides and affects only that collection. The CLI equivalent is:
+
+```console
+airk collections extraction show
+airk collections extraction detail essential
+airk collections extraction detail balanced
+airk collections extraction detail detailed
+```
+
+Detail is included in extraction identity. An ordinary index pass re-extracts files whose level changed, then publishes the completed generation atomically. A failed rebuild preserves the previous index and its reported level. Increasing detail cannot reconstruct older generations; changing it does not change history-retention settings. Explicit provider imports remain separately bound evidence. If retained OCR output prevents applying a changed level, run a full reindex to apply native extraction, then explicitly rerun OCR for those files. The full reindex may omit images with no native text; the original sources remain untouched. No OCR subprocess is launched implicitly.
+
+All levels keep text and citation accuracy, including original document locations. File, parsing, memory-work and disk quotas remain independent. This implementation reduces retained evidence after native extraction; it does not bypass every parser cost or increase parser ceilings. Fact and relationship responses include an `indexing` object naming the published level and deliberate omissions. An empty result at a reduced level must not be interpreted as proof that the source has no such facts.
+
 ## Inspect and configure
 
 In the extension, use **AIRK: Show Ingestion Limits** to see automatic versus configured policy, detected memory, the storage folder, disk quota and cached coverage measurements. **AIRK: Show Collection Status and Coverage** updates measurements; incomplete inventories are labeled partial. Coverage includes successfully extracted source/extracted byte totals and up to twenty largest eligible sources. Inspecting limits does not change storage or require indexing to finish.
@@ -57,7 +80,7 @@ PDF/Office sources can be admitted up to the raw file limit, but extracted text 
 
 Scanning streams one source/extraction at a time into content-addressed storage. Eligible corpus totals include all source aliases and count successfully extracted files, including reused files. Unsupported candidates still consume discovery/read budgets. Oversized or unextractable individual files are reported as skipped. Exhausted collection/discovery/read budgets fail the whole pass and preserve the previous published generation. Collection-limit errors include measured totals, configured limits and the file that crossed the limit.
 
-The compact catalog remains bounded to 512 MiB; extracted-object JSON to 256 MiB; retained sources to 256 MiB; facts and metadata retain independent bounds. Storage quotas and physical free-space admission remain separate and authoritative. A 2 GiB source allowance does **not** imply a 2 GiB index: text, postings, facts, original sources, retained generations and temporary publication files all consume storage. The default 4 GiB collection disk quota may be reached well before the source allowance. Inspect [storage quotas](storage-quotas.md) before raising them; automatic memory sizing never raises disk quotas.
+The compact catalog remains bounded to 512 MiB; extracted-object JSON to 256 MiB; retained sources to 256 MiB; facts and metadata retain independent bounds. Storage quotas and physical free-space admission remain separate and authoritative. A 2 GiB source allowance does **not** imply a 2 GiB index: text, postings, facts, original sources, retained generations and temporary publication files all consume storage. New collections default to a 100 GiB collection quota within a 500 GiB data-root quota. Existing explicit quotas remain in effect. Inspect [storage quotas](storage-quotas.md) before raising them; automatic memory sizing never raises disk quotas.
 
 Use an isolated data root for workload qualification. Inspect skipped files, measured peak RSS, disk use, retrieval quality and full-disk recovery before treating a larger permitted workload as supported performance.
 

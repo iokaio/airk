@@ -715,7 +715,9 @@ impl AdapterRegistry {
         profile: &ExtractionProfile,
     ) -> anyhow::Result<()> {
         profile.identity()?;
+        airk_core::extraction::IndexDetail::from_profile(profile)?;
         let mut checked = profile.clone();
+        checked.options.remove("index_detail");
         if checked.options.contains_key("header_context") {
             anyhow::ensure!(
                 matches!(checked.adapter_id.as_str(), "c" | "cpp")

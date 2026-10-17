@@ -21,6 +21,8 @@ export class Scheduler {
     private busy = false;
     private paused = false;
     private stopped = false;
+    private holds = 0;
+    private idleWaiters = new Set<() => void>();
     private lastActivity: number;
     constructor(private options: Options,
         private readonly run: (spec: LaunchSpec, full: boolean, automatic: boolean) => Promise<IndexReport>,
@@ -34,6 +36,22 @@ export class Scheduler {
     resume(): void { this.paused = false; for (const job of this.jobs.values()) { job.blocked = false; } this.schedule(); }
     get isPaused(): boolean { return this.paused; }
     get isBusy(): boolean { return this.busy; }
+    get canRunMaintenance(): boolean {
+        return !this.busy && !this.stopped && !this.holds
+            && this.clock.now() - this.lastActivity >= Math.max(10000, this.options.idleMs)
+            && ![...this.jobs.values()].some(job => job.revision > job.completed && Number.isFinite(this.due(job)));
+    }
+    /** Hold new jobs during storage selection without changing the user's pause state. */
+    async holdWhile<T>(operation: (idle: Promise<void>) => Promise<T>): Promise<T> {
+        if (this.stopped) { throw new Error('AIRK scheduler stopped.'); }
+        this.holds++;
+        let ready!: () => void;
+        const idle = new Promise<void>(resolve => { ready = resolve; });
+        if (this.busy) { this.idleWaiters.add(ready); } else { ready(); }
+        this.schedule();
+        try { return await operation(idle); }
+        finally { this.idleWaiters.delete(ready); this.holds--; this.schedule(); }
+    }
     states(): { collection: string; name: string; state: string; pending: boolean }[] {
         return [...this.jobs.values()].map(job => ({ collection: job.spec.collection, name: job.spec.name,
             state: this.paused && job.state !== 'indexing' ? 'paused' : job.state,
@@ -81,7 +99,7 @@ export class Scheduler {
     private schedule(): void {
         if (this.timer !== undefined) { this.clock.clear(this.timer); this.timer = undefined; }
         this.changed();
-        if (this.busy || this.stopped) { return; }
+        if (this.busy || this.stopped || this.holds) { return; }
         const pending = [...this.jobs.values()].filter(job => job.revision > job.completed);
         pending.sort((a, b) => this.due(a) - this.due(b));
         const job = pending[0];
@@ -106,10 +124,16 @@ export class Scheduler {
             for (const waiter of job.waiters.filter(w => w.revision <= revision)) { waiter.reject(error); }
             job.waiters = job.waiters.filter(w => w.revision > revision);
             this.failed(job.spec, error);
-        } finally { this.busy = false; job.runningRevision = undefined; job.runningFull = undefined; job.ended = this.clock.now(); this.schedule(); }
+        } finally {
+            this.busy = false; job.runningRevision = undefined; job.runningFull = undefined; job.ended = this.clock.now();
+            for (const ready of this.idleWaiters) { ready(); }
+            this.idleWaiters.clear(); this.schedule();
+        }
     }
     dispose(): void {
         this.stopped = true;
+        for (const ready of this.idleWaiters) { ready(); }
+        this.idleWaiters.clear();
         if (this.timer !== undefined) { this.clock.clear(this.timer); }
         for (const job of this.jobs.values()) { for (const waiter of job.waiters) { waiter.reject(new Error('AIRK extension closed.')); } }
     }

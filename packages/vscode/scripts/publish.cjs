@@ -5,8 +5,10 @@ const { publishVSIX } = require('@vscode/vsce');
 const [inventory, channel] = process.argv.slice(2);
 if (!inventory || !['preview', 'stable'].includes(channel)) { throw new Error('Expected verified inventory and channel.'); }
 const paths = JSON.parse(fs.readFileSync(inventory, 'utf8'));
-if (!Array.isArray(paths) || paths.length !== 4 || paths.some(p => typeof p !== 'string' || !p.endsWith('.vsix'))) {
-    throw new Error('Expected four verified platform packages.');
+if (!Array.isArray(paths) || paths.length > 4 || new Set(paths).size !== paths.length || paths.some(p => typeof p !== 'string' || !p.endsWith('.vsix'))) {
+    throw new Error('Expected at most four verified, unpublished platform packages.');
 }
-publishVSIX(paths, { azureCredential: true, preRelease: channel === 'preview' })
+if (!paths.length) { console.log('All platform packages already published and verified.'); }
+else { publishVSIX(paths, { azureCredential: true, preRelease: channel === 'preview' })
     .catch(error => { console.error(error); process.exitCode = 1; });
+}

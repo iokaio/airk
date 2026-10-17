@@ -26,6 +26,12 @@ impl crate::Kernel {
         crate::validate_budget(limit, max_bytes)?;
         let catalog = self.catalog()?;
         let mut response = airk_core::FactsResponse {
+            indexing: catalog
+                .inventory
+                .as_ref()
+                .and_then(|i| i.index_detail)
+                .unwrap_or_default()
+                .into(),
             publication: Self::catalog_envelope(&catalog),
             generation: catalog.snapshot.generation,
             collection: catalog.snapshot.collection.clone(),

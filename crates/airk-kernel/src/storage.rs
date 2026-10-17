@@ -28,6 +28,14 @@ impl Kernel {
         self.storage_quota()?.policy()
     }
 
+    pub fn configure_quota_if_current(
+        &self,
+        policy: QuotaPolicy,
+        expected: Option<&QuotaPolicy>,
+    ) -> Result<QuotaStatus> {
+        self.storage_quota()?.configure_if_current(policy, expected)
+    }
+
     pub fn configure_quota(&self, policy: QuotaPolicy) -> Result<QuotaStatus> {
         self.storage_quota()?.configure(policy)
     }
