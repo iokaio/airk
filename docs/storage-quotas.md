@@ -42,6 +42,8 @@ Physical admission checks the small ledger write, then each requested growth cha
 
 If allocation fails, the active generation is unchanged. New unreferenced blobs may remain until explicit pruning. Quota-owned private staging is removed on normal guard release or recovered after process death using operating-system leases. Recovery only removes known reservation-owned staging; retained generations and source workspaces are preserved. Retry after pruning obsolete state or deliberately changing the policy. Repeated blind retries do not increase available capacity.
 
+Before an immutable generation leaves private staging, its reservation records the expected active head and prepared receipt in a bounded, atomically installed journal. If the process dies before committing the pointer, recovery authenticates that receipt, checks the unchanged head and obtains an exclusive generation lease before detaching the unpublished directory into owned staging for removal. A committed receipt preserves the generation. Corruption, a changed head or a live reader prevents deletion. Interrupted removal resumes within staging. Existing unjournaled directories are never adopted or deleted by this recovery path; this qualifies process termination, not power-loss durability.
+
 ## Exact boundary and limitations
 
 This is an application logical-byte quota, not an operating-system filesystem quota or a machine-wide physical disk guarantee. It does not account for allocation-unit slack, filesystem metadata, compression, copy-on-write history or external programs writing files. Separate configured data roots have separate policies. Existing files count by length, so manually placing model assets inside a managed root reduces later admission capacity.

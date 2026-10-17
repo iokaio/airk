@@ -73,7 +73,7 @@ pub enum CommittedRevision {
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ExpectedHead {
     Empty,
     /// Digest of exact legacy root payload/header bytes, never a reserialized Snapshot.
@@ -157,7 +157,7 @@ impl FileStore {
     ) -> Result<()> {
         // Unlike legacy builds, the final v2 manifest follows catalog checksums.
         // Reserve its full bound plus the lineage callback write before page admission.
-        let pending = 131_072u64
+        let pending = (131_072u64 + quota::PREPARED_PUBLICATION_MAX)
             .checked_add(serde_json::to_vec(lineage)?.len() as u64)
             .context("v2 metadata allowance overflow")?;
         let maximum = maximum.saturating_sub(pending) / 4096 * 4096;

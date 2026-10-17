@@ -222,6 +222,218 @@ fn prepare(
     ))
 }
 
+fn track_prepared(
+    store: &FileStore,
+    receipt: &PublicationReceipt,
+    reservation: &Reservation,
+) -> Result<()> {
+    let target = store
+        .directory()
+        .join("generations")
+        .join(receipt.token.revision.to_string());
+    let private = reservation.staging_directory()?.join("before-rename");
+    fs::rename(&target, &private)?;
+    reservation.track_prepared_publication(&store.expected_head()?, receipt)?;
+    fs::rename(private, target)?;
+    Ok(())
+}
+
+#[test]
+fn prepared_publication_crash_child() -> Result<()> {
+    let Some(root) = std::env::var_os("AIRK_PUBLICATION_CRASH_ROOT") else {
+        return Ok(());
+    };
+    let root = std::path::PathBuf::from(root);
+    let mode = std::env::var("AIRK_PUBLICATION_CRASH_MODE")?;
+    let store = FileStore::new(root.join("collections/fixture"));
+    let _writer = store.lock()?;
+    let expected = store.expected_head()?;
+    let parent = match expected {
+        ExpectedHead::V2(token) => Some(token),
+        _ => None,
+    };
+    let generation = parent.map_or(1, |token| token.generation + 1);
+    let (inventory, receipt, reservation) =
+        prepare(&store, "Crash recovery evidence.\n", generation, parent)?;
+    track_prepared(&store, &receipt, &reservation)?;
+    if mode == "committed" {
+        store.publish_catalog_v2(&inventory, &receipt, &expected, &reservation)?;
+    } else if mode == "detached" {
+        fs::rename(
+            store
+                .directory()
+                .join("generations")
+                .join(receipt.token.revision.to_string()),
+            reservation
+                .staging_directory()?
+                .join("abandoned-publication"),
+        )?;
+    }
+    fs::write(
+        root.join("crashed-receipt.json"),
+        serde_json::to_vec(&receipt)?,
+    )?;
+    // Deliberately bypass reservation destructors, exactly at the rename/commit
+    // boundary (or during recovery), without production fault-injection hooks.
+    std::process::exit(0);
+}
+
+#[test]
+fn dead_preparation_recovers_without_adopting_or_deleting_committed_evidence() -> Result<()> {
+    for existing in [false, true] {
+        for mode in ["prepared", "committed", "detached"] {
+            let root = tempfile::tempdir()?;
+            let store = FileStore::new(root.path().join("collections/fixture"));
+            if existing {
+                let (inventory, receipt, reservation) =
+                    prepare(&store, "Previous evidence.\n", 1, None)?;
+                store.publish_catalog_v2(
+                    &inventory,
+                    &receipt,
+                    &ExpectedHead::Empty,
+                    &reservation,
+                )?;
+            }
+            let previous = store.expected_head()?;
+            let child = std::process::Command::new(std::env::current_exe()?)
+                .args(["--exact", "prepared_publication_crash_child", "--nocapture"])
+                .env("AIRK_PUBLICATION_CRASH_ROOT", root.path())
+                .env("AIRK_PUBLICATION_CRASH_MODE", mode)
+                .output()?;
+            assert!(
+                child.status.success(),
+                "{}",
+                String::from_utf8_lossy(&child.stderr)
+            );
+            let receipt: PublicationReceipt =
+                serde_json::from_slice(&fs::read(root.path().join("crashed-receipt.json"))?)?;
+            let target = store
+                .directory()
+                .join("generations")
+                .join(receipt.token.revision.to_string());
+            let status = Quota::open(root.path())?.status()?;
+            assert_eq!(status.reserved_bytes, 0);
+            assert_eq!(target.exists(), mode == "committed");
+            if mode == "committed" {
+                assert_eq!(store.receipt(&receipt.token)?, Some(receipt.clone()));
+                assert_eq!(store.expected_head()?, ExpectedHead::V2(receipt.token));
+            } else {
+                assert_eq!(store.expected_head()?, previous);
+                let parent = match previous {
+                    ExpectedHead::V2(token) => Some(token),
+                    _ => None,
+                };
+                let (inventory, retry, reservation) = prepare(
+                    &store,
+                    "Crash recovery evidence.\n",
+                    receipt.token.generation,
+                    parent,
+                )?;
+                assert_eq!(
+                    retry.token, receipt.token,
+                    "same-second/same-revision retry remains possible"
+                );
+                track_prepared(&store, &retry, &reservation)?;
+                store.publish_catalog_v2(&inventory, &retry, &previous, &reservation)?;
+                drop(reservation);
+                assert_eq!(store.receipt(&retry.token)?, Some(retry));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn prepared_recovery_refuses_corruption_and_respects_live_readers() -> Result<()> {
+    for corrupt in [false, true] {
+        let root = tempfile::tempdir()?;
+        let store = FileStore::new(root.path().join("collections/fixture"));
+        let (_, receipt, reservation) = prepare(&store, "Protected prepared evidence.\n", 1, None)?;
+        assert!(
+            reservation
+                .track_prepared_publication(&ExpectedHead::Empty, &receipt)
+                .is_err(),
+            "an existing directory cannot be adopted by a new journal"
+        );
+        track_prepared(&store, &receipt, &reservation)?;
+        let target = store
+            .directory()
+            .join("generations")
+            .join(receipt.token.revision.to_string());
+        let lease_path = airk_store::blobs::reader_lease_path(
+            store.directory(),
+            &receipt.token.revision.to_string(),
+        )?;
+        let reader = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(lease_path)?;
+        reader.lock_shared()?;
+        if corrupt {
+            fs::write(target.join("manifest.json"), b"corrupt prepared manifest")?;
+        }
+        drop(reservation);
+        assert!(Quota::open(root.path())?.status().is_err());
+        assert!(target.exists());
+        drop(reader);
+        if corrupt {
+            assert!(Quota::open(root.path())?.status().is_err());
+            assert!(
+                target.exists(),
+                "corrupt journal-bound data is never silently deleted"
+            );
+        } else {
+            Quota::open(root.path())?.status()?;
+            assert!(!target.exists());
+        }
+        assert_eq!(store.expected_head()?, ExpectedHead::Empty);
+    }
+    Ok(())
+}
+
+#[test]
+fn prepared_recovery_preserves_data_when_authoritative_head_changes() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let store = FileStore::new(root.path().join("collections/fixture"));
+    let (first_inventory, first, first_reservation) =
+        prepare(&store, "First evidence.\n", 1, None)?;
+    store.publish_catalog_v2(
+        &first_inventory,
+        &first,
+        &ExpectedHead::Empty,
+        &first_reservation,
+    )?;
+    drop(first_reservation);
+    let (_, pending, pending_reservation) =
+        prepare(&store, "Uncommitted evidence.\n", 2, Some(first.token))?;
+    track_prepared(&store, &pending, &pending_reservation)?;
+    let (other_inventory, other, other_reservation) = prepare(
+        &store,
+        "Different committed evidence.\n",
+        2,
+        Some(first.token),
+    )?;
+    store.publish_catalog_v2(
+        &other_inventory,
+        &other,
+        &ExpectedHead::V2(first.token),
+        &other_reservation,
+    )?;
+    drop(other_reservation);
+    drop(pending_reservation);
+    assert!(Quota::open(root.path())?.status().is_err());
+    assert!(
+        store
+            .directory()
+            .join("generations")
+            .join(pending.token.revision.to_string())
+            .exists()
+    );
+    assert_eq!(store.expected_head()?, ExpectedHead::V2(other.token));
+    assert_eq!(store.receipt(&other.token)?, Some(other));
+    Ok(())
+}
+
 #[test]
 #[cfg(windows)]
 fn empty_locked_coordination_component_remains_verifiable() -> Result<()> {

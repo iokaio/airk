@@ -671,6 +671,7 @@ impl Kernel {
                     old.as_ref(),
                 )
             },
+            |receipt| reservation.track_prepared_publication(&expected, receipt),
         )?;
         self.store
             .publish_catalog_v2(&inventory, &receipt, &expected, &reservation)?;

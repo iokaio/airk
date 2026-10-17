@@ -24,6 +24,16 @@ const POLICY_MAX: u64 = 65_536;
 const RECORD_MAX: u64 = 1024;
 const MAX_RESERVATIONS: usize = 1024;
 const MAX_ENTRIES: usize = 1_000_000;
+pub(crate) const PREPARED_PUBLICATION_MAX: u64 = 4096;
+const PREPARED_PUBLICATION: &str = "prepared-publication.json";
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PreparedPublication {
+    version: u32,
+    expected: crate::ExpectedHead,
+    receipt: airk_core::identity::PublicationReceipt,
+}
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -892,6 +902,42 @@ impl Reservation {
         self.checked_destination(&path.join("ownership-check"))?;
         Ok(path)
     }
+    /// Record ownership before an immutable generation leaves private staging.
+    /// Recovery may discard only this receipt-bound, still-uncommitted build.
+    pub fn track_prepared_publication(
+        &self,
+        expected: &crate::ExpectedHead,
+        receipt: &airk_core::identity::PublicationReceipt,
+    ) -> Result<()> {
+        let stage = self.staging_directory()?;
+        let collection = stage.parent().context("publication collection missing")?;
+        ensure!(
+            crate::sqlite::expected_head(collection)? == *expected,
+            "publication journal head changed"
+        );
+        ensure!(
+            !collection
+                .join("generations")
+                .join(receipt.token.revision.to_string())
+                .try_exists()?,
+            "publication journal cannot adopt an existing generation"
+        );
+        let bytes = serde_json::to_vec(&PreparedPublication {
+            version: 1,
+            expected: expected.clone(),
+            receipt: receipt.clone(),
+        })?;
+        ensure!(
+            bytes.len() as u64 <= PREPARED_PUBLICATION_MAX,
+            "publication journal too large"
+        );
+        self.charge(bytes.len() as u64)?;
+        let mut pending = tempfile::NamedTempFile::new_in(&stage)?;
+        pending.write_all(&bytes)?;
+        pending.as_file().sync_all()?;
+        pending.persist_noclobber(stage.join(PREPARED_PUBLICATION))?;
+        Ok(())
+    }
     pub fn create_file(&self, path: impl AsRef<Path>) -> Result<QuotaWriter> {
         let path = self.checked_destination(path.as_ref())?;
         let file = OpenOptions::new()
@@ -1106,6 +1152,7 @@ fn cleanup_staging(quota: &Quota, collection: &str, record: &Path) -> Result<()>
     ] {
         unlinked(&path)?;
     }
+    recover_prepared_publication(&stage)?;
     let mut pending = vec![stage.clone()];
     let mut visited = 0usize;
     while let Some(directory) = pending.pop() {
@@ -1126,6 +1173,47 @@ fn cleanup_staging(quota: &Quota, collection: &str, record: &Path) -> Result<()>
         }
     }
     fs::remove_dir_all(stage)?;
+    Ok(())
+}
+
+fn recover_prepared_publication(stage: &Path) -> Result<()> {
+    let journal = stage.join(PREPARED_PUBLICATION);
+    if !journal.try_exists()? {
+        return Ok(());
+    }
+    let prepared: PreparedPublication = json_read(&journal, PREPARED_PUBLICATION_MAX)?;
+    ensure!(prepared.version == 1, "unsupported publication journal");
+    let collection = stage.parent().context("publication collection missing")?;
+    if collection.join("index.sqlite3").try_exists()?
+        && let Some(committed) = crate::sqlite::receipt(collection, &prepared.receipt.token)?
+    {
+        ensure!(
+            committed == prepared.receipt,
+            "publication journal receipt mismatch"
+        );
+        return Ok(()); // Commit succeeded: never discard published evidence.
+    }
+    ensure!(
+        crate::sqlite::expected_head(collection)? == prepared.expected,
+        "publication journal no longer matches the authoritative head"
+    );
+    let target = collection
+        .join("generations")
+        .join(prepared.receipt.token.revision.to_string());
+    if !target.try_exists()? {
+        return Ok(()); // Before rename, or already detached by interrupted cleanup.
+    }
+    let _lease = crate::retention::exclusive(&target)?
+        .context("uncommitted publication still has a reader")?;
+    let inventory = crate::blobs::verify_v2_generation(collection, &prepared.receipt)?;
+    ensure!(
+        collection.file_name().and_then(|name| name.to_str())
+            == Some(inventory.collection.as_str()),
+        "publication journal belongs to another collection"
+    );
+    // Detach only after receipt verification. A crash during recursive removal
+    // is then handled by ordinary reservation-owned staging cleanup.
+    fs::rename(&target, stage.join("abandoned-publication"))?;
     Ok(())
 }
 impl Drop for ReservationInner {

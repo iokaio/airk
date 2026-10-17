@@ -785,6 +785,7 @@ pub fn prepare_streaming_v2_cached(
         staging_parent,
         cache,
         prepare_catalog,
+        |_| Ok(()),
     )
 }
 
@@ -798,6 +799,7 @@ pub fn prepare_streaming_v3_cached(
     staging_parent: Option<&Path>,
     cache: Option<&mut EmbeddingCacheContext<'_>>,
     prepare_catalog: impl FnOnce(&Path) -> Result<()>,
+    before_publish: impl FnOnce(&PublicationReceipt) -> Result<()>,
 ) -> Result<PublicationReceipt> {
     prepare_streaming_owned(
         base,
@@ -810,6 +812,7 @@ pub fn prepare_streaming_v3_cached(
         staging_parent,
         cache,
         prepare_catalog,
+        before_publish,
     )
 }
 
@@ -825,6 +828,7 @@ fn prepare_streaming_owned(
     staging_parent: Option<&Path>,
     cache: Option<&mut EmbeddingCacheContext<'_>>,
     prepare_catalog: impl FnOnce(&Path) -> Result<()>,
+    before_publish: impl FnOnce(&PublicationReceipt) -> Result<()>,
 ) -> Result<PublicationReceipt> {
     let engine = if shared_models { ENGINE_V3 } else { ENGINE_V2 };
     let snapshot = preparation.snapshot;
@@ -976,6 +980,7 @@ fn prepare_streaming_owned(
         .open(lease_path)?;
     lease.sync_all()?;
     drop(lease);
+    before_publish(&receipt)?;
     fs::rename(staging.path(), &target).context("publish immutable v2 components")?;
     tantivy::directory::Directory::sync_directory(&tantivy::directory::MmapDirectory::open(
         &generations,
