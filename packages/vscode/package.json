@@ -1,6 +1,6 @@
 {
   "name": "airk",
-  "displayName": "AIRK — Local Code and Document Evidence for Coding Agents",
+  "displayName": "AIRK — Artifact Indexing and Retrieval Kernal, the Local MCP Power Tool for Coding Agents",
   "description": "Give Claude Code, Codex, Gemini CLI, Copilot and other MCP agents a local index of your workspace that returns bounded, cited evidence. No cloud service, API key or Docker. Beta.",
   "version": "0.2.1",
   "icon": "images/icon.png",
