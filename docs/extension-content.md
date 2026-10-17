@@ -8,7 +8,7 @@ The Marketplace icon is [icon.png](../packages/vscode/images/icon.png), a 256×2
 
 ## Lead with the purpose
 
-**AIRK — Artifact Indexing and Retrieval Kernal, the Local MCP Power Tool for Coding Agents**
+**AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents**
 
 “Give Claude Code, Codex, Gemini CLI and other coding agents a shared, local index of the workspace. AIRK returns bounded passages and facts with source paths, hashes and original locations. Your agent does the reasoning.”
 

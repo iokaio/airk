@@ -12,7 +12,7 @@ VCP's Windows deployment uses a separately installed engine, machine-scoped path
 
 ## Implemented VSIX construction
 
-The current native/helper/extension version is **0.2.1**; 0.1.0 was the initial beta. The visible extension name is **AIRK — Local Code and Document Evidence for Coding Agents**, its identity is `iokaio.airk`, and its description ends `Beta.` VSCE sets the actual pre-release flag in the VSIX; a version below 1.0 by itself does not establish that channel. Keep a purely numeric version, because VS Code does not support a `-beta` suffix in its extension version field. [Official pre-release rules](https://code.visualstudio.com/api/working-with-extensions/publishing-extension#pre-release-extensions) describe the flag and separate release/pre-release versions.
+The current native/helper/extension version is **0.2.1**; 0.1.0 was the initial beta. The visible extension name is **AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents**, its identity is `iokaio.airk`, and its description ends `Beta.` VSCE sets the actual pre-release flag in the VSIX; a version below 1.0 by itself does not establish that channel. Keep a purely numeric version, because VS Code does not support a `-beta` suffix in its extension version field. [Official pre-release rules](https://code.visualstudio.com/api/working-with-extensions/publishing-extension#pre-release-extensions) describe the flag and separate release/pre-release versions.
 
 | Platform | Current VSIX filename |
 |---|---|

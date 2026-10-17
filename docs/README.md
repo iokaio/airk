@@ -1,5 +1,7 @@
 # AIRK documentation
 
+**AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents**
+
 - [Architecture and code boundaries](architecture.md)
 - [Architecture v2: combined implementation and subagent plan](architecture-v2.md)
 - [Proposed change tracing and bounded development indexes](change-tracing-plan.md)
