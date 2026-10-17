@@ -1,6 +1,6 @@
 # VS Code extension content and illustrations
 
-This is the content specification for AIRK's extension details/Marketplace page, its first-use guidance and the material shown from its commands for the 1.1.1 stable release. The shipped listing is [packages/vscode/README.md](../packages/vscode/README.md); the command/settings source is [package.json](../packages/vscode/package.json). Review this page against the actual release candidate, then capture editor screenshots for the [1.1.1 release checklist](release-1.1.1.md).
+This is the content specification for AIRK's extension details/Marketplace page, its first-use guidance and the material shown from its commands for the 1.1.2 stable release candidate. The shipped listing is [packages/vscode/README.md](../packages/vscode/README.md); the command/settings source is [package.json](../packages/vscode/package.json). Review this page against the actual release candidate, then capture editor screenshots for the [1.1.2 release checklist](release-1.1.2.md).
 
 The package includes the two original PNG illustrations and rewrites their listing links to those bundled assets. The installed listing can display them without fetching repository images; package verification includes their exact digests.
 
@@ -41,8 +41,8 @@ Explain explicit local OCR as a native CLI option: separately provisioned Tesser
 1. Install the package matching the workspace host's OS/architecture. The native helper is bundled; the base runtime needs no Docker, Rust toolchain or API key.
 2. Open and trust the intended folder. Each folder has an isolated collection. Untrusted workspaces cannot launch the helper.
 3. Choose index storage if needed, then run **AIRK: Index Now**. Show progress and any skipped/failed files rather than claiming full coverage.
-4. Run **AIRK: Set Up Coding Agent**. Explain the selected client's configuration location and show its scoped launch specification.
-5. Enable/approve the server in that client, then ask for evidence from a small known fixture. **Verify Native MCP Connection** proves AIRK's handshake and tools, while a client-side request proves that particular agent is connected.
+4. Run **AIRK: Connect Coding Agent…**. Explain the selected client's configuration location and show its scoped launch specification.
+5. Enable/approve the server in that client, then ask for evidence from a small known fixture. **Check AIRK MCP Helper** proves AIRK's handshake and tools, while a client-side request proves that particular agent is connected.
 
 ![Diagram: save files, coalesced indexing, publication of a complete collection revision, then bounded retrieval. Coverage, controls and traceability explain the user's choices.](images/index-to-context.png)
 
@@ -50,21 +50,21 @@ Caption: **Saved edits become evidence through indexing.** Coverage describes a 
 
 ## Agent integration copy
 
-The bundled listing's **Coding agent setup** section contains the complete manual instructions for every setup-picker client, plus Antigravity's compatible Gemini-format route. Users can read the merge location, schema, approval/reload steps and connection checks in the installed extension's Details page. The walkthrough points to that section. Keep these instructions synchronized with the version-sensitive matrix in [agent integration](agent-integration.md), with client testing recorded separately.
+The bundled listing's **Coding agent setup** section contains the complete manual instructions for every setup-picker client, including the dedicated Antigravity route. Users can read the merge location, schema, approval/reload steps and connection checks in the installed extension's Details page. The walkthrough points to that section. Keep these instructions synchronized with the version-sensitive matrix in [agent integration](agent-integration.md), with client testing recorded separately.
 
 | Client | What AIRK shows or registers | What the user completes |
 |---|---|---|
-| VS Code / Copilot Chat | Trusted workspace MCP definition provider and scoped native command | Enable the server in VS Code and approve tool access. |
-| Claude Code | A project `.mcp.json` fragment using `mcpServers` | Merge the entry without replacing other servers; approve/load it in Claude Code. |
-| Codex CLI / IDE / desktop | A `[mcp_servers.<name>]` TOML entry for shared Codex configuration | Add it to the user config or trusted project's `.codex/config.toml`, then check client discovery. |
-| Gemini CLI | A `mcpServers` fragment for project/user `.gemini/settings.json` | Preserve the existing settings and Gemini's trust/tool policy, then reload/check the client. |
-| Google Antigravity IDE / CLI | Reuse the `gemini` preview; there is no dedicated picker entry yet | Merge into `.agents/mcp_config.json` or `~/.gemini/config/mcp_config.json`, using the installed client's raw-config view to confirm its location. Follow the bundled connection checks; live-client qualification remains outstanding. |
+| VS Code / Copilot Chat | Trusted workspace MCP provider and explicit registration-enable action | Choose the collection in the opened MCP controls and complete start/trust prompts. |
+| Claude Code | Install a project `.mcp.json` entry preserving existing settings | Restart Claude Code and approve/load the server. |
+| Codex CLI / IDE / desktop | A persistent guide with TOML and optional creation of a missing project file | Create the project file or manually merge into existing configuration, restart Codex, then check client discovery. |
+| Gemini CLI | Install a project `.gemini/settings.json` entry preserving settings and policy | Restart Gemini CLI and check `/mcp`. |
+| Google Antigravity IDE / CLI | Dedicated picker installs project `.agents/mcp_config.json` | Reload in MCP controls and complete trust prompts. Global setup remains manual; live-client qualification remains outstanding. |
 | Cursor, Cline, Roo, Junie, Copilot CLI, OpenCode and Kilo | The appropriate supported configuration preview, with version guidance | Merge and enable using the client's own MCP controls. |
 | Amazon Q and Windsurf/Devin | Command/arguments and guidance tied to the installed client/version | Follow that client's setup UI; do not imply direct registration. |
 
 These routes were checked against [Claude Code's MCP guide](https://code.claude.com/docs/en/mcp), [OpenAI's Codex MCP guide](https://learn.chatgpt.com/docs/extend/mcp?surface=cli), [Gemini CLI's MCP guide](https://geminicli.com/docs/tools/mcp-server/) and the sources in the compatibility matrix on 13 October 2026. Configuration support is distinct from an observed end-to-end client test.
 
-Use **“Preview configuration”** and **“Verify AIRK connection”** accurately. Registering AIRK in VS Code does not configure every other installed agent. Never show a green “Connected to Claude/Codex/Gemini” badge solely because a snippet was generated.
+Use **“Configuration created”** and **“AIRK helper verified”** accurately. Registering AIRK in VS Code does not configure every other installed agent. Never show a green “Connected to Claude/Codex/Gemini” badge solely because a snippet was generated.
 
 ## Information shown inside the extension
 
@@ -86,7 +86,7 @@ Before publication, add genuine screenshots from the packaged extension using on
 
 ## Limits shown near installation
 
-State the tested host matrix and current capacity bounds, model readiness, source-read-only behavior, derived-state privacy, remote-host requirement, unsupported browser-only use, signing/publication status and extraction limitations. Link [formats](formats.md), [operations](operations.md), [security](../SECURITY.md) and the [1.1.1 release checklist](release-1.1.1.md). Clearly separate local runtime behavior from the selected agent's network behavior.
+State the tested host matrix and current capacity bounds, model readiness, source-read-only behavior, derived-state privacy, remote-host requirement, unsupported browser-only use, signing/publication status and extraction limitations. Link [formats](formats.md), [operations](operations.md), [security](../SECURITY.md) and the [1.1.2 release checklist](release-1.1.2.md). Clearly separate local runtime behavior from the selected agent's network behavior.
 
 The listing may describe configured native ingestion bounds, shared logical quotas and available-drive checks, while keeping the editor's soft storage setting distinct. Automatic defaults allow up to 256 MiB/source and 100,000 files, with eligible source sized to one eighth of detected memory and capped at 2 GiB. Extracted text gets twice that allowance; unknown memory uses 512 MiB eligible source. Existing explicit policies remain unchanged. Larger limits do not establish scale performance. Remote editor hosts require an actual test on supplied infrastructure; a matching package and local helper test alone do not qualify SSH, WSL, Containers or Codespaces.
 

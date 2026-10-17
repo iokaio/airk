@@ -88,10 +88,10 @@ export function sidebarContent(state: SidebarState): string {
         const mcp = item.mcp, checking = mcp?.phase === 'checking' || mcp?.phase === 'preparing';
         const mcpLabel = !mcp ? 'Not checked' : mcp.phase === 'preparing' ? 'Preparing collection…' : mcp.phase === 'checking' ? 'Checking MCP…'
             : mcp.phase === 'verified' ? `Verified · ${mcp.tools?.length ?? 0} tools available` : 'Verification failed';
-        const connection = `<div class="mcp"><h3>MCP connection</h3><p role="status" aria-live="polite">Helper: <strong>${escape(mcpLabel)}</strong></p>
+        const connection = `<div class="mcp"><h3>AIRK helper check</h3><p role="status" aria-live="polite">Helper: <strong>${escape(mcpLabel)}</strong></p>
             ${mcp?.checkedAt ? `<p class="muted">Last checked: ${escape(new Date(mcp.checkedAt).toLocaleString())}</p>` : ''}
             ${mcp?.error ? `<p class="error">${escape(mcp.error.slice(0, 600))}</p>` : ''}
-            <div class="actions"><button id="${escape(item.collection)}-verify" ${attributes} data-action="verify"${disabled || checking || state.changingStorage ? ' disabled' : ''}>Verify connection</button>
+            <div class="actions"><button id="${escape(item.collection)}-verify" ${attributes} data-action="verify"${disabled || checking || state.changingStorage ? ' disabled' : ''}>Check AIRK helper</button>
             <button id="${escape(item.collection)}-mcpDetails" class="secondary" ${attributes} data-action="mcpDetails"${disabled || !mcp || checking ? ' disabled' : ''}>View details</button></div>
             <p class="muted">Checks this collection’s helper, not whether an agent is connected. Verification updates the index first.</p></div>`;
         return `<section class="collection"><div class="heading"><h2>${escape(item.name)}</h2><span class="badge${indexing ? ' working' : ''}">${escape(status)}</span></div>
@@ -103,7 +103,7 @@ export function sidebarContent(state: SidebarState): string {
             ${error ? `<p class="error" role="status">${escape(error.slice(0, 600))}</p>` : ''}${actions}${detail}
             <details id="location-${escape(item.collection)}"><summary>Storage and last index</summary><dl><dt>Index size</dt><dd>${bytes(item.diskBytes)}</dd><dt>Eligible source size</dt><dd>${bytes(report?.eligible_source_bytes)}</dd><dt>Last indexed</dt><dd>${escape(last)}</dd><dt>Index folder</dt><dd class="path">${escape(item.dataDir)}</dd></dl></details>${connection}</section>`;
     }).join('');
-    const primaryCommands = new Set(['airk.index', 'airk.reindex', 'airk.indexMode', 'airk.pause', 'airk.resume', 'airk.chooseStorage', 'airk.status', 'airk.verifyMcp', 'airk.manageMcp', 'airk.storageLimits', 'airk.retentionPolicy', 'airk.retentionRun']);
+    const primaryCommands = new Set(['airk.index', 'airk.reindex', 'airk.indexMode', 'airk.pause', 'airk.resume', 'airk.chooseStorage', 'airk.status', 'airk.verifyMcp', 'airk.setupAgent', 'airk.manageMcp', 'airk.manageVscodeMcp', 'airk.storageLimits', 'airk.retentionPolicy', 'airk.retentionRun']);
     const groups = state.groups.filter(group => group.label !== 'Indexing').map(group => {
         const rows = group.commands.filter(([, command]) => !primaryCommands.has(command)).map(([label, command, help]) =>
             `<div class="control">${button(label, command, disabled && command !== 'airk.logs')}<p class="muted">${escape(help)}</p></div>`).join('');
@@ -116,8 +116,9 @@ export function sidebarContent(state: SidebarState): string {
         ${collections || '<section><h2>No workspace collection</h2><p>Open a folder and trust the workspace to start indexing.</p></section>'}
         <section><h2>Agent connections</h2><label class="toggle"><input id="registration" type="checkbox" role="switch"${state.registrationEnabled !== false ? ' checked' : ''}${disabled ? ' disabled' : ''}> VS Code registration: ${state.registrationEnabled !== false ? 'On' : 'Off'}</label>
         <p class="muted">Automatically offer AIRK collections to VS Code on this extension host. This is not a connection status or a global MCP kill switch.</p>
-        ${button('Manage agent connections', 'airk.manageMcp', disabled)}
-        <p class="muted">Opens VS Code’s MCP server controls for start/stop and enable/disable. Manually configured servers and external agents keep their own settings.</p></section>
+        ${button('Connect coding agent…', 'airk.manageMcp', disabled, false)}
+        ${button('VS Code / Copilot MCP controls', 'airk.manageVscodeMcp', disabled)}
+        <p class="muted">Choose Codex, Claude Code or another agent to configure it. VS Code / Copilot controls only manage VS Code connections.</p></section>
         <section><h2>Index storage</h2><p class="muted">Choose a drive for new indexes. Existing indexes stay where they are.</p>${button('Choose storage folder…', 'airk.chooseStorage', disabled || state.changingStorage)}<div class="actions">${button('Storage limits…', 'airk.storageLimits', disabled)}${button('Generations and cleanup…', 'airk.retentionPolicy', disabled)}</div><div class="actions">${button('Reclaim eligible space…', 'airk.retentionRun', disabled)}</div><p class="muted">Defaults: 100 GiB per collection, 500 GiB total; target the active generation only. Readers, protected history and pending cleanup can temporarily retain more.</p></section>${groups}`;
 }
 
@@ -154,9 +155,10 @@ export function sidebarControlGroups(): ControlGroup[] {
             ['Pause Auto-indexing', 'airk.pause', 'Stop automatic jobs; keep queued changes'],
             ['Resume Auto-indexing', 'airk.resume', 'Restart automatic jobs after a pause or budget stop']] },
         { label: 'Setup and reports', commands: [
-            ['Set Up Coding Agent (Claude Code, Codex, Gemini CLI/Antigravity…)', 'airk.setupAgent', 'Preview a configuration to merge into your agent'],
-            ['Verify Native MCP Connection', 'airk.verifyMcp', 'Handshake with the helper and list its tools'],
-            ['Manage Agent Connections', 'airk.manageMcp', 'Open VS Code MCP server controls; other agents manage their own connections'],
+            ['Connect Coding Agent…', 'airk.setupAgent', 'Choose an agent and follow its setup guide'],
+            ['Check AIRK MCP Helper', 'airk.verifyMcp', 'Handshake with the helper and list its tools'],
+            ['Manage Agent Connections', 'airk.manageMcp', 'Choose the coding agent to configure'],
+            ['VS Code / Copilot MCP Controls', 'airk.manageVscodeMcp', 'Start, stop or enable VS Code connections only'],
             ['Show Collection Status and Coverage', 'airk.status', 'Current, stale, missing and failed files'],
             ['Show Local Usage Report', 'airk.usage', 'Content-free local aggregates and estimates'],
             ['Show Output Log', 'airk.logs', 'Skipped files and failures']] },
