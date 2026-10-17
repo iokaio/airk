@@ -18,8 +18,8 @@ on:
       channel:
         description: GitHub release and VSIX channel
         type: choice
-        options: [preview, stable]
-        default: preview
+        options: [stable, preview]
+        default: stable
       publish:
         description: Publish signed downloads to GitHub Releases after verification
         type: boolean

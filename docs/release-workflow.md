@@ -2,11 +2,11 @@
 
 ## Numbered GitHub Releases
 
-The [GitHub release workflow](../.github/workflows/github-release.yml) promotes tested main CI binaries, signs and prepares downloads on GitHub-hosted machines. Run **Actions → GitHub release → Run workflow** on **main**, choose **preview** or **stable**, and enable **publish** to publish the verified downloads. Leave publish disabled for a promotion/signing rehearsal with downloadable Actions artifacts.
+The [GitHub release workflow](../.github/workflows/github-release.yml) promotes tested main CI binaries, signs and prepares downloads on GitHub-hosted machines. Run **Actions → GitHub release → Run workflow** on **main**, choose **stable** for 1.0.0 (the default), and enable **publish** to publish the verified downloads. Leave publish disabled for a promotion/signing rehearsal with downloadable Actions artifacts.
 
 Changes to the release workflow or its release/signing contracts on `main` also run a short validation job without signing credentials. This explicit push event registers and validates the workflow independently of manual dispatch. Push runs skip release preflight and all dependent build, signing, publication and deployment jobs; those remain available only through manual dispatch.
 
-The release tag is automatically numbered from this workflow's run number: for example, `v0.1.0-build.42`. The base version comes from the checked-in Cargo workspace and must match the VS Code extension. App/extension versions remain the checked-in version (currently `0.2.1`); no commit, lockfile or package metadata is rewritten. Every workflow run advances the build number, including validation, failed and rehearsal runs. Reruns retain the number and change the attempt. Existing release assets and conflicting tags are never overwritten. A matching retained draft can be resumed after verification.
+The release tag is automatically numbered from this workflow's run number: for example, `v1.0.0-build.42`. The base version comes from the checked-in Cargo workspace and must match the VS Code extension. App/extension versions remain the checked-in version (currently `1.0.0`); no commit, lockfile or package metadata is rewritten. Every workflow run advances the build number, including validation, failed and rehearsal runs. Reruns retain the number and change the attempt. Existing release assets and conflicting tags are never overwritten. A matching retained draft can be resumed after verification.
 
 Use **Re-run failed jobs** after a signing, assembly or publication failure. Successful signing outputs remain scoped to the same release run, while all original binaries remain bound to one authenticated producer run/attempt. A publishing retry selects the newest successfully assembled bundle from that same release run, including an earlier attempt. It checks existing draft identity and every present digest before uploading only missing files. An already published, complete matching release is an idempotent success. A conflicting or unexpected asset fails closed for inspection.
 
@@ -27,7 +27,7 @@ The **native-signing** and **github-releases** environments must allow only the 
 
 Only signing and Pages deployment jobs receive OIDC permission, and only the release publishing job receives repository content write permission. The website deployment receives Pages write permission. Neither ordinary PR CI nor the build jobs receive signing credentials. Release assembly and contract tests require Python 3.11+, matching the pinned hosted Python.
 
-GitHub documents [release creation and draft uploads](https://cli.github.com/manual/gh_release_create). Full installed-editor, oldest-OS and dependency notice review remain in the [release checklist](release-checklist-0.1.0.md). A successful workflow establishes its recorded checks, not completion of that checklist.
+GitHub documents [release creation and draft uploads](https://cli.github.com/manual/gh_release_create). Full installed-editor, oldest-OS and dependency notice review remain in the [1.0.0 release checklist](release-1.0.0.md). A successful workflow establishes its recorded checks, not completion of that checklist.
 
 ## Downloads website
 
@@ -79,11 +79,11 @@ The new required check names become available when a PR runs these workflow chan
 
 ## Build manually
 
-Open **Actions → Extension release → Run workflow**. Enter the exact checked-in version (currently `0.2.1`), select `preview` or `stable`, and leave `publish` false. Promotion requires `main`; use the CI workflow to build and review feature-branch candidates.
+Open **Actions → Extension release → Run workflow**. Enter the exact checked-in version (currently `1.0.0`), select `stable` for 1.0.0 (the default), and leave `publish` false. Promotion requires `main`; use the CI workflow to build and review feature-branch candidates.
 
 The [release workflow](../.github/workflows/extension-release.yml) authenticates a successful main [CI workflow](../.github/workflows/ci.yml) containing native tests, actual-helper extension tests, packaging checks and container validation. It rebuilds only the small TypeScript/VSIX layer for the selected channel using those tested native packages. Candidate artifacts expire after seven days; `candidate_run_id` selects an explicit successful manual CI rebuild when needed.
 
-Ordinary CI and its manual dispatch create preview packages. The release dispatcher can explicitly choose stable metadata. The source version/display name are never silently edited by a publishing job; review them before selecting a channel. See the [0.1.0 checklist](release-checklist-0.1.0.md).
+Ordinary CI, local packaging and release dispatchers default to stable packages. Preview packaging remains an explicit option for a distinct future preview version; do not publish 1.0.0 as a preview. The source version/display name are never silently edited by a publishing job; review them before selecting a channel. See the [1.0.0 checklist](release-1.0.0.md).
 
 ## Configure publication once
 

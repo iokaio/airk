@@ -63,8 +63,8 @@ jobs:
         run: python scripts/ci-macos-sign.py --cleanup
       - name: Package and reverify signed native candidate
         run: python scripts/package-native.py --target ${{ matrix.target }} --signed-dir artifacts/signed/${{ matrix.target }}
-      - name: Package matching preview VSIX
-        run: python scripts/package-extension.py --target ${{ matrix.target }} --channel preview
+      - name: Package matching stable VSIX
+        run: python scripts/package-extension.py --target ${{ matrix.target }} --channel stable
       - name: Retain signed native candidate
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

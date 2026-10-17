@@ -31,7 +31,7 @@ Use `x86_64-apple-darwin` on the Intel native runner. The signer enables hardene
 
 Signing replaces any linker-generated ad-hoc signature on the fresh artifact copy, then verifies the Developer ID signature, team, hardened runtime and timestamp. The tested source executable remains unchanged; the receipt records both source and signed hashes.
 
-Feed the resulting native `publish/` directory to `package-extension.py --native-dir ...`. Candidate payload hashes then cover the signed executable. Continue with [the macOS build guide](macos-build.md) and [release checklist](release-checklist-0.1.0.md), retaining actual logs for the final commit. Signing/notarization does not qualify installed services, remote editors or the oldest supported macOS version.
+Feed the resulting native `publish/` directory to `package-extension.py --native-dir ...`. Candidate payload hashes then cover the signed executable. Continue with [the macOS build guide](macos-build.md) and [release checklist](release-1.0.0.md), retaining actual logs for the final commit. Signing/notarization does not qualify installed services, remote editors or the oldest supported macOS version.
 
 The local AIRK keychain is `~/Library/Keychains/airk-signing.keychain-db`; its notary profile is `airk-notary`. It reuses the company’s Developer ID Application identity, with a separate keychain and profile from WritingForgePro. Unlock it in Keychain Access before signing. Its generated unlock password is kept in the login keychain as the generic-password item `airk-signing-keychain-password`, never in the repository.
 
@@ -39,7 +39,7 @@ The local AIRK keychain is `~/Library/Keychains/airk-signing.keychain-db`; its n
 
 The [numbered GitHub release workflow](release-workflow.md#numbered-github-releases) also uses this Apple environment, signing the exact native candidates from its successful CI run. It requires accepted notarization for both architectures before any release is published.
 
-[Signed macOS candidates](../.github/workflows/macos-signing.yml) is a separate, manual workflow for `main`. It builds/tests both Apple Silicon and Intel on their native hosted runners, then signs, notarizes and packages native ZIPs and preview VSIX files. Artifacts are retained for seven days. It does not publish a release or Marketplace extension. Ordinary PR CI and Extension release continue to create unsigned candidates.
+[Signed macOS candidates](../.github/workflows/macos-signing.yml) is a separate, manual workflow for `main`. It builds/tests both Apple Silicon and Intel on their native hosted runners, then signs, notarizes and packages native ZIPs and stable VSIX files. Artifacts are retained for seven days. It does not publish a release or Marketplace extension. Ordinary PR CI and Extension release continue to create unsigned candidates.
 
 Before dispatching, configure the repository environment **macos-signing** with a deployment branch policy allowing only the `main` branch (not tags), and these environment secrets:
 

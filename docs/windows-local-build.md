@@ -18,7 +18,7 @@ This builds the Windows x64 release executable and a matching platform VSIX. It 
 - Initial network access for locked Cargo/npm dependencies and missing Rust components.
 - VS Code 1.140+ with its `code` launcher on PATH, only for editor testing/review.
 
-The extension runtime needs none of the developer tools. Its VSIX bundles AIRK, and the editor supplies its JavaScript runtime. The executable is unsigned and the extension is a preview; oldest-OS and installed upgrade/rollback qualification remain separate work.
+The extension runtime needs none of the developer tools. Its VSIX bundles AIRK, and the editor supplies its JavaScript runtime. The executable is unsigned and the extension defaults to the stable channel; oldest-OS and installed upgrade/rollback qualification remain separate work.
 
 ## Results and repeat builds
 

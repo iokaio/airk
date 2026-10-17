@@ -1,6 +1,6 @@
 # VS Code extension content and illustrations
 
-This is the content specification for AIRK's extension details/Marketplace page, its first-use guidance and the material shown from its commands for the current beta (0.2.1). The shipped listing is [packages/vscode/README.md](../packages/vscode/README.md); the command/settings source is [package.json](../packages/vscode/package.json). Review this page against the actual release candidate, then capture editor screenshots for the [release checklist](release-checklist-0.1.0.md).
+This is the content specification for AIRK's extension details/Marketplace page, its first-use guidance and the material shown from its commands for the 1.0.0 stable release. The shipped listing is [packages/vscode/README.md](../packages/vscode/README.md); the command/settings source is [package.json](../packages/vscode/package.json). Review this page against the actual release candidate, then capture editor screenshots for the [1.0.0 release checklist](release-1.0.0.md).
 
 The package includes the two original PNG illustrations and rewrites their listing links to those bundled assets. The installed listing can display them without fetching repository images; package verification includes their exact digests.
 
@@ -86,7 +86,7 @@ Before publication, add genuine screenshots from the packaged extension using on
 
 ## Limits shown near installation
 
-State the tested host matrix and current capacity bounds, model readiness, source-read-only behavior, derived-state privacy, remote-host requirement, unsupported browser-only use, signing/publication status and extraction limitations. Link [formats](formats.md), [operations](operations.md), [security](../SECURITY.md) and the [release checklist](release-checklist-0.1.0.md). Clearly separate local runtime behavior from the selected agent's network behavior.
+State the tested host matrix and current capacity bounds, model readiness, source-read-only behavior, derived-state privacy, remote-host requirement, unsupported browser-only use, signing/publication status and extraction limitations. Link [formats](formats.md), [operations](operations.md), [security](../SECURITY.md) and the [1.0.0 release checklist](release-1.0.0.md). Clearly separate local runtime behavior from the selected agent's network behavior.
 
 The listing may describe configured native ingestion bounds, shared logical quotas and available-drive checks, while keeping the editor's soft storage setting distinct. Current defaults are 16 MiB/source, 64 MiB eligible source, 128 MiB extracted text and 10,000 files. Raising limits is explicit and does not itself establish scale performance. Remote editor hosts require an actual test on supplied infrastructure; a matching package and local helper test alone do not qualify SSH, WSL, Containers or Codespaces.
 

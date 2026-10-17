@@ -344,7 +344,7 @@ def main():
     parser.add_argument("--target", choices=native.TARGETS)
     parser.add_argument("--producer", type=Path)
     parser.add_argument("--resume", action="store_true")
-    parser.add_argument("--channel", choices=("preview", "stable"), default="preview")
+    parser.add_argument("--channel", choices=("preview", "stable"), default="stable")
     args = parser.parse_args()
     commit, version, tag = context()
     if args.command == "preflight":

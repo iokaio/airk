@@ -140,4 +140,4 @@ OOXML entries are read in memory, not unpacked to the filesystem. External slide
 - XLSX: 128 sheets, 10,000 rows per sheet, 100,000 stored cells/shared strings per workbook, 16 MiB of selected XML parts; sparse/merged ranges are never expanded. The shared 10,000-fact limit can be reached before the cell limit.
 - Response: 1–100 results and up to 65,536 payload bytes, metadata additional.
 
-These are retained beta safety bounds pending large-repository qualification. PDF output limits are checked after library extraction, so they do not bound its peak memory. Use trusted local inputs until worker/resource isolation is qualified.
+These are retained extraction safety bounds pending large-repository qualification. PDF output limits are checked after library extraction, so they do not bound its peak memory. Use trusted local inputs until worker/resource isolation is qualified.

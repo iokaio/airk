@@ -107,7 +107,7 @@ export function probeMcp(spec: LaunchSpec, expectedTools: 14 | 15 | 16 = 16): Pr
             child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n');
         });
         void (async () => {
-            await request(1, 'initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'airk-extension-check', version: '0.2.1' } });
+            await request(1, 'initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'airk-extension-check', version: '1.0.0' } });
             child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
             const listed = await request(2, 'tools/list', {});
             const tools: string[] = listed.tools.map((tool: { name: string }) => tool.name);
