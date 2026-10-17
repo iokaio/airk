@@ -37,6 +37,7 @@ fn durable_keys_preserve_body_stamps_across_location_edits_and_reopen() -> Resul
         "pub fn calculate_total() -> u32 {\n    let subtotal = 17;\n    subtotal + 29\n}\n";
     write(root.path(), original)?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    kernel.configure_index_detail(airk_core::extraction::IndexDetail::Detailed)?;
     kernel.index()?;
     let store = FileStore::new(data.path().join("collections/default"));
     let first = records(&store, "sample.rs")?;
@@ -138,6 +139,7 @@ fn explicit_document_identity_survives_statement_edit_but_not_another_file() -> 
         "# Requirements\n\nREQ-731: The fictional service must retain 17 records.\n",
     )?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    kernel.configure_index_detail(airk_core::extraction::IndexDetail::Detailed)?;
     kernel.index()?;
     let store = FileStore::new(data.path().join("collections/default"));
     let before = records(&store, "requirements.md")?;
@@ -190,6 +192,7 @@ fn informative_file_move_and_full_reindex_preserve_file_and_symbol_identity() ->
         "/// Computes an original shipping estimate from several independent line items.\npub fn shipping_total(first_item: u32, second_item: u32) -> u32 {\n    let subtotal = first_item + second_item;\n    let service_charge = 17;\n    subtotal + service_charge\n}\n",
     )?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    kernel.configure_index_detail(airk_core::extraction::IndexDetail::Detailed)?;
     kernel.index()?;
     let store = FileStore::new(data.path().join("collections/default"));
     let first = symbol(&records(&store, "sample.rs")?).clone();
@@ -235,6 +238,7 @@ fn duplicate_requirement_identifiers_receive_explicitly_ambiguous_fresh_keys() -
     let original = "# Original requirements\n\nREQ-882: The fictional queue must retain 17 entries.\n\nREQ-882: The fictional worker must retry 23 attempts.\n";
     fs::write(root.path().join("requirements.md"), original)?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    kernel.configure_index_detail(airk_core::extraction::IndexDetail::Detailed)?;
     kernel.index()?;
     let store = FileStore::new(data.path().join("collections/default"));
     let requirements = |records: Vec<ContinuityRecord>| {
@@ -281,6 +285,7 @@ fn rename_uses_unique_informative_body_but_trivial_and_equal_overloads_are_not_g
         "class Overloaded { int run(int value) { return first_value + second_value + third_value + fourth_value; } int run(String value) { return first_value + second_value + third_value + fourth_value; } }\n",
     )?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    kernel.configure_index_detail(airk_core::extraction::IndexDetail::Detailed)?;
     kernel.index()?;
     let store = FileStore::new(data.path().join("collections/default"));
     let old = records(&store, "sample.rs")?;
@@ -356,6 +361,7 @@ fn unsupported_documentation_dimension_returns_unknown_instead_of_unchanged() ->
         "def original(value):\n    return value + 17\n",
     )?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    kernel.configure_index_detail(airk_core::extraction::IndexDetail::Detailed)?;
     kernel.index()?;
     let store = FileStore::new(data.path().join("collections/default"));
     let record = symbol(&records(&store, "original.py")?).clone();

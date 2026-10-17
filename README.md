@@ -1,8 +1,8 @@
 # AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents
 
-**Version 1.1.0 · In development for the stable release track.** See the [1.1.0 release notes and publication checklist](docs/release-1.1.0.md).
+**Version 1.1.1 · Stable release track.** See the [1.1.1 release notes and publication checklist](docs/release-1.1.1.md).
 
-Local code and document evidence for coding agents. AIRK indexes files and returns bounded facts and passages with source paths, hashes and original locations. The agent supplies the reasoning. Runtime storage uses memory and local disk.
+**Give Claude Code, Codex, Gemini CLI/Antigravity, GitHub Copilot and other MCP-capable agents a shared, local index of your workspace.** AIRK indexes files and returns bounded facts and passages with source paths, hashes and original locations. The agent supplies the reasoning. Runtime storage uses memory and local disk.
 
 [Document indexing](docs/document-indexing.md) specializes headings, dates, requirements, numeric bounds/units, qualitative cues and design/architecture/feature/decision language for Markdown, text and extracted documents. DOCX tables and XLSX worksheets retain row/cell evidence and original locations. These are cited evidence candidates, with category-filtered retrieval through MCP and the CLI.
 
@@ -16,7 +16,7 @@ The native product targets **Windows, macOS and Linux**. Developer builds requir
 
 [GitHub CI](docs/ci-and-builds.md) is configured to test and package Windows x64, Linux x64 and both Mac architectures using standard hosted runners. Successful runs retain matching unsigned candidate ZIPs/VSIX packages, notices and checksums for seven days.
 
-The manual [GitHub release workflow](docs/release-workflow.md#numbered-github-releases) adds automatically numbered releases, Azure-signed Windows helpers, signed/notarized Mac helpers, and native ZIP/VSIX downloads hosted on [GitHub Releases](https://github.com/iokaio/airk/releases). Linux downloads are unsigned. Publication is selected explicitly when dispatching the workflow.
+The manual [GitHub release workflow](docs/release-workflow.md#versioned-github-releases) adds versioned releases, Azure-signed Windows helpers, signed/notarized Mac helpers, and native ZIP/VSIX downloads hosted on [GitHub Releases](https://github.com/iokaio/airk/releases). Linux downloads are unsigned. Publication is selected explicitly when dispatching the workflow.
 
 The [downloads website workflow](docs/release-workflow.md#downloads-website) publishes an AIRK overview, installation steps and direct platform downloads to **airk.ioka.io** using GitHub Pages. It refreshes after release publication and can also be run manually. Until the first release, it displays a pending-download notice.
 
@@ -109,7 +109,7 @@ third_party/      Pinned dependency license records; no imported project source
 
 Start with the [documentation index](docs/README.md), [architecture](docs/architecture.md) and [roadmap](docs/roadmap.md). The optional [VS Code extension](docs/vscode-extension.md) implements native installation, client setup, configurable storage, indexing schedules and collection maintenance. The stable release uses the existing `iokaio.airk` Marketplace identity; see the release checklist for publication and installed-editor verification.
 
-Review the [illustrated extension content guide](docs/extension-content.md), [manual build/publishing workflow and PR rules](docs/release-workflow.md), and [1.1.0 release checklist](docs/release-1.1.0.md) before preparing a public candidate.
+Review the [illustrated extension content guide](docs/extension-content.md), [manual build/publishing workflow and PR rules](docs/release-workflow.md), and [1.1.1 release checklist](docs/release-1.1.1.md) before preparing a public candidate.
 
 ## Contributing and license
 
@@ -124,3 +124,10 @@ git diff --check
 ~~~
 
 Original code/documentation use the existing [Apache-2.0 license](LICENSE). Dependency notices and release-review gaps are recorded in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Local temp/ reference files are excluded from Git, indexing and Docker builds.
+
+
+### Choose indexing detail
+
+The AIRK sidebar offers **Essential**, **Balanced** (the default for new collections), and **Detailed** for each collection. Essential keeps searchable text and exact citations. Balanced adds declarations, imports, useful structural/document facts and declaration change tracking. Detailed also retains individual calls and document-unit change tracking. Existing collections keep their previous Detailed behavior until changed.
+
+The panel shows the configured and published levels separately. Changing a level rebuilds evidence; the previous index stays available until the rebuild succeeds. Storage quotas, retained generations and optional models are separate controls. Native fact and relationship responses explicitly report omitted detail. See [ingestion limits and index detail](docs/ingestion-limits.md) for limits and CLI equivalents.

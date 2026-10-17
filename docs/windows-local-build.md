@@ -63,6 +63,24 @@ This is a packaged-extension development-host smoke, not complete installed Mark
 
 `-RunEditorTests -OpenReview` runs the smoke first, then opens the same private profile for review. The test profile has manual indexing selected; change modes through AIRK controls if you want to inspect automatic behavior.
 
+## Installed extension and two-window qualification
+
+After packaging a verified VSIX and compiling the extension tests, run:
+
+```console
+node scripts/check-editor-windows.cjs "<Code.exe>" "<resources/app/out/cli.js>" "<verified Windows VSIX>"
+```
+
+Use the installed editor executable and its matching CLI script (the installed `bin/code.cmd` identifies the latter, which can be under a versioned directory). This test installs the VSIX and a tiny local test-driver extension into a fresh directory under ignored `artifacts/editor-qualification/`. Ordinary editor windows use private user profiles and an explicitly private shared-application-data directory. The driver is not shipped in AIRK packages. Only generated fictional workspaces are edited.
+
+The scenarios cover two simultaneous windows sharing one workspace/collection, two simultaneous windows using different workspaces/collections in the same storage root, a two-root workspace, and an untrusted workspace. Checks include concurrent native scheduling and MCP reads, post-edit retrieval, positive/negative collection isolation, rejected collection overrides and path traversal, the sixteen-tool handshake, registration settings off/on, and storage changes that preserve the previous indexes. The trust scenario runs with workspace trust enabled and verifies that indexing is rejected, server definitions are empty and storage remains untouched. Trusted scenarios disable the trust prompt in their private processes only.
+
+Each window opens the real AIRK dashboard. The harness clicks its registration switch off/on and its Verify connection button through the rendered webview, then checks the real sixteen-tool verification result. Untrusted controls must remain disabled. The harness captures workbench screenshots through a loopback-only debugging endpoint, records separate extension-host process IDs and writes per-window results plus a combined summary. Citation paths and SHA-256 hashes must match the generated source files, including peer edits. Private profiles and indexes are not release payloads; two fictional-workspace [screenshots](ui/README.md#installed-vs-code-captures) are included for review. The storage-switch check changes the private profile setting; it does not automate the operating-system folder picker. External coding-agent approval screens, Marketplace installation, upgrade/rollback, remote hosts and macOS/Linux remain separate qualification.
+
+On October 17, 2026, AIRK 1.1.1 passed all four scenarios in VS Code 1.142.0 on Windows, across six installed-editor windows. The verified VSIX SHA-256 was `4265b3f4a90a8e15a2357253204a68fd903f147a9c5448f411b98e7efbe77dee`. Both same-workspace windows reported the same collection ID; different-workspace windows reported distinct IDs and never returned the other collection's evidence. The multi-root storage change preserved the original index. The untrusted window launched no index and exposed no MCP definitions. Each window used a distinct private profile while sharing AIRK storage with its scenario peers; shared-profile settings synchronization was not tested.
+
+Repeating the earlier package exposed intermittent concurrent-start failures: a live collection writer incorrectly blocked the scheduled request, and quota accounting could fail when a managed temporary path disappeared during enumeration. The qualified package defers live-lock contention without losing the queued revision and tolerates disappearing managed entries while preserving growth reservations. Native regression tests cover both cases. Startup screenshot timing was also corrected in the harness so an untrusted window has time to create its webview content.
+
 ## Troubleshooting
 
 - The script fails at the first unsuccessful tool/check; retain its build.log.

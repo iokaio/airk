@@ -415,6 +415,7 @@ impl Kernel {
                     ))
                 });
                 let mut response = FactsResponse {
+                    indexing: view.inventory().index_detail.unwrap_or_default().into(),
                     publication: Some(served),
                     generation: view.snapshot().generation,
                     collection: self.collection.clone(),

@@ -113,6 +113,7 @@ fn prepare(
     };
     let inventory = InventoryV2 {
         embedding_pipeline_digest: None,
+        index_detail: None,
         extraction_policy_digest: None,
         version: 2,
         incarnation,
@@ -370,6 +371,91 @@ fn failed_catalog_and_receipt_tampering_do_not_advance_pointer() -> Result<()> {
     conn.execute("DELETE FROM publication_receipts", [])?;
     assert!(store.persistent_revision().is_err());
     assert!(store.catalog().is_err());
+    Ok(())
+}
+
+#[test]
+fn warmed_fact_verification_detects_same_size_corruption_replacement_and_new_publication()
+-> Result<()> {
+    let root = tempfile::tempdir()?;
+    let store = FileStore::new(root.path().join("collections/fixture"));
+    let _writer = store.lock()?;
+    let (first, receipt, reservation) = prepare(&store, "Original one.\n", 1, None)?;
+    store.publish_catalog_v2(&first, &receipt, &ExpectedHead::Empty, &reservation)?;
+    drop(reservation);
+    let query = airk_core::FactQuery {
+        path_prefix: String::new(),
+        name: None,
+        kind: None,
+        language: None,
+        exact_name: false,
+        limit: 10,
+        max_bytes: 4096,
+        path_exact: false,
+        document_only: false,
+    };
+    for _ in 0..3 {
+        assert_eq!(
+            store
+                .facts("/original", "fixture", &query, false)?
+                .unwrap()
+                .generation,
+            1
+        );
+    }
+    let directory = store
+        .directory()
+        .join("generations")
+        .join(receipt.token.revision.to_string());
+    let path = directory.join("catalog.sqlite");
+    let original = fs::read(&path)?;
+    let modified = fs::metadata(&path)?.modified()?;
+    let mut corrupt = original.clone();
+    let last = corrupt.len() - 1;
+    corrupt[last] ^= 1;
+    fs::write(&path, &corrupt)?;
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&path)?
+        .set_modified(modified)?;
+    assert!(
+        store.facts("/original", "fixture", &query, false).is_err(),
+        "same size and timestamp must not authenticate changed bytes"
+    );
+    fs::write(&path, &original)?;
+    assert!(
+        store
+            .facts("/original", "fixture", &query, false)?
+            .is_some()
+    );
+    let replaced = root.path().join("saved-catalog");
+    fs::rename(&path, &replaced)?;
+    fs::write(&path, &corrupt)?;
+    assert!(
+        store.facts("/original", "fixture", &query, false).is_err(),
+        "replacement must be re-authenticated"
+    );
+    fs::remove_file(&path)?;
+    fs::rename(&replaced, &path)?;
+    let overlay = directory.join("catalog.sqlite-wal");
+    fs::write(&overlay, b"unexpected overlay")?;
+    assert!(store.facts("/original", "fixture", &query, false).is_err());
+    fs::remove_file(overlay)?;
+    let (second, next, reservation) = prepare(&store, "Original two.\n", 2, Some(receipt.token))?;
+    store.publish_catalog_v2(
+        &second,
+        &next,
+        &ExpectedHead::V2(receipt.token),
+        &reservation,
+    )?;
+    assert_eq!(
+        store
+            .facts("/original", "fixture", &query, false)?
+            .unwrap()
+            .generation,
+        2
+    );
+    assert!(store.facts("/original", "foreign", &query, false).is_err());
     Ok(())
 }
 

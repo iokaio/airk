@@ -31,7 +31,7 @@ impl Fixture {
         let source = tempfile::tempdir()?;
         let data = tempfile::tempdir()?;
         // Size the entire fixture, including initialization and other collections,
-        // before any SQLite catalog is admitted. The default 4 GiB allowance
+        // before any SQLite catalog is admitted. The default workstation allowance
         // tests physical free-space races on hosted runners instead of retention.
         let quota = Quota::open(data.path())?;
         quota.configure(airk_store::quota::QuotaPolicy {
@@ -44,6 +44,7 @@ impl Fixture {
         let store = FileStore::new(data.path().join("collections/default"));
         kernel.configure_retention(RetentionPolicy {
             mode: RetentionMode::Manual,
+            searchable_predecessors: 1,
             ..Default::default()
         })?;
         Ok(Self {
@@ -70,6 +71,7 @@ impl Fixture {
     fn automatic(&self) -> Result<()> {
         self.kernel.configure_retention(RetentionPolicy {
             mode: RetentionMode::Automatic,
+            searchable_predecessors: 1,
             ..Default::default()
         })?;
         Ok(())
@@ -335,7 +337,9 @@ fn deferred_postcommit_generation_retirement_is_pending_and_converges_without_pu
                 calls.fetch_add(1, Ordering::SeqCst);
                 // Deadline exhaustion before authorization must leave the full
                 // representation intact, with a recoverable pending receipt.
-                std::thread::sleep(std::time::Duration::from_millis(1100));
+                std::thread::sleep(std::time::Duration::from_millis(
+                    airk_store::retention::MaintenanceBudget::default().max_duration_ms + 100,
+                ));
             }
             Ok(())
         }));
@@ -357,6 +361,46 @@ fn deferred_postcommit_generation_retirement_is_pending_and_converges_without_pu
 }
 
 #[test]
+fn disabled_history_does_not_bypass_gc_authentication() -> Result<()> {
+    let fixture = Fixture::new()?;
+    let head = fixture.edit(0)?;
+    fixture.kernel.configure_retention(RetentionPolicy {
+        mode: RetentionMode::Automatic,
+        searchable_predecessors: 0,
+        ..Default::default()
+    })?;
+    fixture.kernel.maintain_retention()?;
+    assert_eq!(generations(&fixture.store)?.len(), 1);
+    assert!(!fixture.store.history_policy()?.policy.enabled);
+    let catalog = fixture
+        .store
+        .directory()
+        .join("generations")
+        .join(head.revision.to_string())
+        .join("catalog.sqlite");
+    let mut bytes = fs::read(&catalog)?;
+    bytes[0] ^= 1;
+    fs::write(catalog, bytes)?;
+    let orphan = fixture
+        .store
+        .directory()
+        .join("objects/sources")
+        .join("a".repeat(64));
+    fs::write(&orphan, b"original orphan fixture")?;
+    let before = files(&fixture.store.directory().join("objects"))?;
+    let run = fixture.kernel.maintain_retention()?;
+    assert!(run.receipt.pending);
+    assert!(run.receipt.error.is_some());
+    assert_eq!(run.receipt.removed_objects, 0);
+    assert_eq!(files(&fixture.store.directory().join("objects"))?, before);
+    assert_eq!(
+        fixture.store.persistent_revision()?.unwrap().token,
+        Some(head)
+    );
+    Ok(())
+}
+
+#[test]
 fn deferred_postcommit_object_gc_is_pending_and_converges_without_publication() -> Result<()> {
     let mut fixture = Fixture::new()?;
     fixture.automatic()?;
@@ -374,7 +418,9 @@ fn deferred_postcommit_object_gc_is_pending_and_converges_without_publication() 
                 calls.fetch_add(1, Ordering::SeqCst);
                 // Deliberately consume the cooperative 1000ms allowance after the
                 // obsolete representation is retired, before object GC can start.
-                std::thread::sleep(std::time::Duration::from_millis(1100));
+                std::thread::sleep(std::time::Duration::from_millis(
+                    airk_store::retention::MaintenanceBudget::default().max_duration_ms + 100,
+                ));
             }
             Ok(())
         }));
@@ -567,9 +613,11 @@ fn postcommit_cleanup_failure_keeps_new_publication_and_recovers_after_reopen() 
     let reopened = Kernel::open(fixture.source.path(), Some(fixture.data.path().into()))?;
     let delayed = reopened.with_retention_observer(Arc::new(|stage| {
         if stage == MaintenanceStage::RetirementAuthorized {
-            // Recovery is bounded too. Expire its ordinary one-second pass
+            // Recovery is bounded too. Expire its ordinary bounded pass
             // after authorization, leaving durable work for another reopen.
-            std::thread::sleep(std::time::Duration::from_millis(1100));
+            std::thread::sleep(std::time::Duration::from_millis(
+                airk_store::retention::MaintenanceBudget::default().max_duration_ms + 100,
+            ));
         }
         Ok(())
     }));

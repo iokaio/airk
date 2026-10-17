@@ -200,6 +200,8 @@ fn publication_releases_superseded_idle_catalog_and_search_pins() -> Result<()> 
     let data = tempfile::tempdir()?;
     fs::write(root.path().join("one.txt"), "Earlier indexed text.\n")?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    // Keep old generations for this explicit-prune lease test.
+    kernel.configure_retention(airk_store::retention::RetentionPolicy::default())?;
     kernel.index()?;
     kernel.file_info("one.txt")?;
     kernel.search(&airk_core::SearchQuery {

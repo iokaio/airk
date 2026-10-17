@@ -148,6 +148,36 @@ fn crashed_worker_releases_native_locks_and_pending_revision_can_resume() -> any
 }
 
 #[test]
+fn live_collection_writer_defers_scheduled_index_without_blocking_queue() -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let state = tempfile::tempdir()?;
+    fs::write(root.path().join("fixture.txt"), "original fixture evidence")?;
+    let kernel = Kernel::open(root.path(), Some(state.path().into()))?;
+    let requested = kernel.schedule_enqueue(false)?;
+    // Coverage refresh, retention or another editor can briefly own this lock
+    // independently of the data-root scheduler worker.
+    let writer = FileStore::new(state.path().join("collections/default")).lock()?;
+    // Manual enqueue is immediately due, without a timing-dependent sleep.
+    Queue::new(state.path()).enqueue("default", &requested.root, false, true, true, 0)?;
+    assert_eq!(kernel.run_scheduled_once()?.state, "busy");
+    let pending = kernel.schedule_status()?.expect("queued request");
+    assert!(!pending.blocked);
+    assert_eq!(pending.running_revision, 0);
+    assert_eq!(pending.completed_revision, 0);
+    assert!(pending.error.is_none());
+    drop(writer);
+    let completed = kernel.scheduled_index(false, false)?;
+    assert_eq!(completed.indexed, 1);
+    assert!(
+        !kernel
+            .schedule_status()?
+            .expect("completed request")
+            .blocked
+    );
+    Ok(())
+}
+
+#[test]
 fn scheduler_crash_child() -> anyhow::Result<()> {
     let Some(state) = std::env::var_os("AIRK_SCHEDULER_CRASH_STATE") else {
         return Ok(());

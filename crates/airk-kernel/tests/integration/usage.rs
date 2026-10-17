@@ -616,6 +616,20 @@ fn native_jobs_record_actual_work_once_in_the_jobs_collection() -> anyhow::Resul
         false,
         airk_store::usage::unix_ms(),
     )?;
+    assert_eq!(host.run_scheduled_once()?.state, "busy");
+    let after_contention = target.usage_report(30)?;
+    assert_eq!(after_contention.report.calls, after_idle.report.calls);
+    assert_eq!(
+        after_contention.process_dropped_observations,
+        after_idle.process_dropped_observations
+    );
+    drop(writer);
+    // An incompatible legacy marker is a real failure, unlike a live writer's
+    // transient advisory lock. It must still be recorded and block the job.
+    std::fs::write(
+        directory.join("writer.lock"),
+        "original legacy writer fixture",
+    )?;
     let usage_guard = (mode == "failed_busy")
         .then(|| airk_store::usage::deletion_guard(&directory))
         .transpose()?;
@@ -627,9 +641,9 @@ fn native_jobs_record_actual_work_once_in_the_jobs_collection() -> anyhow::Resul
             .error
             .as_deref()
             .unwrap_or_default()
-            .contains("index writer locked")
+            .contains("legacy index writer locked")
     );
-    drop(writer);
+    std::fs::remove_file(directory.join("writer.lock"))?;
     let report = target.usage_report(30)?;
     assert_job_observation(&after_idle, &report, None, mode == "failed_busy")?;
     assert_eq!(

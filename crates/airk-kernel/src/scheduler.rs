@@ -217,6 +217,16 @@ impl Kernel {
                     } else {
                         kernel.index()
                     };
+                    if result.as_ref().is_err_and(|error| {
+                        matches!(
+                            error.downcast_ref::<std::fs::TryLockError>(),
+                            Some(std::fs::TryLockError::WouldBlock)
+                        )
+                    }) {
+                        // A deferred claim did no indexing work. Do not count
+                        // each contention retry as a failed usage observation.
+                        return result;
+                    }
                     // Background jobs have a logical index-report JSON representation;
                     // queue/watch envelopes and waiting CLI callers are not extra index work.
                     let logical = result
@@ -244,6 +254,22 @@ impl Kernel {
                     collection: Some(job.collection),
                     revision: Some(job.requested_revision),
                     report: Some(report),
+                    error: None,
+                    maintenance: None,
+                }
+            }
+            Err(error)
+                if matches!(
+                    error.downcast_ref::<std::fs::TryLockError>(),
+                    Some(std::fs::TryLockError::WouldBlock)
+                ) =>
+            {
+                queue.defer(&worker, &job)?;
+                RunOutcome {
+                    state: "busy",
+                    collection: Some(job.collection),
+                    revision: Some(job.requested_revision),
+                    report: None,
                     error: None,
                     maintenance: None,
                 }

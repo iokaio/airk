@@ -29,6 +29,7 @@ fn unchanged_child_shift_changes_original_location_then_child_edit_changes_body(
         "<html><body><script>function beaconTotal() { return 17 + 29; }</script></body></html>\n";
     fs::write(root.path().join("original.html"), original)?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    kernel.configure_index_detail(airk_core::extraction::IndexDetail::Detailed)?;
     kernel.index()?;
     let store = FileStore::new(data.path().join("collections/default"));
     let first = records(&store, "original.html")?
@@ -92,6 +93,7 @@ fn notebook_markdown_array_gaps_and_paragraph_insertion_preserve_unit_key() -> R
     };
     fs::write(root.path().join("original.ipynb"), notebook(false)?)?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    kernel.configure_index_detail(airk_core::extraction::IndexDetail::Detailed)?;
     kernel.index()?;
     let store = FileStore::new(data.path().join("collections/default"));
     let first = records(&store, "original.ipynb")?
@@ -145,6 +147,7 @@ fn identical_sibling_scripts_do_not_promote_position_into_region_identity() -> R
     let original = format!("<html><body>{body}{body}</body></html>\n");
     fs::write(root.path().join("duplicate.html"), &original)?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    kernel.configure_index_detail(airk_core::extraction::IndexDetail::Detailed)?;
     kernel.index()?;
     let store = FileStore::new(data.path().join("collections/default"));
     let before = records(&store, "duplicate.html")?;

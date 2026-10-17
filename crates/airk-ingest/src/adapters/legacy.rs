@@ -55,6 +55,9 @@ pub fn convert_native_legacy(
         "legacy source hash mismatch"
     );
     profile.identity()?;
+    let mut interpretation = profile.clone();
+    airk_core::extraction::IndexDetail::from_profile(profile)?;
+    interpretation.options.remove("index_detail");
     if profile.options.contains_key("header_context") {
         ensure!(
             profile.language == artifact.language,
@@ -63,7 +66,7 @@ pub fn convert_native_legacy(
         AdapterRegistry::baseline().validate_effective_profile(&artifact.path, profile)?;
     } else {
         ensure!(
-            *profile == legacy_profile(artifact)?,
+            interpretation == legacy_profile(artifact)?,
             "legacy interpretation differs from effective profile; re-extraction required"
         );
     }

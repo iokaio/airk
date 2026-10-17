@@ -266,6 +266,7 @@ fn prepare(
     };
     let inventory = InventoryV2 {
         embedding_pipeline_digest: None,
+        index_detail: None,
         extraction_policy_digest: None,
         version: 2,
         incarnation,

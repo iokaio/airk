@@ -331,21 +331,29 @@ impl Kernel {
                 Some(objects)
             }
         };
+        let applied_policy = if matches!(
+            reason,
+            PublicationReason::Initialization
+                | PublicationReason::Index
+                | PublicationReason::FullReindex
+        ) {
+            Some(self.extraction_policy()?)
+        } else {
+            None
+        };
         let mut inventory = InventoryV2 {
             embedding_pipeline_digest: model_objects
                 .as_ref()
                 .map(|objects| objects.pipeline_digest),
             version: airk_core::publication::INVENTORY_VERSION,
-            extraction_policy_digest: if matches!(
-                reason,
-                PublicationReason::Initialization
-                    | PublicationReason::Index
-                    | PublicationReason::FullReindex
-            ) {
-                Some(self.extraction_policy()?.digest)
-            } else {
-                prior.and_then(|inventory| inventory.extraction_policy_digest)
-            },
+            index_detail: applied_policy
+                .as_ref()
+                .map(|p| p.configured_detail)
+                .or_else(|| prior.and_then(|i| i.index_detail)),
+            extraction_policy_digest: applied_policy
+                .as_ref()
+                .map(|p| p.digest)
+                .or_else(|| prior.and_then(|i| i.extraction_policy_digest)),
             incarnation,
             generation,
             root: projection.root.clone(),
@@ -652,7 +660,7 @@ impl Kernel {
                     file.write_all(&manifest.canonical_bytes()?)?;
                     file.sync_all()?;
                 }
-                self.store.prepare_catalog_v2(
+                self.store.prepare_catalog_v2_reusing(
                     directory,
                     &inventory,
                     &lineage,
@@ -660,6 +668,7 @@ impl Kernel {
                     &source,
                     Some(&reservation),
                     self.store.catalog_budget(&reservation)?,
+                    old.as_ref(),
                 )
             },
         )?;

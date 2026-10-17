@@ -66,7 +66,7 @@ export async function runJson<T>(spec: LaunchSpec, command: string, extra: strin
 }
 
 /** Real bounded stdio initialization/tool-list/status probe, independent of any coding agent. */
-export function probeMcp(spec: LaunchSpec, expectedTools: 14 | 15 | 16 = 16): Promise<{ tools: string[]; status: unknown }> {
+export function probeMcp(spec: LaunchSpec, expectedTools: 14 | 15 | 16 = 16, clientVersion = 'development'): Promise<{ tools: string[]; status: unknown }> {
     return new Promise((resolve, reject) => {
         const child = spawn(spec.command, launchArgs(spec), { cwd: spec.root, env: { ...process.env, AIRK_CLIENT: 'vscode' }, windowsHide: true, stdio: 'pipe' });
         let buffer = '', stderr = '', total = 0, done = false;
@@ -107,7 +107,7 @@ export function probeMcp(spec: LaunchSpec, expectedTools: 14 | 15 | 16 = 16): Pr
             child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n');
         });
         void (async () => {
-            await request(1, 'initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'airk-extension-check', version: '1.1.0' } });
+            await request(1, 'initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'airk-extension-check', version: clientVersion } });
             child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
             const listed = await request(2, 'tools/list', {});
             const tools: string[] = listed.tools.map((tool: { name: string }) => tool.name);

@@ -40,15 +40,15 @@ impl Default for RetentionPolicy {
         Self {
             version: 1,
             mode: RetentionMode::Manual,
-            searchable_predecessors: 1,
+            searchable_predecessors: 0,
         }
     }
 }
 impl RetentionPolicy {
     pub fn validate(&self) -> Result<()> {
         ensure!(
-            self.version == 1 && self.searchable_predecessors == 1,
-            "retention supports version 1 and exactly one searchable predecessor"
+            self.version == 1 && self.searchable_predecessors <= 8,
+            "retention supports version 1 and zero through eight searchable predecessors"
         );
         Ok(())
     }
@@ -79,9 +79,9 @@ impl Default for MaintenanceBudget {
     fn default() -> Self {
         Self {
             max_candidates: 32,
-            max_metadata_bytes: 16 * 1024 * 1024,
-            max_removal_bytes: 256 * 1024 * 1024,
-            max_duration_ms: 1000,
+            max_metadata_bytes: 1024 * 1024 * 1024,
+            max_removal_bytes: 4 * 1024 * 1024 * 1024,
+            max_duration_ms: 10_000,
         }
     }
 }
@@ -89,7 +89,7 @@ impl MaintenanceBudget {
     pub(crate) fn validate(self) -> Result<()> {
         ensure!(
             (1..=256).contains(&self.max_candidates)
-                && (16 * 1024..=64 * 1024 * 1024).contains(&self.max_metadata_bytes)
+                && (16 * 1024..=8 * 1024 * 1024 * 1024).contains(&self.max_metadata_bytes)
                 && self.max_removal_bytes > 0
                 && self.max_removal_bytes <= 64 * 1024 * 1024 * 1024
                 && (1..=60_000).contains(&self.max_duration_ms),
@@ -141,6 +141,8 @@ pub enum MaintenanceState {
 #[serde(deny_unknown_fields)]
 pub struct MaintenanceReceipt {
     pub head: Option<RevisionToken>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy_digest: Option<Sha256Digest>,
     pub trigger: MaintenanceTrigger,
     pub state: MaintenanceState,
     pub started_unix_ms: u64,
@@ -427,7 +429,13 @@ fn process_locked(
     if proof.is_none() {
         // A pre-authorization crash cannot override a subsequently protected head.
         if intent.trigger != MaintenanceTrigger::ExplicitLegacyPrune
-            && active_parent(store, active, work)? == Some(intent.token)
+            && retained_predecessors(
+                store,
+                active,
+                store.retention_policy()?.policy.searchable_predecessors,
+                work,
+            )?
+            .contains(&intent.token)
         {
             return Ok(());
         }
@@ -441,7 +449,7 @@ fn process_locked(
         if bytes > work.limit.max_removal_bytes.saturating_sub(work.removed) {
             return Ok(());
         }
-        crate::blobs::verify_v2_generation(store.directory(), &intent.receipt)?;
+        crate::blobs::verify_v2_for_query(store.directory(), &intent.receipt)?;
         let bytes = crate::blobs::read_verified(
             &source.join("manifest.json"),
             &intent.receipt.manifest_digest.to_string(),
@@ -472,7 +480,7 @@ fn process_locked(
         "retirement has two full representations"
     );
     if source.exists() {
-        crate::blobs::verify_v2_generation(store.directory(), &intent.receipt)?;
+        crate::blobs::verify_v2_for_query(store.directory(), &intent.receipt)?;
         fs::rename(&source, &detached)?;
         sync_parent(&generations)?;
         intent.stage = MaintenanceStage::Detached;
@@ -924,10 +932,10 @@ impl FileStore {
 }
 
 #[derive(Debug)]
-pub(crate) struct WorkLimit;
+pub(crate) struct WorkLimit(pub(crate) &'static str);
 impl std::fmt::Display for WorkLimit {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("maintenance metadata or entry budget exhausted")
+        write!(f, "maintenance {} budget exhausted", self.0)
     }
 }
 impl std::error::Error for WorkLimit {}
@@ -947,9 +955,11 @@ pub(crate) struct WorkBudget {
     entries: usize,
     removed: u64,
     planning: bool,
+    predecessors: Option<(RevisionToken, u8, Vec<RevisionToken>)>,
     scan_after: Option<u64>,
     scanned_through: Option<u64>,
 }
+
 impl WorkBudget {
     pub(crate) fn history(limit: crate::history_policy::HistoryWorkBudget) -> Result<Self> {
         limit.validate()?;
@@ -962,8 +972,11 @@ impl WorkBudget {
             .verification
             .checked_add(bytes)
             .context("verification accounting overflow")?;
-        if self.verification > self.verification_limit || self.expired() {
-            return Err(WorkLimit.into());
+        if self.expired() {
+            return Err(WorkLimit("time").into());
+        }
+        if self.verification > self.verification_limit {
+            return Err(WorkLimit("verification bytes").into());
         }
         Ok(())
     }
@@ -985,10 +998,12 @@ impl WorkBudget {
             started: Instant::now(),
             metadata: 0,
             verification: 0,
-            verification_limit: limit.max_metadata_bytes,
+            verification_limit: crate::history_policy::HistoryWorkBudget::default()
+                .verification_bytes,
             entries: 0,
             removed: 0,
             planning: false,
+            predecessors: None,
             scan_after: None,
             scanned_through: None,
         })
@@ -1002,14 +1017,14 @@ impl WorkBudget {
             .checked_add(bytes)
             .context("metadata accounting overflow")?;
         if self.metadata > self.limit.max_metadata_bytes {
-            return Err(WorkLimit.into());
+            return Err(WorkLimit("metadata bytes").into());
         }
         Ok(())
     }
     pub(crate) fn entry(&mut self) -> Result<()> {
         self.entries += 1;
         if self.entries > MAX_SCAN_ENTRIES {
-            return Err(WorkLimit.into());
+            return Err(WorkLimit("entries").into());
         }
         Ok(())
     }
@@ -1049,6 +1064,46 @@ fn current_receipt(store: &FileStore) -> Result<PublicationReceipt> {
         .token
         .context("automatic retention requires v2; migrate first")?;
     crate::sqlite::receipt(store.directory(), &token)?.context("active publication receipt missing")
+}
+
+// Follow authenticated ancestry only; raising retention cannot restore retired data.
+// Cache within a bounded pass so each candidate does not reread the active inventory.
+fn retained_predecessors(
+    store: &FileStore,
+    active: &PublicationReceipt,
+    count: u8,
+    work: &mut WorkBudget,
+) -> Result<Vec<RevisionToken>> {
+    if let Some((head, prior_count, tokens)) = &work.predecessors
+        && *head == active.token
+        && *prior_count == count
+    {
+        return Ok(tokens.clone());
+    }
+    let mut tokens = Vec::new();
+    let mut receipt = active.clone();
+    for _ in 0..count {
+        let Some(parent) = active_parent(store, &receipt, work)? else {
+            break;
+        };
+        ensure!(
+            parent.incarnation == active.token.incarnation
+                && parent.generation < receipt.token.generation,
+            "invalid retention ancestry"
+        );
+        let Some(previous) = crate::sqlite::receipt(store.directory(), &parent)? else {
+            break;
+        };
+        if crate::sqlite::retirement_proof(store.directory(), &parent)?.is_some()
+            || crate::sqlite::history_binding(store.directory(), &parent)?.is_some()
+        {
+            break;
+        }
+        tokens.push(parent);
+        receipt = previous;
+    }
+    work.predecessors = Some((active.token, count, tokens.clone()));
+    Ok(tokens)
 }
 
 fn active_parent(
@@ -1170,7 +1225,8 @@ fn preview_work(
         policy.digest = digest(proposed)?;
     }
     let active = current_receipt(store)?;
-    let parent_result = active_parent(store, &active, work);
+    let parent_result =
+        retained_predecessors(store, &active, policy.policy.searchable_predecessors, work);
     let history_state = crate::sqlite::history_admin(store.directory())?;
     let history_plan = if history_state.policy.policy.enabled {
         match crate::history_policy::preview_work(
@@ -1208,7 +1264,7 @@ fn preview_work(
             .last_maintenance()?
             .and_then(|receipt| receipt.pressure),
     };
-    let parent = match parent_result {
+    let parents = match parent_result {
         Ok(parent) if !work.expired() => parent,
         result if result.is_ok() || result.as_ref().is_err_and(|error| error.is::<WorkLimit>()) => {
             status.protected_truncated = true;
@@ -1234,7 +1290,7 @@ fn preview_work(
     let mut seen = BTreeSet::new();
     let mut receipts = receipts.into_iter().take(256).collect::<Vec<_>>();
     // Active and exact predecessor are protected even outside the candidate page.
-    for token in std::iter::once(active.token).chain(parent.filter(|_| !legacy)) {
+    for token in std::iter::once(active.token).chain(parents.iter().copied().filter(|_| !legacy)) {
         if !receipts.iter().any(|receipt| receipt.token == token)
             && let Some(receipt) = crate::sqlite::receipt(store.directory(), &token)?
         {
@@ -1324,7 +1380,7 @@ fn preview_work(
         {
             reasons.push(ProtectionReason::HistorySelection);
         }
-        if receipt.token != active.token && Some(receipt.token) != parent {
+        if receipt.token != active.token && !parents.contains(&receipt.token) {
             work.scanned_through = Some(
                 work.scanned_through
                     .unwrap_or(0)
@@ -1334,7 +1390,7 @@ fn preview_work(
         if receipt.token == active.token {
             reasons.push(ProtectionReason::Active);
         }
-        if !legacy && Some(receipt.token) == parent {
+        if !legacy && parents.contains(&receipt.token) {
             reasons.push(ProtectionReason::Predecessor);
         }
         let lease = if reasons.is_empty() {
@@ -1373,16 +1429,16 @@ fn preview_work(
             truncated = true;
         }
         drop(lease);
-        if work.planning && !candidates.is_empty() {
-            truncated = true;
-            break;
-        }
     }
     let (legacy_candidates, legacy_protected, legacy_truncated) =
         match if work.planning && !candidates.is_empty() {
             Ok((vec![], vec![], true))
         } else {
-            legacy::preview(store, parent.is_none() && !legacy, work)
+            legacy::preview(
+                store,
+                parents.is_empty() && status.policy.policy.searchable_predecessors > 0 && !legacy,
+                work,
+            )
         } {
             Ok(value) => value,
             Err(error) if error.is::<WorkLimit>() => (vec![], vec![], true),
@@ -1481,6 +1537,7 @@ impl FileStore {
     ) -> MaintenanceRun {
         let mut receipt = MaintenanceReceipt {
             head: None,
+            policy_digest: None,
             trigger,
             state: MaintenanceState::Pending,
             started_unix_ms: now(),
@@ -1506,10 +1563,12 @@ impl FileStore {
             budget.validate()?;
             let active = current_receipt(self)?;
             receipt.head = Some(active.token);
+            let policy = self.retention_policy()?;
+            receipt.policy_digest = Some(policy.digest);
             if matches!(
                 trigger,
                 MaintenanceTrigger::PostCommit | MaintenanceTrigger::Pressure
-            ) && self.retention_policy()?.policy.mode == RetentionMode::Manual
+            ) && policy.policy.mode == RetentionMode::Manual
             {
                 receipt.state = MaintenanceState::Disabled;
                 receipt.pending = !intent_paths(self)?.is_empty()
@@ -1622,7 +1681,7 @@ impl FileStore {
                 };
                 let old = crate::sqlite::receipt(self.directory(), &candidate.token)?
                     .context("candidate receipt missing")?;
-                crate::blobs::verify_v2_generation(self.directory(), &old)?;
+                crate::blobs::verify_v2_for_query(self.directory(), &old)?;
                 let intent = MaintenanceIntent {
                     version: 1,
                     id: framed_digest(b"retirement-intent/1", &[&serde_json::to_vec(&old)?]),
@@ -1875,4 +1934,39 @@ fn prune_compat_inner(
         );
     }
     Ok(report)
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+    use crate::history_policy::HistoryWorkBudget;
+
+    #[test]
+    fn catalog_authentication_is_not_limited_to_metadata_reservation() -> Result<()> {
+        let gib = 1024 * 1024 * 1024;
+        // Preview and automatic apply must both be able to authenticate a large
+        // catalog. This accounts bytes without allocating a multi-GiB fixture.
+        for mut work in [
+            WorkBudget::new(MaintenanceBudget::default())?,
+            WorkBudget::history(HistoryWorkBudget::default())?,
+        ] {
+            work.metadata(64 * 1024 * 1024)?;
+            work.verify(2 * gib)?;
+            work.verify(6 * gib)?;
+            assert!(work.verify(1).is_err(), "verification must remain bounded");
+            assert_eq!(work.metadata, 64 * 1024 * 1024);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn explicit_smaller_verification_budget_still_stops_work() -> Result<()> {
+        let mut work = WorkBudget::history(HistoryWorkBudget {
+            verification_bytes: 256 * 1024 * 1024,
+            ..Default::default()
+        })?;
+        work.verify(256 * 1024 * 1024)?;
+        assert!(work.verify(1).is_err());
+        Ok(())
+    }
 }

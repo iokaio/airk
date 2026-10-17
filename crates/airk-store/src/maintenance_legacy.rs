@@ -256,7 +256,7 @@ fn components(directory: &Path, work: &mut WorkBudget) -> Result<BTreeMap<String
             let mut buffer = [0u8; 65536];
             loop {
                 if work.expired() {
-                    return Err(WorkLimit.into());
+                    return Err(WorkLimit("time").into());
                 }
                 let count = input.read(&mut buffer)?;
                 if count == 0 {
@@ -287,7 +287,7 @@ fn verify_directories(
         for entry in fs::read_dir(parent)? {
             work.entry()?;
             if work.expired() {
-                return Err(WorkLimit.into());
+                return Err(WorkLimit("time").into());
             }
             let entry = entry?;
             ensure!(!entry.file_type()?.is_symlink(), "linked legacy directory");

@@ -11,4 +11,5 @@ AIRK is an independent Artifact Indexing and Retrieval Kernel. Read README.md, C
 - Keep dependency direction in docs/architecture.md. Add adapters inside the owning crate before adding crates with no independent purpose. Keep original source SPDX headers and dependency license notices.
 - Do not claim complete language understanding, resolved references, semantic search or cross-platform qualification without implementation and relevant evidence.
 - Run formatting, clippy, workspace tests, repository checks and whitespace checks from CONTRIBUTING.md. Record unavailable checks honestly.
+- Before creating a PR for new features or bug fixes, remind the user in Codex or Claude Code to manually increment the patch/build number (for example, 1.1.2 to 1.1.3). Keep native and extension versions and their lockfiles synchronized. Honor an already requested or completed version bump; do not increment it again for the same PR. Release-time version-bump PRs are a fallback, not a replacement for this reminder.
 - Keep AGENTS.md and CLAUDE.md byte-identical. Human DCO sign-offs belong to the authorized contributor; do not add agent signatures or invented approvals.

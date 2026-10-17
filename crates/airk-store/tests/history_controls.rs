@@ -134,6 +134,7 @@ fn prepare_with_model(
     };
     let inventory = InventoryV2 {
         embedding_pipeline_digest: model.map(|set| set.pipeline_digest),
+        index_detail: None,
         extraction_policy_digest: None,
         version: 2,
         incarnation,
@@ -964,6 +965,15 @@ fn shared_model_assets_follow_full_reader_roots_but_not_historical_packages() ->
     let store = FileStore::new(root.path().join("collections/fixture"));
     let writer = store.lock()?;
     let quota = Quota::open(root.path())?;
+    // This fixture specifically exercises model assets retained by a predecessor.
+    store.configure_retention(
+        &writer,
+        &quota,
+        airk_store::retention::RetentionPolicy {
+            searchable_predecessors: 1,
+            ..Default::default()
+        },
+    )?;
     let provision = |name: &str| -> Result<ModelObjectSet> {
         let source = root.path().join(name);
         fs::create_dir(&source)?;

@@ -428,6 +428,25 @@ impl Queue {
         Ok(())
     }
 
+    /// Release a claim blocked by a live collection writer without treating
+    /// contention as an indexing failure or completing the queued revision.
+    pub fn defer(&self, lock: &WorkerLock, job: &ScheduledJob) -> Result<()> {
+        ensure!(
+            lock.directory == self.directory,
+            "scheduler worker belongs to another data root"
+        );
+        let changed = self.open()?.execute(
+            "UPDATE jobs SET running=0 WHERE collection=?1 AND root=?2 AND running=?3",
+            params![
+                job.collection,
+                job.root,
+                i64::try_from(job.requested_revision)?
+            ],
+        )?;
+        ensure!(changed == 1, "scheduler claim changed before deferral");
+        Ok(())
+    }
+
     pub fn forget(&self, collection: &str, root: &str) -> Result<()> {
         let lock = self
             .worker_lock()?

@@ -16,6 +16,7 @@ fn qualify(path: &str, moved: &str, source: &str, expected: &str) -> Result<()> 
         "pub fn unaffected() -> u32 {17}\n",
     )?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    kernel.configure_index_detail(airk_core::extraction::IndexDetail::Detailed)?;
     let report = kernel.index()?;
     assert_eq!(report.indexed, 2, "{report:?}");
     let store = FileStore::new(data.path().join("collections/default"));
@@ -54,6 +55,7 @@ fn qualify(path: &str, moved: &str, source: &str, expected: &str) -> Result<()> 
         before.payload_digest
     );
     kernel.configure_extraction_policy(ExtractionPolicy {
+        detail: None,
         version: 1,
         rules: vec![SelectionRule {
             selector: RuleMatch::Exact { path: moved.into() },

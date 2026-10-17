@@ -1,12 +1,12 @@
 # AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents
 
-**Give Claude Code, Codex, Gemini CLI, GitHub Copilot and other MCP-capable agents a shared, local index of your workspace.** AIRK returns small, cited passages and facts, each with its file path, content hash and original location, instead of whole files. Your agent does the reasoning; you can check exactly what it used.
+**Give Claude Code, Codex, Gemini CLI/Antigravity, GitHub Copilot and other MCP-capable agents a shared, local index of your workspace.** AIRK returns small, cited passages and facts, each with its file path, content hash and original location, instead of whole files. Your agent does the reasoning; you can check exactly what it used.
 
 Everything runs on your machine. There is no cloud service, API key, Docker, Rust or Python to install: the native helper is bundled in the extension.
 
-> **Version 1.1.0 · Stable channel.** Packages target Windows x64, Linux x64 and macOS (Intel and Apple Silicon). Large-repository performance, macOS and remote-host qualification, and semantic-search quality are still being measured. See [Known limits](#known-limits).
+> **Version 1.1.1 · Stable channel.** Packages target Windows x64, Linux x64 and macOS (Intel and Apple Silicon). Large-repository performance, macOS and remote-host qualification, and semantic-search quality are still being measured. See [Known limits](#known-limits).
 
-![Workspace code and documents flow through AIRK's local collection to independently configured Claude Code, Codex, Gemini CLI and other MCP clients.](https://raw.githubusercontent.com/iokaio/airk/main/docs/images/local-evidence.png)
+![Workspace code and documents flow through AIRK's local collection to independently configured Claude Code, Codex, Gemini CLI/Antigravity and other MCP clients.](https://raw.githubusercontent.com/iokaio/airk/main/docs/images/local-evidence.png)
 
 ## What your agent can do with it
 
@@ -43,16 +43,18 @@ Document extraction keeps heading context, dates, requirement IDs and modality (
 
 ## Get started
 
-1. **Install the package for your platform** with **Extensions: Install from VSIX…**. Files are named `airk-1.1.0-<platform>.vsix` (`win32-x64`, `linux-x64`, `darwin-x64` or `darwin-arm64`). Choose the stable 1.1.0 package. If you previously opted into pre-release versions, use **Switch to Release Version** in the extension menu to stay on stable updates.
+1. **Install the package for your platform** with **Extensions: Install from VSIX…**. Files are named `airk-1.1.1-<platform>.vsix` (`win32-x64`, `linux-x64`, `darwin-x64` or `darwin-arm64`). Choose the stable 1.1.1 package. If you previously opted into pre-release versions, use **Switch to Release Version** in the extension menu to stay on stable updates.
 2. **Open a folder and trust it.** AIRK does not start its helper or read files in an untrusted window.
 3. **Index.** Click the **AIRK** status-bar item and choose **Index Now**, or run **AIRK: Index Now**. The status item then shows measured coverage, for example `AIRK: 97%`, and its tooltip lists stale, missing and failed files.
 4. **Connect an agent.**
    - *VS Code and Copilot Chat:* AIRK registers each trusted workspace folder as an MCP server. Run **MCP: List Servers** and enable it.
-   - *Claude Code, Codex, Gemini CLI, Cursor, Cline, Roo Code, Junie, Copilot CLI, OpenCode or Kilo Code:* run **AIRK: Set Up Coding Agent**, pick the client, and merge the previewed entry into that client's MCP configuration. Amazon Q and Windsurf/Devin get the command and arguments plus setup guidance. AIRK never writes another agent's settings or approves its tools.
+   - *Claude Code, Codex, Gemini CLI/Antigravity, Cursor, Cline, Roo Code, Junie, Copilot CLI, OpenCode or Kilo Code:* run **AIRK: Set Up Coding Agent**, pick the client, and merge the previewed entry into that client's MCP configuration. Amazon Q and Windsurf/Devin get the command and arguments plus setup guidance. AIRK never writes another agent's settings or approves its tools.
    - *Google Antigravity:* choose `gemini` to generate compatible JSON, then use Antigravity's configuration location below. There is no dedicated Antigravity picker entry yet.
 5. **Verify.** **AIRK: Verify Native MCP Connection** confirms that the helper starts, lists its tools and reports collection status. Then ask your agent about a file you know and check that its answer cites a path. Verification proves AIRK is healthy; it does not prove that a particular agent has enabled the server.
 
 The **Get Started with AIRK** walkthrough (**Help › Welcome**) links these steps.
+
+Automatic indexing starts in trusted workspaces using per-user storage by default. To use another drive, run **AIRK: Choose Index Storage Folder…**. Opening the picker holds new indexing jobs. If a pass is already running, AIRK shows progress while it finishes before switching folders. Cancelling the picker keeps the current location and restores scheduling; an existing pause remains paused. Existing indexes stay in their previous location. Restart connected agents after changing storage.
 
 ![Saved files are indexed into a complete published revision, then an agent retrieves bounded evidence. Coverage, controls and citations make freshness and scope visible.](https://raw.githubusercontent.com/iokaio/airk/main/docs/images/index-to-context.png)
 
@@ -145,6 +147,10 @@ Legacy Cascade uses `mcpServers` in its own `mcp_config.json`; Devin Local uses 
 
 ### Verify the agent connection
 
+Each collection’s **MCP connection** section shows Not checked, Preparing collection, Checking MCP, Verified with a tool count, or Verification failed with an error. **Verify connection** updates that collection’s index before checking the native handshake, tool inventory and status. The result and last-check time stay in the panel for this editor session; **View details** opens the cached diagnostic result. This verifies the helper, not an agent’s live connection.
+
+Under **Agent connections**, the **VS Code registration** switch controls automatic AIRK server definitions on this extension host (`airk.mcp.registrationEnabled`, a machine-scoped user setting). Turning it off prevents new provider resolutions; it does not pause indexing, remove manual server entries or disable external agents. **Manage agent connections** opens VS Code’s MCP server controls to start/stop or enable/disable connections. Other coding agents retain their own connection controls.
+
 Run **AIRK: Verify Native MCP Connection** for the intended folder. A successful result confirms AIRK's stdio handshake, sixteen-tool inventory and collection status. It does not prove the selected coding agent has loaded or approved the entry.
 
 In that agent, explicitly request `airk_status` and `airk_capabilities` from the configured AIRK server. Confirm the collection, then request a lexical `airk_search` for a known indexed phrase and check its source path and original location. Use **AIRK: Index Now** after edits if automatic indexing is paused or set to Manual; MCP retrieval does not initiate reindexing.
@@ -159,7 +165,9 @@ If no tools appear, check the active client config, server enablement, trust, ex
 - **Ignore rules are respected.** AIRK honors `.gitignore` and an optional `.airkignore` in the same syntax. It always skips common dependency, VCS and secret paths such as `.git`, `node_modules`, `target`, `.venv`, `.env*`, `.ssh`, `*.pem` and `*.key`. It is not a secret scanner; review what you index.
 - **Storage is yours to place.** Indexes live in VS Code's per-user extension storage unless you choose another folder. Changing the folder builds new indexes there and leaves old ones in place until you remove them.
 
-The **AIRK** view in the Activity Bar lists active and stored collections with indexing state, coverage, disk use and last index time. Inline buttons index or reindex an active collection, pause auto-indexing for the window, or remove an inactive collection after confirmation.
+Open **AIRK** in the Activity Bar for the persistent **Dashboard**. Each workspace card shows indexing state, measured coverage and current/eligible/stale/missing file counts, with **Index now**, **Reindex** and **Details** buttons for that collection. Expand **Storage and last index** for its folder, disk use and last successful index time.
+
+Choose the indexing mode, pause/resume automatic work, choose storage, set up coding agents and open reports directly in the sidebar. Maintenance and extraction controls are grouped in expandable sections. Coverage measures saved-file freshness; it is not an indexing progress estimate. The collapsed **Collections** view includes inactive stored collections and confirmed removal controls.
 
 ## Commands
 
@@ -259,3 +267,16 @@ More detail: [extension behavior and limits](https://github.com/iokaio/airk/blob
 - [Report a bug](https://github.com/iokaio/airk/issues) · [Support](https://github.com/iokaio/airk/blob/main/SUPPORT.md) · [Security policy](https://github.com/iokaio/airk/blob/main/SECURITY.md)
 
 AIRK stands for Artifact Indexing and Retrieval Kernel. Licensed under Apache-2.0; bundled dependency notices in THIRD_PARTY_NOTICES.md retain their respective terms.
+
+### Storage budgets and generation retention
+
+The sidebar’s **Storage limits…** control edits the selected collection quota (default **100 GiB**) and shared storage quota (default **500 GiB**). These are ceilings, not disk reservations. Existing saved quotas are preserved. **Generations and cleanup…** chooses automatic or manual retention and **1–9 completed generations**, default **1 (active only)** for new collections. Live readers, checkpoints and selected history can retain additional data. The active index remains intact until a new build commits; reducing retention does not remove that failure protection. Previously retired generations cannot be restored by increasing the count.
+
+Automatic retention trims eligible old generations after publication and before builds with low estimated headroom; storage pressure allows one bounded cleanup and retry. **Reclaim eligible space…** previews manual maintenance using the same protections. If protected data or work budgets prevent recovery, indexing stops with the previous index retained. Review storage limits/retention, then Resume or Index now. New file events do not restart a capacity-blocked job.
+
+
+### Choose indexing detail
+
+The AIRK sidebar offers **Essential**, **Balanced** (the default for new collections), and **Detailed** for each collection. Essential keeps searchable text and exact citations. Balanced adds declarations, imports, useful structural/document facts and declaration change tracking. Detailed also retains individual calls and document-unit change tracking. Existing collections keep their previous Detailed behavior until changed.
+
+The panel shows the configured and published levels separately. Changing a level rebuilds evidence; the previous index stays available until the rebuild succeeds. Storage quotas, retained generations and optional models are separate controls. Native fact and relationship responses explicitly report omitted detail. See [ingestion limits and index detail](https://github.com/iokaio/airk/blob/main/docs/ingestion-limits.md) for limits and CLI equivalents.

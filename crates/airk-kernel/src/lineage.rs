@@ -674,6 +674,7 @@ mod tests {
     fn inventory(generation: u64) -> InventoryV2 {
         InventoryV2 {
             embedding_pipeline_digest: None,
+            index_detail: None,
             extraction_policy_digest: None,
             version: 2,
             incarnation: Incarnation::from_bytes([1; 16]),

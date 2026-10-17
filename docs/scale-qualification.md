@@ -44,6 +44,67 @@ AIRK skipped three PNG assets and reported 100% eligible-file coverage. The appl
 
 Local receipts are under ignored `artifacts/filesizing-real-final/`; the earlier failed attempt is under `artifacts/filesizing-real-repositories/`.
 
+## Windows 1.1.1 detail-level baseline
+
+On 2026-10-17, `scripts/benchmark-detail.py` compared Essential, Balanced and Detailed using the same optimized Windows helper and identical source inputs at each level. SHA-256: `d2f138764998f0b150d154a24424550fefc6e3418dd916d95dafd85e8acd1f5e`. Each level had a fresh shared data root containing independent collections for AIRK and a separate local application workspace. Indexing used `index --scheduled --automatic`, automatic source sizing, 100/500 GiB storage defaults and zero retained predecessors. No embedding model was installed. Usage recording was disabled for this controlled measurement. Builds and tests were idle; operating-system caches were not flushed.
+
+| Workspace | Detail | Initial seconds | Unchanged seconds | One-file edit seconds | Initial logical MiB | Initial peak RSS MiB |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| AIRK | Essential | 8.65 | 5.57 | 6.48 | 16.54 | 59.91 |
+| AIRK | Balanced | 12.66 | 7.71 | 11.89 | 95.78 | 122.18 |
+| AIRK | Detailed | 18.68 | 10.76 | 20.04 | 290.07 | 180.30 |
+| Separate application workspace | Essential | 80.33 | 12.68 | 24.42 | 268.71 | 166.57 |
+| Separate application workspace | Balanced | 121.51 | 30.70 | 76.14 | 1273.25 | 884.34 |
+| Separate application workspace | Detailed | 206.93 | 70.41 | 183.69 | 3279.20 | 1953.49 |
+
+AIRK indexed 579 files / 5,429,561 source bytes; the separate application indexed 7,628 files / 90,479,733 source bytes. Edits were made only in isolated source copies. Each update re-extracted exactly one file and reused every other indexed file. Original Git-visible source inventories were unchanged. These single-machine observations are not maximum-capacity or cross-platform qualification.
+
+Balanced reduced initial logical storage versus Detailed by 67.0% for AIRK and 61.2% for the application. All initial MCP symbol, lexical, indexed-read, citation-hash, foreign-collection and traversal/override checks passed. Essential deliberately returned no native structured symbols while retaining text retrieval. Application symbol requests took 1.95/1.98/2.01 seconds in Balanced and 6.61/6.61/6.48 seconds in Detailed for the first and two repeated requests in one helper connection. The first request is a fresh helper process, not a flushed-device measurement.
+
+Five incremental cases finished with one retained generation. The application's Detailed case finished with two: its post-commit cleanup took 15.4 seconds, crossed the cooperative 10-second budget and left a durable pending deletion intent. Its policy still specified zero predecessors, and only the active generation was protected. These one-shot CLI measurements did not run a subsequent idle continuation. Initial storage in the table contains only one generation; incremental retained state must not be compared without accounting for this difference.
+
+The application reported two JSON files over the existing shared parser-work budget and 124 binary assets. AIRK reported 14 PNG assets and one legacy-encoded Markdown file as non-UTF-8; that Markdown file was subsequently normalized to UTF-8. Detail selection reduces retained evidence after parsing and does not remove parser ceilings. Private source copies, paths, excerpts and index state remain under ignored `artifacts/detail-real-final/`.
+
+## Final Windows enhancement comparison (2026-10-17)
+
+The final optimized AIRK 1.1.1 helper, SHA-256 `ff7e33811873f4ed205329e33d14f8cde299f1f62c60cc2939a1fb366c5b5e3b`, was compared with the detail-level baseline above. The final machine had 64 logical CPUs (AMD Ryzen Threadripper PRO 5975WX), 137,285,533,696 bytes of physical memory and Windows x64. Builds and editor tests were idle during measurement. No model was installed; usage recording was disabled. Collection/root quotas were the 100/500 GiB defaults.
+
+The run used frozen AIRK and application source copies matching the baseline's indexed file counts, source bytes and catalog row counts at every detail level. The final roots have longer absolute paths than the baseline roots; their repeated root metadata contributes to the small Essential storage increase. Initial indexes used fresh state, and one-file edits were made only in additional isolated copies. Source-hash preflight, copying and subsequent MCP checks are excluded from index timings. OS caches were not flushed. These are individual observations, not statistical averages or maximum-capacity qualification.
+
+Every cell below is **baseline → final**. Logical storage is measured after the initial publication; update timings include that command's post-publication maintenance.
+
+| Workspace | Detail | Initial seconds | Unchanged seconds | One-file edit seconds | Initial logical MiB |
+| --- | --- | ---: | ---: | ---: | ---: |
+| AIRK | Essential | 8.65 → 7.34 | 5.57 → 5.57 | 6.48 → 6.46 | 16.54 → 16.65 |
+| AIRK | Balanced | 12.66 → 10.85 | 7.71 → 7.13 | 11.89 → 10.45 | 95.78 → 84.09 |
+| AIRK | Detailed | 18.68 → 15.47 | 10.76 → 8.59 | 20.04 → 15.49 | 290.07 → 207.92 |
+| Separate application workspace | Essential | 80.33 → 65.59 | 12.68 → 12.12 | 24.42 → 22.57 | 268.71 → 269.83 |
+| Separate application workspace | Balanced | 121.51 → 98.46 | 30.70 → 23.80 | 76.14 → 58.07 | 1273.25 → 976.80 |
+| Separate application workspace | Detailed | 206.93 → 176.35 | 70.41 → 53.53 | 183.69 → 145.97 | 3279.20 → 2462.20 |
+
+Balanced storage fell 12.2% for AIRK and 23.3% for the application; Detailed fell 28.3% and 24.9%. The application's Balanced SQLite catalog shrank from about 715 to 418 MiB, while its source and extraction-object sizes were unchanged. Balanced remains about 60% smaller than Detailed on both corpora. Essential storage was approximately unchanged. Peak indexing memory did not materially improve: application Balanced was 884.34 → 868.97 MiB and Detailed was 1953.49 → 1955.13 MiB. The final AIRK peaks were 60.67/117.95/181.13 MiB for Essential/Balanced/Detailed; application Essential was 169.41 MiB.
+
+The following exact-symbol timings use a fresh helper connection for the first call and the mean of two subsequent calls in that same process. A fresh process is not a flushed-device measurement. Essential intentionally retains no native symbol facts, so its empty structured responses are excluded from this table.
+
+| Workspace | Detail | First call, milliseconds | Repeated call, milliseconds |
+| --- | --- | ---: | ---: |
+| AIRK | Balanced | 175.54 → 157.76 | 174.27 → 40.87 |
+| AIRK | Detailed | 537.76 → 378.48 | 534.83 → 89.09 |
+| Separate application workspace | Balanced | 1947.14 → 1454.39 | 1992.57 → 341.47 |
+| Separate application workspace | Detailed | 6614.86 → 5050.40 | 6547.12 → 1045.89 |
+
+Repeated symbol calls were 4.3–6.3 times faster. Current component bytes are still hashed on every request; the optimization reuses semantic validation, not timestamp trust. Initial indexing, unchanged passes and one-file updates still perform substantial generation-wide work. The measurements do not establish broad relevance, semantic quality or complete language understanding.
+
+All six cases passed symbol/lexical/indexed-read checks, citation path/hash validation, foreign-collection negative queries, collection-override rejection and traversal rejection. AIRK indexed 579 files and 5,429,561 source bytes; the application indexed 7,628 files and 90,479,733 bytes. Each edit re-extracted exactly one file and reused all other indexed files. Input inventories remained unchanged. The extraction omissions described in the baseline remain; matching counts do not mean every source file was supported.
+
+The final six updates each reached **one retained generation with completed cleanup**. The explicit continuation probe returned no work in all six cases; no additional cleanup pass was required. The baseline application's Detailed update had left two generations and pending cleanup, so its update time did not include equivalent completed reclamation. Separate MCP reads after cleanup checked retained source access, citations and collection isolation again.
+
+Qualification found and corrected two cleanup costs: the former 256 MiB verification allowance prevented large catalogs from completing object GC, and loading a full catalog merely to discover that optional history was disabled could consume the time allowance. The final default permits 8 GiB of streamed verification per pass, and skips that unnecessary history load only when no recovery intent is pending. Authentication, metadata/time/removal bounds and corruption rejection remain in force. The earlier stalled application Detailed state also completed through one continuation without reindexing. See [retention](retention.md) for remaining bounds.
+
+The final Windows VSIX also passed [installed-editor qualification](windows-local-build.md#installed-extension-and-two-window-qualification), including two simultaneous windows sharing a collection and two windows with isolated collections in shared storage. The test found and corrected live writer contention incorrectly blocking queued indexing and quota enumeration failing on concurrently removed managed paths. [Actual workbench PNGs](ui/README.md#installed-vs-code-captures) show MCP verification and untrusted behavior.
+
+Reproduce with `scripts/benchmark-detail.py --binary <optimized-helper> --config <private-config.json> --output artifacts/<fresh-directory> --incremental-copies --continue-cleanup`. Config requires two independent source roots, a distinguishing query and an indexed file path for each; see the script's configuration example. The harness now requires completed cleanup receipts and performs post-cleanup retrieval checks. Local final receipts are under ignored `artifacts/enhancements-qualified-final/`; post-cleanup checks are also recorded in `after-cleanup-mcp.json`. The earlier diagnostic run remains under `artifacts/enhancements-real-final/`. Private sources, excerpts, profiles and indexes are not publication artifacts. Cross-platform, remote-host, upgrade and larger-than-memory qualification remain separate.
+
 ## Windows rotating-disk run: incomplete
 
 On 2026-10-14, the Windows x64 optimized binary `bdfec036c89d09e3a69e505127621ad2450b1c64db7515aa9d538664635a4df4` began the default 16,384-file/128 MiB workload on NTFS drive D:, a Seagate ST2000LM007 rotating disk. The first index was stopped after 432.464 seconds: 2,971 extracted artifact objects had been published, with one unfinished temporary artifact file and no committed collection generation. The process had consumed 13.453 CPU seconds and reached 12.55 MiB peak RSS during that partial pass.

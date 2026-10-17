@@ -796,6 +796,7 @@ impl AirkServer {
             .usage_span(UsageOperation::Capabilities, ClientFamily::Unknown);
         let value = serde_json::json!({
             "adapters": Kernel::extraction_adapters(),
+            "index_detail": {"new_collection_default":"balanced", "levels":["essential","balanced","detailed"], "coverage":"Fact and relationship responses report their published indexing level and deliberate omissions. Configured changes apply only after a successful index. Optional provider imports and history retention are separate."},
             "history": {"exact_reads":["airk_file_info","airk_read_file","airk_outline","airk_context"],"availability":"airk_history","optional_retention":true,"search":false,"live_fallback":false,"mutations":"CLI/extension only"},
             "changes": {"observed_indexed_changes":true,"selectors":64,"selector_bytes":32768,"max_payload_bytes":65536,"exact_revision_tokens":true,"live_source_verified":false,"symbol_continuity":"adapter-specific conservative coverage","document_continuity":"adapter-specific conservative coverage"},
             "conditional_reads": {"tools":["airk_file_info","airk_read_file","airk_outline","airk_context"],"validator":"representation-specific if_evidence","follow_moves_default":false,"move_basis":"unique compatible exact content; not filesystem intent"},

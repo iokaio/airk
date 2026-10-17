@@ -333,6 +333,8 @@ pub struct FactHit {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FactsResponse {
+    #[serde(default)]
+    pub indexing: crate::extraction::IndexCoverage,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub publication: Option<evidence::RevisionEnvelope>,
     pub generation: u64,

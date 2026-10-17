@@ -44,6 +44,7 @@ fn sqlite_facts_graph_budgets_scope_refresh_and_candidates() -> anyhow::Result<(
         "# Requirements\nThe client shall respond within 100 ms.\n",
     )?;
     let kernel = Kernel::open_collection(root.path(), Some(state.path().into()), "fixture")?;
+    kernel.configure_index_detail(airk_core::extraction::IndexDetail::Detailed)?;
     kernel.index()?;
     assert_eq!(kernel.status()?.exact_fact_backend, "sqlite");
     let facts = kernel.code_facts(&fact_query(Some("Auth::run"), Some("definition")))?;
@@ -165,6 +166,7 @@ fn scip_requires_binding_and_invalidates_on_source_and_unindexed_build_changes()
     fs::write(root.path().join("a.ts"), "function run() {}\nrun();\n")?;
     fs::write(root.path().join("flags.bin"), [0, 255])?;
     let kernel = Kernel::open(root.path(), Some(state.path().into()))?;
+    kernel.configure_index_detail(airk_core::extraction::IndexDetail::Detailed)?;
     kernel.index()?;
     let mut binding = kernel.prepare_analysis("fixture-indexer", "1", &["flags.bin".into()])?;
     let bytes = scip_fixture(root.path())?;
@@ -285,6 +287,7 @@ fn invalid_scip_documents_producer_digest_and_ranges_leave_revision_intact() -> 
     fs::write(root.path().join("a.ts"), "function run() {}\nrun();\n")?;
     fs::write(root.path().join("tsconfig.json"), "{}")?;
     let kernel = Kernel::open(root.path(), Some(state.path().into()))?;
+    kernel.configure_index_detail(airk_core::extraction::IndexDetail::Detailed)?;
     kernel.index()?;
     let binding = kernel.prepare_analysis("fixture-indexer", "1", &["tsconfig.json".into()])?;
     let original = Index::parse_from_bytes(&scip_fixture(root.path())?)?;

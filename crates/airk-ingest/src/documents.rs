@@ -48,6 +48,7 @@ pub struct Extracted {
 pub fn extract(path: &str, bytes: &[u8]) -> Result<Extracted> {
     let registry = crate::adapters::registry::AdapterRegistry::baseline();
     let policy = crate::adapters::profile::ExtractionPolicy {
+        detail: None,
         version: 1,
         rules: vec![],
     };

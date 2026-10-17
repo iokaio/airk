@@ -16,6 +16,7 @@ pub mod chunking;
 mod compose;
 mod composite;
 pub mod continuity;
+mod detail;
 pub mod header_context;
 mod host_components;
 mod host_html;
@@ -254,6 +255,7 @@ fn scan_streaming_configured(
     mut emit: impl FnMut(&Artifact, &[u8]) -> Result<Artifact>,
 ) -> Result<(Snapshot, IndexReport)> {
     let policy = adapters::profile::ExtractionPolicy {
+        detail: None,
         version: 1,
         rules: vec![],
     };
@@ -583,6 +585,16 @@ fn scan_observed_profiled(
                 None => adapters::legacy::legacy_profile(old)?,
             };
         }
+        match policy.detail.unwrap_or_default() {
+            airk_core::extraction::IndexDetail::Detailed => {
+                profile.options.remove("index_detail");
+            }
+            detail => {
+                profile
+                    .options
+                    .insert("index_detail".into(), detail.as_str().into());
+            }
+        }
         profile.identity()?;
         if !selection.ambiguity.is_empty() {
             let mut reason = format!(
@@ -649,7 +661,7 @@ fn scan_observed_profiled(
             _ => {
                 ensure!(
                     profile.language != "ocr",
-                    "retained OCR payload unavailable; explicit OCR operation required"
+                    "retained OCR payload unavailable at the selected detail; run a full reindex to apply native extraction, then explicitly rerun OCR for affected files"
                 );
                 observation.usage.parser_calls += 1;
                 let extracted = match (|| -> Result<documents::Extracted> {
@@ -1073,6 +1085,7 @@ mod scan_budget_tests {
         let (previous, _) = scan(root.path(), data.path(), &empty)?;
         assert_eq!(previous.artifacts["header.h"].language, "c");
         let policy = ExtractionPolicy {
+            detail: None,
             version: 1,
             rules: vec![SelectionRule {
                 selector: RuleMatch::Scoped {
@@ -1183,6 +1196,7 @@ mod scan_budget_tests {
             .artifacts
             .insert(artifact.path.clone(), artifact.clone());
         let policy = adapters::profile::ExtractionPolicy {
+            detail: None,
             version: 1,
             rules: vec![],
         };

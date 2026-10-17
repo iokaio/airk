@@ -27,6 +27,21 @@ def release(build=1, *, preview=True, published="2026-10-14T10:00:00Z"):
 
 
 class DownloadSiteTests(unittest.TestCase):
+    def test_clean_version_tags_and_legacy_downloads(self):
+        current = release(preview=False, published="2026-10-17T12:00:00Z")
+        old_tag = current["tag_name"]
+        current["tag_name"] = "v0.1.0"
+        for asset in current["assets"]:
+            asset["browser_download_url"] = asset["browser_download_url"].replace(old_tag, "v0.1.0")
+        records = site.select_releases([release(preview=False), current])
+        self.assertEqual([record["tag"] for record in records], ["v0.1.0"])
+        html = site.render_downloads(records)
+        self.assertIn("/v0.1.0/airk-0.1.0-win32-x64.vsix", html)
+        self.assertNotIn("build number", html)
+        current["assets"].pop()
+        with self.assertRaisesRegex(ValueError, "incomplete"):
+            site.select_releases([current])
+
     def test_latest_per_channel_independent_of_api_order(self):
         catalog = [release(3, published="2026-10-14T12:00:00Z"), release(1),
                    release(2, preview=False), {**release(4), "draft": True},

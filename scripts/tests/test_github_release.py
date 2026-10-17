@@ -15,7 +15,7 @@ release = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(release)
 COMMIT = "a" * 40
 VERSION = "0.1.0"
-TAG = "v0.1.0-build.42"
+TAG = "v0.1.0"
 SUFFIX = COMMIT + "-123-1"
 
 
@@ -228,12 +228,11 @@ class GithubReleaseContracts(unittest.TestCase):
                     self.assemble(root / "in", root / "out")
                 self.assertFalse((root / "out").exists())
 
-    def test_build_identity_and_existing_tag(self):
-        self.assertEqual(release.identity(VERSION, 42), TAG)
-        self.assertNotEqual(release.identity(VERSION, 43), TAG)
-        for version, build in ((VERSION, 0), (VERSION, "42\nbad"), ("../version", 42), ("0.1.0-beta", 42)):
+    def test_version_identity_and_existing_tag(self):
+        self.assertEqual(release.identity(VERSION), TAG)
+        for version in ("../version", "0.1.0-beta", "01.1.0", "1.1.0\nbad"):
             with self.assertRaises(ValueError):
-                release.identity(version, build)
+                release.identity(version)
         with patch.object(release, "github", return_value={"id": 1}), patch.object(release.subprocess, "run") as run:
             with self.assertRaisesRegex(ValueError, "already exists"):
                 release.require_unused_tag(TAG)

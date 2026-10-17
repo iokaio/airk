@@ -1,12 +1,29 @@
 # Protected PRs, GitHub downloads and extension release
 
-## Numbered GitHub Releases
+## Versioned GitHub Releases
 
-The [GitHub release workflow](../.github/workflows/github-release.yml) promotes tested main CI binaries, signs and prepares downloads on GitHub-hosted machines. Run **Actions → GitHub release → Run workflow** on **main**, choose **stable** for 1.1.0 (the default), and enable **publish** to publish the verified downloads. Leave publish disabled for a promotion/signing rehearsal with downloadable Actions artifacts.
+The [GitHub release workflow](../.github/workflows/github-release.yml) promotes tested main CI binaries, signs and prepares downloads on GitHub-hosted machines. Run **Actions → GitHub release → Run workflow** on **main**, choose **stable** for 1.1.1 (the default), and enable **publish** to publish the verified downloads. Leave publish disabled for a promotion/signing rehearsal with downloadable Actions artifacts.
 
 Changes to the release workflow or its release/signing contracts on `main` also run a short validation job without signing credentials. This explicit push event registers and validates the workflow independently of manual dispatch. Push runs skip release preflight and all dependent build, signing, publication and deployment jobs; those remain available only through manual dispatch.
 
-The release tag is automatically numbered from this workflow's run number: for example, `v1.1.0-build.42`. The base version comes from the checked-in Cargo workspace and must match the VS Code extension. App/extension versions remain the checked-in version (currently `1.1.0`); no commit, lockfile or package metadata is rewritten. Every workflow run advances the build number, including validation, failed and rehearsal runs. Reruns retain the number and change the attempt. Existing release assets and conflicting tags are never overwritten. A matching retained draft can be resumed after verification.
+New release tags match the checked-in package version: **`v1.1.1`**, with no workflow build suffix. Cargo, the extension and both lockfiles must agree. Workflow run IDs/attempts stay in provenance records, not public version names. Existing `-build.N` releases remain supported by tag validation and the downloads page; they are never renamed or overwritten.
+
+Both manual release workflows check Marketplace and GitHub before promotion when **publish** is enabled:
+
+| Checked-in version state | Result |
+|---|---|
+| Unused, including a manual increment | Publish that exact version; no automatic bump |
+| Published only in the other destination | Finish this version in the requested destination |
+| Already published in the requested destination only | Skip duplicate publication; finish the other workflow |
+| All four Marketplace platforms and a complete GitHub release exist | Prepare the next unused patch in a draft version PR; do not publish |
+| Retry of a completed release run | Skip; never allocate another version on a rerun |
+| API failure, conflicting channel or incomplete GitHub asset set | Fail for inspection; never interpret an unavailable catalog as an unused version |
+
+The fallback selects a patch unused in either catalog or existing tags, including draft reservations. Ordinary CI, identity checks and rehearsals never bump versions or create PRs. Both release workflows share a publication concurrency group. A newer main commit stops PR creation so a maintainer's manual increment takes precedence.
+
+The version PR updates Cargo/extension manifests and lockfiles on `release/version-<version>`, reuses an existing open PR, and never pushes directly to protected main. Enable **Settings → Actions → General → Allow GitHub Actions to create and approve pull requests** for this fallback. Only its dedicated job receives `contents: write` and `pull-requests: write`; it does not approve or merge the PR. A maintainer must review the generated patch and replace the automation commit with their own authorized signed-off commit before merging. No human DCO certification is fabricated. GitHub can require approval before running workflows for a PR created using `GITHUB_TOKEN`; see [GitHub token behavior](https://docs.github.com/en/actions/concepts/security/github_token). After merge and successful main CI, dispatch the release workflows using the new version. The job summary links the PR and explicitly says publication is waiting.
+
+For a partial Marketplace upload, the publisher downloads the already-published platforms and compares their extension payloads with the verified candidate. Only absent platforms are uploaded; mismatched content fails rather than mixing builds. Keep the original rehearsal for retries. A matching retained GitHub draft must be resumed through its original run's failed publish job.
 
 Use **Re-run failed jobs** after a signing, assembly or publication failure. Successful signing outputs remain scoped to the same release run, while all original binaries remain bound to one authenticated producer run/attempt. A publishing retry selects the newest successfully assembled bundle from that same release run, including an earlier attempt. It checks existing draft identity and every present digest before uploading only missing files. An already published, complete matching release is an idempotent success. A conflicting or unexpected asset fails closed for inspection.
 
@@ -27,7 +44,7 @@ The **native-signing** and **github-releases** environments must allow only the 
 
 Only signing and Pages deployment jobs receive OIDC permission, and only the release publishing job receives repository content write permission. The website deployment receives Pages write permission. Neither ordinary PR CI nor the build jobs receive signing credentials. Release assembly and contract tests require Python 3.11+, matching the pinned hosted Python.
 
-GitHub documents [release creation and draft uploads](https://cli.github.com/manual/gh_release_create). Full installed-editor, oldest-OS and dependency notice review remain in the [1.1.0 release checklist](release-1.1.0.md). A successful workflow establishes its recorded checks, not completion of that checklist.
+GitHub documents [release creation and draft uploads](https://cli.github.com/manual/gh_release_create). Full installed-editor, oldest-OS and dependency notice review remain in the [1.1.1 release checklist](release-1.1.1.md). A successful workflow establishes its recorded checks, not completion of that checklist.
 
 ## Downloads website
 
@@ -79,7 +96,7 @@ The new required check names become available when a PR runs these workflow chan
 
 ## Build manually
 
-Open **Actions → Extension release → Run workflow**. Enter the exact checked-in version (currently `1.1.0`), select `stable` for 1.1.0 (the default), and leave `publish` false. Promotion requires `main`; use the CI workflow to build and review feature-branch candidates.
+Open **Actions → Extension release → Run workflow**. Enter the exact checked-in version (currently `1.1.1`), select `stable` for 1.1.1 (the default), and leave `publish` false. Promotion requires `main`; use the CI workflow to build and review feature-branch candidates.
 
 The [release workflow](../.github/workflows/extension-release.yml) authenticates a successful main [CI workflow](../.github/workflows/ci.yml) containing native tests, actual-helper extension tests, packaging checks and container validation. It rebuilds only the small TypeScript/VSIX layer for the selected channel using those tested native packages. Candidate artifacts expire after seven days; `candidate_run_id` selects an explicit successful manual CI rebuild when needed.
 
@@ -88,12 +105,12 @@ After reviewing a successful rehearsal, publish its exact VSIX files by supplyin
 For example, substitute the reviewed rehearsal's actual run ID:
 
 ~~~console
-gh workflow run extension-release.yml --ref main -f version=1.1.0 -f channel=stable -f publish=true -f rehearsal_run_id=123456789
+gh workflow run extension-release.yml --ref main -f version=1.1.1 -f channel=stable -f publish=true -f rehearsal_run_id=123456789
 ~~~
 
 Only successful, non-publishing rehearsals qualify: preflight and all four packaging jobs must succeed, while publication and identity-only jobs must be skipped. Artifact upload times must belong to those successful jobs in the selected attempt. Preflight records the attempt, artifact IDs and server digests; publication rechecks that record before and after downloading. Rerunning the rehearsal, expired/missing artifacts, another commit, or a mismatched package version/channel stops publication without silently repackaging. Create and review a new rehearsal if needed. Leaving **rehearsal_run_id** empty preserves the existing build-and-publish path. Supplying it for a non-publishing or identity-only run is rejected.
 
-Ordinary CI, local packaging and release dispatchers default to stable packages. Preview packaging remains an explicit option for a distinct future preview version; do not publish 1.1.0 as a preview. The source version/display name are never silently edited by a publishing job; review them before selecting a channel. See the [1.1.0 checklist](release-1.1.0.md).
+Ordinary CI, local packaging and release dispatchers default to stable packages. Preview packaging remains an explicit option for a distinct future preview version; do not publish 1.1.1 as a preview. The source version/display name are never silently edited by a publishing job; review them before selecting a channel. See the [1.1.1 checklist](release-1.1.1.md).
 
 ## Configure publication once
 

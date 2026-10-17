@@ -28,7 +28,7 @@ permissions:
   contents: read
   actions: read
 concurrency:
-  group: airk-github-release
+  group: airk-release-${{ github.event_name == 'workflow_dispatch' && 'publication' || github.run_id }}
   cancel-in-progress: false
 jobs:
   validate:
@@ -53,6 +53,7 @@ jobs:
     outputs:
       version: ${{ steps.identity.outputs.version }}
       tag: ${{ steps.identity.outputs.tag }}
+      action: ${{ steps.version.outputs.action }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -60,24 +61,56 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.11'
-      - name: Bind main commit, package version and automatic build number
+      - name: Select an unused version or finish the existing release
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AIRK_CHANNEL: ${{ inputs.channel }}
+          AIRK_PUBLISH: ${{ inputs.publish }}
+        run: |
+          args=()
+          if [ "$AIRK_PUBLISH" = true ]; then args+=(--publish); fi
+          python scripts/release-version.py plan --destination github --channel "$AIRK_CHANNEL" "${args[@]}"
+      - name: Bind main commit and clean package-version tag
+        if: ${{ steps.version.outputs.action == 'publish' || steps.version.outputs.action == 'rehearse' }}
         id: identity
         env:
           GH_TOKEN: ${{ github.token }}
         run: python scripts/github-release.py preflight
       - name: Select and authenticate the tested main candidate
+        if: ${{ steps.version.outputs.action == 'publish' || steps.version.outputs.action == 'rehearse' }}
         env:
           GH_TOKEN: ${{ github.token }}
           AIRK_CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
         run: python scripts/ci-candidates.py resolve
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ steps.version.outputs.action == 'publish' || steps.version.outputs.action == 'rehearse' }}
         with:
           name: airk-producer-${{ github.sha }}-${{ github.run_id }}
           path: artifacts/producer.json
           if-no-files-found: error
           overwrite: true
           retention-days: 7
+  version-pr:
+    needs: preflight
+    if: ${{ inputs.publish && needs.preflight.outputs.action == 'bump' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Prepare the next patch for human review and main CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AIRK_CHANNEL: ${{ inputs.channel }}
+        run: python scripts/release-version.py prepare-pr --destination github --channel "$AIRK_CHANNEL" --publish
+
   sign:
+    if: ${{ needs.preflight.outputs.action == 'publish' || needs.preflight.outputs.action == 'rehearse' }}
     needs: preflight
     strategy:
       fail-fast: false
@@ -198,6 +231,7 @@ jobs:
           retention-days: 7
           compression-level: 0
   package-linux:
+    if: ${{ needs.preflight.outputs.action == 'publish' || needs.preflight.outputs.action == 'rehearse' }}
     needs: preflight
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -243,6 +277,7 @@ jobs:
           retention-days: 7
           compression-level: 0
   assemble:
+    if: ${{ needs.preflight.outputs.action == 'publish' || needs.preflight.outputs.action == 'rehearse' }}
     needs: [preflight, sign, package-linux]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -279,8 +314,8 @@ jobs:
           retention-days: 7
           compression-level: 0
   publish:
-    if: inputs.publish
-    needs: assemble
+    if: ${{ inputs.publish && needs.preflight.outputs.action == 'publish' }}
+    needs: [preflight, assemble]
     runs-on: ubuntu-24.04
     environment: github-releases
     permissions:

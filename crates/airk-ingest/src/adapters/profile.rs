@@ -32,6 +32,8 @@ pub struct SelectionRule {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExtractionPolicy {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<airk_core::extraction::IndexDetail>,
     pub version: u32,
     pub rules: Vec<SelectionRule>,
 }
@@ -69,7 +71,9 @@ impl ExtractionPolicy {
 
     pub fn validate(&self, registry: &AdapterRegistry) -> anyhow::Result<()> {
         anyhow::ensure!(
-            matches!(self.version, 1 | 2) && self.rules.len() <= 256,
+            matches!(self.version, 1..=3)
+                && (self.detail.is_none() || self.version == 3)
+                && self.rules.len() <= 256,
             "unsupported or oversized extraction policy"
         );
         anyhow::ensure!(
@@ -109,7 +113,7 @@ impl ExtractionPolicy {
                     configuration,
                 } => {
                     anyhow::ensure!(
-                        self.version == 2,
+                        self.version >= 2,
                         "header context requires policy version 2"
                     );
                     anyhow::ensure!(
@@ -331,6 +335,7 @@ mod tests {
     -> anyhow::Result<()> {
         let registry = AdapterRegistry::baseline();
         let mut policy = ExtractionPolicy {
+            detail: None,
             version: 2,
             rules: vec![SelectionRule {
                 selector: RuleMatch::HeaderContext {
@@ -400,6 +405,7 @@ mod tests {
     -> anyhow::Result<()> {
         let registry = AdapterRegistry::baseline();
         let mut policy = ExtractionPolicy {
+            detail: None,
             version: 1,
             rules: vec![],
         };
@@ -432,6 +438,7 @@ mod tests {
     fn empty_scope_selects_root_headers_without_crossing_other_scopes() -> anyhow::Result<()> {
         let registry = AdapterRegistry::baseline();
         let policy = ExtractionPolicy {
+            detail: None,
             version: 1,
             rules: vec![
                 SelectionRule {
@@ -468,6 +475,7 @@ mod tests {
     fn conflicts_traversal_and_case_are_explicit() -> anyhow::Result<()> {
         let registry = AdapterRegistry::baseline();
         let mut policy = ExtractionPolicy {
+            detail: None,
             version: 1,
             rules: vec![],
         };
@@ -490,6 +498,7 @@ mod tests {
     fn exact_and_longest_scope_win() -> anyhow::Result<()> {
         let registry = AdapterRegistry::baseline();
         let policy = ExtractionPolicy {
+            detail: None,
             version: 1,
             rules: vec![
                 SelectionRule {

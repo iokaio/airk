@@ -11,6 +11,7 @@ use std::{
 };
 
 struct PinnedConnection {
+    detail: airk_core::extraction::IndexDetail,
     conn: Connection,
     _lease: Option<std::fs::File>,
     publication: Option<airk_core::evidence::RevisionEnvelope>,
@@ -268,12 +269,14 @@ fn connect(directory: &Path, write: bool) -> Result<PinnedConnection> {
         let deadline = Instant::now() + Duration::from_millis(250);
         conn.progress_handler(1000, Some(move || Instant::now() > deadline))?;
         return Ok(PinnedConnection {
+            detail: Default::default(),
             conn,
             _lease: Some(lease),
             publication: None,
         });
     }
     Ok(PinnedConnection {
+        detail: Default::default(),
         conn,
         _lease: None,
         publication: None,
@@ -293,6 +296,7 @@ fn read_transaction_once(directory: &Path) -> Result<PinnedConnection> {
         let version: u32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
         if version == 1 {
             return Ok(PinnedConnection {
+                detail: Default::default(),
                 conn,
                 _lease: None,
                 publication: None,
@@ -319,10 +323,11 @@ fn read_transaction_once(directory: &Path) -> Result<PinnedConnection> {
             } else {
                 Connection::open_with_flags(catalog_path, OpenFlags::SQLITE_OPEN_READ_ONLY)?
             };
+            let mut detail = airk_core::extraction::IndexDetail::Detailed;
             if is_v2_root(version) {
                 let token = header.token.context("v2 catalog token missing")?;
                 let receipt = receipt_connection(&conn, &token)?.context("v2 receipt missing")?;
-                crate::blobs::verify_v2_generation(directory, &receipt)?;
+                detail = crate::blobs::verify_v2_for_query(directory, &receipt)?;
                 validate_v2_catalog(&inner, &token, &receipt.inventory_digest)?;
             }
             inner.execute_batch("BEGIN DEFERRED")?;
@@ -333,6 +338,7 @@ fn read_transaction_once(directory: &Path) -> Result<PinnedConnection> {
             let deadline = Instant::now() + Duration::from_millis(250);
             inner.progress_handler(1000, Some(move || Instant::now() > deadline))?;
             Ok(PinnedConnection {
+                detail,
                 conn: inner,
                 _lease: Some(lease),
                 publication: header.token.filter(|_| is_v2_root(version)).map(|token| {
@@ -459,7 +465,7 @@ pub(super) fn save_catalog(
         let mut database = reservation
             .open_private_sqlite(directory.join("catalog.sqlite"), maximum)
             .with_context(|| format!("admit private fact catalog with {maximum}-byte quota cap"))?;
-        save_connection(database.connection_mut(), snapshot, Some(revision), source, None)
+        save_connection(database.connection_mut(), snapshot, Some(revision), source, None, None)
             .with_context(|| format!("build private fact catalog with {maximum}-byte quota cap; previous generation retained"))?;
         return database.finish().context("finish private fact catalog");
     }
@@ -1014,6 +1020,8 @@ pub(super) fn save_catalog_v2(
     source: &dyn ArtifactSource,
     reservation: Option<&crate::quota::Reservation>,
     maximum: u64,
+    base_directory: &Path,
+    previous: Option<&crate::blobs::Catalog>,
 ) -> Result<()> {
     use std::io::Write;
     inventory.validate()?;
@@ -1047,85 +1055,104 @@ pub(super) fn save_catalog_v2(
     drop(lineage_file);
     let mut database =
         reservation.open_private_sqlite(directory.join("catalog.sqlite"), maximum)?;
-    let snapshot = inventory.projection()?;
-    save_connection(
-        database.connection_mut(),
-        &snapshot,
-        Some(&token.revision.to_string()),
-        source,
-        Some(inventory),
-    )?;
-    let conn = database.connection_mut();
-    let tx = conn.transaction()?;
-    tx.execute_batch("CREATE TABLE v2_catalog(id INTEGER PRIMARY KEY CHECK(id=1),token TEXT NOT NULL,inventory_digest TEXT NOT NULL,lineage_digest TEXT NOT NULL); CREATE TABLE files(path TEXT PRIMARY KEY,artifact_id TEXT NOT NULL UNIQUE,source_hash TEXT NOT NULL,profile_id TEXT NOT NULL,payload TEXT NOT NULL); CREATE INDEX files_source_hash ON files(source_hash); CREATE INDEX files_profile ON files(profile_id); CREATE TABLE change_events(generation INTEGER NOT NULL,event_id INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(generation,event_id)); CREATE TABLE revision_headers(generation INTEGER PRIMARY KEY,token TEXT NOT NULL,payload TEXT NOT NULL); CREATE TABLE path_resolutions(artifact_id TEXT NOT NULL,path TEXT NOT NULL,payload TEXT NOT NULL); CREATE INDEX resolutions_path ON path_resolutions(path); CREATE INDEX resolutions_artifact ON path_resolutions(artifact_id);")?;
-    tx.execute_batch("CREATE TABLE continuity_schema(id INTEGER PRIMARY KEY CHECK(id=1),version INTEGER NOT NULL); INSERT INTO continuity_schema VALUES(1,1); CREATE TABLE continuity_records(key TEXT PRIMARY KEY,path TEXT NOT NULL,record TEXT NOT NULL); CREATE INDEX continuity_path ON continuity_records(path);")?;
-    tx.execute(
-        "INSERT INTO v2_catalog VALUES(1,?1,?2,?3)",
-        params![
-            token.to_string(),
-            raw_digest(&bytes).to_string(),
-            inventory.lineage_digest.to_string()
-        ],
-    )?;
-    for (path, file) in &inventory.files {
-        let payload = serde_json::to_string(file)?;
-        ensure!(
-            payload.len() <= MAX_FILE_METADATA_BYTES,
-            "file metadata exceeds byte bound"
-        );
+    let reuse = reuse_catalog(base_directory, previous, inventory)?;
+    let written = (|| -> Result<()> {
+        let snapshot = inventory.projection()?;
+        save_connection(
+            database.connection_mut(),
+            &snapshot,
+            Some(&token.revision.to_string()),
+            source,
+            Some(inventory),
+            reuse
+                .as_ref()
+                .zip(previous.and_then(|c| c.inventory.as_ref())),
+        )?;
+        let conn = database.connection_mut();
+        let tx = conn.transaction()?;
+        tx.execute_batch("CREATE TABLE v2_catalog(id INTEGER PRIMARY KEY CHECK(id=1),token TEXT NOT NULL,inventory_digest TEXT NOT NULL,lineage_digest TEXT NOT NULL); CREATE TABLE files(path TEXT PRIMARY KEY,artifact_id TEXT NOT NULL UNIQUE,source_hash TEXT NOT NULL,profile_id TEXT NOT NULL,payload TEXT NOT NULL); CREATE INDEX files_source_hash ON files(source_hash); CREATE INDEX files_profile ON files(profile_id); CREATE TABLE change_events(generation INTEGER NOT NULL,event_id INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(generation,event_id)); CREATE TABLE revision_headers(generation INTEGER PRIMARY KEY,token TEXT NOT NULL,payload TEXT NOT NULL); CREATE TABLE path_resolutions(artifact_id TEXT NOT NULL,path TEXT NOT NULL,payload TEXT NOT NULL); CREATE INDEX resolutions_path ON path_resolutions(path); CREATE INDEX resolutions_artifact ON path_resolutions(artifact_id);")?;
+        tx.execute_batch("CREATE TABLE continuity_schema(id INTEGER PRIMARY KEY CHECK(id=1),version INTEGER NOT NULL); INSERT INTO continuity_schema VALUES(1,1); CREATE TABLE continuity_records(key TEXT PRIMARY KEY,path TEXT NOT NULL,record TEXT NOT NULL); CREATE INDEX continuity_path ON continuity_records(path);")?;
         tx.execute(
-            "INSERT INTO files VALUES(?1,?2,?3,?4,?5)",
+            "INSERT INTO v2_catalog VALUES(1,?1,?2,?3)",
             params![
-                path,
-                file.state.artifact_id.to_string(),
-                file.state.source_hash.to_string(),
-                file.state.profile_id.to_string(),
-                payload
+                token.to_string(),
+                raw_digest(&bytes).to_string(),
+                inventory.lineage_digest.to_string()
             ],
         )?;
-        for record in &file.continuity {
+        for (path, file) in &inventory.files {
+            let payload = serde_json::to_string(file)?;
+            ensure!(
+                payload.len() <= MAX_FILE_METADATA_BYTES,
+                "file metadata exceeds byte bound"
+            );
             tx.execute(
-                "INSERT INTO continuity_records VALUES(?1,?2,?3)",
+                "INSERT INTO files VALUES(?1,?2,?3,?4,?5)",
                 params![
-                    serde_json::to_string(&record.key)?,
                     path,
-                    serde_json::to_string(record)?
+                    file.state.artifact_id.to_string(),
+                    file.state.source_hash.to_string(),
+                    file.state.profile_id.to_string(),
+                    payload
+                ],
+            )?;
+            for record in &file.continuity {
+                tx.execute(
+                    "INSERT INTO continuity_records VALUES(?1,?2,?3)",
+                    params![
+                        serde_json::to_string(&record.key)?,
+                        path,
+                        serde_json::to_string(record)?
+                    ],
+                )?;
+            }
+        }
+        for event in &lineage.events {
+            tx.execute(
+                "INSERT INTO change_events VALUES(?1,?2,?3)",
+                params![
+                    i64::try_from(event.generation)?,
+                    i64::try_from(event.event_id)?,
+                    serde_json::to_string(event)?
                 ],
             )?;
         }
+        for header in &lineage.ancestry {
+            tx.execute(
+                "INSERT INTO revision_headers VALUES(?1,?2,?3)",
+                params![
+                    i64::try_from(header.token.generation)?,
+                    header.token.to_string(),
+                    serde_json::to_string(header)?
+                ],
+            )?;
+        }
+        for resolver in &lineage.resolvers {
+            tx.execute(
+                "INSERT INTO path_resolutions VALUES(?1,?2,?3)",
+                params![
+                    resolver.artifact_id.to_string(),
+                    resolver.from.path,
+                    serde_json::to_string(resolver)?
+                ],
+            )?;
+        }
+        tx.pragma_update(None, "user_version", crate::IMMUTABLE_CATALOG_VERSION)?;
+        tx.commit()?;
+        Ok(())
+    })();
+    if let Err(error) = written {
+        return Err(database.write_error(error));
     }
-    for event in &lineage.events {
-        tx.execute(
-            "INSERT INTO change_events VALUES(?1,?2,?3)",
-            params![
-                i64::try_from(event.generation)?,
-                i64::try_from(event.event_id)?,
-                serde_json::to_string(event)?
-            ],
+    // Authenticate again after row reuse; do not publish a copy of changed base bytes.
+    if reuse.is_some() {
+        crate::blobs::verify_v2_for_query(
+            base_directory,
+            previous
+                .and_then(|c| c.receipt.as_ref())
+                .context("reuse receipt missing")?,
         )?;
     }
-    for header in &lineage.ancestry {
-        tx.execute(
-            "INSERT INTO revision_headers VALUES(?1,?2,?3)",
-            params![
-                i64::try_from(header.token.generation)?,
-                header.token.to_string(),
-                serde_json::to_string(header)?
-            ],
-        )?;
-    }
-    for resolver in &lineage.resolvers {
-        tx.execute(
-            "INSERT INTO path_resolutions VALUES(?1,?2,?3)",
-            params![
-                resolver.artifact_id.to_string(),
-                resolver.from.path,
-                serde_json::to_string(resolver)?
-            ],
-        )?;
-    }
-    tx.pragma_update(None, "user_version", crate::IMMUTABLE_CATALOG_VERSION)?;
-    tx.commit()?;
     database.finish()?;
     Ok(())
 }
@@ -1449,7 +1476,7 @@ fn save_inner(
             "PRAGMA journal_mode=OFF; PRAGMA temp_store=MEMORY; PRAGMA cache_size=-16384; PRAGMA cache_spill=ON;",
         )?;
     }
-    save_connection(&mut conn, snapshot, revision, source, None)
+    save_connection(&mut conn, snapshot, revision, source, None, None)
 }
 
 fn save_connection(
@@ -1458,6 +1485,7 @@ fn save_connection(
     revision: Option<&str>,
     source: &dyn ArtifactSource,
     inventory: Option<&airk_core::publication::InventoryV2>,
+    reuse: Option<(&Connection, &airk_core::publication::InventoryV2)>,
 ) -> Result<()> {
     let payload = serde_json::to_string(snapshot)?;
     ensure!(
@@ -1472,18 +1500,12 @@ fn save_connection(
     let version: u32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     ensure!(version <= 2, "unsupported SQLite schema");
     let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-    tx.execute_batch("CREATE TABLE IF NOT EXISTS revision(id INTEGER PRIMARY KEY CHECK(id=1), root TEXT NOT NULL, collection TEXT NOT NULL, generation INTEGER NOT NULL, schema_version INTEGER NOT NULL, payload TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS facts(path TEXT NOT NULL, name TEXT NOT NULL, folded_name TEXT NOT NULL, qualified_name TEXT NOT NULL, symbol_id TEXT NOT NULL, kind TEXT NOT NULL, language TEXT NOT NULL, is_code INTEGER NOT NULL, is_document INTEGER NOT NULL, line INTEGER NOT NULL, payload TEXT NOT NULL);
-        CREATE INDEX IF NOT EXISTS facts_name ON facts(name,kind);
-        CREATE INDEX IF NOT EXISTS facts_qualified ON facts(qualified_name);
-        CREATE INDEX IF NOT EXISTS facts_symbol ON facts(symbol_id);
-        CREATE INDEX IF NOT EXISTS facts_path ON facts(path,line);
-        CREATE TABLE IF NOT EXISTS relationships(source TEXT NOT NULL,target TEXT NOT NULL,kind TEXT NOT NULL,path TEXT NOT NULL,line INTEGER NOT NULL,payload TEXT NOT NULL);
-        CREATE INDEX IF NOT EXISTS edges_source ON relationships(source,kind);
-        CREATE INDEX IF NOT EXISTS edges_target ON relationships(target,kind);
-        CREATE TABLE IF NOT EXISTS index_components(id INTEGER PRIMARY KEY CHECK(id=1), payload TEXT NOT NULL);
-        DELETE FROM index_components;
-        DELETE FROM facts; DELETE FROM relationships; PRAGMA user_version=1;")?;
+    tx.execute_batch("CREATE TABLE IF NOT EXISTS revision(id INTEGER PRIMARY KEY CHECK(id=1), root TEXT NOT NULL, collection TEXT NOT NULL, generation INTEGER NOT NULL, schema_version INTEGER NOT NULL, payload TEXT NOT NULL); CREATE TABLE IF NOT EXISTS index_components(id INTEGER PRIMARY KEY CHECK(id=1), payload TEXT NOT NULL); DELETE FROM index_components; PRAGMA user_version=1;")?;
+    if inventory.is_some() {
+        crate::normalized::create(&tx)?;
+    } else {
+        tx.execute_batch("CREATE TABLE IF NOT EXISTS facts(path TEXT NOT NULL,name TEXT NOT NULL,folded_name TEXT NOT NULL,qualified_name TEXT NOT NULL,symbol_id TEXT NOT NULL,kind TEXT NOT NULL,language TEXT NOT NULL,is_code INTEGER NOT NULL,is_document INTEGER NOT NULL,line INTEGER NOT NULL,payload TEXT NOT NULL); CREATE TABLE IF NOT EXISTS relationships(source TEXT NOT NULL,target TEXT NOT NULL,kind TEXT NOT NULL,path TEXT NOT NULL,line INTEGER NOT NULL,payload TEXT NOT NULL); DELETE FROM facts; DELETE FROM relationships;")?;
+    }
     if let Some(revision) = revision {
         let header = header(snapshot, revision);
         tx.execute(
@@ -1502,12 +1524,121 @@ fn save_connection(
         ],
     )?;
     {
-        let mut facts =
-            tx.prepare("INSERT INTO facts VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)")?;
-        let mut edges = tx.prepare("INSERT INTO relationships VALUES(?1,?2,?3,?4,?5,?6)")?;
-        let mut insert = |hit: &FactHit| -> Result<()> {
-            let code = hit.code.as_ref();
-            facts.execute(params![
+        let mut writer = inventory.map(|_| crate::normalized::Writer::new(&tx));
+        for path in snapshot.artifacts.keys() {
+            if let (Some((base, old)), Some(next), Some(writer)) =
+                (reuse, inventory, writer.as_mut())
+                && old.files.get(path) == next.files.get(path)
+                && old.files.contains_key(path)
+            {
+                writer.copy_native(base, path, &next.files[path].state.source_hash.to_string())?;
+                continue;
+            }
+            let a = source.load_artifact(path)?;
+            let keys = airk_core::continuity::FactKeyIndex::new(
+                inventory
+                    .and_then(|inventory| inventory.files.get(path))
+                    .map_or(&[], |file| file.continuity.as_slice()),
+            );
+            for (ordinal, f) in a.facts.iter().enumerate() {
+                insert_hit(
+                    &tx,
+                    &mut writer,
+                    &FactHit {
+                        continuity_key: keys.key(ordinal, f),
+                        name: f.name.clone(),
+                        kind: f.kind.clone(),
+                        syntax_kind: f.syntax_kind.clone(),
+                        language: a.language.clone(),
+                        document: f.document.clone(),
+                        code: f.code.clone(),
+                        citation: Citation {
+                            path: a.path.clone(),
+                            content_hash: a.content_hash.clone(),
+                            start_line: f.start_line,
+                            end_line: f.end_line,
+                            location: f.location.clone(),
+                        },
+                    },
+                    false,
+                )?;
+            }
+        }
+        for f in &snapshot.imported_facts {
+            let mut imported = f.clone();
+            imported.continuity_key = None;
+            insert_hit(&tx, &mut writer, &imported, true)?;
+        }
+
+        for edge in &snapshot.imported_relationships {
+            write_edge(&tx, &mut writer, edge, true)?;
+        }
+    }
+    if inventory.is_some() {
+        crate::normalized::indexes(&tx)?;
+    } else {
+        // Build lookup B-trees once after the private bulk load; existing legacy
+        // indexes are retained. All indexes commit with the same evidence rows.
+        tx.execute_batch("CREATE INDEX IF NOT EXISTS facts_name ON facts(name,kind); CREATE INDEX IF NOT EXISTS facts_qualified ON facts(qualified_name); CREATE INDEX IF NOT EXISTS facts_symbol ON facts(symbol_id); CREATE INDEX IF NOT EXISTS facts_path ON facts(path,line); CREATE INDEX IF NOT EXISTS edges_source ON relationships(source,kind); CREATE INDEX IF NOT EXISTS edges_target ON relationships(target,kind);")?;
+    }
+    tx.commit()?;
+    Ok(())
+}
+
+fn reuse_catalog(
+    directory: &Path,
+    previous: Option<&crate::blobs::Catalog>,
+    next: &airk_core::publication::InventoryV2,
+) -> Result<Option<Connection>> {
+    let Some(previous) = previous else {
+        return Ok(None);
+    };
+    let (Some(inventory), Some(receipt)) = (&previous.inventory, &previous.receipt) else {
+        return Ok(None);
+    };
+    ensure!(
+        receipt_connection(&connect_root(directory, false)?, &receipt.token)?.as_ref()
+            == Some(receipt),
+        "reuse requires a committed local receipt"
+    );
+    ensure!(
+        raw_digest(&inventory.canonical_bytes()?) == receipt.inventory_digest,
+        "reuse inventory changed after authentication"
+    );
+    if inventory.incarnation != next.incarnation
+        || inventory.collection != next.collection
+        || inventory.root != next.root
+        || inventory.roots != next.roots
+        || inventory.extractor_version != next.extractor_version
+    {
+        return Ok(None);
+    }
+    crate::blobs::verify_v2_for_query(directory, receipt)?;
+    let conn = open_immutable_catalog(
+        &directory
+            .join("generations")
+            .join(receipt.token.revision.to_string())
+            .join("catalog.sqlite"),
+    )?;
+    if !crate::normalized::present(&conn)? {
+        return Ok(None);
+    }
+    validate_v2_catalog(&conn, &receipt.token, &receipt.inventory_digest)?;
+    Ok(Some(conn))
+}
+
+fn insert_hit(
+    tx: &rusqlite::Transaction<'_>,
+    writer: &mut Option<crate::normalized::Writer<'_>>,
+    hit: &FactHit,
+    imported: bool,
+) -> Result<()> {
+    let code = hit.code.as_ref();
+    if let Some(writer) = writer {
+        writer.fact(hit, imported)?;
+    } else {
+        tx.prepare_cached("INSERT INTO facts VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)")?
+            .execute(params![
                 hit.citation.path,
                 hit.name,
                 hit.name.to_lowercase(),
@@ -1520,81 +1651,62 @@ fn save_connection(
                 i64::try_from(hit.citation.start_line)?,
                 serde_json::to_string(hit)?
             ])?;
-            if let Some(c) = code {
-                if let Some(owner) = &c.owner_id {
-                    insert_edge(
-                        &mut edges,
-                        &RelationshipHit {
-                            source: owner.clone(),
-                            target: c.symbol_id.clone(),
-                            kind: "contains".into(),
-                            resolution: "syntax_candidate".into(),
-                            basis: EvidenceBasis::Syntax,
-                            producer: "airk-syntax-containment".into(),
-                            producer_version: "native-facts/4".into(),
-                            citation: hit.citation.clone(),
-                        },
-                    )?;
-                }
-                if let Some(target) = &c.target {
-                    insert_edge(
-                        &mut edges,
-                        &RelationshipHit {
-                            source: c
-                                .owner_id
-                                .clone()
-                                .unwrap_or_else(|| format!("file:{}", hit.citation.path)),
-                            target: target.clone(),
-                            kind: hit.kind.clone(),
-                            resolution: "syntax_candidate".into(),
-                            basis: c.basis.clone(),
-                            producer: c.producer.clone(),
-                            producer_version: c.producer_version.clone(),
-                            citation: hit.citation.clone(),
-                        },
-                    )?;
-                }
-            }
-            Ok(())
-        };
-        for path in snapshot.artifacts.keys() {
-            let a = source.load_artifact(path)?;
-            let keys = airk_core::continuity::FactKeyIndex::new(
-                inventory
-                    .and_then(|inventory| inventory.files.get(path))
-                    .map_or(&[], |file| file.continuity.as_slice()),
-            );
-            for (ordinal, f) in a.facts.iter().enumerate() {
-                insert(&FactHit {
-                    continuity_key: keys.key(ordinal, f),
-                    name: f.name.clone(),
-                    kind: f.kind.clone(),
-                    syntax_kind: f.syntax_kind.clone(),
-                    language: a.language.clone(),
-                    document: f.document.clone(),
-                    code: f.code.clone(),
-                    citation: Citation {
-                        path: a.path.clone(),
-                        content_hash: a.content_hash.clone(),
-                        start_line: f.start_line,
-                        end_line: f.end_line,
-                        location: f.location.clone(),
-                    },
-                })?;
-            }
+    }
+    if let Some(c) = code {
+        if let Some(owner) = &c.owner_id {
+            write_edge(
+                tx,
+                writer,
+                &RelationshipHit {
+                    source: owner.clone(),
+                    target: c.symbol_id.clone(),
+                    kind: "contains".into(),
+                    resolution: "syntax_candidate".into(),
+                    basis: EvidenceBasis::Syntax,
+                    producer: "airk-syntax-containment".into(),
+                    producer_version: "native-facts/4".into(),
+                    citation: hit.citation.clone(),
+                },
+                imported,
+            )?;
         }
-        for f in &snapshot.imported_facts {
-            let mut imported = f.clone();
-            imported.continuity_key = None;
-            insert(&imported)?;
-        }
-
-        for edge in &snapshot.imported_relationships {
-            insert_edge(&mut edges, edge)?;
+        if let Some(target) = &c.target {
+            write_edge(
+                tx,
+                writer,
+                &RelationshipHit {
+                    source: c
+                        .owner_id
+                        .clone()
+                        .unwrap_or_else(|| format!("file:{}", hit.citation.path)),
+                    target: target.clone(),
+                    kind: hit.kind.clone(),
+                    resolution: "syntax_candidate".into(),
+                    basis: c.basis.clone(),
+                    producer: c.producer.clone(),
+                    producer_version: c.producer_version.clone(),
+                    citation: hit.citation.clone(),
+                },
+                imported,
+            )?;
         }
     }
-    tx.commit()?;
     Ok(())
+}
+
+fn write_edge(
+    tx: &rusqlite::Transaction<'_>,
+    writer: &mut Option<crate::normalized::Writer<'_>>,
+    edge: &RelationshipHit,
+    imported: bool,
+) -> Result<()> {
+    if let Some(writer) = writer {
+        writer.edge(edge, imported)
+    } else {
+        let mut statement =
+            tx.prepare_cached("INSERT INTO relationships VALUES(?1,?2,?3,?4,?5,?6)")?;
+        insert_edge(&mut statement, edge)
+    }
 }
 
 fn insert_edge(stmt: &mut rusqlite::Statement<'_>, edge: &RelationshipHit) -> Result<()> {
@@ -1645,6 +1757,7 @@ impl FileStore {
         let tx = &conn;
         let generation = identity(tx, root, collection)?;
         let mut response = FactsResponse {
+            indexing: conn.detail.into(),
             generation,
             publication: conn.publication.clone(),
             collection: collection.into(),
@@ -1716,7 +1829,7 @@ impl FileStore {
         let conn = read_transaction(&self.directory)?;
         let tx = &conn;
         let generation = identity(tx, root, collection)?;
-        let mut response = RelationshipsResponse {generation,publication:conn.publication.clone(),collection:collection.into(),relationships:Vec::new(),truncated:false,coverage:"Selected syntax patterns and optional manifest-bound producer assertions. External targets are identifiers only; impact is incomplete.".into()};
+        let mut response = RelationshipsResponse {indexing:conn.detail.into(),generation,publication:conn.publication.clone(),collection:collection.into(),relationships:Vec::new(),truncated:false,coverage:"Selected syntax patterns and optional manifest-bound producer assertions. External targets are identifiers only; impact is incomplete.".into()};
         let mut pending = BTreeSet::from([q.symbol.clone()]);
         let mut visited = BTreeSet::new();
         let mut returned = BTreeSet::new();

@@ -624,6 +624,8 @@ enum HistoryCommand {
 
 #[derive(Subcommand)]
 enum RetentionCommand {
+    /// Continue pending automatic cleanup once; skip manual policy or a busy writer.
+    Continue,
     /// Read effective policy, protected storage and pending maintenance; never clean up.
     Show,
     /// Preview the current or proposed policy without changing managed state.
@@ -650,8 +652,8 @@ enum RetentionCommand {
         /// Cooperative elapsed-time budget for this pass (1..60000 ms).
         #[arg(long, value_parser = clap::value_parser!(u64).range(1..=60_000))]
         max_duration_ms: Option<u64>,
-        /// Maximum surviving inventory metadata examined (16 KiB..64 MiB).
-        #[arg(long, value_parser = clap::value_parser!(u64).range(16_384..=67_108_864))]
+        /// Maximum surviving inventory metadata examined (16 KiB..8 GiB).
+        #[arg(long, value_parser = clap::value_parser!(u64).range(16_384..=8_589_934_592))]
         max_metadata_bytes: Option<u64>,
     },
 }
@@ -659,6 +661,11 @@ enum RetentionCommand {
 #[derive(Subcommand)]
 enum ExtractionCommand {
     Show,
+    /// Select optional evidence for the next successful index; preserves adapter rules.
+    Detail {
+        #[arg(value_parser = ["essential", "balanced", "detailed"])]
+        level: String,
+    },
     Validate {
         #[arg(long, required_unless_present = "json", conflicts_with = "json")]
         file: Option<PathBuf>,
@@ -769,7 +776,12 @@ enum QuotaCommand {
     Policy,
     /// Set the entire shared policy from a bounded JSON file, including collection overrides.
     Set {
-        policy: PathBuf,
+        #[arg(required_unless_present = "json", conflicts_with = "json")]
+        policy: Option<PathBuf>,
+        #[arg(long)]
+        json: Option<String>,
+        #[arg(long)]
+        expected_json: Option<String>,
     },
 }
 
@@ -1050,6 +1062,7 @@ async fn main() -> anyhow::Result<()> {
         Command::Collections { action } => match action {
             CollectionCommand::Extraction { action } => match action {
                 ExtractionCommand::Show => recorder.print(&kernel.extraction_policy()?),
+                ExtractionCommand::Detail { level } => recorder.print(&kernel.configure_index_detail(serde_json::from_value(serde_json::Value::String(level))?)?),
                 ExtractionCommand::Validate { file, json } => recorder.print(&kernel.validate_extraction_policy(&extraction_policy_input(file, json)?)?),
                 ExtractionCommand::Set { file, json } => recorder.print(&kernel.configure_extraction_policy(extraction_policy_input(file, json)?)?),
             },
@@ -1077,12 +1090,14 @@ async fn main() -> anyhow::Result<()> {
             CollectionCommand::Quota { action } => match action {
                 QuotaCommand::Status => print_json(&kernel.quota_status()?),
                 QuotaCommand::Policy => print_json(&kernel.quota_policy()?),
-                QuotaCommand::Set { policy } => {
+                QuotaCommand::Set { policy, json, expected_json } => {
                     use std::io::Read;
                     let mut bytes = Vec::new();
-                    std::fs::File::open(policy)?.take(65_537).read_to_end(&mut bytes)?;
-                    anyhow::ensure!(bytes.len() <= 65_536, "quota policy exceeds 64 KiB");
-                    print_json(&kernel.configure_quota(serde_json::from_slice(&bytes)?)?)
+                    if let Some(policy) = policy { std::fs::File::open(policy)?.take(65_537).read_to_end(&mut bytes)?; }
+                    else { bytes = json.unwrap_or_default().into_bytes(); }
+                    anyhow::ensure!(bytes.len() <= 65_536 && expected_json.as_ref().is_none_or(|value| value.len() <= 65_536), "quota policy exceeds 64 KiB");
+                    let expected = expected_json.map(|value| serde_json::from_str(&value)).transpose()?;
+                    print_json(&kernel.configure_quota_if_current(serde_json::from_slice(&bytes)?, expected.as_ref())?)
                 },
             },
             CollectionCommand::Roots { action } => match action {
@@ -1094,6 +1109,7 @@ async fn main() -> anyhow::Result<()> {
             CollectionCommand::List => recorder.print(&kernel.collections()?),
             CollectionCommand::Remove { id } => recorder.print(&kernel.remove_collection(&id)?),
             CollectionCommand::Retention { action } => match action {
+                RetentionCommand::Continue => recorder.print(&kernel.continue_automatic_retention()?),
                 RetentionCommand::Show => recorder.print(&kernel.retention_status()?),
                 RetentionCommand::Preview { file, json } => {
                     let bytes = retention_policy_bytes(file, json)?;

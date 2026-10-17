@@ -24,6 +24,8 @@ test('retention controls preview before explicit mutation and never rewrite clie
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'airk-retention-controls-'));
     const root = path.join(directory, 'Original Workspace'); await fs.mkdir(root);
     const policyFile = path.join(directory, 'original-policy.json');
+    const inputs: (string | undefined)[] = [];
+    const quotaPolicy = { root_bytes: 500 * 1073741824, default_collection_bytes: 100 * 1073741824, collections: { unrelated: 20 * 1073741824 } };
     const policyBytes = '{ "version": 1, "rules": [] }\n';
     await fs.writeFile(policyFile, policyBytes);
     const extractionInputs: string[] = [], snapshots: string[] = [];
@@ -42,15 +44,22 @@ test('retention controls preview before explicit mutation and never rewrite clie
             onDidChangeTextEditorSelection: event, onDidChangeActiveTextEditor: event, showErrorMessage: (error: string) => { throw new Error(error); },
             showTextDocument: async () => {}, showInformationMessage: (message: string) => { information.push(message); }, showQuickPick: async (choices: any[]) => choices.find(choice => choice.mode === 'automatic') ?? choices[0],
             showOpenDialog: async () => [{ fsPath: policyFile }],
+            showInputBox: async () => inputs.shift(),
+            withProgress: async (_options: unknown, run: () => Promise<unknown>) => run(),
             showWarningMessage: async (message: string, _options: unknown, action: string) => { warnings.push(message); if (message.includes('extraction policy')) { await fs.writeFile(policyFile, '{"version":2}'); } return confirm ? action : undefined; } },
         commands: { registerCommand: (name: string, handler: () => Promise<unknown>) => { commands.set(name, handler); return disposable; } },
-        StatusBarAlignment: { Left: 1 }, EventEmitter: class { event = event; fire() {} dispose() {} }, lm: {}
+        ProgressLocation: { Notification: 1 }, StatusBarAlignment: { Left: 1 }, EventEmitter: class { event = event; fire() {} dispose() {} }, lm: {}
     };
     const loader = Module as unknown as { _load: (...args: any[]) => any }, original = loader._load;
     const native = require('../native'), priorPrepare = native.prepareHelper, priorRun = native.runJson;
     native.prepareHelper = async () => '/original/helper';
     native.runJson = async (_spec: unknown, command: string, extra: string[] = []) => {
         calls.push([command, ...extra]);
+        if (extra[0] === 'quota') {
+            if (extra[1] === 'policy') { return structuredClone(quotaPolicy); }
+            if (extra[1] === 'status') { return { used_bytes: 0, reserved_bytes: 0, collections: {} }; }
+            if (extra[1] === 'set') { return {}; }
+        }
         if (extra[0] === 'extraction') {
             if (extra[1] !== 'show') { snapshots.push(extra[3]); extractionInputs.push(await fs.readFile(extra[3], 'utf8')); }
             return { policy: { version: 1, rules: [] }, digest: 'configured', applied_digest: 'published', pending_reindex: true, origin: extra[1] === 'validate' ? 'preview' : 'explicit' };
@@ -66,6 +75,7 @@ test('retention controls preview before explicit mutation and never rewrite clie
     (stub as any).TreeItemCollapsibleState = { None: 0 };
     (stub as any).ThemeIcon = class { constructor(public id: string) {} };
     (stub.window as any).createTreeView = () => ({ dispose() {} });
+    (stub.window as any).registerWebviewViewProvider = () => ({ dispose() {} });
     (stub as any).ViewColumn = { Active: 1 };
     (stub.window as any).createWebviewPanel = () => ({
         webview: { html: '', onDidReceiveMessage: (handler: (message: unknown) => void) => {
@@ -120,6 +130,19 @@ test('retention controls preview before explicit mutation and never rewrite clie
         for (const snapshot of snapshots) { await assert.rejects(fs.stat(snapshot), { code: 'ENOENT' }); }
         assert.ok(documents.some(document => document.proposed?.pending_reindex === true));
         assert.equal(calls.filter(call => call[0] === 'index').length, 0, 'Saving policy does not implicitly index');
+        assert.equal(status.policy.policy.searchable_predecessors, 0, 'User can select active-only retention');
+        inputs.push(undefined); await commands.get('airk.storageLimits')!();
+        assert.equal(calls.filter(call => call[1] === 'quota' && call[2] === 'set').length, 0);
+        confirm = false; inputs.push('150', '600'); await commands.get('airk.storageLimits')!();
+        assert.equal(calls.filter(call => call[1] === 'quota' && call[2] === 'set').length, 0, 'Cancelling review does not save');
+        confirm = true; inputs.push('150', '600'); await commands.get('airk.storageLimits')!();
+        const quotaSet = calls.find(call => call[1] === 'quota' && call[2] === 'set')!;
+        const proposed = JSON.parse(quotaSet[4]);
+        assert.equal(proposed.root_bytes, 600 * 1073741824);
+        assert.equal(proposed.collections.unrelated, quotaPolicy.collections.unrelated);
+        assert.ok(Object.values(proposed.collections).includes(150 * 1073741824));
+        assert.deepEqual(JSON.parse(quotaSet[6]), quotaPolicy, 'Native save must compare the reviewed shared policy');
+
     } finally {
         context.subscriptions.forEach(item => item.dispose()); loader._load = original;
         native.prepareHelper = priorPrepare; native.runJson = priorRun;

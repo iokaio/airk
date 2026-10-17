@@ -28,6 +28,7 @@ fn run(
         roots,
         limits,
         &ExtractionPolicy {
+            detail: None,
             version: 1,
             rules: vec![],
         },
@@ -230,6 +231,7 @@ fn copy_reuses_before_parsing_but_changes_inventory_and_full_scan_bypasses_looku
         }))
     };
     let policy = ExtractionPolicy {
+        detail: None,
         version: 1,
         rules: vec![],
     };

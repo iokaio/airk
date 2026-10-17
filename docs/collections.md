@@ -63,7 +63,7 @@ One writer publishes at a time; other writers receive a locked error. Native OS 
 
 ## Retention and removal
 
-The [searchable retention policy](retention.md) keeps active evidence plus one committed predecessor, with live reader leases protecting additional revisions. New collections use automatic retention; upgraded collections remain manual until an operator selects automatic retention. `collections retention show` reports effective mode/origin, protected bytes, pending work and maintenance failures. Policy preview/set/run are separate from the older explicit prune command below. History packages and checkpoints are not yet available.
+The [searchable retention policy](retention.md) keeps active evidence plus the configured zero to eight predecessors, with live reader leases protecting additional revisions. New collections use automatic retention; upgraded collections remain manual until an operator selects automatic retention. `collections retention show` reports effective mode/origin, protected bytes, pending work and maintenance failures. Policy preview/set/run are separate from the older explicit prune command below. History packages and checkpoints are not yet available.
 
 ~~~console
 airk --data-dir /path/to/state --collection project-a collections list

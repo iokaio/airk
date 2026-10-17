@@ -23,6 +23,7 @@ fn scss_original_locations_profile_invalidation_and_rename_reuse() -> Result<()>
         "pub fn unchanged() -> u32 { 19 }\n",
     )?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    kernel.configure_index_detail(airk_core::extraction::IndexDetail::Detailed)?;
     assert_eq!(kernel.index()?.indexed, 2);
     let store = FileStore::new(data.path().join("collections/default"));
     let before = store.catalog()?.context("catalog")?;
@@ -71,6 +72,7 @@ fn scss_original_locations_profile_invalidation_and_rename_reuse() -> Result<()>
     let warm = kernel.index()?;
     assert_eq!((warm.indexed, warm.reused), (0, 2));
     kernel.configure_extraction_policy(ExtractionPolicy {
+        detail: None,
         version: 1,
         rules: vec![SelectionRule {
             selector: RuleMatch::Exact {
@@ -97,6 +99,7 @@ fn scss_original_locations_profile_invalidation_and_rename_reuse() -> Result<()>
     );
     drop(changed_catalog);
     kernel.configure_extraction_policy(ExtractionPolicy {
+        detail: None,
         version: 1,
         rules: vec![],
     })?;

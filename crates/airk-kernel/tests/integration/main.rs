@@ -14,6 +14,7 @@ mod header_context_boundaries_v2;
 mod header_context_v2;
 mod history_controls_v2;
 mod html_mapping_v2;
+mod index_detail;
 mod instruction_documents_v2;
 mod languages_a_v2;
 mod languages_b_data_v2;

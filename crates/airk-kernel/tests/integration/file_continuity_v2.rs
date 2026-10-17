@@ -45,6 +45,7 @@ fn inventory(generation: u64, files: &[(&str, &str)]) -> Result<InventoryV2> {
     let profile_id = profile.identity()?;
     let mut inventory = InventoryV2 {
         embedding_pipeline_digest: None,
+        index_detail: None,
         extraction_policy_digest: None,
         version: 2,
         incarnation: Incarnation::from_bytes([1; 16]),
