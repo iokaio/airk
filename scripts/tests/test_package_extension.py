@@ -2,6 +2,8 @@
 import hashlib
 import importlib.util
 import json
+import shutil
+import subprocess
 from pathlib import Path
 import tempfile
 import unittest
@@ -13,6 +15,35 @@ spec.loader.exec_module(package)
 
 
 class VsixContracts(unittest.TestCase):
+    @unittest.skipUnless((package.EXTENSION / "node_modules" / "jsonc-parser").is_dir(), "npm dependencies unavailable")
+    def test_packaged_parser_closure_and_license(self):
+        with tempfile.TemporaryDirectory() as directory:
+            stage = Path(directory) / "node_modules" / "jsonc-parser"
+            package.stage_jsonc_parser(package.EXTENSION / "node_modules" / "jsonc-parser", stage)
+            self.assertEqual({p.relative_to(stage).as_posix() for p in stage.rglob("*") if p.is_file()}, set(package.JSONC_FILES))
+            self.assertIn("Permission is hereby granted", (stage / "LICENSE.md").read_text(encoding="utf-8"))
+            if shutil.which("node"):
+                subprocess.run(["node", "-e", 'const p=require(process.argv[1]); if(p.parse("{/*comment*/ \\\"value\\\": 2}").value!==2)process.exit(1);', str(stage)], check=True)
+                root = Path(directory)
+                manifest = json.loads((package.EXTENSION / "package.json").read_text(encoding="utf-8"))
+                (root / "package.json").write_text(json.dumps({"name": "airk", "publisher": "iokaio", "version": "1.1.2",
+                    "engines": {"vscode": "^1.99.0"}, "repository": {"type": "git", "url": "https://github.com/iokaio/airk"},
+                    "license": "Apache-2.0", "files": manifest["files"], "dependencies": manifest["dependencies"]}), encoding="utf-8")
+                (root / "README.md").write_text("AIRK packaging fixture", encoding="utf-8")
+                (root / "LICENSE").write_text("Fixture legal file", encoding="utf-8")
+                for name in ("out/fixture.js", "native/airk.exe", "images/fixture.png", "images/fixture.svg", "NOTICE", "THIRD_PARTY_NOTICES.md"):
+                    file = root / name
+                    file.parent.mkdir(parents=True, exist_ok=True)
+                    file.write_bytes(b"public packaging fixture")
+                expected = {file.relative_to(root).as_posix(): package.digest(file.read_bytes()) for file in root.rglob("*") if file.is_file()}
+                archive = root / "fixture.vsix"
+                subprocess.run(["node", str(package.EXTENSION / "scripts" / "package.cjs"), str(root), "win32-x64", str(archive), "stable"], check=True, capture_output=True)
+                package.verify_vsix(archive, expected, "airk.exe", "win32-x64", "1.1.2", False)
+            source = stage / "lib" / "umd" / "main.js"
+            source.write_text('require("./missing");', encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "Unpackaged jsonc-parser dependency"):
+                package.stage_jsonc_parser(stage, Path(directory) / "rejected")
+
     def test_walkthrough_commands_and_media_are_packaged(self):
         manifest = json.loads((package.EXTENSION / "package.json").read_text(encoding="utf-8"))
         commands = {entry["command"] for entry in manifest["contributes"]["commands"]}

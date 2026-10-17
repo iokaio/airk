@@ -282,10 +282,10 @@ test('multi-root Index Now selects the active folder and coverage refresh never 
             update: async (key: string, value: unknown) => { state.set(key, value); } } };
     try {
         delete require.cache[require.resolve('../extension')]; await require('../extension').activate(context);
-        await commands.get('airk.manageMcp')!();
+        await commands.get('airk.manageVscodeMcp')!();
         assert.deepEqual(invokedMcpCommands, ['workbench.mcp.listServer']);
         availableMcpCommands = [];
-        await assert.rejects(commands.get('airk.manageMcp')!(), /does not expose MCP: List Servers/);
+        await assert.rejects(commands.get('airk.manageVscodeMcp')!(), /does not expose MCP: List Servers/);
         assert.equal(invokedMcpCommands.length, 1, 'Unavailable editor controls do not invoke a guessed fallback');
         const initialNotifications = notifications;
         await commands.get('airk.index')!();
@@ -379,6 +379,137 @@ test('multi-root Index Now selects the active folder and coverage refresh never 
         native.prepareHelper = priorPrepare; native.runJson = priorRun; native.probeMcp = priorProbe;
         const resolved = await fs.realpath(directory); assert.equal(path.dirname(resolved), await fs.realpath(os.tmpdir()));
         assert.ok(path.basename(resolved).startsWith('airk-vscode-multiroot-')); await fs.rm(resolved, { recursive: true, force: true });
+    }
+});
+
+test('Manage Agent Connections selects Codex, creates only on request, and refuses stale or untrusted guides', async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'airk-vscode-connections-'));
+    const root = path.join(directory, 'Project'); await fs.mkdir(root);
+    const openedRoot = path.join(directory, 'OpenedProject');
+    await fs.symlink(root, openedRoot, process.platform === 'win32' ? 'junction' : 'dir');
+    const commands = new Map<string, () => Promise<unknown>>(), state = new Map<string, unknown>();
+    const disposable = { dispose() {} }, event = () => disposable;
+    let registration = false, saveWorks = true;
+    let controller: any, receive!: (value: unknown) => Promise<void>, picked: string | undefined = 'codex', panels = 0, indexes = 0;
+    const clipboard: string[] = [], invoked: string[] = [];
+    const panel = { ...disposable, onDidDispose: event, webview: { html: '', onDidReceiveMessage: (handler: typeof receive) => { receive = handler; return disposable; } } };
+    const stub = {
+        workspace: { isTrusted: true, textDocuments: [] as any[],
+            workspaceFolders: [{ name: 'Project', uri: { scheme: 'file', fsPath: openedRoot } }],
+            getConfiguration: () => ({ get: (key: string, fallback: unknown) => key === 'index.mode' ? 'manual' : fallback, inspect: (key: string) => key === 'mcp.registrationEnabled' ? { globalValue: registration } : undefined,
+                update: async (key: string, value: boolean) => { assert.equal(key, 'mcp.registrationEnabled'); registration = value; } }),
+            createFileSystemWatcher: () => ({ ...disposable, onDidChange: event, onDidCreate: event, onDidDelete: event }),
+            onDidSaveTextDocument: event, onDidChangeTextDocument: event, onDidGrantWorkspaceTrust: event,
+            onDidChangeWorkspaceFolders: event, onDidChangeConfiguration: event,
+            openTextDocument: async (uri: { fsPath: string }) => {
+                const document = { uri, isDirty: false, version: 1, text: await fs.readFile(uri.fsPath, 'utf8'),
+                    getText() { return this.text; }, positionAt(offset: number) { return offset; },
+                    async save() { if (!saveWorks) { return false; } await fs.writeFile(uri.fsPath, this.text); this.isDirty = false; return true; } };
+                stub.workspace.textDocuments.push(document); return document;
+            },
+            applyEdit: async (edit: { uri: { fsPath: string }; text: string }) => {
+                const document = stub.workspace.textDocuments.find(item => item.uri.fsPath === edit.uri.fsPath);
+                document.text = edit.text; document.version++; document.isDirty = true; return true;
+            } },
+        window: { createOutputChannel: () => ({ ...disposable, appendLine() {}, show() {} }),
+            createStatusBarItem: () => ({ ...disposable, show() {} }), onDidChangeTextEditorSelection: event, onDidChangeActiveTextEditor: event,
+            showQuickPick: async (items: { client: string }[]) => items.find(item => item.client === picked),
+            createWebviewPanel: () => { panels++; return panel; },
+            withProgress: async (_options: unknown, run: () => Promise<unknown>) => run(), showErrorMessage() {} },
+        commands: { registerCommand: (name: string, handler: () => Promise<unknown>) => { commands.set(name, handler); return disposable; },
+            getCommands: async () => ['workbench.mcp.listServer'], executeCommand: async (command: string) => { invoked.push(command); } },
+        env: { remoteName: undefined as string | undefined, clipboard: { writeText: async (text: string) => { clipboard.push(text); } } },
+        Uri: { file: (fsPath: string) => ({ fsPath }) }, Range: class { constructor(_start: unknown, _end: unknown) {} },
+        WorkspaceEdit: class { uri?: { fsPath: string }; text = ''; replace(uri: { fsPath: string }, _range: unknown, text: string) { this.uri = uri; this.text = text; } },
+        ConfigurationTarget: { Global: 1 }, ViewColumn: { Active: 1 }, StatusBarAlignment: { Left: 1 }, ProgressLocation: { Notification: 1 },
+        EventEmitter: class { event = event; fire() {} dispose() {} }, lm: {} as { registerMcpServerDefinitionProvider?: () => typeof disposable }
+    };
+    addTreeApi(stub, undefined, provider => { controller = provider.controller; });
+    const loader = Module as unknown as { _load: (...args: any[]) => any }, original = loader._load;
+    const native = require('../native'), priorPrepare = native.prepareHelper, priorRun = native.runJson, priorProbe = native.probeMcp;
+    native.prepareHelper = async () => '/fixture/airk';
+    native.runJson = async (_spec: unknown, command: string) => {
+        if (command === 'index') { indexes++; return { generation: 1, indexed: 1, reused: 0, removed: 0, skipped: [] }; }
+        return { scan_complete: true, eligible: 1, current: 1, indexed: true };
+    };
+    native.probeMcp = async () => ({ tools: ['airk_status'], status: {} });
+    loader._load = function(request: string, ...args: any[]) { return request === 'vscode' ? stub : original.call(this, request, ...args); };
+    const context = { subscriptions: [] as { dispose(): void }[], extensionPath: '/fixture/extension',
+        extension: { packageJSON: { version: '1.1.2' } }, globalStorageUri: { fsPath: path.join(directory, 'Host') },
+        globalState: { get: (key: string, fallback: unknown) => state.get(key) ?? fallback,
+            update: async (key: string, value: unknown) => { state.set(key, value); } } };
+    try {
+        delete require.cache[require.resolve('../extension')]; await require('../extension').activate(context);
+        picked = undefined; await commands.get('airk.manageMcp')!(); assert.equal(panels, 0);
+        picked = 'codex'; await commands.get('airk.manageMcp')!();
+        assert.equal(panels, 1); assert.deepEqual(invoked, []);
+        assert.equal(indexes, 0, 'Opening setup does not force indexing');
+        const destination = path.join(root, '.codex', 'config.toml');
+        await assert.rejects(fs.stat(destination), { code: 'ENOENT' });
+        assert.match(panel.webview.html, /Connect Codex to AIRK/);
+        await receive({ action: 'copy' }); assert.match(clipboard[0], /mcp_servers.airk-project-/);
+        assert.match(clipboard[0], /--collection/);
+        stub.workspace.textDocuments.push({ isDirty: true, uri: { fsPath: path.join(openedRoot, '.codex', 'config.toml') } });
+        await receive({ action: 'createCodex' }); assert.match(panel.webview.html, /unsaved edits/);
+        stub.workspace.textDocuments = [];
+        await receive({ action: 'createCodex' });
+        assert.equal(await fs.readFile(destination, 'utf8'), clipboard[0]);
+        assert.match(panel.webview.html, /configuration created/);
+        await receive({ action: 'createCodex' }); assert.match(panel.webview.html, /already exists and was preserved/);
+        await receive({ action: 'verify' }); assert.match(panel.webview.html, /helper verified: 1 tools/);
+        assert.match(panel.webview.html, /Agent connection still needs/);
+        await receive({ action: 'copyPrompt' }); assert.match(clipboard[1], /airk_status/);
+        native.probeMcp = async () => { throw new Error('Fixture unavailable'); };
+        await receive({ action: 'verify' }); assert.match(panel.webview.html, /Fixture unavailable/);
+        stub.env.remoteName = 'ssh-remote';
+        await receive({ action: 'createCodex' }); assert.match(panel.webview.html, /Use manual configuration/);
+        stub.env.remoteName = undefined;
+        for (const [client, relative] of [['claude', '.mcp.json'], ['gemini', '.gemini/settings.json'], ['antigravity', '.agents/mcp_config.json']]) {
+            picked = client; await commands.get('airk.manageMcp')!();
+            const config = path.join(root, relative);
+            stub.workspace.textDocuments.push({ isDirty: true, uri: { fsPath: path.join(openedRoot, relative) } });
+            await receive({ action: 'installJson' }); assert.match(panel.webview.html, /unsaved edits/);
+            await assert.rejects(fs.stat(config), { code: 'ENOENT' });
+            stub.workspace.textDocuments = [];
+            stub.env.remoteName = 'ssh-remote';
+            await receive({ action: 'installJson' }); assert.match(panel.webview.html, /Use manual configuration/);
+            stub.env.remoteName = undefined;
+            await receive({ action: 'installJson' }); assert.match(panel.webview.html, /configuration installed/);
+            const installed = await fs.readFile(config, 'utf8');
+            assert.ok(Object.keys(JSON.parse(installed).mcpServers).some(key => key.startsWith('airk-project-')));
+            await receive({ action: 'installJson' }); assert.equal(await fs.readFile(config, 'utf8'), installed);
+            assert.match(panel.webview.html, /connection has not been verified/);
+            const prior = '{"mcpServers":{"other":{"command":"keep"}},"approval":false}';
+            await fs.writeFile(config, prior);
+            saveWorks = false;
+            await receive({ action: 'installJson' }); assert.match(panel.webview.html, /not saved/);
+            assert.equal(await fs.readFile(config, 'utf8'), prior);
+            assert.ok(stub.workspace.textDocuments.some(document => document.isDirty));
+            stub.workspace.textDocuments = []; saveWorks = true;
+            await receive({ action: 'installJson' }); assert.match(panel.webview.html, /configuration installed/);
+            const merged = JSON.parse(await fs.readFile(config, 'utf8'));
+            assert.equal(merged.mcpServers.other.command, 'keep'); assert.equal(merged.approval, false);
+            stub.workspace.textDocuments = [];
+        }
+        picked = 'vscode'; await commands.get('airk.manageMcp')!();
+        await receive({ action: 'enableCopilot' }); assert.match(panel.webview.html, /does not support/);
+        assert.equal(registration, false); assert.deepEqual(invoked, []);
+        stub.lm.registerMcpServerDefinitionProvider = () => disposable;
+        await receive({ action: 'enableCopilot' });
+        assert.equal(registration, true); assert.deepEqual(invoked, ['workbench.mcp.listServer']);
+        assert.match(panel.webview.html, /registration enabled/);
+        assert.match(panel.webview.html, /connection has not been verified/);
+        stub.workspace.workspaceFolders = []; await controller.refresh();
+        await receive({ action: 'copy' }); assert.match(panel.webview.html, /Workspace or storage changed/);
+        assert.equal(clipboard.length, 2);
+        stub.workspace.isTrusted = false;
+        await receive({ action: 'copy' }); assert.match(panel.webview.html, /Trust this workspace/);
+        await assert.rejects(commands.get('airk.manageMcp')!(), /Trust this workspace/);
+    } finally {
+        context.subscriptions.forEach(item => item.dispose()); loader._load = original;
+        native.prepareHelper = priorPrepare; native.runJson = priorRun; native.probeMcp = priorProbe;
+        const resolved = await fs.realpath(directory); assert.equal(path.dirname(resolved), await fs.realpath(os.tmpdir()));
+        assert.ok(path.basename(resolved).startsWith('airk-vscode-connections-')); await fs.rm(resolved, { recursive: true, force: true });
     }
 });
 

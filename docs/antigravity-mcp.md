@@ -12,7 +12,7 @@ Run setup with the intended workspace and state directory. This Windows example 
 airk --root "D:/work/project-a" --data-dir "D:/indexes/airk" --collection project-a setup --client gemini
 ~~~
 
-On macOS/Linux, substitute your absolute workspace and state paths. Setup indexes the collection, emits the launch configuration on stdout and writes its indexing summary to stderr. It does not modify client settings. The existing `gemini` choice supplies the compatible JSON format; it does not register Antigravity or select Antigravity's settings location. There is currently no `--client antigravity` option or Antigravity entry in AIRK's extension setup picker.
+On macOS/Linux, substitute your absolute workspace and state paths. Setup indexes the collection, emits the launch configuration on stdout and writes its indexing summary to stderr. It does not modify client settings. The existing `gemini` choice supplies the compatible JSON format; it does not register Antigravity or select Antigravity's settings location. The native CLI has no `--client antigravity` option. In the extension, choose **Connect Coding Agent → Google Antigravity → Install for Google Antigravity** to add the entry to the project’s `.agents/mcp_config.json`, preserving existing settings. Restart/reload Antigravity and complete its trust prompts.
 
 The generated configuration has this shape; keep the actual paths printed by setup:
 
@@ -61,4 +61,4 @@ airk --root "D:/work/project-a" --data-dir "D:/indexes/airk" --collection projec
 
 MCP retrieval does not trigger indexing. An existing [watch worker](native-scheduler.md) can maintain the collection. If tools are absent, check client enablement, executable permissions and the command path. If results are empty or stale, verify the scope arguments and indexing result before changing configuration.
 
-AIRK's native stdio and client-format tests cover the server side. Connection, tool discovery, approvals and scope selection still need a smoke test in the installed Antigravity version on each intended OS. A named setup option or extension picker entry would be a later convenience change, not a prerequisite for this manual connection.
+AIRK's native stdio and client-format tests cover the server side. Connection, tool discovery, approvals and scope selection still need a smoke test in the installed Antigravity version on each intended OS. The extension’s installer automates project configuration; it does not prove the installed client loaded that configuration.

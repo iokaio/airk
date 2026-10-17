@@ -16,7 +16,11 @@ EXTENSION = ROOT / "packages" / "vscode"
 TARGETS = {"x86_64-pc-windows-msvc": "win32-x64", "x86_64-unknown-linux-gnu": "linux-x64",
            "aarch64-apple-darwin": "darwin-arm64", "x86_64-apple-darwin": "darwin-x64"}
 MODULES = ("extension.js", "model.js", "native.js", "scheduler.js", "coverage.js",
-           "retention.js", "extractionPolicy.js", "ingestionLimits.js", "history.js", "report.js", "sidebar.js")
+           "retention.js", "extractionPolicy.js", "ingestionLimits.js", "history.js", "report.js", "sidebar.js",
+           "agentConnections.js", "agentConfig.js")
+JSONC_FILES = ("package.json", "LICENSE.md", "lib/umd/main.js", "lib/umd/impl/edit.js",
+               "lib/umd/impl/format.js", "lib/umd/impl/parser.js", "lib/umd/impl/scanner.js",
+               "lib/umd/impl/string-intern.js")
 ILLUSTRATIONS = ("local-evidence.png", "index-to-context.png")
 ICONS = ("airk.svg", "icon.png")
 
@@ -57,6 +61,32 @@ def stage_runtime_modules(compiled, destination):
     destination.mkdir(parents=True, exist_ok=True)
     for name, data in modules.items():
         (destination / name).write_bytes(data)
+
+
+def stage_jsonc_parser(source, destination):
+    """Ship only the pinned parser's runtime closure and its original MIT notice."""
+    metadata = json.loads((source / "package.json").read_text(encoding="utf-8"))
+    if (metadata["name"], metadata["version"], metadata["main"], metadata["license"]) != (
+            "jsonc-parser", "3.3.1", "./lib/umd/main.js", "MIT"):
+        raise ValueError("Unexpected jsonc-parser identity")
+    files = {}
+    root = source.resolve()
+    for name in JSONC_FILES:
+        file = source / name
+        if file.is_symlink() or not file.resolve().is_relative_to(root) or not file.is_file() or file.stat().st_size > 1_048_576:
+            raise ValueError("Invalid jsonc-parser runtime file: " + name)
+        data = file.read_bytes()
+        if name.endswith(".js"):
+            for match in re.finditer(r'''\brequire\s*\(\s*(["'])([^"']*)\1\s*\)''', data.decode("utf-8")):
+                relative = match.group(2)
+                target = (file.parent / (relative + ".js")).resolve()
+                if not relative.startswith("./") or not target.is_relative_to(root) or target.relative_to(root).as_posix() not in JSONC_FILES:
+                    raise ValueError("Unpackaged jsonc-parser dependency: " + relative)
+        files[name] = data
+    for name, data in files.items():
+        target = destination / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
 
 
 def verify_vsix(archive, expected, executable, platform=None, version=None, pre_release=None, display_name=None):
@@ -146,6 +176,7 @@ def main():
     (stage / "native" / executable).chmod(0o755)
     shutil.copyfile(native / "manifest.json", stage / "native" / "manifest.json")
     stage_runtime_modules(EXTENSION / "out", stage / "out")
+    stage_jsonc_parser(EXTENSION / "node_modules" / "jsonc-parser", stage / "node_modules" / "jsonc-parser")
     for key in ("scripts", "devDependencies"):
         package.pop(key, None)
     (stage / "package.json").write_text(json.dumps(package, indent=2) + "\n", encoding="utf-8")

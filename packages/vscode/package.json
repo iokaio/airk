@@ -2,7 +2,7 @@
   "name": "airk",
   "displayName": "AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents",
   "description": "Give Claude Code, Codex, Gemini CLI/Antigravity, Copilot and other MCP agents a local index of your workspace that returns bounded, cited evidence. No cloud service, API key or Docker.",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "icon": "images/icon.png",
   "publisher": "iokaio",
   "license": "Apache-2.0",
@@ -49,6 +49,14 @@
     "native/**",
     "images/*.png",
     "images/*.svg",
+    "node_modules/jsonc-parser/package.json",
+    "node_modules/jsonc-parser/LICENSE.md",
+    "node_modules/jsonc-parser/lib/umd/main.js",
+    "node_modules/jsonc-parser/lib/umd/impl/edit.js",
+    "node_modules/jsonc-parser/lib/umd/impl/format.js",
+    "node_modules/jsonc-parser/lib/umd/impl/parser.js",
+    "node_modules/jsonc-parser/lib/umd/impl/scanner.js",
+    "node_modules/jsonc-parser/lib/umd/impl/string-intern.js",
     "LICENSE",
     "NOTICE",
     "THIRD_PARTY_NOTICES.md",
@@ -131,7 +139,7 @@
           {
             "id": "airk.setupAgentStep",
             "title": "Connect a coding agent",
-            "description": "VS Code and Copilot Chat discover AIRK automatically; enable it with **MCP: List Servers**. For other clients, preview the selected folder's configuration and merge it into that client's settings. Open AIRK in the Extensions view and read **Details → Coding agent setup** for complete instructions for every supported client. Antigravity uses the gemini preview but its own mcp_config.json location. Amazon Q and Windsurf/Devin receive connection details to enter in their own UI. AIRK never edits another agent's settings.\n[Set Up Coding Agent](command:airk.setupAgent)",
+            "description": "Choose the agent you want to use. The guide shows the correct workspace, configuration and reload steps. For Codex, create a missing project config directly or open an existing file to merge the entry. Claude Code, Gemini CLI and Google Antigravity can install project configuration while preserving existing settings. Enable AIRK for Copilot opens VS Code’s MCP controls for start/trust prompts. Remaining agents get setup guidance.\n[Connect Coding Agent](command:airk.setupAgent)",
             "media": {
               "image": "images/local-evidence.png",
               "altText": "Several coding agents connect to the same workspace-scoped AIRK collection."
@@ -143,7 +151,7 @@
           {
             "id": "airk.verifyMcpStep",
             "title": "Verify the connection",
-            "description": "Check that the native helper starts, lists its tools and reports collection status. Then ask your agent about a file you know and confirm that its answer cites a path.\n[Verify Native MCP Connection](command:airk.verifyMcp)",
+            "description": "Check AIRK’s helper, then copy the verification prompt from the connection guide and send it in your coding agent. A successful helper check does not establish the agent’s connection.\n[Check AIRK MCP Helper](command:airk.verifyMcp)",
             "media": {
               "image": "images/local-evidence.png",
               "altText": "An agent retrieves bounded evidence from a published local collection."
@@ -373,12 +381,12 @@
       {
         "command": "airk.setupAgent",
         "category": "AIRK",
-        "title": "Set Up Coding Agent (Claude Code, Codex, Gemini CLI…)"
+        "title": "Connect Coding Agent…"
       },
       {
         "command": "airk.verifyMcp",
         "category": "AIRK",
-        "title": "Verify Native MCP Connection"
+        "title": "Check AIRK MCP Helper"
       },
       {
         "command": "airk.manageMcp",
@@ -394,6 +402,11 @@
         "command": "airk.storageLimits",
         "title": "Configure Storage Limits…",
         "category": "AIRK"
+      },
+      {
+        "command": "airk.manageVscodeMcp",
+        "category": "AIRK",
+        "title": "VS Code / Copilot MCP Controls"
       }
     ],
     "configuration": [
@@ -430,7 +443,7 @@
             "default": "debounced",
             "scope": "window",
             "order": 1,
-            "markdownDescription": "When AIRK updates the index automatically. In every mode, **Index Now**, **Set Up Coding Agent**, **Verify Native MCP Connection** and an agent's first connection to an unindexed folder still index explicitly. Pausing auto-indexing overrides this setting until you resume."
+            "markdownDescription": "When AIRK updates the index automatically. In every mode, **Index Now**, **Check AIRK MCP Helper** and an agent's first connection to an unindexed folder still index explicitly. Pausing auto-indexing overrides this setting until you resume."
           },
           "airk.index.quietMs": {
             "type": "number",
@@ -502,5 +515,8 @@
     "@types/vscode": "1.140.0",
     "@vscode/vsce": "4.0.1-3",
     "typescript": "5.9.3"
+  },
+  "dependencies": {
+    "jsonc-parser": "3.3.1"
   }
 }

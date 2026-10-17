@@ -2,7 +2,9 @@
 import * as vscode from 'vscode';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import { Client, IndexReport, LaunchSpec, Usage, clients, collectionId, configFor, eligibleEvent, launchArgs } from './model';
+import { Client, IndexReport, LaunchSpec, Usage, collectionId, configFor, eligibleEvent, launchArgs } from './model';
+import { installJsonConfig, isJsonClient, jsonConfigPath, readJsonConfig } from './agentConfig';
+import { agentChoices, codexConfigPath, connectionAction, createCodexConfig, renderConnectionGuide, verificationPrompt } from './agentConnections';
 import { NativeWriteQueue, prepareHelper, probeMcp, runJson } from './native';
 import { CapacityError, Options, PausedError, Scheduler } from './scheduler';
 import { Coverage, CoverageQueue, coverageDetails, coverageLabel } from './coverage';
@@ -68,10 +70,11 @@ class CollectionTree implements vscode.TreeDataProvider<CollectionItem> {
 }
 const locations: Record<Client, string> = {
     vscode: 'VS Code: use MCP: List Servers to enable the registered AIRK collection, or merge into .vscode/mcp.json.',
-    claude: 'Claude Code: merge into project .mcp.json, then review and enable the server in Claude Code.',
+    claude: 'Install project .mcp.json, then restart Claude Code and review the server in /mcp.',
     codex: 'Codex: merge the TOML table into .codex/config.toml for a trusted project or your user config.toml, then check its MCP server list.',
     cursor: 'Cursor: merge into .cursor/mcp.json and enable it in Cursor MCP settings.',
-    gemini: 'Gemini CLI: merge into .gemini/settings.json, then check /mcp.',
+    gemini: 'Install .gemini/settings.json, then restart Gemini CLI and check /mcp. Existing allow/exclude and approval policies remain in force.',
+    antigravity: 'Install .agents/mcp_config.json for this project. In Antigravity IDE, open MCP Servers → Manage MCP Servers to reload; in the CLI use /mcp reload and /mcp list.',
     cline: 'Cline: open Configure MCP Servers and merge the entry into the settings file that Cline opens.',
     roo: 'Roo Code: merge into .roo/mcp.json using Edit Project MCP.',
     junie: 'Junie: merge into .junie/mcp/mcp.json, then check /mcp.',
@@ -758,23 +761,107 @@ class Controller implements vscode.Disposable {
             explanation: 'Local aggregate activity and counterfactual context estimates; these are not measured provider tokens or billed savings.' });
     }
     async setupAgent(): Promise<void> {
-        const spec = await this.chooseSpec(); if (!spec) { return; }
-        const selected = await vscode.window.showQuickPick([...clients], { title: 'Coding agent to connect to AIRK' });
+        this.trusted();
+        const selected = await vscode.window.showQuickPick(agentChoices(), {
+            title: 'Connect a coding agent to AIRK', placeHolder: 'Which agent should use this workspace index?', matchOnDescription: true
+        });
         if (!selected) { return; }
-        const client = selected as Client;
-        await this.scheduler.request(spec, true);
-        const content = configFor(client, spec);
-        const document = await vscode.workspace.openTextDocument({ language: client === 'codex' ? 'toml' : 'json', content });
-        await vscode.window.showTextDocument(document, { preview: true });
-        const note = 'This configuration was generated, not installed. AIRK does not edit the client\'s settings.';
-        if (await vscode.window.showInformationMessage(`${locations[client]} ${note}`, 'Copy configuration') === 'Copy configuration') {
-            await vscode.env.clipboard.writeText(content);
-        }
+        const spec = await this.chooseSpec(); if (!spec) { return; }
+        const client = selected.client;
+        const panel = vscode.window.createWebviewPanel('airk.connection', `AIRK → ${selected.label}`, vscode.ViewColumn.Active,
+            { enableScripts: true, localResourceRoots: [] });
+        let status = client === 'vscode' ? `VS Code registration is ${this.registrationEnabled() ? 'on' : 'off'}. Agent connection has not been verified.`
+            : 'Configuration has not been installed by this guide.';
+        let busy = false, closed = false;
+        const render = () => { panel.webview.html = renderConnectionGuide(client, spec, locations[client], status, !!vscode.env.remoteName, busy); };
+        const checkCurrent = () => {
+            this.trusted();
+            const current = this.specs.get(spec.collection);
+            if (closed || this.storageChoice || this.refreshing || this.disposed || !current || this.mcpKey(current) !== this.mcpKey(spec)) {
+                throw new Error('Workspace or storage changed. Close this guide and run Connect Coding Agent again.');
+            }
+        };
+        const configDocument = (destination: string) => {
+            const samePath = (left: string, right: string) => process.platform === 'win32'
+                ? path.resolve(left).toLowerCase() === path.resolve(right).toLowerCase() : path.resolve(left) === path.resolve(right);
+            const matches = vscode.workspace.textDocuments.filter(document => samePath(document.uri.fsPath, destination)
+                || this.rootBindings.some(binding => samePath(binding.canonical, spec.root)
+                    && samePath(document.uri.fsPath, path.join(binding.opened, path.relative(spec.root, destination)))));
+            if (matches.some(document => document.isDirty)) { throw new Error('Agent configuration has unsaved edits. Save and review it before installing AIRK.'); }
+            return matches[0];
+        };
+        render();
+        const listener = panel.webview.onDidReceiveMessage(async value => {
+            const action = connectionAction(value, client);
+            if (!action || busy || closed) { return; }
+            busy = true;
+            try {
+                checkCurrent();
+                if (action === 'copy' || action === 'copyPrompt') {
+                    await vscode.env.clipboard.writeText(action === 'copy' ? configFor(client, spec) : verificationPrompt(spec));
+                    status = action === 'copy' ? 'Configuration copied. Merge it into the selected agent’s configuration; copying does not install it.' : 'Verification prompt copied. Send it in the selected agent to check its actual connection.';
+                } else if (action === 'createCodex') {
+                    if (vscode.env.remoteName) { throw new Error('Use manual configuration on the host running Codex.'); }
+                    const destination = codexConfigPath(spec);
+                    configDocument(destination);
+                    await createCodexConfig(spec);
+                    status = 'Codex project configuration created. Restart Codex and verify its tools below. Agent connection has not been verified.';
+                } else if (action === 'installJson' && isJsonClient(client)) {
+                    if (vscode.env.remoteName) { throw new Error('Use manual configuration on the host running this agent.'); }
+                    const checkInstall = () => { checkCurrent(); configDocument(jsonConfigPath(client, spec)); };
+                    await installJsonConfig(client, spec, checkInstall, async (destination, before, after) => {
+                        const document = configDocument(destination) ?? await vscode.workspace.openTextDocument(vscode.Uri.file(destination));
+                        const version = document.version;
+                        if (document.isDirty || document.getText() !== before) { throw new Error('Configuration has unsaved or external changes. Review it before installing AIRK.'); }
+                        const edit = new vscode.WorkspaceEdit();
+                        edit.replace(document.uri, new vscode.Range(document.positionAt(0), document.positionAt(before.length)), after);
+                        if (await readJsonConfig(destination) !== before) { throw new Error('Configuration changed on disk. Retry setup.'); }
+                        checkInstall();
+                        if (document.version !== version || !await vscode.workspace.applyEdit(edit)) { throw new Error('Configuration changed during setup. Review the file and retry.'); }
+                        checkCurrent();
+                        if (document.getText() !== after || !await document.save()) { throw new Error('Configuration was not saved. Review the editor’s changes and save manually.'); }
+                    });
+                    status = `${selected.label} project configuration installed. Reload the agent and complete its trust prompts. Agent connection has not been verified.`;
+                } else if (action === 'openJson' && isJsonClient(client)) {
+                    const document = await vscode.workspace.openTextDocument(vscode.Uri.file(jsonConfigPath(client, spec)));
+                    await vscode.window.showTextDocument(document, { viewColumn: vscode.ViewColumn.Beside, preview: false });
+                    status = 'Project configuration opened. Review the AIRK entry and any existing client policies before reloading the agent.';
+                } else if (action === 'enableCopilot') {
+                    if (typeof vscode.lm?.registerMcpServerDefinitionProvider !== 'function'
+                        || !(await vscode.commands.getCommands(true)).includes('workbench.mcp.listServer')) {
+                        throw new Error('This editor does not support AIRK’s MCP registration. Update VS Code or use manual MCP configuration.');
+                    }
+                    checkCurrent();
+                    await vscode.workspace.getConfiguration('airk').update('mcp.registrationEnabled', true, vscode.ConfigurationTarget.Global);
+                    this.registrationChanged();
+                    checkCurrent();
+                    await this.manageVscodeMcp();
+                    status = 'AIRK registration enabled for open workspace collections. Select this collection in VS Code’s MCP controls and complete any start or trust prompts. Copilot’s connection has not been verified.';
+                } else if (action === 'openCodex') {
+                    const document = await vscode.workspace.openTextDocument(vscode.Uri.file(codexConfigPath(spec)));
+                    await vscode.window.showTextDocument(document, { viewColumn: vscode.ViewColumn.Beside, preview: false });
+                    status = 'Existing configuration opened. Merge the AIRK entry without duplicating its table or changing other settings, save, then restart Codex.';
+                } else if (action === 'vscode') {
+                    await this.manageVscodeMcp();
+                    status = `VS Code MCP controls opened. Registration is ${this.registrationEnabled() ? 'on' : 'off'}; enable it in the AIRK sidebar if needed. Other agents use their own configuration.`;
+                } else if (action === 'verify') {
+                    status = 'Checking AIRK helper…'; render();
+                    await this.verify(spec);
+                    const check = this.mcpChecks.get(this.mcpKey(spec));
+                    status = check?.phase === 'verified' ? `AIRK helper verified: ${check.tools?.length ?? 0} tools. Agent connection still needs the verification prompt below.`
+                        : `AIRK helper check did not succeed: ${check?.error ?? 'workspace or storage changed'}`;
+                }
+            } catch (error) { status = error instanceof Error ? error.message : String(error); }
+            finally { busy = false; if (!closed) { render(); } }
+        });
+        panel.onDidDispose(() => { closed = true; listener.dispose(); });
+        this.context.subscriptions.push(panel);
     }
     private mcpKey(spec: LaunchSpec): string { return JSON.stringify([spec.collection, spec.root, spec.dataDir, spec.command]); }
     registrationEnabled(): boolean { return this.machineValue('mcp.registrationEnabled', true) === true; }
     registrationChanged(): void { this.definitions.fire(); this.updateStatus(); }
-    async manageMcp(): Promise<void> {
+    async manageMcp(): Promise<void> { await this.setupAgent(); }
+    async manageVscodeMcp(): Promise<void> {
         this.trusted();
         const command = 'workbench.mcp.listServer';
         if (!(await vscode.commands.getCommands(true)).includes(command)) {
@@ -876,7 +963,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<{ getS
         historyAvailable: () => controller.history('available'), checkpoints: () => controller.history('checkpoints'), createCheckpoint: () => controller.history('create'), removeCheckpoint: () => controller.history('remove'), purgeHistory: () => controller.history('purge'),
         extractionPolicy: () => controller.extractionPolicy(), configureExtractionPolicy: () => controller.extractionPolicy(true),
         ingestionLimits: () => controller.ingestionLimits(), configureIngestionLimits: () => controller.ingestionLimits(true),
-        status: () => controller.collectionStatus(), usage: () => controller.usage(), setupAgent: () => controller.setupAgent(), verifyMcp: () => controller.verify(), manageMcp: () => controller.manageMcp(), logs: () => controller.output.show()
+        status: () => controller.collectionStatus(), usage: () => controller.usage(), setupAgent: () => controller.setupAgent(), verifyMcp: () => controller.verify(), manageMcp: () => controller.manageMcp(), manageVscodeMcp: () => controller.manageVscodeMcp(), logs: () => controller.output.show()
     };
     for (const [name, action] of Object.entries(commands)) { context.subscriptions.push(vscode.commands.registerCommand(`airk.${name}`, safe(action, true))); }
     context.subscriptions.push(
