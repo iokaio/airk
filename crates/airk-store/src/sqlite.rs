@@ -1334,8 +1334,15 @@ pub(super) fn catalog_page_budget(reserved: u64, physical: u64, pointer: u64) ->
     // SQLite's maximum representable page count is a format limit, not an
     // application catalog ceiling. Logical policy and observed capacity govern
     // every smaller admission.
-    let maximum =
-        (reserved.min(physical).saturating_sub(pointer) / 4096).min(u64::from(u32::MAX) - 1) * 4096;
+    // This observation precedes lineage writes and the quota charge's fresh
+    // capacity probe. Do not admit virtually all free space: concurrent writes
+    // on the same filesystem would make even a tiny catalog fail admission.
+    // Keep 10% of observed growth available in addition to OS safety headroom.
+    // It remains a point-in-time bound, not a physical reservation.
+    let physical_admission = physical.saturating_sub(physical / 10);
+    let maximum = (reserved.min(physical_admission).saturating_sub(pointer) / 4096)
+        .min(u64::from(u32::MAX) - 1)
+        * 4096;
     ensure!(
         maximum >= 16_384,
         "private catalog admission exhausted: {reserved} reserved bytes and {physical} physical growth bytes remain, {pointer} needed for active pointer publication"
@@ -2255,8 +2262,16 @@ mod tests {
         let physical = 112 * 1024 * 1024; // 128 MiB volume after safety headroom.
         let pointer = 1_200_123;
         let maximum = catalog_page_budget(logical, physical, pointer)?;
-        assert!(maximum + pointer <= physical);
-        assert!(physical - maximum - pointer < 4096);
+        let admission = physical - physical / 10;
+        assert!(maximum + pointer <= admission);
+        assert!(admission - maximum - pointer < 4096);
+        assert!(physical - maximum - pointer >= physical / 10);
+        // Hosted Mac runners can lose tens of MiB between admission and the
+        // fresh charge probe even for a tiny fixture on a mostly empty volume.
+        let hosted_physical = 32 * 1024 * 1024 * 1024;
+        let hosted_maximum =
+            catalog_page_budget(100 * 1024 * 1024 * 1024, hosted_physical, pointer)?;
+        assert!(hosted_maximum + pointer <= hosted_physical - 16 * 1024 * 1024);
         assert_eq!(catalog_page_budget(32_768, u64::MAX, 16_384)?, 16_384);
         let physical_error = catalog_page_budget(logical, pointer + 16_383, pointer).unwrap_err();
         assert!(
