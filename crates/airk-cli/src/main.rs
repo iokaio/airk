@@ -728,9 +728,22 @@ fn retention_policy_bytes(
 #[derive(Subcommand)]
 enum LimitsCommand {
     Show,
+    /// Show effective policy, automatic recommendation and detected memory.
+    Describe,
+    /// Remove the explicit override and restore machine-aware defaults.
+    Reset,
+    /// Validate a ScanLimits JSON object without saving it.
+    Validate {
+        file: PathBuf,
+    },
     /// Read a ScanLimits JSON object; quotas still constrain publication.
     Set {
-        file: PathBuf,
+        #[arg(required_unless_present = "json")]
+        file: Option<PathBuf>,
+        #[arg(long, conflicts_with = "file")]
+        json: Option<String>,
+        #[arg(long)]
+        expected_json: Option<String>,
     },
 }
 
@@ -1042,9 +1055,23 @@ async fn main() -> anyhow::Result<()> {
             },
             CollectionCommand::Limits { action } => match action {
                 LimitsCommand::Show => recorder.print(&kernel.scan_limits()?),
-                LimitsCommand::Set { file } => {
-                    let limits = serde_json::from_slice(&airk_kernel::usage::read_usage_input(&file,16_384)?)?;
-                    recorder.print(&kernel.configure_scan_limits(limits)?)
+                LimitsCommand::Describe => recorder.print(&kernel.describe_scan_limits()?),
+                LimitsCommand::Reset => recorder.print(&kernel.reset_scan_limits()?),
+                LimitsCommand::Validate { file } => {
+                    let limits: airk_kernel::limits::ScanLimits = serde_json::from_slice(&airk_kernel::usage::read_usage_input(&file,16_384)?)?;
+                    limits.validate()?;
+                    recorder.print(&limits)
+                }
+                LimitsCommand::Set { file, json, expected_json } => {
+                    let bytes = match (file, json) {
+                        (Some(file), None) => airk_kernel::usage::read_usage_input(&file,16_384)?,
+                        (None, Some(json)) => json.into_bytes(),
+                        _ => anyhow::bail!("provide exactly one limits file or --json"),
+                    };
+                    anyhow::ensure!(bytes.len() <= 16_384 && expected_json.as_ref().is_none_or(|json| json.len() <= 16_384), "scan configuration exceeds 16 KiB");
+                    let limits = serde_json::from_slice(&bytes)?;
+                    let expected = expected_json.map(|json| serde_json::from_str(&json)).transpose()?;
+                    recorder.print(&kernel.configure_scan_limits_if_current(limits, expected)?)
                 }
             },
             CollectionCommand::Quota { action } => match action {

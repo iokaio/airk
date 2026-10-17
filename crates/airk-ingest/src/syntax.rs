@@ -82,7 +82,7 @@ pub(crate) fn analyze_selected_budgeted(
     budget: &mut HostBudget,
 ) -> anyhow::Result<Analysis> {
     anyhow::ensure!(
-        text.len() <= crate::MAX_FILE_BYTES,
+        text.len() <= crate::MAX_STRUCTURED_BYTES,
         "child source exceeds native ceiling"
     );
     if matches!(

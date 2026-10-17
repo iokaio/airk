@@ -561,7 +561,7 @@ fn worksheet(
                     .saturating_add(decoded.address.as_ref().map_or(0, String::len));
                 ensure!(
                     *decoded_bytes <= MAX_EXTRACTED,
-                    "XLSX decoded cell text exceeds 4 MiB"
+                    "XLSX decoded cell text exceeds 32 MiB"
                 );
                 rows.get_mut(&row)
                     .context("XLSX row missing")?
@@ -1007,13 +1007,13 @@ mod tests {
 
     #[test]
     fn shared_string_expansion_is_capped_during_cell_decoding() {
-        let shared = vec!["original fixture ".repeat(70_000)];
+        let shared = vec!["original fixture ".repeat(500_000)];
         let xml = r#"<worksheet><sheetData><row><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>0</v></c><c r="C1" t="s"><v>0</v></c><c r="D1" t="s"><v>0</v></c><c r="E1" t="s"><v>0</v></c></row></sheetData></worksheet>"#;
         let error = worksheet(xml, &shared, &[], false, &mut 0, &mut 0).unwrap_err();
         assert!(
             error
                 .to_string()
-                .contains("decoded cell text exceeds 4 MiB")
+                .contains("decoded cell text exceeds 32 MiB")
         );
     }
 

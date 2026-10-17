@@ -455,8 +455,9 @@ impl Kernel {
                     .retained
                     .as_ref()
                     .is_none_or(|reference| reference.profile.is_none())
+                    && old.language != "ocr"
                     && (previous.extractor_version != airk_core::EXTRACTOR_VERSION
-                        || profile.adapter_version != "native-facts/7")
+                        || profile.adapter_version != "native-facts/7/sizing-1")
                 {
                     return Ok(None);
                 }

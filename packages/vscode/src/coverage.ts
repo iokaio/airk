@@ -8,6 +8,8 @@ export interface Coverage {
     missing: number; extraction_failed: number; capacity_blocked: number; unreadable: number; excluded: number;
     unsupported: number; pending_removals: number; budget_exhausted: boolean; percent: number | null;
     source_configuration_pending?: boolean;
+    eligible_source_bytes?: number; extracted_bytes?: number;
+    scan_limits?: { corpus_bytes: number; extracted_bytes: number };
 }
 export interface CoverageView { report?: Coverage; scanning: boolean; pending: boolean; error?: string }
 export function coverageLabel(view: CoverageView | undefined): string {
@@ -28,6 +30,9 @@ export function coverageDetails(name: string, view: CoverageView | undefined, un
             `${report.pending_removals} pending removals; ${report.excluded} per-file exclusions; ${report.unsupported} unsupported`,
             report.scanned_at_unix_ms ? `Inventory measured ${new Date(report.scanned_at_unix_ms).toLocaleString()}` : 'Inventory not yet measured');
         if (!report.scan_complete) { rows.push('Partial inventory; coverage is unknown.'); }
+        if (report.eligible_source_bytes !== undefined && report.scan_limits) {
+            rows.push(`Eligible source: ${(report.eligible_source_bytes / 1048576).toFixed(1)} MiB / ${(report.scan_limits.corpus_bytes / 1048576).toFixed(1)} MiB limit${report.scan_complete ? '' : ' (partial scan)'}. Use AIRK: Show Ingestion Limits for details.`);
+        }
         if (report.source_configuration_pending) { rows.push('Source folders changed; index to publish their new bindings.'); }
     }
     if (view?.pending) { rows.push('Disk changes pending; previous inventory is out of date.'); }

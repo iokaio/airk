@@ -57,7 +57,7 @@ pub(crate) fn analyze_budgeted(
     budget: &mut HostBudget,
 ) -> Result<Analysis> {
     ensure!(
-        source.len() <= crate::MAX_FILE_BYTES,
+        source.len() <= crate::MAX_STRUCTURED_BYTES,
         "language source byte limit"
     );
     let grammar: Language = match adapter {
@@ -302,7 +302,7 @@ mod tests {
         let mut budget = HostBudget::new(1000, 1, 0)?;
         analyze_budgeted("one.R", "a <- 1", "r", &mut budget)?;
         assert!(analyze_budgeted("two.R", "b <- 2", "r", &mut budget).is_err());
-        assert!(analyze("huge.R", &" ".repeat(crate::MAX_FILE_BYTES + 1), "r").is_err());
+        assert!(analyze("huge.R", &" ".repeat(crate::MAX_STRUCTURED_BYTES + 1), "r").is_err());
         Ok(())
     }
     #[test]

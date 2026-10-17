@@ -24,7 +24,7 @@ All three are MIT and expose tree-sitter-language 0.1 bindings compatible with t
 
 Facts use original byte/line locations and `airk-tree-sitter/<profile>` syntax provenance, version `specialist-hardware-facts/1`. Native declaration fingerprints use full names and exact signatures/bodies where available; unsupported body/documentation dimensions stay unknown. Neither native keys nor written targets imply semantic or elaborated identities.
 
-Sources are limited to 16 MiB, shared traversal to 500,000 nodes, facts to 10,000, fingerprint work to 64 MiB, owner depth to 128 and serialized facts to 16 MiB. Pending traversal queues and display details are separately bounded. Child parsing shares host work allowances; it does not reset them per region. Exhaustion fails closed, while malformed/unsupported syntax remains partial.
+Structured sources are limited to 4 MiB (larger UTF-8 sources use [partial text-only extraction](ingestion-limits.md)), shared traversal to 500,000 nodes, facts to 10,000, fingerprint work to 64 MiB, owner depth to 128 and serialized facts to 16 MiB. Pending traversal queues and display details are separately bounded. Child parsing shares host work allowances; it does not reset them per region. Exhaustion fails closed, while malformed/unsupported syntax remains partial.
 
 ## Focused qualification
 

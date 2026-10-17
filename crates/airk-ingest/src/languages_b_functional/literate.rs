@@ -20,7 +20,7 @@ pub(crate) fn discover(
     budget: &mut HostBudget,
 ) -> Result<LiterateDiscovery> {
     ensure!(
-        source.len() <= crate::MAX_FILE_BYTES,
+        source.len() <= crate::MAX_STRUCTURED_BYTES,
         "literate source byte limit"
     );
     let mut result = LiterateDiscovery {

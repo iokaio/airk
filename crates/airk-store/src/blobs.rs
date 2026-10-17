@@ -11,8 +11,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
-const MAX_ARTIFACT_BYTES: u64 = 67_108_864;
-pub const MAX_CATALOG_BYTES: u64 = 134_217_728;
+const MAX_ARTIFACT_BYTES: u64 = airk_core::extraction::MAX_PAYLOAD_BYTES as u64;
+pub const MAX_CATALOG_BYTES: u64 = airk_core::publication::MAX_INVENTORY_BYTES as u64;
 
 pub fn valid_digest(value: &str) -> bool {
     value.len() == 64
@@ -837,11 +837,11 @@ impl FileStore {
     }
 
     pub fn read_retained_source(&self, entry: &Artifact) -> Result<Vec<u8>> {
-        self.read_retained_source_bounded(entry, 16_777_216)
+        self.read_retained_source_bounded(entry, airk_core::extraction::MAX_SOURCE_BYTES as u64)
     }
 
     pub fn read_retained_source_bounded(&self, entry: &Artifact, maximum: u64) -> Result<Vec<u8>> {
-        let maximum = maximum.min(16_777_216);
+        let maximum = maximum.min(airk_core::extraction::MAX_SOURCE_BYTES as u64);
         ensure!(
             u64::try_from(entry.bytes)? <= maximum,
             "retained source exceeds read budget"

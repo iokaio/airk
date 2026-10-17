@@ -100,7 +100,7 @@ Names are implementation guidance, not a requirement to split a small function i
 7. Runtime parsing never evaluates Make/Gradle/MSBuild/Nix/HCL/JavaScript, expands remote includes, fetches schemas or executes notebook cells. Imported provider assertions stay separate from native syntax/structural evidence.
 8. All writers, staging and retained objects participate in logical-byte quotas. A retention target can remain unmet because protected evidence consumes capacity; publish explicit pressure rather than weakening protection.
 
-Preserve current conservative defaults unless a separately measured profile changes them:
+The following table records the original v2 planning baseline. Version 1.1.0 changes source/text/payload admission and automatic collection sizing; [ingestion limits](ingestion-limits.md) is the current contract. The remaining independent bounds still apply:
 
 | Bound | Default/contract |
 |---|---|

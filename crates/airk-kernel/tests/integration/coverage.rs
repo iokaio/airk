@@ -56,10 +56,8 @@ fn eligibility_respects_shared_ignores_limits_documents_and_binary_fallback() ->
     for filename in ["broken.pdf", "broken.docx", "broken.pptx", "broken.xlsx"] {
         fs::write(root.path().join(filename), [0, 255, 159])?;
     }
-    fs::write(
-        root.path().join("huge.txt"),
-        vec![b'x'; airk_ingest::MAX_FILE_BYTES + 1],
-    )?;
+    fs::File::create(root.path().join("huge.txt"))?
+        .set_len((airk_ingest::MAX_FILE_BYTES + 1) as u64)?;
     let kernel = Kernel::open(root.path(), Some(state))?;
     kernel.index()?;
     let report = kernel.coverage(true)?;
@@ -101,6 +99,10 @@ fn empty_incomplete_and_capacity_limited_inventories_never_claim_full_coverage()
     assert!(partial.budget_exhausted);
     assert_eq!(partial.percent, None);
     // Oversized but individually eligible sources must stay in the denominator.
+    kernel.configure_scan_limits(airk_ingest::ScanLimits {
+        corpus_bytes: 64 * 1024 * 1024,
+        ..kernel.scan_limits()?
+    })?;
     let mut bytes = vec![b'x'; 1_048_576];
     bytes[..2].copy_from_slice(b"//");
     for index in 0..65 {

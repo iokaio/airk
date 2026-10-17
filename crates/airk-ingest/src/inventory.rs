@@ -10,7 +10,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub const POLICY_VERSION: &str = "airk-eligibility-v2";
+pub const POLICY_VERSION: &str = "airk-eligibility-v3";
 
 #[derive(Clone, Copy)]
 pub struct InventoryLimits {
@@ -21,8 +21,8 @@ pub struct InventoryLimits {
 impl Default for InventoryLimits {
     fn default() -> Self {
         Self {
-            candidates: 50_000,
-            read_bytes: 256 * 1024 * 1024,
+            candidates: super::MAX_DISCOVERY_ENTRIES,
+            read_bytes: super::MAX_SCAN_READ_BYTES,
             duration: Duration::from_secs(15),
         }
     }
@@ -94,6 +94,11 @@ pub fn scan_roots_with_policy(
     policy: super::ScanLimits,
 ) -> Result<Inventory> {
     policy.validate()?;
+    let limits = InventoryLimits {
+        candidates: limits.candidates.min(policy.discovery_entries),
+        read_bytes: limits.read_bytes.min(policy.read_bytes),
+        ..limits
+    };
     let root = root.canonicalize().context("resolve workspace root")?;
     ensure!(
         root.to_string_lossy() == previous.root,
@@ -161,28 +166,32 @@ pub fn scan_roots_with_policy(
                 result.excluded += 1;
                 continue;
             }
-            // Avoid exceeding the total read budget by a per-file read.
-            if read_bytes.saturating_add(policy.file_bytes + 1) > limits.read_bytes {
+            // Reserve only the remaining allowance. The reader rejects a
+            // truncated source and failed reads still consume their reservation.
+            let allowance = (policy.file_bytes + 1).min(limits.read_bytes - read_bytes);
+            if entry
+                .path()
+                .symlink_metadata()
+                .is_ok_and(|metadata| metadata.len() > allowance as u64)
+            {
                 result.complete = false;
                 result.budget_exhausted = true;
                 break 'sources;
             }
             // A failed read may already have consumed bytes. Reserve the maximum
             // before starting and reclaim unused allowance only on success.
-            read_bytes += policy.file_bytes + 1;
-            let bytes = match super::read_source_with_budget(
-                &source_root,
-                entry.path(),
-                policy.file_bytes + 1,
-            ) {
+            read_bytes += allowance;
+            let bytes = match super::read_source_with_budget(&source_root, entry.path(), allowance)
+            {
                 Ok(bytes) => bytes,
                 Err(_) => {
                     result.unreadable += 1;
                     result.complete = false;
+                    result.budget_exhausted |= read_bytes >= limits.read_bytes;
                     continue;
                 }
             };
-            read_bytes -= policy.file_bytes + 1 - bytes.len();
+            read_bytes -= allowance - bytes.len();
             if bytes.len() > policy.file_bytes {
                 result.excluded += 1;
                 continue;

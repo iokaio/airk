@@ -25,7 +25,7 @@ pub(crate) fn flavor(path: &str) -> &'static str {
 /// Preserve all existing Markdown evidence; append bounded untrusted structural cues.
 pub(crate) fn enrich(path: &str, text: &str, facts: &mut Vec<Fact>) -> Result<()> {
     ensure!(
-        text.len() <= crate::MAX_FILE_BYTES,
+        text.len() <= crate::MAX_STRUCTURED_BYTES,
         "instruction document exceeds source budget"
     );
     ensure!(
@@ -83,7 +83,7 @@ pub(crate) fn enrich(path: &str, text: &str, facts: &mut Vec<Fact>) -> Result<()
             Event::Text(value) => {
                 if let Some((_, visible)) = &mut paragraph {
                     ensure!(
-                        visible.len() + value.len() <= crate::MAX_FILE_BYTES,
+                        visible.len() + value.len() <= crate::MAX_STRUCTURED_BYTES,
                         "instruction paragraph exceeds byte budget"
                     );
                     visible.push_str(&value);

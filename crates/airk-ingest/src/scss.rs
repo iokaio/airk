@@ -252,7 +252,7 @@ mod tests {
 
     #[test]
     fn source_and_fact_limits_fail_explicitly() {
-        assert!(analyze("large.scss", &" ".repeat(crate::MAX_FILE_BYTES + 1)).is_err());
+        assert!(analyze("large.scss", &" ".repeat(crate::MAX_STRUCTURED_BYTES + 1)).is_err());
         assert!(
             analyze("many.scss", &"$entry: 1;\n".repeat(10_001)).is_err_and(|error| error
                 .to_string()

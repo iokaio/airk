@@ -1,6 +1,6 @@
 # Storage and retrieval scale qualification
 
-`scripts/benchmark-scale.py` measures an explicitly bounded workload using the public CLI. Its default original fixture has 16,384 files of 8,192 bytes each: 128 MiB of source, exceeding the bootstrap's 10,000-file and 64 MiB defaults. The harness explicitly configures collection scan limits and a 16 GiB collection/32 GiB root quota. This larger qualification profile is recorded in its report; normal collection defaults remain conservative and unchanged.
+`scripts/benchmark-scale.py` measures an explicitly bounded workload using the public CLI. Its default original fixture has 16,384 files of 8,192 bytes each: 128 MiB of source, exceeding the bootstrap's former 10,000-file and 64 MiB defaults. The harness explicitly configures collection scan limits and a 16 GiB collection/32 GiB root quota. This qualification profile is recorded in its report; the historical measurements below use that explicit profile, independently of the [automatic ingestion defaults introduced in 1.1.0](ingestion-limits.md).
 
 ~~~console
 cargo build --release -p airk-cli --locked
@@ -22,6 +22,27 @@ The report records wall time, operating-system CPU and resident-memory observati
 The index directory starts fresh, but the harness does not flush operating-system caches. Repeated queries have fresh process caches and uncontrolled operating-system caches. Results therefore cannot be labeled cold-device or warm-server latency. Process sampling uses a 20 ms interval, which also limits short-command timing precision. Logical index totals include all retained generations, source objects and ancillary state at the end of the workload.
 
 The transformer adapter has a separate [real-model and independent numerical qualification](onnx-models.md). This scale harness deliberately installs no embedding model: it measures persistent lexical/exact storage, streaming ingestion and revision lifecycle independently of model inference. A larger-than-memory vector qualification needs a separately sized graph, real model/corpus judgments and cache/device measurements.
+
+## Windows 1.1.0 real-workspace indexing and MCP checks
+
+On 2026-10-17, the optimized Windows x64 1.1.0 helper, SHA-256 `64710a9d95293c7eb5453d797d5b76c06d6b43c2d1ff2e8ed11f2238e6fdd20f`, indexed the AIRK working tree and a second local application workspace into separate, extension-derived collection IDs sharing one fresh data root. Both used `index --scheduled --automatic`, ordinary ignore rules, automatic 2 GiB source sizing and the default 4 GiB collection disk quota. Builds and tests were idle during measurement. No optional embedding model was installed.
+
+| Workspace | Indexed files | Eligible indexed source | Initial index wall time | Logical collection state after checks |
+| --- | ---: | ---: | ---: | ---: |
+| AIRK working tree | 570 | 5,228,442 bytes | 15.879 seconds | 297,300,031 bytes |
+| Separate application workspace | 7,628 | 90,479,733 bytes | 185.429 seconds | 3,475,633,240 bytes |
+
+Times include native scheduling, extraction and publication; they exclude compilation, source-hash preflight and subsequent retrieval checks. State was fresh, with zero reused files. OS caches were not flushed. These are individual observations on one machine, not throughput or peak-memory guarantees. The application collection is already close to its default disk quota; retaining another generation can require a deliberate quota increase or maintenance.
+
+An earlier attempt on the application workspace failed after 123.435 seconds at the former 128 MiB aggregate continuity inventory ceiling, without publishing a generation. The shared ceiling is now 512 MiB across publication, retrieval and retained/historical readers. The successful inventory contains 237,649,027 encoded bytes and 216,116 assigned continuity records. A descriptor-by-descriptor comparison with retained extraction payloads confirmed that no continuity was omitted to obtain the successful result. AIRK retained all 11,264 of its descriptors as well. A separate original-fixture regression round-trips a valid inventory above the former 128 MiB ceiling.
+
+Two concurrent stdio MCP connections exposed the expected sixteen tools. All 24 checks passed: status, positive and negative lexical queries, broad queries, exact symbol queries, file discovery and indexed reads; foreign-only terms and paths returned no evidence, and traversal and collection-override arguments were rejected. Every returned collection identity and source citation path/hash was checked against the selected workspace. Before/after SHA-256 inventories also confirmed that all 573 and 7,755 Git-visible source files, respectively, were unchanged. Private excerpts, paths, source inventories and index state remain in ignored local artifacts and are not published here.
+
+The first application MCP search took 2.605 seconds, symbol calls 6.863–6.949 seconds and the first file-list call 8.165 seconds. Subsequent lexical queries and the indexed excerpt read took about 13 ms in the same connection. This exposes metadata/loading costs that still need performance work; it is not a general retrieval-latency qualification.
+
+AIRK skipped three PNG assets and reported 100% eligible-file coverage. The application skipped 124 binary assets plus two JSON files that exceeded the existing shared parser-work budget; its complete inventory reported 7,628 of 7,630 eligible files current, displayed as 99%. Its initial command also reported a dropped local usage observation. Indexing and MCP retrieval passed, but those parser omissions and usage-history incompleteness remain. No installed-editor, Linux/macOS, semantic-relevance or maximum-capacity qualification is implied by this native-helper run.
+
+Local receipts are under ignored `artifacts/filesizing-real-final/`; the earlier failed attempt is under `artifacts/filesizing-real-repositories/`.
 
 ## Windows rotating-disk run: incomplete
 

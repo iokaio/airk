@@ -42,12 +42,14 @@ mod structured_view;
 mod structured_yaml;
 mod syntax_repairs;
 
-pub const MAX_FILE_BYTES: usize = 16_777_216;
-pub const MAX_CORPUS_BYTES: usize = 67_108_864;
-pub const MAX_EXTRACTED_CORPUS_BYTES: usize = 134_217_728;
-pub const MAX_FILES: usize = 10_000;
-pub const MAX_DISCOVERY_ENTRIES: usize = 100_000;
-pub const MAX_SCAN_READ_BYTES: usize = 268_435_456;
+pub const MAX_FILE_BYTES: usize = airk_core::extraction::MAX_SOURCE_BYTES;
+/// Structured parsers never inherit the larger raw-file admission ceiling.
+pub(crate) const MAX_STRUCTURED_BYTES: usize = 4 * 1024 * 1024;
+pub const MAX_CORPUS_BYTES: usize = 2 * 1024 * 1024 * 1024;
+pub const MAX_EXTRACTED_CORPUS_BYTES: usize = 4 * 1024 * 1024 * 1024;
+pub const MAX_FILES: usize = 100_000;
+pub const MAX_DISCOVERY_ENTRIES: usize = 1_000_000;
+pub const MAX_SCAN_READ_BYTES: usize = 8 * 1024 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -74,29 +76,41 @@ impl Default for ScanLimits {
 }
 
 impl ScanLimits {
+    pub fn maximum() -> Self {
+        Self {
+            file_bytes: MAX_FILE_BYTES,
+            corpus_bytes: 64 * 1024 * 1024 * 1024,
+            extracted_bytes: 128 * 1024 * 1024 * 1024,
+            files: 1_000_000,
+            discovery_entries: 10_000_000,
+            read_bytes: 128 * 1024 * 1024 * 1024,
+        }
+    }
+
     pub fn validate(self) -> Result<()> {
+        let maximum = Self::maximum();
         ensure!(
-            (1..=MAX_FILE_BYTES).contains(&self.file_bytes),
-            "file limit must be 1..16 MiB"
+            (1..=maximum.file_bytes).contains(&self.file_bytes),
+            "file limit must be 1..256 MiB"
         );
         ensure!(
-            (1..=64 * 1024 * 1024 * 1024usize).contains(&self.corpus_bytes),
+            (1..=maximum.corpus_bytes).contains(&self.corpus_bytes),
             "corpus limit must be 1 byte..64 GiB"
         );
         ensure!(
-            (1..=128 * 1024 * 1024 * 1024usize).contains(&self.extracted_bytes),
+            (1..=maximum.extracted_bytes).contains(&self.extracted_bytes),
             "extracted limit must be 1 byte..128 GiB"
         );
         ensure!(
-            (1..=1_000_000).contains(&self.files),
+            (1..=maximum.files).contains(&self.files),
             "file count limit must be 1..1000000"
         );
         ensure!(
-            (1..=10_000_000).contains(&self.discovery_entries),
+            (1..=maximum.discovery_entries).contains(&self.discovery_entries),
             "discovery limit must be 1..10000000"
         );
         ensure!(
-            (1..=128 * 1024 * 1024 * 1024usize).contains(&self.read_bytes),
+            (1..=maximum.read_bytes).contains(&self.read_bytes),
             "read limit must be 1 byte..128 GiB"
         );
         Ok(())
@@ -560,7 +574,14 @@ fn scan_observed_profiled(
                 .get(&path)
                 .filter(|old| old.content_hash == content_hash && old.language == "ocr")
         {
-            profile = adapters::legacy::legacy_profile(old)?;
+            profile = match old
+                .retained
+                .as_ref()
+                .and_then(|reference| reference.profile.as_ref())
+            {
+                Some(profile) => profile.clone(),
+                None => adapters::legacy::legacy_profile(old)?,
+            };
         }
         profile.identity()?;
         if !selection.ambiguity.is_empty() {
@@ -632,6 +653,9 @@ fn scan_observed_profiled(
                 );
                 observation.usage.parser_calls += 1;
                 let extracted = match (|| -> Result<documents::Extracted> {
+                    if let Some(extracted) = documents::large_text(&bytes, &profile)? {
+                        return Ok(extracted);
+                    }
                     if composite::is_host(&profile.adapter_id) {
                         let payload = composite::extract(&path, &bytes, &profile)?;
                         let bound = airk_core::binding::bind_payload(
@@ -699,15 +723,19 @@ fn scan_observed_profiled(
             .context("extracted corpus byte count overflow")?;
         ensure!(
             extracted_bytes <= limits.extracted_bytes,
-            "extracted corpus exceeds configured byte limit; previous generation retained"
+            "extracted corpus exceeds configured byte limit: {extracted_bytes} > {} bytes at {path}; previous generation retained. Inspect AIRK ingestion limits or run `airk collections limits describe`",
+            limits.extracted_bytes
         );
         ensure!(
             total_bytes <= limits.corpus_bytes,
-            "corpus exceeds configured byte limit; previous generation retained"
+            "corpus exceeds configured byte limit: {total_bytes} > {} eligible source bytes at {path}; previous generation retained. Inspect AIRK ingestion limits or run `airk collections limits describe`",
+            limits.corpus_bytes
         );
         ensure!(
             artifacts.len() < limits.files,
-            "corpus exceeds configured file count; previous generation retained"
+            "corpus exceeds configured file count: {} > {} at {path}; previous generation retained",
+            artifacts.len() + 1,
+            limits.files
         );
         let artifact = emit(&profile, &artifact, &bytes, fresh_payload.as_ref())?;
         ensure!(

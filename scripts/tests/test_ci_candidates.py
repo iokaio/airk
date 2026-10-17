@@ -28,7 +28,129 @@ def artifacts_fixture():
             for i, (kind, target) in enumerate((kind, target) for target in candidates.TARGETS for kind in ("native", "vsix"))]
 
 
+def rehearsal_fixture():
+    run = {**run_fixture(), "event": "workflow_dispatch", "path": ".github/workflows/extension-release.yml"}
+    jobs = [dict(name="preflight", conclusion="success"), dict(name="publish", conclusion="skipped"),
+            dict(name="verify-identity", conclusion="skipped")]
+    jobs += [dict(name=f"build ({target})", conclusion="success", started_at="2026-10-16T01:00:00Z",
+                  completed_at="2026-10-16T01:01:00Z") for target in candidates.TARGETS]
+    artifacts = [dict(id=i + 1, name=f"airk-vsix-{target}-{COMMIT}-123", expired=False,
+                      digest="sha256:" + str(i) * 64, created_at="2026-10-16T01:00:50Z",
+                      workflow_run=dict(id=123, head_sha=COMMIT, head_branch="main"))
+                 for i, target in enumerate(candidates.TARGETS)]
+    return run, jobs, artifacts
+
+
+def rehearsal_api(run, jobs, artifacts, workflow_id=42):
+    def respond(path, paginate=False):
+        if path == "actions/runs/123":
+            return run
+        if path == "actions/workflows/extension-release.yml":
+            return dict(id=workflow_id)
+        if path == f"actions/runs/123/attempts/{run['run_attempt']}/jobs?per_page=100":
+            return [dict(jobs=jobs)]
+        if path == "actions/runs/123/artifacts?per_page=100":
+            return [dict(artifacts=artifacts)]
+        raise AssertionError(f"Unexpected API call: {path}")
+    return respond
+
+
 class CandidateTests(unittest.TestCase):
+    def test_rehearsal_requires_successful_main_origin_and_all_build_jobs(self):
+        for corruption in (None, "workflow", "branch", "commit", "fork", "event", "running", "failed",
+                           "published", "identity", "missing", "duplicate", "build_failed"):
+            run, jobs, artifacts = rehearsal_fixture()
+            workflow_id = 42
+            if corruption == "workflow":
+                workflow_id = 43
+            elif corruption in ("branch", "commit", "fork", "event", "running", "failed"):
+                key, value = {"branch": ("head_branch", "feature"), "commit": ("head_sha", "b" * 40),
+                              "fork": ("head_repository", {"full_name": "fork/airk"}),
+                              "event": ("event", "pull_request"), "running": ("status", "in_progress"),
+                              "failed": ("conclusion", "failure")}[corruption]
+                run[key] = value
+            elif corruption == "published":
+                jobs[1]["conclusion"] = "success"
+            elif corruption == "identity":
+                jobs[2]["conclusion"] = "success"
+            elif corruption == "missing":
+                jobs.pop()
+            elif corruption == "duplicate":
+                jobs.append(jobs[-1])
+            elif corruption == "build_failed":
+                jobs[-1]["conclusion"] = "failure"
+            with self.subTest(corruption=corruption), \
+                    patch.object(candidates, "api", side_effect=rehearsal_api(run, jobs, artifacts, workflow_id)):
+                if corruption:
+                    with self.assertRaises(ValueError):
+                        candidates.attest_rehearsal(123, COMMIT)
+                else:
+                    record = candidates.attest_rehearsal(123, COMMIT)
+                    self.assertEqual(record["attempt"], "1")
+                    self.assertEqual(len(record["artifacts"]), 4)
+
+    def test_rehearsal_rejects_stale_expired_unbound_or_incomplete_uploads(self):
+        for corruption in ("missing", "duplicate", "expired", "digest", "origin", "old_attempt", "after_job", "no_timezone"):
+            run, jobs, artifacts = rehearsal_fixture()
+            if corruption == "missing":
+                artifacts.pop()
+            elif corruption == "duplicate":
+                artifacts.append(artifacts[0])
+            elif corruption == "expired":
+                artifacts[0]["expired"] = True
+            elif corruption == "digest":
+                artifacts[0]["digest"] = "bad"
+            elif corruption == "origin":
+                artifacts[0]["workflow_run"]["id"] = 456
+            else:
+                artifacts[0]["created_at"] = {"old_attempt": "2026-10-15T01:00:50Z",
+                                              "after_job": "2026-10-16T01:02:00Z",
+                                              "no_timezone": "2026-10-16T01:00:50"}[corruption]
+            with self.subTest(corruption=corruption), \
+                    patch.object(candidates, "api", side_effect=rehearsal_api(run, jobs, artifacts)), \
+                    self.assertRaises(ValueError):
+                candidates.attest_rehearsal(123, COMMIT)
+
+    def test_rehearsal_download_pins_ids_and_rechecks_after_transfer(self):
+        run, jobs, artifacts = rehearsal_fixture()
+        with patch.object(candidates, "api", side_effect=rehearsal_api(run, jobs, artifacts)):
+            record = candidates.attest_rehearsal(123, COMMIT)
+        for change in (None, "before", "during"):
+            changed = {**record, "attempt": "2"}
+            replies = [changed] if change == "before" else [record, changed if change == "during" else record]
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as temporary, \
+                    patch.object(candidates, "attest_rehearsal", side_effect=replies), \
+                    patch.object(candidates, "download") as download:
+                output = Path(temporary) / "release"
+                if change:
+                    with self.assertRaisesRegex(ValueError, "changed"):
+                        candidates.download_rehearsal(record, COMMIT, output)
+                else:
+                    candidates.download_rehearsal(record, COMMIT, output)
+                    for name, artifact in record["artifacts"].items():
+                        download.assert_any_call(artifact, output / name)
+                self.assertEqual(download.call_count, 0 if change == "before" else 4)
+
+    def test_rehearsal_download_rejects_wrong_record_and_existing_destination(self):
+        run, jobs, artifacts = rehearsal_fixture()
+        with patch.object(candidates, "api", side_effect=rehearsal_api(run, jobs, artifacts)):
+            record = candidates.attest_rehearsal(123, COMMIT)
+        for bad in ({**record, "schema": "unknown/1"}, {**record, "commit": "b" * 40}):
+            with patch.object(candidates, "attest_rehearsal") as attest, \
+                    patch.object(candidates, "download") as download, self.assertRaises(ValueError):
+                candidates.download_rehearsal(bad, COMMIT, Path("unused"))
+            attest.assert_not_called()
+            download.assert_not_called()
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(candidates, "attest_rehearsal", return_value=record), \
+                patch.object(candidates, "download") as download:
+            marker = Path(temporary) / "keep.txt"
+            marker.write_text("existing data", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "fresh"):
+                candidates.download_rehearsal(record, COMMIT, Path(temporary))
+            download.assert_not_called()
+            self.assertEqual(marker.read_text(encoding="utf-8"), "existing data")
+
     def test_producer_must_be_exact_successful_main_origin(self):
         valid = run_fixture()
         candidates.verify_run(valid, COMMIT, "ci.yml", ("push",))

@@ -294,7 +294,7 @@ pub(crate) fn tokenize_vendor<'a>(
         _ => anyhow::bail!("unknown vendor SQL lexer mode"),
     };
     ensure!(
-        source.len() <= crate::MAX_FILE_BYTES,
+        source.len() <= crate::MAX_STRUCTURED_BYTES,
         "SQL source byte limit"
     );
     tokenize_mode(source, mode)

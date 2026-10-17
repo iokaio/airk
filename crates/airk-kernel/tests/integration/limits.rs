@@ -13,6 +13,7 @@ fn limits_are_persisted_isolated_and_failure_preserves_revision() -> Result<()> 
     kernel.index()?;
     let generation = kernel.status()?.generation;
     let initial = kernel.scan_limits()?;
+    assert_eq!(kernel.describe_scan_limits()?.mode, "automatic");
     let limited = ScanLimits {
         files: 1,
         ..initial
@@ -23,15 +24,31 @@ fn limits_are_persisted_isolated_and_failure_preserves_revision() -> Result<()> 
     assert_eq!(kernel.status()?.generation, generation);
     assert_eq!(kernel.coverage(true)?.capacity_blocked, 1);
     let reopened = Kernel::open_collection(&root, Some(data.clone()), "first")?;
+    assert_eq!(reopened.describe_scan_limits()?.mode, "configured");
     assert_eq!(reopened.scan_limits()?, limited);
+    let before_approval = std::fs::read(data.join("collections/first/scan-limits.json"))?;
+    assert!(
+        reopened
+            .configure_scan_limits_if_current(initial, Some(initial))
+            .unwrap_err()
+            .to_string()
+            .contains("approval was pending")
+    );
+    assert_eq!(
+        std::fs::read(data.join("collections/first/scan-limits.json"))?,
+        before_approval
+    );
     assert_eq!(
         Kernel::open_collection(&root, Some(data.clone()), "second")?.scan_limits()?,
         initial
     );
-    reopened.configure_scan_limits(ScanLimits {
-        files: 2,
-        ..initial
-    })?;
+    reopened.configure_scan_limits_if_current(
+        ScanLimits {
+            files: 2,
+            ..initial
+        },
+        Some(limited),
+    )?;
     assert_ne!(reopened.coverage(false)?.percent, Some(100));
     reopened.index()?;
     assert_eq!(reopened.status()?.files, 2);
@@ -53,6 +70,60 @@ fn limits_are_persisted_isolated_and_failure_preserves_revision() -> Result<()> 
     std::fs::write(root.join("secret.png"), b"not an image")?;
     assert!(airk_ingest::read_selected_source(&root, &data, "secret.png").is_err());
     assert!(airk_ingest::read_selected_source(&root, &data, "../secret.png").is_err());
+    assert_eq!(reopened.reset_scan_limits()?, initial);
+    assert_eq!(reopened.describe_scan_limits()?.mode, "automatic");
+    assert_eq!(reopened.status()?.files, 2);
+    Ok(())
+}
+
+#[test]
+fn large_text_retains_exact_source_reports_partial_and_preserves_revision_on_capacity_failure()
+-> Result<()> {
+    let root = tempfile::tempdir()?;
+    let data = tempfile::tempdir()?;
+    // Cross both the former 4 MiB text ceiling and 16 MiB retained-source ceiling.
+    let text = format!("{}\nlarge_source_marker\n", "x".repeat(17 * 1024 * 1024));
+    std::fs::write(root.path().join("large.ts"), &text)?;
+    let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    let report = kernel.index()?;
+    assert_eq!(report.indexed, 1);
+    assert!(report.skipped.is_empty());
+    let store = airk_store::FileStore::new(data.path().join("collections/default"));
+    let catalog = store.catalog()?.unwrap();
+    assert_eq!(
+        store.read_retained_source(&catalog.snapshot.artifacts["large.ts"])?,
+        text.as_bytes()
+    );
+    assert!(
+        kernel
+            .file_info("large.ts")?
+            .parse_status
+            .starts_with("partial-text-only:")
+    );
+    assert!(
+        kernel.read_file("large.ts", 2, 2, 1024)?.hits[0]
+            .text
+            .contains("large_source_marker")
+    );
+    let coverage = kernel.coverage(true)?;
+    assert!(coverage.scan_complete);
+    assert_eq!(coverage.eligible_source_bytes, text.len());
+    assert_eq!(coverage.largest_sources[0].path, "large.ts");
+    assert_eq!(coverage.largest_sources[0].source_bytes, text.len());
+    assert_eq!(kernel.index()?.reused, 1);
+    let generation = kernel.status()?.generation;
+    kernel.configure_scan_limits(ScanLimits {
+        corpus_bytes: text.len() - 1,
+        ..kernel.scan_limits()?
+    })?;
+    let error = kernel.index().unwrap_err().to_string();
+    assert!(
+        error.contains("eligible source bytes at large.ts"),
+        "{error}"
+    );
+    assert!(error.contains(&text.len().to_string()), "{error}");
+    assert_eq!(kernel.status()?.generation, generation);
+    assert_eq!(std::fs::read_to_string(root.path().join("large.ts"))?, text);
     Ok(())
 }
 

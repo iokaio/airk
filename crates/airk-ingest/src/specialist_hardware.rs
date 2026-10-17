@@ -106,7 +106,7 @@ pub(crate) fn analyze_budgeted(
     budget: &mut HostBudget,
 ) -> Result<Analysis> {
     ensure!(
-        source.len() <= crate::MAX_FILE_BYTES,
+        source.len() <= crate::MAX_STRUCTURED_BYTES,
         "hardware source byte limit"
     );
     let grammar: Language = match adapter {

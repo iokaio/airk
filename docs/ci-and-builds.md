@@ -33,7 +33,7 @@ Usage accounting has a separate best-effort contract: successful and failed jobs
 
 ## Downloadable candidates
 
-Ordinary CI and local extension packaging default to the stable channel for 1.0.0. A stable candidate is still an unpublished build artifact; release workflows verify and publish it separately. Future previews require an explicit channel and a distinct version.
+Ordinary CI and local extension packaging default to the stable channel for 1.1.0. A stable candidate is still an unpublished build artifact; release workflows verify and publish it separately. Future previews require an explicit channel and a distinct version.
 
 Successful native jobs upload an artifact named `airk-native-<target>-<commit>-<run-id>-<attempt>` to the workflow run's Artifacts section. It contains:
 
@@ -103,6 +103,7 @@ After merging, main CI must produce its own exact-commit candidate and populate 
 - The native matrix runs together. Compiler concurrency is four on x64 and remains two on Apple Silicon for memory headroom. Test scheduling is independently bounded. Platform clippy checks remain; formatting runs once. Intel's existing 120-minute job ceiling remains until hosted measurements justify reducing it; other full jobs retain 90 minutes.
 - SHA-pinned `rust-cache` keeps dependency outputs, excludes workspace crates and writes only from main push CI. PRs may restore main caches but cannot update them. Incremental compilation remains disabled; runtime/release optimization settings are unchanged.
 - Docker tests precede optimized compilation. BuildKit layer caching is supplemented by explicit registry/git/target cache-mount injection and extraction. Workspace outputs are pruned before exporting dependency caches. PR builds do not write shared Docker caches. A cache miss performs the same required checks.
+- Docker dependency cache keys separate the Linux x64/toolchain/Dockerfile/pruning configuration from Cargo manifests and the lockfile. If a version or dependency change misses the exact key, a fallback restores the newest cache with the same configuration prefix. Cargo still checks fingerprints and the locked graph, rebuilding changed dependencies; main saves the updated cache under the new exact key. There is no fallback across toolchain or Dockerfile changes. The first run in the `v3` namespace is cold, and `fresh_build` still disables restores and saves.
 - Dispatch **CI** with `fresh_build` enabled to disable both native and Docker restores for cold qualification. For a release, supply that successful run's ID as `candidate_run_id`. Missing/expired candidates fail early with this rebuild instruction; releases never silently start another long build.
 - Candidates, producer records and numeric timing reports expire after seven days. Public release assets have independent retention. Cache paths exclude corpora, models, private state, credentials and release staging directories.
 - Builds have read-only repository permissions and no signing or publishing credentials. Forks use `pull_request`, never privileged `pull_request_target` execution.

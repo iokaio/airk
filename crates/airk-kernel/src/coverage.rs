@@ -14,6 +14,12 @@ use std::{
 const CACHE_LIMIT: u64 = 32 * 1024 * 1024;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SourceSize {
+    pub path: String,
+    pub source_bytes: usize,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CoverageReport {
     pub collection: String,
     pub root: String,
@@ -40,6 +46,13 @@ pub struct CoverageReport {
     pub pending_removals: usize,
     pub budget_exhausted: bool,
     pub percent: Option<u8>,
+    #[serde(default)]
+    pub eligible_source_bytes: usize,
+    #[serde(default)]
+    pub extracted_bytes: usize,
+    /// At most twenty successfully extracted files, largest first.
+    #[serde(default)]
+    pub largest_sources: Vec<SourceSize>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -123,6 +136,9 @@ impl Kernel {
             pending_removals: 0,
             budget_exhausted: false,
             percent: None,
+            eligible_source_bytes: 0,
+            extracted_bytes: 0,
+            largest_sources: vec![],
         };
         if !refresh {
             return Ok(report);
@@ -171,6 +187,16 @@ impl Kernel {
             successful_bytes += entry.bytes;
             extracted_bytes += entry.extracted_bytes;
             successful_files += 1;
+            report.largest_sources.push(SourceSize {
+                path: path.clone(),
+                source_bytes: entry.bytes,
+            });
+            report.largest_sources.sort_by(|a, b| {
+                b.source_bytes
+                    .cmp(&a.source_bytes)
+                    .then(a.path.cmp(&b.path))
+            });
+            report.largest_sources.truncate(20);
             match previous.artifacts.get(path) {
                 Some(old)
                     if old.content_hash == entry.content_hash
@@ -183,6 +209,8 @@ impl Kernel {
                 None => report.missing += 1,
             }
         }
+        report.eligible_source_bytes = successful_bytes;
+        report.extracted_bytes = extracted_bytes;
         if successful_bytes > scan_limits.corpus_bytes
             || successful_files > scan_limits.files
             || extracted_bytes > scan_limits.extracted_bytes

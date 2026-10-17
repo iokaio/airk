@@ -33,7 +33,7 @@ const ENGINE_V3: &str =
     "tantivy-0.26.2/diskann-0.59.0/airk-file-1/generation-5/inventory-2/model-objects-1";
 const MAX_MANIFEST_V2_BYTES: usize = 128 * 1024;
 const MAX_COMPONENTS_V2: usize = 1024;
-const MAX_INVENTORY_V2_BYTES: usize = 128 * 1024 * 1024;
+const MAX_INVENTORY_V2_BYTES: usize = airk_core::publication::MAX_INVENTORY_BYTES;
 
 pub fn retrieval_specification_v2() -> &'static [u8] {
     ENGINE_V2.as_bytes()

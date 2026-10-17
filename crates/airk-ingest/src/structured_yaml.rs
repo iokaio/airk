@@ -170,7 +170,7 @@ impl View {
 
 pub(crate) fn parse(text: &str) -> Result<View> {
     ensure!(
-        text.len() <= crate::MAX_FILE_BYTES,
+        text.len() <= crate::MAX_STRUCTURED_BYTES,
         "YAML source exceeds byte limit"
     );
     let mut parser = Parser::new();

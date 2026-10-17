@@ -40,7 +40,7 @@ fn field<'a>(node: Node<'_>, source: &'a str, field: &str) -> Option<&'a str> {
 
 pub(crate) fn analyze(path: &str, source: &str, adapter: &str) -> Result<crate::syntax::Analysis> {
     ensure!(
-        source.len() <= crate::MAX_FILE_BYTES,
+        source.len() <= crate::MAX_STRUCTURED_BYTES,
         "language source exceeds byte limit"
     );
     let grammar: Language = match adapter {
@@ -385,7 +385,14 @@ mod tests {
                     || f.name.contains("Hidden")
                     || f.name.contains("Broken"))));
         }
-        assert!(analyze("large.dart", &" ".repeat(crate::MAX_FILE_BYTES + 1), "dart").is_err());
+        assert!(
+            analyze(
+                "large.dart",
+                &" ".repeat(crate::MAX_STRUCTURED_BYTES + 1),
+                "dart"
+            )
+            .is_err()
+        );
         assert!(analyze("many.scala", &"val value = 1\n".repeat(10_001), "scala").is_err());
         Ok(())
     }

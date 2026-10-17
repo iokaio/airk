@@ -25,7 +25,7 @@ pub(crate) fn discover(
     budget: &mut HostBudget,
 ) -> Result<ProseDiscovery> {
     ensure!(
-        text.len() <= crate::MAX_FILE_BYTES,
+        text.len() <= crate::MAX_STRUCTURED_BYTES,
         "prose host source limit exceeded"
     );
     match adapter {

@@ -25,7 +25,7 @@ pub(crate) fn analyze_budgeted(
     budget: &mut HostBudget,
 ) -> Result<Analysis> {
     ensure!(
-        source.len() <= crate::MAX_FILE_BYTES,
+        source.len() <= crate::MAX_STRUCTURED_BYTES,
         "vendor source byte limit"
     );
     budget.charge(0, 0, source.len(), 0)?;

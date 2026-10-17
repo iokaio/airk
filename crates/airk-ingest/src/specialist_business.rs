@@ -123,7 +123,7 @@ pub(crate) fn analyze_budgeted(
     budget: &mut HostBudget,
 ) -> Result<Analysis> {
     ensure!(
-        source.len() <= crate::MAX_FILE_BYTES,
+        source.len() <= crate::MAX_STRUCTURED_BYTES,
         "language source byte limit"
     );
     if adapter == "vbnet" {

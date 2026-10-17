@@ -32,7 +32,7 @@ There are 23 grammar branches from 22 grammar packages: TS and TSX are separate 
 
 [semantic.rs](../crates/airk-ingest/src/semantic.rs), [providers.rs](../crates/airk-ingest/src/providers.rs), [providers_lsp.rs](../crates/airk-ingest/src/providers_lsp.rs), [provider_process.rs](../crates/airk-ingest/src/provider_process.rs) and [ocr.rs](../crates/airk-ingest/src/ocr.rs) retain separate explicit SCIP/LSP/Ctags/OCR producer domains and source/build/model binding. They are not native resolution or automatic fallback.
 
-Syntax visits at most 500,000 nodes and emits at most 10,000 facts per file. Error-containing declarations are suppressed; tree errors report partial syntax. Preserve all [ingestion](ingestion-limits.md) and [format](formats.md) limits, including 4 MiB extracted text, document-unit caps, per-file omission versus pass failure, and original page/block/sheet/slide locations. New child regions must share host budgets.
+Syntax visits at most 500,000 nodes and emits at most 10,000 facts per file. Error-containing declarations are suppressed; tree errors report partial syntax. Preserve all [ingestion](ingestion-limits.md) and [format](formats.md) limits, including 32 MiB extracted text and the 4 MiB structured-source parsing budget, document-unit caps, per-file omission versus pass failure, and original page/block/sheet/slide locations. New child regions must share host budgets.
 
 ## Dependency and legal baseline
 

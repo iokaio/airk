@@ -39,15 +39,11 @@ pub fn bind_payload(
         "invalid artifact binding path"
     );
     ensure!(
-        binding.source_bytes <= 16_777_216,
+        binding.source_bytes <= crate::extraction::MAX_SOURCE_BYTES,
         "artifact source size exceeds ceiling"
     );
     profile.identity()?;
-    payload.validate_with_text_limit(if payload.extraction_method == "utf8" {
-        16_777_216
-    } else {
-        4_194_304
-    })?;
+    payload.validate_with_text_limit(crate::extraction::MAX_TEXT_BYTES)?;
     ensure!(
         payload.regions.is_empty() && payload.relationships.is_empty(),
         "legacy artifact binding cannot represent regions or explicit relationships"

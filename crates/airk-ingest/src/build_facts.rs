@@ -16,7 +16,7 @@ pub(crate) struct Facts<'a> {
 impl<'a> Facts<'a> {
     pub(crate) fn new(path: &'a str, text: &'a str, language: &'a str) -> Result<Self> {
         ensure!(
-            text.len() <= crate::MAX_FILE_BYTES,
+            text.len() <= crate::MAX_STRUCTURED_BYTES,
             "build source exceeds byte limit"
         );
         let mut lines = vec![0];
