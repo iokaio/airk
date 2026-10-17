@@ -1,6 +1,6 @@
 # Implementation roadmap
 
-The native beta and extension implement persistent lexical/vector components, real local transformer inference, local usage, workspace coverage, live provider/OCR adapters and durable scheduling with native events and optional per-user services. The remaining release-qualification work below is explicit; passing original fixtures does not establish production semantic quality or completion of the large-repository target.
+The native kernel and extension implement persistent lexical/vector components, real local transformer inference, local usage, workspace coverage, live provider/OCR adapters and durable scheduling with native events and optional per-user services. The remaining release-qualification work below is explicit; passing original fixtures does not establish production semantic quality or completion of the large-repository target.
 
 | Stage | Scope | Acceptance |
 |---|---|---|

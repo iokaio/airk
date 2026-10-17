@@ -1,6 +1,6 @@
 # Security
 
-AIRK is an early local single-user tool. Index state includes source text. Collection boundaries are retrieval isolation within that user's process/data, not separate-user authentication or a filesystem security boundary.
+AIRK is a local single-user tool. Index state includes source text. Collection boundaries are retrieval isolation within that user's process/data, not separate-user authentication or a filesystem security boundary.
 
 Do not include private source, indexes, tokens or exploit details in public issues. If this repository has GitHub private vulnerability reporting enabled, use **Security → Report a vulnerability**. Otherwise open an issue requesting a private reporting route without disclosing the vulnerability or affected data. No response-time guarantee or security-audited release is currently offered.
 

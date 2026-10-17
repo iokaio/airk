@@ -14,7 +14,7 @@ on:
     inputs:
       channel:
         type: string
-        default: preview
+        default: stable
       expected_version:
         type: string
         default: ''
@@ -196,7 +196,7 @@ jobs:
         run: python scripts/package-native.py --target ${{ matrix.target }}
       - name: Package and verify platform VSIX
         env:
-          AIRK_CHANNEL: ${{ inputs.channel || 'preview' }}
+          AIRK_CHANNEL: ${{ inputs.channel || 'stable' }}
         shell: pwsh
         run: python scripts/package-extension.py --target ${{ matrix.target }} --channel $env:AIRK_CHANNEL
       - name: Retain native candidate and checksums

@@ -4,7 +4,7 @@
 
 Everything runs on your machine. There is no cloud service, API key, Docker, Rust or Python to install: the native helper is bundled in the extension.
 
-> **Beta 0.2.1.** Packages target Windows x64, Linux x64 and macOS (Intel and Apple Silicon). Large-repository performance, macOS and remote-host qualification, and semantic-search quality are still being measured. See [Known limits](#known-limits).
+> **Version 1.0.0 · Stable channel.** Packages target Windows x64, Linux x64 and macOS (Intel and Apple Silicon). Large-repository performance, macOS and remote-host qualification, and semantic-search quality are still being measured. See [Known limits](#known-limits).
 
 ![Workspace code and documents flow through AIRK's local collection to independently configured Claude Code, Codex, Gemini CLI and other MCP clients.](https://raw.githubusercontent.com/iokaio/airk/main/docs/images/local-evidence.png)
 
@@ -43,7 +43,7 @@ Document extraction keeps heading context, dates, requirement IDs and modality (
 
 ## Get started
 
-1. **Install the package for your platform** with **Extensions: Install from VSIX…**. Files are named `airk-0.2.1-<platform>.vsix` (`win32-x64`, `linux-x64`, `darwin-x64` or `darwin-arm64`). Check whether the package is from the preview or stable channel before installing.
+1. **Install the package for your platform** with **Extensions: Install from VSIX…**. Files are named `airk-1.0.0-<platform>.vsix` (`win32-x64`, `linux-x64`, `darwin-x64` or `darwin-arm64`). Choose the stable 1.0.0 package. If you previously opted into pre-release versions, use **Switch to Release Version** in the extension menu to stay on stable updates.
 2. **Open a folder and trust it.** AIRK does not start its helper or read files in an untrusted window.
 3. **Index.** Click the **AIRK** status-bar item and choose **Index Now**, or run **AIRK: Index Now**. The status item then shows measured coverage, for example `AIRK: 97%`, and its tooltip lists stale, missing and failed files.
 4. **Connect an agent.**
@@ -236,7 +236,7 @@ What happens after AIRK returns evidence is up to the agent you connected. That 
 - **Code facts are syntax, not semantics.** Definitions, imports, references and relationships come from grammar parsing and are labeled as candidates. Resolved references require an optional SCIP import or a local LSP run through the CLI. Textual references include matches in strings and comments.
 - **Vector search is optional and unqualified.** It needs local model files you provision. Relevance on real codebases has not been measured.
 - **Not extracted:** scanned or image-only PDFs, encrypted documents, legacy DOC/PPT/XLS, DOCX headers, footers and comments, PPTX notes, and XLSX charts and pivot caches. OCR is available through the CLI for selected pages; the extension does not run it.
-- **Unsigned preview builds.** Signing, macOS notarization and Marketplace publication are pending.
+- **Unsigned local and CI helpers.** Ordinary CI and Marketplace packaging use unsigned native helpers. The separate GitHub release workflow signs Windows helpers and signs/notarizes Mac helpers; check the provenance of the package you install.
 
 More detail: [extension behavior and limits](https://github.com/iokaio/airk/blob/main/docs/vscode-extension.md) · [roadmap](https://github.com/iokaio/airk/blob/main/docs/roadmap.md).
 

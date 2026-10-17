@@ -8,14 +8,14 @@ on:
         type: string
         default: ''
       version:
-        description: Exact checked-in extension version (for example 0.2.1)
+        description: Exact checked-in extension version (for example 1.0.0)
         type: string
         required: true
       channel:
         description: Marketplace release channel
         type: choice
-        options: [preview, stable]
-        default: preview
+        options: [stable, preview]
+        default: stable
       publish:
         description: Publish the verified packages to Visual Studio Marketplace
         type: boolean

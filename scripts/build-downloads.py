@@ -67,7 +67,7 @@ def render_downloads(records):
     if not records:
         return f"""<div class="pending-release">
         <h3>The first download is on its way.</h3>
-        <p>AIRK is in beta. Packaged downloads will appear here after the first GitHub release is published. You can explore the source and build instructions now.</p>
+        <p>Packaged downloads will appear here after the first GitHub release is published. You can explore the source and build instructions now.</p>
         <a class="text-link" href="{GITHUB}">Explore AIRK on GitHub <span aria-hidden="true">↗</span></a>
       </div>"""
     sections = []

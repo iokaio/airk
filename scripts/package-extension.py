@@ -105,7 +105,7 @@ def main():
     parser.add_argument("--target", choices=TARGETS, required=True)
     parser.add_argument("--native-dir", type=Path)
     parser.add_argument("--output", type=Path)
-    parser.add_argument("--channel", choices=("preview", "stable"), default="preview")
+    parser.add_argument("--channel", choices=("preview", "stable"), default="stable")
     args = parser.parse_args()
     native = (args.native_dir or ROOT / "artifacts" / "native" / args.target / "publish").resolve()
     output = (args.output or ROOT / "artifacts" / "extension" / args.target).resolve()
