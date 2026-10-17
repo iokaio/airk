@@ -38,6 +38,10 @@ def main():
             assert result.returncode == 0, (command, result.stderr)
             return json.loads(result.stdout)
 
+        # This scenario verifies explicit prune preview/apply, so preserve its
+        # old generations instead of relying on the automatic new-user default.
+        call("collections", "retention", "set", "--json", json.dumps({
+            "version": 1, "mode": "manual", "searchable_predecessors": 0}))
         call("index")
         assert call("collections", "roots", "add", "requirements", specs)["pending_index"]
         assert call("coverage", "--refresh")["percent"] is None
