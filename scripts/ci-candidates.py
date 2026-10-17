@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Authenticate and download exact main CI artifacts before release promotion."""
 import argparse
+from datetime import datetime
 import hashlib
 import json
 import os
@@ -41,9 +42,10 @@ def verify_run(run, commit, workflow, events, success=True):
     positive(run["run_attempt"])
 
 
-def select_artifacts(artifacts, commit, run_id, attempt):
-    expected = {f"airk-{kind}-{target}-{commit}-{run_id}-{attempt}"
-                for target in TARGETS for kind in ("native", "vsix")}
+def select_artifacts(artifacts, commit, run_id, attempt, kinds=("native", "vsix")):
+    suffix = f"{commit}-{run_id}" + (f"-{attempt}" if attempt is not None else "")
+    expected = {f"airk-{kind}-{target}-{suffix}"
+                for target in TARGETS for kind in kinds}
     selected = {}
     for artifact in artifacts:
         name = artifact.get("name")
@@ -57,7 +59,7 @@ def select_artifacts(artifacts, commit, run_id, attempt):
             raise ValueError("Duplicate, expired or unbound candidate artifact")
         selected[name] = dict(id=positive(artifact["id"]), digest=artifact["digest"])
     if set(selected) != expected:
-        raise ValueError("Candidate lacks the complete eight-artifact platform set for this attempt")
+        raise ValueError("Candidate lacks the complete artifact platform set for this attempt")
     return selected
 
 
@@ -103,6 +105,54 @@ def verify_record(record, commit):
     current = attest(record["run_id"], commit, allow_manual=record.get("event") == "workflow_dispatch")
     if current != record:
         raise ValueError("Producer run attempt or artifact identities changed after preflight")
+
+
+def attest_rehearsal(run_id, commit):
+    """Only a complete, non-publishing main rehearsal may supply Marketplace VSIXs."""
+    run_id = positive(run_id)
+    run = api(f"actions/runs/{run_id}")
+    verify_run(run, commit, "extension-release.yml", ("workflow_dispatch",))
+    workflow = api("actions/workflows/extension-release.yml")
+    if run.get("workflow_id") != workflow.get("id"):
+        raise ValueError("Rehearsal workflow identity differs")
+    attempt = positive(run["run_attempt"])
+    jobs = [job for page in api(f"actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100", True) for job in page["jobs"]]
+    required = {"preflight": "success", "publish": "skipped", "verify-identity": "skipped"}
+    required.update({f"build ({target})": "success" for target in TARGETS})
+    for name, conclusion in required.items():
+        matches = [job for job in jobs if job["name"] == name]
+        if len(matches) != 1 or matches[0].get("conclusion") != conclusion:
+            raise ValueError(f"Rehearsal job has an unexpected result: {name}")
+    artifacts = [a for page in api(f"actions/runs/{run_id}/artifacts?per_page=100", True) for a in page["artifacts"]]
+    selected = select_artifacts(artifacts, commit, run_id, None, kinds=("vsix",))
+    # Rehearsal artifact names survive retries. Bind each upload to the successful
+    # build job in this attempt so retained files from older attempts cannot pass.
+    for target in TARGETS:
+        job = next(job for job in jobs if job["name"] == f"build ({target})")
+        artifact = next(a for a in artifacts if a["name"] == f"airk-vsix-{target}-{commit}-{run_id}")
+        try:
+            started, created, completed = (datetime.fromisoformat(value.replace("Z", "+00:00"))
+                                          for value in (job["started_at"], artifact["created_at"], job["completed_at"]))
+            if any(value.tzinfo is None for value in (started, created, completed)) or not started <= created <= completed:
+                raise ValueError("Upload outside successful job interval")
+        except (KeyError, TypeError, AttributeError, ValueError) as error:
+            raise ValueError("Rehearsal artifact is not bound to this attempt's build job") from error
+    return dict(schema="airk-extension-rehearsal/1", repository=REPOSITORY, workflow_id=workflow["id"],
+                commit=commit, run_id=str(run_id), attempt=str(attempt),
+                artifacts=selected)
+
+
+def download_rehearsal(record, commit, destination):
+    if record.get("schema") != "airk-extension-rehearsal/1" or record.get("commit") != commit:
+        raise ValueError("Rehearsal record belongs to another commit/schema")
+    if attest_rehearsal(record["run_id"], commit) != record:
+        raise ValueError("Rehearsal attempt or artifacts changed after preflight")
+    if destination.exists():
+        raise ValueError("Rehearsal destination must be fresh")
+    for name, artifact in record["artifacts"].items():
+        download(artifact, destination / name)
+    if attest_rehearsal(record["run_id"], commit) != record:
+        raise ValueError("Rehearsal changed during download")
 
 
 def unpack_artifact(archive, destination):
@@ -190,13 +240,23 @@ def verify_tag(tag, commit):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("resolve", "download", "bundle", "tag"))
+    parser.add_argument("command", choices=("resolve", "download", "bundle", "tag", "rehearsal", "rehearsal-download"))
     parser.add_argument("--record", type=Path, default=Path("artifacts/producer.json"))
     parser.add_argument("--target", choices=TARGETS)
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--run-id")
     args = parser.parse_args()
     commit = os.environ["GITHUB_SHA"]
-    if args.command == "tag":
+    if args.command == "rehearsal":
+        record = attest_rehearsal(args.run_id, commit)
+        args.record.parent.mkdir(parents=True, exist_ok=True)
+        args.record.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+        print(f"Verified rehearsal {record['run_id']}, attempt {record['attempt']}, exact commit {commit}")
+    elif args.command == "rehearsal-download":
+        if args.output is None:
+            parser.error("rehearsal-download requires --output")
+        download_rehearsal(json.loads(args.record.read_text(encoding="utf-8")), commit, args.output)
+    elif args.command == "tag":
         verify_tag(os.environ["GITHUB_REF_NAME"], commit)
     elif args.command == "resolve":
         record = resolve(commit, os.environ.get("AIRK_CANDIDATE_RUN_ID"))

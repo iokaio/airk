@@ -14,7 +14,7 @@ All evidence preserves original UTF-8 byte spans and original line bounds, inclu
 
 Sibling declarators retain their actual containing owner. A declaration selected from a child node does not become the owner of all of the traversal node's other children. The GLSL payload regression exercises global siblings, local siblings inside a function and an interface block through extraction, path-neutral conversion and binding.
 
-Input and final serialized evidence are limited to 16 MiB. Shared extraction budgets bound traversal to 500,000 work units and 10,000 facts, with a maximum owner depth of 128. Display names are UTF-8-safe and bounded; exact source spans remain complete. Traversal skips comments, literal contents and macro replacement text. Malformed syntax and preprocessing are explicitly partial. Source files are never written or executed.
+Structured input is limited to 4 MiB; larger UTF-8 sources use [partial text-only extraction](ingestion-limits.md). Final serialized evidence remains limited to 16 MiB. Shared extraction budgets bound traversal to 500,000 work units and 10,000 facts, with a maximum owner depth of 128. Display names are UTF-8-safe and bounded; exact source spans remain complete. Traversal skips comments, literal contents and macro replacement text. Malformed syntax and preprocessing are explicitly partial. Source files are never written or executed.
 
 ## Exact dependencies
 

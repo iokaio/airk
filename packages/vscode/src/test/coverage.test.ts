@@ -33,6 +33,9 @@ test('coverage labels never round partial, empty, changed or nearly complete inv
     assert.equal(coverageLabel({ ...view, report: { ...report, indexed: false } }), 'Not indexed');
     assert.match(coverageDetails('Fixture', view, 2), /2 unsaved documents/);
     assert.match(coverageDetails('Fixture', view, 0), /999 of 1000 eligible files current/);
+    const measured = { ...view, report: { ...report, scan_complete: false, eligible_source_bytes: 71 * 1048576,
+        scan_limits: { corpus_bytes: 2 * 1024 * 1048576, extracted_bytes: 4 * 1024 * 1048576 } } };
+    assert.match(coverageDetails('Fixture', measured, 0), /71\.0 MiB \/ 2048\.0 MiB limit \(partial scan\)/);
 });
 
 test('coverage scans coalesce events and invalidate observations when edits arrive during a scan', async () => {

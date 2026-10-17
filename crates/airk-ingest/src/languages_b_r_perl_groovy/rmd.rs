@@ -20,7 +20,7 @@ pub(crate) fn discover(
     budget: &mut HostBudget,
 ) -> Result<ProseDiscovery> {
     ensure!(
-        source.len() <= crate::MAX_FILE_BYTES,
+        source.len() <= crate::MAX_STRUCTURED_BYTES,
         "R Markdown source limit"
     );
     budget.charge(source.len(), 0, 0, 0)?;

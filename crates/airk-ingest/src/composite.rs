@@ -51,7 +51,7 @@ pub(crate) fn extract(
 ) -> Result<ExtractionPayload> {
     let text = std::str::from_utf8(bytes)?;
     ensure!(
-        bytes.len() <= crate::MAX_FILE_BYTES && !bytes.contains(&0),
+        bytes.len() <= crate::MAX_STRUCTURED_BYTES && !bytes.contains(&0),
         "invalid composite source"
     );
     let registry = AdapterRegistry::baseline();

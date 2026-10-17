@@ -5,8 +5,11 @@ use std::collections::BTreeMap;
 
 pub const EXTRACTION_CONTRACT_VERSION: u32 = 2;
 /// Preserves legacy 40-line chunks across the bounded native source ceiling.
-/// The independent 64 MiB encoded payload limit remains authoritative.
+/// The independent encoded payload limit remains authoritative.
 pub const MAX_EXTRACTION_CHUNKS: usize = 500_000;
+pub const MAX_SOURCE_BYTES: usize = 256 * 1024 * 1024;
+pub const MAX_TEXT_BYTES: usize = 32 * 1024 * 1024;
+pub const MAX_PAYLOAD_BYTES: usize = 256 * 1024 * 1024;
 
 /// A source slice admitted under the native input ceiling. Document adapters
 /// must additionally enforce their lower extraction/text limits.
@@ -30,7 +33,7 @@ impl<'a> AdapterInput<'a> {
         region: Option<AdapterRegionContext<'a>>,
     ) -> anyhow::Result<Self> {
         anyhow::ensure!(
-            bytes.len() <= 16_777_216,
+            bytes.len() <= MAX_SOURCE_BYTES,
             "adapter source exceeds native ceiling"
         );
         profile.identity()?;
@@ -280,13 +283,13 @@ pub struct ExtractionPayload {
 
 impl ExtractionPayload {
     pub fn validate(&self) -> anyhow::Result<()> {
-        self.validate_with_text_limit(16_777_216)
+        self.validate_with_text_limit(MAX_TEXT_BYTES)
     }
 
-    /// Document adapters pass 4 MiB; native text can use the 16 MiB ceiling.
+    /// Adapters may impose a lower bound than the shared 32 MiB text ceiling.
     pub fn validate_with_text_limit(&self, text_limit: usize) -> anyhow::Result<()> {
         anyhow::ensure!(
-            text_limit <= 16_777_216 && self.text.len() <= text_limit,
+            text_limit <= MAX_TEXT_BYTES && self.text.len() <= text_limit,
             "adapter text limit exceeded"
         );
         anyhow::ensure!(
@@ -317,7 +320,7 @@ impl ExtractionPayload {
             );
         }
         anyhow::ensure!(
-            self.text.len() <= 16_777_216 && self.facts.len() <= 10_000,
+            self.text.len() <= MAX_TEXT_BYTES && self.facts.len() <= 10_000,
             "extraction payload exceeds limits"
         );
         anyhow::ensure!(
@@ -617,8 +620,8 @@ impl ExtractionPayload {
         );
         // Includes nested document/table/code evidence in the durable bound.
         anyhow::ensure!(
-            serde_json::to_vec(self)?.len() <= 67_108_864,
-            "serialized extraction payload exceeds 64 MiB"
+            serde_json::to_vec(self)?.len() <= MAX_PAYLOAD_BYTES,
+            "serialized extraction payload exceeds 256 MiB"
         );
         Ok(())
     }

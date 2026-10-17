@@ -31,11 +31,7 @@ impl<'a> MappedBinding<'a> {
         for region in &payload.regions {
             budget.charge(1, 0, region.text.len(), region.source_map.segments.len())?;
         }
-        payload.validate_with_text_limit(if payload.extraction_method == "utf8" {
-            16_777_216
-        } else {
-            4_194_304
-        })?;
+        payload.validate_with_text_limit(crate::extraction::MAX_TEXT_BYTES)?;
         ensure!(
             payload.relationships.is_empty(),
             "mapped artifact binding cannot represent explicit relationships"
@@ -240,7 +236,7 @@ pub fn bind_payload(
         "invalid mapped artifact path"
     );
     ensure!(
-        binding.source_bytes <= 16_777_216,
+        binding.source_bytes <= crate::extraction::MAX_SOURCE_BYTES,
         "mapped source size exceeds ceiling"
     );
     let mapper = MappedBinding::new(payload, profile, budget)?;

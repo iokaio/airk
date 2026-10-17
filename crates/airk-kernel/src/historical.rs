@@ -95,8 +95,14 @@ impl Kernel {
                 "exact revision availability cannot use a cursor"
             );
             revision.validate_against(&envelope.token)?;
-            let retained = self.store.catalog_at(&revision, 268_435_456)?.is_some()
-                || self.store.history_at(&revision, 268_435_456)?.is_some();
+            let retained = self
+                .store
+                .catalog_at(&revision, airk_store::blobs::MAX_CATALOG_BYTES)?
+                .is_some()
+                || self
+                    .store
+                    .history_at(&revision, airk_store::blobs::MAX_CATALOG_BYTES)?
+                    .is_some();
             let fits = serde_json::to_vec(&revision)?.len() <= request.max_bytes;
             return Ok(HistoryAvailability {
                 current_publication: envelope,
@@ -197,11 +203,14 @@ impl Kernel {
         };
         // Each store entry point pins the canonical revision lease before inspecting
         // its representation. A retired revision never resolves to current content.
-        let retained = match self.store.catalog_at(&requested, 268_435_456)? {
+        let retained = match self
+            .store
+            .catalog_at(&requested, airk_store::blobs::MAX_CATALOG_BYTES)?
+        {
             Some(catalog) => Some(RetainedView::Full(catalog)),
             None => self
                 .store
-                .history_at(&requested, 268_435_456)?
+                .history_at(&requested, airk_store::blobs::MAX_CATALOG_BYTES)?
                 .map(RetainedView::History),
         };
         let Some(retained) = retained else {

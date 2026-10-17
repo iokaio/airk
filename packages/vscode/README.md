@@ -4,7 +4,7 @@
 
 Everything runs on your machine. There is no cloud service, API key, Docker, Rust or Python to install: the native helper is bundled in the extension.
 
-> **Version 1.0.0 · Stable channel.** Packages target Windows x64, Linux x64 and macOS (Intel and Apple Silicon). Large-repository performance, macOS and remote-host qualification, and semantic-search quality are still being measured. See [Known limits](#known-limits).
+> **Version 1.1.0 · Stable channel.** Packages target Windows x64, Linux x64 and macOS (Intel and Apple Silicon). Large-repository performance, macOS and remote-host qualification, and semantic-search quality are still being measured. See [Known limits](#known-limits).
 
 ![Workspace code and documents flow through AIRK's local collection to independently configured Claude Code, Codex, Gemini CLI and other MCP clients.](https://raw.githubusercontent.com/iokaio/airk/main/docs/images/local-evidence.png)
 
@@ -43,7 +43,7 @@ Document extraction keeps heading context, dates, requirement IDs and modality (
 
 ## Get started
 
-1. **Install the package for your platform** with **Extensions: Install from VSIX…**. Files are named `airk-1.0.0-<platform>.vsix` (`win32-x64`, `linux-x64`, `darwin-x64` or `darwin-arm64`). Choose the stable 1.0.0 package. If you previously opted into pre-release versions, use **Switch to Release Version** in the extension menu to stay on stable updates.
+1. **Install the package for your platform** with **Extensions: Install from VSIX…**. Files are named `airk-1.1.0-<platform>.vsix` (`win32-x64`, `linux-x64`, `darwin-x64` or `darwin-arm64`). Choose the stable 1.1.0 package. If you previously opted into pre-release versions, use **Switch to Release Version** in the extension menu to stay on stable updates.
 2. **Open a folder and trust it.** AIRK does not start its helper or read files in an untrusted window.
 3. **Index.** Click the **AIRK** status-bar item and choose **Index Now**, or run **AIRK: Index Now**. The status item then shows measured coverage, for example `AIRK: 97%`, and its tooltip lists stale, missing and failed files.
 4. **Connect an agent.**
@@ -232,7 +232,7 @@ What happens after AIRK returns evidence is up to the agent you connected. That 
 
 ## Known limits
 
-- **Size.** Default collection bounds are 16 MiB per source file, 64 MiB of eligible source, 128 MiB of extracted text and 10,000 files. Larger limits can be configured through the CLI but have not been performance-qualified.
+- **Size.** Automatic limits allow up to 256 MiB per source file, 32 MiB extracted text per file and 100,000 files. Eligible source uses one eighth of detected machine memory, capped at 2 GiB (512 MiB when detection is unavailable); extracted text gets twice that allowance. Existing saved policies remain unchanged. UTF-8 files above 4 MiB retain searchable text with partial text-only status, without structural facts. Disk quotas and format limits still apply; larger permitted workloads are not performance-qualified. Use **AIRK: Show Ingestion Limits** to inspect effective limits, memory detection, the storage path, quota and cached coverage totals/largest files. Use **AIRK: Show Collection Status and Coverage** for fresh measurements and **AIRK: Configure Ingestion Limits…** to restore automatic sizing or review/import a six-field limits JSON. When indexing hits a collection budget, **Review larger limit** lets you enter a larger allowance up to the displayed hard ceiling. **Save limit and retry** explains that larger limits may increase indexing time, memory and disk usage, then saves the approved budget and retries once. Cancellation preserves the existing limits; per-file extraction bounds and disk quotas remain enforced. See [ingestion limits](https://github.com/iokaio/airk/blob/main/docs/ingestion-limits.md) for the JSON format, CLI commands and independent extraction/storage limits.
 - **Code facts are syntax, not semantics.** Definitions, imports, references and relationships come from grammar parsing and are labeled as candidates. Resolved references require an optional SCIP import or a local LSP run through the CLI. Textual references include matches in strings and comments.
 - **Vector search is optional and unqualified.** It needs local model files you provision. Relevance on real codebases has not been measured.
 - **Not extracted:** scanned or image-only PDFs, encrypted documents, legacy DOC/PPT/XLS, DOCX headers, footers and comments, PPTX notes, and XLSX charts and pivot caches. OCR is available through the CLI for selected pages; the extension does not run it.

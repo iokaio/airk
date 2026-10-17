@@ -127,6 +127,15 @@ test('extension native adapter indexes, rebuilds, probes MCP, isolates and remov
         const spec: LaunchSpec = { command, root, dataDir, collection: collectionId(root), name: 'A' };
         const first = await runJson<IndexReport>(spec, 'index', ['--scheduled']); assert.equal(first.indexed, 1);
         const coverage = await runJson<Coverage>(spec, 'coverage', ['--refresh']); assert.equal(coverage.percent, 100); assert.equal(coverage.current, 1);
+        const limits = await runJson<import('../ingestionLimits').LimitsDescription>(spec, 'collections', ['limits', 'describe']);
+        assert.equal(limits.mode, 'automatic'); assert.ok(limits.effective.corpus_bytes <= 2147483648);
+        const reduced = { ...limits.effective, corpus_bytes: 1 };
+        await runJson(spec, 'collections', ['limits', 'set', '--json', JSON.stringify(reduced), '--expected-json', JSON.stringify(limits.effective)]);
+        await assert.rejects(runJson(spec, 'index', ['--scheduled', '--automatic']), /corpus exceeds configured byte limit/);
+        await assert.rejects(runJson(spec, 'collections', ['limits', 'set', '--json', JSON.stringify(limits.effective), '--expected-json', JSON.stringify(limits.effective)]), /approval was pending/);
+        await runJson(spec, 'collections', ['limits', 'set', '--json', JSON.stringify(limits.effective), '--expected-json', JSON.stringify(reduced)]);
+        assert.equal((await runJson<IndexReport>(spec, 'index', ['--scheduled', '--automatic'])).reused, 1);
+        await runJson(spec, 'collections', ['limits', 'reset']);
         await runJson(spec, 'schedule', ['pause']);
         await assert.rejects(runJson(spec, 'index', ['--scheduled', '--automatic']), /scheduling is paused/);
         assert.equal((await runJson<IndexReport>(spec, 'index', ['--scheduled'])).reused, 1);

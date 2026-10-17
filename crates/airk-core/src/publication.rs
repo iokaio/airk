@@ -12,7 +12,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub const INVENTORY_VERSION: u32 = 3;
 pub const SNAPSHOT_PROJECTION_VERSION: u32 = 4;
-pub const MAX_INVENTORY_BYTES: usize = 134_217_728;
+/// Includes durable continuity descriptors across the collection. A code-heavy
+/// workspace can exceed 128 MiB of metadata while its source is under 100 MiB.
+pub const MAX_INVENTORY_BYTES: usize = 512 * 1024 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -203,9 +205,9 @@ impl InventoryV2 {
                 "file profile language mismatch"
             );
             ensure!(
-                file.source_bytes <= 16_777_216
-                    && file.payload_bytes <= 67_108_864
-                    && file.extracted_bytes <= 16_777_216
+                file.source_bytes <= crate::extraction::MAX_SOURCE_BYTES
+                    && file.payload_bytes <= crate::extraction::MAX_PAYLOAD_BYTES
+                    && file.extracted_bytes <= crate::extraction::MAX_TEXT_BYTES
                     && file.facts <= 10_000
                     && file.chunks <= 500_000,
                 "file metadata exceeds bounds"
@@ -396,6 +398,33 @@ mod tests {
         let mut changed = value;
         changed.profiles.values_mut().next().unwrap().chunk_version = 2;
         assert!(changed.validate().is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn inventory_above_old_metadata_ceiling_round_trips_without_losing_bindings() -> Result<()> {
+        let mut value = inventory();
+        let mut template = value.files.remove("notes.txt").unwrap();
+        // Exercise actual encoded metadata beyond the former 128 MiB limit,
+        // without changing any per-file validation or fabricating source bytes.
+        template.parse_status = "x".repeat(65_536);
+        for index in 0..2050u128 {
+            let path = format!("fixture-{index}.txt");
+            let mut file = template.clone();
+            file.state.artifact_id = ArtifactId::from_bytes(index.to_le_bytes());
+            file.state.path = path.clone();
+            value.files.insert(path, file);
+        }
+        let bytes = value.canonical_bytes()?;
+        assert!(bytes.len() > 128 * 1024 * 1024);
+        drop(value);
+        let decoded: InventoryV2 = serde_json::from_slice(&bytes)?;
+        decoded.validate()?;
+        let projection = decoded.projection()?;
+        assert_eq!(projection.artifacts.len(), 2050);
+        assert_eq!(projection.root, "/original");
+        assert_eq!(projection.collection, "fixture");
+        assert_eq!(decoded.canonical_bytes()?, bytes);
         Ok(())
     }
 

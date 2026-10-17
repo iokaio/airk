@@ -83,7 +83,7 @@ pub fn convert_native_legacy(
         ensure!(
             text.len()
                 .checked_add(chunk.text.len())
-                .is_some_and(|n| n <= 16_777_216),
+                .is_some_and(|n| n <= airk_core::extraction::MAX_TEXT_BYTES),
             "legacy text limit exceeded"
         );
         let line_count = chunk.text.split_inclusive('\n').count();
@@ -268,9 +268,10 @@ pub fn convert_native_legacy(
         relationships: vec![],
         continuity: vec![],
         diagnostics: vec![],
-        partial: artifact.parse_status == "partial-syntax",
+        partial: artifact.parse_status == "partial-syntax"
+            || artifact.parse_status.starts_with("partial-text-only:"),
     };
-    payload.validate_with_text_limit(if native_text { 16_777_216 } else { 4_194_304 })?;
+    payload.validate_with_text_limit(airk_core::extraction::MAX_TEXT_BYTES)?;
     Ok(payload)
 }
 

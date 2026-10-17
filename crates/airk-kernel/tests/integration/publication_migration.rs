@@ -59,6 +59,8 @@ fn save_legacy(
     bytes: &[u8],
 ) -> Result<Vec<u8>> {
     let mut snapshot = Snapshot::empty(root.canonicalize()?.to_string_lossy().into_owned());
+    // Existing 1.0.0 OCR must survive a newer native extractor/profile version.
+    snapshot.extractor_version = "native-facts/7".into();
     snapshot.generation = 11;
     snapshot.storage_format = 1;
     snapshot.artifacts.insert(

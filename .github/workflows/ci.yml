@@ -258,13 +258,17 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: artifacts/docker-cache
-          key: airk-docker-deps-v2-${{ hashFiles('Dockerfile', 'rust-toolchain.toml', 'Cargo.lock', '**/Cargo.toml', 'scripts/ci-prune-target.py') }}
+          key: airk-docker-deps-v3-linux-x64-${{ hashFiles('Dockerfile', 'rust-toolchain.toml', 'scripts/ci-prune-target.py') }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}
+          restore-keys: |
+            airk-docker-deps-v3-linux-x64-${{ hashFiles('Dockerfile', 'rust-toolchain.toml', 'scripts/ci-prune-target.py') }}-
       - name: Restore dependency mounts without writing PR caches
         if: ${{ !inputs.fresh_build && (github.event_name != 'push' || github.ref != 'refs/heads/main') }}
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: artifacts/docker-cache
-          key: airk-docker-deps-v2-${{ hashFiles('Dockerfile', 'rust-toolchain.toml', 'Cargo.lock', '**/Cargo.toml', 'scripts/ci-prune-target.py') }}
+          key: airk-docker-deps-v3-linux-x64-${{ hashFiles('Dockerfile', 'rust-toolchain.toml', 'scripts/ci-prune-target.py') }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}
+          restore-keys: |
+            airk-docker-deps-v3-linux-x64-${{ hashFiles('Dockerfile', 'rust-toolchain.toml', 'scripts/ci-prune-target.py') }}-
       - name: Persist the actual Cargo cache mounts
         if: ${{ !inputs.fresh_build }}
         uses: reproducible-containers/buildkit-cache-dance@5422eac04292c961a382e0f584ea0f03ad9da723 # v3

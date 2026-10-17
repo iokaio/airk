@@ -25,7 +25,7 @@ Nix/Zig/Julia use tree-sitter-language 0.1 bindings. Clojure additionally depend
 
 ## Adapter contracts and limits
 
-`languages_b_data::analyze(path, text, adapter)` creates a fresh host allowance. `analyze_budgeted(path, text, adapter, budget)` shares node, fact and fingerprint allowances across host children; callers admit source/map bytes once. IDs: `nix`, `zig`, `julia`, `clojure`, `edn`. The common limits are 16 MiB source, 500,000 visited nodes, 10,000 facts, 64 MiB fingerprint work, 128 owner/context depth, bounded display details and 16 MiB serialized evidence. Exhaustion fails closed.
+`languages_b_data::analyze(path, text, adapter)` creates a fresh host allowance. `analyze_budgeted(path, text, adapter, budget)` shares node, fact and fingerprint allowances across host children; callers admit source/map bytes once. IDs: `nix`, `zig`, `julia`, `clojure`, `edn`. The common limits are 4 MiB structured source (larger UTF-8 sources use [partial text-only extraction](ingestion-limits.md)), 500,000 visited nodes, 10,000 facts, 64 MiB fingerprint work, 128 owner/context depth, bounded display details and 16 MiB serialized evidence. Exhaustion fails closed.
 
 Native syntax facts use `airk-tree-sitter/<adapter>` with `general-b-facts/1`. Clojure macro-form interpretation and EDN data cues use `airk-language-structure/<adapter>` with the same version; these require explicit producer admission. They have no declaration fingerprints and remain partial. Clojure reader branches carry written `reader:<feature>` scope context without selecting a platform. Quoted, discarded, evaluated and tagged forms are not interpreted. EDN list values never become call/declaration evidence.
 

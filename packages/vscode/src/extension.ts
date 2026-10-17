@@ -8,6 +8,7 @@ import { CapacityError, Options, PausedError, Scheduler } from './scheduler';
 import { Coverage, CoverageQueue, coverageDetails, coverageLabel } from './coverage';
 import { RetentionStatus, RetentionPreview, retentionSummary, retentionPolicyForMode } from './retention';
 import { withPolicySnapshot } from './extractionPolicy';
+import { aboveNormal, authorizeLimitIncrease, indexWithLimitApproval, largerLimitsExplanation, LimitsDescription, ScanLimits } from './ingestionLimits';
 import { historyControl, HistoryAction } from './history';
 import { renderReport, ReportKind } from './report';
 
@@ -231,7 +232,21 @@ class Controller implements vscode.Disposable {
             }
         }
         let report: IndexReport;
-        try { report = await this.writeNative<IndexReport>(spec, 'index', ['--scheduled', ...(automatic ? ['--automatic'] : []), ...(full ? ['--full'] : [])]); }
+        try {
+            report = await indexWithLimitApproval(
+                () => this.writeNative<IndexReport>(spec, 'index', ['--scheduled', ...(automatic ? ['--automatic'] : []), ...(full ? ['--full'] : [])]),
+                error => authorizeLimitIncrease({
+                    describe: () => { this.trusted(); return runJson<LimitsDescription>(spec, 'collections', ['limits', 'describe']); },
+                    review: async message => await vscode.window.showWarningMessage(message, 'Review larger limit') === 'Review larger limit',
+                    input: async (prompt, value, validateInput) => vscode.window.showInputBox({ prompt, value, validateInput, ignoreFocusOut: true }),
+                    confirm: async message => await vscode.window.showWarningMessage(message, { modal: true }, 'Save limit and retry') === 'Save limit and retry',
+                    save: async (proposed, expected) => {
+                        this.trusted();
+                        if (this.specs.get(spec.collection)?.dataDir !== spec.dataDir) { throw new Error('Collection storage changed; review its current limits.'); }
+                        await this.writeNative(spec, 'collections', ['limits', 'set', '--json', JSON.stringify(proposed), '--expected-json', JSON.stringify(expected)]);
+                    }
+                }, spec.name, error));
+        }
         catch (error) {
             if (error instanceof Error && error.message.includes('native automatic scheduling is paused')) { throw new PausedError(error.message); }
             throw error;
@@ -422,6 +437,37 @@ class Controller implements vscode.Disposable {
             input: (prompt, value) => Promise.resolve(vscode.window.showInputBox({ prompt, value, ignoreFocusOut: true }))
         }, action);
     }
+    async ingestionLimits(configure = false): Promise<void> {
+        const spec = await this.chooseSpec(); if (!spec) { return; }
+        const current = await runJson<LimitsDescription>(spec, 'collections', ['limits', 'describe']);
+        await this.showJson('AIRK ingestion limits', { collection: spec.collection, root: spec.root, dataDir: spec.dataDir,
+            ...current, coverage: await runJson<object>(spec, 'coverage'),
+            quota: await runJson<object>(spec, 'collections', ['quota', 'status']) });
+        if (!configure) { return; }
+        const choice = await vscode.window.showQuickPick(['Use automatic machine sizing', 'Import limits JSON'],
+            { title: `Ingestion limits for ${spec.name}` });
+        if (!choice) { return; }
+        if (choice === 'Use automatic machine sizing') {
+            if (await vscode.window.showWarningMessage(`Restore automatic ingestion limits for ${spec.name}? Existing indexed evidence is retained.`,
+                { modal: true }, 'Restore automatic limits') !== 'Restore automatic limits') { return; }
+            this.trusted();
+            await this.showJson('AIRK saved ingestion limits', await this.writeNative<object>(spec, 'collections', ['limits', 'reset']));
+        } else {
+            const files = await vscode.window.showOpenDialog({ canSelectMany: false, canSelectFolders: false,
+                filters: { 'Ingestion limits JSON': ['json'] }, title: `Choose ingestion limits for ${spec.name}` });
+            if (!files?.[0]) { return; }
+            await withPolicySnapshot(files[0].fsPath, async snapshot => {
+                this.trusted();
+                const proposed = await runJson<ScanLimits>(spec, 'collections', ['limits', 'validate', snapshot]);
+                await this.showJson('AIRK proposed ingestion limits', { current, proposed });
+                if (await vscode.window.showWarningMessage(`Save these ingestion limits for ${spec.name}? ${aboveNormal(proposed, current.automatic) ? 'These exceed the normal limits for this machine. ' : ''}${largerLimitsExplanation}`,
+                    { modal: true }, 'Save ingestion limits') !== 'Save ingestion limits') { return; }
+                this.trusted();
+                await this.showJson('AIRK saved ingestion limits', await this.writeNative<object>(spec, 'collections', ['limits', 'set', snapshot, '--expected-json', JSON.stringify(current.effective)]));
+            });
+        }
+        this.coverage.request(spec, true);
+    }
     async extractionPolicy(configure = false): Promise<void> {
         const spec = await this.chooseSpec(); if (!spec) { return; }
         const current = await runJson<object>(spec, 'collections', ['extraction', 'show']);
@@ -580,6 +626,8 @@ class Controller implements vscode.Disposable {
                 ['Remove Checkpoint…', 'airk.removeCheckpoint', 'Release one pin'],
                 ['Preview Logical History Purge…', 'airk.purgeHistory', 'Plan, then confirm; not secure erasure']] },
             { label: 'Extraction', commands: [
+                ['Show Ingestion Limits', 'airk.ingestionLimits', 'Machine sizing, measured source sizes, quotas and storage path'],
+                ['Configure Ingestion Limits…', 'airk.configureIngestionLimits', 'Restore automatic sizing or import explicit limits'],
                 ['Show Extraction Policy', 'airk.extractionPolicy', 'Configured versus applied policy'],
                 ['Configure Extraction Policy…', 'airk.configureExtractionPolicy', 'Validate a JSON policy for the next index']] }
         ];
@@ -614,6 +662,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<{ getS
         history: () => controller.history('show'), historyPolicy: () => controller.history('policy'), historyRun: () => controller.history('run'),
         historyAvailable: () => controller.history('available'), checkpoints: () => controller.history('checkpoints'), createCheckpoint: () => controller.history('create'), removeCheckpoint: () => controller.history('remove'), purgeHistory: () => controller.history('purge'),
         extractionPolicy: () => controller.extractionPolicy(), configureExtractionPolicy: () => controller.extractionPolicy(true),
+        ingestionLimits: () => controller.ingestionLimits(), configureIngestionLimits: () => controller.ingestionLimits(true),
         status: () => controller.collectionStatus(), usage: () => controller.usage(), setupAgent: () => controller.setupAgent(), verifyMcp: () => controller.verify(), logs: () => controller.output.show()
     };
     for (const [name, action] of Object.entries(commands)) { context.subscriptions.push(vscode.commands.registerCommand(`airk.${name}`, safe(action, true))); }

@@ -160,7 +160,7 @@ impl View {
 
 pub(crate) fn parse(path: &str, text: &str, multi_document: bool) -> Result<View> {
     ensure!(
-        text.len() <= crate::MAX_FILE_BYTES,
+        text.len() <= crate::MAX_STRUCTURED_BYTES,
         "structured source exceeds byte limit"
     );
     let suffix = path.rsplit('.').next().unwrap_or("");

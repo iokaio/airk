@@ -61,6 +61,8 @@ class ReleaseContracts(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "identity/channel/lock"):
                     release.verify(directory, "c" * 40, "0.1.0", channel)
                 with self.assertRaisesRegex(ValueError, "identity/channel/lock"):
+                    release.verify(directory, COMMIT, "1.0.0", channel)
+                with self.assertRaisesRegex(ValueError, "identity/channel/lock"):
                     release.verify(directory, COMMIT, "0.1.0", "stable" if channel == "preview" else "preview")
                 (directory / "linux-x64/manifest.json").unlink()
                 with self.assertRaisesRegex(ValueError, "four platform"):

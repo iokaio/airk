@@ -8,7 +8,35 @@ use std::{
     io::{Cursor, Read},
 };
 
-pub(crate) const MAX_EXTRACTED: usize = 4_194_304;
+pub(crate) const MAX_EXTRACTED: usize = airk_core::extraction::MAX_TEXT_BYTES;
+/// Keep costly syntax/structured parsing within the established input bound.
+/// Larger UTF-8 sources retain exact text and locations, with no claimed facts.
+pub(crate) fn large_text(
+    bytes: &[u8],
+    profile: &airk_core::extraction::ExtractionProfile,
+) -> Result<Option<Extracted>> {
+    if bytes.len() <= crate::MAX_STRUCTURED_BYTES
+        || matches!(
+            profile.adapter_id.as_str(),
+            "pdf" | "docx" | "xlsx" | "pptx"
+        )
+    {
+        return Ok(None);
+    }
+    ensure!(
+        bytes.len() <= MAX_EXTRACTED,
+        "text exceeds 32 MiB extraction limit"
+    );
+    let text = std::str::from_utf8(bytes).context("binary or non-UTF-8; extractor unavailable")?;
+    ensure!(!text.contains('\0'), "binary data; extractor unavailable");
+    Ok(Some(Extracted {
+        chunks: crate::chunk(text),
+        language: profile.language.clone(),
+        method: "utf8".into(),
+        parse_status: "partial-text-only: source exceeds 4 MiB structured parsing budget; symbols, relationships and document facts unavailable".into(),
+        facts: vec![],
+    }))
+}
 pub struct Extracted {
     pub chunks: Vec<Chunk>,
     pub language: String,
@@ -34,6 +62,9 @@ pub(crate) fn extract_selected(
 ) -> Result<Extracted> {
     let registry = crate::adapters::registry::AdapterRegistry::baseline();
     registry.validate_effective_profile(path, profile)?;
+    if let Some(extracted) = large_text(bytes, profile)? {
+        return Ok(extracted);
+    }
     let adapter = profile.adapter_id.as_str();
     match adapter {
         "pdf" => {
@@ -108,7 +139,7 @@ pub(crate) fn extract_selected(
                         total += xml.len();
                         ensure!(
                             total <= MAX_EXTRACTED,
-                            "PPTX XML exceeds 4 MiB extraction limit"
+                            "PPTX XML exceeds 32 MiB extraction limit"
                         );
                         let text = ooxml_paragraphs(&xml)?.join("\n");
                         if let Some(title) = pptx_title(&xml)? {
@@ -141,7 +172,7 @@ pub(crate) fn extract_selected(
             ensure!(!text.contains('\0'), "binary data; extractor unavailable");
             ensure!(
                 text.len() <= MAX_EXTRACTED,
-                "text exceeds 4 MiB extraction limit"
+                "text exceeds 32 MiB extraction limit"
             );
             let mut analysis = crate::syntax::analyze_selected(path, text, adapter)?;
             if matches!(adapter, "markdown" | "instruction-markdown") {
@@ -200,7 +231,7 @@ pub(crate) fn from_blocks(
         total += text.len();
         ensure!(
             total <= MAX_EXTRACTED,
-            "document exceeds 4 MiB extracted text"
+            "document exceeds 32 MiB extracted text"
         );
         let block_start = line;
         for mut chunk in crate::chunk(&text) {
@@ -283,14 +314,14 @@ pub(crate) fn read_part(
         .with_context(|| format!("missing OOXML part {name}"))?;
     ensure!(
         file.size() <= MAX_EXTRACTED as u64,
-        "OOXML part exceeds 4 MiB"
+        "OOXML part exceeds 32 MiB"
     );
     let mut bytes = Vec::new();
     file.take((MAX_EXTRACTED + 1) as u64)
         .read_to_end(&mut bytes)?;
     ensure!(
         bytes.len() <= MAX_EXTRACTED,
-        "OOXML expanded part exceeds 4 MiB"
+        "OOXML expanded part exceeds 32 MiB"
     );
     let xml = String::from_utf8(bytes).context("OOXML part is not UTF-8")?;
     let mut reader = Reader::from_str(&xml);
@@ -688,6 +719,46 @@ fn line_fact(
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn large_text_is_exact_partial_and_rejects_binary_or_excess_instead_of_truncating() -> Result<()>
+    {
+        let registry = crate::adapters::registry::AdapterRegistry::baseline();
+        let profile = registry.effective_profile("large.ts", "typescript")?;
+        let mut bytes = vec![b'x'; MAX_EXTRACTED];
+        let extracted = large_text(&bytes, &profile)?.expect("large source uses text fallback");
+        assert!(extracted.parse_status.starts_with("partial-text-only:"));
+        assert!(extracted.facts.is_empty());
+        assert_eq!(extracted.chunks.len(), 1);
+        assert_eq!(extracted.chunks[0].text.as_bytes(), bytes);
+        drop(extracted);
+        bytes.push(b'x');
+        assert!(
+            large_text(&bytes, &profile)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("32 MiB")
+        );
+        bytes.truncate(crate::MAX_STRUCTURED_BYTES + 1);
+        bytes[0] = 0;
+        assert!(
+            large_text(&bytes, &profile)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("binary")
+        );
+        bytes[0] = 255;
+        assert!(
+            large_text(&bytes, &profile)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("non-UTF-8")
+        );
+        Ok(())
+    }
 
     #[test]
     fn structured_header_locations_and_configuration_limits() -> Result<()> {

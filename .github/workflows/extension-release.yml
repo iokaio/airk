@@ -7,8 +7,12 @@ on:
         description: Optional successful manual CI run on this exact main commit
         type: string
         default: ''
+      rehearsal_run_id:
+        description: Publish exact VSIXs from a successful rehearsal on this main commit (skips packaging)
+        type: string
+        default: ''
       version:
-        description: Exact checked-in extension version (for example 1.0.0)
+        description: Exact checked-in extension version (for example 1.1.0)
         type: string
         required: true
       channel:
@@ -41,6 +45,7 @@ jobs:
           AIRK_VERIFY_IDENTITY: ${{ inputs.verify_identity }}
           AIRK_REF: ${{ github.ref }}
           AIRK_VERSION: ${{ inputs.version }}
+          AIRK_REHEARSAL_RUN_ID: ${{ inputs.rehearsal_run_id }}
         run: |
           if [ "$AIRK_REF" != refs/heads/main ]; then
             echo 'Candidate promotion and Marketplace identity access require protected main.' >&2
@@ -49,6 +54,13 @@ jobs:
           if [ "$AIRK_PUBLISH" = true ] && [ "$AIRK_VERIFY_IDENTITY" = true ]; then
             echo 'Identity verification and publication are separate operations.' >&2
             exit 1
+          fi
+          if [ -n "$AIRK_REHEARSAL_RUN_ID" ]; then
+            if [ "$AIRK_PUBLISH" != true ] || [ "$AIRK_VERIFY_IDENTITY" = true ]; then
+              echo 'Rehearsal promotion requires publication without identity-only mode.' >&2
+              exit 1
+            fi
+            [[ "$AIRK_REHEARSAL_RUN_ID" =~ ^[1-9][0-9]*$ ]]
           fi
           [[ "$AIRK_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -64,6 +76,20 @@ jobs:
         run: |
           python -c 'import json, os; assert json.load(open("packages/vscode/package.json"))["version"] == os.environ["AIRK_VERSION"]'
           python scripts/ci-candidates.py resolve
+      - name: Authenticate the exact successful rehearsal
+        if: ${{ inputs.rehearsal_run_id != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AIRK_REHEARSAL_RUN_ID: ${{ inputs.rehearsal_run_id }}
+        run: python scripts/ci-candidates.py rehearsal --run-id "$AIRK_REHEARSAL_RUN_ID" --record artifacts/rehearsal.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ inputs.rehearsal_run_id != '' }}
+        with:
+          name: airk-rehearsal-${{ github.sha }}-${{ github.run_id }}
+          path: artifacts/rehearsal.json
+          overwrite: true
+          if-no-files-found: error
+          retention-days: 7
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !inputs.verify_identity }}
         with:
@@ -100,7 +126,7 @@ jobs:
           printf 'Marketplace member ID: %s\n' "$profile_id"
           printf 'Marketplace member ID: `%s`\n\nAdd this ID to publisher **iokaio** with the **Contributor** role. This check does not verify publisher membership or publish an extension.\n' "$profile_id" >> "$GITHUB_STEP_SUMMARY"
   build:
-    if: ${{ !inputs.verify_identity }}
+    if: ${{ !inputs.verify_identity && inputs.rehearsal_run_id == '' }}
     needs: preflight
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -140,13 +166,14 @@ jobs:
           compression-level: 0
 
   publish:
-    if: ${{ inputs.publish }}
-    needs: build
+    if: ${{ !cancelled() && inputs.publish && needs.preflight.result == 'success' && (needs.build.result == 'success' || (needs.build.result == 'skipped' && inputs.rehearsal_run_id != '')) }}
+    needs: [preflight, build]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment: vscode-marketplace
     permissions:
       contents: read
+      actions: read
       id-token: write
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -160,23 +187,34 @@ jobs:
           node-version: '24.15.0'
           package-manager-cache: false
       - run: npm ci --ignore-scripts --no-audit --no-fund --prefix packages/vscode
-      - name: Authenticate the Marketplace publisher identity
-        uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2
-        with:
-          client-id: ${{ vars.AZURE_MARKETPLACE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_MARKETPLACE_TENANT_ID }}
-          allow-no-subscriptions: true
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: ${{ inputs.rehearsal_run_id == '' }}
         with:
           pattern: airk-vsix-*-${{ github.sha }}-${{ github.run_id }}
           path: artifacts/release
           merge-multiple: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: ${{ inputs.rehearsal_run_id != '' }}
+        with:
+          name: airk-rehearsal-${{ github.sha }}-${{ github.run_id }}
+          path: artifacts
+      - name: Restore the exact rehearsed VSIX files without repackaging
+        if: ${{ inputs.rehearsal_run_id != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/ci-candidates.py rehearsal-download --record artifacts/rehearsal.json --output artifacts/release
       - name: Verify complete platform set, payloads, version and source provenance
         env:
           AIRK_COMMIT: ${{ github.sha }}
           AIRK_VERSION: ${{ inputs.version }}
           AIRK_CHANNEL: ${{ inputs.channel }}
         run: python scripts/verify-extension-release.py --directory artifacts/release --commit "$AIRK_COMMIT" --version "$AIRK_VERSION" --channel "$AIRK_CHANNEL" --output artifacts/verified-vsix.json
+      - name: Authenticate the Marketplace publisher identity
+        uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2
+        with:
+          client-id: ${{ vars.AZURE_MARKETPLACE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_MARKETPLACE_TENANT_ID }}
+          allow-no-subscriptions: true
       - name: Publish verified VSIX packages using Microsoft Entra
         env:
           AIRK_CHANNEL: ${{ inputs.channel }}

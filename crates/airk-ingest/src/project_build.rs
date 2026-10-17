@@ -9,7 +9,7 @@ use tree_sitter::{Node, Parser};
 
 pub(crate) fn analyze(path: &str, text: &str, adapter_id: &str) -> Result<crate::syntax::Analysis> {
     ensure!(
-        text.len() <= crate::MAX_FILE_BYTES,
+        text.len() <= crate::MAX_STRUCTURED_BYTES,
         "project source exceeds byte limit"
     );
     let mut parser = Parser::new();

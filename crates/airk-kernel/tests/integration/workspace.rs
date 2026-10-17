@@ -242,7 +242,7 @@ fn oversized_files_are_reported_and_no_longer_searchable() -> anyhow::Result<()>
     fs::write(&file, "needle")?;
     let kernel = Kernel::open(root.path(), None)?;
     kernel.index()?;
-    fs::write(&file, vec![b'x'; airk_ingest::MAX_FILE_BYTES + 1])?;
+    fs::File::create(&file)?.set_len((airk_ingest::MAX_FILE_BYTES + 1) as u64)?;
     let report = kernel.index()?;
     assert_eq!(report.removed, 1);
     assert_eq!(report.skipped.len(), 1);
