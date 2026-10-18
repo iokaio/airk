@@ -6,6 +6,15 @@ Everything runs on your machine. There is no cloud service, API key, Docker, Rus
 
 > **Version 1.1.2 · Stable channel.** Packages target Windows x64, Linux x64 and macOS (Intel and Apple Silicon). Large-repository performance, macOS and remote-host qualification, and semantic-search quality are still being measured. See [Known limits](#known-limits).
 
+## What's new in 1.1.0–1.1.2
+
+- **Larger workspaces:** machine-aware ingestion limits, measured source/extracted sizes and reviewed limit increases with a single retry.
+- **Collection controls:** a dashboard with coverage, MCP helper checks, indexing and pause controls, and Essential/Balanced/Detailed evidence selection. New collections default to Balanced.
+- **Storage and recovery:** smaller fact catalogs, reuse of unchanged native rows and faster repeated exact queries; adjustable 100 GiB collection/500 GiB root quota defaults; retention targeting 1–9 generations, active-only for new collections; recovery for interrupted publication. Existing saved policies remain in force.
+- **Agent setup:** persistent guides can create missing Codex project configuration, install Claude Code/Gemini CLI/Antigravity entries while preserving settings, or enable Copilot registration. Verify the agent's actual tools separately from helper health.
+
+The [combined October 17 release notes](https://github.com/iokaio/airk/blob/main/docs/releases-2026-10-17.md) include upgrade steps, measured Windows results and remaining qualification limits. Download matching packages from [GitHub Releases](https://github.com/iokaio/airk/releases/tag/v1.1.2); Marketplace publication is a separate process.
+
 ![Workspace code and documents flow through AIRK's local collection to independently configured Claude Code, Codex, Gemini CLI/Antigravity and other MCP clients.](https://raw.githubusercontent.com/iokaio/airk/main/docs/images/local-evidence.png)
 
 ## What your agent can do with it
@@ -168,6 +177,18 @@ Open **AIRK** in the Activity Bar for the persistent **Dashboard**. Each workspa
 
 Choose the indexing mode, pause/resume automatic work, choose storage, set up coding agents and open reports directly in the sidebar. Maintenance and extraction controls are grouped in expandable sections. Coverage measures saved-file freshness; it is not an indexing progress estimate. The collapsed **Collections** view includes inactive stored collections and confirmed removal controls.
 
+### Storage budgets and generation retention
+
+The sidebar’s **Storage limits…** control edits the selected collection quota (default **100 GiB**) and shared storage quota (default **500 GiB**). These are ceilings, not disk reservations. Existing saved quotas are preserved. **Generations and cleanup…** chooses automatic or manual retention and **1–9 completed generations**, default **1 (active only)** for new collections. Live readers, checkpoints and selected history can retain additional data. The active index remains intact until a new build commits; reducing retention does not remove that failure protection. Previously retired generations cannot be restored by increasing the count.
+
+Automatic retention trims eligible old generations after publication and before builds with low estimated headroom; storage pressure allows one bounded cleanup and retry. **Reclaim eligible space…** previews manual maintenance using the same protections. If protected data or work budgets prevent recovery, indexing stops with the previous index retained. Review storage limits/retention, then Resume or Index now. New file events do not restart a capacity-blocked job.
+
+### Choose indexing detail
+
+The AIRK sidebar offers **Essential**, **Balanced** (the default for new collections), and **Detailed** for each collection. Essential keeps searchable text and exact citations. Balanced adds declarations, imports, useful structural/document facts and declaration change tracking. Detailed also retains individual calls and document-unit change tracking. Existing collections keep their previous Detailed behavior until changed.
+
+The panel shows the configured and published levels separately. Changing a level rebuilds evidence; the previous index stays available until the rebuild succeeds. Storage quotas, retained generations and optional models are separate controls. Native fact and relationship responses explicitly report omitted detail. See [ingestion limits and index detail](https://github.com/iokaio/airk/blob/main/docs/ingestion-limits.md) for limits and CLI equivalents.
+
 ## Commands
 
 Clicking the status-bar item or running **AIRK: Open Controls** opens all commands in one grouped menu. Every command is also in the Command Palette under **AIRK:**.
@@ -267,16 +288,3 @@ More detail: [extension behavior and limits](https://github.com/iokaio/airk/blob
 - [Report a bug](https://github.com/iokaio/airk/issues) · [Support](https://github.com/iokaio/airk/blob/main/SUPPORT.md) · [Security policy](https://github.com/iokaio/airk/blob/main/SECURITY.md)
 
 AIRK stands for Artifact Indexing and Retrieval Kernel. Licensed under Apache-2.0; bundled dependency notices in THIRD_PARTY_NOTICES.md retain their respective terms.
-
-### Storage budgets and generation retention
-
-The sidebar’s **Storage limits…** control edits the selected collection quota (default **100 GiB**) and shared storage quota (default **500 GiB**). These are ceilings, not disk reservations. Existing saved quotas are preserved. **Generations and cleanup…** chooses automatic or manual retention and **1–9 completed generations**, default **1 (active only)** for new collections. Live readers, checkpoints and selected history can retain additional data. The active index remains intact until a new build commits; reducing retention does not remove that failure protection. Previously retired generations cannot be restored by increasing the count.
-
-Automatic retention trims eligible old generations after publication and before builds with low estimated headroom; storage pressure allows one bounded cleanup and retry. **Reclaim eligible space…** previews manual maintenance using the same protections. If protected data or work budgets prevent recovery, indexing stops with the previous index retained. Review storage limits/retention, then Resume or Index now. New file events do not restart a capacity-blocked job.
-
-
-### Choose indexing detail
-
-The AIRK sidebar offers **Essential**, **Balanced** (the default for new collections), and **Detailed** for each collection. Essential keeps searchable text and exact citations. Balanced adds declarations, imports, useful structural/document facts and declaration change tracking. Detailed also retains individual calls and document-unit change tracking. Existing collections keep their previous Detailed behavior until changed.
-
-The panel shows the configured and published levels separately. Changing a level rebuilds evidence; the previous index stays available until the rebuild succeeds. Storage quotas, retained generations and optional models are separate controls. Native fact and relationship responses explicitly report omitted detail. See [ingestion limits and index detail](https://github.com/iokaio/airk/blob/main/docs/ingestion-limits.md) for limits and CLI equivalents.

@@ -1,6 +1,6 @@
-# AIRK 1.1.0 release preparation
+# AIRK 1.1.0 release and qualification record
 
-**Status: local development; not published.** The native workspace and extension target **1.1.0 on the stable channel**. The existing published 1.0.0 release remains available until a separate authorized release completes.
+**Published:** [v1.1.0-build.8](https://github.com/iokaio/airk/releases/tag/v1.1.0-build.8), October 17, 2026 at 02:50 MDT, from `9bb7cce5d94edd8ed7cc4535b8e4edfad720a232`. The native and extension package version is **1.1.0, stable**. See the [combined 1.1.0–1.1.2 summary](releases-2026-10-17.md) for current behavior and upgrade guidance. The preparation checklist below is a historical qualification record, not current publication status or proof of Marketplace availability.
 
 This release raises workstation ingestion allowances and makes limits inspectable in the extension. Automatic eligible-source sizing uses one eighth of detected memory, capped at 2 GiB, with a 512 MiB fallback. The largest automatic profile permits 256 MiB raw files, 32 MiB extracted text per file, 4 GiB extracted text per collection, 100,000 files, one million discovery entries and 8 GiB pass reads. Existing explicit policies remain unchanged.
 
@@ -16,9 +16,9 @@ When a collection budget stops indexing, the extension can offer a reviewed, exp
 
 Keep the existing extension identity, collection IDs and storage configuration. Use **AIRK: Configure Ingestion Limits… → Use automatic machine sizing** only when deliberately replacing an old explicit policy. Collections without a saved override adopt the new automatic defaults. Revised extraction profiles invalidate earlier extraction reuse and can make the first indexing pass more expensive.
 
-New larger retained objects can exceed the limits understood by 1.0.0. Do not assume an older helper can read newly published 1.1.0 generations; test rollback with isolated or backed-up state. No source files are rewritten. A 2 GiB source allowance is not a 2 GiB storage requirement or a measured performance guarantee; the existing default collection disk quota remains 4 GiB. Native parser process isolation and hard per-file CPU/RSS enforcement remain unimplemented.
+New larger retained objects can exceed the limits understood by 1.0.0. Do not assume an older helper can read newly published 1.1.0 generations; test rollback with isolated or backed-up state. No source files are rewritten. A 2 GiB source allowance is not a 2 GiB storage requirement or a measured performance guarantee. Version 1.1.0 retained the 4 GiB default collection disk quota; 1.1.1 raised new defaults to 100 GiB per collection and 500 GiB per storage root, preserving saved policies. Native parser process isolation and hard per-file CPU/RSS enforcement remain unimplemented.
 
-## Publication checklist
+## Historical preparation checklist
 
 - [ ] Review the `feat/filesizing` PR, including the retained CI enhancements and local qualification results.
 - [ ] Pass repository checks and Windows/macOS/Linux CI; record large-file, low-memory, explicit-policy, upgrade and prior-generation preservation results.

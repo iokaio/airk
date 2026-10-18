@@ -2,17 +2,24 @@
 
 **AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents**
 
+Start with the [combined October 17 release summary](releases-2026-10-17.md) for 1.1.0–1.1.2, current defaults, upgrade steps and qualification evidence. For setup, use [coding-agent integration](agent-integration.md) and [extension controls](vscode-extension.md); for indexing and disk use, use [ingestion limits and detail](ingestion-limits.md), [storage quotas](storage-quotas.md) and [retention](retention.md).
+
 - [Architecture and code boundaries](architecture.md)
 - [Architecture v2: combined implementation and subagent plan](architecture-v2.md)
 - [Proposed change tracing and bounded development indexes](change-tracing-plan.md)
 - [Decision 001: focused local retrieval](decisions/001-local-retrieval-kernel.md)
 - [Design inspiration and independent implementation](inspiration.md)
 - [Implemented format support](formats.md)
+- [Ingestion limits, machine sizing and index detail](ingestion-limits.md)
+- [Per-collection extraction policy](extraction-policy.md)
+- [Measured scale and performance qualification](scale-qualification.md)
 - [Document requirements, dates and design indexing](document-indexing.md)
 - [Code-indexing recommendations and optional semantic-provider review](code-indexing-options.md)
 - [Implemented SQLite code facts, relationships and SCIP imports](code-facts-and-relationships.md)
 - [Collections and selected DiskANN architecture](collections.md)
 - [Shared storage quotas and reservation limits](storage-quotas.md)
+- [Searchable generation retention and maintenance](retention.md)
+- [Historical content and checkpoints](v2-history-controls.md)
 - [Transactional storage relocation and recovery](storage-relocation.md)
 - [Additional source folders and revision-bound aliases](source-roots.md)
 - [Explicit local model assets and vector/hybrid retrieval](local-models.md)
@@ -26,9 +33,10 @@
 - [Extension listing content, agent integration copy and illustrations](extension-content.md)
 - [1.0.0 stable release notes and publication checklist](release-1.0.0.md)
 - [Sidebar PNG renderings](ui/README.md)
-- [1.1.2 preparation: guided coding-agent connections](release-1.1.2.md)
-- [1.1.1 preparation: sidebar, storage and release versions](release-1.1.1.md)
-- [1.1.0 preparation: workstation file sizing and ingestion controls](release-1.1.0.md)
+- [October 17 combined release notes: 1.1.0–1.1.2](releases-2026-10-17.md)
+- [1.1.2 implementation and qualification: coding-agent connections](release-1.1.2.md)
+- [1.1.1 implementation and qualification: dashboard, storage and recovery](release-1.1.1.md)
+- [1.1.0 implementation and qualification: workstation sizing](release-1.1.0.md)
 - [Historical 0.1.0 release review and test checklist](release-checklist-0.1.0.md)
 - [0.1.0 implementation review and remaining roadmap work](review-0.1.0.md)
 - [Main branch protection and manual extension publication](release-workflow.md)

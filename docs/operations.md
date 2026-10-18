@@ -1,5 +1,11 @@
 # Operations
 
+## Upgrading through 1.1.2
+
+The [October 17 release summary](releases-2026-10-17.md) combines workstation sizing, evidence detail, storage/recovery and agent setup changes. Preserve collection/root/storage identity and inspect saved policies before changing defaults. Existing limits, quotas and retention remain authoritative; older extraction policies keep Detailed while new collections default to Balanced. Review [ingestion limits](ingestion-limits.md) and [storage quotas](storage-quotas.md) before increasing allowances or rebuilding.
+
+After a helper upgrade or storage change, refresh generated client configuration and reconnect agents using the intended helper, root, data directory and collection. The extension's **Connect Coding Agent** guide preserves existing settings; Codex TOML requires manual merging if already present. Verify the helper and the agent's actual tool discovery separately. New object sizes can exceed 1.0.0 reader limits; qualify rollback using isolated or backed-up state.
+
 ## Native state and collection selection
 
 Use --root for the source workspace, --data-dir for the user-controlled index location and --collection for its stable local collection ID. Example:
@@ -71,6 +77,8 @@ A current writer uses an operating-system advisory lock and an atomic `airk-advi
 
 Corrupt/unsupported snapshots fail closed. Preserve them locally if diagnosis is needed, then choose fresh state or rebuild after deliberate cleanup. Never reassign one collection to another source root. Moving a workspace requires new state in the current scaffold. Do not publish snapshots in issues or commits.
 
-SQLite WAL transactions with full synchronous commits publish catalog/revision/facts/edges and the immutable component pointer together. A child-process test demonstrates scheduler/writer lock release and recovery after exit without destructors; this is narrower than a complete process-kill/power-loss campaign. Network filesystems and hostile concurrent filesystem mutation remain unqualified. PDF processing may allocate before post-extraction limits; source files must be trusted local inputs at this stage.
+SQLite WAL transactions with full synchronous commits publish catalog/revision/facts/edges and the immutable component pointer together. Preparation journals receipt-bound ownership before renaming completed components out of reservation staging. On dead-reservation recovery, committed receipts are preserved. Uncommitted data is detached only after authenticating its receipt and expected head and obtaining an exclusive reader lease. Unknown or corrupt state and live readers fail closed; do not remove an immutable directory merely because it appears orphaned.
+
+Process-death tests cover first publication and updates, pre-commit and post-commit exits, interrupted cleanup and same-revision retry, as well as scheduler/writer lock release. These checks do not establish power-loss durability, network-filesystem behavior or hostile concurrent filesystem mutation. PDF processing may allocate before post-extraction limits; source files must be trusted local inputs at this stage.
 
 SQLite busy waits are bounded at two seconds; failed publication retains the previous revision. Ordinary MCP reads open read transactions without the collection writer lock and may finish on the older revision while a writer commits. [Code facts and optional SCIP import](code-facts-and-relationships.md) explain exact lookup, source/build binding and stale-analysis invalidation.

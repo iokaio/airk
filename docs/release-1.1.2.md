@@ -1,6 +1,6 @@
 # AIRK 1.1.2: coding-agent connection setup
 
-Version 1.1.2 was developed on `feature/agent-connections-1.1.2`. No publication or installed-client qualification is implied.
+**Published:** [v1.1.2](https://github.com/iokaio/airk/releases/tag/v1.1.2), October 17, 2026 at 17:37 MDT, from `22a2b46ac9b5f3b77a2412c9b27c09a84a78266a`. Native and extension packages use **1.1.2, stable**. See the [combined 1.1.0–1.1.2 summary](releases-2026-10-17.md) for the full update and upgrade steps. This record retains the implementation plan and qualification evidence; GitHub publication does not establish Marketplace availability or every installed-client connection.
 
 ## Problem and implementation plan
 
@@ -31,4 +31,4 @@ The previous **Manage Agent Connections** command opened VS Code's MCP controls.
 - Manual release acceptance: in an installed 1.1.2 extension, select Codex from **Manage Agent Connections**, create or merge its project config, restart Codex, then request `airk_status`, `airk_capabilities` and a known-phrase search. Confirm the exact collection and original source location.
 - Also exercise Copilot's separate controls, an existing Codex config with unrelated servers/policies, multiple workspace folders, helper failure and a remote host. Linux/macOS and installed-agent behavior require their own evidence.
 
-The requested version bump is already applied for this feature; do not bump it again for the same PR. The user authorized publication after green PR/main checks; use the protected release workflows and their exact-source candidate gates. Historical [1.1.1 qualification](release-1.1.1.md) remains unchanged.
+The native and extension manifests and lockfiles were synchronized at 1.1.2 for this feature. The release record links the exact-source build and signing runs. Historical [1.1.1 qualification](release-1.1.1.md) remains available; open installed-client acceptance items above are separate from publication.
