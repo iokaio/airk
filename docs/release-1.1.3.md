@@ -35,6 +35,8 @@ The sixteen-worker run had 197.93 ms median concurrent call time and 982.84 ms m
 
 ## Validation record
 
+The results and installed-editor/package evidence below describe the initial PR candidate, `4645968`. The hosted Windows follow-up is recorded separately below; its helper is not the helper in these original local packages.
+
 - Windows workspace build, formatting, clippy with warnings denied, and the final complete workspace test run passed: **687 passed, 4 intentionally ignored**, plus doc-tests. The final store regression suite passed all 14 tests.
 - Linux x64 Docker workspace qualification passed **694 nextest cases, 4 skipped**, plus doc-tests. That full run used the intermediate wait budget; after the final budget adjustment, the Linux store suite was rebuilt and all 14 tests passed again. This is local container evidence, not macOS qualification.
 - Extension suite: **68 passed, 1 skipped**. The skipped old/new-helper upgrade fixture needs a previous helper. Tests use the real helper and cover allowlisted panel messages, stale actions, scope, cancellation, exports, escaping, signed estimates and missing measurements.
@@ -51,6 +53,16 @@ The reporting scenario exercised real webview buttons and VS Code dialogs: seven
 The harness uses private profiles, fictional sources, VS Code's simple file dialogs and a loopback debugging endpoint. It does not alter the user's editor profile. OS-native dialogs, live trust-revocation/reload, remote hosts and other operating systems are outside this result. See [installed-editor qualification](windows-local-build.md#installed-extension-and-two-window-qualification) for reproducible commands and the optional `AIRK_EDITOR_SCENARIOS` selector.
 
 The final unsigned local packages are under `artifacts/local/usage-1.1.3-ready/native/publish/` and `artifacts/local/usage-1.1.3-ready/vscode/publish/`. They are development candidates; nothing has been published or installed into the normal user profile.
+
+## Hosted Windows contention follow-up
+
+The [first hosted Windows job](https://github.com/iokaio/airk/actions/runs/39148043176/job/117736048221) passed 686 tests but failed `concurrent_best_effort_workers_initialize_and_record_without_losing_calls`: a worker exhausted the two-second lifecycle-lock wait. Repeated OS-lock polling allowed returning threads to overtake already-waiting threads on the slower runner. Increasing the timeout had not removed that starvation mechanism.
+
+Usage locking now queues callers within each process in FIFO order for each lock path, before acquiring the authoritative OS file lock. The local queue and OS wait share the existing two-second budget. Timed-out tickets are removed and successors are notified; queues are bounded and inactive entries are reclaimed. Deletion remains fail-fast, and OS locking still protects separate processes and alternate path spellings. This does not promise FIFO ordering between processes or lossless accounting under arbitrary storage delays.
+
+Three deterministic queue regressions cover overtaking, timed-out-ticket removal, wakeup and independence between lock paths. The existing concurrent recording and stuck-writer tests remain enabled with their original assertions and time budget. No CI retry, test exclusion or timeout increase was added.
+
+Local Windows validation passed all three queue tests and all 14 usage-store tests. The originally failing test also passed 25 consecutive runs while workspace checks were running: 1,200 unique observations and 1,200 duplicate replays were verified. Workspace build, formatting, clippy with warnings denied, the public usage-input smoke (including separate concurrent processes), repository checks and whitespace checks passed.
 
 ## Remaining release qualification
 

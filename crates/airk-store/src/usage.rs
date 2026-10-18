@@ -11,6 +11,8 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+mod wait;
+
 pub const DAY_MS: u64 = 86_400_000;
 const MAX_DEDUP: usize = 4096;
 const MAX_DIAGNOSTICS: usize = 128;
@@ -64,7 +66,9 @@ pub fn comparison_snapshot(
 }
 
 pub struct UsageLock {
+    // Release the OS lock before waking the next local waiter (field drop order).
     _file: File,
+    _turn: Option<wait::Turn>,
 }
 
 fn lock(path: PathBuf) -> Result<UsageLock> {
@@ -72,6 +76,15 @@ fn lock(path: PathBuf) -> Result<UsageLock> {
 }
 
 fn lock_with_budget(path: PathBuf, budget: Duration) -> Result<UsageLock> {
+    let started = Instant::now();
+    // Polling the OS lock alone lets a busy thread repeatedly overtake sleepers.
+    // Queue local callers before contending with other processes. Both waits use
+    // the original deadline; deletion's zero-budget guard remains fail-fast.
+    let turn = if budget.is_zero() {
+        None
+    } else {
+        Some(wait::acquire(&path, started, budget)?)
+    };
     if let Ok(metadata) = fs::symlink_metadata(&path) {
         ensure!(!metadata.file_type().is_symlink(), "linked usage lock");
     }
@@ -82,7 +95,6 @@ fn lock_with_budget(path: PathBuf, budget: Duration) -> Result<UsageLock> {
         .truncate(false)
         .open(&path)
         .context("usage state is busy; observation may be dropped")?;
-    let started = Instant::now();
     loop {
         match file.try_lock() {
             Ok(()) => break,
@@ -97,7 +109,10 @@ fn lock_with_budget(path: PathBuf, budget: Duration) -> Result<UsageLock> {
             }
         }
     }
-    Ok(UsageLock { _file: file })
+    Ok(UsageLock {
+        _file: file,
+        _turn: turn,
+    })
 }
 
 fn reserve_write(directory: &Path, bytes: u64) -> Result<crate::quota::Reservation> {

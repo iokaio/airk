@@ -53,7 +53,7 @@ flowchart LR
   P --> C[CLI export and extension view]
 ```
 
-Small SQLite transactions in `usage.sqlite3` are separate from index transactions and the index writer lock. Multiple workers update shared daily aggregate rows atomically. This directly implements bounded multiworker accounting: no file per request, detailed events off by default, and no complete-history rewrite on each call. An OS file lock coordinates writes, clear and collection deletion; a crashed process releases it automatically. Usage operations wait up to two seconds for brief contention, while collection deletion retains fail-fast acquisition. A random ledger incarnation rejects late spans after history clearing or collection recreation.
+Small SQLite transactions in `usage.sqlite3` are separate from index transactions and the index writer lock. Multiple workers update shared daily aggregate rows atomically. This directly implements bounded multiworker accounting: no file per request, detailed events off by default, and no complete-history rewrite on each call. An OS file lock coordinates writes, clear and collection deletion; a crashed process releases it automatically. Usage operations wait up to two seconds for brief contention, while collection deletion retains fail-fast acquisition. Callers within one process queue in arrival order for each lock path, preventing a returning worker from repeatedly overtaking waiting workers. Local queuing and OS-lock polling share the same two-second budget; ordering across processes is still controlled by the OS lock. A random ledger incarnation rejects late spans after history clearing or collection recreation.
 
 ## Measurements
 
