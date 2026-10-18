@@ -26,8 +26,8 @@ test('usage report formats bounded operation rows and preserves unknowns', () =>
         }, estimated_bill_savings: null, provider_token_usage_observed: false },
         status: 'partial', health: { complete_history: false }
     });
-    assert.match(html, /<th scope="row">search<\/th><td>3<\/td><td>2<\/td><td>1<\/td><td>9007199254740993<\/td>/);
-    assert.match(html, /Dropped observations<\/span><strong>Unknown<\/strong>/);
-    assert.match(html, /counterfactual estimates are not measured provider tokens or billed savings/);
-    assert.match(html, /Complete history<\/th><td>No<\/td>/);
+    assert.match(html, /9,007,199,254,740,993/);
+    assert.match(html, /Missing observations across processes: Not measured/);
+    assert.match(html, /Token and cost estimates are comparisons/);
+    assert.match(html, /History completeness: not certified/);
 });

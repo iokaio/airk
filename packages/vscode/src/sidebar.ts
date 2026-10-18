@@ -15,6 +15,7 @@ export interface SidebarCollection {
     collection: string; name: string; root: string; dataDir: string; state: string;
     coverage?: CoverageView; diskBytes?: number; lastIndexed?: string; error?: string;
     mcp?: McpVerification; detail?: DetailStatus;
+    usage?: { calls: number; reduction?: string; compared: number; checkedAt: number; disabled: boolean };
 }
 export interface SidebarState {
     trusted: boolean; paused: boolean; mode: IndexMode; changingStorage: boolean;
@@ -24,7 +25,7 @@ export interface SidebarState {
 export type SidebarAction = { type: 'detail'; collection: string; dataDir: string; level: IndexDetail } | { type: 'ready' } | { type: 'mode'; value: IndexMode }
     | { type: 'registration'; enabled: boolean }
     | { type: 'command'; command: string }
-    | { type: 'collection'; action: 'index' | 'reindex' | 'status' | 'verify' | 'mcpDetails'; collection: string; dataDir: string };
+    | { type: 'collection'; action: 'index' | 'reindex' | 'status' | 'usage' | 'verify' | 'mcpDetails'; collection: string; dataDir: string };
 
 export function sidebarAction(value: unknown, allowed: Set<string>): SidebarAction | undefined {
     if (!value || typeof value !== 'object') { return; }
@@ -41,7 +42,7 @@ export function sidebarAction(value: unknown, allowed: Set<string>): SidebarActi
     if (item.type === 'command' && typeof item.command === 'string' && allowed.has(item.command)) {
         return { type: 'command', command: item.command };
     }
-    if (item.type === 'collection' && typeof item.action === 'string' && ['index', 'reindex', 'status', 'verify', 'mcpDetails'].includes(item.action)
+    if (item.type === 'collection' && typeof item.action === 'string' && ['index', 'reindex', 'status', 'usage', 'verify', 'mcpDetails'].includes(item.action)
         && typeof item.collection === 'string' && typeof item.dataDir === 'string') {
         return { type: 'collection', action: item.action as Extract<SidebarAction, { type: 'collection' }>['action'], collection: item.collection, dataDir: item.dataDir };
     }
@@ -73,8 +74,8 @@ export function sidebarContent(state: SidebarState): string {
             'capacity-limited': 'Storage budget reached', paused: 'Auto-indexing paused'
         } as Record<string, string>)[item.state] ?? 'Ready to index';
         const attributes = `data-collection="${escape(item.collection)}" data-storage="${escape(item.dataDir)}"`;
-        const actions = `<div class="actions">${(['index', 'reindex', 'status'] as const).map(action =>
-            `<button id="${escape(item.collection)}-${action}" ${attributes} data-action="${action}" class="${action === 'index' ? 'primary' : 'secondary'}"${disabled || (action !== 'status' && (indexing || state.changingStorage)) ? ' disabled' : ''}>${action === 'index' ? 'Index now' : action === 'reindex' ? 'Reindex' : 'Details'}</button>`).join('')}</div>`;
+        const actions = `<div class="actions">${(['index', 'reindex', 'status', 'usage'] as const).map(action =>
+            `<button id="${escape(item.collection)}-${action}" ${attributes} data-action="${action}" class="${action === 'index' ? 'primary' : 'secondary'}"${disabled || (!['status', 'usage'].includes(action) && (indexing || state.changingStorage)) ? ' disabled' : ''}>${action === 'index' ? 'Index now' : action === 'reindex' ? 'Reindex' : action === 'usage' ? 'Usage &amp; Savings' : 'Details'}</button>`).join('')}</div>`;
         const detail = `<div class="mcp"><h3>Index detail</h3><label for="${escape(item.collection)}-detail">Evidence to retain</label>
             <select id="${escape(item.collection)}-detail" ${attributes} data-detail="true"${disabled || !item.detail || indexing || state.changingStorage ? ' disabled' : ''}>
             ${!item.detail ? '<option>Loading current setting…</option>' : (['essential', 'balanced', 'detailed'] as const).map(level => `<option value="${level}"${item.detail?.configured_detail === level ? ' selected' : ''}>${level === 'balanced' ? 'Balanced (recommended)' : level[0].toUpperCase() + level.slice(1)}</option>`).join('')}</select>
@@ -100,7 +101,8 @@ export function sidebarContent(state: SidebarState): string {
             <div class="metrics">${metric('Current', report?.current)}${metric('Eligible', report?.eligible)}${metric('Stale', report?.stale)}${metric('Missing', report?.missing)}</div>
             ${report ? `<p class="muted">${escape(report.extraction_failed)} extraction failures · ${escape(report.unsupported)} unsupported · ${escape(report.capacity_blocked)} capacity blocked</p>` : '<p class="muted">Coverage appears after the first inventory scan.</p>'}
             ${view?.pending && report ? '<p class="muted">Files changed; these counts are from the previous scan.</p>' : ''}
-            ${error ? `<p class="error" role="status">${escape(error.slice(0, 600))}</p>` : ''}${actions}${detail}
+            ${error ? `<p class="error" role="status">${escape(error.slice(0, 600))}</p>` : ''}${actions}
+            <p class="muted">${item.usage ? `Last 30 days: ${escape(item.usage.calls)} recorded calls · ${escape(item.usage.reduction ?? 'Not measured')} estimated tokens avoided versus complete cited files (${escape(item.usage.compared)} comparisons). ${item.usage.disabled ? 'Recording is off. ' : ''}Updated ${escape(new Date(item.usage.checkedAt).toLocaleTimeString())}.` : 'Open Usage &amp; Savings to see activity and estimated savings.'}</p>${detail}
             <details id="location-${escape(item.collection)}"><summary>Storage and last index</summary><dl><dt>Index size</dt><dd>${bytes(item.diskBytes)}</dd><dt>Eligible source size</dt><dd>${bytes(report?.eligible_source_bytes)}</dd><dt>Last indexed</dt><dd>${escape(last)}</dd><dt>Index folder</dt><dd class="path">${escape(item.dataDir)}</dd></dl></details>${connection}</section>`;
     }).join('');
     const primaryCommands = new Set(['airk.index', 'airk.reindex', 'airk.indexMode', 'airk.pause', 'airk.resume', 'airk.chooseStorage', 'airk.status', 'airk.verifyMcp', 'airk.setupAgent', 'airk.manageMcp', 'airk.manageVscodeMcp', 'airk.storageLimits', 'airk.retentionPolicy', 'airk.retentionRun']);
@@ -160,7 +162,7 @@ export function sidebarControlGroups(): ControlGroup[] {
             ['Manage Agent Connections', 'airk.manageMcp', 'Choose the coding agent to configure'],
             ['VS Code / Copilot MCP Controls', 'airk.manageVscodeMcp', 'Start, stop or enable VS Code connections only'],
             ['Show Collection Status and Coverage', 'airk.status', 'Current, stale, missing and failed files'],
-            ['Show Local Usage Report', 'airk.usage', 'Content-free local aggregates and estimates'],
+            ['Usage & Savings', 'airk.usage', 'Content-free local aggregates and estimates'],
             ['Show Output Log', 'airk.logs', 'Skipped files and failures']] },
         { label: 'Collections and storage', commands: [
             ['Choose Index Storage Folder…', 'airk.chooseStorage', 'Build new indexes on another drive'],

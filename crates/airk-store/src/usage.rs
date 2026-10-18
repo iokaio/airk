@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Small transactional daily aggregates, independent of the index writer lock.
-//! A separate nonblocking lifecycle lock prevents deletion/late-writer resurrection.
+//! A separate lifecycle lock prevents deletion/late-writer resurrection.
 use airk_core::usage::*;
 use anyhow::{Context, Result, ensure};
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
@@ -8,13 +8,16 @@ use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File, OpenOptions},
     path::{Path, PathBuf},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+
+mod wait;
 
 pub const DAY_MS: u64 = 86_400_000;
 const MAX_DEDUP: usize = 4096;
 const MAX_DIAGNOSTICS: usize = 128;
 const MAX_BUCKET_BYTES: usize = 65_536;
+const CONTENTION_BUDGET: Duration = Duration::from_secs(2);
 
 pub fn unix_ms() -> u64 {
     SystemTime::now()
@@ -63,10 +66,25 @@ pub fn comparison_snapshot(
 }
 
 pub struct UsageLock {
+    // Release the OS lock before waking the next local waiter (field drop order).
     _file: File,
+    _turn: Option<wait::Turn>,
 }
 
 fn lock(path: PathBuf) -> Result<UsageLock> {
+    lock_with_budget(path, Duration::ZERO)
+}
+
+fn lock_with_budget(path: PathBuf, budget: Duration) -> Result<UsageLock> {
+    let started = Instant::now();
+    // Polling the OS lock alone lets a busy thread repeatedly overtake sleepers.
+    // Queue local callers before contending with other processes. Both waits use
+    // the original deadline; deletion's zero-budget guard remains fail-fast.
+    let turn = if budget.is_zero() {
+        None
+    } else {
+        Some(wait::acquire(&path, started, budget)?)
+    };
     if let Ok(metadata) = fs::symlink_metadata(&path) {
         ensure!(!metadata.file_type().is_symlink(), "linked usage lock");
     }
@@ -77,9 +95,24 @@ fn lock(path: PathBuf) -> Result<UsageLock> {
         .truncate(false)
         .open(&path)
         .context("usage state is busy; observation may be dropped")?;
-    file.try_lock()
-        .context("usage state is busy; observation may be dropped")?;
-    Ok(UsageLock { _file: file })
+    loop {
+        match file.try_lock() {
+            Ok(()) => break,
+            Err(std::fs::TryLockError::WouldBlock) if started.elapsed() < budget => {
+                std::thread::sleep(
+                    Duration::from_millis(2).min(budget.saturating_sub(started.elapsed())),
+                );
+            }
+            Err(error) => {
+                return Err(anyhow::Error::from(error)
+                    .context("usage state is busy; observation may be dropped"));
+            }
+        }
+    }
+    Ok(UsageLock {
+        _file: file,
+        _turn: turn,
+    })
 }
 
 fn reserve_write(directory: &Path, bytes: u64) -> Result<crate::quota::Reservation> {
@@ -118,11 +151,26 @@ fn reserve_ledger(
             .file_name()
             .and_then(|name| name.to_str())
             .context("invalid usage collection")?;
-        let reservation = crate::quota::Quota::open(root)?.try_reserve(
-            collection,
-            bytes,
-            Duration::from_millis(10),
-        )?;
+        let quota = crate::quota::Quota::open(root)?;
+        let started = Instant::now();
+        let reservation = loop {
+            match quota.try_reserve(
+                collection,
+                bytes,
+                CONTENTION_BUDGET.saturating_sub(started.elapsed()),
+            ) {
+                Ok(reservation) => break reservation,
+                Err(error)
+                    if matches!(
+                        error.downcast_ref::<std::fs::TryLockError>(),
+                        Some(std::fs::TryLockError::WouldBlock)
+                    ) && started.elapsed() < CONTENTION_BUDGET =>
+                {
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+                Err(error) => return Err(error),
+            }
+        };
         reservation.charge(bytes)?;
         Ok(reservation)
     } else {
@@ -132,6 +180,10 @@ fn reserve_ledger(
 
 pub fn deletion_guard(collection: &Path) -> Result<UsageLock> {
     lock(collection.join("usage.lock"))
+}
+
+fn operation_guard(collection: &Path) -> Result<UsageLock> {
+    lock_with_budget(collection.join("usage.lock"), CONTENTION_BUDGET)
 }
 
 fn managed(directory: &Path) -> Result<()> {
@@ -189,7 +241,7 @@ fn validate_policy(policy: &UsagePolicy) -> Result<()> {
 
 pub fn configure(directory: &Path, value: &UsagePolicy) -> Result<()> {
     validate_policy(value)?;
-    let _guard = deletion_guard(directory)?;
+    let _guard = operation_guard(directory)?;
     managed(directory)?;
     let _quota = reserve_write(directory, 4096)?;
     let mut file = tempfile::NamedTempFile::new_in(directory)?;
@@ -276,6 +328,7 @@ pub struct RecordingHealth {
 #[derive(Serialize)]
 pub struct StoredUsage {
     pub buckets: Vec<UsageReport>,
+    pub lifetime: Option<UsageReport>,
     pub supplemental: Vec<SupplementalBucket>,
     pub health: RecordingHealth,
 }
@@ -289,7 +342,7 @@ impl UsageStore {
         Self::open_mode(directory, scope, policy, false)
     }
 
-    /// Adapter path: nonblocking quota admission with a small inventory budget.
+    /// Adapter path: bounded contention waits and quota inventory work.
     pub fn open_best_effort(
         directory: &Path,
         scope: &UsageScope,
@@ -308,15 +361,47 @@ impl UsageStore {
             return Ok(None);
         }
         validate_policy(policy)?;
-        let _guard = deletion_guard(directory)?;
+        let _guard = operation_guard(directory)?;
         managed(directory)?;
         crate::validate_collection(&scope.collection)?;
+        if directory.join("usage.sqlite3").exists() {
+            ensure!(
+                fs::metadata(directory.join("usage.sqlite3"))?.len() <= 1_048_576,
+                "usage database exceeds absolute cap"
+            );
+            // Opening an established ledger does not grow it. Avoid quota scans,
+            // schema writes and journal setup until there is an observation to commit.
+            let db = Connection::open_with_flags(
+                directory.join("usage.sqlite3"),
+                OpenFlags::SQLITE_OPEN_READ_ONLY,
+            )?;
+            db.busy_timeout(Duration::from_millis(2))?;
+            let saved: String =
+                db.query_row("SELECT value FROM meta WHERE key='scope'", [], |r| r.get(0))?;
+            ensure!(
+                serde_json::from_str::<UsageScope>(&saved)? == *scope,
+                "usage history belongs to another root binding"
+            );
+            let incarnation =
+                db.query_row("SELECT value FROM meta WHERE key='incarnation'", [], |r| {
+                    r.get(0)
+                })?;
+            return Ok(Some(Self {
+                directory: directory.to_path_buf(),
+                scope: scope.clone(),
+                incarnation,
+                best_effort,
+            }));
+        }
         let root = directory
             .parent()
             .and_then(Path::parent)
             .context("invalid collection directory")?;
         let _quota = if !directory.join("usage.sqlite3").exists() {
-            Some(lock(root.join("usage-quota.lock"))?)
+            Some(lock_with_budget(
+                root.join("usage-quota.lock"),
+                CONTENTION_BUDGET,
+            )?)
         } else {
             None
         };
@@ -393,7 +478,7 @@ impl UsageStore {
             event.scope == self.scope,
             "usage observation scope mismatch"
         );
-        let _guard = deletion_guard(&self.directory)?;
+        let _guard = operation_guard(&self.directory)?;
         managed(&self.directory)?;
         let current_policy = policy(&self.directory)?;
         if current_policy.mode == RecordingMode::Disabled {
@@ -456,6 +541,36 @@ impl UsageStore {
             [event],
             ByteTokenHeuristic::default(),
         )?;
+        // A single bounded rollup starts with new observations, never by replaying
+        // retained daily buckets. It participates in the same deduplicated transaction.
+        let saved: Option<String> = tx
+            .query_row("SELECT value FROM meta WHERE key='lifetime'", [], |r| {
+                r.get(0)
+            })
+            .optional()?;
+        let mut lifetime = summarize(
+            &self.scope,
+            day * DAY_MS,
+            (day + 1) * DAY_MS,
+            [],
+            ByteTokenHeuristic::default(),
+        )?;
+        if let Some(saved) = saved {
+            ensure!(
+                saved.len() <= MAX_BUCKET_BYTES,
+                "oversize lifetime aggregate"
+            );
+            lifetime = serde_json::from_str(&saved)?;
+        }
+        lifetime.start_unix_ms = lifetime.start_unix_ms.min(day * DAY_MS);
+        lifetime.end_unix_ms_exclusive = lifetime.end_unix_ms_exclusive.max((day + 1) * DAY_MS);
+        lifetime.merge(&aggregate)?;
+        let saved = serde_json::to_string(&lifetime)?;
+        ensure!(
+            saved.len() <= MAX_BUCKET_BYTES,
+            "lifetime dimensions exceed cap"
+        );
+        tx.execute("INSERT INTO meta VALUES ('lifetime',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [saved])?;
         let old: Option<String> = tx
             .query_row(
                 "SELECT summary FROM daily WHERE day=?1",
@@ -500,6 +615,7 @@ impl UsageStore {
     pub fn read(directory: &Path, scope: &UsageScope, start: u64, end: u64) -> Result<StoredUsage> {
         let mut result = StoredUsage {
             buckets: Vec::new(),
+            lifetime: None,
             supplemental: Vec::new(),
             health: RecordingHealth {
                 deduplication_capacity: MAX_DEDUP,
@@ -509,7 +625,7 @@ impl UsageStore {
         if !directory.join("usage.sqlite3").exists() {
             return Ok(result);
         }
-        let _guard = deletion_guard(directory)?;
+        let _guard = operation_guard(directory)?;
         managed(directory)?;
         let db = connect(directory, false)?;
         let saved: String =
@@ -518,6 +634,20 @@ impl UsageStore {
             serde_json::from_str::<UsageScope>(&saved)? == *scope,
             "usage history belongs to another root binding"
         );
+        let lifetime: Option<String> = db
+            .query_row("SELECT value FROM meta WHERE key='lifetime'", [], |r| {
+                r.get(0)
+            })
+            .optional()?;
+        if let Some(saved) = lifetime {
+            ensure!(
+                saved.len() <= MAX_BUCKET_BYTES,
+                "oversize lifetime aggregate"
+            );
+            let aggregate: UsageReport = serde_json::from_str(&saved)?;
+            ensure!(aggregate.scope == *scope, "lifetime scope mismatch");
+            result.lifetime = Some(aggregate);
+        }
         let current_policy = policy(directory)?;
         let oldest = (unix_ms() / DAY_MS)
             .saturating_sub(u64::from(current_policy.aggregate_retention_days) - 1)
@@ -592,7 +722,7 @@ impl UsageStore {
     /// Only aggregate strata and a bounded opaque deduplication window are retained.
     pub fn record_supplement(&self, event: &SupplementalMeasurement) -> Result<bool> {
         event.validate()?;
-        let _guard = deletion_guard(&self.directory)?;
+        let _guard = operation_guard(&self.directory)?;
         managed(&self.directory)?;
         let current = policy(&self.directory)?;
         ensure!(
@@ -610,6 +740,7 @@ impl UsageStore {
         self.verify(&db)?;
         let tx = db.transaction()?;
         tx.execute_batch("CREATE TABLE IF NOT EXISTS supplemental_daily (day INTEGER PRIMARY KEY, summary TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS session_links (id BLOB PRIMARY KEY);
             CREATE TABLE IF NOT EXISTS supplemental_seen (sequence INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, timestamp INTEGER NOT NULL);")?;
         tx.execute("DELETE FROM daily WHERE day<?1", [oldest as i64])?;
         tx.execute(
@@ -660,6 +791,27 @@ impl UsageStore {
             event.unix_ms as i64 > floor,
             "supplemental observation older than bounded replay protection"
         );
+        tx.execute(
+            "DELETE FROM session_links WHERE id NOT IN (SELECT id FROM seen)",
+            [],
+        )?;
+        for request in &event.airk_request_ids {
+            let id: Vec<u8> = (0..32)
+                .step_by(2)
+                .map(|i| u8::from_str_radix(&request[i..i + 2], 16))
+                .collect::<std::result::Result<_, _>>()?;
+            let retained = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM seen WHERE id=?1)",
+                [&id],
+                |r| r.get::<_, bool>(0),
+            )?;
+            ensure!(
+                retained,
+                "linked AIRK request is unknown, expired or belongs to another collection"
+            );
+            tx.execute("INSERT INTO session_links VALUES (?1)", [&id])
+                .context("AIRK request already linked to another session import")?;
+        }
         let day = event.unix_ms / DAY_MS;
         let encoded: Option<String> = tx
             .query_row(
@@ -726,7 +878,7 @@ pub fn feedback(
         .step_by(2)
         .map(|i| u8::from_str_radix(&request_id[i..i + 2], 16))
         .collect::<std::result::Result<_, _>>()?;
-    let _guard = deletion_guard(directory)?;
+    let _guard = operation_guard(directory)?;
     managed(directory)?;
     ensure!(
         policy(directory)?.mode != RecordingMode::Disabled,
@@ -750,7 +902,7 @@ pub fn feedback(
 }
 
 pub fn clear(directory: &Path) -> Result<()> {
-    let _guard = deletion_guard(directory)?;
+    let _guard = operation_guard(directory)?;
     managed(directory)?;
     // Reclaim without a temporary DB/journal or quota reservation when storage is full.
     // Old writers cannot open a deleted ledger; a recreated ledger has a new incarnation.

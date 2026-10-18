@@ -23,6 +23,7 @@ test('policy snapshots bound input, preserve exact bytes and clean up cancellati
         await assert.rejects(fs.stat(snapshot), { code: 'ENOENT' });
         await fs.writeFile(input, Buffer.alloc(maximumPolicyBytes + 1, 32));
         await assert.rejects(withPolicySnapshot(input, async () => assert.fail('oversized policy reached native call')), /128 KiB/);
+        await assert.rejects(withPolicySnapshot(input, async () => assert.fail('oversized measurement reached native call'), 'Usage measurement', 16_384), /Usage measurement.*16 KiB/);
         await fs.writeFile(input, Buffer.from([0xff]));
         await assert.rejects(withPolicySnapshot(input, async () => assert.fail('invalid UTF-8 reached native call')));
         await assert.rejects(withPolicySnapshot(directory, async () => assert.fail('directory reached native call')), /regular/);

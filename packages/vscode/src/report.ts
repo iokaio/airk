@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { randomBytes } from 'node:crypto';
+import { renderUsage } from './usageReport';
 
 export type ReportKind = 'coverage' | 'usage' | 'retention';
 type RecordValue = Record<string, unknown>;
@@ -40,33 +41,17 @@ function coverage(value: RecordValue): string {
     return summary + section('Inventory', rows(details)) + retention(value.retention);
 }
 
-function usage(value: RecordValue): string {
-    const report = record(value.report), health = record(value.health), operations = record(report.operations);
-    const summary = `<div class="metrics">${metric('Recorded calls', report.calls)}${metric('Evidence calls', report.eligible_evidence_calls)}${metric('Missing baseline', report.missing_baseline_calls)}${metric('Dropped observations', report.dropped_observations)}</div>`;
-    const operationRows = Object.entries(operations).slice(0, 64).map(([name, item]) => {
-        const operation = record(item);
-        return `<tr><th scope="row">${escape(name)}</th><td>${escape(operation.calls)}</td><td>${escape(operation.successful)}</td><td>${escape(operation.failed)}</td><td>${escape(operation.returned_utf8_bytes)}</td></tr>`;
-    }).join('');
-    const table = `<table><thead><tr><th>Operation</th><th>Calls</th><th>Successful</th><th>Failed</th><th>Returned UTF-8 bytes</th></tr></thead><tbody>${operationRows || '<tr><td colspan="5">No recorded operations</td></tr>'}</tbody></table>`;
-    const details: [string, unknown][] = [
-        ['Recording status', value.status], ['Recording mode', field(value.policy, 'mode')],
-        ['Database bytes', health.database_bytes], ['Complete history', health.complete_history],
-        ['Estimated bill savings', report.estimated_bill_savings], ['Provider tokens observed', report.provider_token_usage_observed]
-    ];
-    return summary + section('Operations', table) + section('Recording and estimates', rows(details));
-}
-
-/** Render bounded, escaped report data. The webview sends only one fixed diagnostic request. */
+/** Render bounded, escaped reports. Usage controls use the separate allowlisted action parser. */
 export function renderReport(title: string, kind: ReportKind, value: unknown): string {
     const nonce = randomBytes(24).toString('hex');
     const data = record(value);
-    const body = kind === 'coverage' ? coverage(data) : kind === 'retention' ? retention(data.retention) : usage(data);
-    const note = data.explanation ?? (kind === 'usage' ? 'Local aggregates and counterfactual estimates are not measured provider tokens or billed savings.' : undefined);
+    const body = kind === 'coverage' ? coverage(data) : kind === 'retention' ? retention(data.retention) : renderUsage(data);
+    const note = data.explanation ?? (kind === 'usage' ? 'AIRK measures its own activity. Token and cost estimates are comparisons, not a record of your agent’s bill.' : undefined);
     return `<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}';"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escape(title)}</title><style nonce="${nonce}">
         body{font-family:var(--vscode-font-family);color:var(--vscode-foreground);background:var(--vscode-editor-background);padding:1rem 1.5rem;line-height:1.45}
         header{display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap}h1{font-size:1.55rem}h2{font-size:1.15rem;margin-top:1.5rem}
-        button{color:var(--vscode-button-foreground);background:var(--vscode-button-background);border:0;padding:.5rem .8rem;cursor:pointer}button:hover{background:var(--vscode-button-hoverBackground)}
+        button,select{font:inherit;margin:.25rem;color:var(--vscode-button-foreground);background:var(--vscode-button-background);border:0;padding:.5rem .8rem;cursor:pointer}button:hover{background:var(--vscode-button-hoverBackground)}
         .metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(10rem,1fr));gap:.6rem}.metric{border:1px solid var(--vscode-panel-border);padding:.7rem;display:flex;flex-direction:column;gap:.3rem}.metric span{color:var(--vscode-descriptionForeground)}.metric strong{font-size:1.35rem}
-        section{overflow-x:auto}table{border-collapse:collapse;width:100%}th,td{text-align:left;border-bottom:1px solid var(--vscode-panel-border);padding:.48rem .6rem}th{font-weight:600}td{font-variant-numeric:tabular-nums}.note{color:var(--vscode-descriptionForeground)}
-        </style></head><body><header><h1>${escape(title)}</h1><button id="open-json" type="button">Open as JSON</button></header>${note == null ? '' : `<p class="note">${escape(note)}</p>`}${body}<script nonce="${nonce}">document.getElementById('open-json').addEventListener('click',()=>acquireVsCodeApi().postMessage({type:'openJson'}));</script></body></html>`;
+        section{overflow-x:auto}small{font-size:.85rem;font-weight:normal}details{margin:1rem 0;overflow-x:auto}p{overflow-wrap:anywhere}summary{cursor:pointer}nav{display:flex;align-items:center;flex-wrap:wrap;gap:.4rem}table{border-collapse:collapse;width:100%}th,td{text-align:left;border-bottom:1px solid var(--vscode-panel-border);padding:.48rem .6rem}th{font-weight:600}td{font-variant-numeric:tabular-nums}.note{color:var(--vscode-descriptionForeground)}
+        </style></head><body><header><h1>${escape(title)}</h1><button id="open-json" type="button">Open as JSON</button></header>${note == null ? '' : `<p class="note">${escape(note)}</p>`}${body}<script nonce="${nonce}">const api=acquireVsCodeApi(); document.getElementById('open-json').addEventListener('click',()=>api.postMessage({type:'openJson'})); document.querySelectorAll('[data-usage]').forEach(button=>button.addEventListener('click',()=>api.postMessage({type:'usage',action:button.dataset.usage}))); document.getElementById('usage-days')?.addEventListener('change',event=>api.postMessage({type:'usage',action:'days',days:Number(event.target.value)}));</script></body></html>`;
 }

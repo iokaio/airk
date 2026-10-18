@@ -72,7 +72,7 @@ class Mcp {
 export async function run(): Promise<void> {
     const runRoot = process.env.AIRK_EDITOR_RUN!, role = process.env.AIRK_EDITOR_ROLE!;
     const scenario = process.env.AIRK_EDITOR_SCENARIO!;
-    assert.ok(runRoot && ['a', 'b'].includes(role) && ['same', 'different', 'multi', 'untrusted'].includes(scenario));
+    assert.ok(runRoot && ['a', 'b'].includes(role) && ['same', 'different', 'multi', 'usage', 'untrusted'].includes(scenario));
     const allowed = path.resolve(__dirname, '../../../../artifacts/editor-qualification');
     const relative = path.relative(allowed, path.resolve(runRoot));
     assert.ok(relative && !relative.startsWith('..') && !path.isAbsolute(relative), 'Private qualification directory');
@@ -93,12 +93,13 @@ export async function run(): Promise<void> {
         assert.equal(vscode.workspace.isTrusted, false);
         assert.deepEqual(await api.getServerDefinitions(), []);
         await assert.rejects(Promise.resolve(vscode.commands.executeCommand('airk.index')), /Trust this workspace/);
+        await assert.rejects(Promise.resolve(vscode.commands.executeCommand('airk.usage')), /Trust this workspace/);
         assert.deepEqual(await fs.readdir(path.join(folder, 'storage')), [], 'Untrusted workspace must not create an index');
-        checks.push('untrusted definitions empty', 'index command rejected', 'storage untouched', 'dashboard focus');
+        checks.push('untrusted definitions empty', 'index and usage commands rejected', 'storage untouched', 'dashboard focus');
     } else {
         assert.equal(vscode.workspace.isTrusted, true);
         const definitions: vscode.McpStdioServerDefinition[] = await api.getServerDefinitions();
-        assert.equal(definitions.length, scenario === 'multi' ? 2 : 1);
+        assert.equal(definitions.length, ['multi', 'usage'].includes(scenario) ? 2 : 1);
         const specs: LaunchSpec[] = definitions.map(definition => ({ command: definition.command,
             root: definition.args[definition.args.indexOf('--root') + 1], dataDir: definition.args[definition.args.indexOf('--data-dir') + 1],
             collection: definition.args[definition.args.indexOf('--collection') + 1], name: definition.label }));
@@ -111,6 +112,44 @@ export async function run(): Promise<void> {
             const document = await vscode.workspace.openTextDocument(path.join(spec.root, 'fixture.ts'));
             await vscode.window.showTextDocument(document);
             await vscode.commands.executeCommand('airk.index');
+        }
+        if (scenario === 'usage') {
+            const before = await Promise.all(specs.map(spec => runJson<any>(spec, 'usage', ['report'])));
+            assert.ok(before.every(report => report.report.calls > 0));
+            const sourceBefore = await Promise.all(specs.map(spec => fs.readFile(path.join(spec.root, 'fixture.ts'), 'utf8')));
+            await fs.writeFile(path.join(folder, 'measurement.json'), JSON.stringify({ schema_version: 1,
+                event_id: 'b'.repeat(32), unix_ms: Date.now(), client: 'codex', content_kind: 'code', provenance: 'client_reported',
+                context: null, paired_task: null, airk_request_ids: [], session: { model_revision_sha256: 'a'.repeat(64),
+                    requests: 1, input_tokens: 12000, cached_input_tokens: 2000, output_tokens: 1000, elapsed_ms: 45000, tool_round_trips: 3 } }));
+            const otherMeasurement = path.join(folder, 'other-measurement.json');
+            const other = JSON.parse(await fs.readFile(path.join(folder, 'measurement.json'), 'utf8'));
+            other.event_id = 'c'.repeat(32); other.session.input_tokens = 888; other.session.cached_input_tokens = 0;
+            await fs.writeFile(otherMeasurement, JSON.stringify(other));
+            await runJson(specs[1], 'usage', ['import', otherMeasurement]);
+            await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(path.join(specs[0].root, 'fixture.ts')));
+            await vscode.commands.executeCommand('airk.usage');
+            await mark('usage-ready', { specs });
+            await waitFor(path.join(folder, 'usage-ui-complete.json'));
+            const after = await Promise.all(specs.map(spec => runJson<any>(spec, 'usage', ['report'])));
+            assert.equal(after[0].report.calls, 0); assert.equal(after[0].supplemental.length, 0); assert.equal(after[0].lifetime, null);
+            assert.ok(after[1].report.calls >= before[1].report.calls, 'other collection can gain background observations');
+            assert.equal(after[1].supplemental.flatMap((bucket: any) => bucket.summaries)
+                .reduce((total: bigint, summary: any) => total + BigInt(summary.sessions.input_tokens), 0n), 888n,
+                'clearing first collection preserves second collection supplied evidence');
+            assert.deepEqual(await Promise.all(specs.map(spec => fs.readFile(path.join(spec.root, 'fixture.ts'), 'utf8'))), sourceBefore);
+            for (const spec of specs) { assert.ok((await fs.stat(path.join(spec.dataDir, 'collections', spec.collection, 'index.sqlite3'))).isFile()); }
+            checks.push('installed reports for two collections', 'clear scoped to selected collection', 'source bytes and indexes preserved');
+            const next = path.join(folder, 'selected-storage'); await fs.mkdir(next);
+            await vscode.workspace.getConfiguration('airk').update('storage.path', next, vscode.ConfigurationTarget.Global);
+            await api.getServerDefinitions();
+            await mark('usage-storage-changed');
+            await waitFor(path.join(folder, 'usage-stale-checked.json'));
+            assert.deepEqual(await fs.readdir(next), [], 'stale usage panel must not create new storage');
+            checks.push('storage selection invalidates open reporting panels');
+            await vscode.commands.executeCommand('airk.dashboard.focus');
+            await mark('result', evidence); await mark('capture');
+            await waitFor(path.join(folder, 'capture-complete.json'));
+            return;
         }
         if (scenario === 'same' || scenario === 'different') { await barrier('indexed'); }
         checks.push('installed command indexing', 'shared storage selection');

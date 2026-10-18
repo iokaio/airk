@@ -2,7 +2,7 @@
 //! Local request accounting and reports. No source or query content is persisted.
 pub use airk_core::usage::*;
 use airk_store::usage::{DAY_MS, RecordingHealth, UsageStore, unix_ms};
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -43,6 +43,9 @@ pub struct UsageView {
     pub status: &'static str,
     pub report: UsageReport,
     pub history: Vec<UsageReport>,
+    /// Partial native totals since rollup recording began (or history was cleared).
+    /// Supplemental/session evidence keeps its separate daily retention window.
+    pub lifetime: Option<UsageReport>,
     pub supplemental: Vec<SupplementalBucket>,
     pub price_scenario: Option<Value>,
     /// Measured exclusive intervals only; see sample counts in resources.
@@ -144,6 +147,7 @@ impl crate::Kernel {
             status,
             report,
             history: stored.buckets,
+            lifetime: stored.lifetime,
             supplemental: stored.supplemental,
             price_scenario: None,
             process_cpu_us,
@@ -532,6 +536,23 @@ pub fn render_report(view: &UsageView, format: &str) -> Result<String> {
                     serde_json::to_string(bucket)?.replace('"', "\"\"")
                 ));
             }
+            for (label, value) in [
+                (
+                    "report_metadata",
+                    serde_json::json!({"scope":view.report.scope,"start_unix_ms":view.report.start_unix_ms,"end_unix_ms_exclusive":view.report.end_unix_ms_exclusive,"status":view.status,"policy":view.policy,"estimator":view.report.estimator_version,"heuristic":view.report.heuristic,"eligible_evidence_calls":view.report.eligible_evidence_calls,"missing_baseline_calls":view.report.missing_baseline_calls,"mismatched_baseline_calls":view.report.mismatched_baseline_calls,"notice":view.notice}),
+                ),
+                (
+                    "comparisons",
+                    serde_json::to_value(&view.report.comparisons)?,
+                ),
+                ("recording_health", serde_json::to_value(&view.health)?),
+                ("lifetime_native", serde_json::to_value(&view.lifetime)?),
+            ] {
+                text.push_str(&format!(
+                    "{label},,,,,,,\"{}\"\n",
+                    serde_json::to_string(&value)?.replace('"', "\"\"")
+                ));
+            }
             text.push_str(&format!(
                 "resources,,,,,,,\"{}\"\n",
                 serde_json::to_string(&view.resources)?.replace('"', "\"\"")
@@ -560,6 +581,9 @@ pub fn render_report(view: &UsageView, format: &str) -> Result<String> {
             }
             for (kind, comparison) in &view.report.comparisons {
                 text.push_str(&format!("\n{} counterfactual: {} nominal tokens of context reduction (signed; {} compared calls).\n", serde_json::to_string(kind)?, comparison.token_estimate.nominal_reduction, comparison.compared_calls));
+            }
+            if let Some(lifetime) = &view.lifetime {
+                text.push_str(&format!("\nSince rollup recording began (UTC milliseconds {}): {} recorded AIRK calls. Partial native history; excludes earlier activity and imported sessions. Clearing history resets this total.\n", lifetime.start_unix_ms, lifetime.calls));
             }
             text.push_str(&format!("\nProcess resources: {} sampled intervals, {} overlapping intervals excluded from counter attribution; peak process RSS: {:?} bytes. Process deltas include background threads. OS storage bytes and transfer bytes are distinct; hardware physical I/O remains unknown.\n", view.resources.intervals, view.resources.overlapped_intervals, view.resources.peak_rss_bytes));
             for (counter, total) in &view.resources.counters {
@@ -698,6 +722,7 @@ impl crate::Kernel {
         let _: Value = serde_json::from_str(&baseline)?;
         let _: Value = serde_json::from_str(&returned)?;
         let measurement = SupplementalMeasurement {
+            airk_request_ids: Vec::new(),
             schema_version: 1,
             event_id: new_event_id()
                 .iter()
@@ -748,6 +773,7 @@ impl crate::Kernel {
             }
         }
         let mut sessions = Vec::new();
+        let mut paired_costs = Vec::new();
         for bucket in &view.supplemental {
             for summary in &bucket.summaries {
                 if scenario.context_assumes_uncached && summary.context_pairs > 0 {
@@ -770,12 +796,27 @@ impl crate::Kernel {
                     let classified = session.cache_classified_input_tokens;
                     let uncached = classified.saturating_sub(session.cached_input_tokens);
                     // Unknown cache splits are deliberately excluded instead of assuming zero cached tokens.
-                    sessions.push(serde_json::json!({"day":bucket.day,"stratum":summary.stratum,"kind":kind,"sessions":session.sessions,"cache_classified_sessions":session.cached_input_measured_sessions,"uncached_input_equivalent":scenario.input_equivalent(i128::try_from(uncached)?,false)?,"cached_input_equivalent":scenario.input_equivalent(i128::try_from(session.cached_input_tokens)?,true)?,"unpriced_input_tokens_unknown_cache_split":session.input_tokens.saturating_sub(classified).to_string(),"sessions_without_input_counts":session.sessions-session.input_measured_sessions}));
+                    sessions.push(serde_json::json!({"day":bucket.day,"stratum":summary.stratum,"kind":kind,"sessions":session.sessions,"cache_classified_sessions":session.cached_input_measured_sessions,"uncached_input_equivalent":if session.cached_input_measured_sessions == 0 { None } else { scenario.input_equivalent(i128::try_from(uncached)?,false)? },"cached_input_equivalent":if session.cached_input_measured_sessions == 0 { None } else { scenario.input_equivalent(i128::try_from(session.cached_input_tokens)?,true)? },"output_equivalent":if session.output_measured_sessions == 0 { None } else { scenario.output_equivalent(i128::try_from(session.output_tokens)?)? },"output_measured_sessions":session.output_measured_sessions,"unpriced_input_tokens_unknown_cache_split":session.input_tokens.saturating_sub(classified).to_string(),"sessions_without_input_counts":session.sessions-session.input_measured_sessions}));
+                }
+                let a = &summary.paired_with_airk;
+                let b = &summary.paired_without_airk;
+                if a.sessions > 0 && a.sessions == b.sessions {
+                    let inputs = a.cached_input_measured_sessions == a.sessions
+                        && b.cached_input_measured_sessions == b.sessions;
+                    let outputs = a.output_measured_sessions == a.sessions
+                        && b.output_measured_sessions == b.sessions;
+                    let difference = |before: u128, after: u128| -> Result<i128> {
+                        Ok(i128::try_from(before)? - i128::try_from(after)?)
+                    };
+                    paired_costs.push(serde_json::json!({"day":bucket.day,"stratum":summary.stratum,"pairs":a.sessions,"quality":summary.paired_quality,
+                        "uncached_input_reduction":if inputs { scenario.input_equivalent(difference(b.input_tokens.checked_sub(b.cached_input_tokens).context("invalid cached input total")?,a.input_tokens.checked_sub(a.cached_input_tokens).context("invalid cached input total")?)?,false)? } else { None },
+                        "cached_input_reduction":if inputs { scenario.input_equivalent(difference(b.cached_input_tokens,a.cached_input_tokens)?,true)? } else { None },
+                        "output_reduction":if outputs { scenario.output_equivalent(difference(b.output_tokens,a.output_tokens)?)? } else { None }}));
                 }
             }
         }
         view.price_scenario = Some(
-            serde_json::json!({"provenance":"user_supplied_scenario","scenario":scenario,"context_equivalents":contexts,"session_input_equivalents":sessions,"estimated_bill_savings":null,"notice":"Hypothetical input-cost equivalents at explicitly supplied rates. No model compatibility, provider bill, output-token savings or causal savings are inferred. Context equivalents assume every context token is uncached only when explicitly enabled."}),
+            serde_json::json!({"provenance":"user_supplied_scenario","scenario":scenario,"context_equivalents":contexts,"session_input_equivalents":sessions,"paired_cost_equivalents":paired_costs,"estimated_bill_savings":null,"notice":"Hypothetical cost equivalents at explicitly supplied rates. No model compatibility, provider bill or causal savings are inferred. Paired differences require complete measurements for both sides. Output equivalents require supplied output counts and an explicit output rate. Context equivalents assume every context token is uncached only when explicitly enabled."}),
         );
         Ok(view)
     }

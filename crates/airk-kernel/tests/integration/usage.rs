@@ -103,6 +103,7 @@ fn resource_aggregation_keeps_unknown_overlap_and_high_water_semantics() -> anyh
 
 fn supplemental(id: u8) -> SupplementalMeasurement {
     SupplementalMeasurement {
+        airk_request_ids: Vec::new(),
         schema_version: 1,
         event_id: format!("{id:032x}"),
         unix_ms: airk_store::usage::unix_ms(),
@@ -138,6 +139,7 @@ fn supplemental(id: u8) -> SupplementalMeasurement {
 
 fn scenario() -> PriceScenario {
     PriceScenario {
+        output_price_per_million: None,
         model: "fictional-model".into(),
         currency: "USD".into(),
         rate_date: "2026-10-14".into(),
@@ -152,6 +154,12 @@ fn scenario() -> PriceScenario {
 fn explicit_price_scenarios_preserve_sign_cache_unknown_and_decimal_precision() -> anyhow::Result<()>
 {
     let mut price = scenario();
+    assert!(price.output_equivalent(12)?.is_none());
+    price.output_price_per_million = Some("10.00".into());
+    assert_eq!(
+        price.output_equivalent(-12)?.as_deref(),
+        Some("-0.000120000000")
+    );
     assert_eq!(
         price.input_equivalent(-80, false)?.as_deref(),
         Some("-0.000200000000")
@@ -170,6 +178,33 @@ fn explicit_price_scenarios_preserve_sign_cache_unknown_and_decimal_precision() 
     for invalid in ["NaN", "-1", "1e9", "0.0000001", "1000001"] {
         assert!(price_microunits(invalid).is_err());
     }
+    Ok(())
+}
+
+#[test]
+fn paired_prices_require_complete_counters_and_preserve_negative_differences() -> anyhow::Result<()>
+{
+    let root = tempfile::tempdir()?;
+    std::fs::write(root.path().join("fixture.txt"), "original usage fixture")?;
+    let kernel = airk_kernel::Kernel::open(root.path(), None)?;
+    kernel.index()?;
+    let mut event = supplemental(91);
+    event.paired_task.as_mut().unwrap().with_airk.output_tokens = Some(100);
+    kernel.usage_import(&event)?;
+    let mut price = scenario();
+    price.output_price_per_million = Some("10".into());
+    let view = kernel.usage_report_with_price(30, &price)?;
+    let paired = &view.price_scenario.as_ref().unwrap()["paired_cost_equivalents"][0];
+    assert_eq!(paired["output_reduction"], "-0.000880000000");
+    assert_eq!(paired["quality"][2], 1);
+    event.event_id = format!("{:032x}", 92);
+    event.paired_task.as_mut().unwrap().with_airk.output_tokens = None;
+    kernel.usage_import(&event)?;
+    let view = kernel.usage_report_with_price(30, &price)?;
+    assert!(
+        view.price_scenario.as_ref().unwrap()["paired_cost_equivalents"][0]["output_reduction"]
+            .is_null()
+    );
     Ok(())
 }
 
