@@ -356,7 +356,12 @@ enum StorageCommand {
 #[derive(Subcommand)]
 enum UsageCommand {
     /// Import one bounded content-free client/session measurement JSON (at most 16 KiB).
-    Import { file: PathBuf },
+    Import {
+        file: PathBuf,
+        /// Validate and display the content-free measurement without recording it.
+        #[arg(long)]
+        preview: bool,
+    },
     /// Count comparable logical JSON samples with a digest-bound offline tokenizer.
     Calibrate {
         #[arg(long)]
@@ -959,9 +964,12 @@ async fn main() -> anyhow::Result<()> {
             }
         },
         Command::Usage { action } => match action {
-            UsageCommand::Import { file } => {
-                let event = serde_json::from_slice(&airk_kernel::usage::read_usage_input(&file,16_384)?)?;
-                print_json(&kernel.usage_import(&event)?)
+            UsageCommand::Import { file, preview } => {
+                let event: airk_core::usage::SupplementalMeasurement = serde_json::from_slice(&airk_kernel::usage::read_usage_input(&file,16_384)?)?;
+                if preview {
+                    event.validate()?;
+                    print_json(&serde_json::json!({"measurement":event,"recorded":false,"notice":"Validated content-free input. Request links and collection admission are checked only when importing."}))
+                } else { print_json(&kernel.usage_import(&event)?) }
             },
             UsageCommand::Calibrate {tokenizer,baseline,returned,generation,content_kind,record} => {
                 let content_kind = serde_json::from_value(serde_json::Value::String(content_kind))?;

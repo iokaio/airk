@@ -1,6 +1,6 @@
 # AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents
 
-**Version 1.1.2 · Stable release track.** Download [native ZIPs and platform VSIX packages](https://github.com/iokaio/airk/releases/tag/v1.1.2). The [October 17 release summary](docs/releases-2026-10-17.md) combines the changes in 1.1.0, 1.1.1 and 1.1.2, with upgrade guidance and qualification limits.
+**Version 1.1.3 · Development candidate.** [Usage & Savings changes](docs/release-1.1.3.md). The latest published packages remain 1.1.2. Download [native ZIPs and platform VSIX packages](https://github.com/iokaio/airk/releases/tag/v1.1.2). The [October 17 release summary](docs/releases-2026-10-17.md) combines the changes in 1.1.0, 1.1.1 and 1.1.2, with upgrade guidance and qualification limits.
 
 **Give Claude Code, Codex, Gemini CLI/Antigravity, GitHub Copilot and other MCP-capable agents a shared, local index of your workspace.** AIRK indexes files and returns bounded facts and passages with source paths, hashes and original locations. The agent supplies the reasoning. Runtime storage uses memory and local disk.
 
@@ -9,6 +9,10 @@
 This is an independent, runnable open-source project. Munarium, VCP and local reference files inform the design; their implementations are not dependencies. Persistent Tantivy lexical indexes, SQLite exact facts and an independent disk file provider for Microsoft DiskANN publish coherent revisions. Optional [local models](docs/local-models.md), including [CPU ONNX transformer inference](docs/onnx-models.md), enable vector and hybrid retrieval. AIRK does not download models or use remote inference; model quality must be evaluated for the intended corpus.
 
 [Code facts and relationships](docs/code-facts-and-relationships.md) add scopes, signatures, written types, call/framework candidates and optional source/build-bound SCIP imports. Sixteen read-only MCP tools expose bounded evidence with explicit syntax versus producer provenance. Native indexing needs no external compiler/indexer installation.
+
+## What's new in 1.1.3
+
+Open **Usage & Savings** on any collection to see how much smaller AIRK results were than complete cited files, daily activity, optional session/task measurements and explicit cost assumptions. The report explains estimates in plain language and keeps technical counters expandable. [Measurement and evaluation](docs/usage-evaluation.md) covers content-free client adapters, matched-task comparisons and cumulative native totals. These features do not establish provider billing savings.
 
 ## What's new in 1.1.0–1.1.2
 

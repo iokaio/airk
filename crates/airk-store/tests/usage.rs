@@ -51,11 +51,74 @@ fn observation(scope: &UsageScope, id: u8) -> UsageObservation {
 }
 
 #[test]
+fn lifetime_is_atomic_deduplicated_scoped_and_survives_daily_expiry() -> anyhow::Result<()> {
+    let (_root, directory, scope) = setup()?;
+    let store = UsageStore::open(&directory, &scope, &UsagePolicy::default())?.unwrap();
+    let mut prior = observation(&scope, 1);
+    prior.unix_ms -= 2 * DAY_MS;
+    store.record(&prior)?;
+    store.record(&prior)?;
+    let policy = UsagePolicy {
+        aggregate_retention_days: 1,
+        ..UsagePolicy::default()
+    };
+    usage::configure(&directory, &policy)?;
+    store.record(&observation(&scope, 2))?;
+    let read = UsageStore::read(&directory, &scope, 0, u64::MAX / 2)?;
+    assert_eq!(read.buckets.len(), 1);
+    let lifetime = read.lifetime.unwrap();
+    assert_eq!(lifetime.calls, 2);
+    assert_eq!(
+        lifetime.comparisons[&BaselineKind::FullReturnedSources]
+            .token_estimate
+            .nominal_reduction,
+        -160
+    );
+    let mut foreign = scope.clone();
+    foreign.root_binding = [8; 32];
+    assert!(UsageStore::read(&directory, &foreign, 0, u64::MAX / 2).is_err());
+    usage::clear(&directory)?;
+    assert!(
+        UsageStore::read(&directory, &scope, 0, u64::MAX / 2)?
+            .lifetime
+            .is_none()
+    );
+    assert!(store.record(&observation(&scope, 3)).is_err());
+    Ok(())
+}
+
+#[test]
+fn session_links_require_retained_local_requests_and_cannot_be_counted_twice() -> anyhow::Result<()>
+{
+    let (_root, directory, scope) = setup()?;
+    let store = UsageStore::open(&directory, &scope, &UsagePolicy::default())?.unwrap();
+    store.record(&observation(&scope, 1))?;
+    let mut event: SupplementalMeasurement = serde_json::from_value(serde_json::json!({
+        "schema_version":1,"event_id":"00000000000000000000000000000001","unix_ms":usage::unix_ms(),
+        "client":"codex","content_kind":"code","provenance":"client_reported","context":null,"paired_task":null,
+        "session":{"model_revision_sha256":"a".repeat(64),"requests":1,"input_tokens":10,"cached_input_tokens":null,"output_tokens":null,"elapsed_ms":null,"tool_round_trips":null},
+        "airk_request_ids":["01".repeat(16)]
+    }))?;
+    assert!(store.record_supplement(&event)?);
+    assert!(!store.record_supplement(&event)?);
+    event.event_id = "02".repeat(16);
+    assert!(store.record_supplement(&event).is_err());
+    event.airk_request_ids = vec!["03".repeat(16)];
+    assert!(store.record_supplement(&event).is_err());
+    let read = UsageStore::read(&directory, &scope, 0, u64::MAX / 2)?;
+    assert_eq!(read.supplemental[0].summaries[0].sessions.sessions, 1);
+    assert_eq!(read.supplemental[0].summaries[0].linked_airk_requests, 1);
+    assert_eq!(read.lifetime.unwrap().calls, 1);
+    Ok(())
+}
+
+#[test]
 fn supplemental_dimensions_replay_clear_and_retention_share_lifecycle() -> anyhow::Result<()> {
     let (_root, directory, scope) = setup()?;
     let first = UsageStore::open(&directory, &scope, &UsagePolicy::default())?.unwrap();
     let second = UsageStore::open(&directory, &scope, &UsagePolicy::default())?.unwrap();
     let mut event = SupplementalMeasurement {
+        airk_request_ids: Vec::new(),
         schema_version: 1,
         event_id: format!("{:032x}", 1),
         unix_ms: usage::unix_ms(),
@@ -153,7 +216,10 @@ fn shared_quota_rejects_usage_growth_but_clear_reclaims_when_full() -> anyhow::R
     })?;
     let before = std::fs::read(directory.join("usage.sqlite3"))?;
     assert!(store.record(&observation(&scope, 2)).is_err());
-    assert!(UsageStore::open_best_effort(&directory, &scope, &UsagePolicy::default()).is_err());
+    // Identity-only opens are read-only even when storage is full; mutations still fail.
+    let reopened =
+        UsageStore::open_best_effort(&directory, &scope, &UsagePolicy::default())?.unwrap();
+    assert!(reopened.record(&observation(&scope, 2)).is_err());
     assert_eq!(std::fs::read(directory.join("usage.sqlite3"))?, before);
     usage::clear(&directory)?;
     assert!(!directory.join("usage.sqlite3").exists());
@@ -167,6 +233,7 @@ fn ordinary_activity_prunes_expired_supplemental_rows() -> anyhow::Result<()> {
     let (_root, directory, scope) = setup()?;
     let store = UsageStore::open(&directory, &scope, &UsagePolicy::default())?.unwrap();
     let event = SupplementalMeasurement {
+        airk_request_ids: Vec::new(),
         schema_version: 1,
         event_id: "c".repeat(32),
         unix_ms: usage::unix_ms() - DAY_MS,
@@ -228,6 +295,92 @@ fn independent_workers_merge_once_and_keep_signed_estimates() -> anyhow::Result<
     );
     assert!(saved.health.database_bytes < 1_048_576 / 2);
     assert_eq!(saved.health.dropped_observations, None);
+    Ok(())
+}
+
+#[test]
+fn concurrent_best_effort_workers_initialize_and_record_without_losing_calls() -> anyhow::Result<()>
+{
+    let (_root, directory, scope) = setup()?;
+    let barrier = std::sync::Barrier::new(4);
+    std::thread::scope(|threads| -> anyhow::Result<()> {
+        let workers: Vec<_> = (0..4)
+            .map(|worker| {
+                let (directory, scope, barrier) = (&directory, &scope, &barrier);
+                threads.spawn(move || -> anyhow::Result<()> {
+                    barrier.wait();
+                    for request in 0..12 {
+                        let store = UsageStore::open_best_effort(
+                            directory,
+                            scope,
+                            &UsagePolicy::default(),
+                        )?
+                        .unwrap();
+                        let event = observation(scope, worker * 12 + request + 1);
+                        store.record(&event)?;
+                        store.record(&event)?;
+                    }
+                    Ok(())
+                })
+            })
+            .collect();
+        for worker in workers {
+            worker.join().unwrap()?;
+        }
+        Ok(())
+    })?;
+    let saved = UsageStore::read(&directory, &scope, 0, usage::unix_ms() + DAY_MS)?;
+    assert_eq!(saved.buckets.iter().map(|b| b.calls).sum::<u64>(), 48);
+    assert_eq!(saved.lifetime.unwrap().calls, 48);
+    assert_eq!(saved.health.duplicate_observations, 48);
+    Ok(())
+}
+
+#[test]
+fn brief_lifecycle_and_shared_quota_contention_waits_but_stuck_writer_is_bounded()
+-> anyhow::Result<()> {
+    use std::time::{Duration, Instant};
+    let (root, directory, scope) = setup()?;
+    let store = UsageStore::open_best_effort(&directory, &scope, &UsagePolicy::default())?.unwrap();
+    let lock = usage::deletion_guard(&directory)?;
+    std::thread::scope(|threads| -> anyhow::Result<()> {
+        threads.spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            drop(lock);
+        });
+        store.record(&observation(&scope, 1))
+    })?;
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(root.path().join(".quota/ledger.lock"))?;
+    lock.lock()?;
+    std::thread::scope(|threads| -> anyhow::Result<()> {
+        threads.spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            drop(lock);
+        });
+        store.record(&observation(&scope, 2))
+    })?;
+    let lock = usage::deletion_guard(&directory)?;
+    let started = Instant::now();
+    assert!(store.record(&observation(&scope, 3)).is_err());
+    assert!(
+        started.elapsed() < Duration::from_secs(4),
+        "busy accounting must not wait indefinitely"
+    );
+    assert!(
+        usage::deletion_guard(&directory).is_err(),
+        "collection deletion remains fail-fast"
+    );
+    drop(lock);
+    assert_eq!(
+        UsageStore::read(&directory, &scope, 0, usage::unix_ms() + DAY_MS)?
+            .lifetime
+            .unwrap()
+            .calls,
+        2
+    );
     Ok(())
 }
 

@@ -1,5 +1,7 @@
 # AIRK sidebar renderings
 
+For the 1.1.3 reporting work, see [Usage & Savings PNG previews](usage-reporting.md), including dark/light overviews, task and cost comparisons, a narrow report, first use, developer details and the updated sidebar entry point.
+
 The eleven `dashboard-*.png` images render the implemented 1.1.1 sidebar HTML/CSS with fictional workspaces and coverage observations, using a VS Code dark-theme palette. Viewport width is 360 CSS pixels, rendered at 2× resolution; images show the full scrollable panel. Separate installed-editor captures appear below.
 
 Regenerated during the October 17, 2026 code review. Cards distinguish a completed indexing job from current coverage: stale files show **Changes detected**, an unapplied detail selection shows **Detail change pending**, and an absent or incomplete inventory does not claim that the index is current. The storage text explains why protected readers or pending cleanup may temporarily retain extra generations.

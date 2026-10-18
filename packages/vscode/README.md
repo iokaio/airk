@@ -4,7 +4,11 @@
 
 Everything runs on your machine. There is no cloud service, API key, Docker, Rust or Python to install: the native helper is bundled in the extension.
 
-> **Version 1.1.2 · Stable channel.** Packages target Windows x64, Linux x64 and macOS (Intel and Apple Silicon). Large-repository performance, macOS and remote-host qualification, and semantic-search quality are still being measured. See [Known limits](#known-limits).
+> **Version 1.1.3 · Development candidate.** Packages target Windows x64, Linux x64 and macOS (Intel and Apple Silicon). Large-repository performance, macOS and remote-host qualification, and semantic-search quality are still being measured. See [Known limits](#known-limits).
+
+## What's new in 1.1.3
+
+Every collection now has a **Usage & Savings** button. See how much smaller AIRK results were than complete cited files, view 7/30-day activity, export a report, change recording and inspect longer-term totals. Optional session measurements and matched-task results show what is known about time and token use. Cost assumptions are explicit; estimates are not verified bill savings. Technical details are expandable.
 
 ## What's new in 1.1.0–1.1.2
 
@@ -52,7 +56,7 @@ Document extraction keeps heading context, dates, requirement IDs and modality (
 
 ## Get started
 
-1. **Install the package for your platform** with **Extensions: Install from VSIX…**. Files are named `airk-1.1.2-<platform>.vsix` (`win32-x64`, `linux-x64`, `darwin-x64` or `darwin-arm64`). Choose the stable 1.1.2 package. If you previously opted into pre-release versions, use **Switch to Release Version** in the extension menu to stay on stable updates.
+1. **Install the package for your platform** with **Extensions: Install from VSIX…**. Candidate files are named `airk-1.1.3-<platform>.vsix` (`win32-x64`, `linux-x64`, `darwin-x64` or `darwin-arm64`). Published stable downloads remain 1.1.2 until 1.1.3 is released. If you previously opted into pre-release versions, use **Switch to Release Version** in the extension menu to stay on stable updates.
 2. **Open a folder and trust it.** AIRK does not start its helper or read files in an untrusted window.
 3. **Index.** Click the **AIRK** status-bar item and choose **Index Now**, or run **AIRK: Index Now**. The status item then shows measured coverage, for example `AIRK: 97%`, and its tooltip lists stale, missing and failed files.
 4. **Connect an agent.**

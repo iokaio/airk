@@ -13,7 +13,8 @@ import { withPolicySnapshot } from './extractionPolicy';
 import { aboveNormal, authorizeLimitIncrease, indexWithLimitApproval, largerLimitsExplanation, LimitsDescription, ScanLimits } from './ingestionLimits';
 import { historyControl, HistoryAction } from './history';
 import { renderReport, ReportKind } from './report';
-import { ControlGroup, DetailStatus, IndexDetail, McpVerification, SidebarState, renderSidebar, sidebarContent, sidebarAction, sidebarControlGroups } from './sidebar';
+import { openUsagePanel } from './usagePanel';
+import { ControlGroup, DetailStatus, IndexDetail, McpVerification, SidebarCollection, SidebarState, renderSidebar, sidebarContent, sidebarAction, sidebarControlGroups } from './sidebar';
 
 interface KnownCollection { name: string; root: string; lastIndexed?: string }
 class DashboardView implements vscode.WebviewViewProvider, vscode.Disposable {
@@ -112,6 +113,7 @@ class Controller implements vscode.Disposable {
     private mcpChecks = new Map<string, McpVerification & { result?: { tools: string[]; status: unknown } }>();
     private mcpPending = new Map<string, Promise<void>>();
     private treeUsage?: { dataDir: string; updated: number; entries: Usage[] };
+    private usageSummaries = new Map<string, SidebarCollection['usage']>();
 
     constructor(private readonly context: vscode.ExtensionContext) {
         this.status.command = 'airk.menu'; this.status.show();
@@ -216,6 +218,7 @@ class Controller implements vscode.Disposable {
             const prior = this.specs;
             this.specs = next;
             const mcpBindings = new Set([...next.values()].map(spec => this.mcpKey(spec)));
+            for (const key of this.usageSummaries.keys()) { if (!mcpBindings.has(key)) { this.usageSummaries.delete(key); } }
             for (const key of this.mcpChecks.keys()) { if (!mcpBindings.has(key)) { this.mcpChecks.delete(key); } }
             this.rootBindings = bindings.sort((a, b) => b.opened.length - a.opened.length);
             const known = this.context.globalState.get<Record<string, KnownCollection>>('collections', {});
@@ -353,7 +356,7 @@ class Controller implements vscode.Disposable {
                 state: states.find(state => state.collection === spec.collection)?.state ?? 'queued',
                 coverage: this.coverage.get(spec.collection), lastIndexed: known[spec.collection]?.lastIndexed,
                 diskBytes: this.treeUsage?.dataDir === spec.dataDir ? this.treeUsage.entries.find(item => item.collection === spec.collection)?.disk_bytes : undefined,
-                error: this.indexErrors.get(JSON.stringify([spec.dataDir, spec.collection])), mcp: this.mcpChecks.get(this.mcpKey(spec)), detail: this.detailViews.get(this.mcpKey(spec)) })) : [] };
+                error: this.indexErrors.get(JSON.stringify([spec.dataDir, spec.collection])), mcp: this.mcpChecks.get(this.mcpKey(spec)), detail: this.detailViews.get(this.mcpKey(spec)), usage: this.usageSummaries.get(this.mcpKey(spec)) })) : [] };
     }
     async sidebarMessage(message: unknown): Promise<void> {
         const action = sidebarAction(message, new Set(this.controlGroups().flatMap(group => group.commands.map(([, command]) => command))));
@@ -382,6 +385,7 @@ class Controller implements vscode.Disposable {
             return;
         }
         if (action.action === 'status') { await this.collectionStatus(spec); return; }
+        if (action.action === 'usage') { await this.usage(spec); return; }
         await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Indexing ${spec.name}` },
             () => this.scheduler.request(spec, true, action.action === 'reindex'));
     }
@@ -407,7 +411,7 @@ class Controller implements vscode.Disposable {
             }
         }
         await Promise.all([...this.specs.values()].filter(spec => refreshDetail || !this.detailViews.has(this.mcpKey(spec)))
-            .map(spec => this.refreshDetail(spec)));
+            .map(async spec => { await this.refreshDetail(spec); await this.refreshUsageSummary(spec); }));
         const byId = new Map(usage.map(item => [item.collection, item]));
         const known = this.context.globalState.get<Record<string, KnownCollection>>('collections', {});
         const states = new Map(this.scheduler.states().map(item => [item.collection, item]));
@@ -754,11 +758,26 @@ class Controller implements vscode.Disposable {
         this.showReport('coverage', 'AIRK workspace coverage', { coverage, retention: retention ?? null, scheduling: this.scheduler.states(), dataDir: spec.dataDir,
             explanation: 'Coverage compares saved eligible files with indexed hashes at the inventory time. Ignored and unsupported files are excluded; extraction failures remain eligible. A partial scan cannot establish a percentage.' });
     }
-    async usage(): Promise<void> {
-        const spec = await this.chooseSpec(); if (!spec) { return; }
-        this.showReport('usage', 'AIRK local usage and estimated context reduction', {
-            ...await runJson<object>(spec, 'usage', ['report']),
-            explanation: 'Local aggregate activity and counterfactual context estimates; these are not measured provider tokens or billed savings.' });
+    private async refreshUsageSummary(spec: LaunchSpec): Promise<void> {
+        const key = this.mcpKey(spec);
+        try {
+            const view = await runJson<{ status: string; report: { calls: number; comparisons?: { full_returned_sources?: { compared_calls: number; token_estimate: { nominal_reduction: string } } } } }>(spec, 'usage', ['report']);
+            const c = view.report?.comparisons?.full_returned_sources;
+            if (!Number.isSafeInteger(view.report?.calls)) { throw new Error('Usage summary unavailable'); }
+            if (vscode.workspace.isTrusted && !this.disposed && this.specs.get(spec.collection) && this.mcpKey(this.specs.get(spec.collection)!) === key) {
+                const reduction = c && /^-?\d{1,40}$/.test(c.token_estimate?.nominal_reduction) ? BigInt(c.token_estimate.nominal_reduction).toLocaleString() : undefined;
+                this.usageSummaries.set(key, { calls: view.report.calls, compared: c?.compared_calls ?? 0, reduction, checkedAt: Date.now(), disabled: view.status === 'disabled' });
+            }
+        } catch { this.usageSummaries.delete(key); }
+    }
+    async usage(selected?: LaunchSpec): Promise<void> {
+        this.trusted();
+        const spec = selected ?? await this.chooseSpec(); if (!spec) { return; }
+        await openUsagePanel(spec, () => {
+            const current = this.specs.get(spec.collection);
+            return !this.disposed && !this.storageChoice && !!current && this.mcpKey(current) === this.mcpKey(spec);
+        },
+            args => this.writeNative(spec, 'usage', args));
     }
     async setupAgent(): Promise<void> {
         this.trusted();

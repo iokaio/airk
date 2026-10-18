@@ -13,6 +13,8 @@ const env = { ...process.env, AIRK_USAGE_MODE: 'disabled', RUST_BACKTRACE: '1' }
 delete env.ELECTRON_RUN_AS_NODE;
 delete env.VSCODE_IPC_HOOK_CLI;
 const active = new Set();
+const scenarios = (process.env.AIRK_EDITOR_SCENARIOS || 'same,different,multi,usage,untrusted').split(',');
+if (scenarios.some(value => !['same', 'different', 'multi', 'usage', 'untrusted'].includes(value))) { throw new Error('Unknown editor scenario'); }
 
 async function runProcess(args, logfile, extraEnv = {}) {
     const log = await fs.open(logfile, 'w');
@@ -156,7 +158,7 @@ exports.activate=()=>{if(!process.env.AIRK_EDITOR_RUN)return;void require(${JSON
         '--shared-data-dir', path.join(run, 'shared-editor-data'), '--install-extension', driverVsix, '--force'],
         path.join(run, 'install-driver.log'), { ELECTRON_RUN_AS_NODE: '1' });
     const summary = { vsix_sha256: createHash('sha256').update(await fs.readFile(vsix)).digest('hex'), scenarios: [] };
-    for (const scenario of ['same', 'different', 'multi', 'untrusted']) {
+    for (const scenario of scenarios) {
         const folder = path.join(run, scenario); await fs.mkdir(folder);
         const storage = path.join(folder, 'storage'); await fs.mkdir(storage);
         for (const [name, symbol] of [['workspace-a', 'WindowAlphaEvidence'], ['workspace-b', 'WindowBetaEvidence']]) {
@@ -169,9 +171,10 @@ exports.activate=()=>{if(!process.env.AIRK_EDITOR_RUN)return;void require(${JSON
             const profile = path.join(folder, `profile-${role}`); await fs.mkdir(path.join(profile, 'User'), { recursive: true });
             await fs.writeFile(path.join(profile, 'User/settings.json'), JSON.stringify({ 'airk.index.mode': 'manual', 'airk.storage.path': storage,
                 'workbench.startupEditor': 'none', 'window.restoreWindows': 'none', 'security.workspace.trust.startupPrompt': 'never',
-                'extensions.autoUpdate': false, 'extensions.autoCheckUpdates': false, 'telemetry.telemetryLevel': 'off', 'update.mode': 'none' }));
+                'extensions.autoUpdate': false, 'extensions.autoCheckUpdates': false, 'telemetry.telemetryLevel': 'off', 'update.mode': 'none',
+                'files.simpleDialog.enable': true, 'window.dialogStyle': 'custom' }));
             let workspace = path.join(folder, scenario === 'different' && role === 'b' ? 'workspace-b' : 'workspace-a');
-            if (scenario === 'multi') {
+            if (scenario === 'multi' || scenario === 'usage') {
                 workspace = path.join(folder, 'two-roots.code-workspace');
                 await fs.writeFile(workspace, JSON.stringify({ folders: [{ path: './workspace-a' }, { path: './workspace-b' }] }));
             }
@@ -181,12 +184,14 @@ exports.activate=()=>{if(!process.env.AIRK_EDITOR_RUN)return;void require(${JSON
                 `--remote-debugging-port=${ports[role]}`, '--remote-debugging-address=127.0.0.1',
                 '--skip-welcome', '--skip-release-notes', '--disable-updates', '--disable-telemetry', '--disable-gpu'];
             if (scenario !== 'untrusted') { args.push('--disable-workspace-trust'); }
-            children.push(runProcess(args, path.join(folder, `${role}-editor.log`), { AIRK_EDITOR_RUN: run, AIRK_EDITOR_ROLE: role, AIRK_EDITOR_SCENARIO: scenario }));
+            children.push(runProcess(args, path.join(folder, `${role}-editor.log`), { AIRK_EDITOR_RUN: run, AIRK_EDITOR_ROLE: role, AIRK_EDITOR_SCENARIO: scenario,
+                AIRK_USAGE_MODE: scenario === 'usage' ? 'aggregates-only' : 'disabled' }));
         }
         // Observe process failure immediately while waiting for extension-host results.
         let failure;
         const exited = Promise.all(children).catch(error => { failure = error; });
         try {
+            if (scenario === 'usage') { uiChecks.a = await require('./check-usage-editor.cjs').checkUsage(ports.a, folder); }
             const end = Date.now() + 180000;
             while (true) {
                 if (failure) { throw failure; }
@@ -199,7 +204,7 @@ exports.activate=()=>{if(!process.env.AIRK_EDITOR_RUN)return;void require(${JSON
                 if (Date.now() > end) { throw new Error(`Scenario timed out: ${scenario}`); }
                 await delay(250);
             }
-            for (const role of roles) { uiChecks[role] = await capture(ports[role], path.join(folder, `${role}-workbench`)); }
+            for (const role of roles) { uiChecks[role] = [...(uiChecks[role] || []), ...await capture(ports[role], path.join(folder, `${role}-workbench`))]; }
         } finally { await fs.writeFile(path.join(folder, 'capture-complete.json'), '{}'); }
         await exited;
         if (failure) { throw failure; }

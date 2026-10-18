@@ -863,6 +863,9 @@ pub struct SupplementalMeasurement {
     pub context: Option<ContextMeasurement>,
     pub session: Option<SessionMeasurement>,
     pub paired_task: Option<PairedTaskMeasurement>,
+    /// Retained AIRK request IDs explicitly associated with this final session summary.
+    #[serde(default)]
+    pub airk_request_ids: Vec<String>,
 }
 
 pub fn validate_hex(value: &str, bytes: usize) -> Result<()> {
@@ -907,6 +910,24 @@ impl SessionMeasurement {
 
 impl SupplementalMeasurement {
     pub fn validate(&self) -> Result<()> {
+        ensure!(
+            self.airk_request_ids.len() <= 100,
+            "at most 100 linked AIRK requests"
+        );
+        ensure!(
+            self.airk_request_ids.is_empty()
+                || self.session.is_some()
+                || self.paired_task.is_some(),
+            "request links require session evidence"
+        );
+        let mut ids = std::collections::BTreeSet::new();
+        for id in &self.airk_request_ids {
+            validate_hex(id, 16)?;
+            ensure!(
+                ids.insert(id.to_ascii_lowercase()),
+                "duplicate linked request ID"
+            );
+        }
         ensure!(
             self.schema_version == 1,
             "unsupported supplemental usage schema"
@@ -1084,6 +1105,8 @@ pub struct SupplementStratum {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SupplementSummary {
+    #[serde(default)]
+    pub linked_airk_requests: u64,
     pub stratum: SupplementStratum,
     pub measurements: u64,
     pub context_pairs: u64,
@@ -1115,6 +1138,7 @@ pub struct SupplementSummary {
 impl SupplementSummary {
     pub fn new(event: &SupplementalMeasurement) -> Self {
         Self {
+            linked_airk_requests: 0,
             stratum: SupplementStratum {
                 client: event.client,
                 content_kind: event.content_kind,
@@ -1193,6 +1217,10 @@ impl SupplementSummary {
             "supplemental aggregate capacity reached"
         );
         self.measurements += 1;
+        self.linked_airk_requests = self
+            .linked_airk_requests
+            .checked_add(event.airk_request_ids.len() as u64)
+            .ok_or_else(|| anyhow::anyhow!("linked request count overflow"))?;
         if let Some(context) = &event.context {
             self.context_pairs += 1;
             self.first_generation = Some(
@@ -1269,6 +1297,8 @@ pub struct PriceScenario {
     pub rate_date: String,
     /// Decimal currency units per million INPUT tokens, at most six fractional places.
     pub input_price_per_million: String,
+    #[serde(default)]
+    pub output_price_per_million: Option<String>,
     pub cached_input_treatment: CachePriceTreatment,
     pub cached_input_price_per_million: Option<String>,
     /// Context counterfactuals have no observed cache split; the assumption must be explicit.
@@ -1345,6 +1375,9 @@ impl PriceScenario {
             "invalid rate date"
         );
         price_microunits(&self.input_price_per_million)?;
+        if let Some(price) = &self.output_price_per_million {
+            price_microunits(price)?;
+        }
         ensure!(
             (self.cached_input_treatment == CachePriceTreatment::SeparateRate)
                 == self.cached_input_price_per_million.is_some(),
@@ -1380,5 +1413,15 @@ impl PriceScenario {
             magnitude / 1_000_000_000_000u128,
             magnitude % 1_000_000_000_000u128
         )))
+    }
+
+    pub fn output_equivalent(&self, tokens: i128) -> Result<Option<String>> {
+        self.validate()?;
+        let Some(rate) = &self.output_price_per_million else {
+            return Ok(None);
+        };
+        let mut output = self.clone();
+        output.input_price_per_million = rate.clone();
+        output.input_equivalent(tokens, false)
     }
 }

@@ -81,6 +81,12 @@ On October 17, 2026, AIRK 1.1.1 passed all four scenarios in VS Code 1.142.0 on 
 
 Repeating the earlier package exposed intermittent concurrent-start failures: a live collection writer incorrectly blocked the scheduled request, and quota accounting could fail when a managed temporary path disappeared during enumeration. The qualified package defers live-lock contention without losing the queued revision and tolerates disappearing managed entries while preserving growth reservations. Native regression tests cover both cases. Startup screenshot timing was also corrected in the harness so an untrusted window has time to create its webview content.
 
+The 1.1.3 harness also includes a `usage` scenario. It clicks the installed report's date selector, exports CSV and Markdown through VS Code's built-in simple file dialogs, imports a fictional measurement through preview/confirmation, enters model prices, toggles recording, opens two collection reports, cancels and confirms clearing, and rejects an old panel after a storage change. Native readback verifies the other collection's imported measurement survives and the source files/indexes remain intact. The untrusted scenario also rejects the reporting command. These test profiles select VS Code's simple dialogs; OS-native dialogs and a live trust-revocation/reload remain separate from these checks.
+
+To run just the reporting and untrusted scenarios, set `AIRK_EDITOR_SCENARIOS=usage,untrusted` in the harness process environment. Omit it for all five scenarios. The test driver, fixtures, screenshots and receipts stay in the private qualification directory; none are packaged with the extension.
+
+On October 18, 2026, the final 1.1.3 candidate passed all five scenarios across seven installed VS Code 1.142.0 windows. See [1.1.3 validation](release-1.1.3.md#installed-vs-code-acceptance) for the package digest, reporting checks and qualification limits.
+
 ## Troubleshooting
 
 - The script fails at the first unsuccessful tool/check; retain its build.log.

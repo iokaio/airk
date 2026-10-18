@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Exercise explicit content-free usage inputs through the built public CLI."""
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 import os
@@ -42,7 +43,16 @@ def main():
             return path
 
         indexed = run("index")
+        request = run("search", "fixture")
         native_calls = run("usage", "report")["report"]["calls"]
+        with ThreadPoolExecutor(max_workers=4) as workers:
+            replies = list(workers.map(lambda _: run("search", "fixture"), range(40)))
+        assert all(reply["hits"] for reply in replies)
+        assert len({reply["request_id"] for reply in replies}) == 40
+        native_calls += 40
+        concurrent = run("usage", "report")
+        assert concurrent["report"]["calls"] == native_calls, "concurrent CLI observations were lost"
+        assert concurrent["lifetime"]["calls"] == native_calls
         measurement = write_json("measurement.json", {
             "schema_version": 1, "event_id": uuid.uuid4().hex,
             "unix_ms": int(time.time() * 1000), "client": "codex", "content_kind": "code",
@@ -58,7 +68,11 @@ def main():
                 "elapsed_ms": 1000, "tool_round_trips": None,
             },
             "paired_task": None,
+            "airk_request_ids": [request["request_id"]],
         })
+        preview = run("usage", "import", measurement, "--preview")
+        assert preview["recorded"] is False
+        assert run("usage", "report")["supplemental"] == []
         assert run("usage", "import", measurement)["recorded"] is True
         assert run("usage", "import", measurement)["duplicate"] is True
         tokenizer = write_json("tokenizer.json", {
@@ -74,6 +88,7 @@ def main():
         prices = write_json("prices.json", {
             "model": "fictional-model", "currency": "USD", "rate_date": "2026-10-14",
             "input_price_per_million": "2.50", "cached_input_treatment": "unknown",
+            "output_price_per_million": "10.00",
             "cached_input_price_per_million": None, "context_assumes_uncached": True,
         })
         report = run("usage", "report", "--price-scenario", prices)
@@ -81,11 +96,15 @@ def main():
         assert report["report"]["provider_token_usage_observed"] is False
         assert report["report"]["estimated_bill_savings"] is None
         assert report["health"]["supplemental_duplicate_observations"] == 1
+        assert report["lifetime"]["calls"] == native_calls
+        assert sum(s["linked_airk_requests"] for b in report["supplemental"] for s in b["summaries"]) == 1
         scenario = report["price_scenario"]
         observed = next(row for row in scenario["context_equivalents"]
                         if row.get("stratum", {}).get("provenance") == "client_reported")
         assert observed["nominal_input_cost_equivalent"] == "-0.000200000000"
         assert scenario["session_input_equivalents"][0]["unpriced_input_tokens_unknown_cache_split"] == "120"
+        assert scenario["session_input_equivalents"][0]["uncached_input_equivalent"] is None
+        assert scenario["session_input_equivalents"][0]["output_equivalent"] == "0.000120000000"
         ledger = state / "collections" / "usage-fixture" / "usage.sqlite3"
         assert b"hellohello" not in ledger.read_bytes()
         run("usage", "configure", "--mode", "disabled")
@@ -96,7 +115,8 @@ def main():
         assert hashlib.sha256(ledger.read_bytes()).digest() == before
         run("usage", "clear")
         assert run("usage", "report")["supplemental"] == []
-    print("Usage input CLI smoke passed: separate imports, replay protection, exact local byte-BPE counts, signed price scenarios, unknown cache splits, disabled no-writes and clear.")
+        assert run("usage", "report")["lifetime"] is None
+    print("Usage input CLI smoke passed: concurrent process accounting, separate imports, replay protection, exact local byte-BPE counts, signed price scenarios, unknown cache splits, disabled no-writes and clear.")
 
 
 if __name__ == "__main__":
