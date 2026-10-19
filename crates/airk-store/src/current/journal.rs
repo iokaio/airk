@@ -1110,6 +1110,7 @@ impl CurrentWriter<'_> {
         path: &str,
         input: Option<&CapturedInput>,
     ) -> Result<CurrentCommit> {
+        ensure!(valid_current_path(path), "invalid current artifact path");
         let (phase, base) = state(self.connection()?, &self.scope)?;
         ensure!(
             phase == TransactionPhase::Ready
@@ -1147,9 +1148,30 @@ impl CurrentWriter<'_> {
                 maintenance_error: None,
             });
         }
+        let previous = before
+            .as_ref()
+            .map(|bytes| -> Result<CapturedInput> {
+                let previous: CapturedInput = serde_json::from_slice(bytes)?;
+                ensure!(
+                    previous.artifact.path == path && previous.bytes()? == *bytes,
+                    "invalid prior catalog binding"
+                );
+                Ok(previous)
+            })
+            .transpose()?;
+        let mut changes = vec![change];
         let planned_root = {
             let mut plan = map::MapPlan::new(self.connection()?, &self.scope, base.artifact_root)?;
-            plan.put(identity, change.value())?;
+            let mut postings = super::postings::PostingChanges::default();
+            postings.update(
+                &mut plan,
+                &self.scope,
+                &self.store,
+                previous.as_ref().map(|input| &input.artifact),
+                input.map(|input| &input.artifact),
+            )?;
+            plan.put(identity, changes[0].value())?;
+            changes.extend(postings.into_changes());
             plan.root()?
         };
         let id = framed_digest(
@@ -1157,9 +1179,12 @@ impl CurrentWriter<'_> {
             &[
                 &serde_json::to_vec(expected)?,
                 identity.as_bytes(),
-                &framed_digest(b"current-catalog-value/1", &[change.value().unwrap_or(&[])])
-                    .as_bytes()[..],
-                &[u8::from(change.value().is_some())],
+                &framed_digest(
+                    b"current-catalog-value/1",
+                    &[changes[0].value().unwrap_or(&[])],
+                )
+                .as_bytes()[..],
+                &[u8::from(changes[0].value().is_some())],
             ],
         );
         let allowance = database::allowance(
@@ -1184,13 +1209,16 @@ impl CurrentWriter<'_> {
             .as_mut()
             .context("current database missing")?;
         let transaction = connection.transaction()?;
-        let next_root = map::put(
-            &transaction,
-            &self.scope,
-            base.artifact_root,
-            identity,
-            change.value(),
-        )?;
+        let mut next_root = base.artifact_root;
+        for change in &changes {
+            next_root = map::put(
+                &transaction,
+                &self.scope,
+                next_root,
+                change.key(),
+                change.value(),
+            )?;
+        }
         ensure!(
             next_root == planned_root,
             "current catalog plan and SQL root differ"
@@ -1338,29 +1366,47 @@ impl CurrentWriter<'_> {
             "changed-artifact publication base expired"
         );
         let mut plan = map::MapPlan::new(self.connection()?, &self.scope, base.artifact_root)?;
+        let mut postings = super::postings::PostingChanges::default();
         for change in changes {
             let key = map::key(
                 &self.scope,
                 map::MapDomain::Artifact,
                 change.path().as_bytes(),
             )?;
-            let prior_hash = if let Some(bytes) = plan.get(key)? {
+            let previous = if let Some(bytes) = plan.get(key)? {
                 let previous: CapturedInput = serde_json::from_slice(&bytes)?;
                 ensure!(
                     previous.artifact.path == change.path() && previous.bytes()? == bytes,
                     "changed artifact has invalid prior catalog binding"
                 );
-                Some(previous.artifact.content_hash.parse::<Sha256Digest>()?)
+                Some(previous.artifact)
             } else {
                 None
             };
-            prior_sources.insert(change.path().to_owned(), prior_hash);
+            prior_sources.insert(
+                change.path().to_owned(),
+                previous
+                    .as_ref()
+                    .map(|a| a.content_hash.parse::<Sha256Digest>())
+                    .transpose()?,
+            );
+            postings.update(
+                &mut plan,
+                &self.scope,
+                &self.store,
+                previous.as_ref(),
+                match change {
+                    ArtifactChange::Upsert(input) => Some(&input.artifact),
+                    ArtifactChange::Delete(_) => None,
+                },
+            )?;
             let value = match change {
                 ArtifactChange::Upsert(input) => Some(input.bytes()?),
                 ArtifactChange::Delete(_) => None,
             };
             plan.put(key, value.as_deref())?;
         }
+        map_changes.extend(postings.into_changes());
         let reattached = occurrences
             .iter()
             .map(|item| item.pointer.embedding_key)

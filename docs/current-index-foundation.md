@@ -79,3 +79,9 @@ Metadata replacement synchronizes the file and, on Unix, its parent directory. O
 ## S8 handoff
 
 Adoption requires authenticated per-artifact catalog and exact-key/live-occurrence mappings, incremental Tantivy commits, captured replay for all components, durable database growth, request-scoped readers across every public route, retained-input ownership and bounded reclamation. Replace the old runtime at one rebuild boundary. Remove historical read/checkpoint/rollback capabilities and document current-token expiry. Preserve sources, externally selected workspace/storage paths, original citations, collection/root isolation and explicit failure reporting. The authorized 1.2 boundary discards 1.1.x per-collection configuration and derived indexes. The S7 foundation alone does not claim faster user-visible indexing or completed removal of generations.
+
+## Current native discovery
+
+Artifact transactions also maintain authenticated file/fact/relationship path postings. Selectors are domain-separated digests; each selector uses 256 fixed path-hash shards, each bounded to 4,096 paths and the map value byte limit. A reader authenticates every shard to establish a complete candidate set or absence. Changes rewrite only affected shards, with transaction byte/key ceilings; no mixed-map corpus scan is required. The current format is rebuild-only.
+
+Native fact pages and relationship queries materialize candidates through verified retained extraction and original source bytes under the same current read gate. Fact cursors bind revision, filters and representation, preserve deterministic source order, and can advance over files with no matching facts. Evidence-work limits are independent of response-size limits. Relationship traversal reports truncation when work or response budgets are exhausted. These native APIs do not include imported producer assertions or establish public runtime adoption.

@@ -19,6 +19,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[path = "postings_tests.rs"]
+mod postings_tests;
+
 const CAPACITY: u64 = 8 * 1024 * 1024;
 
 struct Fixture {
@@ -251,6 +254,15 @@ fn retained_input(fixture: &Fixture, text: &str) -> Result<CapturedInput> {
 }
 
 fn retained_input_at(fixture: &Fixture, path: &str, text: &str) -> Result<CapturedInput> {
+    retained_input_with_facts(fixture, path, text, Vec::new())
+}
+
+fn retained_input_with_facts(
+    fixture: &Fixture,
+    path: &str,
+    text: &str,
+    facts: Vec<airk_core::extraction::LocalFact>,
+) -> Result<CapturedInput> {
     use airk_core::extraction::{ExtractionPayload, ExtractionProfile, LocalChunk, LocalSpan};
     use std::collections::BTreeMap;
     let profile = ExtractionProfile {
@@ -273,8 +285,20 @@ fn retained_input_at(fixture: &Fixture, path: &str, text: &str) -> Result<Captur
         parse_status: "plain".into(),
         provenance: vec![],
         text: text.into(),
-        facts: vec![],
-        syntax_identities: vec![],
+        syntax_identities: facts
+            .iter()
+            .filter_map(|fact| {
+                fact.code
+                    .as_ref()
+                    .map(|code| airk_core::extraction::LocalSyntaxIdentity {
+                        id: code.syntax_id,
+                        span: fact.span.clone(),
+                        syntax_kind: fact.syntax_kind.clone(),
+                        region: None,
+                    })
+            })
+            .collect(),
+        facts,
         chunks: vec![LocalChunk {
             span: LocalSpan {
                 start: 0,
@@ -774,6 +798,16 @@ fn prepared_map_and_graph_replay_commit_one_authenticated_head() -> Result<()> {
     for change in &changes {
         plan.put(change.key(), change.value())?;
     }
+    let mut postings = postings::PostingChanges::default();
+    postings.update(
+        &mut plan,
+        &fixture.scope,
+        &fixture.store,
+        None,
+        Some(&input.artifact),
+    )?;
+    changes.extend(postings.into_changes());
+    changes.sort_by_key(map::MapChange::key);
     target.artifact_root = plan.root()?;
     drop(connection);
     let writer = fixture.store.lock()?;
@@ -790,7 +824,7 @@ fn prepared_map_and_graph_replay_commit_one_authenticated_head() -> Result<()> {
         None,
         &changes,
     )?;
-    assert_eq!(pending.map_count, 4);
+    assert_eq!(pending.map_count, 6);
     current.mark_applying(&pending)?;
     drop(current);
     drop(writer);
@@ -888,7 +922,7 @@ fn prepared_map_and_graph_replay_commit_one_authenticated_head() -> Result<()> {
         None,
         br#"{"engine":"test","version":2}"#,
     )?;
-    assert_eq!(deletion.map_count, 4);
+    assert_eq!(deletion.map_count, 6);
     current.mark_applying(&deletion)?;
     drop(current);
     drop(writer);
@@ -998,6 +1032,18 @@ fn changed_path_retires_only_its_share_of_a_live_vector() -> Result<()> {
     for change in &changes {
         plan.put(change.key(), change.value())?;
     }
+    let mut postings = postings::PostingChanges::default();
+    for input in [&first, &second] {
+        postings.update(
+            &mut plan,
+            &fixture.scope,
+            &fixture.store,
+            None,
+            Some(&input.artifact),
+        )?;
+    }
+    changes.extend(postings.into_changes());
+    changes.sort_by_key(map::MapChange::key);
     target.artifact_root = plan.root()?;
     drop(connection);
     let writer = fixture.store.lock()?;
@@ -1046,7 +1092,7 @@ fn changed_path_retires_only_its_share_of_a_live_vector() -> Result<()> {
         None,
         br#"{"engine":"test","version":2}"#,
     )?;
-    assert_eq!(pending.map_count, 4);
+    assert_eq!(pending.map_count, 6);
     current.mark_applying(&pending)?;
     current.commit(&pending, pending.target.lexical_commit)?;
     drop(current);
@@ -1309,7 +1355,7 @@ fn changed_artifact_and_lexical_manifest_share_one_replayed_head() -> Result<()>
         None,
         &next,
     )?;
-    assert_eq!(pending.map_count, 1);
+    assert_eq!(pending.map_count, 3);
     assert_eq!(pending.inputs_count, 1);
     assert_eq!(pending.lexical_manifest_bytes, next.len() as u64);
     drop(current);
@@ -1490,7 +1536,7 @@ fn catalog_only_artifact_updates_are_atomic_authenticated_and_revision_bound() -
         serde_json::to_value(Some(&original.artifact))?
     );
     assert!(read.artifact("missing.txt")?.is_none());
-    assert_eq!(read.map_entries(map::MapVisitLimits::default())?.len(), 1);
+    assert_eq!(read.map_entries(map::MapVisitLimits::default())?.len(), 3);
     drop(read);
     fs::write(&source, "Later live edit")?;
     assert_eq!(
