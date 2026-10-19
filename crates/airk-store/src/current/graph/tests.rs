@@ -159,7 +159,7 @@ fn nonempty_base_changes_remain_proven_and_seal_releases_the_reader() -> Result<
         version: 1,
         scope: scope.clone(),
         sequence: 0,
-        artifact_root: Sha256Digest::from_bytes([4; 32]),
+        artifact_root: crate::current::map::empty_root(&scope)?,
         lexical_commit: Sha256Digest::from_bytes([5; 32]),
         graph_head: GraphHead::empty(graph_scope)?,
     };
