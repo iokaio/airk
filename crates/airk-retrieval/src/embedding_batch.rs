@@ -110,7 +110,7 @@ fn prepare_onnx_batch<'a>(
 }
 
 /// All joins complete before returning, including failure. Results retain input order.
-fn parallel_map<T: Sync, R: Send>(
+pub(crate) fn parallel_map<T: Sync, R: Send>(
     items: &[T],
     workers: usize,
     work: impl Fn(&T) -> Result<R> + Sync,
@@ -163,6 +163,9 @@ pub(crate) fn embed(
         "embedding batch exceeds chunk bound"
     );
     stats.batches += 1;
+    stats.plan_cache_peak_bytes = stats
+        .plan_cache_peak_bytes
+        .max(model.plan_cache_peak_bytes()?);
     let EmbeddingModel::Onnx(onnx) = model else {
         let inferences = stats.inferences;
         let result = texts
@@ -181,14 +184,15 @@ pub(crate) fn embed(
     if pending.is_empty() {
         return Ok(vectors);
     }
-    let limit =
-        memory_limited_workers(max_workers, onnx.workspace_bytes, memory_budget).min(pending.len());
-    let workers = pending.len().div_ceil(pending.len().div_ceil(limit));
-    stats.workers = stats.workers.max(workers);
+    // ONNX acquires a measured per-plan workspace permit before running. This
+    // outer bound reserves tokenizer/input state while retaining worker parallelism.
+    let limit = memory_limited_workers(max_workers, 0, memory_budget).min(pending.len());
     let started = Instant::now();
-    let computed = parallel_map(&pending, workers, |group| model.embed_text(group.text))?;
+    let texts: Vec<_> = pending.iter().map(|group| group.text).collect();
+    let (computed, execution) = onnx.embed_batch_measured(&texts, limit, memory_budget)?;
     stats.inference_us += elapsed_us(started);
-    stats.actual_forwards += pending.len() as u64;
+    stats.add_execution(&execution);
+    stats.workers = stats.workers.max(execution.workers);
     stats.inferences += pending
         .iter()
         .map(|group| group.positions.len() as u64)
@@ -197,15 +201,11 @@ pub(crate) fn embed(
     // Serialize cache persistence: duplicate inputs cannot race on immutable files
     // or quota reservations. Corruption still aborts the unpublished generation.
     for (group, vector) in pending.into_iter().zip(computed) {
-        if let Some(vector) = &vector {
-            if let Some(cache) = cache {
-                store_embedding(cache, descriptor, group.text.as_bytes(), vector.clone())?;
-            }
-        } else {
-            stats.no_vector += group.positions.len() as u64;
+        if let Some(cache) = cache {
+            store_embedding(cache, descriptor, group.text.as_bytes(), vector.clone())?;
         }
         for index in group.positions {
-            vectors[index] = vector.clone();
+            vectors[index] = Some(vector.clone());
         }
     }
     stats.cache_store_us += elapsed_us(started);
@@ -402,6 +402,10 @@ mod tests {
             "ONNX assets required"
         );
         let descriptor = model.cache_descriptor()?;
+        let batch_four = match &model {
+            EmbeddingModel::Onnx(onnx) => crate::onnx::qualified_batch_four(&onnx.manifest),
+            _ => false,
+        };
         let long = "A bounded original input with Unicode café. ".repeat(600);
         let blank_prefix = format!("{}suffix", " ".repeat(crate::model::MAX_INPUT_BYTES));
         let split_unicode = format!("{}é suffix", " ".repeat(crate::model::MAX_INPUT_BYTES - 1));
@@ -443,7 +447,7 @@ mod tests {
             (cold.inputs, cold.blank_inputs, cold.duplicate_inputs),
             (10, 4, 1)
         );
-        assert_eq!(cold.actual_forwards, 5);
+        assert_eq!(cold.actual_forwards, if batch_four { 2 } else { 5 });
         assert_eq!(cache.lookups.load(Ordering::Relaxed), 5);
         assert_eq!(cache.stores.load(Ordering::Relaxed), 5);
         assert!(
@@ -470,6 +474,10 @@ mod tests {
             "empty outcomes are not persisted as vectors"
         );
         assert_eq!(warm.actual_forwards, 0);
+        assert!(
+            warm.plan_cache_peak_bytes > 0,
+            "warm hits still retain the parsed template/plans"
+        );
         assert_eq!(warm.workers, 0);
         assert_eq!(cache.lookups.load(Ordering::Relaxed), 10);
         assert_eq!(cache.stores.load(Ordering::Relaxed), 5);
@@ -489,7 +497,7 @@ mod tests {
         );
         assert_eq!(full.hits, 0);
         assert_eq!(full.inferences, texts.len() as u64);
-        assert_eq!(full.actual_forwards, 5);
+        assert_eq!(full.actual_forwards, if batch_four { 2 } else { 5 });
         assert_eq!(cache.lookups.load(Ordering::Relaxed), 10);
         assert_eq!(cache.stores.load(Ordering::Relaxed), 10);
         let mut direct = EmbeddingCacheStats::default();
@@ -503,6 +511,36 @@ mod tests {
             (1, 1, 0)
         );
         assert_eq!(cache.lookups.load(Ordering::Relaxed), 10);
+        for positions in [vec![7, 4, 1, 0], vec![0, 1, 7]] {
+            let regrouped: Vec<_> = positions.iter().map(|index| texts[*index]).collect();
+            let expected: Vec<_> = positions
+                .iter()
+                .map(|index| serial[*index].clone())
+                .collect();
+            let mut changed = EmbeddingCacheStats::default();
+            assert_eq!(
+                embed(
+                    &model,
+                    &regrouped,
+                    &descriptor,
+                    Some(&cache),
+                    true,
+                    &mut changed,
+                    4,
+                    1 << 30
+                )?,
+                expected,
+                "new row positions and B1 tails must match previously cached B4 vectors exactly"
+            );
+            assert_eq!(
+                changed.actual_forwards,
+                if batch_four && positions.len() == 4 {
+                    1
+                } else {
+                    positions.len() as u64
+                }
+            );
+        }
         let mut rejected = EmbeddingCacheStats::default();
         assert!(
             embed(

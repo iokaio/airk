@@ -190,7 +190,7 @@ impl PersistentIndex {
         let model = cached.as_ref().context("local model unavailable")?;
         ensure!(
             Some(model.identity()) == self.model_sha256.as_deref(),
-            "generation model identity mismatch"
+            "indexed model identity mismatch; rebuild the index with airk index --full"
         );
         let vector = model
             .embed_text(&query.text)?

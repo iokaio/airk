@@ -8,6 +8,8 @@ The panel installs verified local inputs with `airk collections vectors install 
 
 The [CPU transformer adapter](onnx-models.md) executes deliberately provisioned ONNX models using tract and a local BERT WordPiece tokenizer. A pinned Apache-2.0 MiniLM recipe, real-model retrieval test and independent ONNX Runtime numerical comparison are provided. Schema 2 binds weights, tokenizer, license, context and pooling into one revision identity. The schema 1 word-vector adapter below remains compatible with existing assets.
 
+The bucketed transformer runtime requires rebuilding earlier transformer indexes with `airk index --full`. It uses shorter token shapes and a narrowly qualified four-input MiniLM indexing path; queries remain single-input. [Execution limits and native qualification](onnx-models.md#bounds-and-supported-profile) describe model/platform restrictions, exact-cache checks and memory accounting. Word-vector execution is unchanged.
+
 The initial embedding adapter averages recognized pretrained word vectors and L2-normalizes the result. It then indexes/searches squared Euclidean distance with Microsoft's DiskANN algorithms and AIRK's disk file provider. This supports deliberately supplied word-vector models; it is not transformer inference, compiler resolution, or evidence of general semantic understanding. Word order, negation, programming-language meaning and unknown identifiers are important limitations. Measure quality for the selected vocabulary and corpus.
 
 ## Provision assets
