@@ -27,6 +27,8 @@ use std::{
 
 const MAX_DESCRIPTOR_BYTES: usize = 196_608;
 const MAX_CAPTURED_OBJECT_BYTES: u64 = 64 * 1024 * 1024 * 1024;
+const MAX_PENDING_MAP_CHANGES: u64 = 65_536;
+const MAX_PENDING_MAP_BYTES: u64 = 64 * 1024 * 1024;
 const BOOTSTRAP_FILE: &str = "current-bootstrap.json";
 
 #[derive(Serialize, Deserialize)]
@@ -227,6 +229,9 @@ pub struct PendingTransaction {
     pub metadata_bytes: u64,
     pub object_bytes: u64,
     pub inputs_digest: Sha256Digest,
+    pub map_count: u64,
+    pub map_bytes: u64,
+    pub map_digest: Sha256Digest,
     pub model: Option<ModelObjectSet>,
     pub database_capacity_bytes: u64,
 }
@@ -237,15 +242,23 @@ impl PendingTransaction {
         self.graph.validate()?;
         database::validate_capacity(self.database_capacity_bytes)?;
         ensure!(
-            self.version == 1
+            self.version == 2
                 && self.inputs_count <= MAX_PENDING_INPUTS as u64
                 && self.metadata_bytes <= MAX_PENDING_METADATA_BYTES
                 && self.object_bytes <= MAX_CAPTURED_OBJECT_BYTES
+                && self.map_count <= MAX_PENDING_MAP_CHANGES
+                && self.map_bytes <= MAX_PENDING_MAP_BYTES
                 && self.graph.target == self.target.graph_head
                 && self.expected.incarnation == self.target.scope.incarnation
                 && self.expected.sequence.checked_add(1) == Some(self.target.sequence),
             "invalid pending current transaction"
         );
+        if self.map_count == 0 {
+            ensure!(
+                self.map_bytes == 0 && self.map_digest == MapDigest::new().finish(),
+                "empty pending map has a nonempty descriptor"
+            );
+        }
         if let Some(model) = &self.model {
             model.validate()?;
         }
@@ -282,7 +295,8 @@ fn transaction_id(
 fn create(connection: &Connection) -> Result<()> {
     connection.execute_batch("CREATE TABLE current_state(id INTEGER PRIMARY KEY CHECK(id=1),phase TEXT NOT NULL CHECK(phase IN('ready','prepared','applying')),head BLOB NOT NULL CHECK(length(head)<=65536));
         CREATE TABLE current_pending(id INTEGER PRIMARY KEY CHECK(id=1),transaction_id TEXT NOT NULL,descriptor BLOB NOT NULL CHECK(length(descriptor)<=196608),digest TEXT NOT NULL);
-        CREATE TABLE current_pending_inputs(path TEXT PRIMARY KEY,metadata BLOB NOT NULL CHECK(length(metadata)<=262144)) WITHOUT ROWID;")?;
+        CREATE TABLE current_pending_inputs(path TEXT PRIMARY KEY,metadata BLOB NOT NULL CHECK(length(metadata)<=262144)) WITHOUT ROWID;
+        CREATE TABLE current_pending_map(key BLOB PRIMARY KEY CHECK(typeof(key)='blob' AND length(key)=32),value BLOB CHECK(value IS NULL OR (typeof(value)='blob' AND length(value)<=262144))) WITHOUT ROWID;")?;
     graph::create(connection)?;
     super::map::create(connection)
 }
@@ -382,6 +396,98 @@ impl InputDigest {
     fn finish(&self) -> Sha256Digest {
         Sha256Digest::from_bytes(self.hash.clone().finalize().into())
     }
+}
+
+struct MapDigest {
+    hash: Sha256,
+    count: u64,
+    bytes: u64,
+    previous: Option<Sha256Digest>,
+}
+impl MapDigest {
+    fn new() -> Self {
+        let mut hash = Sha256::new();
+        hash.update(b"airk-current-pending-map/1");
+        Self {
+            hash,
+            count: 0,
+            bytes: 0,
+            previous: None,
+        }
+    }
+    fn add(&mut self, key: Sha256Digest, value: Option<&[u8]>) -> Result<()> {
+        ensure!(
+            self.previous.is_none_or(|previous| previous < key),
+            "pending map keys must be unique and ordered"
+        );
+        let value_bytes = value.map_or(0, |bytes| bytes.len());
+        ensure!(
+            value_bytes <= map::MAX_VALUE_BYTES,
+            "pending map value exceeds limit"
+        );
+        self.count = self
+            .count
+            .checked_add(1)
+            .context("map change count overflow")?;
+        self.bytes = self
+            .bytes
+            .checked_add(32 + 1 + 4 + value_bytes as u64)
+            .context("map change byte overflow")?;
+        ensure!(
+            self.count <= MAX_PENDING_MAP_CHANGES && self.bytes <= MAX_PENDING_MAP_BYTES,
+            "pending map change budget exceeded"
+        );
+        self.hash.update(key.as_bytes());
+        self.hash.update([u8::from(value.is_some())]);
+        self.hash.update((value_bytes as u32).to_be_bytes());
+        if let Some(value) = value {
+            self.hash.update(value);
+        }
+        self.previous = Some(key);
+        Ok(())
+    }
+    fn finish(&self) -> Sha256Digest {
+        Sha256Digest::from_bytes(self.hash.clone().finalize().into())
+    }
+}
+
+type MapVisitor<'a> = dyn FnMut(Sha256Digest, Option<&[u8]>) -> Result<()> + 'a;
+
+fn visit_pending_map(
+    connection: &Connection,
+    pending: &PendingTransaction,
+    visitor: &mut MapVisitor<'_>,
+) -> Result<()> {
+    let count: i64 =
+        connection.query_row("SELECT count(*) FROM current_pending_map", [], |row| {
+            row.get(0)
+        })?;
+    ensure!(
+        u64::try_from(count)? == pending.map_count,
+        "pending map count mismatch"
+    );
+    let mut digest = MapDigest::new();
+    let mut after = Vec::new();
+    loop {
+        let row: Option<(Vec<u8>, Option<Vec<u8>>)> = connection.query_row(
+            "SELECT key,value FROM current_pending_map WHERE key>?1 AND (value IS NULL OR length(value)<=262144) ORDER BY key LIMIT 1",
+            [&after],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        ).optional()?;
+        let Some((bytes, value)) = row else { break };
+        ensure!(bytes.len() == 32, "pending map key length mismatch");
+        let key = Sha256Digest::from_bytes(bytes.as_slice().try_into()?);
+        digest.add(key, value.as_deref())?;
+        visitor(key, value.as_deref())?;
+        after = bytes;
+    }
+    ensure!(
+        digest.count == pending.map_count
+            && digest.bytes == pending.map_bytes
+            && digest.finish() == pending.map_digest,
+        "pending map digest or byte count mismatch"
+    );
+    Ok(())
 }
 
 fn verify_model(store: &FileStore, model: &Option<ModelObjectSet>) -> Result<()> {
@@ -739,7 +845,6 @@ impl CurrentWriter<'_> {
                 && *expected == base.token()?,
             "current catalog base expired or publication pending"
         );
-        let identity = map::key(&self.scope, map::MapDomain::Artifact, path.as_bytes())?;
         let value = input
             .map(|input| {
                 ensure!(
@@ -751,13 +856,20 @@ impl CurrentWriter<'_> {
                 Ok::<_, anyhow::Error>(bytes)
             })
             .transpose()?;
+        let change = map::MapChange::new(
+            &self.scope,
+            map::MapDomain::Artifact,
+            path.as_bytes(),
+            value,
+        )?;
+        let identity = change.key();
         let before = map::get(
             self.connection()?,
             &self.scope,
             base.artifact_root,
             identity,
         )?;
-        if before == value {
+        if before.as_deref() == change.value() {
             return Ok(CurrentCommit {
                 token: *expected,
                 maintenance_error: None,
@@ -765,7 +877,7 @@ impl CurrentWriter<'_> {
         }
         let planned_root = {
             let mut plan = map::MapPlan::new(self.connection()?, &self.scope, base.artifact_root)?;
-            plan.put(identity, value.as_deref())?;
+            plan.put(identity, change.value())?;
             plan.root()?
         };
         let id = framed_digest(
@@ -773,12 +885,9 @@ impl CurrentWriter<'_> {
             &[
                 &serde_json::to_vec(expected)?,
                 identity.as_bytes(),
-                &framed_digest(
-                    b"current-catalog-value/1",
-                    &[value.as_deref().unwrap_or(&[])],
-                )
-                .as_bytes()[..],
-                &[u8::from(value.is_some())],
+                &framed_digest(b"current-catalog-value/1", &[change.value().unwrap_or(&[])])
+                    .as_bytes()[..],
+                &[u8::from(change.value().is_some())],
             ],
         );
         let allowance = database::allowance(
@@ -808,7 +917,7 @@ impl CurrentWriter<'_> {
             &self.scope,
             base.artifact_root,
             identity,
-            value.as_deref(),
+            change.value(),
         )?;
         ensure!(
             next_root == planned_root,
@@ -842,6 +951,18 @@ impl CurrentWriter<'_> {
         graph_delta: &dyn PreparedGraphDelta,
         inputs: &dyn CapturedInputs,
         model: Option<ModelObjectSet>,
+    ) -> Result<PendingTransaction> {
+        self.prepare_mapped(expected, target, graph_delta, inputs, model, &[])
+    }
+
+    pub(crate) fn prepare_mapped(
+        &mut self,
+        expected: &CurrentToken,
+        target: CurrentHead,
+        graph_delta: &dyn PreparedGraphDelta,
+        inputs: &dyn CapturedInputs,
+        model: Option<ModelObjectSet>,
+        map_changes: &[map::MapChange],
     ) -> Result<PendingTransaction> {
         let (phase, head) = state(self.connection()?, &self.scope)?;
         ensure!(
@@ -893,8 +1014,22 @@ impl CurrentWriter<'_> {
             )?;
             Ok(())
         })?;
+        let mut map_digest = MapDigest::new();
+        let mut map_plan = map::MapPlan::new(&transaction, &self.scope, head.artifact_root)?;
+        for change in map_changes {
+            map_digest.add(change.key(), change.value())?;
+            map_plan.put(change.key(), change.value())?;
+            transaction.execute(
+                "INSERT OR ROLLBACK INTO current_pending_map(key,value) VALUES(?1,?2)",
+                params![change.key().as_bytes().as_slice(), change.value()],
+            )?;
+        }
+        ensure!(
+            map_plan.root()? == target.artifact_root,
+            "planned current map root differs from captured target"
+        );
         let pending = PendingTransaction {
-            version: 1,
+            version: 2,
             id,
             expected: *expected,
             target,
@@ -903,6 +1038,9 @@ impl CurrentWriter<'_> {
             metadata_bytes: digest.bytes,
             object_bytes: digest.objects,
             inputs_digest: digest.finish(),
+            map_count: map_digest.count,
+            map_bytes: map_digest.bytes,
+            map_digest: map_digest.finish(),
             model,
             database_capacity_bytes: self.capacity,
         };
@@ -970,6 +1108,7 @@ impl CurrentWriter<'_> {
         );
         let already_applying = self.phase()? == TransactionPhase::Applying;
         self.visit_captured(pending, &mut |_| Ok(()))?;
+        visit_pending_map(self.connection()?, pending, &mut |_, _| Ok(()))?;
         let mut grant = self.grant(pending)?;
         let connection = self
             .connection
@@ -1018,8 +1157,19 @@ impl CurrentWriter<'_> {
         crate::capacity::require_growth(self.quota.root(), allowance)?;
         let transaction = connection.transaction()?;
         graph::apply(&transaction, pending.id, &pending.graph)?;
+        // Start from the authenticated committed base, not an empty map.
+        let mut map_root = state(&transaction, &self.scope)?.1.artifact_root;
+        visit_pending_map(&transaction, pending, &mut |key, value| {
+            map_root = map::put(&transaction, &self.scope, map_root, key, value)?;
+            Ok(())
+        })?;
+        ensure!(
+            map_root == pending.target.artifact_root,
+            "replayed current map root differs from prepared target"
+        );
         graph::cleanup(&transaction, pending.id)?;
         transaction.execute("DELETE FROM current_pending_inputs", [])?;
+        transaction.execute("DELETE FROM current_pending_map", [])?;
         transaction.execute("DELETE FROM current_pending WHERE id=1", [])?;
         transaction.execute(
             "UPDATE OR ROLLBACK current_state SET phase='ready',head=?1 WHERE id=1",
@@ -1053,6 +1203,7 @@ impl CurrentWriter<'_> {
         let transaction = connection.transaction()?;
         graph::cleanup(&transaction, pending.id)?;
         transaction.execute("DELETE FROM current_pending_inputs", [])?;
+        transaction.execute("DELETE FROM current_pending_map", [])?;
         transaction.execute("DELETE FROM current_pending", [])?;
         transaction.execute(
             "UPDATE OR ROLLBACK current_state SET phase='ready' WHERE id=1",

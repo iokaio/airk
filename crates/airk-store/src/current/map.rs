@@ -21,6 +21,39 @@ pub enum MapDomain {
     EdgeSource,
     EdgeTarget,
 }
+
+#[derive(Clone, Debug)]
+pub(crate) struct MapChange {
+    key: Sha256Digest,
+    value: Option<Vec<u8>>,
+}
+
+impl MapChange {
+    pub(crate) fn new(
+        scope: &CurrentScope,
+        domain: MapDomain,
+        identity: &[u8],
+        value: Option<Vec<u8>>,
+    ) -> Result<Self> {
+        if let Some(value) = &value {
+            ensure!(
+                value.len() <= MAX_VALUE_BYTES,
+                "map change value limit exceeded"
+            );
+        }
+        Ok(Self {
+            key: key(scope, domain, identity)?,
+            value,
+        })
+    }
+
+    pub(crate) fn key(&self) -> Sha256Digest {
+        self.key
+    }
+    pub(crate) fn value(&self) -> Option<&[u8]> {
+        self.value.as_deref()
+    }
+}
 impl MapDomain {
     fn label(self) -> &'static [u8] {
         match self {

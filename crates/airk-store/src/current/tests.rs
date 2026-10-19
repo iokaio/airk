@@ -329,6 +329,175 @@ fn replay_uses_captured_bytes_and_detects_corruption_without_live_fallback() -> 
 }
 
 #[test]
+fn prepared_map_and_graph_replay_commit_one_authenticated_head() -> Result<()> {
+    let fixture = Fixture::new()?;
+    let input = retained_input(&fixture, "Captured citation body.")?;
+    let (_reservation, sealed) = fixture.sealed()?;
+    let mut target = fixture.target(&sealed);
+    let embedding_key = Sha256Digest::from_bytes([6; 32]);
+    let occurrence_id = Sha256Digest::from_bytes([8; 32]);
+    let binding = vector_map::VectorBinding {
+        version: 1,
+        embedding_key,
+        graph_scope: target.graph_head.scope.digest(),
+        graph_id: 1,
+        occurrence_ids: vec![occurrence_id],
+    };
+    let pointer = vector_map::OccurrencePointer {
+        version: 1,
+        embedding_key,
+        occurrence_id,
+        path: input.artifact.path.clone(),
+        source_hash: input.artifact.content_hash.parse()?,
+        payload_digest: Sha256Digest::from_bytes([9; 32]),
+        object: Sha256Digest::from_bytes([10; 32]),
+    };
+    let mut changes = vec![
+        map::MapChange::new(
+            &fixture.scope,
+            map::MapDomain::Artifact,
+            input.artifact.path.as_bytes(),
+            Some(input.bytes()?),
+        )?,
+        map::MapChange::new(
+            &fixture.scope,
+            map::MapDomain::Vector,
+            embedding_key.as_bytes(),
+            Some(binding.canonical_bytes(&target)?),
+        )?,
+        map::MapChange::new(
+            &fixture.scope,
+            map::MapDomain::Occurrence,
+            occurrence_id.as_bytes(),
+            Some(pointer.canonical_bytes()?),
+        )?,
+    ];
+    changes.sort_by_key(map::MapChange::key);
+    let connection = database::open_reader(&fixture.store.directory().join("index.sqlite3"))?;
+    let mut plan = map::MapPlan::new(&connection, &fixture.scope, fixture.head.artifact_root)?;
+    for change in &changes {
+        plan.put(change.key(), change.value())?;
+    }
+    target.artifact_root = plan.root()?;
+    drop(connection);
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    let captured = [input.clone()];
+    let pending = current.prepare_mapped(
+        &fixture.head.token()?,
+        target,
+        &sealed,
+        &captured,
+        None,
+        &changes,
+    )?;
+    assert_eq!(pending.map_count, 3);
+    current.mark_applying(&pending)?;
+    drop(current);
+    drop(writer);
+    assert!(fixture.store.current_read(&fixture.scope).is_err());
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    current.mark_applying(&pending)?;
+    let committed = current.commit(&pending, pending.target.lexical_commit)?;
+    assert!(committed.maintenance_error.is_none());
+    drop(current);
+    drop(writer);
+    let read = fixture.store.current_read(&fixture.scope)?;
+    assert_eq!(read.token()?, committed.token);
+    assert_eq!(
+        read.artifact(&input.artifact.path)?.unwrap().content_hash,
+        input.artifact.content_hash
+    );
+    assert_eq!(read.vector_for_graph_id(1)?, binding);
+    assert_eq!(
+        read.vector_occurrence_pointers(embedding_key)?,
+        Some(vec![pointer])
+    );
+    Ok(())
+}
+
+#[test]
+fn changed_pending_map_bytes_block_applying_and_commit_without_advancing_head() -> Result<()> {
+    let fixture = Fixture::new()?;
+    let input = retained_input(&fixture, "Captured citation body.")?;
+    let (_reservation, sealed) = fixture.sealed()?;
+    let mut target = fixture.target(&sealed);
+    let valid_bytes = input.bytes()?;
+    let change = map::MapChange::new(
+        &fixture.scope,
+        map::MapDomain::Artifact,
+        input.artifact.path.as_bytes(),
+        Some(valid_bytes.clone()),
+    )?;
+    let connection = database::open_reader(&fixture.store.directory().join("index.sqlite3"))?;
+    let mut plan = map::MapPlan::new(&connection, &fixture.scope, fixture.head.artifact_root)?;
+    plan.put(change.key(), change.value())?;
+    target.artifact_root = plan.root()?;
+    drop(connection);
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    let pending = current.prepare_mapped(
+        &fixture.head.token()?,
+        target,
+        &sealed,
+        &[input],
+        None,
+        &[change],
+    )?;
+    let tamper = rusqlite::Connection::open(fixture.store.directory().join("index.sqlite3"))?;
+    tamper.execute(
+        "UPDATE current_pending_map SET value=zeroblob(length(value))",
+        [],
+    )?;
+    drop(tamper);
+    assert!(current.mark_applying(&pending).is_err());
+    assert_eq!(current.phase()?, TransactionPhase::Prepared);
+    assert_eq!(current.head()?, fixture.head);
+    drop(current);
+    drop(writer);
+    assert_eq!(
+        fixture.store.current_read(&fixture.scope)?.head(),
+        &fixture.head
+    );
+    let repair = rusqlite::Connection::open(fixture.store.directory().join("index.sqlite3"))?;
+    repair.execute("UPDATE current_pending_map SET value=?1", [&valid_bytes])?;
+    drop(repair);
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    current.mark_applying(&pending)?;
+    let tamper = rusqlite::Connection::open(fixture.store.directory().join("index.sqlite3"))?;
+    tamper.execute(
+        "UPDATE current_pending_map SET value=zeroblob(length(value))",
+        [],
+    )?;
+    drop(tamper);
+    assert!(
+        current
+            .commit(&pending, pending.target.lexical_commit)
+            .is_err()
+    );
+    assert_eq!(current.phase()?, TransactionPhase::Applying);
+    assert_eq!(current.head()?, fixture.head);
+    drop(current);
+    drop(writer);
+    assert!(fixture.store.current_read(&fixture.scope).is_err());
+    Ok(())
+}
+
+#[test]
 fn catalog_only_artifact_updates_are_atomic_authenticated_and_revision_bound() -> Result<()> {
     let fixture = Fixture::new()?;
     let source = std::path::Path::new(&fixture.scope.root).join("evidence.txt");
