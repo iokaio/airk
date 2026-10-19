@@ -594,6 +594,22 @@ fn pending_lexical(
     Ok(Some(bytes))
 }
 
+pub(super) fn committed_lexical_manifest(
+    connection: &Connection,
+    head: &CurrentHead,
+) -> Result<Vec<u8>> {
+    let bytes: Option<Vec<u8>> = connection
+        .query_row(
+            "SELECT CASE WHEN typeof(content)='blob' AND length(content) BETWEEN 1 AND 1048576 THEN content END FROM current_lexical_manifest WHERE id=1",
+            [],
+            |row| row.get(0),
+        )
+        .context("committed lexical manifest missing")?;
+    let bytes = bytes.context("invalid committed lexical manifest row")?;
+    verify_lexical_manifest(&bytes, head.lexical_commit)?;
+    Ok(bytes)
+}
+
 fn verify_model(store: &FileStore, model: &Option<ModelObjectSet>) -> Result<()> {
     if let Some(model) = model {
         model.validate()?;
@@ -813,6 +829,21 @@ impl CurrentWriter<'_> {
         Ok(state(self.connection()?, &self.scope)?.1)
     }
 
+    pub fn committed_lexical_manifest(&self) -> Result<Vec<u8>> {
+        committed_lexical_manifest(self.connection()?, &self.head()?)
+    }
+
+    pub fn pending_lexical_manifest(
+        &self,
+        pending: &PendingTransaction,
+    ) -> Result<Option<Vec<u8>>> {
+        ensure!(
+            self.pending()?.as_ref() == Some(pending),
+            "pending lexical manifest transaction changed"
+        );
+        pending_lexical(self.connection()?, pending)
+    }
+
     /// Remove only unselected, flat lexical fork directories while the
     /// exclusive current gate has drained readers. This is maintenance after
     /// a Ready commit; failure does not undo an already committed head.
@@ -822,15 +853,7 @@ impl CurrentWriter<'_> {
             "lexical reclamation requires a ready current head"
         );
         let head = self.head()?;
-        let bytes: Option<Vec<u8>> = self.connection()?.query_row(
-            "SELECT CASE WHEN typeof(content)='blob' AND length(content) BETWEEN 1 AND 1048576 THEN content END FROM current_lexical_manifest WHERE id=1",
-            [],
-            |row| row.get(0),
-        ).context("committed lexical manifest missing")?;
-        verify_lexical_manifest(
-            &bytes.context("invalid committed lexical manifest row")?,
-            head.lexical_commit,
-        )?;
+        committed_lexical_manifest(self.connection()?, &head)?;
         let directory = self.store.directory();
         let parent = directory.canonicalize()?;
         let selected = head.lexical_directory_name()?;
