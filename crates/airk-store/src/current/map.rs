@@ -440,6 +440,18 @@ impl<'a> MapPlan<'a> {
         Ok(self.root)
     }
 
+    /// Read through the planned afterimage, proving the bucket against the
+    /// planned root. Used to derive removals of old per-artifact identities
+    /// before their replacement is staged in the same transaction.
+    pub fn get(&self, key: Sha256Digest) -> Result<Option<Vec<u8>>> {
+        ensure!(!self.poisoned, "current map plan is poisoned");
+        let entries = self.proven(key)?;
+        Ok(entries
+            .binary_search_by_key(&key, |entry| entry.key)
+            .ok()
+            .map(|position| entries[position].value.clone()))
+    }
+
     fn node(&self, height: u8, index: u16) -> Result<Sha256Digest> {
         match self.nodes.get(&(height, index)) {
             Some(digest) => Ok(*digest),

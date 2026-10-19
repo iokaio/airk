@@ -1301,8 +1301,24 @@ impl CurrentWriter<'_> {
             "changed-artifact publication base expired"
         );
         let mut plan = map::MapPlan::new(self.connection()?, &self.scope, base.artifact_root)?;
-        for change in &map_changes {
-            plan.put(change.key(), change.value())?;
+        for change in changes {
+            let key = map::key(
+                &self.scope,
+                map::MapDomain::Artifact,
+                change.path().as_bytes(),
+            )?;
+            if let Some(bytes) = plan.get(key)? {
+                let previous: CapturedInput = serde_json::from_slice(&bytes)?;
+                ensure!(
+                    previous.artifact.path == change.path() && previous.bytes()? == bytes,
+                    "changed artifact has invalid prior catalog binding"
+                );
+            }
+            let value = match change {
+                ArtifactChange::Upsert(input) => Some(input.bytes()?),
+                ArtifactChange::Delete(_) => None,
+            };
+            plan.put(key, value.as_deref())?;
         }
         target.artifact_root = plan.root()?;
         target.lexical_sequence = target.sequence;
