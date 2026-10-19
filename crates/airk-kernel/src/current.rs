@@ -18,6 +18,9 @@ use anyhow::{Context, Result, ensure};
 
 const MAX_LEXICAL_VALIDATION_BYTES: u64 = 256 * 1024 * 1024;
 
+mod update;
+pub use update::{CurrentUpdateResult, CurrentUpdateStage, CurrentUpdater, SemanticUpdate};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CurrentRecoveryAction {
     AlreadyReady,
