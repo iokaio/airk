@@ -313,6 +313,259 @@ fn retained_input_at(fixture: &Fixture, path: &str, text: &str) -> Result<Captur
     Ok(CapturedInput { artifact })
 }
 
+fn prepared_occurrence(
+    fixture: &Fixture,
+    input: &CapturedInput,
+    embedding_key: Sha256Digest,
+    graph_id: u32,
+) -> Result<vector_map::PreparedOccurrence> {
+    let index = vector_map::PathOccurrences {
+        version: 1,
+        path: input.artifact.path.clone(),
+        source_hash: input.artifact.content_hash.parse()?,
+        count: 1,
+    };
+    Ok(vector_map::PreparedOccurrence {
+        pointer: vector_map::OccurrencePointer {
+            version: 1,
+            embedding_key,
+            occurrence_id: index.occurrence_id(&fixture.scope, 0)?,
+            path: index.path,
+            path_ordinal: 0,
+            source_hash: index.source_hash,
+            payload_digest: fixture
+                .store
+                .load_retrieval_artifact(&input.artifact)?
+                .payload_digest,
+            object: input
+                .artifact
+                .retained
+                .as_ref()
+                .context("test extraction missing")?
+                .object
+                .parse()?,
+        },
+        graph_id,
+    })
+}
+
+#[test]
+fn changed_artifact_attaches_and_replaces_exact_vector_occurrence() -> Result<()> {
+    let fixture = Fixture::new()?;
+    let key = Sha256Digest::from_bytes([6; 32]);
+    let first = retained_input(&fixture, "First source")?;
+    let occurrence = prepared_occurrence(&fixture, &first, key, 1)?;
+    let (_reservation, sealed) = fixture.sealed()?;
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    let mut foreign = occurrence.clone();
+    foreign.pointer.object = Sha256Digest::from_bytes([99; 32]);
+    assert!(
+        current
+            .prepare_artifacts_with_occurrences(
+                &fixture.head.token()?,
+                fixture.target(&sealed),
+                &sealed,
+                ArtifactVectorChanges {
+                    artifacts: &[ArtifactChange::Upsert(Box::new(first.clone()))],
+                    occurrences: &[foreign],
+                },
+                None,
+                br#"{"engine":"test","sequence":1}"#,
+            )
+            .is_err()
+    );
+    assert_eq!(current.phase()?, TransactionPhase::Ready);
+    let pending = current.prepare_artifacts_with_occurrences(
+        &fixture.head.token()?,
+        fixture.target(&sealed),
+        &sealed,
+        ArtifactVectorChanges {
+            artifacts: &[ArtifactChange::Upsert(Box::new(first.clone()))],
+            occurrences: std::slice::from_ref(&occurrence),
+        },
+        None,
+        br#"{"engine":"test","sequence":1}"#,
+    )?;
+    current.mark_applying(&pending)?;
+    current.commit(&pending, pending.target.lexical_commit)?;
+    drop(current);
+    drop(writer);
+    let read = fixture.store.current_read(&fixture.scope)?;
+    assert_eq!(
+        read.vector_for_graph_id(1)?.occurrence_ids,
+        vec![occurrence.pointer.occurrence_id]
+    );
+    assert_eq!(
+        read.vector_occurrence_pointers(key)?,
+        Some(vec![occurrence.pointer.clone()])
+    );
+    drop(read);
+
+    let second = retained_input(&fixture, "Second source")?;
+    let replacement = prepared_occurrence(&fixture, &second, key, 1)?;
+    let base = fixture.store.current_read(&fixture.scope)?.head().clone();
+    let reservation = fixture
+        .quota
+        .reserve(&fixture.scope.collection, 4 * 1024 * 1024)?;
+    let sealed = graph::GraphOverlay::new(
+        &reservation,
+        fixture.store.current_read(&fixture.scope)?,
+        graph::GraphOverlayLimits {
+            maximum_bytes: 1024 * 1024,
+            ..Default::default()
+        },
+    )?
+    .seal()?;
+    let mut target = base.clone();
+    target.sequence += 1;
+    target.graph_head = sealed.descriptor().target.clone();
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    let pending = current.prepare_artifacts_with_occurrences(
+        &base.token()?,
+        target,
+        &sealed,
+        ArtifactVectorChanges {
+            artifacts: &[ArtifactChange::Upsert(Box::new(second.clone()))],
+            occurrences: std::slice::from_ref(&replacement),
+        },
+        None,
+        br#"{"engine":"test","sequence":2}"#,
+    )?;
+    current.mark_applying(&pending)?;
+    current.commit(&pending, pending.target.lexical_commit)?;
+    drop(current);
+    drop(writer);
+    let read = fixture.store.current_read(&fixture.scope)?;
+    assert_eq!(
+        read.vector_occurrence_pointers(key)?,
+        Some(vec![replacement.pointer.clone()])
+    );
+    assert!(
+        read.map_get(
+            map::MapDomain::Occurrence,
+            occurrence.pointer.occurrence_id.as_bytes()
+        )?
+        .is_none()
+    );
+    assert_eq!(read.vector_for_graph_id(1)?.graph_id, 1);
+    drop(read);
+
+    let alias = retained_input_at(&fixture, "alias.txt", "Same embedding input")?;
+    let additional = prepared_occurrence(&fixture, &alias, key, 1)?;
+    let base = fixture.store.current_read(&fixture.scope)?.head().clone();
+    let reservation = fixture
+        .quota
+        .reserve(&fixture.scope.collection, 4 * 1024 * 1024)?;
+    let sealed = graph::GraphOverlay::new(
+        &reservation,
+        fixture.store.current_read(&fixture.scope)?,
+        graph::GraphOverlayLimits {
+            maximum_bytes: 1024 * 1024,
+            ..Default::default()
+        },
+    )?
+    .seal()?;
+    let mut target = base.clone();
+    target.sequence += 1;
+    target.graph_head = sealed.descriptor().target.clone();
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    let pending = current.prepare_artifacts_with_occurrences(
+        &base.token()?,
+        target,
+        &sealed,
+        ArtifactVectorChanges {
+            artifacts: &[ArtifactChange::Upsert(Box::new(alias))],
+            occurrences: std::slice::from_ref(&additional),
+        },
+        None,
+        br#"{"engine":"test","sequence":3}"#,
+    )?;
+    current.mark_applying(&pending)?;
+    current.commit(&pending, pending.target.lexical_commit)?;
+    drop(current);
+    drop(writer);
+    let read = fixture.store.current_read(&fixture.scope)?;
+    let mut expected = vec![replacement.pointer, additional.pointer];
+    expected.sort_by_key(|pointer| pointer.occurrence_id);
+    assert_eq!(read.vector_occurrence_pointers(key)?, Some(expected));
+    assert_eq!(read.counts()?.live_nodes, 1);
+    Ok(())
+}
+
+#[test]
+fn new_occurrence_cannot_adopt_unmapped_committed_graph_node() -> Result<()> {
+    let fixture = Fixture::new()?;
+    let (_reservation, sealed) = fixture.sealed()?;
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    let pending = current.prepare(
+        &fixture.head.token()?,
+        fixture.target(&sealed),
+        &sealed,
+        &[],
+        None,
+    )?;
+    current.mark_applying(&pending)?;
+    current.commit(&pending, pending.target.lexical_commit)?;
+    drop(current);
+    drop(writer);
+
+    let input = retained_input(&fixture, "Captured source")?;
+    let occurrence = prepared_occurrence(&fixture, &input, Sha256Digest::from_bytes([6; 32]), 1)?;
+    let base = fixture.store.current_read(&fixture.scope)?.head().clone();
+    let reservation = fixture
+        .quota
+        .reserve(&fixture.scope.collection, 4 * 1024 * 1024)?;
+    let sealed = graph::GraphOverlay::new(
+        &reservation,
+        fixture.store.current_read(&fixture.scope)?,
+        graph::GraphOverlayLimits {
+            maximum_bytes: 1024 * 1024,
+            ..Default::default()
+        },
+    )?
+    .seal()?;
+    let mut target = base.clone();
+    target.sequence += 1;
+    target.graph_head = sealed.descriptor().target.clone();
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    let error = current
+        .prepare_artifacts_with_occurrences(
+            &base.token()?,
+            target,
+            &sealed,
+            ArtifactVectorChanges {
+                artifacts: &[ArtifactChange::Upsert(Box::new(input))],
+                occurrences: &[occurrence],
+            },
+            None,
+            br#"{"engine":"test","sequence":2}"#,
+        )
+        .unwrap_err();
+    assert!(error.to_string().contains("unmapped base graph node"));
+    assert_eq!(current.phase()?, TransactionPhase::Ready);
+    Ok(())
+}
+
 #[test]
 fn replay_uses_captured_bytes_and_detects_corruption_without_live_fallback() -> Result<()> {
     let fixture = Fixture::new()?;

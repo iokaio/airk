@@ -2,8 +2,11 @@
 //! Captured, bounded replay state survives disposable staging and process death.
 use super::{
     CurrentHead, CurrentScope, CurrentToken, MAX_INPUT_METADATA_BYTES, MAX_LEXICAL_MANIFEST_BYTES,
-    MAX_PENDING_INPUTS, MAX_PENDING_METADATA_BYTES, database, decode_head, gate::Gate, graph, map,
-    vector_map, verify_lexical_manifest,
+    MAX_PENDING_INPUTS, MAX_PENDING_METADATA_BYTES, database, decode_head,
+    gate::Gate,
+    graph, map,
+    vector_map::{self, PreparedOccurrence},
+    verify_lexical_manifest,
 };
 use crate::{
     FileStore, WriterLock,
@@ -21,7 +24,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     io::{Read, Write},
     path::{Path, PathBuf},
@@ -198,6 +201,11 @@ pub struct CapturedInput {
 pub enum ArtifactChange {
     Upsert(Box<CapturedInput>),
     Delete(String),
+}
+
+pub struct ArtifactVectorChanges<'a> {
+    pub artifacts: &'a [ArtifactChange],
+    pub occurrences: &'a [PreparedOccurrence],
 }
 
 impl ArtifactChange {
@@ -1253,12 +1261,38 @@ impl CurrentWriter<'_> {
     pub fn prepare_artifacts(
         &mut self,
         expected: &CurrentToken,
-        mut target: CurrentHead,
+        target: CurrentHead,
         graph_delta: &dyn PreparedGraphDelta,
         changes: &[ArtifactChange],
         model: Option<ModelObjectSet>,
         lexical_manifest: &[u8],
     ) -> Result<PendingTransaction> {
+        self.prepare_artifacts_with_occurrences(
+            expected,
+            target,
+            graph_delta,
+            ArtifactVectorChanges {
+                artifacts: changes,
+                occurrences: &[],
+            },
+            model,
+            lexical_manifest,
+        )
+    }
+
+    /// Publish new vector citations with changed artifacts after retiring
+    /// their old citations. The sealed graph already contains their nodes.
+    pub fn prepare_artifacts_with_occurrences(
+        &mut self,
+        expected: &CurrentToken,
+        mut target: CurrentHead,
+        graph_delta: &dyn PreparedGraphDelta,
+        update: ArtifactVectorChanges<'_>,
+        model: Option<ModelObjectSet>,
+        lexical_manifest: &[u8],
+    ) -> Result<PendingTransaction> {
+        let changes = update.artifacts;
+        let occurrences = update.occurrences;
         ensure!(
             !changes.is_empty() && changes.len() <= MAX_PENDING_INPUTS,
             "invalid changed-artifact count"
@@ -1327,16 +1361,38 @@ impl CurrentWriter<'_> {
             };
             plan.put(key, value.as_deref())?;
         }
-        map_changes.extend(vector_map::retire_changed_paths(
-            &mut plan,
-            self.connection()?,
-            &self.scope,
-            &base,
-            &target,
-            graph_delta,
-            &prior_sources,
-        )?);
-        map_changes.sort_by_key(map::MapChange::key);
+        let reattached = occurrences
+            .iter()
+            .map(|item| item.pointer.embedding_key)
+            .collect::<BTreeSet<_>>();
+        {
+            let mut context = vector_map::VectorPlanContext {
+                plan: &mut plan,
+                connection: self.connection()?,
+                store: &self.store,
+                scope: &self.scope,
+                base: &base,
+                target: &target,
+                delta: graph_delta,
+            };
+            map_changes.extend(vector_map::retire_changed_paths(
+                &mut context,
+                &prior_sources,
+                &reattached,
+            )?);
+            map_changes.extend(vector_map::attach_new_occurrences(
+                &mut context,
+                changes,
+                occurrences,
+            )?);
+        }
+        // A replaced path may retire and reattach one exact key. Replay only
+        // its final afterimage, not both intermediate map changes.
+        let mut final_changes = BTreeMap::new();
+        for change in map_changes {
+            final_changes.insert(change.key(), change);
+        }
+        let map_changes = final_changes.into_values().collect::<Vec<_>>();
         ensure!(
             map_changes
                 .windows(2)

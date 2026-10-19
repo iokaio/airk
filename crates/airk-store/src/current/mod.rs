@@ -10,8 +10,8 @@ pub mod vector_map;
 
 pub use database::{DATABASE_VERSION, PAGE_BYTES, journal_bound};
 pub use journal::{
-    ArtifactChange, CapturedInput, CapturedInputs, CurrentCapacityChange, CurrentCommit,
-    CurrentWriter, PendingTransaction, TransactionPhase,
+    ArtifactChange, ArtifactVectorChanges, CapturedInput, CapturedInputs, CurrentCapacityChange,
+    CurrentCommit, CurrentWriter, PendingTransaction, TransactionPhase,
 };
 pub use read::CurrentRead;
 
