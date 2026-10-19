@@ -3,7 +3,7 @@
 use super::{
     CurrentHead, CurrentScope, CurrentToken, MAX_INPUT_METADATA_BYTES, MAX_LEXICAL_MANIFEST_BYTES,
     MAX_PENDING_INPUTS, MAX_PENDING_METADATA_BYTES, database, decode_head, gate::Gate, graph, map,
-    verify_lexical_manifest,
+    vector_map, verify_lexical_manifest,
 };
 use crate::{
     FileStore, WriterLock,
@@ -21,6 +21,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
+    collections::BTreeMap,
     fs,
     io::{Read, Write},
     path::{Path, PathBuf},
@@ -200,7 +201,7 @@ pub enum ArtifactChange {
 }
 
 impl ArtifactChange {
-    fn path(&self) -> &str {
+    pub(crate) fn path(&self) -> &str {
         match self {
             Self::Upsert(input) => &input.artifact.path,
             Self::Delete(path) => path,
@@ -1263,6 +1264,7 @@ impl CurrentWriter<'_> {
         );
         let mut previous = None;
         let mut inputs = Vec::new();
+        let mut prior_sources = BTreeMap::new();
         let mut map_changes = Vec::with_capacity(changes.len());
         for change in changes {
             let path = change.path();
@@ -1307,19 +1309,39 @@ impl CurrentWriter<'_> {
                 map::MapDomain::Artifact,
                 change.path().as_bytes(),
             )?;
-            if let Some(bytes) = plan.get(key)? {
+            let prior_hash = if let Some(bytes) = plan.get(key)? {
                 let previous: CapturedInput = serde_json::from_slice(&bytes)?;
                 ensure!(
                     previous.artifact.path == change.path() && previous.bytes()? == bytes,
                     "changed artifact has invalid prior catalog binding"
                 );
-            }
+                Some(previous.artifact.content_hash.parse::<Sha256Digest>()?)
+            } else {
+                None
+            };
+            prior_sources.insert(change.path().to_owned(), prior_hash);
             let value = match change {
                 ArtifactChange::Upsert(input) => Some(input.bytes()?),
                 ArtifactChange::Delete(_) => None,
             };
             plan.put(key, value.as_deref())?;
         }
+        map_changes.extend(vector_map::retire_changed_paths(
+            &mut plan,
+            self.connection()?,
+            &self.scope,
+            &base,
+            &target,
+            graph_delta,
+            &prior_sources,
+        )?);
+        map_changes.sort_by_key(map::MapChange::key);
+        ensure!(
+            map_changes
+                .windows(2)
+                .all(|pair| pair[0].key() < pair[1].key()),
+            "duplicate current component map identity"
+        );
         target.artifact_root = plan.root()?;
         target.lexical_sequence = target.sequence;
         target.lexical_commit = framed_digest(b"current-lexical-manifest/1", &[lexical_manifest]);
