@@ -657,7 +657,8 @@ impl FileStore {
             "foreign current writer collection"
         );
         let gate = Gate::exclusive(self, writer)?;
-        let path = self.directory().join("index.sqlite3");
+        database::reject_legacy_collection(self.directory())?;
+        let path = self.directory().join("current.sqlite3");
         let bootstrap = read_bootstrap(self, scope)?;
         let pending_bootstrap = bootstrap.as_ref().filter(|value| !value.complete);
         let mut initialized = false;
@@ -668,7 +669,7 @@ impl FileStore {
             );
             let recovery = self
                 .directory()
-                .join("index.sqlite3-journal")
+                .join("current.sqlite3-journal")
                 .try_exists()?;
             if recovery || pending_bootstrap.is_some() {
                 let grants = quota.current_grants(writer)?;
@@ -792,7 +793,7 @@ impl CurrentWriter<'_> {
         // transaction, while still owning the writer and exclusive read gate.
         drop(self.connection.take());
         let connection =
-            database::open_writer(&self.store.directory().join("index.sqlite3"), next, false)?;
+            database::open_writer(&self.store.directory().join("current.sqlite3"), next, false)?;
         database::restrict(&connection)?;
         self.connection = Some(connection);
         let maintenance_error = grant
@@ -965,7 +966,7 @@ impl CurrentWriter<'_> {
         let mut connection = match self.connection.take() {
             Some(connection) => connection,
             None => database::open_writer(
-                &self.store.directory().join("index.sqlite3"),
+                &self.store.directory().join("current.sqlite3"),
                 self.capacity,
                 true,
             )?,

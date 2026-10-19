@@ -1,6 +1,6 @@
 # AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents
 
-**Version 1.1.4.** [Release notes and upgrade guidance](docs/release-1.1.4.md). Download published [native ZIPs and platform VSIX packages](https://github.com/iokaio/airk/releases).
+**Development version 1.2.0.** The last published release is [1.1.4](docs/release-1.1.4.md). Download published [native ZIPs and platform VSIX packages](https://github.com/iokaio/airk/releases).
 
 **Give Claude Code, Codex, Gemini CLI/Antigravity, GitHub Copilot and other MCP-capable agents a shared, local index of your workspace.** AIRK indexes files and returns bounded facts and passages with source paths, hashes and original locations. The agent supplies the reasoning. Runtime storage uses memory and local disk.
 

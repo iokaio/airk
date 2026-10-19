@@ -9,11 +9,31 @@ use rusqlite::{
 use std::io::{Read, Write};
 use std::{fs, path::Path, time::Duration};
 
-pub const DATABASE_VERSION: u32 = 105;
+pub const DATABASE_VERSION: u32 = 120;
 pub const PAGE_BYTES: u64 = 4096;
 const APPLICATION_ID: i32 = 0x4149_524b;
 pub const MAX_DATABASE_BYTES: u64 = 16 * 1024 * 1024 * 1024 * 1024;
 pub const OWNER_FILE: &str = "current-owner.json";
+
+/// The 1.2 current database has its own filename and never shares a collection
+/// directory with the 1.1 snapshot/catalog layout. The caller must first reset
+/// the old managed derived collection under its writer and reader gates.
+pub(crate) fn reject_legacy_collection(directory: &Path) -> Result<()> {
+    for name in [
+        "index.sqlite3",
+        "index.sqlite3-wal",
+        "index.sqlite3-shm",
+        "index.sqlite3-journal",
+        "snapshot.json",
+        "generations",
+    ] {
+        ensure!(
+            !directory.join(name).try_exists()?,
+            "AIRK 1.1.x collection state is incompatible with 1.2.0; reset the managed collection and rebuild"
+        );
+    }
+    Ok(())
+}
 
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -153,7 +173,7 @@ pub(crate) fn require_version(connection: &Connection) -> Result<()> {
 
 pub(crate) fn open_reader(path: &Path) -> Result<Connection> {
     plain_database(path)?;
-    let journal = path.with_file_name("index.sqlite3-journal");
+    let journal = path.with_file_name("current.sqlite3-journal");
     ensure!(
         !journal.try_exists()?,
         "current index requires writer recovery before reads"
@@ -326,7 +346,7 @@ pub(crate) fn recovery_bound(path: &Path, capacity: u64, allowance: u64) -> Resu
         fs::metadata(path)?.len() <= capacity,
         "current database exceeds recovery capacity"
     );
-    let journal = path.with_file_name("index.sqlite3-journal");
+    let journal = path.with_file_name("current.sqlite3-journal");
     let Ok(metadata) = fs::symlink_metadata(&journal) else {
         return Ok(());
     };
