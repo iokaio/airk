@@ -1,15 +1,28 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Remove only changed paths' old vector citations from the planned current
 //! map. A later enrichment transaction may attach newly computed vectors.
-use super::{OccurrencePointer, PathOccurrences, VectorBinding};
-use crate::current::{CurrentHead, CurrentScope, graph, map};
+use super::{OccurrencePointer, PathOccurrences, PreparedOccurrence, VectorBinding};
+use crate::{
+    FileStore,
+    current::{CurrentHead, CurrentScope, MAX_PENDING_INPUTS, graph, journal::ArtifactChange, map},
+};
 use airk_core::{
     graph_storage::{GraphRecord, PreparedGraphDelta},
     identity::Sha256Digest,
 };
 use anyhow::{Context, Result, ensure};
 use rusqlite::Connection;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+
+pub(crate) struct VectorPlanContext<'plan, 'state> {
+    pub plan: &'plan mut map::MapPlan<'state>,
+    pub connection: &'state Connection,
+    pub store: &'state FileStore,
+    pub scope: &'state CurrentScope,
+    pub base: &'state CurrentHead,
+    pub target: &'state CurrentHead,
+    pub delta: &'state dyn PreparedGraphDelta,
+}
 
 fn change(
     plan: &mut map::MapPlan<'_>,
@@ -30,14 +43,19 @@ fn change(
 /// Every old path-local ordinal is checked against its pointer and vector
 /// binding. Graph records must agree with the resulting live memberships.
 pub(crate) fn retire_changed_paths(
-    plan: &mut map::MapPlan<'_>,
-    connection: &Connection,
-    scope: &CurrentScope,
-    base: &CurrentHead,
-    target: &CurrentHead,
-    delta: &dyn PreparedGraphDelta,
+    context: &mut VectorPlanContext<'_, '_>,
     prior_sources: &BTreeMap<String, Option<Sha256Digest>>,
+    reattached: &BTreeSet<Sha256Digest>,
 ) -> Result<Vec<map::MapChange>> {
+    let VectorPlanContext {
+        plan,
+        connection,
+        scope,
+        base,
+        target,
+        delta,
+        ..
+    } = context;
     ensure!(
         delta.descriptor().base == base.graph_head
             && delta.descriptor().target == target.graph_head,
@@ -143,7 +161,8 @@ pub(crate) fn retire_changed_paths(
         };
         ensure!(
             record.embedding_key == Some(embedding_key)
-                && record.live == !binding.occurrence_ids.is_empty(),
+                && (reattached.contains(&embedding_key)
+                    || record.live == !binding.occurrence_ids.is_empty()),
             "changed current vector live mapping differs from graph target"
         );
         change(
@@ -156,4 +175,187 @@ pub(crate) fn retire_changed_paths(
         )?;
     }
     Ok(changes)
+}
+
+/// Attach only the changed paths' new citations after old memberships have
+/// been retired. The extraction object and payload digest are verified once
+/// per path, and every binding must agree with the sealed graph target.
+pub(crate) fn attach_new_occurrences(
+    context: &mut VectorPlanContext<'_, '_>,
+    changes: &[ArtifactChange],
+    occurrences: &[PreparedOccurrence],
+) -> Result<Vec<map::MapChange>> {
+    let VectorPlanContext {
+        plan,
+        connection,
+        store,
+        scope,
+        base,
+        target,
+        delta,
+    } = context;
+    ensure!(
+        occurrences.len() <= MAX_PENDING_INPUTS,
+        "too many changed current vector occurrences"
+    );
+    ensure!(
+        delta.descriptor().base == base.graph_head
+            && delta.descriptor().target == target.graph_head,
+        "new current vector graph target mismatch"
+    );
+    if occurrences.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut inputs = BTreeMap::new();
+    for change in changes {
+        if let ArtifactChange::Upsert(input) = change {
+            inputs.insert(input.artifact.path.as_str(), input.as_ref());
+        }
+    }
+    let mut by_path = BTreeMap::<&str, Vec<&PreparedOccurrence>>::new();
+    let mut graph_keys = BTreeMap::<u32, Sha256Digest>::new();
+    for occurrence in occurrences {
+        occurrence.pointer.validate()?;
+        let pointer = &occurrence.pointer;
+        ensure!(
+            inputs.contains_key(pointer.path.as_str())
+                && occurrence.graph_id != 0
+                && u64::from(occurrence.graph_id) < target.graph_head.allocated_count,
+            "new current occurrence has no changed artifact or graph node"
+        );
+        if let Some(previous) = graph_keys.insert(occurrence.graph_id, pointer.embedding_key) {
+            ensure!(
+                previous == pointer.embedding_key,
+                "new current graph ID has conflicting embedding keys"
+            );
+        }
+        by_path.entry(&pointer.path).or_default().push(occurrence);
+    }
+    let affected_ids = graph_keys.keys().copied().collect::<BTreeSet<_>>();
+    let mut afterimages = BTreeMap::<u32, GraphRecord>::new();
+    delta.visit_records(&mut |id, record| {
+        if affected_ids.contains(&id) {
+            ensure!(
+                afterimages.insert(id, record.clone()).is_none(),
+                "duplicate new current graph afterimage"
+            );
+        }
+        Ok(())
+    })?;
+    let mut map_changes = Vec::new();
+    let mut bindings = BTreeMap::<Sha256Digest, VectorBinding>::new();
+    for (path, mut items) in by_path {
+        let input = inputs[path];
+        let source_hash = input.artifact.content_hash.parse::<Sha256Digest>()?;
+        let object = input
+            .artifact
+            .retained
+            .as_ref()
+            .context("new occurrence extraction object missing")?
+            .object
+            .parse::<Sha256Digest>()?;
+        let payload_digest = store
+            .load_retrieval_artifact(&input.artifact)?
+            .payload_digest;
+        items.sort_by_key(|item| item.pointer.path_ordinal);
+        let index = PathOccurrences {
+            version: 1,
+            path: path.to_owned(),
+            source_hash,
+            count: u32::try_from(items.len())?,
+        };
+        for (ordinal, item) in items.into_iter().enumerate() {
+            let pointer = &item.pointer;
+            let occurrence_id = index.occurrence_id(scope, u32::try_from(ordinal)?)?;
+            ensure!(
+                pointer.path_ordinal == u32::try_from(ordinal)?
+                    && pointer.occurrence_id == occurrence_id
+                    && pointer.source_hash == source_hash
+                    && pointer.payload_digest == payload_digest
+                    && pointer.object == object,
+                "new current occurrence differs from captured extraction"
+            );
+            change(
+                plan,
+                scope,
+                map::MapDomain::Occurrence,
+                occurrence_id.as_bytes(),
+                Some(pointer.canonical_bytes()?),
+                &mut map_changes,
+            )?;
+            if let std::collections::btree_map::Entry::Vacant(entry) =
+                bindings.entry(pointer.embedding_key)
+            {
+                let binding_key = map::key(
+                    scope,
+                    map::MapDomain::Vector,
+                    pointer.embedding_key.as_bytes(),
+                )?;
+                let binding = match plan.get(binding_key)? {
+                    Some(bytes) => VectorBinding::decode(&bytes, target, pointer.embedding_key)?,
+                    None => {
+                        ensure!(
+                            u64::from(item.graph_id) >= base.graph_head.allocated_count,
+                            "new current vector key reuses an unmapped base graph node"
+                        );
+                        VectorBinding {
+                            version: 1,
+                            embedding_key: pointer.embedding_key,
+                            graph_scope: target.graph_head.scope.digest(),
+                            graph_id: item.graph_id,
+                            occurrence_ids: Vec::new(),
+                        }
+                    }
+                };
+                entry.insert(binding);
+            }
+            let binding = bindings
+                .get_mut(&pointer.embedding_key)
+                .context("new current vector binding disappeared")?;
+            ensure!(
+                binding.graph_id == item.graph_id,
+                "new current occurrence graph ID differs from binding"
+            );
+            let position = binding
+                .occurrence_ids
+                .binary_search(&occurrence_id)
+                .unwrap_or_else(|position| position);
+            ensure!(
+                binding.occurrence_ids.get(position) != Some(&occurrence_id),
+                "duplicate new current occurrence ID"
+            );
+            binding.occurrence_ids.insert(position, occurrence_id);
+        }
+        change(
+            plan,
+            scope,
+            map::MapDomain::PathOccurrences,
+            path.as_bytes(),
+            Some(index.canonical_bytes()?),
+            &mut map_changes,
+        )?;
+    }
+    for (embedding_key, binding) in bindings {
+        binding.validate(target)?;
+        let record = match afterimages.remove(&binding.graph_id) {
+            Some(record) => record,
+            None if u64::from(binding.graph_id) < base.graph_head.allocated_count => {
+                graph::read_record(connection, &base.graph_head, binding.graph_id)?
+            }
+            None => anyhow::bail!("new current vector graph record missing"),
+        };
+        ensure!(
+            record.embedding_key == Some(embedding_key) && record.live,
+            "new current vector binding differs from graph target"
+        );
+        change(
+            plan,
+            scope,
+            map::MapDomain::Vector,
+            embedding_key.as_bytes(),
+            Some(binding.canonical_bytes(target)?),
+            &mut map_changes,
+        )?;
+    }
+    Ok(map_changes)
 }
