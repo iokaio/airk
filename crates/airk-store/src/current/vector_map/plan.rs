@@ -254,9 +254,9 @@ pub(crate) fn attach_new_occurrences(
             .context("new occurrence extraction object missing")?
             .object
             .parse::<Sha256Digest>()?;
-        let payload_digest = store
-            .load_retrieval_artifact(&input.artifact)?
-            .payload_digest;
+        let retained = store.load_retrieval_artifact(&input.artifact)?;
+        let payload_digest = retained.payload_digest;
+        let mut evidence = airk_core::vector_evidence::VectorEvidenceReader::new(&retained)?;
         items.sort_by_key(|item| item.pointer.path_ordinal);
         let index = PathOccurrences {
             version: 1,
@@ -275,6 +275,7 @@ pub(crate) fn attach_new_occurrences(
                     && pointer.object == object,
                 "new current occurrence differs from captured extraction"
             );
+            evidence.materialize(&pointer.members)?;
             change(
                 plan,
                 scope,

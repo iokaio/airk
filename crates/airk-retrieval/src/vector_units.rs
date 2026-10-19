@@ -15,12 +15,7 @@ pub const MAX_VECTOR_UNIT_INPUT_BYTES: usize = crate::model::MAX_INPUT_BYTES;
 pub const MAX_VECTOR_UNIT_MEMBERS: usize = 64;
 pub const MAX_VECTOR_UNITS_PER_ARTIFACT: usize = airk_core::extraction::MAX_EXTRACTION_CHUNKS;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct VectorMemberSpan {
-    pub chunk_index: u32,
-    /// Absolute byte positions within the chunk's host or mapped region.
-    pub span: LocalSpan,
-}
+pub use airk_core::vector_evidence::VectorMemberSpan;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PreparedVectorUnit {
