@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Qualified single-current-index storage foundation. Runtime adoption is separate.
 mod database;
+pub mod discovery;
 mod gate;
 pub mod graph;
 mod journal;
 pub mod map;
+pub mod postings;
 mod read;
+pub mod relationships;
 pub mod vector_map;
 
 pub use database::{DATABASE_VERSION, PAGE_BYTES, journal_bound};
