@@ -203,13 +203,14 @@ impl FileStore {
             "foreign current collection path"
         );
         let gate = Gate::shared(self)?;
+        database::reject_legacy_collection(self.directory())?;
         self.ensure_index_ready()?;
         let capacity = database::check_owner(self.directory(), scope)?;
         ensure!(
-            std::fs::metadata(self.directory().join("index.sqlite3"))?.len() <= capacity,
+            std::fs::metadata(self.directory().join("current.sqlite3"))?.len() <= capacity,
             "current database exceeds captured capacity"
         );
-        let connection = database::open_reader(&self.directory().join("index.sqlite3"))?;
+        let connection = database::open_reader(&self.directory().join("current.sqlite3"))?;
         let (phase, bytes): (String, Vec<u8>) = connection
             .query_row(
                 "SELECT phase,head FROM current_state WHERE id=1 AND length(head)<=65536",

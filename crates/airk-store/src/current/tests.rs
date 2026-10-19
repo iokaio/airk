@@ -133,6 +133,30 @@ impl Fixture {
 }
 
 #[test]
+fn current_collection_rejects_legacy_sqlite_coexistence() -> Result<()> {
+    let fixture = Fixture::new()?;
+    let old = fixture.store.directory().join("index.sqlite3");
+    fs::write(&old, b"legacy")?;
+    let error = fixture
+        .store
+        .current_read(&fixture.scope)
+        .err()
+        .context("old database accepted")?;
+    assert!(error.to_string().contains("incompatible with 1.2.0"));
+    let writer = fixture.store.lock()?;
+    let error = fixture
+        .store
+        .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)
+        .err()
+        .context("old database accepted by writer")?;
+    assert!(error.to_string().contains("incompatible with 1.2.0"));
+    drop(writer);
+    fs::remove_file(old)?;
+    fixture.store.current_read(&fixture.scope)?;
+    Ok(())
+}
+
+#[test]
 fn gates_pin_one_request_prepared_is_readable_and_old_tokens_expire() -> Result<()> {
     let fixture = Fixture::new()?;
     let read = fixture.store.current_read(&fixture.scope)?;
@@ -391,7 +415,7 @@ fn prepared_map_and_graph_replay_commit_one_authenticated_head() -> Result<()> {
         )?,
     ];
     changes.sort_by_key(map::MapChange::key);
-    let connection = database::open_reader(&fixture.store.directory().join("index.sqlite3"))?;
+    let connection = database::open_reader(&fixture.store.directory().join("current.sqlite3"))?;
     let mut plan = map::MapPlan::new(&connection, &fixture.scope, fixture.head.artifact_root)?;
     for change in &changes {
         plan.put(change.key(), change.value())?;
@@ -608,7 +632,7 @@ fn changed_path_retires_only_its_share_of_a_live_vector() -> Result<()> {
         Some(binding.canonical_bytes(&target)?),
     )?);
     changes.sort_by_key(map::MapChange::key);
-    let connection = database::open_reader(&fixture.store.directory().join("index.sqlite3"))?;
+    let connection = database::open_reader(&fixture.store.directory().join("current.sqlite3"))?;
     let mut plan = map::MapPlan::new(&connection, &fixture.scope, fixture.head.artifact_root)?;
     for change in &changes {
         plan.put(change.key(), change.value())?;
@@ -817,7 +841,7 @@ fn corrupt_staged_lexical_manifest_never_advances_the_current_head() -> Result<(
         None,
         &next_bytes,
     )?;
-    let tamper = rusqlite::Connection::open(fixture.store.directory().join("index.sqlite3"))?;
+    let tamper = rusqlite::Connection::open(fixture.store.directory().join("current.sqlite3"))?;
     tamper.execute(
         "UPDATE current_pending_lexical SET content=zeroblob(length(content))",
         [],
@@ -834,7 +858,7 @@ fn corrupt_staged_lexical_manifest_never_advances_the_current_head() -> Result<(
             .lexical_manifest()?,
         initial_bytes
     );
-    let repair = rusqlite::Connection::open(fixture.store.directory().join("index.sqlite3"))?;
+    let repair = rusqlite::Connection::open(fixture.store.directory().join("current.sqlite3"))?;
     repair.execute(
         "UPDATE current_pending_lexical SET content=?1",
         [&next_bytes],
@@ -846,7 +870,7 @@ fn corrupt_staged_lexical_manifest_never_advances_the_current_head() -> Result<(
             .store
             .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
     current.mark_applying(&pending)?;
-    let tamper = rusqlite::Connection::open(fixture.store.directory().join("index.sqlite3"))?;
+    let tamper = rusqlite::Connection::open(fixture.store.directory().join("current.sqlite3"))?;
     tamper.execute(
         "UPDATE current_pending_lexical SET content=zeroblob(length(content))",
         [],
@@ -1008,7 +1032,7 @@ fn changed_pending_map_bytes_block_applying_and_commit_without_advancing_head() 
         input.artifact.path.as_bytes(),
         Some(valid_bytes.clone()),
     )?;
-    let connection = database::open_reader(&fixture.store.directory().join("index.sqlite3"))?;
+    let connection = database::open_reader(&fixture.store.directory().join("current.sqlite3"))?;
     let mut plan = map::MapPlan::new(&connection, &fixture.scope, fixture.head.artifact_root)?;
     plan.put(change.key(), change.value())?;
     target.artifact_root = plan.root()?;
@@ -1026,7 +1050,7 @@ fn changed_pending_map_bytes_block_applying_and_commit_without_advancing_head() 
         None,
         &[change],
     )?;
-    let tamper = rusqlite::Connection::open(fixture.store.directory().join("index.sqlite3"))?;
+    let tamper = rusqlite::Connection::open(fixture.store.directory().join("current.sqlite3"))?;
     tamper.execute(
         "UPDATE current_pending_map SET value=zeroblob(length(value))",
         [],
@@ -1041,7 +1065,7 @@ fn changed_pending_map_bytes_block_applying_and_commit_without_advancing_head() 
         fixture.store.current_read(&fixture.scope)?.head(),
         &fixture.head
     );
-    let repair = rusqlite::Connection::open(fixture.store.directory().join("index.sqlite3"))?;
+    let repair = rusqlite::Connection::open(fixture.store.directory().join("current.sqlite3"))?;
     repair.execute("UPDATE current_pending_map SET value=?1", [&valid_bytes])?;
     drop(repair);
     let writer = fixture.store.lock()?;
@@ -1050,7 +1074,7 @@ fn changed_pending_map_bytes_block_applying_and_commit_without_advancing_head() 
             .store
             .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
     current.mark_applying(&pending)?;
-    let tamper = rusqlite::Connection::open(fixture.store.directory().join("index.sqlite3"))?;
+    let tamper = rusqlite::Connection::open(fixture.store.directory().join("current.sqlite3"))?;
     tamper.execute(
         "UPDATE current_pending_map SET value=zeroblob(length(value))",
         [],
@@ -1171,7 +1195,7 @@ fn catalog_only_corruption_cannot_forge_a_hit_or_an_absence() -> Result<()> {
         let key = map::key(&fixture.scope, map::MapDomain::Artifact, b"evidence.txt")?;
         {
             let connection = database::open_writer(
-                &fixture.store.directory().join("index.sqlite3"),
+                &fixture.store.directory().join("current.sqlite3"),
                 CAPACITY,
                 false,
             )?;
@@ -1207,9 +1231,9 @@ fn current_scope_and_owned_header_reject_foreign_state_before_recovery() -> Resu
             .current_write(&writer, &fixture.quota, &foreign, CAPACITY)
             .is_err()
     );
-    let before = fs::read(fixture.store.directory().join("index.sqlite3"))?;
+    let before = fs::read(fixture.store.directory().join("current.sqlite3"))?;
     fs::write(
-        fixture.store.directory().join("index.sqlite3-journal"),
+        fixture.store.directory().join("current.sqlite3-journal"),
         b"not a journal",
     )?;
     assert!(
@@ -1220,7 +1244,7 @@ fn current_scope_and_owned_header_reject_foreign_state_before_recovery() -> Resu
     );
     assert_eq!(
         before,
-        fs::read(fixture.store.directory().join("index.sqlite3"))?
+        fs::read(fixture.store.directory().join("current.sqlite3"))?
     );
     Ok(())
 }
@@ -1233,7 +1257,7 @@ fn journal_bound_sector_adapter_and_statement_contract_are_enforced() -> Result<
     assert!(journal_bound(2, 513).is_err());
     let fixture = Fixture::new()?;
     let mut connection = database::open_writer(
-        &fixture.store.directory().join("index.sqlite3"),
+        &fixture.store.directory().join("current.sqlite3"),
         CAPACITY,
         false,
     )?;
@@ -1405,7 +1429,7 @@ fn current_child_process() -> Result<()> {
     current.mark_applying(&pending)?;
     if mode == "hot-apply" {
         let mut connection =
-            database::open_writer(&store.directory().join("index.sqlite3"), CAPACITY, false)?;
+            database::open_writer(&store.directory().join("current.sqlite3"), CAPACITY, false)?;
         let transaction = connection.transaction()?;
         graph::apply(&transaction, pending.id, &pending.graph)?;
         transaction.execute(
@@ -1505,9 +1529,9 @@ fn oversized_recovery_journal_is_rejected_before_database_open() -> Result<()> {
         },
         1024,
     )?;
-    let before = fs::read(fixture.store.directory().join("index.sqlite3"))?;
+    let before = fs::read(fixture.store.directory().join("current.sqlite3"))?;
     fs::write(
-        fixture.store.directory().join("index.sqlite3-journal"),
+        fixture.store.directory().join("current.sqlite3-journal"),
         vec![0u8; 1025],
     )?;
     let error = fixture
@@ -1522,7 +1546,7 @@ fn oversized_recovery_journal_is_rejected_before_database_open() -> Result<()> {
     );
     assert_eq!(
         before,
-        fs::read(fixture.store.directory().join("index.sqlite3"))?
+        fs::read(fixture.store.directory().join("current.sqlite3"))?
     );
     Ok(())
 }
@@ -1533,7 +1557,7 @@ fn hot_final_apply_rolls_back_then_replays_exact_afterimages() -> Result<()> {
     let pending = fixture.prepare(&[])?;
     let child = child(&fixture, "hot-apply")?;
     drop(child);
-    let journal = fs::read(fixture.store.directory().join("index.sqlite3-journal"))?;
+    let journal = fs::read(fixture.store.directory().join("current.sqlite3-journal"))?;
     assert!(journal.len() > 28);
     assert_eq!(
         &journal[..8],
