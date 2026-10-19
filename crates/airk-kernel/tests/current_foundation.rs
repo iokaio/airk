@@ -7,7 +7,7 @@ use airk_core::{
 };
 use airk_retrieval::{
     bounded::Charge,
-    current_lexical::{CurrentLexical, LexicalChange, LexicalManifest, VerifiedCurrentLexical},
+    current_lexical::{CurrentLexical, LexicalChange, LexicalManifest},
     vector::mutable::{self, MutableDiskIndex, SearchLimits},
 };
 use airk_store::{
@@ -259,7 +259,7 @@ fn current_store_commits_verified_lexical_fork_with_graph_in_one_head() -> Resul
 
     let (artifact, compact) =
         retained_lexical_artifact(&fixture, "docs/a.md", "new searchable evidence")?;
-    let (_lexical, replacement, _) = CurrentLexical::fork_changed(
+    let (private_lexical, replacement, _) = CurrentLexical::fork_changed(
         &verified,
         &target_path,
         Arc::new(|_| Ok(())),
@@ -269,6 +269,7 @@ fn current_store_commits_verified_lexical_fork_with_graph_in_one_head() -> Resul
         }],
     )?;
     let replacement_bytes = replacement.manifest().canonical_bytes()?;
+    drop(private_lexical);
     let (_reservation, head, overlay) = fixture.candidate()?;
     assert_eq!(head, old_head);
     let mut graph = MutableDiskIndex::create(overlay.clone(), DIMENSIONS, pipeline())?;
@@ -292,6 +293,7 @@ fn current_store_commits_verified_lexical_fork_with_graph_in_one_head() -> Resul
         None,
         &replacement_bytes,
     )?;
+    assert!(current.reclaim_lexical_candidates().is_err());
     drop(current);
     drop(lock);
     assert_eq!(
@@ -325,12 +327,8 @@ fn current_store_commits_verified_lexical_fork_with_graph_in_one_head() -> Resul
     let committed = LexicalManifest::decode(&committed_bytes, read.head().lexical_commit)?;
     committed.verify(&target_path, read.head().lexical_commit)?;
     assert_eq!(committed_bytes, replacement_bytes);
-    let lexical = VerifiedCurrentLexical::open(
-        &target_path,
-        Arc::new(|_| Ok(())),
-        &committed_bytes,
-        read.head().lexical_commit,
-    )?;
+    let lexical =
+        airk_kernel::current::open_selected_lexical(&fixture.store, &read, Arc::new(|_| Ok(())))?;
     let candidates = lexical.search(&SearchQuery {
         text: "searchable evidence".into(),
         path_prefix: Some("docs/".into()),
@@ -409,6 +407,67 @@ fn current_store_commits_verified_lexical_fork_with_graph_in_one_head() -> Resul
     assert_eq!(short.hits[0].text, "new");
     assert!(short.truncated && short.hits[0].truncated);
     old_manifest.verify(&base_path, old_head.lexical_commit)?;
+    drop(lexical);
+    drop(read);
+
+    let missing_path = fixture.store.directory().join("missing-selected");
+    std::fs::rename(&target_path, &missing_path)?;
+    let lock = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&lock, &fixture.quota, &fixture.scope, CAPACITY)?;
+    assert!(current.reclaim_lexical_candidates().is_err());
+    assert!(base_path.exists());
+    drop(current);
+    drop(lock);
+    std::fs::rename(&missing_path, &target_path)?;
+
+    let orphan = fixture.store.directory().join("lexical-99");
+    drop(CurrentLexical::create(&orphan, Arc::new(|_| Ok(())))?);
+    let nested = orphan.join("unexpected-nested");
+    std::fs::create_dir(&nested)?;
+    let lock = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&lock, &fixture.quota, &fixture.scope, CAPACITY)?;
+    assert!(current.reclaim_lexical_candidates().is_err());
+    assert!(base_path.exists() && orphan.exists());
+    drop(current);
+    drop(lock);
+    std::fs::remove_dir(nested)?;
+    let interrupted = fixture
+        .store
+        .directory()
+        .join(".current-lexical-interrupted");
+    std::fs::create_dir(&interrupted)?;
+    std::fs::write(interrupted.join("partial"), b"staged")?;
+    let lock = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&lock, &fixture.quota, &fixture.scope, CAPACITY)?;
+    assert_eq!(current.reclaim_lexical_candidates()?, 3);
+    drop(current);
+    drop(lock);
+    assert!(!base_path.exists() && !orphan.exists() && !interrupted.exists());
+    assert!(target_path.exists());
+    let read = fixture.store.current_read(&fixture.scope)?;
+    let lexical =
+        airk_kernel::current::open_selected_lexical(&fixture.store, &read, Arc::new(|_| Ok(())))?;
+    assert_eq!(
+        lexical
+            .search(&SearchQuery {
+                text: "searchable evidence".into(),
+                path_prefix: None,
+                limit: 2,
+                max_bytes: 1024,
+            })?
+            .values
+            .len(),
+        1
+    );
     Ok(())
 }
 

@@ -23,7 +23,7 @@ use sha2::{Digest, Sha256};
 use std::{
     fs,
     io::{Read, Write},
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 const MAX_DESCRIPTOR_BYTES: usize = 196_608;
@@ -31,6 +31,52 @@ const MAX_CAPTURED_OBJECT_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 const MAX_PENDING_MAP_CHANGES: u64 = 65_536;
 const MAX_PENDING_MAP_BYTES: u64 = 64 * 1024 * 1024;
 const BOOTSTRAP_FILE: &str = "current-bootstrap.json";
+const MAX_LEXICAL_GC_ROOT_ENTRIES: usize = 16_384;
+const MAX_LEXICAL_GC_DIRECTORIES: usize = 4_096;
+const MAX_LEXICAL_GC_FILES: usize = 32_768;
+
+fn lexical_gc_candidate(name: &str) -> Result<bool> {
+    if let Some(sequence) = name.strip_prefix("lexical-") {
+        let number: u64 = sequence
+            .parse()
+            .context("invalid lexical directory sequence")?;
+        ensure!(
+            name == format!("lexical-{number}"),
+            "noncanonical lexical directory name"
+        );
+        Ok(true)
+    } else {
+        Ok(name.starts_with(".current-lexical-"))
+    }
+}
+
+fn validate_flat_lexical_directory(path: &Path, parent: &Path) -> Result<()> {
+    let metadata = fs::symlink_metadata(path)?;
+    ensure!(
+        metadata.is_dir() && !metadata.file_type().is_symlink(),
+        "lexical candidate is not an owned directory"
+    );
+    ensure!(
+        path.canonicalize()?.parent() == Some(parent),
+        "lexical candidate leaves the owned collection directory"
+    );
+    let mut count = 0usize;
+    for entry in fs::read_dir(path)? {
+        count = count
+            .checked_add(1)
+            .context("lexical file count overflow")?;
+        ensure!(
+            count <= MAX_LEXICAL_GC_FILES,
+            "lexical file count limit exceeded"
+        );
+        let metadata = fs::symlink_metadata(entry?.path())?;
+        ensure!(
+            metadata.is_file() && !metadata.file_type().is_symlink(),
+            "lexical directory contains an unowned or nested entry"
+        );
+    }
+    Ok(())
+}
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -765,6 +811,60 @@ impl CurrentWriter<'_> {
     }
     pub fn head(&self) -> Result<CurrentHead> {
         Ok(state(self.connection()?, &self.scope)?.1)
+    }
+
+    /// Remove only unselected, flat lexical fork directories while the
+    /// exclusive current gate has drained readers. This is maintenance after
+    /// a Ready commit; failure does not undo an already committed head.
+    pub fn reclaim_lexical_candidates(&mut self) -> Result<usize> {
+        ensure!(
+            self.phase()? == TransactionPhase::Ready && self.pending()?.is_none(),
+            "lexical reclamation requires a ready current head"
+        );
+        let head = self.head()?;
+        let bytes: Option<Vec<u8>> = self.connection()?.query_row(
+            "SELECT CASE WHEN typeof(content)='blob' AND length(content) BETWEEN 1 AND 1048576 THEN content END FROM current_lexical_manifest WHERE id=1",
+            [],
+            |row| row.get(0),
+        ).context("committed lexical manifest missing")?;
+        verify_lexical_manifest(
+            &bytes.context("invalid committed lexical manifest row")?,
+            head.lexical_commit,
+        )?;
+        let directory = self.store.directory();
+        let parent = directory.canonicalize()?;
+        let selected = head.lexical_directory_name()?;
+        validate_flat_lexical_directory(&directory.join(&selected), &parent)?;
+        let mut root_entries = 0usize;
+        let mut obsolete: Vec<PathBuf> = Vec::new();
+        for entry in fs::read_dir(directory)? {
+            root_entries = root_entries
+                .checked_add(1)
+                .context("collection entry count overflow")?;
+            ensure!(
+                root_entries <= MAX_LEXICAL_GC_ROOT_ENTRIES,
+                "collection entry count exceeds lexical maintenance bound"
+            );
+            let entry = entry?;
+            let name = entry.file_name();
+            let name = name.to_str().context("non-UTF-8 collection entry")?;
+            if name == selected || !lexical_gc_candidate(name)? {
+                continue;
+            }
+            ensure!(
+                obsolete.len() < MAX_LEXICAL_GC_DIRECTORIES,
+                "too many obsolete lexical directories"
+            );
+            validate_flat_lexical_directory(&entry.path(), &parent)?;
+            obsolete.push(entry.path());
+        }
+        for path in &obsolete {
+            fs::remove_dir_all(path)?;
+        }
+        if !obsolete.is_empty() {
+            crate::maintenance::sync_parent(directory)?;
+        }
+        Ok(obsolete.len())
     }
     pub fn pending(&self) -> Result<Option<PendingTransaction>> {
         let pending = pending(self.connection()?, &self.scope)?;
