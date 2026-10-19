@@ -198,7 +198,7 @@ fn quota_failure_preserves_published_evidence_and_orphans_are_reclaimed() -> Res
 }
 
 #[test]
-fn legacy_snapshot_migrates_to_verified_objects_without_losing_citations() -> Result<()> {
+fn obsolete_unbound_json_snapshot_is_rejected_without_source_changes() -> Result<()> {
     let root = tempfile::tempdir()?;
     let data = tempfile::tempdir()?;
     fs::write(root.path().join("a.rs"), "fn migrated_fact() {}\n")?;
@@ -211,22 +211,14 @@ fn legacy_snapshot_migrates_to_verified_objects_without_losing_citations() -> Re
         serde_json::to_vec(&legacy)?,
     )?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
-    let before = kernel.read_file("a.rs", 1, 1, 4096)?;
-    kernel.index()?;
-    let after = kernel.read_file("a.rs", 1, 1, 4096)?;
+    let before = fs::read(root.path().join("a.rs"))?;
+    assert!(kernel.read_file("a.rs", 1, 1, 4096).is_err());
+    assert!(kernel.index().is_err());
+    assert!(kernel.reindex().is_err());
+    assert_eq!(fs::read(root.path().join("a.rs"))?, before);
     assert_eq!(
-        before.hits[0].citation.content_hash,
-        after.hits[0].citation.content_hash
-    );
-    assert_eq!(before.hits[0].text, after.hits[0].text);
-    assert!(after.generation > before.generation);
-    assert_eq!(
-        FileStore::new(directory)
-            .catalog()?
-            .unwrap()
-            .snapshot
-            .storage_format,
-        2
+        fs::read(directory.join("snapshot.json"))?,
+        serde_json::to_vec(&legacy)?
     );
     Ok(())
 }

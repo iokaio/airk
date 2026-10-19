@@ -20,6 +20,7 @@ pub(crate) fn prepare_with_prose_text(
     use airk_core::continuity::*;
     use airk_core::extraction::IndexDetail;
     let detail = IndexDetail::from_profile(profile)?;
+    payload.semantic_projection = crate::semantic_projection::capture(payload)?;
     crate::detail::select(payload, detail);
     if detail == IndexDetail::Essential {
         for family in [ContinuityFamily::Code, ContinuityFamily::Documents] {

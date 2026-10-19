@@ -9,7 +9,7 @@ use crate::{
 use airk_core::identity::{PublicationReceipt, RevisionToken, Sha256Digest, revision_digest};
 use airk_core::model_objects::{MAX_MODEL_OBJECT_SET_BYTES, ModelObjectSet};
 use airk_core::publication::InventoryV2;
-use airk_core::{ArtifactSource, Citation, Hit, Snapshot};
+use airk_core::{Citation, Hit, RetrievalSource, Snapshot};
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -25,25 +25,19 @@ use tantivy::{
     schema::{FAST, Field, INDEXED, STORED, STRING, Schema},
 };
 
+#[cfg(test)]
+#[path = "../tests/support/source.rs"]
+mod fixture_source;
 mod search;
+mod vector_map;
 
-const ENGINE: &str = "tantivy-0.26.2/diskann-0.59.0/airk-file-1/generation-3";
-const ENGINE_V2: &str = "tantivy-0.26.2/diskann-0.59.0/airk-file-1/generation-4/inventory-2";
-const ENGINE_V3: &str =
-    "tantivy-0.26.2/diskann-0.59.0/airk-file-1/generation-5/inventory-2/model-objects-1";
-const ENGINE_V4: &str = "tantivy-0.26.2/diskann-0.59.0/airk-file-1/generation-5/inventory-2/model-objects-1/source-context-1";
+const ENGINE: &str = "tantivy-0.26.2/diskann-0.59.0/airk-file-1/generation-6/inventory-3/model-objects-1/source-context-1/vector-units-1/vector-map-1";
 const MAX_MANIFEST_V2_BYTES: usize = 128 * 1024;
 const MAX_COMPONENTS_V2: usize = 1024;
 const MAX_INVENTORY_V2_BYTES: usize = airk_core::publication::MAX_INVENTORY_BYTES;
 
-pub fn retrieval_specification_v2() -> &'static [u8] {
-    ENGINE_V2.as_bytes()
-}
-pub fn retrieval_specification_v3() -> &'static [u8] {
-    ENGINE_V3.as_bytes()
-}
-pub fn retrieval_specification_v4() -> &'static [u8] {
-    ENGINE_V4.as_bytes()
+pub fn retrieval_specification() -> &'static [u8] {
+    ENGINE.as_bytes()
 }
 
 /// Kernel-finalized identity plus the bound artifact projection needed to build
@@ -70,68 +64,19 @@ pub struct ManifestV2 {
     pub collection: String,
     pub chunks: usize,
     pub vectors: usize,
+    pub vector_occurrences: usize,
     pub model_sha256: Option<String>,
     pub embedding: String,
     pub inventory_digest: Sha256Digest,
     pub components: BTreeMap<String, ComponentDigest>,
 }
 
-fn read_manifest(directory: &Path) -> Result<ReadManifest> {
-    let file = File::open(directory.join("manifest.json"))?;
-    ensure!(file.metadata()?.len() <= 16_384, "oversized index manifest");
-    let mut bytes = Vec::new();
-    file.take(16_385).read_to_end(&mut bytes)?;
-    ensure!(bytes.len() <= 16_384, "oversized index manifest");
-    Ok(serde_json::from_slice(&bytes)?)
-}
-
-#[derive(Serialize)]
-pub struct Manifest {
-    pub schema: u32,
-    pub engine: String,
-    pub revision: String,
-    pub generation: u64,
-    pub collection: String,
-    pub chunks: usize,
-    pub vectors: usize,
-    pub model_sha256: Option<String>,
-    pub embedding: &'static str,
-}
-
-// An explicit owned representation keeps manifests readable without static lifetimes.
-#[derive(Deserialize)]
-struct ReadManifest {
-    schema: u32,
-    engine: String,
-    revision: String,
-    generation: u64,
-    collection: String,
+struct BuiltComponents {
     chunks: usize,
     vectors: usize,
+    vector_occurrences: usize,
     model_sha256: Option<String>,
-}
-
-/// Includes parser/chunker output and source binding; imported analysis creates a new
-/// component identity too. A reused numerical generation cannot pair stale citations.
-pub fn revision_id(snapshot: &Snapshot) -> Result<String> {
-    struct HashWriter(Sha256);
-    impl Write for HashWriter {
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            self.0.update(bytes);
-            Ok(bytes.len())
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-    let mut hash = HashWriter(Sha256::new());
-    hash.write_all(ENGINE.as_bytes())?;
-    serde_json::to_writer(&mut hash, snapshot)?;
-    Ok(format!("{:x}", hash.0.finalize()))
-}
-
-pub fn component_directory(base: &Path, snapshot: &Snapshot) -> Result<PathBuf> {
-    Ok(base.join("generations").join(revision_id(snapshot)?))
+    embedding: &'static str,
 }
 
 fn schema() -> (Schema, Fields) {
@@ -139,8 +84,7 @@ fn schema() -> (Schema, Fields) {
     let fields = Fields {
         terms: builder.add_text_field("terms", STRING),
         path: builder.add_text_field("path", STRING),
-        ordinal: builder.add_u64_field("ordinal", FAST),
-        vector: builder.add_u64_field("vector", INDEXED),
+        ordinal: builder.add_u64_field("ordinal", FAST | INDEXED),
         payload: builder.add_text_field("payload", STORED),
     };
     (builder.build(), fields)
@@ -168,94 +112,7 @@ struct Fields {
     terms: Field,
     path: Field,
     ordinal: Field,
-    vector: Field,
     payload: Field,
-}
-
-/// Build and reopen every component before publishing an immutable directory. The
-/// caller publishes SQLite's revision only after this succeeds; orphan builds are safe.
-pub fn prepare(base: &Path, snapshot: &Snapshot, model_directory: Option<&Path>) -> Result<()> {
-    prepare_streaming(
-        base,
-        snapshot,
-        model_directory,
-        snapshot,
-        None,
-        None,
-        |_| Ok(()),
-    )
-}
-
-pub fn prepare_streaming(
-    base: &Path,
-    snapshot: &Snapshot,
-    model_directory: Option<&Path>,
-    source: &dyn ArtifactSource,
-    charge: Option<Charge>,
-    staging_parent: Option<&Path>,
-    prepare_catalog: impl FnOnce(&Path) -> Result<()>,
-) -> Result<()> {
-    let target = component_directory(base, snapshot)?;
-    if target.exists() {
-        PersistentIndex::open(base, snapshot)?;
-        return Ok(());
-    }
-    let generations = base.join("generations");
-    fs::create_dir_all(&generations)?;
-    let charge = charge.unwrap_or_else(|| std::sync::Arc::new(|_| Ok(())));
-    let staging = tempfile::Builder::new()
-        .prefix("building-")
-        .tempdir_in(staging_parent.unwrap_or(&generations))?;
-    let lexical = staging.path().join("lexical");
-    let manifest = build_streaming_components(
-        staging.path(),
-        snapshot,
-        model_directory,
-        source,
-        charge.clone(),
-        revision_id(snapshot)?,
-        None,
-        None,
-        None,
-    )?;
-    let mut inventory = BudgetWriter::new(
-        File::create(staging.path().join("inventory.json"))?,
-        charge.clone(),
-    );
-    serde_json::to_writer(&mut inventory, snapshot)?;
-    inventory.get_ref().sync_all()?;
-    drop(inventory);
-    let manifest_bytes = serde_json::to_vec(&manifest)?;
-    ensure!(manifest_bytes.len() <= 16_384, "oversized index manifest");
-    let mut file = BudgetWriter::new(
-        File::create(staging.path().join("manifest.json"))?,
-        charge.clone(),
-    );
-    file.write_all(&manifest_bytes)?;
-    file.get_ref().sync_all()?;
-    drop(file);
-    // The catalog can consume the remaining generation quota: every other
-    // nonempty component has already been written and charged.
-    prepare_catalog(staging.path())?;
-    // Windows cannot rename directories containing open OS lease handles.
-    let lease_path = reader_lease_path(base, &manifest.revision)?;
-    fs::create_dir_all(lease_path.parent().context("lease parent missing")?)?;
-    let lease = fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(lease_path)?;
-    lease.sync_all()?;
-    drop(lease);
-    // Reopen Tantivy before publication to detect incomplete commits.
-    let probe: IndexReader = Index::open_in_dir(&lexical)?
-        .reader_builder()
-        .reload_policy(ReloadPolicy::Manual)
-        .try_into()?;
-    drop(probe);
-    let directory = staging.keep();
-    fs::rename(&directory, &target).context("publish immutable index components")?;
-    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -263,13 +120,12 @@ fn build_streaming_components(
     directory: &Path,
     snapshot: &Snapshot,
     model_directory: Option<&Path>,
-    source: &dyn ArtifactSource,
+    source: &dyn RetrievalSource,
     charge: Charge,
-    revision: String,
     mut cache: Option<&mut EmbeddingCacheContext<'_>>,
     expected_pipeline: Option<Sha256Digest>,
     model_objects: Option<(&Path, &ModelObjectSet)>,
-) -> Result<Manifest> {
+) -> Result<BuiltComponents> {
     let lexical = directory.join("lexical");
     fs::create_dir(&lexical)?;
     let (schema, fields) = schema();
@@ -282,6 +138,19 @@ fn build_streaming_components(
         tantivy::IndexSettings::default(),
     )?;
     let mut writer = index.writer_with_num_threads::<TantivyDocument>(1, 20_000_000)?;
+    let map_directory = directory.join("vector-map");
+    fs::create_dir(&map_directory)?;
+    let (map_schema, map_fields) = vector_map::schema();
+    let map_index = Index::create(
+        BoundedDirectory::new(
+            tantivy::directory::MmapDirectory::open(&map_directory)?,
+            charge.clone(),
+        ),
+        map_schema,
+        tantivy::IndexSettings::default(),
+    )?;
+    let mut map_writer = map_index.writer_with_num_threads::<TantivyDocument>(1, 20_000_000)?;
+
     ensure!(
         model_directory.is_none() || model_objects.is_none(),
         "conflicting model inputs"
@@ -337,82 +206,270 @@ fn build_streaming_components(
         })
         .transpose()?;
     let mut ordinal = 0u64;
-    let mut vectors = 0;
+    let mut vectors = 0usize;
+    let mut vector_occurrences = 0usize;
     for path in snapshot.artifacts.keys() {
-        let artifact = source.load_artifact(path)?;
-        for chunks in artifact
-            .chunks
-            .chunks(crate::embedding_batch::MAX_BATCH_CHUNKS)
-        {
-            let embeddings = if let Some(model) = &model {
-                let texts: Vec<_> = chunks.iter().map(|chunk| chunk.text.as_str()).collect();
-                let descriptor = descriptor
+        let retained = source.load_retrieval_artifact(path)?;
+        let artifact = &retained.artifact;
+        retained.payload.validate()?;
+        ensure!(
+            artifact.path == *path && artifact.chunks.len() == retained.payload.chunks.len(),
+            "retrieval carrier differs from retained artifact"
+        );
+        let mut mapping_budget = airk_core::location::HostBudget::new(500_000, 10_000, 16 << 20)?;
+        let mapper = (!retained.payload.regions.is_empty())
+            .then(|| {
+                airk_core::mapped_binding::MappedBinding::new(
+                    &retained.payload,
+                    &retained.profile,
+                    &mut mapping_budget,
+                )
+            })
+            .transpose()?;
+        let first_ordinal = ordinal;
+        for (chunk, local) in artifact.chunks.iter().zip(&retained.payload.chunks) {
+            let text = match local.region {
+                None => retained.payload.text.as_str(),
+                Some(region) => mapper
                     .as_ref()
-                    .context("embedding descriptor missing")?;
-                if let Some(context) = cache.as_mut() {
-                    crate::embedding_batch::embed(
-                        model,
-                        &texts,
-                        descriptor,
-                        context.cache,
-                        context.bypass,
-                        context.stats,
-                        context.max_workers,
-                        context.working_memory_bytes,
-                    )?
-                } else {
-                    crate::embedding_batch::embed(
-                        model,
-                        &texts,
-                        descriptor,
-                        None,
-                        false,
-                        &mut local_stats,
-                        1,
-                        128 << 20,
-                    )?
-                }
-            } else {
-                vec![None; chunks.len()]
+                    .context("region mapper missing")?
+                    .text(Some(region))?,
             };
-            for (chunk, vector) in chunks.iter().zip(embeddings) {
-                let mut document = TantivyDocument::default();
-                for term in terms(&format!("{path} {}", chunk.text)) {
-                    document.add_text(fields.terms, term);
-                }
-                document.add_text(fields.path, path);
-                document.add_u64(fields.ordinal, ordinal);
-                if let Some(graph) = &mut graph
-                    && let Some(vector) = vector
-                {
-                    let started = std::time::Instant::now();
-                    document.add_u64(fields.vector, u64::from(graph.insert(&vector)?));
-                    if let Some(context) = cache.as_mut() {
-                        context.stats.graph_insert_us +=
-                            crate::embedding_batch::elapsed_us(started);
-                    }
-                    vectors += 1;
-                }
-                let hit = Hit {
-                    citation: Citation {
-                        path: path.clone(),
-                        content_hash: artifact.content_hash.clone(),
-                        start_line: chunk.start_line,
-                        end_line: chunk.end_line,
-                        location: chunk.location.clone(),
-                    },
-                    text: chunk.text.clone(),
-                    truncated: false,
-                };
-                document.add_text(fields.payload, serde_json::to_string(&hit)?);
-                writer.add_document(document)?;
-                ordinal += 1;
+            ensure!(
+                text.get(local.span.start..local.span.end) == Some(chunk.text.as_str()),
+                "bound chunk differs from neutral retrieval payload"
+            );
+            let mut document = TantivyDocument::default();
+            for term in terms(&format!("{path} {}", chunk.text)) {
+                document.add_text(fields.terms, term);
             }
+            document.add_text(fields.path, path);
+            document.add_u64(fields.ordinal, ordinal);
+            let hit = Hit {
+                citation: Citation {
+                    path: path.clone(),
+                    content_hash: artifact.content_hash.clone(),
+                    start_line: chunk.start_line,
+                    end_line: chunk.end_line,
+                    location: chunk.location.clone(),
+                },
+                text: chunk.text.clone(),
+                truncated: false,
+            };
+            document.add_text(fields.payload, serde_json::to_string(&hit)?);
+            writer.add_document(document)?;
+            ordinal = ordinal.checked_add(1).context("lexical ordinal overflow")?;
+        }
+        if let Some(model) = &model {
+            let descriptor = descriptor
+                .as_ref()
+                .context("embedding descriptor missing")?;
+            let mut units = Vec::with_capacity(crate::embedding_batch::MAX_BATCH_CHUNKS);
+            let mut flush =
+                |units: &mut Vec<crate::vector_units::PreparedVectorUnit>| -> Result<()> {
+                    if units.is_empty() {
+                        return Ok(());
+                    }
+                    let texts: Vec<_> = units.iter().map(|unit| unit.input.as_str()).collect();
+                    let embeddings = if let Some(context) = cache.as_mut() {
+                        crate::embedding_batch::embed(
+                            model,
+                            &texts,
+                            descriptor,
+                            context.cache,
+                            context.bypass,
+                            context.stats,
+                            context.max_workers,
+                            context.working_memory_bytes,
+                        )?
+                    } else {
+                        crate::embedding_batch::embed(
+                            model,
+                            &texts,
+                            descriptor,
+                            None,
+                            false,
+                            &mut local_stats,
+                            1,
+                            128 << 20,
+                        )?
+                    };
+                    for (unit, vector) in units.drain(..).zip(embeddings) {
+                        let Some(vector) = vector else {
+                            continue;
+                        };
+                        ensure!(
+                            !unit.members.is_empty()
+                                && unit.members.len() <= vector_map::MAX_MEMBERS,
+                            "invalid vector unit member count"
+                        );
+                        let mut members = Vec::with_capacity(unit.members.len());
+                        for member in unit.members {
+                            let index = member.chunk_index as usize;
+                            let local = retained
+                                .payload
+                                .chunks
+                                .get(index)
+                                .context("vector member chunk missing")?;
+                            let chunk = &artifact.chunks[index];
+                            ensure!(
+                                local.span.start <= member.span.start
+                                    && member.span.end <= local.span.end
+                                    && member.span.start < member.span.end,
+                                "vector member outside lexical chunk"
+                            );
+                            let span_in_chunk = airk_core::location::ByteSpan {
+                                start: member.span.start - local.span.start,
+                                end: member.span.end - local.span.start,
+                            };
+                            span_in_chunk.validate(&chunk.text)?;
+                            let (location, start_line, end_line) =
+                                if let Some(region) = local.region {
+                                    mapper
+                                        .as_ref()
+                                        .context("vector region mapper missing")?
+                                        .mapped_location(
+                                            region,
+                                            member.span.clone(),
+                                            &mut mapping_budget,
+                                        )?
+                                } else {
+                                    let start_line = chunk.start_line
+                                        + chunk.text[..span_in_chunk.start]
+                                            .bytes()
+                                            .filter(|byte| *byte == b'\n')
+                                            .count();
+                                    let end_line = start_line
+                                        + chunk.text.as_bytes()
+                                            [span_in_chunk.start..span_in_chunk.end - 1]
+                                            .iter()
+                                            .filter(|byte| **byte == b'\n')
+                                            .count();
+                                    let location = match &chunk.location {
+                                        airk_core::DocumentLocation::Lines { .. } => {
+                                            airk_core::DocumentLocation::Lines {
+                                                start: start_line,
+                                                end: end_line,
+                                            }
+                                        }
+                                        location => location.clone(),
+                                    };
+                                    (location, start_line, end_line)
+                                };
+                            let mut member = vector_map::Member {
+                                evidence_id: Sha256Digest::from_bytes([0; 32]),
+                                lexical_ordinal: first_ordinal + index as u64,
+                                region: local.region,
+                                span: member.span.clone(),
+                                blank: chunk.text[span_in_chunk.start..span_in_chunk.end]
+                                    .trim()
+                                    .is_empty(),
+                                span_in_chunk,
+                                start_line,
+                                end_line,
+                                location,
+                            };
+                            member.set_identity(path, artifact.content_hash.parse()?)?;
+                            members.push(member);
+                        }
+                        let first = members.first().context("vector body is empty")?;
+                        let last = members.last().context("vector body is empty")?;
+                        let span = airk_core::extraction::LocalSpan {
+                            start: first.span.start,
+                            end: last.span.end,
+                        };
+                        let (location, start_line, end_line, projection) = if let Some(region) =
+                            first.region
+                        {
+                            let mapper = mapper.as_ref().context("vector body mapper missing")?;
+                            let projection =
+                                mapper.capture_body(region, span.clone(), &mut mapping_budget)?;
+                            let (location, start, end) = mapper.mapped_location(
+                                region,
+                                span.clone(),
+                                &mut mapping_budget,
+                            )?;
+                            (location, start, end, Some(projection))
+                        } else {
+                            let location = match &first.location {
+                                airk_core::DocumentLocation::Lines { .. } => {
+                                    airk_core::DocumentLocation::Lines {
+                                        start: first.start_line,
+                                        end: last.end_line,
+                                    }
+                                }
+                                location => {
+                                    ensure!(
+                                        members.iter().all(|member| &member.location == location),
+                                        "vector body crosses native document location"
+                                    );
+                                    location.clone()
+                                }
+                            };
+                            (location, first.start_line, last.end_line, None)
+                        };
+                        let body = vector_map::Body {
+                            region: first.region,
+                            span,
+                            start_line,
+                            end_line,
+                            location,
+                            projection,
+                        };
+                        let occurrence = vector_map::Occurrence::new(
+                            path.clone(),
+                            retained.payload_digest,
+                            artifact.content_hash.parse()?,
+                            airk_core::embedding::embedding_key(descriptor, unit.input.as_bytes())?,
+                            body,
+                            members,
+                        )?;
+                        let started = std::time::Instant::now();
+                        let graph_id = graph
+                            .as_mut()
+                            .context("vector graph missing")?
+                            .insert(&vector)?;
+                        if let Some(context) = cache.as_mut() {
+                            context.stats.graph_insert_us +=
+                                crate::embedding_batch::elapsed_us(started);
+                        }
+                        map_writer.add_document(vector_map::document(
+                            &map_fields,
+                            graph_id,
+                            vector_occurrences as u64,
+                            &occurrence,
+                        )?)?;
+                        vectors += 1;
+                        vector_occurrences += 1;
+                    }
+                    Ok(())
+                };
+            let planning =
+                crate::vector_units::visit_vector_units(&retained.payload, model, |unit| {
+                    units.push(unit);
+                    if units.len() == crate::embedding_batch::MAX_BATCH_CHUNKS {
+                        flush(&mut units)?;
+                    }
+                    Ok(())
+                })?;
+            flush(&mut units)?;
+            let stats = match cache.as_mut() {
+                Some(context) => &mut *context.stats,
+                None => &mut local_stats,
+            };
+            stats.vector_units = stats.vector_units.saturating_add(planning.units);
+            stats.vector_body_bytes = stats.vector_body_bytes.saturating_add(planning.body_bytes);
+            stats.vector_planning_us = stats
+                .vector_planning_us
+                .saturating_add(planning.planning_us);
         }
     }
     writer.commit()?;
     writer.wait_merging_threads()?;
     drop(index);
+    map_writer.commit()?;
+    map_writer.wait_merging_threads()?;
+    drop(map_index);
     if let Some(mut graph) = graph {
         graph.finish()?;
         drop(graph);
@@ -451,14 +508,10 @@ fn build_streaming_components(
         output.write_all(&set.canonical_bytes()?)?;
         output.get_ref().sync_all()?;
     }
-    Ok(Manifest {
-        schema: 1,
-        engine: ENGINE.into(),
-        revision,
-        generation: snapshot.generation,
-        collection: snapshot.collection.clone(),
+    Ok(BuiltComponents {
         chunks: ordinal as usize,
         vectors,
+        vector_occurrences,
         model_sha256: model.as_ref().map(|m| m.identity().to_owned()),
         embedding: model.as_ref().map_or("none", EmbeddingModel::specification),
     })
@@ -523,7 +576,7 @@ fn component_digests_expected(
             );
             if metadata.is_dir() {
                 ensure!(
-                    name == "lexical" || name == "model",
+                    name == "lexical" || name == "vector-map",
                     "foreign generation directory"
                 );
                 pending.push(path);
@@ -543,7 +596,7 @@ fn component_digests_expected(
                         | "embedding-cache.json"
                         | "model-objects.json"
                 ) || name.starts_with("lexical/")
-                    || name.starts_with("model/"),
+                    || name.starts_with("vector-map/"),
                 "foreign generation component"
             );
             ensure!(
@@ -605,7 +658,7 @@ fn sync_components(directory: &Path, components: &BTreeMap<String, ComponentDige
     }
     // Tantivy's directory implementation supplies its platform-specific sync
     // behavior. Windows directory durability is not a power-loss guarantee.
-    for name in ["lexical", "model", ""] {
+    for name in ["lexical", "vector-map", ""] {
         let path = directory.join(name);
         if path.is_dir() {
             tantivy::directory::Directory::sync_directory(
@@ -626,10 +679,15 @@ fn read_manifest_v2(
         raw_digest(&bytes) == receipt.manifest_digest,
         "v2 manifest receipt mismatch"
     );
+    let header: serde_json::Value = serde_json::from_slice(&bytes)?;
+    ensure!(
+        header.get("schema").and_then(serde_json::Value::as_u64) == Some(4)
+            && header.get("engine").and_then(serde_json::Value::as_str) == Some(ENGINE),
+        "obsolete retrieval format; rebuild the index with airk index --full"
+    );
     let manifest: ManifestV2 = serde_json::from_slice(&bytes)?;
     ensure!(
-        ((manifest.schema == 2 && manifest.engine == ENGINE_V2)
-            || (manifest.schema == 3 && matches!(manifest.engine.as_str(), ENGINE_V3 | ENGINE_V4)))
+        (manifest.schema == 4 && manifest.engine == ENGINE)
             && manifest.token == receipt.token
             && manifest.collection == collection
             && manifest.inventory_digest == receipt.inventory_digest
@@ -638,11 +696,7 @@ fn read_manifest_v2(
     );
     for name in manifest.components.keys() {
         ensure!(
-            if manifest.schema == 3 {
-                !name.starts_with("model/")
-            } else {
-                name != "model-objects.json"
-            },
+            !name.starts_with("model/"),
             "model storage disagrees with generation schema"
         );
         ensure!(
@@ -659,6 +713,7 @@ fn read_manifest_v2(
         "lineage.json",
         "catalog.sqlite",
         "lexical/meta.json",
+        "vector-map/meta.json",
     ] {
         ensure!(
             manifest.components.contains_key(name),
@@ -687,7 +742,7 @@ fn verify_directory_v2(
         revision_digest(manifest.engine.as_bytes(), &inventory) == receipt.token.revision,
         "v2 revision input mismatch"
     );
-    if manifest.schema == 3 {
+    {
         ensure!(
             !directory.join("model").exists(),
             "shared-model generation contains inline model directory"
@@ -703,9 +758,6 @@ fn verify_directory_v2(
 }
 
 fn read_model_objects(directory: &Path, manifest: &ManifestV2) -> Result<Option<ModelObjectSet>> {
-    if manifest.schema != 3 {
-        return Ok(None);
-    }
     match &manifest.model_sha256 {
         None => {
             ensure!(
@@ -755,19 +807,13 @@ fn open_components_v2(
         "lexical inventory mismatch"
     );
     ensure!(
-        manifest.vectors <= manifest.chunks,
-        "vector inventory exceeds lexical inventory"
+        manifest.vectors <= manifest.vector_occurrences
+            && (manifest.vectors == 0) == (manifest.vector_occurrences == 0),
+        "vector occurrence inventory mismatch"
     );
-    if let Some(identity) = &manifest.model_sha256 {
-        if manifest.schema == 3 {
-            let set = read_model_objects(directory, manifest)?.context("model objects missing")?;
-            crate::model::inspect_objects_cache_descriptor(collection, &set)?;
-        } else {
-            ensure!(
-                crate::model::inspect(&directory.join("model"))?.identity == *identity,
-                "indexed model identity mismatch; rebuild the index with airk index --full"
-            );
-        }
+    if manifest.model_sha256.is_some() {
+        let set = read_model_objects(directory, manifest)?.context("model objects missing")?;
+        crate::model::inspect_objects_cache_descriptor(collection, &set)?;
         ensure!(
             DiskIndex::open(&directory.join("vectors.bin"))?.len() == manifest.vectors,
             "vector inventory mismatch"
@@ -775,6 +821,7 @@ fn open_components_v2(
     } else {
         ensure!(
             manifest.vectors == 0
+                && manifest.vector_occurrences == 0
                 && !directory.join("vectors.bin").exists()
                 && !directory.join("model").exists(),
             "model-free revision contains vector/model state"
@@ -784,96 +831,18 @@ fn open_components_v2(
             "model-free generation contains model references"
         );
     }
+    let (map_reader, _) = vector_map::open(directory, manifest.vector_occurrences)?;
+    drop(map_reader);
     Ok((reader, fields))
 }
 
-/// Build a private v2 revision; this does not advance any committed pointer.
-/// The callback must quota-charge, sync, verify and close catalog.sqlite and
-/// lineage.json before returning. It may additionally write embedding-cache.json,
-/// but may not alter existing components or add other sidecars. An existing
-/// target requires a trusted receipt and is never adopted.
-pub fn prepare_streaming_v2(
-    base: &Path,
-    preparation: &V2Preparation<'_>,
-    model_directory: Option<&Path>,
-    source: &dyn ArtifactSource,
-    charge: Option<Charge>,
-    staging_parent: Option<&Path>,
-    prepare_catalog: impl FnOnce(&Path) -> Result<()>,
-) -> Result<PublicationReceipt> {
-    prepare_streaming_v2_cached(
-        base,
-        preparation,
-        model_directory,
-        source,
-        charge,
-        staging_parent,
-        None,
-        prepare_catalog,
-    )
-}
-
+/// Build one privately finalized revision; publication remains the caller's responsibility.
 #[allow(clippy::too_many_arguments)]
-pub fn prepare_streaming_v2_cached(
-    base: &Path,
-    preparation: &V2Preparation<'_>,
-    model_directory: Option<&Path>,
-    source: &dyn ArtifactSource,
-    charge: Option<Charge>,
-    staging_parent: Option<&Path>,
-    cache: Option<&mut EmbeddingCacheContext<'_>>,
-    prepare_catalog: impl FnOnce(&Path) -> Result<()>,
-) -> Result<PublicationReceipt> {
-    prepare_streaming_owned(
-        base,
-        preparation,
-        model_directory,
-        None,
-        false,
-        source,
-        charge,
-        staging_parent,
-        cache,
-        prepare_catalog,
-        |_| Ok(()),
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-pub fn prepare_streaming_v3_cached(
+pub fn prepare_streaming(
     base: &Path,
     preparation: &V2Preparation<'_>,
     model_objects: Option<&ModelObjectSet>,
-    source: &dyn ArtifactSource,
-    charge: Option<Charge>,
-    staging_parent: Option<&Path>,
-    cache: Option<&mut EmbeddingCacheContext<'_>>,
-    prepare_catalog: impl FnOnce(&Path) -> Result<()>,
-    before_publish: impl FnOnce(&PublicationReceipt) -> Result<()>,
-) -> Result<PublicationReceipt> {
-    prepare_streaming_owned(
-        base,
-        preparation,
-        None,
-        model_objects,
-        true,
-        source,
-        charge,
-        staging_parent,
-        cache,
-        prepare_catalog,
-        before_publish,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn prepare_streaming_owned(
-    base: &Path,
-    preparation: &V2Preparation<'_>,
-    model_directory: Option<&Path>,
-    model_objects: Option<&ModelObjectSet>,
-    shared_models: bool,
-    source: &dyn ArtifactSource,
+    source: &dyn RetrievalSource,
     charge: Option<Charge>,
     staging_parent: Option<&Path>,
     cache: Option<&mut EmbeddingCacheContext<'_>>,
@@ -886,24 +855,16 @@ fn prepare_streaming_owned(
         "oversized v2 inventory"
     );
     let authoritative: InventoryV2 = serde_json::from_slice(preparation.canonical_inventory)?;
-    let engine = if shared_models && authoritative.retrieval_specification == ENGINE_V4 {
-        ENGINE_V4
-    } else if shared_models {
-        ENGINE_V3
-    } else {
-        ENGINE_V2
-    };
-    if shared_models {
-        if let Some(set) = model_objects {
-            set.validate()?;
-        }
-        ensure!(
-            model_objects.map(|set| set.pipeline_digest) == authoritative.embedding_pipeline_digest
-                && model_objects.map(|set| set.legacy_identity.as_str())
-                    == authoritative.embedding_model.as_deref(),
-            "model object input differs from finalized inventory"
-        );
+    let engine = ENGINE;
+    if let Some(set) = model_objects {
+        set.validate()?;
     }
+    ensure!(
+        model_objects.map(|set| set.pipeline_digest) == authoritative.embedding_pipeline_digest
+            && model_objects.map(|set| set.legacy_identity.as_str())
+                == authoritative.embedding_model.as_deref(),
+        "model object input differs from finalized inventory"
+    );
     ensure!(
         authoritative.canonical_bytes()? == preparation.canonical_inventory,
         "noncanonical v2 inventory bytes"
@@ -944,10 +905,9 @@ fn prepare_streaming_owned(
     let built = build_streaming_components(
         staging.path(),
         snapshot,
-        model_directory,
+        None,
         source,
         charge.clone(),
-        preparation.token.revision.to_string(),
         cache,
         authoritative.embedding_pipeline_digest,
         model_objects.map(|set| (base, set)),
@@ -996,12 +956,13 @@ fn prepare_streaming_owned(
         "streamed chunk inventory mismatch"
     );
     let manifest = ManifestV2 {
-        schema: if shared_models { 3 } else { 2 },
+        schema: 4,
         engine: engine.into(),
         token: preparation.token,
         collection: snapshot.collection.clone(),
         chunks: built.chunks,
         vectors: built.vectors,
+        vector_occurrences: built.vector_occurrences,
         model_sha256: built.model_sha256,
         embedding: built.embedding.into(),
         inventory_digest,
@@ -1049,10 +1010,13 @@ pub struct PersistentIndex {
     _lease: File,
     reader: IndexReader,
     fields: Fields,
+    map_reader: IndexReader,
+    map_fields: vector_map::Fields,
     directory: PathBuf,
     generation: u64,
     collection: String,
     pub vectors: usize,
+    pub vector_occurrences: usize,
     pub model_sha256: Option<String>,
     v2_receipt: Option<PublicationReceipt>,
     model_objects: Option<ModelObjectSet>,
@@ -1068,88 +1032,22 @@ impl PersistentIndex {
         let manifest = verify_directory_v2(&directory, receipt, collection)?;
         let (reader, fields) = open_components_v2(&directory, base, &manifest)?;
         let model_objects = read_model_objects(&directory, &manifest)?;
+        let (map_reader, map_fields) = vector_map::open(&directory, manifest.vector_occurrences)?;
         Ok(Self {
             model: Mutex::new(None),
             _lease: lease,
             reader,
             fields,
+            map_reader,
+            map_fields,
             directory,
             generation: receipt.token.generation,
             collection: collection.into(),
             vectors: manifest.vectors,
+            vector_occurrences: manifest.vector_occurrences,
             model_sha256: manifest.model_sha256,
             v2_receipt: Some(receipt.clone()),
             model_objects,
-            collection_directory: base.into(),
-        })
-    }
-
-    pub fn open(base: &Path, snapshot: &Snapshot) -> Result<Self> {
-        Self::open_revision(
-            base,
-            &revision_id(snapshot)?,
-            snapshot.generation,
-            &snapshot.collection,
-        )
-    }
-
-    pub fn open_revision(
-        base: &Path,
-        revision: &str,
-        generation: u64,
-        collection: &str,
-    ) -> Result<Self> {
-        ensure!(
-            revision.len() == 64 && revision.bytes().all(|byte| byte.is_ascii_hexdigit()),
-            "invalid component identity"
-        );
-        let directory = base.join("generations").join(revision);
-        let lease = File::open(reader_lease_path(base, revision)?)?;
-        lease.lock_shared()?;
-        let manifest = read_manifest(&directory)?;
-        ensure!(
-            manifest.schema == 1
-                && manifest.engine == ENGINE
-                && manifest.revision == revision
-                && manifest.generation == generation
-                && manifest.collection == collection,
-            "persistent index revision mismatch"
-        );
-        let (expected, fields) = schema();
-        let index = Index::open_in_dir(directory.join("lexical"))?;
-        ensure!(index.schema() == expected, "unsupported lexical schema");
-        let reader: IndexReader = index
-            .reader_builder()
-            .reload_policy(ReloadPolicy::Manual)
-            .try_into()?;
-        ensure!(
-            reader.searcher().num_docs() == manifest.chunks as u64,
-            "lexical inventory mismatch"
-        );
-        ensure!(
-            manifest.vectors <= manifest.chunks,
-            "vector inventory exceeds lexical inventory"
-        );
-        if manifest.model_sha256.is_some() {
-            ensure!(
-                DiskIndex::open(&directory.join("vectors.bin"))?.len() == manifest.vectors,
-                "vector inventory mismatch"
-            );
-        } else {
-            ensure!(manifest.vectors == 0, "vectors are missing a model binding");
-        }
-        Ok(Self {
-            model: Mutex::new(None),
-            _lease: lease,
-            reader,
-            fields,
-            directory,
-            generation,
-            collection: collection.into(),
-            vectors: manifest.vectors,
-            model_sha256: manifest.model_sha256,
-            v2_receipt: None,
-            model_objects: None,
             collection_directory: base.into(),
         })
     }
@@ -1166,15 +1064,15 @@ mod pipeline_tests {
         model: PathBuf,
         change: bool,
     }
-    impl ArtifactSource for ChangingSource {
-        fn load_artifact(&self, path: &str) -> Result<Artifact> {
+    impl RetrievalSource for ChangingSource {
+        fn load_retrieval_artifact(&self, path: &str) -> Result<airk_core::RetrievalArtifact> {
             if self.change {
                 let manifest = self.model.join("model.json");
                 let mut value: serde_json::Value = serde_json::from_slice(&fs::read(&manifest)?)?;
                 value["name"] = "changed while building".into();
                 fs::write(manifest, serde_json::to_vec(&value)?)?;
             }
-            self.snapshot.load_artifact(path)
+            fixture_source::FixtureSource::new(&self.snapshot)?.load_retrieval_artifact(path)
         }
     }
 
@@ -1220,9 +1118,8 @@ mod pipeline_tests {
             &wrong,
             &snapshot,
             Some(&model),
-            &snapshot,
+            &fixture_source::FixtureSource::new(&snapshot)?,
             charge.clone(),
-            "fixture".into(),
             None,
             Some(Sha256Digest::from_bytes([0; 32])),
             None,
@@ -1236,9 +1133,8 @@ mod pipeline_tests {
             &legacy,
             &snapshot,
             Some(&model),
-            &snapshot,
+            &fixture_source::FixtureSource::new(&snapshot)?,
             charge.clone(),
-            "fixture".into(),
             None,
             None,
             None,
@@ -1256,7 +1152,6 @@ mod pipeline_tests {
             Some(&model),
             &source,
             charge,
-            "fixture".into(),
             None,
             Some(expected),
             None,

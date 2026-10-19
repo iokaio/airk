@@ -37,6 +37,7 @@ mod razor;
 mod repository_binding;
 mod repository_syntax;
 mod scss;
+mod semantic_projection;
 mod source_read;
 mod specialist_business;
 mod specialist_gpu;
@@ -175,6 +176,13 @@ pub struct IndexReport {
     /// Peak declared allocation charged to the bounded plan cache, not process RSS.
     #[serde(default)]
     pub embedding_plan_cache_peak_bytes: u64,
+    #[serde(default)]
+    pub vector_units: u64,
+    #[serde(default)]
+    pub vector_body_bytes: u64,
+    /// Semantic planning only; excludes embedding/cache/graph visitor time.
+    #[serde(default)]
+    pub vector_planning_us: u64,
     #[serde(default)]
     pub embedding_model_load_us: u64,
     #[serde(default)]

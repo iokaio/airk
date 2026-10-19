@@ -418,6 +418,7 @@ struct OriginalManifest {
     collection: String,
     chunks: usize,
     vectors: usize,
+    vector_occurrences: usize,
     model_sha256: Option<String>,
     embedding: String,
     inventory_digest: Sha256Digest,
@@ -426,25 +427,26 @@ struct OriginalManifest {
 
 impl OriginalManifest {
     fn supported_format(&self) -> bool {
-        match self.schema {
-            2 => {
-                self.engine == "tantivy-0.26.2/diskann-0.59.0/airk-file-1/generation-4/inventory-2"
-            }
-            3 => {
-                matches!(
-                    self.engine.as_str(),
-                    "tantivy-0.26.2/diskann-0.59.0/airk-file-1/generation-5/inventory-2/model-objects-1"
-                        | "tantivy-0.26.2/diskann-0.59.0/airk-file-1/generation-5/inventory-2/model-objects-1/source-context-1"
-                ) && !self
-                    .components
-                    .keys()
-                    .any(|name| name.starts_with("model/"))
-                    && self.components.contains_key("model-objects.json")
-                        == self.model_sha256.is_some()
-            }
-            _ => false,
-        }
+        self.schema == 4
+            && self.engine == crate::reset::CURRENT_RETRIEVAL_ENGINE
+            && !self
+                .components
+                .keys()
+                .any(|name| name.starts_with("model/"))
+            && self.components.contains_key("model-objects.json") == self.model_sha256.is_some()
+            && self.components.contains_key("vector-map/meta.json")
+            && self.vectors <= self.vector_occurrences
+            && (self.vectors == 0) == (self.vector_occurrences == 0)
+            && (self.model_sha256.is_some() || self.vectors == 0)
     }
+}
+
+fn parse_manifest(bytes: &[u8]) -> Result<OriginalManifest> {
+    ensure!(
+        crate::reset::current_manifest(bytes)?,
+        "obsolete index format; run airk index --full"
+    );
+    Ok(serde_json::from_slice(bytes)?)
 }
 
 fn plain(path: &Path) -> Result<fs::Metadata> {
@@ -703,7 +705,7 @@ fn verify_package_metadata(
             && lineage.observation.observed_unix_seconds == descriptor.observed_unix_seconds,
         "historical observation scope mismatch"
     );
-    let manifest: OriginalManifest = serde_json::from_slice(&metadata_bytes(
+    let manifest = parse_manifest(&metadata_bytes(
         &package.join("manifest.json"),
         &descriptor.metadata[&HistoryMetadata::Manifest],
         charge,
@@ -721,7 +723,7 @@ fn verify_package_metadata(
                     .files
                     .values()
                     .try_fold(0usize, |sum, file| sum.checked_add(file.chunks))
-            && manifest.vectors <= manifest.chunks
+            && manifest.vectors <= manifest.vector_occurrences
             && manifest.model_sha256 == inventory.embedding_model,
         "historical original manifest scope mismatch"
     );
@@ -2128,7 +2130,7 @@ fn verify_full_bounded(
     let manifest_bytes = plain(&path)?.len();
     work.metadata(manifest_bytes)?;
     let bytes = crate::blobs::read_verified(&path, &receipt.manifest_digest.to_string(), 131_072)?;
-    let manifest: OriginalManifest = serde_json::from_slice(&bytes)?;
+    let manifest = parse_manifest(&bytes)?;
     ensure!(
         manifest.token == receipt.token && manifest.components.len() <= 1024,
         "invalid candidate manifest identity or bound"
@@ -2233,7 +2235,7 @@ pub(crate) fn observation(
         "historical observation manifest exceeds bound"
     );
     work.metadata(length)?;
-    let manifest: OriginalManifest = serde_json::from_slice(&crate::blobs::read_verified(
+    let manifest = parse_manifest(&crate::blobs::read_verified(
         &manifest_path,
         &receipt.manifest_digest.to_string(),
         131072,

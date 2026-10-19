@@ -6,8 +6,8 @@ use anyhow::Result;
 use std::fs;
 
 #[test]
-fn legacy_plain_conditional_reads_remain_available_without_v2_validators() -> Result<()> {
-    use airk_core::{Artifact, Chunk, DocumentLocation, Snapshot, SnapshotStore};
+fn obsolete_conditional_reads_require_rebuild_without_evidence_fallback() -> Result<()> {
+    use airk_core::{Artifact, Chunk, DocumentLocation, Snapshot};
     let root = tempfile::tempdir()?;
     let data = tempfile::tempdir()?;
     let store = FileStore::new(data.path().join("collections/default"));
@@ -32,37 +32,57 @@ fn legacy_plain_conditional_reads_remain_available_without_v2_validators() -> Re
             retained: None,
         },
     );
-    store.save(&snapshot)?;
+    // A legacy coordination row cannot opt into current readers merely by
+    // claiming the current manifest format without receipt-bound identities.
+    let claimed_revision = "a".repeat(64);
+    store.save_with_components(&snapshot, &claimed_revision)?;
+    let components = store.directory().join("generations").join(claimed_revision);
+    fs::create_dir_all(&components)?;
+    fs::write(
+        components.join("manifest.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "schema": 4,
+            "engine": airk_retrieval::persistent::retrieval_specification(),
+        }))?,
+    )?;
     drop(_writer);
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
-    let read = kernel.read_file_conditional("old.md", 1, 1, 8192, &Default::default())?;
-    assert_eq!(
-        read.read.status,
-        airk_core::evidence::EvidenceReadStatus::Content
-    );
-    assert!(read.read.publication.is_none());
-    assert!(read.read.validator.is_none());
-    assert!(read.content.is_some());
     assert!(
         kernel
-            .read_file_conditional(
-                "old.md",
-                1,
-                1,
-                8192,
-                &airk_core::evidence::EvidenceReadOptions {
-                    follow_moves: true,
-                    ..Default::default()
-                }
-            )
+            .read_file_conditional("old.md", 1, 1, 8192, &Default::default())
             .is_err()
     );
-    assert_eq!(
+    assert!(
         kernel
-            .file_info_conditional("missing.md", &Default::default())?
-            .read
-            .status,
-        airk_core::evidence::EvidenceReadStatus::Unknown
+            .file_info_conditional("missing.md", &Default::default())
+            .is_err()
+    );
+    assert!(kernel.read_file("old.md", 1, 1, 8192).is_err());
+    let facts = airk_core::FactQuery {
+        path_prefix: String::new(),
+        name: None,
+        kind: None,
+        language: None,
+        exact_name: false,
+        limit: 10,
+        max_bytes: 8192,
+        path_exact: false,
+        document_only: false,
+    };
+    assert!(kernel.facts(&facts).is_err());
+    assert!(kernel.code_facts(&facts).is_err());
+    assert!(
+        kernel
+            .relationships(&airk_core::RelationshipQuery {
+                symbol: "fixture".into(),
+                direction: "outgoing".into(),
+                kind: None,
+                path_prefix: String::new(),
+                hops: 1,
+                limit: 10,
+                max_bytes: 8192,
+            })
+            .is_err()
     );
     Ok(())
 }

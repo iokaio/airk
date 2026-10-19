@@ -282,6 +282,10 @@ pub(crate) fn extract(
     if profile.adapter_id == "notebook" {
         // The original JSON is a mapping domain, never a retrieval chunk.
         payload.chunks.retain(|chunk| chunk.region.is_some());
+        payload
+            .semantic_projection
+            .boundaries
+            .retain(|boundary| boundary.region.is_some());
     }
     if payload.partial {
         payload.parse_status = "partial-syntax".into();

@@ -51,7 +51,7 @@ fn references(store: &FileStore) -> Result<Vec<airk_store::vector_cache::VectorC
 }
 
 #[test]
-fn exact_chunks_reuse_vectors_across_publications_moves_and_line_insertions() -> Result<()> {
+fn exact_units_reuse_across_publications_and_moves_but_group_edits_recompute() -> Result<()> {
     let root = tempfile::tempdir()?;
     let data = unlinked_tempdir()?;
     model(data.path(), "original embedding fixture")?;
@@ -73,13 +73,13 @@ fn exact_chunks_reuse_vectors_across_publications_moves_and_line_insertions() ->
     assert_eq!(
         unrelated.embedding_inferences - unrelated.embedding_no_vector,
         1,
-        "only the new vector-producing text chunk requires inference; no-vector outcomes are retried truthfully"
+        "only the new vector-producing semantic input requires inference; no-vector outcomes are retried truthfully"
     );
     fs::rename(root.path().join("auth.rs"), root.path().join("moved.rs"))?;
     let moved = kernel.index()?;
     assert_eq!(
         moved.embedding_inferences, moved.embedding_no_vector,
-        "unchanged supported chunks have zero inference calls; unsupported chunks are not cached"
+        "unchanged supported inputs have zero inference calls; unsupported inputs are not cached"
     );
     assert!(moved.embedding_cache_hits >= 2);
     let before = kernel.semantic_search(&query())?;
@@ -89,17 +89,35 @@ fn exact_chunks_reuse_vectors_across_publications_moves_and_line_insertions() ->
         format!("// inserted original comment\n\n{original}"),
     )?;
     let shifted = kernel.index()?;
-    assert!(
-        shifted.embedding_cache_hits >= 2,
-        "unchanged declaration and unrelated text reuse exact vectors"
+    assert_eq!(
+        shifted.embedding_cache_hits, 1,
+        "the unrelated input is unchanged; inserting text into a coalesced group changes that group's exact input"
+    );
+    assert_eq!(
+        shifted.embedding_inferences - shifted.embedding_no_vector,
+        1
     );
     let optimized = kernel.semantic_search(&query())?;
     let moved_hit = optimized
         .hits
         .iter()
-        .find(|hit| hit.citation.path == "moved.rs")
+        .find(|hit| hit.citation.path == "moved.rs" && hit.text.contains("pub fn authenticate"))
         .context("moved hit missing")?;
-    assert!(moved_hit.citation.start_line > before.hits[0].citation.start_line);
+    let declaration_line = |hit: &airk_core::Hit| -> Result<usize> {
+        let offset = hit
+            .text
+            .find("pub fn authenticate")
+            .context("declaration missing")?;
+        Ok(hit.citation.start_line
+            + hit.text[..offset]
+                .bytes()
+                .filter(|byte| *byte == b'\n')
+                .count())
+    };
+    assert_eq!(
+        declaration_line(moved_hit)?,
+        declaration_line(&before.hits[0])? + 2
+    );
     let full = kernel.reindex()?;
     assert_eq!(full.embedding_cache_hits, 0);
     assert!(full.embedding_inferences > cold.embedding_inferences);

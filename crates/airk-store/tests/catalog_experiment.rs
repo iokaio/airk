@@ -14,7 +14,7 @@ use rusqlite::Connection;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::{cell::Cell, collections::BTreeMap, fs, path::Path, time::Instant};
-const ENGINE: &str = "tantivy-0.26.2/diskann-0.59.0/airk-file-1/generation-4/inventory-2";
+const ENGINE: &str = airk_store::reset::CURRENT_RETRIEVAL_ENGINE;
 const CAP: u64 = 64 * 1024 * 1024;
 fn hash(bytes: &[u8]) -> Sha256Digest {
     Sha256Digest::from_bytes(Sha256::digest(bytes).into())
@@ -28,7 +28,7 @@ fn profile() -> ExtractionProfile {
         dialect: None,
         grammar_identity: None,
         mapping_version: 1,
-        chunk_version: 1,
+        chunk_version: 3,
         options: BTreeMap::new(),
         configuration_inputs: BTreeMap::new(),
     }
@@ -121,6 +121,7 @@ fn add_file(
         body_informative: true,
     };
     let payload = ExtractionPayload {
+        semantic_projection: Default::default(),
         contract_version: 1,
         extraction_method: "original_fixture".into(),
         parse_status: "parsed".into(),
@@ -308,13 +309,20 @@ fn publish(
     let inventory_bytes = inventory.canonical_bytes()?;
     reservation.charge(inventory_bytes.len() as u64)?;
     fs::write(directory.join("inventory.json"), &inventory_bytes)?;
+    fs::create_dir_all(directory.join("vector-map"))?;
+    fs::write(directory.join("vector-map/meta.json"), b"{}")?;
     let mut components = BTreeMap::new();
-    for name in ["inventory.json", "lineage.json", "catalog.sqlite"] {
+    for name in [
+        "inventory.json",
+        "lineage.json",
+        "catalog.sqlite",
+        "vector-map/meta.json",
+    ] {
         let bytes = fs::read(directory.join(name))?;
         components.insert(name, json!({"bytes":bytes.len(),"sha256":hash(&bytes)}));
     }
     let bytes = serde_json::to_vec(
-        &json!({"schema":2,"engine":ENGINE,"token":token,"collection":"experiment","chunks":inventory.files.len(),"vectors":0,"model_sha256":null,"embedding":"none","inventory_digest":hash(&inventory_bytes),"components":components}),
+        &json!({"schema":4,"engine":ENGINE,"token":token,"collection":"experiment","chunks":inventory.files.len(),"vectors":0,"vector_occurrences":0,"model_sha256":null,"embedding":"none","inventory_digest":hash(&inventory_bytes),"components":components}),
     )?;
     reservation.charge(bytes.len() as u64)?;
     fs::write(directory.join("manifest.json"), &bytes)?;
@@ -510,11 +518,18 @@ fn compare(
         directory: &incremental,
         max_catalog_bytes: CAP,
     })?;
+    let full_rows = logical_rows(&full.join("catalog.sqlite"))?;
+    let incremental_rows = logical_rows(&incremental.join("catalog.sqlite"))?;
     assert_eq!(
-        logical_rows(&full.join("catalog.sqlite"))?,
-        logical_rows(&incremental.join("catalog.sqlite"))?,
-        "{label}"
+        full_rows.keys().collect::<Vec<_>>(),
+        incremental_rows.keys().collect::<Vec<_>>()
     );
+    for (table, rows) in full_rows {
+        assert!(
+            rows == incremental_rows[&table],
+            "{label}: different rows in {table}"
+        );
+    }
     assert_eq!(
         fs::read(full.join("lineage.json"))?,
         fs::read(incremental.join("lineage.json"))?

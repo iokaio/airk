@@ -60,11 +60,12 @@ fn prepare_with_model(
         dialect: None,
         grammar_identity: None,
         mapping_version: 1,
-        chunk_version: 1,
+        chunk_version: 3,
         options: BTreeMap::new(),
         configuration_inputs: BTreeMap::new(),
     };
     let payload = ExtractionPayload {
+        semantic_projection: Default::default(),
         continuity_coverage: BTreeMap::new(),
         contract_version: 1,
         extraction_method: "utf8".into(),
@@ -176,12 +177,7 @@ fn prepare_with_model(
                 parse_status: "plain".into(),
             },
         )]),
-        retrieval_specification: if model.is_some() {
-            "tantivy-0.26.2/diskann-0.59.0/airk-file-1/generation-5/inventory-2/model-objects-1"
-        } else {
-            "tantivy-0.26.2/diskann-0.59.0/airk-file-1/generation-4/inventory-2"
-        }
-        .into(),
+        retrieval_specification: airk_store::reset::CURRENT_RETRIEVAL_ENGINE.into(),
         embedding_model: model.map(|set| set.legacy_identity.clone()),
         extractor_version: "native-facts/7".into(),
         analysis: Some(airk_core::AnalysisManifest {
@@ -239,8 +235,15 @@ fn prepare_with_model(
     )?;
     reservation.charge(bytes.len() as u64)?;
     fs::write(staging.join("inventory.json"), &bytes)?;
+    fs::create_dir_all(staging.join("vector-map"))?;
+    fs::write(staging.join("vector-map/meta.json"), b"{}")?;
     let mut components = BTreeMap::new();
-    for name in ["inventory.json", "lineage.json", "catalog.sqlite"] {
+    for name in [
+        "inventory.json",
+        "lineage.json",
+        "catalog.sqlite",
+        "vector-map/meta.json",
+    ] {
         let bytes = fs::read(staging.join(name))?;
         components.insert(name, json!({"bytes":bytes.len(),"sha256":digest(&bytes)}));
     }
@@ -254,7 +257,7 @@ fn prepare_with_model(
         );
     }
     let manifest = serde_json::to_vec(
-        &json!({"schema":if model.is_some(){3}else{2},"engine":inventory.retrieval_specification,"token":token,"collection":"fixture","chunks":1,"vectors":0,"model_sha256":inventory.embedding_model,"embedding":"none","inventory_digest":digest(&bytes),"components":components}),
+        &json!({"schema":4,"engine":inventory.retrieval_specification,"token":token,"collection":"fixture","chunks":1,"vectors":0,"vector_occurrences":0,"model_sha256":inventory.embedding_model,"embedding":"none","inventory_digest":digest(&bytes),"components":components}),
     )?;
     reservation.charge(manifest.len() as u64)?;
     fs::write(staging.join("manifest.json"), &manifest)?;

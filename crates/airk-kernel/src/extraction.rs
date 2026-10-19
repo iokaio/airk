@@ -29,6 +29,35 @@ pub(crate) fn policy_digest(policy: &ExtractionPolicy) -> Result<Sha256Digest> {
     ))
 }
 impl Kernel {
+    fn policy_catalog(&self) -> Result<Option<airk_store::blobs::Catalog>> {
+        match self.store.index_format(&self.root_id(), &self.collection)? {
+            airk_store::IndexFormat::Current => self.store.catalog(),
+            _ => Ok(None),
+        }
+    }
+    /// Rebuild reads saved policy without consulting obsolete derived catalogs.
+    pub(crate) fn rebuild_extraction_policy(&self) -> Result<ExtractionPolicyStatus> {
+        let bytes = self.store.extraction_policy_bytes(&self.root_id())?;
+        let registry = airk_ingest::adapters::registry::AdapterRegistry::baseline();
+        let policy = match &bytes {
+            Some(bytes) => ExtractionPolicy::parse(bytes, &registry)?,
+            None => ExtractionPolicy {
+                version: 3,
+                detail: Some(airk_core::extraction::IndexDetail::Balanced),
+                rules: vec![],
+            },
+        };
+        self.extraction_policy_status_with_catalog(
+            policy,
+            if bytes.is_some() {
+                "explicit"
+            } else {
+                "default"
+            },
+            None,
+        )
+    }
+
     pub fn extraction_adapters() -> Vec<AdapterDescriptor> {
         airk_ingest::adapters::registry::AdapterRegistry::baseline()
             .descriptors()
@@ -38,7 +67,7 @@ impl Kernel {
     pub fn extraction_policy(&self) -> Result<ExtractionPolicyStatus> {
         let bytes = self.store.extraction_policy_bytes(&self.root_id())?;
         let registry = airk_ingest::adapters::registry::AdapterRegistry::baseline();
-        let catalog = self.store.catalog()?;
+        let catalog = self.policy_catalog()?;
         let policy = match &bytes {
             Some(bytes) => ExtractionPolicy::parse(bytes, &registry)?,
             None => {
@@ -78,7 +107,7 @@ impl Kernel {
         policy: ExtractionPolicy,
         origin: &str,
     ) -> Result<ExtractionPolicyStatus> {
-        self.extraction_policy_status_with_catalog(policy, origin, self.store.catalog()?)
+        self.extraction_policy_status_with_catalog(policy, origin, self.policy_catalog()?)
     }
     fn extraction_policy_status_with_catalog(
         &self,

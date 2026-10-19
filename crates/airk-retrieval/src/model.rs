@@ -116,8 +116,27 @@ pub enum EmbeddingModel {
     Onnx(Box<OnnxModel>),
 }
 
+/// Untruncated token offsets for one bounded planning slice. Special tokens have
+/// no source span and are accounted for separately by the model adapter.
+pub(crate) struct PlanningTokens {
+    pub offsets: Vec<(usize, usize)>,
+    pub special_tokens: usize,
+}
+
+impl PlanningTokens {
+    pub fn len(&self) -> usize {
+        self.offsets.len() + self.special_tokens
+    }
+}
+
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct EmbeddingCacheStats {
+    /// Semantic units emitted before embedding cache lookup.
+    pub vector_units: u64,
+    /// Exact covered source-body bytes, excluding repeated written context.
+    pub vector_body_bytes: u64,
+    /// Planning wall time excluding synchronous embedding/publication callbacks.
+    pub vector_planning_us: u64,
     /// Logical inputs presented, including cache hits and blank inputs.
     pub inputs: u64,
     /// Inputs whose effective model text is whitespace-only.
@@ -448,6 +467,41 @@ pub fn inspect_objects_cache_descriptor(
 }
 
 impl EmbeddingModel {
+    pub(crate) fn planning_context_tokens(&self) -> Option<usize> {
+        match self {
+            Self::WordVectors(_) => None,
+            Self::Onnx(model) => Some(model.manifest.max_tokens),
+        }
+    }
+
+    pub(crate) fn planning_tokens(&self, text: &str) -> Result<PlanningTokens> {
+        ensure!(
+            text.len() <= MAX_INPUT_BYTES,
+            "vector planning input exceeds byte bound"
+        );
+        match self {
+            Self::Onnx(model) => model.planning_tokens(text),
+            Self::WordVectors(_) => {
+                let mut offsets = Vec::new();
+                let mut start = None;
+                for (index, character) in text.char_indices() {
+                    if character.is_alphanumeric() || character == '_' {
+                        start.get_or_insert(index);
+                    } else if let Some(start) = start.take() {
+                        offsets.push((start, index));
+                    }
+                }
+                if let Some(start) = start {
+                    offsets.push((start, text.len()));
+                }
+                Ok(PlanningTokens {
+                    offsets,
+                    special_tokens: 0,
+                })
+            }
+        }
+    }
+
     pub fn open_objects(collection: &Path, set: &ModelObjectSet) -> Result<Self> {
         set.validate()?;
         let source = ObjectAssets { collection, set };

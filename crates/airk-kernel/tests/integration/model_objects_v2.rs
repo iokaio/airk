@@ -63,7 +63,7 @@ fn active(store: &FileStore) -> Result<(PublicationReceipt, ModelObjectSet)> {
     assert!(!directory.join("model").exists());
     let manifest: serde_json::Value =
         serde_json::from_slice(&fs::read(directory.join("manifest.json"))?)?;
-    assert_eq!(manifest["schema"], 3);
+    assert_eq!(manifest["schema"], 4);
     let set = ModelObjectSet::from_bytes(&fs::read(directory.join("model-objects.json"))?)?;
     Ok((receipt, set))
 }
@@ -294,66 +294,88 @@ fn lexical_only_generation_has_no_model_objects_or_model_requirement() -> Result
 }
 
 #[test]
-fn schema_two_retrieval_reader_keeps_authentic_inline_model_compatibility() -> Result<()> {
-    use airk_core::identity::{RevisionToken, revision_digest};
-    use airk_retrieval::persistent::{
-        V2Preparation, prepare_streaming_v2, retrieval_specification_v2,
-    };
+fn obsolete_retrieval_format_requires_rebuild() -> Result<()> {
     let source = tempfile::tempdir()?;
     let data = unlinked_tempdir()?;
-    let legacy_base = unlinked_tempdir()?;
-    model(data.path(), "original legacy model", false)?;
+    model(data.path(), "original model", false)?;
     fs::write(source.path().join("original.txt"), "login original\n")?;
     let kernel = Kernel::open(source.path(), Some(data.path().into()))?;
     kernel.index()?;
     let store = FileStore::new(data.path().join("collections/default"));
     let catalog = store.catalog()?.context("catalog")?;
-    let old_receipt = catalog.receipt.as_ref().context("receipt")?;
-    let lineage = fs::read(
-        store
-            .directory()
-            .join("generations")
-            .join(old_receipt.token.revision.to_string())
-            .join("lineage.json"),
-    )?;
-    let mut inventory = catalog.inventory.as_ref().context("inventory")?.clone();
-    inventory.retrieval_specification = String::from_utf8(retrieval_specification_v2().to_vec())?;
-    let bytes = inventory.canonical_bytes()?;
-    let snapshot = inventory.projection()?;
-    let token = RevisionToken {
-        incarnation: inventory.incarnation,
-        generation: inventory.generation,
-        revision: revision_digest(retrieval_specification_v2(), &bytes),
-    };
-    let receipt = prepare_streaming_v2(
-        legacy_base.path(),
-        &V2Preparation {
-            snapshot: &snapshot,
-            canonical_inventory: &bytes,
-            token,
-        },
-        Some(&data.path().join("models/local")),
-        &catalog,
-        None,
-        None,
-        |directory| {
-            // This qualifies the retrieval reader; SQL catalog semantics have their
-            // separate store fixtures and are not asserted by this inert payload.
-            fs::write(
-                directory.join("catalog.sqlite"),
-                b"original retrieval-only closed catalog fixture",
-            )?;
-            fs::write(directory.join("lineage.json"), &lineage)?;
-            Ok(())
-        },
-    )?;
-    let generation = legacy_base
-        .path()
+    let mut receipt = catalog.receipt.as_ref().context("receipt")?.clone();
+    let path = store
+        .directory()
         .join("generations")
-        .join(token.revision.to_string());
-    assert!(generation.join("model/model.json").exists());
-    assert!(!generation.join("model-objects.json").exists());
-    let reader = PersistentIndex::open_v2(legacy_base.path(), "default", &receipt)?;
-    assert!(!reader.semantic_search(&query())?.hits.is_empty());
+        .join(receipt.token.revision.to_string())
+        .join("manifest.json");
+    let mut manifest: serde_json::Value = serde_json::from_slice(&fs::read(&path)?)?;
+    manifest["schema"] = 3.into();
+    manifest["engine"] = "obsolete-original-fixture".into();
+    let bytes = serde_json::to_vec(&manifest)?;
+    fs::write(path, &bytes)?;
+    receipt.manifest_digest =
+        airk_core::identity::Sha256Digest::from_bytes(Sha256::digest(&bytes).into());
+    let error = PersistentIndex::open_v2(store.directory(), "default", &receipt)
+        .err()
+        .context("obsolete format was accepted")?;
+    assert!(format!("{error:#}").contains("rebuild"), "{error:#}");
+    Ok(())
+}
+
+#[test]
+fn full_rebuild_resets_obsolete_state_and_preserves_source_and_saved_policy() -> Result<()> {
+    use airk_core::{Snapshot, SnapshotStore};
+    let source = tempfile::tempdir()?;
+    let data = unlinked_tempdir()?;
+    model(data.path(), "original saved model", false)?;
+    let text = b"login original evidence remains byte exact\n";
+    fs::write(source.path().join("original.txt"), text)?;
+    let kernel = Kernel::open(source.path(), Some(data.path().into()))?;
+    let store = FileStore::new(data.path().join("collections/default"));
+    let root = source.path().canonicalize()?.to_string_lossy().into_owned();
+    let writer = store.lock()?;
+    let mut old = Snapshot::empty(root.clone());
+    old.generation = 99;
+    store.save(&old)?;
+    let quota = airk_store::quota::Quota::open(data.path())?;
+    store.configure_extraction_policy_bytes(
+        &writer,
+        &quota,
+        &root,
+        br#"{"version":3,"detail":"essential","rules":[]}"#,
+    )?;
+    airk_store::roots::RootConfig::load(store.directory(), &root)?.save(store.directory())?;
+    // A malformed obsolete extraction must never be decoded during reset.
+    fs::create_dir_all(store.directory().join("objects/artifacts"))?;
+    fs::write(
+        store.directory().join("objects/artifacts/obsolete.json"),
+        b"not an extraction payload",
+    )?;
+    let policy_path = store.directory().join("extraction-policy.json");
+    let roots_path = store.directory().join("roots.json");
+    let model_path = data.path().join("models/local/model.json");
+    let preserved = [
+        (&policy_path, fs::read(&policy_path)?),
+        (&roots_path, fs::read(&roots_path)?),
+        (&model_path, fs::read(&model_path)?),
+    ];
+    drop(writer);
+    assert!(format!("{:#}", kernel.index().unwrap_err()).contains("airk index --full"));
+    let report = kernel.reindex()?;
+    assert_eq!(report.generation, 1);
+    assert_eq!(fs::read(source.path().join("original.txt"))?, text);
+    for (path, bytes) in preserved {
+        assert_eq!(fs::read(path)?, bytes);
+    }
+    assert!(!store.reset_required()?);
+    assert_eq!(
+        kernel.extraction_policy()?.configured_detail,
+        airk_core::extraction::IndexDetail::Essential
+    );
+    assert!(!kernel.search(&query())?.hits.is_empty());
+    assert!(!kernel.semantic_search(&query())?.hits.is_empty());
+    let current = kernel.status()?.publication.context("current revision")?;
+    assert_eq!(current.generation, 1);
     Ok(())
 }
