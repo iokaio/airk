@@ -116,7 +116,7 @@ fn collections(source: &Path) -> Result<Vec<String>> {
             .file_name()
             .into_string()
             .map_err(|_| anyhow::anyhow!("non-UTF-8 collection state"))?;
-        if name == ".writer-locks" || name == ".reader-locks" {
+        if name == ".writer-locks" || name == ".reader-locks" || name == ".current-gates" {
             continue;
         }
         crate::validate_collection(&name)?;
@@ -283,6 +283,7 @@ fn excluded(relative: &Path) -> bool {
     }
     if value.starts_with("collections/.writer-locks")
         || value.starts_with("collections/.reader-locks")
+        || value.starts_with("collections/.current-gates")
     {
         return true;
     }

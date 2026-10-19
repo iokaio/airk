@@ -14,6 +14,8 @@ pub mod blobs;
 pub mod capacity;
 pub mod catalog_experiment;
 pub mod checkpoints;
+pub mod current;
+mod durability;
 pub mod extraction_policy;
 pub mod history;
 pub mod history_policy;
