@@ -356,6 +356,19 @@ pub enum IndexMetric {
     VectorUnits,
     VectorBodyBytes,
     VectorPlanningUs,
+    EmbeddingCacheFileOpens,
+    EmbeddingCacheReadBytes,
+    EmbeddingCacheWrittenBytes,
+    EmbeddingCacheRecordVerificationBytes,
+    EmbeddingCacheIndexVerificationBytes,
+    EmbeddingCacheFullPackVerificationBytes,
+    EmbeddingCacheSyncs,
+    EmbeddingCacheIndexHits,
+    EmbeddingCacheIndexPeakBytes,
+    EmbeddingCachePacksWritten,
+    EmbeddingCachePacksReused,
+    EmbeddingCacheCompactedRecords,
+    EmbeddingCacheFinalizeUs,
     EmbeddingCacheHits,
     EmbeddingCacheMisses,
     EmbeddingModelLoadUs,
@@ -366,7 +379,7 @@ pub enum IndexMetric {
 }
 
 impl IndexMetric {
-    pub const ALL: [Self; 27] = [
+    pub const ALL: [Self; 40] = [
         Self::EmbeddingInputs,
         Self::EmbeddingBlankInputs,
         Self::EmbeddingDuplicateInputs,
@@ -387,6 +400,19 @@ impl IndexMetric {
         Self::VectorUnits,
         Self::VectorBodyBytes,
         Self::VectorPlanningUs,
+        Self::EmbeddingCacheFileOpens,
+        Self::EmbeddingCacheReadBytes,
+        Self::EmbeddingCacheWrittenBytes,
+        Self::EmbeddingCacheRecordVerificationBytes,
+        Self::EmbeddingCacheIndexVerificationBytes,
+        Self::EmbeddingCacheFullPackVerificationBytes,
+        Self::EmbeddingCacheSyncs,
+        Self::EmbeddingCacheIndexHits,
+        Self::EmbeddingCacheIndexPeakBytes,
+        Self::EmbeddingCachePacksWritten,
+        Self::EmbeddingCachePacksReused,
+        Self::EmbeddingCacheCompactedRecords,
+        Self::EmbeddingCacheFinalizeUs,
         Self::EmbeddingCacheHits,
         Self::EmbeddingCacheMisses,
         Self::EmbeddingModelLoadUs,
@@ -418,6 +444,25 @@ impl IndexMetric {
             Self::VectorUnits => "vector_units",
             Self::VectorBodyBytes => "vector_body_bytes",
             Self::VectorPlanningUs => "vector_planning_us",
+            Self::EmbeddingCacheFileOpens => "embedding_cache_file_opens",
+            Self::EmbeddingCacheReadBytes => "embedding_cache_read_bytes",
+            Self::EmbeddingCacheWrittenBytes => "embedding_cache_written_bytes",
+            Self::EmbeddingCacheRecordVerificationBytes => {
+                "embedding_cache_record_verification_bytes"
+            }
+            Self::EmbeddingCacheIndexVerificationBytes => {
+                "embedding_cache_index_verification_bytes"
+            }
+            Self::EmbeddingCacheFullPackVerificationBytes => {
+                "embedding_cache_full_pack_verification_bytes"
+            }
+            Self::EmbeddingCacheSyncs => "embedding_cache_syncs",
+            Self::EmbeddingCacheIndexHits => "embedding_cache_index_hits",
+            Self::EmbeddingCacheIndexPeakBytes => "embedding_cache_index_peak_bytes",
+            Self::EmbeddingCachePacksWritten => "embedding_cache_packs_written",
+            Self::EmbeddingCachePacksReused => "embedding_cache_packs_reused",
+            Self::EmbeddingCacheCompactedRecords => "embedding_cache_compacted_records",
+            Self::EmbeddingCacheFinalizeUs => "embedding_cache_finalize_us",
             Self::EmbeddingCacheHits => "embedding_cache_hits",
             Self::EmbeddingCacheMisses => "embedding_cache_misses",
             Self::EmbeddingModelLoadUs => "embedding_model_load_us",

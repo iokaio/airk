@@ -215,6 +215,81 @@ fn verify_model_objects(
     crate::model_objects::ModelObjects::new(base).verify(&set, maximum)
 }
 
+/// Authenticate reusable pack ownership without reading the embedding payloads.
+/// Lookup verifies the selected records; maintenance verifies complete packs.
+fn embedding_manifest(
+    base: &Path,
+    directory: &Path,
+    manifest: &ManifestV2,
+    inventory: &airk_core::publication::InventoryV2,
+) -> Result<Option<crate::vector_cache::VectorCacheManifest>> {
+    let path = directory.join("embedding-cache.json");
+    let Some(component) = manifest.components.get("embedding-cache.json") else {
+        match path.symlink_metadata() {
+            Ok(_) => anyhow::bail!("unanchored embedding sidecar"),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        return Ok(None);
+    };
+    ensure!(
+        component.bytes <= crate::vector_cache::MAX_CACHE_MANIFEST_BYTES as u64,
+        "embedding sidecar exceeds byte bound"
+    );
+    let metadata = path.symlink_metadata()?;
+    ensure!(
+        metadata.is_file()
+            && !metadata.file_type().is_symlink()
+            && metadata.len() == component.bytes,
+        "embedding sidecar type or length mismatch"
+    );
+    let bytes = read_verified(&path, &component.sha256.to_string(), component.bytes)?;
+    ensure!(
+        bytes.len() as u64 == component.bytes,
+        "embedding sidecar length changed"
+    );
+    let cache = crate::vector_cache::VectorCacheManifest::from_bytes(&bytes)?;
+    let model = model_set(directory, manifest, inventory)?
+        .context("embedding sidecar requires authenticated model objects")?;
+    ensure!(
+        inventory.embedding_pipeline_digest == Some(cache.pipeline_digest)
+            && model.pipeline_digest == cache.pipeline_digest,
+        "embedding pack pipeline differs from publication"
+    );
+    let asset = model
+        .assets
+        .get(&airk_core::model_objects::ModelAssetName::ModelJson)
+        .context("model metadata asset missing")?;
+    let model_path = object_path(base, "models", &asset.sha256.to_string())?;
+    let metadata = model_path.symlink_metadata()?;
+    ensure!(
+        metadata.is_file() && metadata.len() == asset.bytes,
+        "model metadata length mismatch"
+    );
+    let metadata: serde_json::Value = serde_json::from_slice(&read_verified(
+        &model_path,
+        &asset.sha256.to_string(),
+        asset.bytes,
+    )?)?;
+    let schema = if model
+        .assets
+        .contains_key(&airk_core::model_objects::ModelAssetName::VocabularyJson)
+    {
+        1
+    } else {
+        2
+    };
+    ensure!(
+        metadata.get("schema").and_then(serde_json::Value::as_u64) == Some(schema)
+            && metadata
+                .get("dimensions")
+                .and_then(serde_json::Value::as_u64)
+                == Some(u64::from(cache.dimensions)),
+        "embedding pack schema or dimensions differ from model metadata"
+    );
+    Ok(Some(cache))
+}
+
 /// Verify against a committed receipt (or a newly prepared receipt before commit),
 /// never against an untrusted manifest's self-asserted identity alone.
 pub(crate) fn verify_v2_generation(
@@ -328,12 +403,12 @@ impl FileStore {
         Ok(Some(set))
     }
 
-    /// Authenticate reusable embedding references against a committed receipt.
+    /// Authenticate reusable embedding-pack ownership against a committed receipt.
     /// The caller keeps its catalog reader lease alive while using the result.
-    pub fn embedding_cache_references(
+    pub fn embedding_cache_manifest(
         &self,
         receipt: &airk_core::identity::PublicationReceipt,
-    ) -> Result<Vec<crate::vector_cache::VectorCacheReference>> {
+    ) -> Result<Option<crate::vector_cache::VectorCacheManifest>> {
         ensure!(
             self.receipt(&receipt.token)?.as_ref() == Some(receipt),
             "embedding references require this collection's committed receipt"
@@ -347,6 +422,7 @@ impl FileStore {
             self.directory().join("generations"),
             directory.clone(),
             manifest_path.clone(),
+            directory.join("inventory.json"),
         ] {
             ensure!(
                 !fs::symlink_metadata(path)?.file_type().is_symlink(),
@@ -367,32 +443,28 @@ impl FileStore {
                     == Some(manifest.collection.as_str()),
             "embedding manifest receipt or collection mismatch"
         );
-        let path = directory.join("embedding-cache.json");
-        let Some(component) = manifest.components.get("embedding-cache.json") else {
-            match path.symlink_metadata() {
-                Ok(_) => anyhow::bail!("unanchored embedding sidecar"),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => return Err(error.into()),
-            }
-            return Ok(vec![]);
-        };
+        let bytes = read_verified(
+            &directory.join("inventory.json"),
+            &receipt.inventory_digest.to_string(),
+            MAX_CATALOG_BYTES,
+        )?;
         ensure!(
-            component.bytes <= crate::vector_cache::MAX_CACHE_MANIFEST_BYTES as u64,
-            "embedding sidecar exceeds byte bound"
+            airk_core::identity::revision_digest(manifest.engine.as_bytes(), &bytes)
+                == receipt.token.revision,
+            "embedding publication revision mismatch"
         );
-        let metadata = fs::symlink_metadata(&path)?;
+        let inventory: airk_core::publication::InventoryV2 = serde_json::from_slice(&bytes)?;
+        inventory.validate()?;
+        manifest.verify_selection(&inventory)?;
         ensure!(
-            metadata.is_file()
-                && !metadata.file_type().is_symlink()
-                && metadata.len() == component.bytes,
-            "embedding sidecar type or length mismatch"
+            inventory.incarnation == receipt.token.incarnation
+                && inventory.generation == receipt.token.generation
+                && inventory.collection == manifest.collection
+                && inventory.retrieval_specification == manifest.engine
+                && inventory.embedding_model == manifest.model_sha256,
+            "embedding publication scope mismatch"
         );
-        let bytes = read_verified(&path, &component.sha256.to_string(), component.bytes)?;
-        ensure!(
-            bytes.len() as u64 == component.bytes,
-            "embedding sidecar length changed"
-        );
-        Ok(crate::vector_cache::VectorCacheManifest::from_bytes(&bytes)?.references)
+        embedding_manifest(self.directory(), &directory, &manifest, &inventory)
     }
 }
 
@@ -636,6 +708,7 @@ pub(crate) fn verify_v2_directory(
         "v2 inventory manifest binding mismatch"
     );
     verify_model_objects(base, directory, &manifest, &inventory)?;
+    embedding_manifest(base, directory, &manifest, &inventory)?;
     crate::sqlite::verify_prepared_catalog(directory, receipt)?;
     if manifest.model_sha256.is_none() {
         crate::verified_cache::remember(

@@ -340,3 +340,150 @@ fn exact_alias_inputs_share_one_native_forward_and_graph_node_with_explicit_sele
     }
     Ok(())
 }
+
+#[test]
+#[ignore = "requires AIRK_TEST_MODEL_DIR with verified local ONNX assets"]
+fn distinct_native_inputs_use_packs_and_preserve_warm_and_full_retrieval() -> Result<()> {
+    let base = tempfile::tempdir_in(std::env::temp_dir().canonicalize()?)?;
+    let root = base.path().join("workspace");
+    let data = base.path().join("state");
+    fs::create_dir_all(root.join("notes"))?;
+    let source = |index: usize| {
+        format!(
+            "Recover account {index:03} with a temporary password reset link sent to its verified email address.\n"
+        )
+    };
+    for index in 0..64 {
+        fs::write(
+            root.join(format!("notes/account{index:03}.txt")),
+            source(index),
+        )?;
+    }
+    let model = std::env::var("AIRK_TEST_MODEL_DIR")?;
+    run(
+        &root,
+        &data,
+        "4",
+        &["collections", "vectors", "install", &model],
+    )?;
+    let counter = |report: &Value, name: &str| -> Result<u64> {
+        report[name]
+            .as_u64()
+            .with_context(|| format!("missing counter {name}"))
+    };
+    let mut reports = Vec::new();
+    let started = std::time::Instant::now();
+    let cold = run(&root, &data, "4", &["index"])?;
+    let elapsed = started.elapsed().as_micros();
+    ensure!(
+        cold["embedding_inputs"] == 64
+            && cold["vector_graph_nodes"] == 64
+            && cold["embedding_inferences"] == 64
+            && cold["embedding_cache_hits"] == 0
+            && cold["embedding_cache_packs_written"] == 1,
+        "distinct inputs did not produce one packed cache: {cold}"
+    );
+    for field in ["embedding_cache_file_opens", "embedding_cache_syncs"] {
+        ensure!(
+            (1..64).contains(&counter(&cold, field)?),
+            "packing did not reduce {field}: {cold}"
+        );
+    }
+    ensure!(
+        counter(&cold, "embedding_cache_written_bytes")? > 0
+            && counter(&cold, "embedding_cache_full_pack_verification_bytes")? > 0
+            && counter(&cold, "embedding_cache_finalize_us")? > 0,
+        "cold pack persistence measurements missing: {cold}"
+    );
+    reports.push(("cold", elapsed, cold));
+
+    fs::rename(
+        root.join("notes/account063.txt"),
+        root.join("notes/renamed-last.txt"),
+    )?;
+    let started = std::time::Instant::now();
+    let moved = run(&root, &data, "4", &["index"])?;
+    let elapsed = started.elapsed().as_micros();
+    ensure!(
+        moved["embedding_cache_hits"] == 64
+            && moved["embedding_actual_forwards"] == 0
+            && moved["embedding_cache_packs_written"] == 0
+            && moved["embedding_cache_packs_reused"] == 1,
+        "rename did not reuse the existing pack: {moved}"
+    );
+    ensure!(
+        counter(&moved, "embedding_cache_file_opens")? < 64
+            && counter(&moved, "embedding_cache_record_verification_bytes")? > 0
+            && counter(&moved, "embedding_cache_index_verification_bytes")? > 0
+            && counter(&moved, "embedding_cache_index_hits")? >= 63
+            && counter(&moved, "embedding_cache_full_pack_verification_bytes")? == 0,
+        "warm lookup must reuse an authenticated index and verify selected records: {moved}"
+    );
+    reports.push(("warm-move", elapsed, moved));
+
+    let edited = "Recover account 063 using a temporary password reset link. Verify the recovery email before restoring access.\n";
+    fs::write(root.join("notes/renamed-last.txt"), edited)?;
+    let started = std::time::Instant::now();
+    let changed = run(&root, &data, "4", &["index"])?;
+    let elapsed = started.elapsed().as_micros();
+    ensure!(
+        changed["embedding_cache_hits"] == 63
+            && changed["embedding_inferences"] == 1
+            && changed["embedding_actual_forwards"] == 1
+            && changed["vector_graph_nodes"] == 64
+            && changed["embedding_cache_packs_written"] == 1
+            && changed["embedding_cache_packs_reused"] == 1,
+        "one-file edit did not preserve unchanged packed vectors: {changed}"
+    );
+    reports.push(("warm-edit", elapsed, changed));
+    let query = [
+        "search",
+        "recover forgotten login access",
+        "--mode",
+        "vector",
+        "--path-prefix",
+        "notes/renamed-last.txt",
+    ];
+    let before = run(&root, &data, "4", &query)?;
+    ensure!(
+        before["hits"][0]["citation"]["path"] == "notes/renamed-last.txt"
+            && before["hits"][0]["text"] == edited
+            && before["truncated"] == false,
+        "scoped packed evidence differs from the edited source: {before}"
+    );
+    let started = std::time::Instant::now();
+    let full = run(&root, &data, "4", &["index", "--full"])?;
+    let elapsed = started.elapsed().as_micros();
+    ensure!(
+        full["embedding_cache_hits"] == 0
+            && full["embedding_inferences"] == 64
+            && full["vector_graph_nodes"] == 64
+            && full["embedding_cache_packs_written"] == 0
+            && full["embedding_cache_packs_reused"] == 2
+            && counter(&full, "embedding_cache_record_verification_bytes")? > 0,
+        "full rebuild must recompute and verify matching packed values: {full}"
+    );
+    ensure!(
+        run(&root, &data, "4", &query)?["hits"] == before["hits"],
+        "full rebuild changed the packed native evidence"
+    );
+    reports.push(("full", elapsed, full));
+    for (phase, wall_us, report) in reports {
+        let persistence_us = counter(&report, "embedding_cache_store_us")?
+            .saturating_add(counter(&report, "embedding_cache_finalize_us")?);
+        eprintln!(
+            "distinct_packs phase={phase} wall_us={wall_us} persistence_us={persistence_us} report={report}"
+        );
+    }
+    for index in 0..63 {
+        ensure!(
+            fs::read_to_string(root.join(format!("notes/account{index:03}.txt")))? == source(index),
+            "indexing changed source {index}"
+        );
+    }
+    ensure!(
+        fs::read_to_string(root.join("notes/renamed-last.txt"))? == edited,
+        "indexing changed edited source"
+    );
+    Ok(())
+}
