@@ -2,7 +2,7 @@
 //! Captured, bounded replay state survives disposable staging and process death.
 use super::{
     CurrentHead, CurrentScope, CurrentToken, MAX_INPUT_METADATA_BYTES, MAX_PENDING_INPUTS,
-    MAX_PENDING_METADATA_BYTES, database, decode_head, gate::Gate, graph,
+    MAX_PENDING_METADATA_BYTES, database, decode_head, gate::Gate, graph, map,
 };
 use crate::{
     FileStore, WriterLock,
@@ -142,7 +142,7 @@ pub struct CapturedInput {
 }
 
 impl CapturedInput {
-    fn bytes(&self) -> Result<Vec<u8>> {
+    pub(super) fn bytes(&self) -> Result<Vec<u8>> {
         let artifact = &self.artifact;
         ensure!(
             !artifact.path.is_empty()
@@ -184,7 +184,7 @@ impl CapturedInput {
         );
         Ok(bytes)
     }
-    fn verify(&self, store: &FileStore) -> Result<()> {
+    pub(super) fn verify(&self, store: &FileStore) -> Result<()> {
         self.bytes()?;
         store.load_retrieval_artifact(&self.artifact)?;
         store.read_retained_source(&self.artifact)?;
@@ -283,7 +283,8 @@ fn create(connection: &Connection) -> Result<()> {
     connection.execute_batch("CREATE TABLE current_state(id INTEGER PRIMARY KEY CHECK(id=1),phase TEXT NOT NULL CHECK(phase IN('ready','prepared','applying')),head BLOB NOT NULL CHECK(length(head)<=65536));
         CREATE TABLE current_pending(id INTEGER PRIMARY KEY CHECK(id=1),transaction_id TEXT NOT NULL,descriptor BLOB NOT NULL CHECK(length(descriptor)<=196608),digest TEXT NOT NULL);
         CREATE TABLE current_pending_inputs(path TEXT PRIMARY KEY,metadata BLOB NOT NULL CHECK(length(metadata)<=262144)) WITHOUT ROWID;")?;
-    graph::create(connection)
+    graph::create(connection)?;
+    super::map::create(connection)
 }
 
 fn state(connection: &Connection, scope: &CurrentScope) -> Result<(TransactionPhase, CurrentHead)> {
@@ -720,6 +721,109 @@ impl CurrentWriter<'_> {
             },
         )?;
         grant.release(self.writer)
+    }
+
+    /// Publish a catalog-only artifact change in one rollback-journaled SQL
+    /// transaction. This path is useful when no lexical or graph component
+    /// changes; combined changes use the captured multi-component protocol.
+    pub fn commit_artifact(
+        &mut self,
+        expected: &CurrentToken,
+        path: &str,
+        input: Option<&CapturedInput>,
+    ) -> Result<CurrentCommit> {
+        let (phase, base) = state(self.connection()?, &self.scope)?;
+        ensure!(
+            phase == TransactionPhase::Ready
+                && self.pending()?.is_none()
+                && *expected == base.token()?,
+            "current catalog base expired or publication pending"
+        );
+        let identity = map::key(&self.scope, map::MapDomain::Artifact, path.as_bytes())?;
+        let value = input
+            .map(|input| {
+                ensure!(
+                    input.artifact.path == path,
+                    "captured artifact path mismatch"
+                );
+                let bytes = input.bytes()?;
+                input.verify(&self.store)?;
+                Ok::<_, anyhow::Error>(bytes)
+            })
+            .transpose()?;
+        let before = map::get(
+            self.connection()?,
+            &self.scope,
+            base.artifact_root,
+            identity,
+        )?;
+        if before == value {
+            return Ok(CurrentCommit {
+                token: *expected,
+                maintenance_error: None,
+            });
+        }
+        let id = framed_digest(
+            b"current-catalog-only-update/1",
+            &[
+                &serde_json::to_vec(expected)?,
+                identity.as_bytes(),
+                &framed_digest(
+                    b"current-catalog-value/1",
+                    &[value.as_deref().unwrap_or(&[])],
+                )
+                .as_bytes()[..],
+                &[u8::from(value.is_some())],
+            ],
+        );
+        let allowance = database::allowance(
+            self.connection
+                .as_mut()
+                .context("current database missing")?,
+            self.capacity,
+        )?;
+        let grant_scope = self.grant_scope(id);
+        let mut grant = match self.quota.current_grant(self.writer, &grant_scope)? {
+            Some(grant) => grant,
+            None => self
+                .quota
+                .reserve_current(self.writer, grant_scope, allowance)?,
+        };
+        if grant.capacity() < allowance {
+            grant.resize(self.writer, allowance)?;
+        }
+        crate::capacity::require_growth(self.quota.root(), allowance)?;
+        let connection = self
+            .connection
+            .as_mut()
+            .context("current database missing")?;
+        let transaction = connection.transaction()?;
+        let next_root = map::put(
+            &transaction,
+            &self.scope,
+            base.artifact_root,
+            identity,
+            value.as_deref(),
+        )?;
+        let mut target = base;
+        target.sequence = target
+            .sequence
+            .checked_add(1)
+            .context("current sequence overflow")?;
+        target.artifact_root = next_root;
+        transaction.execute(
+            "UPDATE OR ROLLBACK current_state SET head=?1 WHERE id=1 AND phase='ready'",
+            [target.canonical_bytes()?],
+        )?;
+        transaction.commit()?;
+        let maintenance_error = grant
+            .release(self.writer)
+            .err()
+            .map(|error| error.to_string());
+        Ok(CurrentCommit {
+            token: target.token()?,
+            maintenance_error,
+        })
     }
 
     pub fn prepare(

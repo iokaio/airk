@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
-use super::{CurrentHead, CurrentScope, CurrentToken, database, decode_head, gate::Gate, graph};
+use super::{
+    CurrentHead, CurrentScope, CurrentToken, database, decode_head, gate::Gate, graph,
+    journal::CapturedInput, map,
+};
 use crate::FileStore;
 use airk_core::graph_storage::{GraphCounts, GraphRecord, GraphRecordReader, GraphScope};
 use anyhow::{Context, Result, ensure};
@@ -15,6 +18,49 @@ pub struct CurrentRead {
 }
 
 impl CurrentRead {
+    /// Authenticates the compact record and path. Call FileStore's verified
+    /// retained-object reader before using referenced source or extraction bytes.
+    pub fn artifact(&self, path: &str) -> Result<Option<airk_core::Artifact>> {
+        let Some(bytes) = self.map_get(map::MapDomain::Artifact, path.as_bytes())? else {
+            return Ok(None);
+        };
+        let captured: CapturedInput = serde_json::from_slice(&bytes)?;
+        ensure!(
+            captured.artifact.path == path && captured.bytes()? == bytes,
+            "current artifact record binding mismatch"
+        );
+        Ok(Some(captured.artifact))
+    }
+    /// Returns authenticated current-map bytes. Referenced retained objects must
+    /// still be loaded through FileStore's verified object readers.
+    pub fn map_get(&self, domain: map::MapDomain, identity: &[u8]) -> Result<Option<Vec<u8>>> {
+        let key = map::key(&self.head.scope, domain, identity)?;
+        self.with_connection(|connection| {
+            map::get(connection, &self.head.scope, self.head.artifact_root, key)
+        })
+    }
+
+    /// A complete proof-checked enumeration, limited independently by visited
+    /// nodes, entries and bytes. This returns no partial list on budget failure.
+    pub fn map_entries(
+        &self,
+        limits: map::MapVisitLimits,
+    ) -> Result<Vec<(airk_core::identity::Sha256Digest, Vec<u8>)>> {
+        self.with_connection(|connection| {
+            let mut entries = Vec::new();
+            map::visit_all(
+                connection,
+                &self.head.scope,
+                self.head.artifact_root,
+                limits,
+                &mut |key, value| {
+                    entries.push((key, value.to_vec()));
+                    Ok(())
+                },
+            )?;
+            Ok(entries)
+        })
+    }
     pub fn head(&self) -> &CurrentHead {
         &self.head
     }
