@@ -591,6 +591,22 @@ impl Kernel {
                 Some(&observation),
             )?;
             report.generation = generation;
+            report.embedding_cache_file_opens = embedding.cache_file_opens;
+            report.embedding_cache_read_bytes = embedding.cache_read_bytes;
+            report.embedding_cache_written_bytes = embedding.cache_written_bytes;
+            report.embedding_cache_record_verification_bytes =
+                embedding.cache_record_verification_bytes;
+            report.embedding_cache_index_verification_bytes =
+                embedding.cache_index_verification_bytes;
+            report.embedding_cache_full_pack_verification_bytes =
+                embedding.cache_full_pack_verification_bytes;
+            report.embedding_cache_syncs = embedding.cache_syncs;
+            report.embedding_cache_index_hits = embedding.cache_index_hits;
+            report.embedding_cache_index_peak_bytes = embedding.cache_index_peak_bytes;
+            report.embedding_cache_packs_written = embedding.cache_packs_written;
+            report.embedding_cache_packs_reused = embedding.cache_packs_reused;
+            report.embedding_cache_compacted_records = embedding.cache_compacted_records;
+            report.embedding_cache_finalize_us = embedding.cache_finalize_us;
             report.embedding_cache_hits = embedding.hits;
             report.embedding_cache_misses = embedding.misses;
             report.embedding_inferences = embedding.inferences;

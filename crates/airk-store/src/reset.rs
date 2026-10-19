@@ -15,7 +15,7 @@ use std::{
     time::Duration,
 };
 
-pub const CURRENT_RETRIEVAL_ENGINE: &str = "tantivy-0.26.2/diskann-0.59.0/airk-file-1/generation-7/inventory-4/model-objects-1/source-context-1/vector-units-1/vector-map-1/vector-selection-1";
+pub const CURRENT_RETRIEVAL_ENGINE: &str = "tantivy-0.26.2/diskann-0.59.0/airk-file-1/generation-8/inventory-4/model-objects-1/source-context-1/vector-units-1/vector-map-1/vector-selection-1/embedding-packs-1";
 const INTENT: &str = "index-reset.json";
 const MAX_INTENT: u64 = 16_384;
 const MAX_ENTRIES: usize = 1_000_000;
@@ -586,6 +586,16 @@ mod tests {
             ] {
                 fs::write(store.directory().join(name), name.as_bytes())?;
             }
+            // Old per-vector JSON objects are obsolete derived state. They are
+            // discarded only by this explicit reset, never adopted into packs.
+            fs::create_dir_all(store.directory().join("objects/embeddings"))?;
+            fs::write(
+                store
+                    .directory()
+                    .join("objects/embeddings")
+                    .join("a".repeat(64)),
+                b"obsolete vector JSON",
+            )?;
             crate::roots::RootConfig::load(store.directory(), &owner)?.save(store.directory())?;
             Ok(Self {
                 _root: root,

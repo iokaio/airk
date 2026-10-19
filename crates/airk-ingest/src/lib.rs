@@ -143,6 +143,33 @@ pub struct IndexReport {
     #[serde(default)]
     pub embedding_cache_hits: u64,
     #[serde(default)]
+    pub embedding_cache_finalize_us: u64,
+    #[serde(default)]
+    pub embedding_cache_file_opens: u64,
+    #[serde(default)]
+    pub embedding_cache_read_bytes: u64,
+    #[serde(default)]
+    pub embedding_cache_written_bytes: u64,
+    #[serde(default)]
+    pub embedding_cache_record_verification_bytes: u64,
+    #[serde(default)]
+    pub embedding_cache_index_verification_bytes: u64,
+    #[serde(default)]
+    pub embedding_cache_full_pack_verification_bytes: u64,
+    #[serde(default)]
+    pub embedding_cache_syncs: u64,
+    #[serde(default)]
+    pub embedding_cache_index_hits: u64,
+    #[serde(default)]
+    pub embedding_cache_index_peak_bytes: u64,
+    #[serde(default)]
+    pub embedding_cache_packs_written: u64,
+    #[serde(default)]
+    pub embedding_cache_packs_reused: u64,
+    #[serde(default)]
+    pub embedding_cache_compacted_records: u64,
+
+    #[serde(default)]
     pub embedding_cache_misses: u64,
     #[serde(default)]
     pub embedding_inferences: u64,

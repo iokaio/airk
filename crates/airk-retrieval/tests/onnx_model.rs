@@ -67,7 +67,11 @@ fn real_transformer_publishes_reopens_and_keeps_generation_assets_isolated() -> 
     );
     // Receipt-bound shared objects remain independent of provisioned source assets.
     let set = model::inspect_object_plan(&directory)?;
-    model::inspect_objects_cache_descriptor(&base, &set)?;
+    let descriptor = model::inspect_objects_cache_descriptor(&base, &set)?;
+    assert_eq!(
+        model::descriptor_from_objects_metadata(&base, &set)?,
+        descriptor
+    );
     drop(index);
     let reopened = PersistentIndex::open_v2(&base, &snapshot.collection, &receipt)?;
     assert_eq!(
