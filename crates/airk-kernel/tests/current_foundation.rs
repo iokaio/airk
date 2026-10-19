@@ -303,15 +303,18 @@ fn current_store_commits_verified_lexical_fork_with_graph_in_one_head() -> Resul
             .lexical_manifest()?,
         old_bytes
     );
-    let lock = fixture.store.lock()?;
-    let mut current =
-        fixture
-            .store
-            .current_write(&lock, &fixture.quota, &fixture.scope, CAPACITY)?;
-    current.mark_applying(&pending)?;
-    current.commit(&pending, replacement.digest())?;
-    drop(current);
-    drop(lock);
+    let recovered =
+        airk_kernel::current::recover_current(&fixture.store, &fixture.quota, &fixture.scope)?;
+    assert_eq!(
+        recovered.action,
+        airk_kernel::current::CurrentRecoveryAction::Applied
+    );
+    assert_eq!(recovered.token, pending.target.token()?);
+    assert_eq!(
+        airk_kernel::current::recover_current(&fixture.store, &fixture.quota, &fixture.scope)?
+            .action,
+        airk_kernel::current::CurrentRecoveryAction::AlreadyReady
+    );
 
     let read = fixture.store.current_read(&fixture.scope)?;
     assert_eq!(read.head(), &pending.target);
@@ -468,6 +471,101 @@ fn current_store_commits_verified_lexical_fork_with_graph_in_one_head() -> Resul
             .len(),
         1
     );
+    Ok(())
+}
+
+#[test]
+fn restart_verifies_private_lexical_candidate_before_replay_or_prepared_abort() -> Result<()> {
+    for (applying, remove_target) in [(false, true), (true, false), (true, true)] {
+        let fixture = Fixture::new()?;
+        let base_path = fixture.store.directory().join("lexical-0");
+        let target_path = fixture.store.directory().join("lexical-1");
+        let read = fixture.store.current_read(&fixture.scope)?;
+        let head = read.head().clone();
+        let base_bytes = read.lexical_manifest()?;
+        let base = LexicalManifest::decode(&base_bytes, head.lexical_commit)?;
+        let verified = base.verify_owned(&base_path, head.lexical_commit)?;
+        drop(read);
+        let (private, replacement, _) = CurrentLexical::fork_changed(
+            &verified,
+            &target_path,
+            Arc::new(|_| Ok(())),
+            &[LexicalChange {
+                path: "docs/absent.md",
+                artifact: None,
+            }],
+        )?;
+        drop(private);
+        let replacement_bytes = replacement.manifest().canonical_bytes()?;
+        let (_reservation, candidate_head, overlay) = fixture.candidate()?;
+        assert_eq!(candidate_head, head);
+        let sealed = Fixture::seal(overlay)?;
+        let mut target = head.clone();
+        target.sequence += 1;
+        target.graph_head = sealed.descriptor().target.clone();
+        target.lexical_commit = replacement.digest();
+        let lock = fixture.store.lock()?;
+        let mut current =
+            fixture
+                .store
+                .current_write(&lock, &fixture.quota, &fixture.scope, CAPACITY)?;
+        let pending = current.prepare_lexical(
+            &head.token()?,
+            target,
+            &sealed,
+            &[],
+            None,
+            &replacement_bytes,
+        )?;
+        if applying {
+            current.mark_applying(&pending)?;
+        }
+        drop(current);
+        drop(lock);
+        if remove_target {
+            std::fs::remove_dir_all(&target_path)?;
+        }
+        let recovered =
+            airk_kernel::current::recover_current(&fixture.store, &fixture.quota, &fixture.scope);
+        match (applying, remove_target) {
+            (false, true) => {
+                let result = recovered?;
+                assert_eq!(
+                    result.action,
+                    airk_kernel::current::CurrentRecoveryAction::AbortedPrepared
+                );
+                assert!(result.aborted_reason.is_some());
+                assert_eq!(result.token, head.token()?);
+                assert_eq!(
+                    fixture
+                        .store
+                        .current_read(&fixture.scope)?
+                        .lexical_manifest()?,
+                    base_bytes
+                );
+            }
+            (true, false) => {
+                let result = recovered?;
+                assert_eq!(
+                    result.action,
+                    airk_kernel::current::CurrentRecoveryAction::Applied
+                );
+                assert_eq!(result.token, pending.target.token()?);
+                assert_eq!(
+                    fixture
+                        .store
+                        .current_read(&fixture.scope)?
+                        .lexical_manifest()?,
+                    replacement_bytes
+                );
+            }
+            (true, true) => {
+                assert!(recovered.is_err());
+                assert!(fixture.store.current_read(&fixture.scope).is_err());
+            }
+            _ => unreachable!(),
+        }
+    }
     Ok(())
 }
 
