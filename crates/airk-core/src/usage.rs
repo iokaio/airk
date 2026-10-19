@@ -347,6 +347,12 @@ pub enum IndexMetric {
     EmbeddingTruncatedInputs,
     EmbeddingPlanCompilations,
     EmbeddingPlanCompileUs,
+    VectorEligibleArtifacts,
+    VectorExcludedArtifacts,
+    VectorReusedInputs,
+    VectorGraphNodes,
+    VectorRegistryRows,
+    VectorRegistryBytes,
     VectorUnits,
     VectorBodyBytes,
     VectorPlanningUs,
@@ -360,7 +366,7 @@ pub enum IndexMetric {
 }
 
 impl IndexMetric {
-    pub const ALL: [Self; 21] = [
+    pub const ALL: [Self; 27] = [
         Self::EmbeddingInputs,
         Self::EmbeddingBlankInputs,
         Self::EmbeddingDuplicateInputs,
@@ -372,6 +378,12 @@ impl IndexMetric {
         Self::EmbeddingTruncatedInputs,
         Self::EmbeddingPlanCompilations,
         Self::EmbeddingPlanCompileUs,
+        Self::VectorEligibleArtifacts,
+        Self::VectorExcludedArtifacts,
+        Self::VectorReusedInputs,
+        Self::VectorGraphNodes,
+        Self::VectorRegistryRows,
+        Self::VectorRegistryBytes,
         Self::VectorUnits,
         Self::VectorBodyBytes,
         Self::VectorPlanningUs,
@@ -397,6 +409,12 @@ impl IndexMetric {
             Self::EmbeddingTruncatedInputs => "embedding_truncated_inputs",
             Self::EmbeddingPlanCompilations => "embedding_plan_compilations",
             Self::EmbeddingPlanCompileUs => "embedding_plan_compile_us",
+            Self::VectorEligibleArtifacts => "vector_eligible_artifacts",
+            Self::VectorExcludedArtifacts => "vector_excluded_artifacts",
+            Self::VectorReusedInputs => "vector_reused_inputs",
+            Self::VectorGraphNodes => "vector_graph_nodes",
+            Self::VectorRegistryRows => "vector_registry_rows",
+            Self::VectorRegistryBytes => "vector_registry_bytes",
             Self::VectorUnits => "vector_units",
             Self::VectorBodyBytes => "vector_body_bytes",
             Self::VectorPlanningUs => "vector_planning_us",

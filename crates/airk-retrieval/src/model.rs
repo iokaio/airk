@@ -131,6 +131,18 @@ impl PlanningTokens {
 
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct EmbeddingCacheStats {
+    /// Artifacts admitted by the applied vector policy, independent of model enablement.
+    pub vector_eligible_artifacts: u64,
+    /// Artifacts deliberately retained without vectors by the applied policy.
+    pub vector_excluded_artifacts: u64,
+    /// Inputs resolved from another exact input in this build, including no-vector outcomes.
+    pub vector_reused_inputs: u64,
+    /// Distinct positive inputs inserted into the graph in this build.
+    pub vector_graph_nodes: u64,
+    /// Distinct outcomes in the private per-build exact-input registry.
+    pub vector_registry_rows: u64,
+    /// Allocated registry SQLite pages in bytes, not physical disk I/O.
+    pub vector_registry_bytes: u64,
     /// Semantic units emitted before embedding cache lookup.
     pub vector_units: u64,
     /// Exact covered source-body bytes, excluding repeated written context.

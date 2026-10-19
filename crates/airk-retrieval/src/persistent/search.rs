@@ -380,6 +380,9 @@ impl PersistentIndex {
             manifest.chunks as u64 == self.reader.searcher().num_docs()
                 && manifest.vector_occurrences as u64 == self.map_reader.searcher().num_docs()
                 && manifest.vector_occurrences == self.vector_occurrences
+                && manifest.vector_selection_digest == self.vector_selection_digest
+                && manifest.vector_eligible_artifacts == self.vector_eligible_artifacts
+                && manifest.vector_excluded_artifacts == self.vector_excluded_artifacts
                 && manifest.vectors == self.vectors
                 && manifest.model_sha256 == self.model_sha256,
             "cached generation manifest mismatch"

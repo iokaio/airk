@@ -9,6 +9,7 @@ use crate::{
 use airk_core::identity::{PublicationReceipt, RevisionToken, Sha256Digest, revision_digest};
 use airk_core::model_objects::{MAX_MODEL_OBJECT_SET_BYTES, ModelObjectSet};
 use airk_core::publication::InventoryV2;
+use airk_core::vector_selection::{VectorNodeRegistry, VectorSelectionPolicy};
 use airk_core::{Citation, Hit, RetrievalSource, Snapshot};
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
@@ -29,9 +30,10 @@ use tantivy::{
 #[path = "../tests/support/source.rs"]
 mod fixture_source;
 mod search;
+mod vector_inputs;
 mod vector_map;
 
-const ENGINE: &str = "tantivy-0.26.2/diskann-0.59.0/airk-file-1/generation-6/inventory-3/model-objects-1/source-context-1/vector-units-1/vector-map-1";
+const ENGINE: &str = "tantivy-0.26.2/diskann-0.59.0/airk-file-1/generation-7/inventory-4/model-objects-1/source-context-1/vector-units-1/vector-map-1/vector-selection-1";
 const MAX_MANIFEST_V2_BYTES: usize = 128 * 1024;
 const MAX_COMPONENTS_V2: usize = 1024;
 const MAX_INVENTORY_V2_BYTES: usize = airk_core::publication::MAX_INVENTORY_BYTES;
@@ -65,6 +67,9 @@ pub struct ManifestV2 {
     pub chunks: usize,
     pub vectors: usize,
     pub vector_occurrences: usize,
+    pub vector_selection_digest: Sha256Digest,
+    pub vector_eligible_artifacts: usize,
+    pub vector_excluded_artifacts: usize,
     pub model_sha256: Option<String>,
     pub embedding: String,
     pub inventory_digest: Sha256Digest,
@@ -75,6 +80,8 @@ struct BuiltComponents {
     chunks: usize,
     vectors: usize,
     vector_occurrences: usize,
+    vector_eligible_artifacts: usize,
+    vector_excluded_artifacts: usize,
     model_sha256: Option<String>,
     embedding: &'static str,
 }
@@ -121,11 +128,14 @@ fn build_streaming_components(
     snapshot: &Snapshot,
     model_directory: Option<&Path>,
     source: &dyn RetrievalSource,
+    registry: Option<&dyn VectorNodeRegistry>,
+    selection: &VectorSelectionPolicy,
     charge: Charge,
     mut cache: Option<&mut EmbeddingCacheContext<'_>>,
     expected_pipeline: Option<Sha256Digest>,
     model_objects: Option<(&Path, &ModelObjectSet)>,
 ) -> Result<BuiltComponents> {
+    let selection = selection.validated()?;
     let lexical = directory.join("lexical");
     fs::create_dir(&lexical)?;
     let (schema, fields) = schema();
@@ -208,10 +218,24 @@ fn build_streaming_components(
     let mut ordinal = 0u64;
     let mut vectors = 0usize;
     let mut vector_occurrences = 0usize;
+    let mut vector_eligible_artifacts = 0usize;
+    let mut vector_excluded_artifacts = 0usize;
     for path in snapshot.artifacts.keys() {
         let retained = source.load_retrieval_artifact(path)?;
         let artifact = &retained.artifact;
         retained.payload.validate()?;
+        let decision = selection.decision(path, &retained.profile, &artifact.language)?;
+        let stats = match cache.as_mut() {
+            Some(context) => &mut *context.stats,
+            None => &mut local_stats,
+        };
+        if decision.eligible {
+            vector_eligible_artifacts += 1;
+            stats.vector_eligible_artifacts = stats.vector_eligible_artifacts.saturating_add(1);
+        } else {
+            vector_excluded_artifacts += 1;
+            stats.vector_excluded_artifacts = stats.vector_excluded_artifacts.saturating_add(1);
+        }
         ensure!(
             artifact.path == *path && artifact.chunks.len() == retained.payload.chunks.len(),
             "retrieval carrier differs from retained artifact"
@@ -261,6 +285,11 @@ fn build_streaming_components(
             ordinal = ordinal.checked_add(1).context("lexical ordinal overflow")?;
         }
         if let Some(model) = &model {
+            if !decision.eligible {
+                continue;
+            }
+            let registry =
+                registry.context("model build requires a private exact-input registry")?;
             let descriptor = descriptor
                 .as_ref()
                 .context("embedding descriptor missing")?;
@@ -271,31 +300,18 @@ fn build_streaming_components(
                         return Ok(());
                     }
                     let texts: Vec<_> = units.iter().map(|unit| unit.input.as_str()).collect();
-                    let embeddings = if let Some(context) = cache.as_mut() {
-                        crate::embedding_batch::embed(
-                            model,
-                            &texts,
-                            descriptor,
-                            context.cache,
-                            context.bypass,
-                            context.stats,
-                            context.max_workers,
-                            context.working_memory_bytes,
-                        )?
-                    } else {
-                        crate::embedding_batch::embed(
-                            model,
-                            &texts,
-                            descriptor,
-                            None,
-                            false,
-                            &mut local_stats,
-                            1,
-                            128 << 20,
-                        )?
-                    };
-                    for (unit, vector) in units.drain(..).zip(embeddings) {
-                        let Some(vector) = vector else {
+                    let ids = vector_inputs::intern(
+                        model,
+                        &texts,
+                        descriptor,
+                        registry,
+                        graph.as_mut().context("vector graph missing")?,
+                        cache.as_deref_mut(),
+                        &mut local_stats,
+                    )?;
+                    vectors = graph.as_ref().context("vector graph missing")?.len();
+                    for (unit, graph_id) in units.drain(..).zip(ids) {
+                        let Some(graph_id) = graph_id else {
                             continue;
                         };
                         ensure!(
@@ -424,22 +440,12 @@ fn build_streaming_components(
                             body,
                             members,
                         )?;
-                        let started = std::time::Instant::now();
-                        let graph_id = graph
-                            .as_mut()
-                            .context("vector graph missing")?
-                            .insert(&vector)?;
-                        if let Some(context) = cache.as_mut() {
-                            context.stats.graph_insert_us +=
-                                crate::embedding_batch::elapsed_us(started);
-                        }
                         map_writer.add_document(vector_map::document(
                             &map_fields,
                             graph_id,
                             vector_occurrences as u64,
                             &occurrence,
                         )?)?;
-                        vectors += 1;
                         vector_occurrences += 1;
                     }
                     Ok(())
@@ -512,6 +518,8 @@ fn build_streaming_components(
         chunks: ordinal as usize,
         vectors,
         vector_occurrences,
+        vector_eligible_artifacts,
+        vector_excluded_artifacts,
         model_sha256: model.as_ref().map(|m| m.identity().to_owned()),
         embedding: model.as_ref().map_or("none", EmbeddingModel::specification),
     })
@@ -749,6 +757,21 @@ fn verify_directory_v2(
         );
         let objects = read_model_objects(directory, &manifest)?;
         let inventory: InventoryV2 = serde_json::from_slice(&inventory)?;
+        let selection = inventory.vector_selection.validated()?;
+        let mut eligible = 0usize;
+        for (path, file) in &inventory.files {
+            let profile = inventory
+                .profiles
+                .get(&file.state.profile_id)
+                .context("vector policy profile missing")?;
+            eligible += usize::from(selection.decision(path, profile, &file.language)?.eligible);
+        }
+        ensure!(
+            manifest.vector_selection_digest == inventory.vector_selection.digest()?
+                && manifest.vector_eligible_artifacts == eligible
+                && manifest.vector_excluded_artifacts == inventory.files.len() - eligible,
+            "vector selection manifest differs from authoritative inventory"
+        );
         ensure!(
             objects.as_ref().map(|set| set.pipeline_digest) == inventory.embedding_pipeline_digest,
             "model object pipeline differs from authoritative inventory"
@@ -843,6 +866,7 @@ pub fn prepare_streaming(
     preparation: &V2Preparation<'_>,
     model_objects: Option<&ModelObjectSet>,
     source: &dyn RetrievalSource,
+    registry: Option<&dyn VectorNodeRegistry>,
     charge: Option<Charge>,
     staging_parent: Option<&Path>,
     cache: Option<&mut EmbeddingCacheContext<'_>>,
@@ -856,6 +880,10 @@ pub fn prepare_streaming(
     );
     let authoritative: InventoryV2 = serde_json::from_slice(preparation.canonical_inventory)?;
     let engine = ENGINE;
+    ensure!(
+        model_objects.is_none() || registry.is_some(),
+        "model build requires a private exact-input registry"
+    );
     if let Some(set) = model_objects {
         set.validate()?;
     }
@@ -907,6 +935,8 @@ pub fn prepare_streaming(
         snapshot,
         None,
         source,
+        registry,
+        &authoritative.vector_selection,
         charge.clone(),
         cache,
         authoritative.embedding_pipeline_digest,
@@ -963,6 +993,9 @@ pub fn prepare_streaming(
         chunks: built.chunks,
         vectors: built.vectors,
         vector_occurrences: built.vector_occurrences,
+        vector_selection_digest: authoritative.vector_selection.digest()?,
+        vector_eligible_artifacts: built.vector_eligible_artifacts,
+        vector_excluded_artifacts: built.vector_excluded_artifacts,
         model_sha256: built.model_sha256,
         embedding: built.embedding.into(),
         inventory_digest,
@@ -1017,6 +1050,9 @@ pub struct PersistentIndex {
     collection: String,
     pub vectors: usize,
     pub vector_occurrences: usize,
+    pub vector_selection_digest: Sha256Digest,
+    pub vector_eligible_artifacts: usize,
+    pub vector_excluded_artifacts: usize,
     pub model_sha256: Option<String>,
     v2_receipt: Option<PublicationReceipt>,
     model_objects: Option<ModelObjectSet>,
@@ -1045,6 +1081,9 @@ impl PersistentIndex {
             collection: collection.into(),
             vectors: manifest.vectors,
             vector_occurrences: manifest.vector_occurrences,
+            vector_selection_digest: manifest.vector_selection_digest,
+            vector_eligible_artifacts: manifest.vector_eligible_artifacts,
+            vector_excluded_artifacts: manifest.vector_excluded_artifacts,
             model_sha256: manifest.model_sha256,
             v2_receipt: Some(receipt.clone()),
             model_objects,
@@ -1119,6 +1158,8 @@ mod pipeline_tests {
             &snapshot,
             Some(&model),
             &fixture_source::FixtureSource::new(&snapshot)?,
+            Some(&fixture_source::FixtureRegistry::default()),
+            &VectorSelectionPolicy::default(),
             charge.clone(),
             None,
             Some(Sha256Digest::from_bytes([0; 32])),
@@ -1134,6 +1175,8 @@ mod pipeline_tests {
             &snapshot,
             Some(&model),
             &fixture_source::FixtureSource::new(&snapshot)?,
+            Some(&fixture_source::FixtureRegistry::default()),
+            &VectorSelectionPolicy::default(),
             charge.clone(),
             None,
             None,
@@ -1151,6 +1194,8 @@ mod pipeline_tests {
             &snapshot,
             Some(&model),
             &source,
+            Some(&fixture_source::FixtureRegistry::default()),
+            &VectorSelectionPolicy::default(),
             charge,
             None,
             Some(expected),

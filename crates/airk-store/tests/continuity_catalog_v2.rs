@@ -281,10 +281,11 @@ fn prepare(
         resolvers: vec![],
     };
     let inventory = InventoryV2 {
+        vector_selection: Default::default(),
         embedding_pipeline_digest: None,
         index_detail: None,
         extraction_policy_digest: None,
-        version: if count > 0 { 3 } else { 2 },
+        version: airk_core::publication::INVENTORY_VERSION,
         incarnation,
         generation,
         collection: "fixture".into(),
@@ -407,7 +408,7 @@ fn prepare(
         components.insert(name, json!({"bytes":bytes.len(),"sha256":digest(&bytes)}));
     }
     let manifest = serde_json::to_vec(
-        &json!({"schema":4,"engine":inventory.retrieval_specification,"token":token,"collection":"fixture","chunks":1,"vectors":0,"vector_occurrences":0,"model_sha256":null,"embedding":"none","inventory_digest":digest(&bytes),"components":components}),
+        &json!({"schema":4,"engine":inventory.retrieval_specification,"token":token,"collection":"fixture","chunks":1,"vectors":0,"vector_occurrences":0,"vector_selection_digest":inventory.vector_selection.digest()?,"vector_eligible_artifacts":inventory.files.len(),"vector_excluded_artifacts":0,"model_sha256":null,"embedding":"none","inventory_digest":digest(&bytes),"components":components}),
     )?;
     reservation.charge(manifest.len() as u64)?;
     fs::write(staging.join("manifest.json"), &manifest)?;

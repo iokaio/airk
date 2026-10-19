@@ -564,6 +564,11 @@ enum AnalysisCommand {
 #[derive(Subcommand)]
 enum VectorCommand {
     Show,
+    /// Inspect or save explicit vector-only exclusions; lexical evidence is retained.
+    Selection {
+        #[command(subcommand)]
+        action: VectorSelectionCommand,
+    },
     /// Verify and install local model inputs under native storage quotas.
     Install {
         source: PathBuf,
@@ -572,6 +577,52 @@ enum VectorCommand {
         #[arg(long, action = clap::ArgAction::Set)]
         enabled: bool,
     },
+}
+
+#[derive(Subcommand)]
+enum VectorSelectionCommand {
+    Show,
+    /// Validate a proposed policy without saving or indexing it.
+    Validate {
+        #[arg(long, required_unless_present = "json", conflicts_with = "json")]
+        file: Option<PathBuf>,
+        #[arg(long, conflicts_with = "file")]
+        json: Option<String>,
+    },
+    /// Save a policy for the next index; preserves the vector enabled setting.
+    Set {
+        #[arg(long, required_unless_present = "json", conflicts_with = "json")]
+        file: Option<PathBuf>,
+        #[arg(long, conflicts_with = "file")]
+        json: Option<String>,
+    },
+}
+
+fn vector_selection_input(
+    file: Option<PathBuf>,
+    json: Option<String>,
+) -> anyhow::Result<airk_core::vector_selection::VectorSelectionPolicy> {
+    use std::io::Read;
+    const MAXIMUM: u64 = 131_072;
+    let bytes = match (file, json) {
+        (Some(file), None) => {
+            let input = std::fs::File::open(file)?;
+            anyhow::ensure!(
+                input.metadata()?.len() <= MAXIMUM,
+                "vector selection exceeds 128 KiB"
+            );
+            let mut bytes = Vec::new();
+            input.take(MAXIMUM + 1).read_to_end(&mut bytes)?;
+            bytes
+        }
+        (None, Some(json)) => json.into_bytes(),
+        _ => anyhow::bail!("provide exactly one vector selection --file or --json"),
+    };
+    anyhow::ensure!(
+        bytes.len() <= MAXIMUM as usize,
+        "vector selection exceeds 128 KiB"
+    );
+    Ok(serde_json::from_slice(&bytes)?)
 }
 
 #[derive(Subcommand)]
@@ -1133,6 +1184,11 @@ async fn main_async() -> anyhow::Result<()> {
                 VectorCommand::Show => recorder.print(&kernel.vector_status()?),
                 VectorCommand::Install { source } => recorder.print(&kernel.install_vector_model(&source)?),
                 VectorCommand::Set { enabled } => recorder.print(&kernel.configure_vectors(enabled)?),
+                VectorCommand::Selection { action } => match action {
+                    VectorSelectionCommand::Show => recorder.print(&kernel.vector_selection_status()?),
+                    VectorSelectionCommand::Validate { file, json } => recorder.print(&kernel.validate_vector_selection(&vector_selection_input(file, json)?)?),
+                    VectorSelectionCommand::Set { file, json } => recorder.print(&kernel.configure_vector_selection(vector_selection_input(file, json)?)?),
+                },
             },
             CollectionCommand::Extraction { action } => match action {
                 ExtractionCommand::Show => recorder.print(&kernel.extraction_policy()?),

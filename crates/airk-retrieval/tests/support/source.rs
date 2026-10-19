@@ -11,6 +11,39 @@ use airk_core::{
 use anyhow::{Result, ensure};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
+use std::sync::Mutex;
+
+/// Deliberately in-memory, original test fixture; runtime uses charged disk staging.
+#[derive(Default)]
+pub struct FixtureRegistry(
+    pub Mutex<BTreeMap<Sha256Digest, airk_core::vector_selection::PreparedVectorNode>>,
+);
+
+impl airk_core::vector_selection::VectorNodeRegistry for FixtureRegistry {
+    fn lookup(
+        &self,
+        key: Sha256Digest,
+    ) -> Result<Option<airk_core::vector_selection::PreparedVectorNode>> {
+        Ok(self.0.lock().unwrap().get(&key).copied())
+    }
+    fn remember(
+        &self,
+        key: Sha256Digest,
+        node: airk_core::vector_selection::PreparedVectorNode,
+    ) -> Result<()> {
+        ensure!(
+            node.graph_id.is_none_or(|id| id > 0),
+            "invalid fixture node"
+        );
+        let mut entries = self.0.lock().unwrap();
+        ensure!(
+            entries.get(&key).is_none_or(|old| old == &node),
+            "conflicting fixture node"
+        );
+        entries.insert(key, node);
+        Ok(())
+    }
+}
 
 pub struct FixtureSource {
     pub artifacts: BTreeMap<String, RetrievalArtifact>,

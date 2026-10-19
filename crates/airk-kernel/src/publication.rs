@@ -280,7 +280,21 @@ impl Kernel {
         } else {
             None
         };
+        let vector_selection = if matches!(
+            reason,
+            PublicationReason::Initialization
+                | PublicationReason::Index
+                | PublicationReason::FullReindex
+        ) {
+            self.vector_selection()?
+        } else {
+            prior
+                .context("metadata publication requires current inventory")?
+                .vector_selection
+                .clone()
+        };
         let mut inventory = InventoryV2 {
+            vector_selection,
             embedding_pipeline_digest: model_objects
                 .as_ref()
                 .map(|objects| objects.pipeline_digest),
@@ -411,8 +425,7 @@ impl Kernel {
             Ok(())
         };
         for (path, file) in &mut inventory.files {
-            if prior.is_some_and(|inventory| inventory.version >= 3)
-                && let Some((old_path, old_file)) = prior_by_id.get(&file.state.artifact_id)
+            if let Some((old_path, old_file)) = prior_by_id.get(&file.state.artifact_id)
                 && *old_path == path
                 && old_file.state.payload_digest == file.state.payload_digest
                 && old_file.state.profile_id == file.state.profile_id
@@ -481,6 +494,12 @@ impl Kernel {
                 || prior.embedding_pipeline_digest != inventory.embedding_pipeline_digest
             {
                 invalidations.push(("retrieval/model", ChangeCause::ModelChanged));
+            }
+            if prior.vector_selection.digest()? != inventory.vector_selection.digest()? {
+                invalidations.push((
+                    "retrieval/vector-selection",
+                    ChangeCause::MetadataMaintenance,
+                ));
             }
             if prior.files.iter().any(|(path, file)| {
                 inventory
@@ -564,6 +583,14 @@ impl Kernel {
         } else {
             None
         };
+        let vector_registry = if model_objects.is_some() {
+            Some(airk_store::vector_registry::VectorRegistry::new(
+                &reservation,
+                (reservation.remaining() / 16).min(airk_store::vector_registry::MAX_REGISTRY_BYTES),
+            )?)
+        } else {
+            None
+        };
         let mut cache_context = airk_retrieval::model::EmbeddingCacheContext {
             cache: vector_cache
                 .as_ref()
@@ -586,6 +613,9 @@ impl Kernel {
             },
             model_objects.as_ref(),
             &source,
+            vector_registry
+                .as_ref()
+                .map(|registry| registry as &dyn airk_core::vector_selection::VectorNodeRegistry),
             Some(charge),
             Some(&staging),
             Some(&mut cache_context),
@@ -614,6 +644,11 @@ impl Kernel {
             },
             |receipt| reservation.track_prepared_publication(&expected, receipt),
         )?;
+        if let Some(registry) = &vector_registry {
+            let measured = registry.statistics()?;
+            cache_stats.vector_registry_rows = measured.rows;
+            cache_stats.vector_registry_bytes = measured.bytes;
+        }
         self.store
             .publish_catalog_v2(&inventory, &receipt, &expected, &reservation)?;
         if resetting {
@@ -624,6 +659,7 @@ impl Kernel {
         // a failed publication nor retain superseded idle leases. Active calls
         // own independent Arc pins; drop potentially large indexes outside locks.
         drop(vector_cache);
+        drop(vector_registry);
         drop((old, reservation));
         self.after_publication(writer, &quota);
         Ok((generation, cache_stats))

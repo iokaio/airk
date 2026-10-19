@@ -92,6 +92,9 @@ struct ManifestV2 {
     chunks: usize,
     vectors: usize,
     vector_occurrences: usize,
+    vector_selection_digest: airk_core::identity::Sha256Digest,
+    vector_eligible_artifacts: usize,
+    vector_excluded_artifacts: usize,
     model_sha256: Option<String>,
     embedding: String,
     inventory_digest: airk_core::identity::Sha256Digest,
@@ -111,7 +114,45 @@ impl ManifestV2 {
             && self.vectors <= self.vector_occurrences
             && (self.vectors == 0) == (self.vector_occurrences == 0)
             && (self.model_sha256.is_some() || self.vectors == 0)
+            && self
+                .vector_eligible_artifacts
+                .checked_add(self.vector_excluded_artifacts)
+                .is_some_and(|count| count <= 1_000_000)
+            && (self.vectors == 0 || self.vector_eligible_artifacts > 0)
     }
+
+    fn verify_selection(&self, inventory: &airk_core::publication::InventoryV2) -> Result<()> {
+        verify_vector_selection(
+            inventory,
+            self.vector_selection_digest,
+            self.vector_eligible_artifacts,
+            self.vector_excluded_artifacts,
+        )
+    }
+}
+
+pub(crate) fn verify_vector_selection(
+    inventory: &airk_core::publication::InventoryV2,
+    digest: airk_core::identity::Sha256Digest,
+    eligible_artifacts: usize,
+    excluded_artifacts: usize,
+) -> Result<()> {
+    let selection = inventory.vector_selection.validated()?;
+    let mut eligible = 0usize;
+    for (path, file) in &inventory.files {
+        let profile = inventory
+            .profiles
+            .get(&file.state.profile_id)
+            .context("vector selection profile missing from inventory")?;
+        eligible += usize::from(selection.decision(path, profile, &file.language)?.eligible);
+    }
+    ensure!(
+        digest == inventory.vector_selection.digest()?
+            && eligible_artifacts == eligible
+            && excluded_artifacts == inventory.files.len() - eligible,
+        "vector selection manifest differs from authoritative inventory"
+    );
+    Ok(())
 }
 
 fn parse_manifest(bytes: &[u8]) -> Result<ManifestV2> {
@@ -266,6 +307,7 @@ impl FileStore {
         );
         let inventory: airk_core::publication::InventoryV2 = serde_json::from_slice(&bytes)?;
         inventory.validate()?;
+        manifest.verify_selection(&inventory)?;
         ensure!(
             inventory.incarnation == receipt.token.incarnation
                 && inventory.generation == receipt.token.generation
@@ -577,6 +619,7 @@ pub(crate) fn verify_v2_directory(
     );
     let inventory: airk_core::publication::InventoryV2 = serde_json::from_slice(&bytes)?;
     inventory.validate()?;
+    manifest.verify_selection(&inventory)?;
     ensure!(
         inventory.incarnation == receipt.token.incarnation
             && inventory.generation == receipt.token.generation
@@ -1486,6 +1529,7 @@ mod tests {
             "schema":4,"engine":crate::reset::CURRENT_RETRIEVAL_ENGINE,
             "token":format!("airk-r1:11111111111111111111111111111111:1:{digest}"),
             "collection":"fixture","chunks":1,"vectors":3,"vector_occurrences":4,
+            "vector_selection_digest":digest,"vector_eligible_artifacts":1,"vector_excluded_artifacts":0,
             "model_sha256":digest,"embedding":"fixture","inventory_digest":digest,
             "components":{"vector-map/meta.json":{"bytes":2,"sha256":digest},"model-objects.json":{"bytes":2,"sha256":digest}}
         });
