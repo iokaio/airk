@@ -158,6 +158,24 @@ pub struct IndexReport {
     #[serde(default)]
     pub embedding_actual_forwards: u64,
     #[serde(default)]
+    pub embedding_tokenized_inputs: u64,
+    /// Tokens include processor specials and apply only to executed cache misses.
+    #[serde(default)]
+    pub embedding_input_tokens: u64,
+    #[serde(default)]
+    pub embedding_embedded_tokens: u64,
+    #[serde(default)]
+    pub embedding_padding_tokens: u64,
+    #[serde(default)]
+    pub embedding_truncated_inputs: u64,
+    #[serde(default)]
+    pub embedding_plan_compilations: u64,
+    #[serde(default)]
+    pub embedding_plan_compile_us: u64,
+    /// Peak declared allocation charged to the bounded plan cache, not process RSS.
+    #[serde(default)]
+    pub embedding_plan_cache_peak_bytes: u64,
+    #[serde(default)]
     pub embedding_model_load_us: u64,
     #[serde(default)]
     pub embedding_cache_lookup_us: u64,

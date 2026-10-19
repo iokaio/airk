@@ -54,11 +54,16 @@ test('embedding work distinguishes measured zero forwards from unavailable measu
     const html = renderUsage({ report: { operations: { index: { index_work: { metrics: {
         embedding_actual_forwards: { samples: 1, value: '0' },
         embedding_blank_inputs: { samples: 0, value: '0' },
-        embedding_inputs: { samples: 2, value: '20' }
+        embedding_inputs: { samples: 2, value: '20' },
+        embedding_padding_tokens: { samples: 1, value: '96' },
+        embedding_plan_compilations: { samples: 1, value: '0' }
     } } } } } });
     assert.match(html, /Neural model executions<\/td><td>0<\/td><td>1/);
     assert.match(html, /Blank inputs skipped<\/td><td>Not measured<\/td><td>0/);
     assert.match(html, /Embedding inputs<\/td><td>20<\/td><td>2/);
+    assert.match(html, /Padding slots<\/td><td>96<\/td><td>1/);
+    assert.match(html, /Compiled inference plans<\/td><td>0<\/td><td>1/);
+    assert.match(html, /Token counts cover executed cache misses/);
     assert.match(html, /Inference µs<\/td><td>Not measured/);
     assert.match(html, /do not add them to publication time/);
 });
