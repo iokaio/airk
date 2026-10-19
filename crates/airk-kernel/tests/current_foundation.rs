@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Qualifies real DiskANN algorithms across the authenticated store/journal boundary.
 use airk_core::{
-    Artifact, Chunk, DocumentLocation, SearchQuery,
+    Artifact, DocumentLocation, SearchQuery,
     graph_storage::{GraphHead, GraphRecordReader, GraphScope, PreparedGraphDelta},
     identity::{Incarnation, Sha256Digest, framed_digest},
 };
@@ -13,12 +13,13 @@ use airk_retrieval::{
 use airk_store::{
     FileStore,
     current::{
-        CurrentHead, CurrentScope, PendingTransaction,
+        ArtifactChange, CapturedInput, CurrentHead, CurrentScope, PendingTransaction,
         graph::{GraphOverlay, GraphOverlayLimits, SealedGraph},
     },
     quota::{Quota, Reservation},
 };
 use anyhow::{Context, Result, ensure};
+use sha2::{Digest, Sha256};
 use std::{collections::BTreeSet, sync::Arc, time::Instant};
 
 const DIMENSIONS: usize = 8;
@@ -170,23 +171,70 @@ impl Fixture {
     }
 }
 
-fn lexical_artifact(path: &str, hash: u8, text: &str) -> Artifact {
-    Artifact {
-        path: path.into(),
-        content_hash: Sha256Digest::from_bytes([hash; 32]).to_string(),
-        bytes: text.len(),
-        chunks: vec![Chunk {
+fn retained_lexical_artifact(
+    fixture: &Fixture,
+    path: &str,
+    text: &str,
+) -> Result<(Artifact, CapturedInput)> {
+    use airk_core::extraction::{ExtractionPayload, ExtractionProfile, LocalChunk, LocalSpan};
+    let profile = ExtractionProfile {
+        contract_version: 1,
+        adapter_id: "text".into(),
+        adapter_version: "current-kernel-test/1".into(),
+        language: "text".into(),
+        dialect: None,
+        grammar_identity: None,
+        mapping_version: 1,
+        chunk_version: 3,
+        options: Default::default(),
+        configuration_inputs: Default::default(),
+    };
+    let payload = ExtractionPayload {
+        semantic_projection: Default::default(),
+        continuity_coverage: Default::default(),
+        contract_version: 1,
+        extraction_method: "utf8".into(),
+        parse_status: "plain".into(),
+        provenance: vec![],
+        text: text.into(),
+        facts: vec![],
+        syntax_identities: vec![],
+        chunks: vec![LocalChunk {
+            span: LocalSpan {
+                start: 0,
+                end: text.len(),
+            },
             start_line: 1,
             end_line: 1,
-            text: text.into(),
             location: DocumentLocation::Lines { start: 1, end: 1 },
+            region: None,
         }],
-        language: "text".into(),
-        extraction_method: "test".into(),
-        parse_status: "ok".into(),
-        facts: vec![],
-        retained: None,
-    }
+        regions: vec![],
+        relationships: vec![],
+        continuity: vec![],
+        diagnostics: vec![],
+        partial: false,
+    };
+    let artifact = airk_core::binding::bind_payload(
+        &payload,
+        &profile,
+        airk_core::binding::ArtifactBinding {
+            path,
+            source_hash: Sha256Digest::from_bytes(Sha256::digest(text.as_bytes()).into()),
+            source_bytes: text.len(),
+        },
+    )?;
+    let reservation = fixture
+        .quota
+        .reserve(&fixture.scope.collection, 1024 * 1024)?;
+    let compact = fixture.store.retain_payload_with_budget(
+        &artifact,
+        &payload,
+        &profile,
+        Some(text.as_bytes()),
+        Some(&reservation),
+    )?;
+    Ok((artifact, CapturedInput { artifact: compact }))
 }
 
 #[test]
@@ -201,7 +249,8 @@ fn current_store_commits_verified_lexical_fork_with_graph_in_one_head() -> Resul
     let verified = old_manifest.verify_owned(&base_path, old_head.lexical_commit)?;
     drop(before);
 
-    let artifact = lexical_artifact("docs/a.md", 1, "new searchable evidence");
+    let (artifact, compact) =
+        retained_lexical_artifact(&fixture, "docs/a.md", "new searchable evidence")?;
     let (_lexical, replacement, _) = CurrentLexical::fork_changed(
         &verified,
         &target_path,
@@ -227,11 +276,11 @@ fn current_store_commits_verified_lexical_fork_with_graph_in_one_head() -> Resul
         fixture
             .store
             .current_write(&lock, &fixture.quota, &fixture.scope, CAPACITY)?;
-    let pending = current.prepare_lexical(
+    let pending = current.prepare_artifacts(
         &head.token()?,
         target,
         &sealed,
-        &[],
+        &[ArtifactChange::Upsert(Box::new(compact))],
         None,
         &replacement_bytes,
     )?;
@@ -279,6 +328,71 @@ fn current_store_commits_verified_lexical_fork_with_graph_in_one_head() -> Resul
         artifact.content_hash
     );
     assert!(!candidates.incomplete);
+    let mut old_component = candidates.clone();
+    old_component.manifest_digest = old_head.lexical_commit;
+    assert!(
+        airk_kernel::current::materialize_lexical(
+            &fixture.store,
+            &read,
+            &SearchQuery {
+                text: "searchable evidence".into(),
+                path_prefix: Some("docs/".into()),
+                limit: 2,
+                max_bytes: 1024,
+            },
+            old_component,
+        )
+        .is_err()
+    );
+    let mut changed_payload = candidates.clone();
+    changed_payload.values[0].hit.text.push_str(" changed");
+    assert!(
+        airk_kernel::current::materialize_lexical(
+            &fixture.store,
+            &read,
+            &SearchQuery {
+                text: "searchable evidence".into(),
+                path_prefix: Some("docs/".into()),
+                limit: 2,
+                max_bytes: 1024,
+            },
+            changed_payload,
+        )
+        .is_err()
+    );
+    let evidence = airk_kernel::current::materialize_lexical(
+        &fixture.store,
+        &read,
+        &SearchQuery {
+            text: "searchable evidence".into(),
+            path_prefix: Some("docs/".into()),
+            limit: 2,
+            max_bytes: 1024,
+        },
+        candidates,
+    )?;
+    assert_eq!(evidence.token, read.token()?);
+    assert_eq!(evidence.hits.len(), 1);
+    assert_eq!(evidence.hits[0].text, "new searchable evidence");
+    assert!(!evidence.truncated);
+    let short = airk_kernel::current::materialize_lexical(
+        &fixture.store,
+        &read,
+        &SearchQuery {
+            text: "searchable evidence".into(),
+            path_prefix: Some("docs/".into()),
+            limit: 2,
+            max_bytes: 3,
+        },
+        lexical.search(&SearchQuery {
+            text: "searchable evidence".into(),
+            path_prefix: Some("docs/".into()),
+            limit: 2,
+            max_bytes: 3,
+        })?,
+    )?;
+    assert_eq!(short.hits[0].text, "new");
+    assert!(short.truncated && short.hits[0].truncated);
     old_manifest.verify(&base_path, old_head.lexical_commit)?;
     Ok(())
 }
