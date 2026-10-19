@@ -15,6 +15,7 @@ pub const MAX_BUCKET_ENTRIES: usize = 128;
 pub enum MapDomain {
     Artifact,
     Vector,
+    Occurrence,
     FactName,
     EdgeSource,
     EdgeTarget,
@@ -24,6 +25,7 @@ impl MapDomain {
         match self {
             Self::Artifact => b"artifact",
             Self::Vector => b"vector",
+            Self::Occurrence => b"occurrence",
             Self::FactName => b"fact-name",
             Self::EdgeSource => b"edge-source",
             Self::EdgeTarget => b"edge-target",
