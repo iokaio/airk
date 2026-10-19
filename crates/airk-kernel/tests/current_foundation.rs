@@ -97,10 +97,11 @@ impl Fixture {
         let manifest = lexical.capture_manifest(None)?;
         let manifest_bytes = manifest.canonical_bytes()?;
         let head = CurrentHead {
-            version: 1,
+            version: 2,
             scope: scope.clone(),
             sequence: 0,
             artifact_root: airk_store::current::map::empty_root(&scope)?,
+            lexical_sequence: 0,
             lexical_commit: manifest.digest()?,
             graph_head: GraphHead::empty(graph_scope)?,
         };
@@ -244,6 +245,13 @@ fn current_store_commits_verified_lexical_fork_with_graph_in_one_head() -> Resul
     let target_path = fixture.store.directory().join("lexical-1");
     let before = fixture.store.current_read(&fixture.scope)?;
     let old_head = before.head().clone();
+    assert_eq!(
+        base_path,
+        fixture
+            .store
+            .directory()
+            .join(old_head.lexical_directory_name()?)
+    );
     let old_bytes = before.lexical_manifest()?;
     let old_manifest = LexicalManifest::decode(&old_bytes, old_head.lexical_commit)?;
     let verified = old_manifest.verify_owned(&base_path, old_head.lexical_commit)?;
@@ -305,6 +313,13 @@ fn current_store_commits_verified_lexical_fork_with_graph_in_one_head() -> Resul
 
     let read = fixture.store.current_read(&fixture.scope)?;
     assert_eq!(read.head(), &pending.target);
+    assert_eq!(
+        target_path,
+        fixture
+            .store
+            .directory()
+            .join(read.head().lexical_directory_name()?)
+    );
     assert_eq!(read.read(1)?.embedding_key, Some(key(1)));
     let committed_bytes = read.lexical_manifest()?;
     let committed = LexicalManifest::decode(&committed_bytes, read.head().lexical_commit)?;
@@ -401,6 +416,7 @@ fn current_store_commits_verified_lexical_fork_with_graph_in_one_head() -> Resul
 fn real_diskann_reopens_appends_and_changes_one_record_without_copying_the_graph() -> Result<()> {
     let fixture = Fixture::new()?;
     let first = fixture.populate(96)?;
+    assert_eq!(first.lexical_sequence, 0);
     let (_reservation, head, overlay) = fixture.candidate()?;
     assert_eq!(head, first);
     let mut graph = MutableDiskIndex::open_overlay(overlay.clone(), DIMENSIONS, pipeline())?;
@@ -410,6 +426,7 @@ fn real_diskann_reopens_appends_and_changes_one_record_without_copying_the_graph
     drop(graph);
     let sealed = Fixture::seal(overlay)?;
     let second = fixture.publish(&head, &sealed)?;
+    assert_eq!(second.lexical_sequence, 0);
     drop(sealed);
     drop(_reservation);
     let read = fixture.store.current_read(&fixture.scope)?;
