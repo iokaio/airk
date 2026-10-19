@@ -48,6 +48,8 @@ impl ProviderCommand {
 
 pub(crate) struct Process {
     pub child: Child,
+    #[cfg(target_os = "macos")]
+    memory_limit: Option<usize>,
     #[cfg(windows)]
     job: windows_sys::Win32::Foundation::HANDLE,
 }
@@ -93,10 +95,17 @@ impl Process {
                 // SAFETY: only async-signal-safe setrlimit calls run between fork and exec.
                 unsafe {
                     command.pre_exec(move || {
-                        for (resource, value) in [
+                        #[cfg(not(target_os = "macos"))]
+                        let resources = [
                             (libc::RLIMIT_AS, limits.memory_bytes as libc::rlim_t),
                             (libc::RLIMIT_CPU, limits.cpu_seconds as libc::rlim_t),
-                        ] {
+                        ];
+                        // Darwin rejects a finite RLIMIT_AS below the inherited
+                        // parent's existing VM mappings. Observe physical footprint
+                        // from the parent instead; CPU remains a kernel-enforced limit.
+                        #[cfg(target_os = "macos")]
+                        let resources = [(libc::RLIMIT_CPU, limits.cpu_seconds as libc::rlim_t)];
+                        for (resource, value) in resources {
                             let limit = libc::rlimit {
                                 rlim_cur: value,
                                 rlim_max: value,
@@ -173,8 +182,47 @@ impl Process {
         }
         #[cfg(not(windows))]
         {
-            Ok(Self { child })
+            Ok(Self {
+                child,
+                #[cfg(target_os = "macos")]
+                memory_limit: limits.map(|limits| limits.memory_bytes),
+            })
         }
+    }
+
+    fn check_memory_budget(&mut self) -> Result<()> {
+        #[cfg(target_os = "macos")]
+        if let Some(limit) = self.memory_limit {
+            // A reaped child has no further allocations. A concurrent exit between
+            // this check and proc_pid_rusage is handled by the second try_wait.
+            if self.child.try_wait()?.is_some() {
+                return Ok(());
+            }
+            let mut usage: libc::rusage_info_v0 = unsafe { std::mem::zeroed() };
+            // SAFETY: the flavor matches this initialized writable buffer, the PID
+            // is our unreaped child, and the API accepts its address as rusage_info_t*.
+            let result = unsafe {
+                libc::proc_pid_rusage(
+                    self.child.id() as i32,
+                    libc::RUSAGE_INFO_V0,
+                    (&mut usage as *mut libc::rusage_info_v0).cast::<libc::rusage_info_t>(),
+                )
+            };
+            if result != 0 {
+                let error = std::io::Error::last_os_error();
+                if self.child.try_wait()?.is_some() {
+                    return Ok(());
+                }
+                return Err(error).context("observe macOS provider memory budget");
+            }
+            ensure!(
+                usage.ri_phys_footprint <= limit as u64,
+                "local provider exceeded its macOS physical-memory budget ({} > {} bytes)",
+                usage.ri_phys_footprint,
+                limit
+            );
+        }
+        Ok(())
     }
 }
 
@@ -306,16 +354,23 @@ pub(crate) fn run_limited(
     });
     let result = (|| {
         let mut output = None;
-        for _ in 0..2 {
-            let (is_output, bytes) = receiver
-                .recv_timeout(remaining(deadline)?)
-                .context("provider output timeout/disconnect")?;
+        let mut collected = 0;
+        while collected < 2 {
+            process.check_memory_budget()?;
+            let (is_output, bytes) =
+                match receiver.recv_timeout(remaining(deadline)?.min(Duration::from_millis(5))) {
+                    Ok(message) => message,
+                    Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                    Err(error) => return Err(error).context("provider output disconnect"),
+                };
+            collected += 1;
             let bytes = bytes?;
             if is_output {
                 output = Some(bytes);
             }
         }
         loop {
+            process.check_memory_budget()?;
             if let Some(status) = process.child.try_wait()? {
                 ensure!(
                     status.success(),
@@ -406,15 +461,30 @@ mod tests {
     #[test]
     #[ignore = "invoked only as a bounded subprocess fixture"]
     fn allocation_fixture() {
-        let mut bytes = Vec::<u8>::new();
-        assert!(
-            bytes.try_reserve_exact(1024 * 1024 * 1024).is_err(),
-            "child allocation limit was not enforced"
-        );
-        assert!(
-            bytes.try_reserve_exact(1024 * 1024).is_ok(),
-            "ordinary child allocation failed"
-        );
+        #[cfg(not(target_os = "macos"))]
+        {
+            let mut bytes = Vec::<u8>::new();
+            assert!(
+                bytes.try_reserve_exact(1024 * 1024 * 1024).is_err(),
+                "child allocation limit was not enforced"
+            );
+            assert!(
+                bytes.try_reserve_exact(1024 * 1024).is_ok(),
+                "ordinary child allocation failed"
+            );
+        }
+        #[cfg(target_os = "macos")]
+        {
+            // Physical footprint requires committed pages, not a virtual reservation.
+            // Grow gradually so the watchdog must detect the named memory reason.
+            let mut committed = Vec::new();
+            for _ in 0..1024 {
+                committed.push(vec![0x5a; 1024 * 1024]);
+                std::hint::black_box(&committed);
+                thread::sleep(Duration::from_millis(2));
+            }
+            thread::sleep(Duration::from_secs(60));
+        }
     }
 
     #[test]
@@ -429,7 +499,7 @@ mod tests {
             ],
             timeout_ms: 10_000,
         };
-        run_limited(
+        let allocation = run_limited(
             &command,
             temporary.path(),
             &[],
@@ -438,7 +508,17 @@ mod tests {
                 memory_bytes: 512 * 1024 * 1024,
                 cpu_seconds: 10,
             }),
-        )?;
+        );
+        #[cfg(not(target_os = "macos"))]
+        allocation?;
+        #[cfg(target_os = "macos")]
+        {
+            let error = allocation.expect_err("committed allocation must trigger the watchdog");
+            assert!(
+                error.to_string().contains("macOS physical-memory budget"),
+                "{error:#}"
+            );
+        }
         command.args[2] = "provider_process::tests::descendant_fixture".into();
         command.timeout_ms = 1500;
         let started = Instant::now();

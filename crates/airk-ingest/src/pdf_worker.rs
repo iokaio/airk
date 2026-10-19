@@ -266,7 +266,11 @@ mod tests {
     #[test]
     fn malformed_pdf_is_an_extraction_failure_and_output_growth_is_bounded() -> Result<()> {
         let start = std::time::Instant::now();
-        assert!(extract(b"%PDF-1.4\nmalformed").is_err());
+        let error = extract(b"%PDF-1.4\nmalformed").unwrap_err();
+        assert!(
+            error.to_string().contains("PDF extraction refused"),
+            "{error:#}"
+        );
         assert!(start.elapsed() < std::time::Duration::from_secs(20));
         let mut text = BoundedText {
             bytes: Vec::new(),
@@ -392,7 +396,11 @@ mod tests {
         let mut bytes = Vec::new();
         document.save_to(&mut bytes)?;
         let start = std::time::Instant::now();
-        assert!(extract(&bytes).is_err(), "33 MiB text must not be admitted");
+        let error = extract(&bytes).expect_err("33 MiB text must not be admitted");
+        assert!(
+            !format!("{error:#}").contains("start explicitly provisioned"),
+            "fixture must reach the worker, rather than fail during startup: {error:#}"
+        );
         assert!(
             start.elapsed() < std::time::Duration::from_secs(20),
             "high expansion worker did not stop"

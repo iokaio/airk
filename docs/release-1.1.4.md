@@ -11,7 +11,7 @@ Version 1.1.4 includes the [code-review improvements](airkimprovements.md), comp
 
 ## Ingestion and extension
 
-PDF parsing uses a local worker with page/output checks, wall/CPU deadlines and platform memory controls. Source reads verify opened handles and reject redirected traversal; Windows providers enter their containment job before execution. CLI setup refuses hard-linked, redirected and oversized shell profiles. The [hardening document](ingest-hardening.md) describes platform differences and remaining race-model limits.
+PDF parsing uses a local worker with page/output checks, wall/CPU deadlines and platform memory controls. Linux/Windows enforce allocation limits; macOS samples physical memory and terminates over-budget workers, allowing sampling overshoot. Source reads verify opened handles and reject redirected traversal; Windows providers enter their containment job before execution. CLI setup refuses hard-linked, redirected and oversized shell profiles. The [hardening document](ingest-hardening.md) describes platform differences and remaining race-model limits.
 
 The extension preserves the collection's vector opt-out and prepares explicitly pinned local model assets through its trusted setup flow. Indexing batches compatible embedding work. The AIRK Tools terminal uses the same MCP handlers and schemas as coding agents. Dashboard rendering, collection tree and agent setup now have separate owner modules; existing command IDs remain valid.
 
