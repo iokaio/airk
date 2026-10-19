@@ -516,6 +516,24 @@ fn current_child_process() -> Result<()> {
             })
             .map(|_| ());
     }
+    if mode.starts_with("grow-") {
+        return current
+            .grow_capacity_observed(CAPACITY * 2, &mut |stage| {
+                let selected = matches!(
+                    (mode.as_str(), stage),
+                    ("grow-before-owner", journal::CapacityStage::BeforeOwner)
+                        | ("grow-after-owner", journal::CapacityStage::AfterOwner)
+                );
+                if selected {
+                    fs::write(&ready, b"ready")?;
+                    loop {
+                        std::thread::sleep(Duration::from_millis(100));
+                    }
+                }
+                Ok(())
+            })
+            .map(|_| ());
+    }
     let pending = current.pending()?.context("child pending missing")?;
     current.mark_applying(&pending)?;
     if mode == "hot-apply" {
@@ -676,5 +694,131 @@ fn hot_final_apply_rolls_back_then_replays_exact_afterimages() -> Result<()> {
     let read = fixture.store.current_read(&fixture.scope)?;
     assert_eq!(read.counts()?.allocated_count, 2);
     assert_eq!(read.read(1)?.bytes, vec![7; 16]);
+    Ok(())
+}
+
+#[test]
+fn admitted_capacity_growth_preserves_head_and_reopens_with_captured_limit() -> Result<()> {
+    let fixture = Fixture::new()?;
+    let before = fixture.store.current_read(&fixture.scope)?.token()?;
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    let changed = current.grow_capacity(CAPACITY * 2)?;
+    assert_eq!(changed.capacity_bytes, CAPACITY * 2);
+    assert!(changed.maintenance_error.is_none());
+    assert_eq!(current.database_capacity_bytes(), CAPACITY * 2);
+    assert_eq!(current.head()?, fixture.head);
+    drop(current);
+    assert!(
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)
+            .is_err()
+    );
+    let current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY * 2)?;
+    assert_eq!(current.release_orphan_grants()?, 0);
+    drop(current);
+    drop(writer);
+    assert_eq!(fixture.quota.status()?.reserved_bytes, 0);
+    assert_eq!(fixture.store.current_read(&fixture.scope)?.token()?, before);
+    let (_reservation, sealed) = fixture.sealed()?;
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY * 2)?;
+    let pending = current.prepare(&before, fixture.target(&sealed), &sealed, &[], None)?;
+    assert_eq!(pending.database_capacity_bytes, CAPACITY * 2);
+    current.mark_applying(&pending)?;
+    let committed = current.commit(&pending, pending.target.lexical_commit)?;
+    assert!(committed.maintenance_error.is_none());
+    drop(current);
+    drop(writer);
+    assert!(
+        fixture
+            .store
+            .current_read(&fixture.scope)?
+            .require_token(&before)
+            .is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn capacity_growth_rejects_quota_pressure_and_prepared_transactions() -> Result<()> {
+    let fixture = Fixture::new()?;
+    let status = fixture.quota.status()?;
+    fixture.quota.configure(crate::quota::QuotaPolicy {
+        root_bytes: status.used_bytes + CAPACITY + 128 * 1024,
+        default_collection_bytes: status.used_bytes + CAPACITY + 128 * 1024,
+        collections: Default::default(),
+    })?;
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    let error = current
+        .grow_capacity(CAPACITY * 2)
+        .err()
+        .context("growth should fail under quota")?;
+    assert!(error.is::<crate::quota::QuotaPressure>());
+    assert_eq!(current.database_capacity_bytes(), CAPACITY);
+    assert_eq!(
+        database::check_owner(fixture.store.directory(), &fixture.scope)?,
+        CAPACITY
+    );
+    drop(current);
+    drop(writer);
+    assert_eq!(fixture.quota.status()?.reserved_bytes, 0);
+    assert_eq!(
+        fixture.store.current_read(&fixture.scope)?.head(),
+        &fixture.head
+    );
+
+    let fixture = Fixture::new()?;
+    let pending = fixture.prepare(&[])?;
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    assert!(current.grow_capacity(CAPACITY * 2).is_err());
+    current.abort_prepared(&pending)?;
+    Ok(())
+}
+
+#[test]
+fn killed_capacity_growth_keeps_old_or_new_bound_and_releases_only_orphans() -> Result<()> {
+    for (mode, expected) in [
+        ("grow-before-owner", CAPACITY),
+        ("grow-after-owner", CAPACITY * 2),
+    ] {
+        let fixture = Fixture::new()?;
+        let before = fixture.store.current_read(&fixture.scope)?.token()?;
+        let child = child(&fixture, mode)?;
+        assert!(fixture.quota.status()?.reserved_bytes > 0);
+        drop(child);
+        assert_eq!(fixture.store.current_read(&fixture.scope)?.token()?, before);
+        assert_eq!(
+            database::check_owner(fixture.store.directory(), &fixture.scope)?,
+            expected
+        );
+        let writer = fixture.store.lock()?;
+        let current =
+            fixture
+                .store
+                .current_write(&writer, &fixture.quota, &fixture.scope, expected)?;
+        assert_eq!(current.release_orphan_grants()?, 1);
+        drop(current);
+        drop(writer);
+        assert_eq!(fixture.quota.status()?.reserved_bytes, 0);
+    }
     Ok(())
 }
