@@ -144,18 +144,37 @@ pub struct CapturedInput {
     pub artifact: Artifact,
 }
 
+/// A changed source path in a single current-index publication. Upserts carry
+/// compact, retained and source-verified metadata; deletes carry the exact
+/// normalized path whose current map entry is removed.
+#[derive(Clone, Debug)]
+pub enum ArtifactChange {
+    Upsert(Box<CapturedInput>),
+    Delete(String),
+}
+
+impl ArtifactChange {
+    fn path(&self) -> &str {
+        match self {
+            Self::Upsert(input) => &input.artifact.path,
+            Self::Delete(path) => path,
+        }
+    }
+}
+
+fn valid_current_path(path: &str) -> bool {
+    !path.is_empty()
+        && path.len() <= 8192
+        && !path.contains(['\\', ':', '\0'])
+        && Path::new(path).is_relative()
+        && path.split('/').all(|part| !matches!(part, "" | "." | ".."))
+}
+
 impl CapturedInput {
     pub(super) fn bytes(&self) -> Result<Vec<u8>> {
         let artifact = &self.artifact;
         ensure!(
-            !artifact.path.is_empty()
-                && artifact.path.len() <= 8192
-                && !artifact.path.contains('\\')
-                && Path::new(&artifact.path).is_relative()
-                && artifact
-                    .path
-                    .split('/')
-                    .all(|part| !part.is_empty() && part != "." && part != ".."),
+            valid_current_path(&artifact.path),
             "invalid captured artifact path"
         );
         artifact.content_hash.parse::<Sha256Digest>()?;
@@ -1091,6 +1110,82 @@ impl CurrentWriter<'_> {
             model,
             ComponentChanges {
                 map: &[],
+                lexical_manifest: Some(lexical_manifest),
+            },
+        )
+    }
+
+    /// Prepare changed artifact rows and a verified private Tantivy candidate
+    /// in one durable intent. The caller supplies the sealed graph target;
+    /// this method derives the exact catalog root and lexical digest. The
+    /// caller must verify the physical lexical candidate before this call and
+    /// again after recovery, before it serves candidates to a reader.
+    pub fn prepare_artifacts(
+        &mut self,
+        expected: &CurrentToken,
+        mut target: CurrentHead,
+        graph_delta: &dyn PreparedGraphDelta,
+        changes: &[ArtifactChange],
+        model: Option<ModelObjectSet>,
+        lexical_manifest: &[u8],
+    ) -> Result<PendingTransaction> {
+        ensure!(
+            !changes.is_empty() && changes.len() <= MAX_PENDING_INPUTS,
+            "invalid changed-artifact count"
+        );
+        let mut previous = None;
+        let mut inputs = Vec::new();
+        let mut map_changes = Vec::with_capacity(changes.len());
+        for change in changes {
+            let path = change.path();
+            ensure!(
+                valid_current_path(path) && previous.is_none_or(|prior| prior < path),
+                "changed artifact paths are invalid, unsorted or repeated"
+            );
+            previous = Some(path);
+            let value = match change {
+                ArtifactChange::Upsert(input) => {
+                    let bytes = input.bytes()?;
+                    inputs.push(input.as_ref().clone());
+                    Some(bytes)
+                }
+                ArtifactChange::Delete(_) => None,
+            };
+            map_changes.push(map::MapChange::new(
+                &self.scope,
+                map::MapDomain::Artifact,
+                path.as_bytes(),
+                value,
+            )?);
+        }
+        map_changes.sort_by_key(map::MapChange::key);
+        ensure!(
+            map_changes
+                .windows(2)
+                .all(|pair| pair[0].key() < pair[1].key()),
+            "duplicate current artifact map identity"
+        );
+        let (phase, base) = state(self.connection()?, &self.scope)?;
+        ensure!(
+            phase == TransactionPhase::Ready
+                && self.pending()?.is_none()
+                && base.token()? == *expected,
+            "changed-artifact publication base expired"
+        );
+        let mut plan = map::MapPlan::new(self.connection()?, &self.scope, base.artifact_root)?;
+        for change in &map_changes {
+            plan.put(change.key(), change.value())?;
+        }
+        target.artifact_root = plan.root()?;
+        target.lexical_commit = framed_digest(b"current-lexical-manifest/1", &[lexical_manifest]);
+        self.prepare_components(
+            expected,
+            target,
+            graph_delta,
+            &inputs,
+            model,
+            ComponentChanges {
+                map: &map_changes,
                 lexical_manifest: Some(lexical_manifest),
             },
         )
