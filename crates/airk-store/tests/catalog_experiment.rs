@@ -322,7 +322,7 @@ fn publish(
         components.insert(name, json!({"bytes":bytes.len(),"sha256":hash(&bytes)}));
     }
     let bytes = serde_json::to_vec(
-        &json!({"schema":4,"engine":ENGINE,"token":token,"collection":"experiment","chunks":inventory.files.len(),"vectors":0,"vector_occurrences":0,"model_sha256":null,"embedding":"none","inventory_digest":hash(&inventory_bytes),"components":components}),
+        &json!({"schema":4,"engine":ENGINE,"token":token,"collection":"experiment","chunks":inventory.files.len(),"vectors":0,"vector_occurrences":0,"vector_selection_digest":inventory.vector_selection.digest()?,"vector_eligible_artifacts":inventory.files.len(),"vector_excluded_artifacts":0,"model_sha256":null,"embedding":"none","inventory_digest":hash(&inventory_bytes),"components":components}),
     )?;
     reservation.charge(bytes.len() as u64)?;
     fs::write(directory.join("manifest.json"), &bytes)?;
@@ -366,7 +366,8 @@ impl Fixture {
         let profile = profile();
         let lineage = lineage(1, None);
         let mut inventory = InventoryV2 {
-            version: 3,
+            vector_selection: Default::default(),
+            version: airk_core::publication::INVENTORY_VERSION,
             incarnation: lineage.incarnation,
             generation: 1,
             collection: "experiment".into(),

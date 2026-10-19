@@ -38,13 +38,12 @@ fn scope_fixture(large_graph: bool) -> Result<()> {
     let chunks = (0..4097)
         .map(|index| Chunk {
             text: if index == 4096 {
-                "needle"
+                "needle".to_owned()
             } else if large_graph {
-                "distant"
+                format!("distant {index}")
             } else {
-                "unknown"
-            }
-            .into(),
+                "unknown".to_owned()
+            },
             start_line: 1,
             end_line: 1,
             location: DocumentLocation::Lines { start: 1, end: 1 },
@@ -75,7 +74,7 @@ fn scope_fixture(large_graph: bool) -> Result<()> {
     };
     let exhausted = index.semantic_search(&query)?;
     if large_graph {
-        assert_eq!(exhausted.hits[0].text, "distant");
+        assert!(exhausted.hits[0].text.starts_with("distant"));
         assert!(
             exhausted.truncated,
             "scope beyond 4096 graph IDs is not exhausted evidence"

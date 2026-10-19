@@ -419,6 +419,9 @@ struct OriginalManifest {
     chunks: usize,
     vectors: usize,
     vector_occurrences: usize,
+    vector_selection_digest: Sha256Digest,
+    vector_eligible_artifacts: usize,
+    vector_excluded_artifacts: usize,
     model_sha256: Option<String>,
     embedding: String,
     inventory_digest: Sha256Digest,
@@ -438,6 +441,11 @@ impl OriginalManifest {
             && self.vectors <= self.vector_occurrences
             && (self.vectors == 0) == (self.vector_occurrences == 0)
             && (self.model_sha256.is_some() || self.vectors == 0)
+            && self
+                .vector_eligible_artifacts
+                .checked_add(self.vector_excluded_artifacts)
+                .is_some_and(|count| count <= 1_000_000)
+            && (self.vectors == 0 || self.vector_eligible_artifacts > 0)
     }
 }
 
@@ -727,6 +735,12 @@ fn verify_package_metadata(
             && manifest.model_sha256 == inventory.embedding_model,
         "historical original manifest scope mismatch"
     );
+    crate::blobs::verify_vector_selection(
+        &inventory,
+        manifest.vector_selection_digest,
+        manifest.vector_eligible_artifacts,
+        manifest.vector_excluded_artifacts,
+    )?;
     for kind in [HistoryMetadata::Inventory, HistoryMetadata::Lineage] {
         ensure!(
             manifest.components.get(kind.file_name()) == descriptor.metadata.get(&kind),

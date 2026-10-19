@@ -31,6 +31,7 @@ mod sqlite;
 pub mod usage;
 pub mod vector_cache;
 pub mod vector_policy;
+pub mod vector_registry;
 mod verified_cache;
 
 #[derive(Clone, Debug)]

@@ -113,10 +113,11 @@ fn prepare(
         resolvers: vec![],
     };
     let inventory = InventoryV2 {
+        vector_selection: Default::default(),
         embedding_pipeline_digest: None,
         index_detail: None,
         extraction_policy_digest: None,
-        version: 2,
+        version: airk_core::publication::INVENTORY_VERSION,
         incarnation,
         generation,
         collection: "fixture".into(),
@@ -202,7 +203,7 @@ fn prepare(
         components.insert(name, json!({"bytes":bytes.len(),"sha256":digest(&bytes)}));
     }
     let manifest = serde_json::to_vec(
-        &json!({"schema":4,"engine":inventory.retrieval_specification,"token":token,"collection":"fixture","chunks":1,"vectors":0,"vector_occurrences":0,"model_sha256":null,"embedding":"none","inventory_digest":digest(&bytes),"components":components}),
+        &json!({"schema":4,"engine":inventory.retrieval_specification,"token":token,"collection":"fixture","chunks":1,"vectors":0,"vector_occurrences":0,"vector_selection_digest":inventory.vector_selection.digest()?,"vector_eligible_artifacts":inventory.files.len(),"vector_excluded_artifacts":0,"model_sha256":null,"embedding":"none","inventory_digest":digest(&bytes),"components":components}),
     )?;
     reservation.charge(manifest.len() as u64)?;
     fs::write(staging.join("manifest.json"), &manifest)?;
@@ -242,6 +243,45 @@ fn track_prepared(
     fs::rename(&target, &private)?;
     reservation.track_prepared_publication(&store.expected_head()?, receipt)?;
     fs::rename(private, target)?;
+    Ok(())
+}
+
+#[test]
+fn publication_rejects_selection_digest_and_count_mismatches() -> Result<()> {
+    for field in [
+        "vector_selection_digest",
+        "vector_eligible_artifacts",
+        "vector_excluded_artifacts",
+    ] {
+        let root = tempfile::tempdir()?;
+        let store = FileStore::new(root.path().join("collections/fixture"));
+        let (inventory, mut receipt, reservation) =
+            prepare(&store, "Selection binding evidence.\n", 1, None)?;
+        let path = store
+            .directory()
+            .join("generations")
+            .join(receipt.token.revision.to_string())
+            .join("manifest.json");
+        let mut manifest: serde_json::Value = serde_json::from_slice(&fs::read(&path)?)?;
+        manifest[field] = if field.ends_with("digest") {
+            json!(digest(b"different selection policy"))
+        } else {
+            json!(2)
+        };
+        let bytes = serde_json::to_vec(&manifest)?;
+        fs::write(&path, &bytes)?;
+        // Rebind the receipt deliberately: checking the outer checksum alone
+        // cannot detect a self-consistent manifest with false policy metadata.
+        receipt.manifest_digest = digest(&bytes);
+        let error = store
+            .publish_catalog_v2(&inventory, &receipt, &ExpectedHead::Empty, &reservation)
+            .unwrap_err();
+        assert!(
+            format!("{error:#}").contains("vector selection manifest"),
+            "{field}: {error:#}"
+        );
+        assert_eq!(store.expected_head()?, ExpectedHead::Empty);
+    }
     Ok(())
 }
 

@@ -401,6 +401,8 @@ def indexing_measurements(report, elapsed_seconds):
               'embedding_tokenized_inputs', 'embedding_input_tokens', 'embedding_embedded_tokens',
               'embedding_padding_tokens', 'embedding_truncated_inputs', 'embedding_plan_compilations',
               'embedding_plan_compile_us', 'embedding_plan_cache_peak_bytes',
+              'vector_eligible_artifacts', 'vector_excluded_artifacts', 'vector_reused_inputs', 'vector_graph_nodes',
+              'vector_registry_rows', 'vector_registry_bytes',
               'vector_units', 'vector_body_bytes', 'vector_planning_us',
               'embedding_model_load_us', 'embedding_cache_lookup_us', 'embedding_cache_store_us',
               'embedding_inference_us', 'vector_graph_insert_us', 'embedding_workers', 'embedding_batches')

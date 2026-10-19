@@ -284,6 +284,11 @@ impl Kernel {
     ) -> Result<ConditionalRead<FileInfo>> {
         self.historical_read(path, options, "file_info/1", |view, file, served| {
             let snapshot = view.snapshot();
+            let inventory = view.inventory();
+            let profile = inventory
+                .profiles
+                .get(&file.state.profile_id)
+                .context("historical file profile missing")?;
             Ok(FileInfo {
                 publication: Some(served),
                 source: airk_store::roots::source_location(&snapshot.root, &snapshot.roots, path)?,
@@ -303,6 +308,12 @@ impl Kernel {
                 } else {
                     "extracted-text; cite original location"
                 },
+                vector_selection: inventory.vector_selection.decision(
+                    path,
+                    profile,
+                    &file.language,
+                )?,
+                vector_selection_digest: inventory.vector_selection.digest()?,
             })
         })
     }

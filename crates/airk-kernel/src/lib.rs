@@ -111,6 +111,9 @@ pub struct Status {
     pub local_model_ready: bool,
     pub vectors_enabled: bool,
     pub indexed_vectors: usize,
+    pub vector_selection_digest: Option<airk_core::identity::Sha256Digest>,
+    pub vector_eligible_artifacts: usize,
+    pub vector_excluded_artifacts: usize,
     pub semantic_producer: Option<String>,
     pub imported_facts: usize,
     pub imported_relationships: usize,
@@ -143,6 +146,8 @@ pub struct FileInfo {
     pub facts: usize,
     pub indexed_lines: usize,
     pub line_basis: &'static str,
+    pub vector_selection: airk_core::vector_selection::VectorSelectionDecision,
+    pub vector_selection_digest: airk_core::identity::Sha256Digest,
 }
 
 #[derive(Serialize)]
@@ -411,14 +416,20 @@ impl Kernel {
         } else {
             None
         };
-        let prior_pipeline = if resetting {
+        let prior_inventory = if resetting {
             None
         } else {
-            self.store
-                .catalog()?
-                .and_then(|catalog| catalog.inventory)
-                .and_then(|inventory| inventory.embedding_pipeline_digest)
+            self.store.catalog()?.and_then(|catalog| catalog.inventory)
         };
+        let prior_pipeline = prior_inventory
+            .as_ref()
+            .and_then(|inventory| inventory.embedding_pipeline_digest);
+        let selection_digest = self.vector_selection()?.digest()?;
+        let prior_selection_digest = prior_inventory
+            .as_ref()
+            .map(|inventory| inventory.vector_selection.digest())
+            .transpose()?;
+        drop(prior_inventory);
         let roots = self.configured_roots()?;
         let reservation = self.publication_reservation()?;
         let scan_started = std::time::Instant::now();
@@ -553,7 +564,8 @@ impl Kernel {
         if (snapshot.embedding_model != previous.embedding_model
             || previous.storage_format != 2
             || configured_policy.pending_reindex
-            || desired_pipeline != prior_pipeline)
+            || desired_pipeline != prior_pipeline
+            || prior_selection_digest != Some(selection_digest))
             && snapshot.generation == previous.generation
         {
             snapshot.generation = snapshot
@@ -595,6 +607,12 @@ impl Kernel {
             report.embedding_plan_compilations = embedding.plan_compilations;
             report.embedding_plan_compile_us = embedding.plan_compile_us;
             report.embedding_plan_cache_peak_bytes = embedding.plan_cache_peak_bytes;
+            report.vector_eligible_artifacts = embedding.vector_eligible_artifacts;
+            report.vector_excluded_artifacts = embedding.vector_excluded_artifacts;
+            report.vector_reused_inputs = embedding.vector_reused_inputs;
+            report.vector_graph_nodes = embedding.vector_graph_nodes;
+            report.vector_registry_rows = embedding.vector_registry_rows;
+            report.vector_registry_bytes = embedding.vector_registry_bytes;
             report.vector_units = embedding.vector_units;
             report.vector_body_bytes = embedding.vector_body_bytes;
             report.vector_planning_us = embedding.vector_planning_us;
@@ -645,6 +663,9 @@ impl Kernel {
                 local_model_ready: index.model_sha256.is_some(),
                 vectors_enabled: self.vectors_enabled()?,
                 indexed_vectors: index.vectors,
+                vector_selection_digest: Some(index.vector_selection_digest),
+                vector_eligible_artifacts: index.vector_eligible_artifacts,
+                vector_excluded_artifacts: index.vector_excluded_artifacts,
                 semantic_producer: revision.semantic_producer,
                 imported_facts: revision.imported_facts,
                 imported_relationships: revision.imported_relationships,
@@ -949,57 +970,40 @@ impl Kernel {
 
     fn file_info_in(&self, catalog: &airk_store::blobs::Catalog, path: &str) -> Result<FileInfo> {
         let snapshot = &catalog.snapshot;
-        if catalog.inventory.is_some()
-            && let Some(file) = catalog.file(path)?
-        {
-            return Ok(FileInfo {
-                publication: Self::catalog_envelope(catalog),
-                source: airk_store::roots::source_location(&snapshot.root, &snapshot.roots, path)?,
-                generation: snapshot.generation,
-                collection: snapshot.collection.clone(),
-                path: path.into(),
-                content_hash: file.state.source_hash.to_string(),
-                source_bytes: file.source_bytes,
-                language: file.language,
-                extraction_method: file.extraction_method.clone(),
-                parse_status: file.parse_status,
-                chunks: file.chunks,
-                facts: file.facts,
-                indexed_lines: file.indexed_lines,
-                line_basis: if file.extraction_method == "utf8" {
-                    "source"
-                } else {
-                    "extracted-text; cite original location"
-                },
-            });
-        }
-        let a = catalog.load_artifact(path)?;
-        let source_lines = self
-            .source_line_artifact(catalog, a.clone())?
-            .chunks
-            .iter()
-            .map(|chunk| chunk.end_line)
-            .max()
-            .unwrap_or(0);
+        let inventory = catalog
+            .inventory
+            .as_ref()
+            .context("obsolete index format; rebuild with airk index --full")?;
+        let file = catalog.file(path)?.context("indexed file not found")?;
+        let profile = inventory
+            .profiles
+            .get(&file.state.profile_id)
+            .context("indexed file profile missing")?;
+        let vector_selection =
+            inventory
+                .vector_selection
+                .decision(path, profile, &file.language)?;
         Ok(FileInfo {
             publication: Self::catalog_envelope(catalog),
             source: airk_store::roots::source_location(&snapshot.root, &snapshot.roots, path)?,
             generation: snapshot.generation,
             collection: snapshot.collection.clone(),
-            path: a.path.clone(),
-            content_hash: a.content_hash.clone(),
-            source_bytes: a.bytes,
-            language: a.language.clone(),
-            extraction_method: a.extraction_method.clone(),
-            parse_status: a.parse_status.clone(),
-            chunks: a.chunks.len(),
-            facts: a.facts.len(),
-            indexed_lines: source_lines,
-            line_basis: if a.extraction_method == "utf8" {
+            path: path.into(),
+            content_hash: file.state.source_hash.to_string(),
+            source_bytes: file.source_bytes,
+            language: file.language,
+            extraction_method: file.extraction_method.clone(),
+            parse_status: file.parse_status,
+            chunks: file.chunks,
+            facts: file.facts,
+            indexed_lines: file.indexed_lines,
+            line_basis: if file.extraction_method == "utf8" {
                 "source"
             } else {
                 "extracted-text; cite original location"
             },
+            vector_selection,
+            vector_selection_digest: inventory.vector_selection.digest()?,
         })
     }
 
