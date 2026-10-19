@@ -10,9 +10,18 @@ use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 
 mod plan;
-pub(crate) use plan::retire_changed_paths;
+pub(crate) use plan::{VectorPlanContext, attach_new_occurrences, retire_changed_paths};
 
 pub const MAX_VECTOR_OCCURRENCES: usize = 128;
+
+/// A new path-local citation and its already allocated DiskANN node. The
+/// pointer refers to the changed artifact's verified retained extraction;
+/// callers derive citation bodies from that exact captured payload.
+#[derive(Clone, Debug)]
+pub struct PreparedOccurrence {
+    pub pointer: OccurrencePointer,
+    pub graph_id: u32,
+}
 
 /// A path-local ordinal makes every old occurrence addressable after an edit
 /// without a whole-corpus scan or a large list in one authenticated map value.
