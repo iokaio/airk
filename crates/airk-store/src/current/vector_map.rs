@@ -9,6 +9,9 @@ use airk_core::{
 use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 
+mod plan;
+pub(crate) use plan::retire_changed_paths;
+
 pub const MAX_VECTOR_OCCURRENCES: usize = 128;
 
 /// A path-local ordinal makes every old occurrence addressable after an edit
@@ -136,6 +139,7 @@ pub struct OccurrencePointer {
     pub embedding_key: Sha256Digest,
     pub occurrence_id: Sha256Digest,
     pub path: String,
+    pub path_ordinal: u32,
     pub source_hash: Sha256Digest,
     pub payload_digest: Sha256Digest,
     pub object: Sha256Digest,
@@ -147,6 +151,7 @@ impl OccurrencePointer {
             self.version == 1
                 && !self.path.is_empty()
                 && self.path.len() <= 8192
+                && usize::try_from(self.path_ordinal)? < MAX_EXTRACTION_CHUNKS
                 && !self.path.contains(['\\', ':', '\0'])
                 && self
                     .path

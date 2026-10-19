@@ -223,6 +223,10 @@ fn failed_capture_rolls_back_graph_rows_and_preserves_orphan_capacity() -> Resul
 }
 
 fn retained_input(fixture: &Fixture, text: &str) -> Result<CapturedInput> {
+    retained_input_at(fixture, "evidence.txt", text)
+}
+
+fn retained_input_at(fixture: &Fixture, path: &str, text: &str) -> Result<CapturedInput> {
     use airk_core::extraction::{ExtractionPayload, ExtractionProfile, LocalChunk, LocalSpan};
     use std::collections::BTreeMap;
     let profile = ExtractionProfile {
@@ -267,7 +271,7 @@ fn retained_input(fixture: &Fixture, text: &str) -> Result<CapturedInput> {
         &payload,
         &profile,
         airk_core::binding::ArtifactBinding {
-            path: "evidence.txt",
+            path,
             source_hash: Sha256Digest::from_bytes(Sha256::digest(text.as_bytes()).into()),
             source_bytes: text.len(),
         },
@@ -355,6 +359,7 @@ fn prepared_map_and_graph_replay_commit_one_authenticated_head() -> Result<()> {
         embedding_key,
         occurrence_id,
         path: input.artifact.path.clone(),
+        path_ordinal: 0,
         source_hash: input.artifact.content_hash.parse()?,
         payload_digest: Sha256Digest::from_bytes([9; 32]),
         object: Sha256Digest::from_bytes([10; 32]),
@@ -437,6 +442,245 @@ fn prepared_map_and_graph_replay_commit_one_authenticated_head() -> Result<()> {
         read.vector_occurrence_pointers(embedding_key)?,
         Some(vec![pointer])
     );
+    drop(read);
+
+    let base = fixture.store.current_read(&fixture.scope)?.head().clone();
+    let no_op_reservation = fixture
+        .quota
+        .reserve(&fixture.scope.collection, 4 * 1024 * 1024)?;
+    let no_op = graph::GraphOverlay::new(
+        &no_op_reservation,
+        fixture.store.current_read(&fixture.scope)?,
+        graph::GraphOverlayLimits {
+            maximum_bytes: 1024 * 1024,
+            ..Default::default()
+        },
+    )?
+    .seal()?;
+    let mut invalid_target = base.clone();
+    invalid_target.sequence += 1;
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    let error = current
+        .prepare_artifacts(
+            &base.token()?,
+            invalid_target,
+            &no_op,
+            &[ArtifactChange::Delete(input.artifact.path.clone())],
+            None,
+            br#"{"engine":"test","version":2}"#,
+        )
+        .unwrap_err();
+    assert!(error.to_string().contains("live mapping"));
+    assert_eq!(current.phase()?, TransactionPhase::Ready);
+    drop(current);
+    drop(writer);
+    drop(no_op);
+    drop(no_op_reservation);
+
+    let reservation = fixture
+        .quota
+        .reserve(&fixture.scope.collection, 4 * 1024 * 1024)?;
+    let overlay = graph::GraphOverlay::new(
+        &reservation,
+        fixture.store.current_read(&fixture.scope)?,
+        graph::GraphOverlayLimits {
+            maximum_bytes: 1024 * 1024,
+            ..Default::default()
+        },
+    )?;
+    overlay.set_live(1, false)?;
+    let sealed = overlay.seal()?;
+    let mut target = base.clone();
+    target.sequence += 1;
+    target.graph_head = sealed.descriptor().target.clone();
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    let deletion = current.prepare_artifacts(
+        &base.token()?,
+        target,
+        &sealed,
+        &[ArtifactChange::Delete(input.artifact.path.clone())],
+        None,
+        br#"{"engine":"test","version":2}"#,
+    )?;
+    assert_eq!(deletion.map_count, 4);
+    current.mark_applying(&deletion)?;
+    drop(current);
+    drop(writer);
+    assert!(fixture.store.current_read(&fixture.scope).is_err());
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    current.mark_applying(&deletion)?;
+    current.commit(&deletion, deletion.target.lexical_commit)?;
+    drop(current);
+    drop(writer);
+    let read = fixture.store.current_read(&fixture.scope)?;
+    assert!(read.artifact(&input.artifact.path)?.is_none());
+    assert!(read.path_occurrences(&input.artifact.path)?.is_none());
+    assert_eq!(
+        read.vector_binding(embedding_key)?.unwrap().occurrence_ids,
+        Vec::<Sha256Digest>::new()
+    );
+    assert!(read.vector_for_graph_id(1).is_err());
+    assert_eq!(
+        read.map_get(map::MapDomain::Occurrence, occurrence_id.as_bytes())?,
+        None
+    );
+    Ok(())
+}
+
+#[test]
+fn changed_path_retires_only_its_share_of_a_live_vector() -> Result<()> {
+    let fixture = Fixture::new()?;
+    let first = retained_input_at(&fixture, "evidence.txt", "First source")?;
+    let second = retained_input_at(&fixture, "second.txt", "Second source")?;
+    let (_reservation, sealed) = fixture.sealed()?;
+    let mut target = fixture.target(&sealed);
+    let embedding_key = Sha256Digest::from_bytes([6; 32]);
+    let mut changes = Vec::new();
+    let mut occurrence_ids = Vec::new();
+    for input in [&first, &second] {
+        let path_index = vector_map::PathOccurrences {
+            version: 1,
+            path: input.artifact.path.clone(),
+            source_hash: input.artifact.content_hash.parse()?,
+            count: 1,
+        };
+        let occurrence_id = path_index.occurrence_id(&fixture.scope, 0)?;
+        occurrence_ids.push(occurrence_id);
+        let pointer = vector_map::OccurrencePointer {
+            version: 1,
+            embedding_key,
+            occurrence_id,
+            path: input.artifact.path.clone(),
+            path_ordinal: 0,
+            source_hash: path_index.source_hash,
+            payload_digest: Sha256Digest::from_bytes([9; 32]),
+            object: Sha256Digest::from_bytes([10; 32]),
+        };
+        for (domain, identity, value) in [
+            (
+                map::MapDomain::Artifact,
+                input.artifact.path.as_bytes(),
+                input.bytes()?,
+            ),
+            (
+                map::MapDomain::PathOccurrences,
+                input.artifact.path.as_bytes(),
+                path_index.canonical_bytes()?,
+            ),
+            (
+                map::MapDomain::Occurrence,
+                occurrence_id.as_bytes().as_slice(),
+                pointer.canonical_bytes()?,
+            ),
+        ] {
+            changes.push(map::MapChange::new(
+                &fixture.scope,
+                domain,
+                identity,
+                Some(value),
+            )?);
+        }
+    }
+    occurrence_ids.sort();
+    let binding = vector_map::VectorBinding {
+        version: 1,
+        embedding_key,
+        graph_scope: target.graph_head.scope.digest(),
+        graph_id: 1,
+        occurrence_ids,
+    };
+    changes.push(map::MapChange::new(
+        &fixture.scope,
+        map::MapDomain::Vector,
+        embedding_key.as_bytes(),
+        Some(binding.canonical_bytes(&target)?),
+    )?);
+    changes.sort_by_key(map::MapChange::key);
+    let connection = database::open_reader(&fixture.store.directory().join("index.sqlite3"))?;
+    let mut plan = map::MapPlan::new(&connection, &fixture.scope, fixture.head.artifact_root)?;
+    for change in &changes {
+        plan.put(change.key(), change.value())?;
+    }
+    target.artifact_root = plan.root()?;
+    drop(connection);
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    let pending = current.prepare_mapped(
+        &fixture.head.token()?,
+        target,
+        &sealed,
+        &[first.clone(), second.clone()],
+        None,
+        &changes,
+    )?;
+    current.mark_applying(&pending)?;
+    current.commit(&pending, pending.target.lexical_commit)?;
+    drop(current);
+    drop(writer);
+
+    let base = fixture.store.current_read(&fixture.scope)?.head().clone();
+    let reservation = fixture
+        .quota
+        .reserve(&fixture.scope.collection, 4 * 1024 * 1024)?;
+    let no_op = graph::GraphOverlay::new(
+        &reservation,
+        fixture.store.current_read(&fixture.scope)?,
+        graph::GraphOverlayLimits {
+            maximum_bytes: 1024 * 1024,
+            ..Default::default()
+        },
+    )?
+    .seal()?;
+    let mut target = base.clone();
+    target.sequence += 1;
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    let pending = current.prepare_artifacts(
+        &base.token()?,
+        target,
+        &no_op,
+        &[ArtifactChange::Delete(first.artifact.path.clone())],
+        None,
+        br#"{"engine":"test","version":2}"#,
+    )?;
+    assert_eq!(pending.map_count, 4);
+    current.mark_applying(&pending)?;
+    current.commit(&pending, pending.target.lexical_commit)?;
+    drop(current);
+    drop(writer);
+    let read = fixture.store.current_read(&fixture.scope)?;
+    assert!(read.artifact(&first.artifact.path)?.is_none());
+    assert_eq!(
+        read.vector_for_graph_id(1)?.occurrence_ids,
+        vec![
+            vector_map::PathOccurrences {
+                version: 1,
+                path: second.artifact.path.clone(),
+                source_hash: second.artifact.content_hash.parse()?,
+                count: 1,
+            }
+            .occurrence_id(&fixture.scope, 0)?
+        ]
+    );
+    assert!(read.path_occurrences(&second.artifact.path)?.is_some());
     Ok(())
 }
 

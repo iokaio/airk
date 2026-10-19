@@ -79,6 +79,7 @@ fn occurrence_pointer_rejects_foreign_id_and_unsafe_path() {
         embedding_key: digest(5),
         occurrence_id: digest(6),
         path: "docs/example.md".into(),
+        path_ordinal: 0,
         source_hash: digest(7),
         payload_digest: digest(8),
         object: digest(9),

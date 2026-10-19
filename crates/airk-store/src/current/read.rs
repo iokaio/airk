@@ -104,15 +104,13 @@ impl CurrentRead {
                 pointer.embedding_key == embedding_key,
                 "current occurrence vector key mismatch"
             );
-            let artifact = self
-                .artifact(&pointer.path)?
-                .context("current occurrence artifact missing")?;
+            let path_index = self
+                .path_occurrences(&pointer.path)?
+                .context("current occurrence path index missing")?;
             ensure!(
-                artifact
-                    .content_hash
-                    .parse::<airk_core::identity::Sha256Digest>()?
-                    == pointer.source_hash,
-                "current occurrence source hash mismatch"
+                path_index.occurrence_id(&self.head.scope, pointer.path_ordinal)? == occurrence_id
+                    && path_index.source_hash == pointer.source_hash,
+                "current occurrence path ordinal or source differs"
             );
             pointers.push(pointer);
         }
