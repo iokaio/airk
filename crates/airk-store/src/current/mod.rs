@@ -131,6 +131,19 @@ pub struct CurrentToken {
     pub digest: Sha256Digest,
 }
 
+impl crate::FileStore {
+    /// Read the captured capacity bound before opening a recovering writer.
+    pub fn current_database_capacity(&self, scope: &CurrentScope) -> Result<u64> {
+        scope.validate()?;
+        ensure!(
+            self.directory().file_name().and_then(|name| name.to_str())
+                == Some(scope.collection.as_str()),
+            "foreign current capacity collection"
+        );
+        database::check_owner(self.directory(), scope)
+    }
+}
+
 pub(crate) fn decode_head(bytes: &[u8], scope: &CurrentScope) -> Result<CurrentHead> {
     ensure!(
         bytes.len() <= MAX_HEAD_BYTES,
