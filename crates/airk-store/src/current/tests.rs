@@ -598,6 +598,136 @@ fn corrupt_staged_lexical_manifest_never_advances_the_current_head() -> Result<(
 }
 
 #[test]
+fn changed_artifact_and_lexical_manifest_share_one_replayed_head() -> Result<()> {
+    let mut fixture = Fixture::empty()?;
+    let initial = serde_json::to_vec(&serde_json::json!({"engine":"test","sequence":0}))?;
+    fixture.head.lexical_commit =
+        airk_core::identity::framed_digest(b"current-lexical-manifest/1", &[&initial]);
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    current.initialize(fixture.head.clone())?;
+    current.install_initial_lexical_manifest(&fixture.head.token()?, &initial)?;
+    drop(current);
+    drop(writer);
+    let input = retained_input(&fixture, "Changed artifact source.")?;
+    let (_reservation, sealed) = fixture.sealed()?;
+    let next = serde_json::to_vec(&serde_json::json!({"engine":"test","sequence":1}))?;
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    assert!(
+        current
+            .prepare_artifacts(
+                &fixture.head.token()?,
+                fixture.target(&sealed),
+                &sealed,
+                &[
+                    ArtifactChange::Upsert(Box::new(input.clone())),
+                    ArtifactChange::Upsert(Box::new(input.clone())),
+                ],
+                None,
+                &next,
+            )
+            .is_err()
+    );
+    assert!(
+        current
+            .prepare_artifacts(
+                &fixture.head.token()?,
+                fixture.target(&sealed),
+                &sealed,
+                &[ArtifactChange::Delete("../outside".into())],
+                None,
+                &next,
+            )
+            .is_err()
+    );
+    assert_eq!(current.phase()?, TransactionPhase::Ready);
+    let pending = current.prepare_artifacts(
+        &fixture.head.token()?,
+        fixture.target(&sealed),
+        &sealed,
+        &[ArtifactChange::Upsert(Box::new(input.clone()))],
+        None,
+        &next,
+    )?;
+    assert_eq!(pending.map_count, 1);
+    assert_eq!(pending.inputs_count, 1);
+    assert_eq!(pending.lexical_manifest_bytes, next.len() as u64);
+    drop(current);
+    drop(writer);
+    let before = fixture.store.current_read(&fixture.scope)?;
+    assert!(before.artifact(&input.artifact.path)?.is_none());
+    assert_eq!(before.lexical_manifest()?, initial);
+    drop(before);
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    current.mark_applying(&pending)?;
+    current.commit(&pending, pending.target.lexical_commit)?;
+    drop(current);
+    drop(writer);
+    let after = fixture.store.current_read(&fixture.scope)?;
+    assert_eq!(after.head(), &pending.target);
+    assert_eq!(after.lexical_manifest()?, next);
+    assert_eq!(
+        after.artifact(&input.artifact.path)?.unwrap().content_hash,
+        input.artifact.content_hash
+    );
+    drop(after);
+
+    let reservation = fixture
+        .quota
+        .reserve(&fixture.scope.collection, 1024 * 1024)?;
+    let overlay = graph::GraphOverlay::new(
+        &reservation,
+        fixture.store.current_read(&fixture.scope)?,
+        graph::GraphOverlayLimits {
+            maximum_bytes: 1024 * 1024,
+            ..Default::default()
+        },
+    )?;
+    let sealed = overlay.seal()?;
+    let mut target = pending.target.clone();
+    target.sequence += 1;
+    target.graph_head = sealed.descriptor().target.clone();
+    let deleted = serde_json::to_vec(&serde_json::json!({"engine":"test","sequence":2}))?;
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    let deletion = current.prepare_artifacts(
+        &pending.target.token()?,
+        target,
+        &sealed,
+        &[ArtifactChange::Delete(input.artifact.path.clone())],
+        None,
+        &deleted,
+    )?;
+    current.mark_applying(&deletion)?;
+    current.commit(&deletion, deletion.target.lexical_commit)?;
+    drop(current);
+    drop(writer);
+    let after_delete = fixture.store.current_read(&fixture.scope)?;
+    assert!(after_delete.artifact(&input.artifact.path)?.is_none());
+    assert_eq!(after_delete.lexical_manifest()?, deleted);
+    assert!(
+        after_delete
+            .require_token(&pending.target.token()?)
+            .is_err()
+    );
+    Ok(())
+}
+
+#[test]
 fn changed_pending_map_bytes_block_applying_and_commit_without_advancing_head() -> Result<()> {
     let fixture = Fixture::new()?;
     let input = retained_input(&fixture, "Captured citation body.")?;
