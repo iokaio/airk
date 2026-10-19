@@ -39,9 +39,15 @@ fn private_map_plan_predicts_multi_key_root_without_changing_committed_rows() ->
         (artifact(51)?, Some(b"another".as_slice())),
     ];
     let mut plan = MapPlan::new(&connection, &scope, base)?;
+    assert_eq!(plan.get(artifact(2)?)?, Some(b"old".to_vec()));
+    assert_eq!(plan.get(artifact(50)?)?, None);
     for (key, value) in changes {
         plan.put(key, value)?;
     }
+    assert_eq!(plan.get(artifact(2)?)?, Some(b"edited".to_vec()));
+    assert_eq!(plan.get(artifact(3)?)?, None);
+    assert_eq!(plan.get(artifact(50)?)?, Some(b"added".to_vec()));
+    assert_eq!(plan.get(artifact(4)?)?, Some(b"old".to_vec()));
     let planned = plan.root()?;
     assert_ne!(planned, base);
     assert_eq!(
@@ -80,7 +86,29 @@ fn failed_map_plan_is_poisoned_and_cannot_supply_a_target_root() -> Result<()> {
             .is_err()
     );
     assert!(plan.root().is_err());
+    assert!(plan.get(artifact(1)?).is_err());
     assert!(plan.put(artifact(2)?, Some(b"valid")).is_err());
+    Ok(())
+}
+
+#[test]
+fn map_plan_get_rejects_corrupt_committed_bucket() -> Result<()> {
+    let connection = database()?;
+    let scope = scope();
+    let key = artifact(7)?;
+    let base = put(
+        &connection,
+        &scope,
+        empty_root(&scope)?,
+        key,
+        Some(b"retained"),
+    )?;
+    connection.execute(
+        "UPDATE current_map_buckets SET content=zeroblob(length(content)) WHERE prefix=?1",
+        [i64::from(prefix(key))],
+    )?;
+    let plan = MapPlan::new(&connection, &scope, base)?;
+    assert!(plan.get(key).is_err());
     Ok(())
 }
 
