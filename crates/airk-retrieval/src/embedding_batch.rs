@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Bounded inference batches. Cache writes and graph insertion stay on the caller.
-use crate::model::{EmbeddingCacheStats, EmbeddingModel};
+use crate::model::{EmbeddingCacheStats, EmbeddingModel, onnx_input_is_blank};
 use airk_core::embedding::{
     EmbeddingCache, EmbeddingDescriptor, lookup_embedding, store_embedding,
 };
 use anyhow::{Context, Result, ensure};
-use std::time::Instant;
+use std::{collections::BTreeMap, time::Instant};
 
 pub const MAX_BATCH_CHUNKS: usize = 32;
 
@@ -36,6 +36,78 @@ fn memory_limited_workers(requested: usize, workspace: usize, budget: usize) -> 
 }
 
 type Embedded = Option<Vec<f32>>;
+
+struct InputGroup<'a> {
+    text: &'a str,
+    positions: Vec<usize>,
+}
+
+struct PreparedBatch<'a> {
+    vectors: Vec<Embedded>,
+    pending: Vec<InputGroup<'a>>,
+}
+
+/// Group only exact inputs, without copying their text or changing cache identity.
+/// All cache validation finishes before any inference or cache persistence starts.
+fn prepare_onnx_batch<'a>(
+    texts: &[&'a str],
+    descriptor: &EmbeddingDescriptor,
+    cache: Option<&dyn EmbeddingCache>,
+    bypass: bool,
+    stats: &mut EmbeddingCacheStats,
+) -> Result<PreparedBatch<'a>> {
+    ensure!(
+        texts.len() <= MAX_BATCH_CHUNKS,
+        "embedding batch exceeds chunk bound"
+    );
+    let started = Instant::now();
+    let mut positions: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut groups: Vec<InputGroup<'a>> = Vec::new();
+    let mut blanks = 0;
+    let mut duplicates = 0;
+    for (index, text) in texts.iter().copied().enumerate() {
+        // Keep the public input/descriptor bounds even for skipped blank inputs.
+        airk_core::embedding::embedding_key(descriptor, text.as_bytes())?;
+        if onnx_input_is_blank(text) {
+            blanks += 1;
+        } else if let Some(group) = positions.get(text).copied() {
+            groups[group].positions.push(index);
+            duplicates += 1;
+        } else {
+            positions.insert(text, groups.len());
+            groups.push(InputGroup {
+                text,
+                positions: vec![index],
+            });
+        }
+    }
+    let mut vectors = vec![None; texts.len()];
+    let mut pending = Vec::new();
+    let mut hits = 0;
+    let mut misses = 0;
+    for group in groups {
+        if let Some(cache) = cache.filter(|_| !bypass) {
+            if let Some(vector) = lookup_embedding(cache, descriptor, group.text.as_bytes())? {
+                hits += group.positions.len() as u64;
+                for position in group.positions {
+                    vectors[position] = Some(vector.clone());
+                }
+                continue;
+            }
+            misses += group.positions.len() as u64;
+        }
+        pending.push(group);
+    }
+    stats.inputs += texts.len() as u64;
+    stats.blank_inputs += blanks;
+    stats.duplicate_inputs += duplicates;
+    stats.inferences += blanks;
+    stats.no_vector += blanks;
+    stats.hits += hits;
+    stats.misses += misses;
+    stats.cache_lookup_us += elapsed_us(started);
+    Ok(PreparedBatch { vectors, pending })
+}
 
 /// All joins complete before returning, including failure. Results retain input order.
 fn parallel_map<T: Sync, R: Send>(
@@ -102,22 +174,10 @@ pub(crate) fn embed(
         }
         return result;
     };
-    let started = Instant::now();
-    let mut vectors = vec![None; texts.len()];
-    let mut pending = Vec::new();
-    for (index, text) in texts.iter().enumerate() {
-        airk_core::embedding::embedding_key(descriptor, text.as_bytes())?;
-        if let Some(cache) = cache.filter(|_| !bypass) {
-            if let Some(vector) = lookup_embedding(cache, descriptor, text.as_bytes())? {
-                stats.hits += 1;
-                vectors[index] = Some(vector);
-                continue;
-            }
-            stats.misses += 1;
-        }
-        pending.push((index, *text));
-    }
-    stats.cache_lookup_us += elapsed_us(started);
+    let PreparedBatch {
+        mut vectors,
+        pending,
+    } = prepare_onnx_batch(texts, descriptor, cache, bypass, stats)?;
     if pending.is_empty() {
         return Ok(vectors);
     }
@@ -126,21 +186,27 @@ pub(crate) fn embed(
     let workers = pending.len().div_ceil(pending.len().div_ceil(limit));
     stats.workers = stats.workers.max(workers);
     let started = Instant::now();
-    let computed = parallel_map(&pending, workers, |(_, text)| model.embed_text(text))?;
+    let computed = parallel_map(&pending, workers, |group| model.embed_text(group.text))?;
     stats.inference_us += elapsed_us(started);
-    stats.inferences += pending.len() as u64;
+    stats.actual_forwards += pending.len() as u64;
+    stats.inferences += pending
+        .iter()
+        .map(|group| group.positions.len() as u64)
+        .sum::<u64>();
     let started = Instant::now();
     // Serialize cache persistence: duplicate inputs cannot race on immutable files
     // or quota reservations. Corruption still aborts the unpublished generation.
-    for ((index, text), vector) in pending.into_iter().zip(computed) {
+    for (group, vector) in pending.into_iter().zip(computed) {
         if let Some(vector) = &vector {
             if let Some(cache) = cache {
-                store_embedding(cache, descriptor, text.as_bytes(), vector.clone())?;
+                store_embedding(cache, descriptor, group.text.as_bytes(), vector.clone())?;
             }
         } else {
-            stats.no_vector += 1;
+            stats.no_vector += group.positions.len() as u64;
         }
-        vectors[index] = vector;
+        for index in group.positions {
+            vectors[index] = vector.clone();
+        }
     }
     stats.cache_store_us += elapsed_us(started);
     Ok(vectors)
@@ -149,32 +215,196 @@ pub(crate) fn embed(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use airk_core::{embedding::CachedEmbedding, identity::Sha256Digest};
+    use std::sync::{
+        Mutex,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    #[derive(Default)]
+    struct Cache {
+        values: Mutex<BTreeMap<Sha256Digest, CachedEmbedding>>,
+        lookups: AtomicUsize,
+        stores: AtomicUsize,
+    }
+    impl EmbeddingCache for Cache {
+        fn lookup(&self, key: &Sha256Digest) -> Result<Option<CachedEmbedding>> {
+            self.lookups.fetch_add(1, Ordering::Relaxed);
+            Ok(self.values.lock().unwrap().get(key).cloned())
+        }
+        fn store(&self, entry: &CachedEmbedding) -> Result<()> {
+            self.stores.fetch_add(1, Ordering::Relaxed);
+            let mut values = self.values.lock().unwrap();
+            if let Some(existing) = values.get(&entry.key) {
+                ensure!(existing == entry, "immutable cache mismatch");
+            }
+            values.insert(entry.key, entry.clone());
+            Ok(())
+        }
+    }
+
+    fn descriptor() -> EmbeddingDescriptor {
+        let digest = Sha256Digest::from_bytes([1; 32]);
+        EmbeddingDescriptor {
+            version: 1,
+            model: digest,
+            tokenizer: digest,
+            preprocessing: digest,
+            pooling: digest,
+            normalization: digest,
+            inference: digest,
+            dimensions: 2,
+        }
+    }
+
+    #[test]
+    fn preparation_deduplicates_exact_inputs_and_scatters_authenticated_hits() -> Result<()> {
+        let descriptor = descriptor();
+        let cache = Cache::default();
+        let texts = [
+            "alpha", " \r\n", "beta", "alpha", "\u{2003}", "gamma", "beta",
+        ];
+        let mut cold = EmbeddingCacheStats::default();
+        let prepared = prepare_onnx_batch(&texts, &descriptor, Some(&cache), false, &mut cold)?;
+        assert_eq!(
+            prepared
+                .pending
+                .iter()
+                .map(|group| (group.text, group.positions.clone()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("alpha", vec![0, 3]),
+                ("beta", vec![2, 6]),
+                ("gamma", vec![5])
+            ]
+        );
+        assert!(prepared.vectors.iter().all(Option::is_none));
+        assert_eq!(cache.lookups.load(Ordering::Relaxed), 3);
+        assert_eq!(
+            (cold.inputs, cold.blank_inputs, cold.duplicate_inputs),
+            (7, 2, 2)
+        );
+        assert_eq!((cold.hits, cold.misses, cold.actual_forwards), (0, 5, 0));
+        assert_eq!((cold.inferences, cold.no_vector), (2, 2));
+
+        // These are cache fixtures, not a simulated neural inference adapter.
+        for (text, vector) in [
+            ("alpha", vec![1.0, 0.0]),
+            ("beta", vec![0.0, 1.0]),
+            ("gamma", vec![-1.0, 0.0]),
+        ] {
+            store_embedding(&cache, &descriptor, text.as_bytes(), vector)?;
+        }
+        let mut warm = EmbeddingCacheStats::default();
+        let prepared = prepare_onnx_batch(&texts, &descriptor, Some(&cache), false, &mut warm)?;
+        assert!(prepared.pending.is_empty());
+        assert_eq!(
+            prepared.vectors,
+            vec![
+                Some(vec![1.0, 0.0]),
+                None,
+                Some(vec![0.0, 1.0]),
+                Some(vec![1.0, 0.0]),
+                None,
+                Some(vec![-1.0, 0.0]),
+                Some(vec![0.0, 1.0]),
+            ]
+        );
+        assert_eq!(cache.lookups.load(Ordering::Relaxed), 6);
+        assert_eq!((warm.hits, warm.misses, warm.actual_forwards), (5, 0, 0));
+        assert_eq!((warm.inferences, warm.no_vector), (2, 2));
+
+        let mut bypass = EmbeddingCacheStats::default();
+        let prepared = prepare_onnx_batch(&texts, &descriptor, Some(&cache), true, &mut bypass)?;
+        assert_eq!(prepared.pending.len(), 3);
+        assert_eq!(cache.lookups.load(Ordering::Relaxed), 6);
+        assert_eq!((bypass.hits, bypass.misses), (0, 0));
+        let distinct = prepare_onnx_batch(
+            &["alpha", "alpha\n", "alpha\r\n"],
+            &descriptor,
+            None,
+            false,
+            &mut EmbeddingCacheStats::default(),
+        )?;
+        assert_eq!(
+            distinct.pending.len(),
+            3,
+            "deduplication must preserve exact bytes"
+        );
+        let key = airk_core::embedding::embedding_key(&descriptor, b"alpha")?;
+        cache.values.lock().unwrap().get_mut(&key).unwrap().vector[0] = 0.5;
+        let mut rejected = EmbeddingCacheStats::default();
+        assert!(
+            prepare_onnx_batch(
+                &["uncached", "alpha", "alpha"],
+                &descriptor,
+                Some(&cache),
+                false,
+                &mut rejected,
+            )
+            .is_err()
+        );
+        assert_eq!(rejected.actual_forwards, 0);
+        assert_eq!(cache.stores.load(Ordering::Relaxed), 3);
+        Ok(())
+    }
+
+    #[test]
+    fn blank_prefixes_preserve_utf8_and_input_bounds_before_cache_access() -> Result<()> {
+        use crate::model::MAX_INPUT_BYTES;
+        let descriptor = descriptor();
+        let cache = Cache::default();
+        let prefix = format!("{}suffix", " ".repeat(MAX_INPUT_BYTES));
+        let split_unicode = format!("{}é suffix", " ".repeat(MAX_INPUT_BYTES - 1));
+        let complete_unicode = format!("{}é suffix", " ".repeat(MAX_INPUT_BYTES - 2));
+        assert!(!prefix.trim().is_empty());
+        assert!(onnx_input_is_blank(&prefix));
+        assert!(onnx_input_is_blank(&split_unicode));
+        assert!(!onnx_input_is_blank(&complete_unicode));
+        let mut stats = EmbeddingCacheStats::default();
+        let prepared = prepare_onnx_batch(
+            &[&prefix, &split_unicode],
+            &descriptor,
+            Some(&cache),
+            false,
+            &mut stats,
+        )?;
+        assert!(prepared.pending.is_empty());
+        assert_eq!(stats.blank_inputs, 2);
+        assert_eq!(stats.actual_forwards, 0);
+        assert_eq!(cache.lookups.load(Ordering::Relaxed), 0);
+        let oversized = " ".repeat(airk_core::embedding::MAX_EMBEDDING_INPUT_BYTES + 1);
+        assert!(
+            prepare_onnx_batch(&[&oversized], &descriptor, Some(&cache), false, &mut stats,)
+                .is_err()
+        );
+        assert!(
+            prepare_onnx_batch(
+                &[" "; MAX_BATCH_CHUNKS + 1],
+                &descriptor,
+                Some(&cache),
+                false,
+                &mut stats,
+            )
+            .is_err()
+        );
+        assert_eq!(cache.lookups.load(Ordering::Relaxed), 0);
+        Ok(())
+    }
 
     #[test]
     #[ignore = "requires AIRK_TEST_MODEL_DIR with verified local ONNX assets"]
     fn real_model_parallel_vectors_cache_and_bypass_are_exact() -> Result<()> {
-        use airk_core::{embedding::CachedEmbedding, identity::Sha256Digest};
-        use std::{collections::BTreeMap, sync::Mutex};
-        #[derive(Default)]
-        struct Cache(Mutex<BTreeMap<Sha256Digest, CachedEmbedding>>);
-        impl EmbeddingCache for Cache {
-            fn lookup(&self, key: &Sha256Digest) -> Result<Option<CachedEmbedding>> {
-                Ok(self.0.lock().unwrap().get(key).cloned())
-            }
-            fn store(&self, entry: &CachedEmbedding) -> Result<()> {
-                let mut values = self.0.lock().unwrap();
-                if let Some(existing) = values.get(&entry.key) {
-                    ensure!(existing == entry, "immutable cache mismatch");
-                }
-                values.insert(entry.key, entry.clone());
-                Ok(())
-            }
-        }
         let model =
             EmbeddingModel::open(std::path::Path::new(&std::env::var("AIRK_TEST_MODEL_DIR")?))?;
+        ensure!(
+            matches!(model, EmbeddingModel::Onnx(_)),
+            "ONNX assets required"
+        );
         let descriptor = model.cache_descriptor()?;
         let long = "A bounded original input with Unicode café. ".repeat(600);
+        let blank_prefix = format!("{}suffix", " ".repeat(crate::model::MAX_INPUT_BYTES));
+        let split_unicode = format!("{}é suffix", " ".repeat(crate::model::MAX_INPUT_BYTES - 1));
         let texts = [
             "Reset an account password.",
             "Bake bread with flour and yeast.",
@@ -184,6 +414,8 @@ mod tests {
             "Reset an account password.",
             long.as_str(),
             "An original final evidence passage.",
+            blank_prefix.as_str(),
+            split_unicode.as_str(),
         ];
         let serial: Vec<_> = texts
             .iter()
@@ -206,7 +438,14 @@ mod tests {
             "parallel inference must preserve exact float bits and input order"
         );
         assert_eq!(cold.inferences, texts.len() as u64);
-        assert_eq!(cold.no_vector, 2);
+        assert_eq!(cold.no_vector, 4);
+        assert_eq!(
+            (cold.inputs, cold.blank_inputs, cold.duplicate_inputs),
+            (10, 4, 1)
+        );
+        assert_eq!(cold.actual_forwards, 5);
+        assert_eq!(cache.lookups.load(Ordering::Relaxed), 5);
+        assert_eq!(cache.stores.load(Ordering::Relaxed), 5);
         assert!(
             cold.workers > 1,
             "real model should fit concurrent execution in the declared budget"
@@ -227,9 +466,13 @@ mod tests {
         );
         assert_eq!(warm.hits, 6);
         assert_eq!(
-            warm.inferences, 2,
+            warm.inferences, 4,
             "empty outcomes are not persisted as vectors"
         );
+        assert_eq!(warm.actual_forwards, 0);
+        assert_eq!(warm.workers, 0);
+        assert_eq!(cache.lookups.load(Ordering::Relaxed), 10);
+        assert_eq!(cache.stores.load(Ordering::Relaxed), 5);
         let mut full = EmbeddingCacheStats::default();
         assert_eq!(
             embed(
@@ -246,6 +489,20 @@ mod tests {
         );
         assert_eq!(full.hits, 0);
         assert_eq!(full.inferences, texts.len() as u64);
+        assert_eq!(full.actual_forwards, 5);
+        assert_eq!(cache.lookups.load(Ordering::Relaxed), 10);
+        assert_eq!(cache.stores.load(Ordering::Relaxed), 10);
+        let mut direct = EmbeddingCacheStats::default();
+        assert!(
+            model
+                .embed_cached(&blank_prefix, &descriptor, Some(&cache), false, &mut direct,)?
+                .is_none()
+        );
+        assert_eq!(
+            (direct.inputs, direct.blank_inputs, direct.actual_forwards),
+            (1, 1, 0)
+        );
+        assert_eq!(cache.lookups.load(Ordering::Relaxed), 10);
         let mut rejected = EmbeddingCacheStats::default();
         assert!(
             embed(
@@ -261,7 +518,7 @@ mod tests {
             .is_err()
         );
         let key = airk_core::embedding::embedding_key(&descriptor, texts[0].as_bytes())?;
-        cache.0.lock().unwrap().get_mut(&key).unwrap().vector[0] += 1.0;
+        cache.values.lock().unwrap().get_mut(&key).unwrap().vector[0] += 1.0;
         assert!(
             embed(
                 &model,

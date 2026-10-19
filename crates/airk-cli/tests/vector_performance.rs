@@ -42,6 +42,29 @@ fn serial_parallel_and_incremental_vectors_preserve_retrieval() -> Result<()> {
     )?;
     let serial = run(&root, &data, "1", &["index"])?;
     ensure!(
+        serial["embedding_inputs"]
+            .as_u64()
+            .context("inputs missing")?
+            == serial["embedding_cache_hits"]
+                .as_u64()
+                .context("hits missing")?
+                + serial["embedding_inferences"]
+                    .as_u64()
+                    .context("evaluations missing")?,
+        "per-input work counters do not reconcile"
+    );
+    ensure!(
+        serial["embedding_actual_forwards"]
+            .as_u64()
+            .context("forwards missing")?
+            > 0
+            && serial["embedding_blank_inputs"]
+                .as_u64()
+                .context("blanks missing")?
+                > 0,
+        "fixture must distinguish neural work from blank gaps"
+    );
+    ensure!(
         serial["embedding_workers"] == 1 && serial["embedding_batches"].as_u64().unwrap_or(0) >= 2,
         "fixture did not exercise multiple batches: {serial}"
     );
@@ -71,6 +94,15 @@ fn serial_parallel_and_incremental_vectors_preserve_retrieval() -> Result<()> {
         "Mix flour and yeast to bake a loaf of bread.",
     )?;
     let incremental = run(&root, &data, "4", &["index"])?;
+    ensure!(
+        incremental["embedding_actual_forwards"]
+            .as_u64()
+            .context("forwards missing")?
+            < parallel["embedding_actual_forwards"]
+                .as_u64()
+                .context("forwards missing")?,
+        "incremental neural work did not decrease"
+    );
     ensure!(
         incremental["embedding_cache_hits"]
             .as_u64()

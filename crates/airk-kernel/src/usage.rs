@@ -343,6 +343,14 @@ impl crate::Kernel {
                     ),
                     scan_extract_us: value["scan_extract_us"].as_u64(),
                     publish_us: value["publish_us"].as_u64(),
+                    metrics: IndexMetric::ALL
+                        .into_iter()
+                        .filter_map(|metric| {
+                            value[metric.report_field()]
+                                .as_u64()
+                                .map(|value| (metric, value))
+                        })
+                        .collect(),
                 });
             }
             // Count only explicit cited sources. Bound optional comparison work to small

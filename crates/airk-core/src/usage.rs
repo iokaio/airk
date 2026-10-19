@@ -332,6 +332,55 @@ pub fn content_kind(language: &str, extraction: &str) -> ContentKind {
     }
 }
 
+/// Content-free indexing counters. Timers are nested inside publication time.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum IndexMetric {
+    EmbeddingInputs,
+    EmbeddingBlankInputs,
+    EmbeddingDuplicateInputs,
+    EmbeddingActualForwards,
+    EmbeddingCacheHits,
+    EmbeddingCacheMisses,
+    EmbeddingModelLoadUs,
+    EmbeddingCacheLookupUs,
+    EmbeddingCacheStoreUs,
+    EmbeddingInferenceUs,
+    VectorGraphInsertUs,
+}
+
+impl IndexMetric {
+    pub const ALL: [Self; 11] = [
+        Self::EmbeddingInputs,
+        Self::EmbeddingBlankInputs,
+        Self::EmbeddingDuplicateInputs,
+        Self::EmbeddingActualForwards,
+        Self::EmbeddingCacheHits,
+        Self::EmbeddingCacheMisses,
+        Self::EmbeddingModelLoadUs,
+        Self::EmbeddingCacheLookupUs,
+        Self::EmbeddingCacheStoreUs,
+        Self::EmbeddingInferenceUs,
+        Self::VectorGraphInsertUs,
+    ];
+
+    pub fn report_field(self) -> &'static str {
+        match self {
+            Self::EmbeddingInputs => "embedding_inputs",
+            Self::EmbeddingBlankInputs => "embedding_blank_inputs",
+            Self::EmbeddingDuplicateInputs => "embedding_duplicate_inputs",
+            Self::EmbeddingActualForwards => "embedding_actual_forwards",
+            Self::EmbeddingCacheHits => "embedding_cache_hits",
+            Self::EmbeddingCacheMisses => "embedding_cache_misses",
+            Self::EmbeddingModelLoadUs => "embedding_model_load_us",
+            Self::EmbeddingCacheLookupUs => "embedding_cache_lookup_us",
+            Self::EmbeddingCacheStoreUs => "embedding_cache_store_us",
+            Self::EmbeddingInferenceUs => "embedding_inference_us",
+            Self::VectorGraphInsertUs => "vector_graph_insert_us",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct IndexWork {
     pub indexed: u64,
@@ -346,6 +395,9 @@ pub struct IndexWork {
     pub scan_extract_us: Option<u64>,
     #[serde(default)]
     pub publish_us: Option<u64>,
+    /// Missing values remain unmeasured; the enum bounds keys and forbids source text.
+    #[serde(default)]
+    pub metrics: BTreeMap<IndexMetric, u64>,
 }
 
 /// OS counter semantics are deliberately distinct: transfer bytes are not disk I/O.
@@ -479,6 +531,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct IndexSummary {
+    #[serde(default)]
+    pub metrics: BTreeMap<IndexMetric, ResourceTotal>,
     #[serde(with = "wide_u128")]
     pub indexed: u128,
     #[serde(with = "wide_u128")]
@@ -608,6 +662,17 @@ impl UsageReport {
         for (key, source) in &other.operations {
             let target = self.operations.entry(*key).or_default();
             target.resources.merge(&source.resources)?;
+            for (metric, value) in &source.index_work.metrics {
+                let total = target.index_work.metrics.entry(*metric).or_default();
+                total.samples = total
+                    .samples
+                    .checked_add(value.samples)
+                    .context("index metric sample overflow")?;
+                total.value = total
+                    .value
+                    .checked_add(value.value)
+                    .context("index metric value overflow")?;
+            }
             add!(
                 target,
                 source,
@@ -747,6 +812,11 @@ impl OperationSummary {
             self.returned_utf8_bytes += u128::from(bytes);
         }
         if let Some(index) = &event.index_work {
+            for (metric, value) in &index.metrics {
+                let total = self.index_work.metrics.entry(*metric).or_default();
+                total.samples += 1;
+                total.value += u128::from(*value);
+            }
             self.index_work.indexed += u128::from(index.indexed);
             self.index_work.reused += u128::from(index.reused);
             self.index_work.removed += u128::from(index.removed);
