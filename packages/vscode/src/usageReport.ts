@@ -113,6 +113,17 @@ export function renderUsage(value: unknown): string {
     const operations = Object.entries(obj(report.operations)).slice(0, 64).map(([name, raw]) => { const s = obj(raw); return [name, s.calls, s.successful, s.empty, s.failed, s.truncated, s.returned_utf8_bytes, s.total_elapsed_us]; });
     const index = Object.entries(obj(report.operations)).filter(([name]) => ['index', 'reindex'].includes(name)).map(([name, raw]) => { const s = obj(obj(raw).index_work); return [name, s.indexed, s.reused, s.removed, s.processed_source_bytes, s.scan_extract_us, s.publish_us, s.disk_growth_bytes]; });
     const embeddingLabels: Record<string, string> = {
+        extraction_workers_requested: 'Requested extraction workers',
+        extraction_worker_limit: 'Admitted extraction worker limit',
+        extraction_workers_spawned: 'Extraction workers started',
+        extraction_parallel_jobs: 'Parallel extraction jobs',
+        extraction_serial_jobs: 'Serial extraction jobs',
+        extraction_work_us: 'Summed extraction job time µs',
+        extraction_wait_us: 'Extraction result wait µs',
+        extraction_source_peak_bytes: 'Peak admitted source bytes per job',
+        extraction_coordinator_source_peak_bytes: 'Peak coordinator source bytes per job',
+        extraction_result_bound_bytes: 'Declared result limit bytes per job',
+
         embedding_inputs: 'Embedding inputs', embedding_blank_inputs: 'Blank inputs skipped',
         embedding_duplicate_inputs: 'Duplicate inputs reused', embedding_actual_forwards: 'Neural model executions',
         embedding_tokenized_inputs: 'Tokenized cache miss inputs', embedding_input_tokens: 'Tokens before truncation',
@@ -149,7 +160,7 @@ export function renderUsage(value: unknown): string {
         <p>Compared full-source bytes: ${esc(c.baseline_utf8_bytes)}. Returned bytes for those same requests: ${esc(c.returned_utf8_bytes)}. Missing baselines: ${esc(report.missing_baseline_calls)}; mismatched: ${esc(report.mismatched_baseline_calls)}; excluded calls: ${esc(report.excluded_from_estimation_calls)}. Estimates use four bytes per nominal token and two-to-six-byte sensitivity assumptions.</p>
         ${table(['Operation', 'Calls', 'Successful', 'Empty', 'Failed', 'Truncated', 'Response bytes', 'Total microseconds'], operations)}
         <h3>Indexing cost</h3>${table(['Operation', 'Changed files', 'Reused files', 'Removed files', 'Source bytes', 'Scan/extract µs', 'Publish µs', 'Disk growth bytes'], index)}<p>Reuse avoids extraction work; it does not prove avoided disk reads. Zero stage totals without samples are not measured durations; inspect JSON for sample counts.</p>
-        <h3>Embedding work</h3>${table(['Operation', 'Measurement', 'Total', 'Measured jobs'], embedding)}<p>Blank and duplicate inputs do not each require a neural model execution. Token counts cover executed cache misses and include special tokens. Semantic input planning includes boundary selection and token checks, excluding embedding, cache and graph work. Inference time includes worker scheduling and any plan compilation. These phase timings are inside publication time; do not add them to publication time.</p>
+        <h3>Extraction and embedding work</h3>${table(['Operation', 'Measurement', 'Total', 'Measured jobs'], embedding)}<p>Blank and duplicate inputs do not each require a neural model execution. Token counts cover executed cache misses and include special tokens. Semantic input planning includes boundary selection and token checks, excluding embedding, cache and graph work. Inference time includes worker scheduling and any plan compilation. Embedding phase timings are inside publication time; do not add them to publication time. Extraction job durations are summed across workers and overlap scan time and result waits; they are neither CPU time nor total elapsed time. Extraction byte peaks and declared result limits are per-job values summed here, not process memory measurements.</p>
         <h3>Process resources</h3>${table(['Counter', 'Total', 'Measured intervals'], Object.entries(obj(resources.counters)).map(([key, raw]) => [key, obj(raw).value, obj(raw).samples]))}<p>Peak process memory: ${esc(resources.peak_rss_bytes)} bytes. Overlapping intervals excluded: ${esc(resources.overlapped_intervals)}. Process counters may include background work; transfer bytes are not physical disk I/O.</p>
         <h3>Recording health</h3><p>History completeness: not certified. Missing observations across processes: ${esc(report.dropped_observations)}. Drops in this report process: ${esc(v.process_dropped_observations)}. Ledger size: ${esc(health.database_bytes)} bytes. Duplicate requests ignored: ${esc(health.duplicate_observations)}.</p>
         ${table(['Client', 'Recorded calls'], Object.entries(obj(report.clients)))}${table(['Content type', 'Recorded calls'], Object.entries(obj(report.content_kinds)))}

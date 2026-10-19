@@ -332,10 +332,21 @@ pub fn content_kind(language: &str, extraction: &str) -> ContentKind {
     }
 }
 
-/// Content-free indexing counters. Timers are nested inside publication time.
+/// Content-free indexing counters. Extraction and publication timings overlap
+/// their parent phases; summed parallel job durations are not wall or CPU time.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
 pub enum IndexMetric {
+    ExtractionWorkersRequested,
+    ExtractionWorkerLimit,
+    ExtractionWorkersSpawned,
+    ExtractionParallelJobs,
+    ExtractionSerialJobs,
+    ExtractionWorkUs,
+    ExtractionWaitUs,
+    ExtractionSourcePeakBytes,
+    ExtractionCoordinatorSourcePeakBytes,
+    ExtractionResultBoundBytes,
     EmbeddingInputs,
     EmbeddingBlankInputs,
     EmbeddingDuplicateInputs,
@@ -379,7 +390,17 @@ pub enum IndexMetric {
 }
 
 impl IndexMetric {
-    pub const ALL: [Self; 40] = [
+    pub const ALL: [Self; 50] = [
+        Self::ExtractionWorkersRequested,
+        Self::ExtractionWorkerLimit,
+        Self::ExtractionWorkersSpawned,
+        Self::ExtractionParallelJobs,
+        Self::ExtractionSerialJobs,
+        Self::ExtractionWorkUs,
+        Self::ExtractionWaitUs,
+        Self::ExtractionSourcePeakBytes,
+        Self::ExtractionCoordinatorSourcePeakBytes,
+        Self::ExtractionResultBoundBytes,
         Self::EmbeddingInputs,
         Self::EmbeddingBlankInputs,
         Self::EmbeddingDuplicateInputs,
@@ -424,6 +445,18 @@ impl IndexMetric {
 
     pub fn report_field(self) -> &'static str {
         match self {
+            Self::ExtractionWorkersRequested => "extraction_workers_requested",
+            Self::ExtractionWorkerLimit => "extraction_worker_limit",
+            Self::ExtractionWorkersSpawned => "extraction_workers_spawned",
+            Self::ExtractionParallelJobs => "extraction_parallel_jobs",
+            Self::ExtractionSerialJobs => "extraction_serial_jobs",
+            Self::ExtractionWorkUs => "extraction_work_us",
+            Self::ExtractionWaitUs => "extraction_wait_us",
+            Self::ExtractionSourcePeakBytes => "extraction_source_peak_bytes",
+            Self::ExtractionCoordinatorSourcePeakBytes => {
+                "extraction_coordinator_source_peak_bytes"
+            }
+            Self::ExtractionResultBoundBytes => "extraction_result_bound_bytes",
             Self::EmbeddingInputs => "embedding_inputs",
             Self::EmbeddingBlankInputs => "embedding_blank_inputs",
             Self::EmbeddingDuplicateInputs => "embedding_duplicate_inputs",

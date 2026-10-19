@@ -396,6 +396,16 @@ def setup(build_record, root, data_dir=None, skip_index=False, new_data_dir=None
 def indexing_measurements(report, elapsed_seconds):
     """Only aggregate counters/timings, never source paths or skipped-file diagnostics."""
     fields = ('generation', 'indexed', 'reused', 'removed', 'source_bytes', 'scan_extract_us', 'publish_us',
+              'extraction_workers_requested',
+              'extraction_worker_limit',
+              'extraction_workers_spawned',
+              'extraction_parallel_jobs',
+              'extraction_serial_jobs',
+              'extraction_work_us',
+              'extraction_wait_us',
+              'extraction_source_peak_bytes',
+              'extraction_coordinator_source_peak_bytes',
+              'extraction_result_bound_bytes',
               'embedding_cache_hits', 'embedding_cache_misses', 'embedding_inferences', 'embedding_no_vector',
               'embedding_inputs', 'embedding_blank_inputs', 'embedding_duplicate_inputs', 'embedding_actual_forwards',
               'embedding_tokenized_inputs', 'embedding_input_tokens', 'embedding_embedded_tokens',

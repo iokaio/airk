@@ -17,54 +17,190 @@ struct Node {
     children: Vec<usize>,
 }
 
-fn hints(payload: &ExtractionPayload) -> BTreeMap<Option<u32>, Vec<Node>> {
-    let identities: BTreeMap<_, _> = payload
-        .syntax_identities
-        .iter()
-        .map(|i| (i.id, i))
-        .collect();
-    let mut result: BTreeMap<_, Vec<Node>> = BTreeMap::new();
-    let mut seen = BTreeSet::new();
-    let mut headings: BTreeMap<_, Vec<_>> = BTreeMap::new();
-    for fact in &payload.facts {
-        if fact.kind == "definition"
-            && let Some(code) = &fact.code
-            && let Some(identity) = identities.get(&code.syntax_id)
-            && identity.region == fact.region
-            && identity.span.start < identity.span.end
-            && seen.insert(code.syntax_id)
-        {
-            let signature = code
-                .signature_span
-                .as_ref()
-                .filter(|s| {
-                    s.start_byte >= identity.span.start
-                        && s.end_byte <= identity.span.end
-                        && s.start_byte < s.end_byte
-                })
-                .map(|s| LocalSpan {
-                    start: s.start_byte,
-                    end: s.end_byte,
-                });
-            result.entry(fact.region).or_default().push(Node {
-                span: identity.span.clone(),
-                signature,
-                heading: false,
-                children: Vec::new(),
-            });
+#[derive(Clone, Debug)]
+enum SeedKind {
+    Definition { signature: Option<LocalSpan> },
+    Heading { depth: usize },
+}
+
+#[derive(Clone, Debug)]
+struct Seed {
+    region: Option<u32>,
+    span: LocalSpan,
+    kind: SeedKind,
+}
+
+/// Transient written coordinates, independent of optional facts and parser trees.
+/// Only the resulting complete SemanticProjection is persisted.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct SemanticSeeds {
+    seeds: Vec<Seed>,
+}
+
+impl SemanticSeeds {
+    pub(crate) fn len(&self) -> usize {
+        self.seeds.len()
+    }
+
+    pub(crate) fn definition(
+        &mut self,
+        region: Option<u32>,
+        span: LocalSpan,
+        signature: Option<LocalSpan>,
+    ) -> Result<()> {
+        ensure!(span.start < span.end, "empty semantic definition seed");
+        ensure!(
+            signature.as_ref().is_none_or(|signature| {
+                signature.start >= span.start
+                    && signature.end <= span.end
+                    && signature.start < signature.end
+            }),
+            "semantic signature seed escapes definition"
+        );
+        self.push(Seed {
+            region,
+            span,
+            kind: SeedKind::Definition { signature },
+        })
+    }
+
+    pub(crate) fn heading(
+        &mut self,
+        region: Option<u32>,
+        span: LocalSpan,
+        depth: usize,
+    ) -> Result<()> {
+        ensure!(
+            span.start < span.end && depth > 0,
+            "invalid semantic heading seed"
+        );
+        self.push(Seed {
+            region,
+            span,
+            kind: SeedKind::Heading { depth },
+        })
+    }
+
+    fn push(&mut self, seed: Seed) -> Result<()> {
+        ensure!(
+            self.seeds.len() < MAX_SEMANTIC_BOUNDARIES,
+            "semantic seed bound exceeded"
+        );
+        self.seeds.push(seed);
+        Ok(())
+    }
+
+    pub(crate) fn extend(&mut self, mut child: Self) -> Result<()> {
+        ensure!(
+            self.seeds.len().saturating_add(child.seeds.len()) <= MAX_SEMANTIC_BOUNDARIES,
+            "semantic seed bound exceeded"
+        );
+        self.seeds.append(&mut child.seeds);
+        Ok(())
+    }
+
+    pub(crate) fn extend_in_region(&mut self, mut child: Self, region: u32) -> Result<()> {
+        ensure!(
+            child.seeds.iter().all(|seed| seed.region.is_none()),
+            "cannot flatten semantic seeds from nested regions"
+        );
+        for seed in &mut child.seeds {
+            seed.region = Some(region);
         }
-        if fact.kind == "section"
-            && let Some(document) = &fact.document
-            && matches!(
-                document.basis.as_str(),
-                "explicit-heading" | "heuristic-heading"
-            )
-            && fact.span.start < fact.span.end
-        {
-            headings
-                .entry(fact.region)
-                .or_default()
-                .push((fact.span.clone(), document.heading_path.len().max(1)));
+        self.extend(child)
+    }
+
+    /// Reference/fallback adapters collect these before selecting evidence detail.
+    pub(crate) fn from_payload(payload: &ExtractionPayload) -> Result<Self> {
+        let identities: BTreeMap<_, _> = payload
+            .syntax_identities
+            .iter()
+            .map(|i| (i.id, i))
+            .collect();
+        let mut seeds = Self::default();
+        let mut seen = BTreeSet::new();
+        for fact in &payload.facts {
+            if fact.kind == "definition"
+                && let Some(code) = &fact.code
+                && let Some(identity) = identities.get(&code.syntax_id)
+                && identity.region == fact.region
+                && identity.span.start < identity.span.end
+                && seen.insert(code.syntax_id)
+            {
+                let signature = code
+                    .signature_span
+                    .as_ref()
+                    .filter(|s| {
+                        s.start_byte >= identity.span.start
+                            && s.end_byte <= identity.span.end
+                            && s.start_byte < s.end_byte
+                    })
+                    .map(|s| LocalSpan {
+                        start: s.start_byte,
+                        end: s.end_byte,
+                    });
+                seeds.definition(fact.region, identity.span.clone(), signature)?;
+            }
+            if fact.kind == "section"
+                && let Some(document) = &fact.document
+                && matches!(
+                    document.basis.as_str(),
+                    "explicit-heading" | "heuristic-heading"
+                )
+                && fact.span.start < fact.span.end
+            {
+                seeds.heading(
+                    fact.region,
+                    fact.span.clone(),
+                    document.heading_path.len().max(1),
+                )?;
+            }
+        }
+        Ok(seeds)
+    }
+}
+
+fn hints(
+    payload: &ExtractionPayload,
+    seeds: &SemanticSeeds,
+) -> Result<BTreeMap<Option<u32>, Vec<Node>>> {
+    let mut result: BTreeMap<_, Vec<Node>> = BTreeMap::new();
+    let mut headings: BTreeMap<_, Vec<_>> = BTreeMap::new();
+    let regions: BTreeMap<_, _> = payload
+        .regions
+        .iter()
+        .map(|r| (Some(r.id), r.text.as_str()))
+        .chain(std::iter::once((None, payload.text.as_str())))
+        .collect();
+    for seed in &seeds.seeds {
+        let text = regions
+            .get(&seed.region)
+            .ok_or_else(|| anyhow::anyhow!("semantic seed region missing"))?;
+        ensure!(
+            text.get(seed.span.start..seed.span.end).is_some(),
+            "semantic seed span outside text"
+        );
+        match &seed.kind {
+            SeedKind::Definition { signature } => {
+                ensure!(
+                    signature
+                        .as_ref()
+                        .is_none_or(|s| text.get(s.start..s.end).is_some()),
+                    "semantic signature seed is not UTF-8 aligned"
+                );
+                result.entry(seed.region).or_default().push(Node {
+                    span: seed.span.clone(),
+                    signature: signature.clone(),
+                    heading: false,
+                    children: Vec::new(),
+                });
+            }
+            SeedKind::Heading { depth } => {
+                headings
+                    .entry(seed.region)
+                    .or_default()
+                    .push((seed.span.clone(), *depth));
+            }
         }
     }
     for (region, mut rows) in headings {
@@ -110,7 +246,7 @@ fn hints(payload: &ExtractionPayload) -> BTreeMap<Option<u32>, Vec<Node>> {
         });
         nodes.dedup_by(|right, left| right.span == left.span);
     }
-    result
+    Ok(result)
 }
 
 /// Native pages/rows/blocks and mapped regions are hard domains. Ordinary line
@@ -263,7 +399,15 @@ fn project_slab(
 }
 
 pub(crate) fn capture(payload: &mut ExtractionPayload) -> Result<SemanticProjection> {
-    let hints = hints(payload);
+    let seeds = SemanticSeeds::from_payload(payload)?;
+    capture_with_seeds(payload, &seeds)
+}
+
+pub(crate) fn capture_with_seeds(
+    payload: &mut ExtractionPayload,
+    seeds: &SemanticSeeds,
+) -> Result<SemanticProjection> {
+    let hints = hints(payload, seeds)?;
     let slabs = slabs(payload);
     ensure!(
         slabs.len() <= MAX_SEMANTIC_BOUNDARIES,
@@ -325,13 +469,17 @@ mod tests {
             detail: Some(detail),
             rules: vec![],
         };
-        let profile = policy
+        let mut profile = policy
             .select_with_prefix(&registry, path, text.as_bytes())?
             .profile;
+        profile
+            .options
+            .insert("index_detail".into(), detail.as_str().into());
         if crate::composite::is_host(&profile.adapter_id) {
             return crate::composite::extract(path, text.as_bytes(), &profile);
         }
-        let extracted = crate::documents::extract_selected(path, text.as_bytes(), &profile)?;
+        let mut extracted = crate::documents::extract_selected(path, text.as_bytes(), &profile)?;
+        let seeds = extracted.semantic_seeds.take();
         let artifact = Artifact {
             path: path.into(),
             content_hash: format!("{:x}", Sha256::digest(text.as_bytes())),
@@ -343,7 +491,12 @@ mod tests {
             facts: extracted.facts,
             retained: None,
         };
-        crate::continuity::prepare_native(&artifact, text.as_bytes(), &profile)
+        crate::continuity::prepare_native_with_seeds(
+            &artifact,
+            text.as_bytes(),
+            &profile,
+            seeds.as_ref(),
+        )
     }
 
     fn assert_partition(payload: &ExtractionPayload) {
@@ -507,6 +660,72 @@ mod tests {
                 .all(|b| b.region.is_some())
         );
         assert_partition(&notebook);
+        Ok(())
+    }
+
+    #[test]
+    fn explicit_empty_seeds_are_distinct_from_fallback_and_coordinates_are_checked() -> Result<()> {
+        let mut payload = extract(
+            "sample.rs",
+            "fn café() {}\nfn second() {}\n",
+            IndexDetail::Detailed,
+        )?;
+        let fallback = capture(&mut payload)?;
+        assert!(
+            fallback
+                .boundaries
+                .iter()
+                .any(|boundary| boundary.split_context.is_some())
+        );
+        let empty = capture_with_seeds(&mut payload, &SemanticSeeds::default())?;
+        assert_eq!(empty.boundaries.len(), 1);
+        assert!(empty.boundaries[0].split_context.is_none());
+        let mut seeds = SemanticSeeds::default();
+        seeds.definition(None, LocalSpan { start: 7, end: 10 }, None)?;
+        assert!(
+            capture_with_seeds(&mut payload, &seeds).is_err(),
+            "UTF-8 interior boundary"
+        );
+        let mut missing = SemanticSeeds::default();
+        missing.heading(Some(42), LocalSpan { start: 0, end: 2 }, 1)?;
+        assert!(capture_with_seeds(&mut payload, &missing).is_err());
+        assert!(
+            SemanticSeeds::default()
+                .definition(
+                    None,
+                    LocalSpan { start: 1, end: 2 },
+                    Some(LocalSpan { start: 0, end: 2 })
+                )
+                .is_err()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn independent_child_seeds_preserve_equal_local_spans_in_distinct_mapped_regions() -> Result<()>
+    {
+        let text = r#"{"cells":[{"cell_type":"code","metadata":{},"source":["def café():\n","    ordinary()\n"],"outputs":[],"execution_count":null},{"cell_type":"code","metadata":{},"source":["def café():\n","    ordinary()\n"],"outputs":[],"execution_count":null}],"metadata":{"kernelspec":{"language":"python","name":"python3","display_name":"Python"}},"nbformat":4,"nbformat_minor":5}"#;
+        let detailed = extract("sample.ipynb", text, IndexDetail::Detailed)?;
+        let essential = extract("sample.ipynb", text, IndexDetail::Essential)?;
+        assert!(essential.facts.is_empty());
+        assert_eq!(essential.semantic_projection, detailed.semantic_projection);
+        let definitions: Vec<_> = essential
+            .semantic_projection
+            .boundaries
+            .iter()
+            .filter(|boundary| boundary.split_context.is_some())
+            .collect();
+        assert_eq!(definitions.len(), 2);
+        assert_eq!(definitions[0].span, definitions[1].span);
+        assert_ne!(definitions[0].region, definitions[1].region);
+        assert_ne!(definitions[0].group, definitions[1].group);
+        assert_partition(&essential);
+        let mut seeds = SemanticSeeds::default();
+        seeds.heading(Some(1), LocalSpan { start: 0, end: 2 }, 1)?;
+        assert!(
+            SemanticSeeds::default().extend_in_region(seeds, 2).is_err(),
+            "already mapped seeds cannot be flattened"
+        );
         Ok(())
     }
 }
