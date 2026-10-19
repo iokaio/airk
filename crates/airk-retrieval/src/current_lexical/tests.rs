@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
-use airk_core::{Chunk, DocumentLocation};
+use airk_core::{Chunk, DocumentLocation, SearchQuery};
 use std::sync::Arc;
 
 fn artifact(path: &str, marker: u8, lines: &[&str]) -> Artifact {
@@ -27,6 +27,67 @@ fn artifact(path: &str, marker: u8, lines: &[&str]) -> Artifact {
         facts: Vec::new(),
         retained: None,
     }
+}
+
+#[test]
+fn verified_reader_scopes_bounded_candidates_and_rejects_changed_files() -> Result<()> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("lexical");
+    let charge: Charge = Arc::new(|_| Ok(()));
+    let lexical = CurrentLexical::create(&path, charge.clone())?;
+    let a = artifact("docs/a[1].md", 1, &["shared needle"]);
+    let b = artifact("docs/b.md", 2, &["shared needle"]);
+    lexical.apply_changes(&[
+        LexicalChange {
+            path: &a.path,
+            artifact: Some(&a),
+        },
+        LexicalChange {
+            path: &b.path,
+            artifact: Some(&b),
+        },
+    ])?;
+    let manifest = lexical.capture_manifest(None)?;
+    let bytes = manifest.canonical_bytes()?;
+    let digest = manifest.digest()?;
+    drop(lexical);
+    assert!(
+        VerifiedCurrentLexical::open(
+            &path,
+            charge.clone(),
+            &bytes,
+            Sha256Digest::from_bytes([9; 32]),
+        )
+        .is_err()
+    );
+    let reader = VerifiedCurrentLexical::open(&path, charge.clone(), &bytes, digest)?;
+    let mut query = SearchQuery {
+        text: "shared needle".into(),
+        path_prefix: None,
+        limit: 1,
+        max_bytes: 1024,
+    };
+    let one = reader.search(&query)?;
+    assert_eq!(one.values.len(), 1);
+    assert!(one.incomplete);
+    query.limit = 2;
+    let both = reader.search(&query)?;
+    assert_eq!(both.values.len(), 2);
+    assert!(!both.incomplete);
+    query.path_prefix = Some("docs/a[".into());
+    let scoped = reader.search(&query)?;
+    assert_eq!(scoped.values.len(), 1);
+    assert_eq!(scoped.values[0].hit.citation.path, a.path);
+    assert_eq!(scoped.values[0].stable_id, stable_id(&a.path, 0)?);
+    assert!(!scoped.incomplete);
+    drop(reader);
+
+    let meta = path.join("meta.json");
+    let mut changed = std::fs::read(&meta)?;
+    changed[0] ^= 1;
+    std::fs::write(meta, changed)?;
+    assert!(VerifiedCurrentLexical::open(&path, charge, &bytes, digest).is_err());
+    Ok(())
 }
 
 #[test]
