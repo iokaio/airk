@@ -6,6 +6,7 @@ pub mod graph;
 mod journal;
 pub mod map;
 mod read;
+pub mod vector_map;
 
 pub use database::{DATABASE_VERSION, PAGE_BYTES, journal_bound};
 pub use journal::{
