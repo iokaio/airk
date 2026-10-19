@@ -111,6 +111,19 @@ pub struct CurrentCommit {
     pub maintenance_error: Option<String>,
 }
 
+#[derive(Clone, Debug)]
+pub struct CurrentCapacityChange {
+    pub capacity_bytes: u64,
+    /// The owner limit changed durably; its unused admission grant needs cleanup.
+    pub maintenance_error: Option<String>,
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum CapacityStage {
+    BeforeOwner,
+    AfterOwner,
+}
+
 impl TransactionPhase {
     fn parse(value: &str) -> Result<Self> {
         match value {
@@ -491,6 +504,74 @@ impl FileStore {
 }
 
 impl CurrentWriter<'_> {
+    pub fn database_capacity_bytes(&self) -> u64 {
+        self.capacity
+    }
+
+    /// Grow the admitted SQLite limit while Ready, before preparing a transaction.
+    /// The owner header is synchronized under the exclusive gate before reopening
+    /// SQLite with the larger max_page_count. A crashed writer leaves a durable
+    /// allowance that the next Ready writer may explicitly retire.
+    pub fn grow_capacity(&mut self, next: u64) -> Result<CurrentCapacityChange> {
+        self.grow_capacity_observed(next, &mut |_| Ok(()))
+    }
+
+    pub(super) fn grow_capacity_observed(
+        &mut self,
+        next: u64,
+        observe: &mut dyn FnMut(CapacityStage) -> Result<()>,
+    ) -> Result<CurrentCapacityChange> {
+        database::validate_capacity(next)?;
+        ensure!(next > self.capacity, "current database capacity must grow");
+        ensure!(
+            self.phase()? == TransactionPhase::Ready && self.pending()?.is_none(),
+            "current database capacity cannot change during publication"
+        );
+        let previous = self.capacity;
+        let grant_id = framed_digest(
+            b"current-database-capacity-grow/1",
+            &[
+                self.scope.collection.as_bytes(),
+                self.scope.root.as_bytes(),
+                self.scope.incarnation.as_bytes(),
+                &previous.to_be_bytes(),
+                &next.to_be_bytes(),
+            ],
+        );
+        let allowance = database::allowance(
+            self.connection
+                .as_mut()
+                .context("current database missing")?,
+            next,
+        )?;
+        let grant =
+            self.quota
+                .reserve_current(self.writer, self.grant_scope(grant_id), allowance)?;
+        if let Err(error) = crate::capacity::require_growth(self.quota.root(), allowance) {
+            let _ = grant.release(self.writer);
+            return Err(error);
+        }
+        observe(CapacityStage::BeforeOwner)?;
+        database::grow_owner(self.store.directory(), &self.scope, previous, next)?;
+        observe(CapacityStage::AfterOwner)?;
+        self.capacity = next;
+        // The old connection's max_page_count is fixed. Reopen without a live
+        // transaction, while still owning the writer and exclusive read gate.
+        drop(self.connection.take());
+        let connection =
+            database::open_writer(&self.store.directory().join("index.sqlite3"), next, false)?;
+        database::restrict(&connection)?;
+        self.connection = Some(connection);
+        let maintenance_error = grant
+            .release(self.writer)
+            .err()
+            .map(|error| error.to_string());
+        Ok(CurrentCapacityChange {
+            capacity_bytes: next,
+            maintenance_error,
+        })
+    }
+
     fn connection(&self) -> Result<&Connection> {
         ensure!(self.initialized, "current index is not initialized");
         self.connection
