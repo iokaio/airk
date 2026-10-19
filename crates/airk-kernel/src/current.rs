@@ -3,7 +3,8 @@
 //! Runtime routing and capability responses remain separate S8 work.
 use airk_core::{Hit, SearchQuery};
 use airk_retrieval::{
-    current_lexical::{CurrentLexicalCandidates, stable_id},
+    bounded::Charge,
+    current_lexical::{CurrentLexicalCandidates, VerifiedCurrentLexical, stable_id},
     terms, truncate_utf8,
 };
 use airk_store::{
@@ -13,6 +14,26 @@ use airk_store::{
 use anyhow::{Context, Result, ensure};
 
 const MAX_LEXICAL_VALIDATION_BYTES: u64 = 256 * 1024 * 1024;
+
+/// Open only the physical Tantivy directory selected by the exact read head.
+/// The `CurrentRead` keeps the shared collection gate through subsequent
+/// search and materialization; no idle lexical handle is retained.
+pub fn open_selected_lexical(
+    store: &FileStore,
+    read: &CurrentRead,
+    charge: Charge,
+) -> Result<VerifiedCurrentLexical> {
+    ensure!(
+        store.directory().file_name().and_then(|name| name.to_str())
+            == Some(read.head().scope.collection.as_str()),
+        "foreign selected current lexical collection"
+    );
+    let path = store
+        .directory()
+        .join(read.head().lexical_directory_name()?);
+    let bytes = read.lexical_manifest()?;
+    VerifiedCurrentLexical::open(&path, charge, &bytes, read.head().lexical_commit)
+}
 
 pub struct CurrentLexicalEvidence {
     pub token: CurrentToken,
