@@ -2,6 +2,7 @@
 use super::*;
 use airk_kernel::current::{CurrentUpdater, SemanticUpdate};
 use airk_retrieval::model::{EmbeddingCacheContext, EmbeddingCacheStats, EmbeddingModel};
+use airk_store::current::CurrentToken;
 use airk_store::current::postings::Lookup;
 
 fn configuration() -> airk_store::current::collection::CollectionConfiguration {
@@ -182,6 +183,48 @@ fn coordinator_reuses_shared_vectors_tombstones_and_resurrects_exact_ids() -> Re
     ])?;
     assert_eq!(cold.vector_graph_nodes, 2);
     assert_eq!(cold.vector_reused_inputs, 1);
+    use airk_kernel::current::{CurrentSearchMode, search_current};
+    let current_search = |mode, prefix, max_bytes, expected: Option<&CurrentToken>| {
+        search_current(
+            &fixture.store,
+            &fixture.scope,
+            expected,
+            mode,
+            &SearchQuery {
+                text: "alpha".into(),
+                path_prefix: prefix,
+                limit: 10,
+                max_bytes,
+            },
+            Arc::new(|_| Ok(())),
+        )
+    };
+    let vector = current_search(CurrentSearchMode::Vector, None, 4096, None)?;
+    assert_eq!(vector.hits.len(), 3);
+    assert_eq!(vector.hits[0].citation.path, "a.txt");
+    assert_eq!(vector.hits[1].citation.path, "b.txt");
+    let hybrid = current_search(CurrentSearchMode::Hybrid, None, 4096, Some(&vector.token))?;
+    assert_eq!(hybrid.hits.len(), 3);
+    assert_eq!(hybrid.token, vector.token);
+    // Scope selection must rank beta even though alpha is globally nearer.
+    let scoped = current_search(CurrentSearchMode::Vector, Some("c.".into()), 4096, None)?;
+    assert_eq!(scoped.hits.len(), 1);
+    assert_eq!(scoped.hits[0].text, "beta");
+    assert!(!scoped.truncated);
+    assert!(
+        current_search(
+            CurrentSearchMode::Vector,
+            Some("absent/".into()),
+            4096,
+            None
+        )?
+        .hits
+        .is_empty()
+    );
+    let tiny = current_search(CurrentSearchMode::Hybrid, None, 3, None)?;
+    assert_eq!(tiny.hits.len(), 1);
+    assert_eq!(tiny.hits[0].text, "alp");
+    assert!(tiny.truncated && tiny.hits[0].truncated);
     let descriptor = model.cache_descriptor()?;
     let alpha = airk_core::embedding::embedding_key(&descriptor, b"alpha")?;
     let beta = airk_core::embedding::embedding_key(&descriptor, b"beta")?;
@@ -204,6 +247,14 @@ fn coordinator_reuses_shared_vectors_tombstones_and_resurrects_exact_ids() -> Re
         ArtifactChange::Delete("b.txt".into()),
     ])?;
     assert_eq!(changed.vector_graph_nodes, 1);
+    assert!(current_search(CurrentSearchMode::Vector, None, 4096, Some(&vector.token)).is_err());
+    let refreshed = current_search(CurrentSearchMode::Hybrid, None, 4096, None)?;
+    assert!(
+        refreshed
+            .hits
+            .iter()
+            .all(|hit| hit.citation.path != "b.txt" && hit.text != "alpha")
+    );
     let read = fixture.store.current_read(&fixture.scope)?;
     assert!(!read.read(alpha_id)?.live);
     assert!(read.occurrence_hit(&fixture.store, &pointers[0]).is_err());
@@ -222,6 +273,72 @@ fn coordinator_reuses_shared_vectors_tombstones_and_resurrects_exact_ids() -> Re
     );
     drop(read);
     assert_eq!(search(&fixture, "alpha")?.hits[0].citation.path, "d.txt");
+    let restored = current_search(CurrentSearchMode::Vector, None, 4096, None)?;
+    assert_eq!(restored.hits[0].citation.path, "d.txt");
+    // Shared current gates prevent observing an applying writer, and a corrupt
+    // retained source cannot be replaced with the live workspace's contents.
+    let lock = fixture.store.lock()?;
+    let writer = fixture
+        .store
+        .current_write(&lock, &fixture.quota, &fixture.scope, CAPACITY)?;
+    assert!(current_search(CurrentSearchMode::Vector, None, 4096, None).is_err());
+    drop(writer);
+    drop(lock);
+    let source = fixture
+        .store
+        .current_read(&fixture.scope)?
+        .artifact("d.txt")?
+        .unwrap()
+        .content_hash;
+    std::fs::write(
+        fixture
+            .store
+            .directory()
+            .join("objects/sources")
+            .join(source),
+        b"wrong",
+    )?;
+    assert!(current_search(CurrentSearchMode::Vector, None, 4096, None).is_err());
+    Ok(())
+}
+
+#[test]
+fn current_search_handles_lexical_only_state_and_validates_exact_tokens() -> Result<()> {
+    use airk_kernel::current::{CurrentSearchMode, search_current};
+    let fixture = Fixture::new()?;
+    let lock = fixture.store.lock()?;
+    let reservation = fixture
+        .quota
+        .reserve(&fixture.scope.collection, 512 << 20)?;
+    let config = configuration();
+    let mut update = updater(&fixture, &lock, &reservation);
+    update.configuration = Some(&config);
+    let result = update.apply(&[upsert(&fixture, "a.txt", "alpha body")?], None)?;
+    drop(lock);
+    let query = SearchQuery {
+        text: "alpha".into(),
+        path_prefix: None,
+        limit: 1,
+        max_bytes: 100,
+    };
+    let search = |mode, token| {
+        search_current(
+            &fixture.store,
+            &fixture.scope,
+            token,
+            mode,
+            &query,
+            Arc::new(|_| Ok(())),
+        )
+    };
+    let response = search(CurrentSearchMode::Lexical, Some(&result.commit.token))?;
+    assert_eq!(response.hits[0].text, "alpha body");
+    assert!(!response.truncated);
+    assert!(search(CurrentSearchMode::Vector, None).is_err());
+    assert!(search(CurrentSearchMode::Hybrid, None).is_err());
+    let mut foreign = result.commit.token;
+    foreign.sequence += 1;
+    assert!(search(CurrentSearchMode::Lexical, Some(&foreign)).is_err());
     Ok(())
 }
 

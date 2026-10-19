@@ -196,6 +196,47 @@ impl MutableDiskIndex {
         self.search_with_limits(query, limit, SearchLimits::default())
     }
 
+    /// Rank an authenticated, bounded path subset using this same disk graph's
+    /// distances. Filtering global ANN neighbors would miss an otherwise valid
+    /// nearest result in a narrow scope. IDs must be sorted and unique; tombstones
+    /// or a reserved ID indicate a stale/corrupt caller mapping, not an empty hit.
+    pub fn search_subset(&self, query: &[f32], ids: &[u32], limit: usize) -> Result<SearchResult> {
+        let provider = self.inner.provider();
+        provider.checked((|| {
+            ensure!((1..=1000).contains(&limit), "vector limit must be 1..1000");
+            ensure!(
+                ids.len() <= super::MAX_SCOPED_VECTOR_READS
+                    && ids.first().is_none_or(|id| *id != 0)
+                    && ids.windows(2).all(|pair| pair[0] < pair[1]),
+                "invalid current scoped vector IDs or read budget"
+            );
+            validate_vector(query, provider.dimensions)?;
+            let context = OperationContext::new(super::MAX_SCOPED_VECTOR_READS);
+            // Keep only the requested prefix, independent of the scope size.
+            let mut hits: Vec<(u32, f32)> = Vec::with_capacity(limit + 1);
+            for &id in ids {
+                let (record, decoded) = provider.read_record(id, &context)?;
+                ensure!(record.live, "current scoped vector is not live");
+                let distance = L2.evaluate_similarity(query, &decoded.vector);
+                ensure!(distance.is_finite(), "nonfinite current vector distance");
+                let at = hits.partition_point(|&(old_id, old_distance)| {
+                    old_distance
+                        .total_cmp(&distance)
+                        .then(old_id.cmp(&id))
+                        .is_lt()
+                });
+                hits.insert(at, (id, distance));
+                hits.truncate(limit);
+            }
+            Ok(SearchResult {
+                hits,
+                partial: false,
+                record_reads: context.reads.load(Ordering::Relaxed) as u64,
+                passes: u32::from(!ids.is_empty()),
+            })
+        })())
+    }
+
     pub fn search_with_limits(
         &self,
         query: &[f32],

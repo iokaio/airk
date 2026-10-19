@@ -129,6 +129,30 @@ fn key(id: u32) -> Sha256Digest {
 }
 
 #[test]
+fn scoped_distances_rank_only_selected_live_ids_and_reject_invalid_mappings() -> Result<()> {
+    let fixture = Fixture::new(2)?;
+    let mut graph = MutableDiskIndex::create(fixture.clone(), 2, PIPELINE)?;
+    let a = graph.insert(key(1), &[1.0, 0.0])?;
+    let b = graph.insert(key(2), &[0.0, 1.0])?;
+    let c = graph.insert(key(3), &[0.0, -1.0])?;
+    let subset = graph.search_subset(&[1.0, 0.0], &[b, c], 1)?;
+    assert_eq!(subset.hits, [(b, 2.0)]);
+    assert_eq!(subset.record_reads, 2);
+    assert!(!subset.partial);
+    assert!(graph.search_subset(&[1.0, 0.0], &[], 1)?.hits.is_empty());
+    // Use a committed handle: malformed query mappings must not poison the
+    // underlying readable index, and they never silently filter tombstones.
+    graph.set_live(a, key(1), false)?;
+    drop(graph);
+    let read = MutableDiskIndex::open(fixture, 2, PIPELINE)?;
+    for ids in [vec![0], vec![a], vec![c, b], vec![b, b], vec![99]] {
+        assert!(read.search_subset(&[1.0, 0.0], &ids, 1).is_err());
+    }
+    assert_eq!(read.search_subset(&[0.0, 1.0], &[b, c], 2)?.hits[0].0, b);
+    Ok(())
+}
+
+#[test]
 fn actual_diskann_incremental_ids_reopen_and_recall() -> Result<()> {
     let store = Fixture::new(8)?;
     let mut index = MutableDiskIndex::create(store.clone(), 8, PIPELINE)?;
