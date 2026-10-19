@@ -97,7 +97,7 @@ pub struct CurrentLexical {
 /// against retained current artifacts and the response has been materialized.
 pub struct VerifiedCurrentLexical {
     index: CurrentLexical,
-    _ticket: VerifiedLexicalManifest,
+    ticket: VerifiedLexicalManifest,
 }
 
 /// An engine candidate, not publishable evidence. The owning kernel verifies
@@ -112,6 +112,8 @@ pub struct CurrentLexicalCandidate {
 
 #[derive(Clone, Debug)]
 pub struct CurrentLexicalCandidates {
+    /// Exact lexical component verified when this candidate set was selected.
+    pub manifest_digest: Sha256Digest,
     pub values: Vec<CurrentLexicalCandidate>,
     /// A match was omitted by the candidate count. The owner additionally
     /// reports any text-budget truncation during response materialization.
@@ -128,10 +130,7 @@ impl VerifiedCurrentLexical {
         let manifest = LexicalManifest::decode(manifest_bytes, expected)?;
         let ticket = manifest.verify_owned(directory, expected)?;
         let index = CurrentLexical::open(directory, charge)?;
-        Ok(Self {
-            index,
-            _ticket: ticket,
-        })
+        Ok(Self { index, ticket })
     }
 
     pub fn search(&self, query: &SearchQuery) -> Result<CurrentLexicalCandidates> {
@@ -243,7 +242,11 @@ impl VerifiedCurrentLexical {
             },
             "duplicate current lexical candidate identity"
         );
-        Ok(CurrentLexicalCandidates { values, incomplete })
+        Ok(CurrentLexicalCandidates {
+            manifest_digest: self.ticket.digest(),
+            values,
+            incomplete,
+        })
     }
 }
 
