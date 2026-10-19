@@ -20,6 +20,8 @@ const MAX_LEXICAL_VALIDATION_BYTES: u64 = 256 * 1024 * 1024;
 
 mod update;
 pub use update::{CurrentUpdateResult, CurrentUpdateStage, CurrentUpdater, SemanticUpdate};
+mod search;
+pub use search::{CurrentSearchEvidence, CurrentSearchMode, search_current};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CurrentRecoveryAction {
