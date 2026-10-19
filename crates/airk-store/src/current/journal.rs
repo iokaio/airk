@@ -763,6 +763,11 @@ impl CurrentWriter<'_> {
                 maintenance_error: None,
             });
         }
+        let planned_root = {
+            let mut plan = map::MapPlan::new(self.connection()?, &self.scope, base.artifact_root)?;
+            plan.put(identity, value.as_deref())?;
+            plan.root()?
+        };
         let id = framed_digest(
             b"current-catalog-only-update/1",
             &[
@@ -805,6 +810,10 @@ impl CurrentWriter<'_> {
             identity,
             value.as_deref(),
         )?;
+        ensure!(
+            next_root == planned_root,
+            "current catalog plan and SQL root differ"
+        );
         let mut target = base;
         target.sequence = target
             .sequence
