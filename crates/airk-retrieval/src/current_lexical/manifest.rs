@@ -35,6 +35,25 @@ pub struct LexicalManifest {
     pub total_bytes: u64,
 }
 
+/// A per-process verification ticket for immutable active segment files.
+/// The kernel must still bind its digest to the current head and hold the
+/// collection gate while using it; this ticket does not retain an index reader.
+#[derive(Clone)]
+pub struct VerifiedLexicalManifest {
+    pub(crate) directory: std::path::PathBuf,
+    pub(crate) manifest: LexicalManifest,
+    pub(crate) digest: Sha256Digest,
+}
+
+impl VerifiedLexicalManifest {
+    pub fn digest(&self) -> Sha256Digest {
+        self.digest
+    }
+    pub fn manifest(&self) -> &LexicalManifest {
+        &self.manifest
+    }
+}
+
 fn name_valid(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 128
@@ -201,6 +220,69 @@ impl LexicalManifest {
             "current lexical active file set differs from manifest"
         );
         Ok(())
+    }
+
+    pub fn verify_owned(
+        &self,
+        directory: &Path,
+        trusted_digest: Sha256Digest,
+    ) -> Result<VerifiedLexicalManifest> {
+        self.verify(directory, trusted_digest)?;
+        Ok(VerifiedLexicalManifest {
+            directory: directory.to_owned(),
+            manifest: self.clone(),
+            digest: trusted_digest,
+        })
+    }
+
+    /// After a private fork, only unchanged immutable segment names inherited
+    /// from its verified base may reuse their prior hashes. Mutable metadata
+    /// and new segment files are read in full. A process restart needs `verify`.
+    pub(crate) fn verify_fork(
+        &self,
+        directory: &Path,
+        trusted_digest: Sha256Digest,
+        base: &VerifiedLexicalManifest,
+    ) -> Result<VerifiedLexicalManifest> {
+        ensure!(
+            self.digest()? == trusted_digest,
+            "untrusted fork lexical manifest"
+        );
+        for file in &self.files {
+            let inherited = file.name != "meta.json"
+                && base.manifest.files.iter().any(|prior| {
+                    prior.name == file.name
+                        && prior.bytes == file.bytes
+                        && prior.sha256 == file.sha256
+                });
+            if inherited {
+                ensure!(
+                    regular_len(directory, &file.name)? == file.bytes,
+                    "inherited Tantivy segment length changed"
+                );
+            } else {
+                ensure!(
+                    hash_file(directory, &file.name, file.bytes)? == file.sha256,
+                    "forked Tantivy file digest mismatch"
+                );
+            }
+        }
+        let index = Index::open_in_dir(directory)?;
+        ensure!(
+            index.schema() == schema().0
+                && active_names(&index)?
+                    == self
+                        .files
+                        .iter()
+                        .map(|file| file.name.clone())
+                        .collect::<Vec<_>>(),
+            "forked lexical schema or active files differ from manifest"
+        );
+        Ok(VerifiedLexicalManifest {
+            directory: directory.to_owned(),
+            manifest: self.clone(),
+            digest: trusted_digest,
+        })
     }
 }
 
