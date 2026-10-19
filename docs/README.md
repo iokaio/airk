@@ -13,6 +13,7 @@ Start with the [1.1.4 release notes](release-1.1.4.md) and the [combined October
 - [Ingestion limits, machine sizing and index detail](ingestion-limits.md)
 - [Per-collection extraction policy](extraction-policy.md)
 - [Measured scale and performance qualification](scale-qualification.md)
+- [Indexing cost analysis, experiments and enhancement plan](indexingenhancements.md)
 - [Document requirements, dates and design indexing](document-indexing.md)
 - [Code-indexing recommendations and optional semantic-provider review](code-indexing-options.md)
 - [Implemented SQLite code facts, relationships and SCIP imports](code-facts-and-relationships.md)
