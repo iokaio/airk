@@ -48,17 +48,17 @@ def main():
             return duration, json.loads(result.stdout)
 
         run(["index"], True)
-        run(["search", "telemetry"], True)
-        run(["search", "telemetry"])
+        run(["search", "telemetry", "--mode", "lexical"], True)
+        run(["search", "telemetry", "--mode", "lexical"])
         run(["usage", "clear"])
         durations = {"enabled": [], "disabled": []}
         for trial in range(args.trials):
             for mode in (["enabled", "disabled"] if trial % 2 == 0 else ["disabled", "enabled"]):
-                elapsed, _ = run(["search", "telemetry"], mode == "disabled")
+                elapsed, _ = run(["search", "telemetry", "--mode", "lexical"], mode == "disabled")
                 durations[mode].append(elapsed)
         before = run(["usage", "report"])[1]
         with ThreadPoolExecutor(max_workers=args.workers) as pool:
-            concurrent = list(pool.map(lambda _: run(["search", "telemetry"])[0], range(args.trials)))
+            concurrent = list(pool.map(lambda _: run(["search", "telemetry", "--mode", "lexical"])[0], range(args.trials)))
         after = run(["usage", "report"])[1]
 
         def stats(values):

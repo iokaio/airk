@@ -253,14 +253,27 @@ impl crate::Kernel {
             let returned_items = result
                 .and_then(|v| {
                     v.get("hits")
+                        .or_else(|| {
+                            v.get("outline").filter(|value| {
+                                value.as_array().is_some_and(|items| !items.is_empty())
+                            })
+                        })
                         .or_else(|| v.get("facts"))
                         .or_else(|| v.get("relationships"))
                         .or_else(|| v.get("paths"))
                 })
                 .and_then(Value::as_array)
-                .map_or(u32::from(logical.is_some()), |v| {
-                    v.len().min(u32::MAX as usize) as u32
-                });
+                .map_or_else(
+                    || {
+                        u32::from(
+                            logical.is_some()
+                                && logical
+                                    .and_then(|v| v.pointer("/read/status"))
+                                    .is_none_or(|status| status == "content"),
+                        )
+                    },
+                    |v| v.len().min(u32::MAX as usize) as u32,
+                );
             let outcome = if failed {
                 UsageOutcome::Failed
             } else if returned_items == 0 {
@@ -302,6 +315,7 @@ impl crate::Kernel {
                     Some(bytes as u64)
                 },
                 baseline: None,
+                baseline_unavailable: None,
                 index_work: None,
                 resources,
             };
@@ -337,11 +351,14 @@ impl crate::Kernel {
                 && !failed
                 && returned_items > 0
                 && let Some(value) = logical
-                && let Ok(Some((baseline, kind))) =
-                    self.usage_baseline(value, generation, representation)
             {
-                event.baseline = Some(baseline);
-                event.content_kind = kind;
+                match self.usage_baseline(value, generation, representation) {
+                    Ok((baseline, kind)) => {
+                        event.baseline = Some(baseline);
+                        event.content_kind = kind;
+                    }
+                    Err(reason) => event.baseline_unavailable = Some(reason),
+                }
             }
             store.record(&event)
         })();
@@ -360,7 +377,8 @@ impl crate::Kernel {
         value: &Value,
         generation: Option<u64>,
         representation: ResponseRepresentation,
-    ) -> Result<Option<(ContextBaseline, ContentKind)>> {
+    ) -> std::result::Result<(ContextBaseline, ContentKind), BaselineUnavailable> {
+        use BaselineUnavailable as Missing;
         let mut sources = BTreeSet::new();
         fn citations<'a>(value: &'a Value, sources: &mut BTreeSet<(&'a str, &'a str)>) {
             match value {
@@ -384,88 +402,126 @@ impl crate::Kernel {
             }
         }
         citations(value, &mut sources);
-        if sources.is_empty() || sources.len() > 100 {
-            return Ok(None);
+        if sources.is_empty() {
+            return Err(Missing::MissingCitation);
         }
-        let Some(catalog) = self.store.catalog_bounded(8_388_608)? else {
-            return Ok(None);
-        };
-        let snapshot = &catalog.snapshot;
-        if Some(snapshot.generation) != generation
-            || snapshot.root != self.root_id()
-            || snapshot.collection != self.collection
-        {
-            return Ok(None);
+        if sources.len() > 100 {
+            return Err(Missing::TooManySources);
         }
-        let mut hits = Vec::new();
-        let mut normalized_bytes = 0usize;
-        let mut kinds = BTreeSet::new();
-        let mut payload_remaining = 8_388_608usize;
-        for (path, hash) in &sources {
-            let Some(artifact) = snapshot
-                .artifacts
-                .get(*path)
-                .filter(|a| a.content_hash == *hash)
-            else {
-                return Ok(None);
+        let generation = generation.ok_or(Missing::MissingRevision)?;
+        let token_value = value
+            .pointer("/publication/token")
+            .or_else(|| value.pointer("/read/publication/token"))
+            .or_else(|| value.pointer("/evidence/publication/token"));
+        let token: Option<airk_core::identity::RevisionToken> = token_value
+            .map(|token| serde_json::from_value(token.clone()))
+            .transpose()
+            .map_err(|_| Missing::RevisionMismatch)?;
+        if token.is_some_and(|token| token.generation != generation) {
+            return Err(Missing::RevisionMismatch);
+        }
+        let mut measurements = None;
+        if let Some(token) = token {
+            match self
+                .store
+                .usage_source_sizes(&self.root_id(), &self.collection, &token, &sources)
+                .map_err(|_| Missing::MeasurementError)?
+            {
+                airk_store::UsageSourceSizes::Available(sizes) => measurements = Some(sizes),
+                airk_store::UsageSourceSizes::Unavailable(reason) => return Err(reason),
+                airk_store::UsageSourceSizes::Legacy => {}
+            }
+        }
+        let sizes = if let Some(sizes) = measurements {
+            sizes
+        } else {
+            // Older publications have no precomputed counters. Reuse an already
+            // leased matching query catalog; otherwise keep the old bounded path.
+            let cached = self
+                .catalog_cache
+                .lock()
+                .map_err(|_| Missing::MeasurementError)?
+                .clone();
+            let cached = cached.filter(|catalog| {
+                token
+                    .is_some_and(|token| catalog.receipt.as_ref().is_some_and(|r| r.token == token))
+            });
+            let catalog = if let Some(cached) = cached {
+                cached
+            } else {
+                let opened = match token {
+                    Some(token) => self.store.catalog_at(&token, 8_388_608),
+                    None => self.store.catalog_bounded(8_388_608),
+                }
+                .map_err(|error| {
+                    if error
+                        .to_string()
+                        .contains("catalog exceeds request byte limit")
+                    {
+                        Missing::InventoryLimit
+                    } else {
+                        Missing::MeasurementError
+                    }
+                })?;
+                std::sync::Arc::new(opened.ok_or(Missing::RevisionUnavailable)?)
             };
-            if artifact.extracted_bytes() > 1_048_576usize.saturating_sub(normalized_bytes)
-                || artifact
+            if catalog.snapshot.generation != generation
+                || catalog.snapshot.root != self.root_id()
+                || catalog.snapshot.collection != self.collection
+            {
+                return Err(Missing::RevisionMismatch);
+            }
+            let mut sizes = Vec::new();
+            let mut normalized_bytes = 0usize;
+            let mut payload_remaining = 8_388_608usize;
+            for (path, hash) in &sources {
+                let entry = catalog
+                    .snapshot
+                    .artifacts
+                    .get(*path)
+                    .ok_or(Missing::SourceUnavailable)?;
+                if entry.content_hash != *hash {
+                    return Err(Missing::SourceMismatch);
+                }
+                if entry.extracted_bytes() > 1_048_576usize.saturating_sub(normalized_bytes) {
+                    return Err(Missing::SourceTextLimit);
+                }
+                if entry
                     .retained
                     .as_ref()
-                    .is_some_and(|reference| reference.object_bytes > payload_remaining)
-            {
-                return Ok(None);
-            }
-            let artifact = catalog.load_artifact_bounded(path, payload_remaining as u64)?;
-            let payload_bytes = serde_json::to_vec(&artifact)?.len();
-            if payload_bytes > payload_remaining {
-                return Ok(None);
-            }
-            payload_remaining -= payload_bytes;
-            kinds.insert(content_kind(
-                &artifact.language,
-                &artifact.extraction_method,
-            ));
-            for chunk in &artifact.chunks {
-                normalized_bytes = normalized_bytes.saturating_add(chunk.text.len());
-                if normalized_bytes > 1_048_576 {
-                    return Ok(None);
+                    .is_some_and(|r| r.object_bytes > payload_remaining)
+                {
+                    return Err(Missing::SourcePayloadLimit);
                 }
-                hits.push(airk_core::Hit {
-                    citation: airk_core::Citation {
-                        path: (*path).into(),
-                        content_hash: (*hash).into(),
-                        start_line: chunk.start_line,
-                        end_line: chunk.end_line,
-                        location: chunk.location.clone(),
-                    },
-                    text: chunk.text.clone(),
-                    truncated: false,
-                });
+                let artifact = catalog
+                    .load_artifact_bounded(path, payload_remaining as u64)
+                    .map_err(|_| Missing::MeasurementError)?;
+                let payload = serde_json::to_vec(&artifact)
+                    .map_err(|_| Missing::MeasurementError)?
+                    .len();
+                if payload > payload_remaining {
+                    return Err(Missing::SourcePayloadLimit);
+                }
+                payload_remaining -= payload;
+                normalized_bytes += artifact.extracted_bytes();
+                if normalized_bytes > 1_048_576 {
+                    return Err(Missing::SourceTextLimit);
+                }
+                sizes.push(
+                    SourceContextSize::measure(&artifact).map_err(|_| Missing::MeasurementError)?,
+                );
             }
-        }
-        let baseline = airk_core::SearchResponse {
-            publication: None,
-            generation: snapshot.generation,
-            collection: snapshot.collection.clone(),
-            hits,
-            truncated: false,
+            sizes
         };
-        let text = serde_json::to_string(&baseline)?;
-        let bytes = match representation {
-            ResponseRepresentation::LogicalResultJson => text.len(),
-            ResponseRepresentation::McpToolResultJson => serde_json::to_vec(
-                &serde_json::json!({"content":[{"type":"text","text":text}],"isError":false}),
-            )?
-            .len(),
-        };
-        Ok(Some((
+        let kinds: BTreeSet<_> = sizes.iter().map(|s| s.content_kind).collect();
+        let bytes = full_source_context_bytes(&sizes, &self.collection, generation, representation)
+            .map_err(|_| Missing::MeasurementError)?;
+        Ok((
             ContextBaseline {
                 kind: BaselineKind::FullReturnedSources,
-                generation: snapshot.generation,
+                generation,
                 representation,
-                utf8_bytes: bytes as u64,
+                utf8_bytes: bytes,
                 unique_sources: sources.len() as u32,
             },
             if kinds.len() == 1 {
@@ -473,7 +529,7 @@ impl crate::Kernel {
             } else {
                 ContentKind::Mixed
             },
-        )))
+        ))
     }
 }
 
@@ -488,27 +544,6 @@ fn new_event_id() -> [u8; 16] {
     hash.update(std::process::id().to_le_bytes());
     hash.update(sequence.to_le_bytes());
     hash.finalize()[..16].try_into().expect("fixed digest size")
-}
-
-fn content_kind(language: &str, extraction: &str) -> ContentKind {
-    if extraction.contains("pdf") {
-        ContentKind::Pdf
-    } else if extraction.contains("docx") {
-        ContentKind::Docx
-    } else if extraction.contains("xlsx") {
-        ContentKind::Xlsx
-    } else if extraction.contains("pptx") {
-        ContentKind::Pptx
-    } else {
-        match language {
-            "markdown" => ContentKind::Markdown,
-            "svg" => ContentKind::Svg,
-            "json" | "yaml" | "toml" | "html" | "css" | "xml" | "csv" | "tsv" | "ini"
-            | "dockerfile" => ContentKind::StructuredText,
-            "text" | "plain" | "unknown" => ContentKind::PlainText,
-            _ => ContentKind::Code,
-        }
-    }
 }
 
 pub fn render_report(view: &UsageView, format: &str) -> Result<String> {
@@ -539,7 +574,7 @@ pub fn render_report(view: &UsageView, format: &str) -> Result<String> {
             for (label, value) in [
                 (
                     "report_metadata",
-                    serde_json::json!({"scope":view.report.scope,"start_unix_ms":view.report.start_unix_ms,"end_unix_ms_exclusive":view.report.end_unix_ms_exclusive,"status":view.status,"policy":view.policy,"estimator":view.report.estimator_version,"heuristic":view.report.heuristic,"eligible_evidence_calls":view.report.eligible_evidence_calls,"missing_baseline_calls":view.report.missing_baseline_calls,"mismatched_baseline_calls":view.report.mismatched_baseline_calls,"notice":view.notice}),
+                    serde_json::json!({"scope":view.report.scope,"start_unix_ms":view.report.start_unix_ms,"end_unix_ms_exclusive":view.report.end_unix_ms_exclusive,"status":view.status,"policy":view.policy,"estimator":view.report.estimator_version,"heuristic":view.report.heuristic,"eligible_evidence_calls":view.report.eligible_evidence_calls,"missing_baseline_calls":view.report.missing_baseline_calls,"mismatched_baseline_calls":view.report.mismatched_baseline_calls,"baseline_unavailable":view.report.baseline_unavailable,"notice":view.notice}),
                 ),
                 (
                     "comparisons",
@@ -577,6 +612,19 @@ pub fn render_report(view: &UsageView, format: &str) -> Result<String> {
                     summary.calls,
                     summary.failed,
                     summary.returned_utf8_bytes
+                ));
+            }
+            let compared = view
+                .report
+                .comparisons
+                .get(&BaselineKind::FullReturnedSources)
+                .map_or(0, |c| c.compared_calls);
+            text.push_str(&format!("\nComparison coverage: {} of {} eligible evidence requests; {} unavailable. {} calls excluded from estimation.\n", compared, view.report.eligible_evidence_calls, view.report.missing_baseline_calls + view.report.mismatched_baseline_calls, view.report.excluded_from_estimation_calls));
+            for (reason, count) in &view.report.baseline_unavailable {
+                text.push_str(&format!(
+                    "\nUnavailable baseline: {} — {} requests.\n",
+                    serde_json::to_string(reason)?,
+                    count
                 ));
             }
             for (kind, comparison) in &view.report.comparisons {
@@ -943,6 +991,7 @@ impl LocalByteBpe {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use airk_core::ArtifactSource;
 
     fn strict_span(
         kernel: &crate::Kernel,
@@ -959,6 +1008,219 @@ mod tests {
         )?;
         assert!(span.enabled && span.store.is_some());
         Ok(span)
+    }
+
+    #[test]
+    fn source_measurements_match_full_json_with_escaping_documents_and_duplicate_citations()
+    -> Result<()> {
+        let root = tempfile::tempdir()?;
+        std::fs::write(
+            root.path().join("memo.md"),
+            "# Original fixture\nQuotes: \"sample\" \\ slash\nUnicode: 雪\n".repeat(300),
+        )?;
+        let kernel = crate::Kernel::open(root.path(), None)?;
+        kernel.index()?;
+        let catalog = kernel.catalog()?;
+        let artifact = catalog.load_artifact("memo.md")?;
+        let mut hits: Vec<_> = artifact
+            .chunks
+            .iter()
+            .map(|chunk| airk_core::Hit {
+                citation: airk_core::Citation {
+                    path: artifact.path.clone(),
+                    content_hash: artifact.content_hash.clone(),
+                    start_line: chunk.start_line,
+                    end_line: chunk.end_line,
+                    location: chunk.location.clone(),
+                },
+                text: chunk.text.clone(),
+                truncated: false,
+            })
+            .collect();
+        let baseline = airk_core::SearchResponse {
+            publication: None,
+            generation: catalog.snapshot.generation,
+            collection: catalog.snapshot.collection.clone(),
+            hits: hits.clone(),
+            truncated: false,
+        };
+        let text = serde_json::to_string(&baseline)?;
+        let mut response = kernel.read_file("memo.md", 1, 2, 500)?;
+        response.hits.push(response.hits[0].clone());
+        let value = serde_json::to_value(response)?;
+        for representation in [
+            ResponseRepresentation::LogicalResultJson,
+            ResponseRepresentation::McpToolResultJson,
+        ] {
+            let (measured, kind) = kernel
+                .usage_baseline(&value, Some(catalog.snapshot.generation), representation)
+                .map_err(|reason| anyhow::anyhow!("{reason:?}"))?;
+            let expected = match representation {
+                ResponseRepresentation::LogicalResultJson => text.len(),
+                ResponseRepresentation::McpToolResultJson => serde_json::to_vec(
+                    &serde_json::json!({"content":[{"type":"text","text":text}],"isError":false}),
+                )?
+                .len(),
+            };
+            assert_eq!(measured.utf8_bytes, expected as u64);
+            assert_eq!(measured.unique_sources, 1);
+            assert_eq!(kind, ContentKind::Markdown);
+            // Extracted document locations and nested escaping use the same
+            // measured framing without treating compressed source bytes as text.
+            let mut document = artifact.clone();
+            document.extraction_method = "docx".into();
+            document.chunks[0].location = airk_core::DocumentLocation::Block { number: 1 };
+            hits[0].citation.location = document.chunks[0].location.clone();
+            let doc_baseline = airk_core::SearchResponse {
+                hits: hits.clone(),
+                ..baseline.clone()
+            };
+            let doc_text = serde_json::to_string(&doc_baseline)?;
+            let expected = match representation {
+                ResponseRepresentation::LogicalResultJson => doc_text.len(),
+                ResponseRepresentation::McpToolResultJson => serde_json::to_vec(&serde_json::json!({"content":[{"type":"text","text":doc_text}],"isError":false}))?.len(),
+            };
+            assert_eq!(
+                full_source_context_bytes(
+                    &[SourceContextSize::measure(&document)?],
+                    &catalog.snapshot.collection,
+                    catalog.snapshot.generation,
+                    representation
+                )?,
+                expected as u64
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn comparison_uses_response_revision_after_reindex_and_reports_missing_reasons() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        std::fs::write(
+            root.path().join("memo.txt"),
+            "original content\n".repeat(80),
+        )?;
+        let kernel = crate::Kernel::open(root.path(), None)?;
+        kernel.index()?;
+        let pin = kernel.catalog()?; // Keep the response generation leased across publication.
+        let old = kernel.read_file("memo.txt", 1, 1, 100)?;
+        let old_value = serde_json::to_value(&old)?;
+        let expected = kernel
+            .usage_baseline(
+                &old_value,
+                Some(old.generation),
+                ResponseRepresentation::LogicalResultJson,
+            )
+            .map_err(|r| anyhow::anyhow!("{r:?}"))?
+            .0
+            .utf8_bytes;
+        std::fs::write(
+            root.path().join("memo.txt"),
+            "changed content\n".repeat(150),
+        )?;
+        kernel.index()?;
+        let span = strict_span(&kernel, UsageOperation::ReadFile, ClientFamily::Codex)?;
+        kernel.finish_usage(
+            span,
+            Some(&old_value),
+            400,
+            false,
+            ResponseRepresentation::LogicalResultJson,
+        );
+        let report = kernel.usage_report(30)?.report;
+        let summary = &report.comparisons[&BaselineKind::FullReturnedSources];
+        assert_eq!(summary.compared_calls, 1);
+        assert_eq!(summary.baseline_utf8_bytes, u128::from(expected));
+        assert_eq!(report.missing_baseline_calls, 0);
+        let mut bad = old_value.clone();
+        bad["hits"][0]["citation"]["content_hash"] = "0".repeat(64).into();
+        assert!(matches!(
+            kernel.usage_baseline(
+                &bad,
+                Some(old.generation),
+                ResponseRepresentation::LogicalResultJson
+            ),
+            Err(BaselineUnavailable::SourceMismatch)
+        ));
+        let span = strict_span(&kernel, UsageOperation::ReadFile, ClientFamily::Codex)?;
+        kernel.finish_usage(
+            span,
+            Some(&bad),
+            400,
+            false,
+            ResponseRepresentation::LogicalResultJson,
+        );
+        let report = kernel.usage_report(30)?.report;
+        assert_eq!(
+            report.baseline_unavailable[&BaselineUnavailable::SourceMismatch],
+            1
+        );
+        assert_eq!(
+            report.comparisons[&BaselineKind::FullReturnedSources].compared_calls,
+            1
+        );
+        drop(pin);
+        Ok(())
+    }
+
+    #[test]
+    fn compact_measurements_compare_large_sources_without_loading_payloads() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        std::fs::write(
+            root.path().join("large.txt"),
+            "Original large context fixture line.\n".repeat(40_000),
+        )?;
+        let kernel = crate::Kernel::open(root.path(), None)?;
+        kernel.index()?;
+        let response = kernel.read_file("large.txt", 1, 1, 100)?;
+        let value = serde_json::to_value(&response)?;
+        let (baseline, _) = kernel
+            .usage_baseline(
+                &value,
+                Some(response.generation),
+                ResponseRepresentation::LogicalResultJson,
+            )
+            .map_err(|r| anyhow::anyhow!("{r:?}"))?;
+        assert!(
+            baseline.utf8_bytes > 1_048_576,
+            "The former full-text cap must not reject compact counters"
+        );
+        assert_eq!(baseline.unique_sources, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn compact_measurements_compare_small_reads_from_large_catalog() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        for file in 0..32 {
+            let source: String = (0..256).map(|item| format!("/// Original measurement fixture.\npub fn fixture_{file}_{item}(value: usize) -> usize {{ value + {item} }}\n")).collect();
+            std::fs::write(root.path().join(format!("fixture_{file}.rs")), source)?;
+        }
+        let kernel = crate::Kernel::open(root.path(), None)?;
+        kernel.index()?;
+        let token = kernel.store.persistent_revision()?.unwrap().token.unwrap();
+        let inventory = kernel
+            .store
+            .directory()
+            .join("generations")
+            .join(token.revision.to_string())
+            .join("inventory.json");
+        assert!(
+            std::fs::metadata(inventory)?.len() > 8_388_608,
+            "Fixture must exceed the former inventory comparison limit"
+        );
+        let response = kernel.read_file("fixture_0.rs", 1, 2, 250)?;
+        let value = serde_json::to_value(&response)?;
+        let (baseline, _) = kernel
+            .usage_baseline(
+                &value,
+                Some(response.generation),
+                ResponseRepresentation::LogicalResultJson,
+            )
+            .map_err(|r| anyhow::anyhow!("{r:?}"))?;
+        assert_eq!(baseline.unique_sources, 1);
+        assert!(baseline.utf8_bytes > serde_json::to_vec(&value)?.len() as u64);
+        Ok(())
     }
 
     #[test]

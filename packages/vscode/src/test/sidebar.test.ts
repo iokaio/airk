@@ -12,6 +12,41 @@ const state: SidebarState = { trusted: true, paused: false, changingStorage: fal
     collections: [{ collection: 'a', name: 'Project A', root: '/project/a', dataDir: '/data', state: 'indexing',
         coverage: { report, scanning: false, pending: false }, diskBytes: 1048576 }] };
 
+test('vector switch reflects persisted opt-out, readiness and trust and validates collection-bound actions', () => {
+    const sample = structuredClone(state);
+    sample.collections[0].state = 'current';
+    sample.collections[0].vectors = { enabled: true, published: false, indexed_vectors: 0, pending_reindex: true, default_search_mode: 'hybrid' };
+    assert.match(sidebarContent(sample), /data-vectors="true" checked>/);
+    assert.match(sidebarContent(sample), /waiting for model setup/);
+    sample.collections[0].vectors.enabled = false;
+    assert.doesNotMatch(sidebarContent(sample), /data-vectors="true" checked/);
+    assert.match(sidebarContent(sample), /Off: keyword search/);
+    assert.match(sidebarContent({ ...sample, trusted: false }), /data-vectors="true" disabled/);
+    const action = { type: 'vectors', collection: 'a', dataDir: '/data', enabled: false };
+    assert.deepEqual(sidebarAction(action, new Set()), action);
+    assert.equal(sidebarAction({ ...action, enabled: 'false' }, new Set()), undefined);
+    assert.equal(sidebarAction({ ...action, dataDir: undefined }, new Set()), undefined);
+});
+
+test('tools button opens a collection-bound console and is disabled without trust or during storage changes', () => {
+    assert.match(sidebarContent(state), /data-collection="a" data-storage="\/data" data-action="tools">Open AIRK Tools/);
+    assert.match(sidebarContent({ ...state, trusted: false }), /data-action="tools" disabled/);
+    assert.match(sidebarContent({ ...state, changingStorage: true }), /data-action="tools" disabled/);
+    const action = { type: 'collection', action: 'tools', collection: 'a', dataDir: '/data' };
+    assert.deepEqual(sidebarAction(action, new Set()), action);
+    assert.equal(sidebarAction({ ...action, dataDir: undefined }, new Set()), undefined);
+});
+
+test('CLI getting-started note reports setup failures and keeps repair behind workspace trust', () => {
+    assert.match(sidebarContent({ ...state, cliStatus: 'ready' }), /<code>airk --help<\/code>/);
+    assert.match(sidebarContent({ ...state, cliStatus: 'ready' }), /Restart external terminal apps/);
+    assert.match(sidebarContent({ ...state, cliStatus: 'failed' }), /CLI setup needs attention/);
+    assert.match(sidebarContent({ ...state, cliStatus: 'disabled' }), /Automatic CLI installation is off/);
+    assert.match(sidebarContent({ ...state, trusted: false }), /data-command="airk.installCli"[^>]*disabled/);
+    const allowed = new Set(sidebarControlGroups().flatMap(group => group.commands.map(([, command]) => command)));
+    assert.deepEqual(sidebarAction({ type: 'command', command: 'airk.installCli' }, allowed), { type: 'command', command: 'airk.installCli' });
+});
+
 test('sidebar shows measured coverage, direct collection controls and no invented indexing percentage', () => {
     const html = sidebarContent(state);
     assert.match(html, /Indexing saved files/); assert.match(html, /99%/);

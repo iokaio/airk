@@ -191,11 +191,42 @@ impl Kernel {
         max_bytes: usize,
         options: &EvidenceReadOptions,
     ) -> Result<ConditionalRead<FactsResponse>> {
+        self.outline_conditional_page(path, limit, max_bytes, options, &Default::default())
+    }
+
+    pub fn outline_conditional_page(
+        &self,
+        path: &str,
+        limit: usize,
+        max_bytes: usize,
+        options: &EvidenceReadOptions,
+        page: &airk_core::discovery::DiscoveryOptions,
+    ) -> Result<ConditionalRead<FactsResponse>> {
         validate_budget(limit, max_bytes)?;
         if options.revision.is_some() {
-            return self.historical_outline(path, limit, max_bytes, options);
+            return self.historical_outline(path, limit, max_bytes, options, page);
         }
         let catalog = self.catalog()?;
+        let publication = Self::catalog_envelope(&catalog);
+        ensure!(
+            publication.is_some() || page.cursor.is_none(),
+            "legacy discovery cannot resume; reindex first"
+        );
+        let binding = airk_core::discovery::binding(
+            &publication
+                .as_ref()
+                .map(|p| p.token.to_string())
+                .unwrap_or_else(|| "legacy".into()),
+            "outline",
+            (
+                path,
+                page.compact,
+                options.follow_moves,
+                options.artifact_id,
+                options.known_hash,
+            ),
+        )?;
+        airk_core::discovery::decode(page.cursor.as_deref(), &binding)?;
         let read = self.resolve_evidence_path(&catalog, path, options)?;
         if read.status != EvidenceReadStatus::Content {
             return Ok(ConditionalRead {
@@ -255,6 +286,8 @@ impl Kernel {
             ))
         });
         let mut payload = FactsResponse {
+            page: Default::default(),
+            outline: Vec::new(),
             indexing: catalog
                 .inventory
                 .as_ref()
@@ -267,35 +300,22 @@ impl Kernel {
             facts: vec![],
             truncated: false,
         };
-        let mut remaining = max_bytes;
-        for fact in facts {
-            let bytes = fact.name.len()
-                + fact.citation.path.len()
-                + serde_json::to_vec(&fact.citation.location)?.len()
-                + fact
-                    .document
-                    .as_ref()
-                    .map(serde_json::to_vec)
-                    .transpose()?
-                    .map_or(0, |v| v.len())
-                + fact
-                    .code
-                    .as_ref()
-                    .map(serde_json::to_vec)
-                    .transpose()?
-                    .map_or(0, |v| v.len());
-            if payload.facts.len() == limit || bytes > remaining {
-                payload.truncated = true;
-                break;
-            }
-            remaining -= bytes;
-            payload.facts.push(fact);
+        airk_core::discovery::paginate_facts(
+            &mut payload,
+            facts,
+            page,
+            &binding,
+            limit,
+            max_bytes,
+        )?;
+        if publication.is_none() {
+            payload.page.cursor = None;
         }
         self.conditional(
             &catalog,
             read,
             options,
-            ("outline/1", limit, max_bytes),
+            ("outline/2", limit, max_bytes, page),
             payload,
         )
     }

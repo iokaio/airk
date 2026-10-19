@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Best-effort stable memory capacity, not fluctuating free memory.
 
-pub(super) fn memory_bytes() -> Option<u64> {
+pub(crate) fn memory_bytes() -> Option<u64> {
     platform_memory().filter(|bytes| *bytes > 0)
 }
 

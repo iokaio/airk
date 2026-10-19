@@ -1,8 +1,8 @@
 # Local CPU transformer embeddings
 
-Schema 2 executes a real BERT-family ONNX encoder using [tract 0.23.8](https://docs.rs/crate/tract-onnx/0.23.8), compiled into the native binary. It uses a local Hugging Face WordPiece tokenizer, attention-mask mean pooling and L2 normalization. Runtime installation requires no Python, ONNX Runtime DLLs, cloud inference or network connection. Unsupported graphs and tokenizers fail explicitly. [Schema 1 word-vector assets](local-models.md) remain compatible.
+Schema 2 executes a real BERT-family ONNX encoder using [tract 0.23.8](https://docs.rs/crate/tract-onnx/0.23.8), compiled into the native binary. It uses a local Hugging Face WordPiece tokenizer, attention-mask mean pooling and L2 normalization. Once model assets are present, inference requires no Python, ONNX Runtime DLLs, cloud service or network connection. Unsupported graphs and tokenizers fail explicitly. [Schema 1 word-vector assets](local-models.md) remain compatible.
 
-## Deliberate provisioning
+## Default setup and native provisioning
 
 The initial reproducible model is [sentence-transformers/all-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2), revision `10dbd2f06a8baf40ad285b037edda610c1b9a57c`. Its model card declares Apache-2.0 and describes a 384-dimensional English sentence/short-paragraph encoder with a 256-word-piece context. It can support document and natural-language/code-comment matching; this does not establish compiler resolution or broad code understanding.
 
@@ -13,7 +13,7 @@ airk --data-dir /path/to/state search "recover access after forgetting a login s
 airk --data-dir /path/to/state search "recover access after forgetting a login secret" --mode hybrid
 ~~~
 
-The provisioning script is a separate operator/developer tool. Without `--download`, it only verifies existing local files. It checks exact sizes and SHA-256 digests, refuses mismatched existing files, and generates `model.json`. Weights are excluded from source control and release packages. The license declaration comes from the model card; the included license file is the standard Apache-2.0 text.
+The trusted extension downloads these exact pinned assets on first indexing when vector search is enabled (the default), verifies sizes and SHA-256 digests, stages downloads in a bounded private system temporary directory, and asks the native helper to atomically install the complete directory under storage quota reservations. Temporary downloads are outside the managed index quota and bounded to the pinned asset sizes; failed downloads are cleaned up. Existing custom models are preserved. Setup failures leave the published index and the enabled setting intact; retry **Index now** or opt out in the panel. No source text is uploaded. The provisioning script shown above remains available for native-only installations and offline preparation. Without `--download`, it only verifies existing local files. It checks exact sizes and SHA-256 digests, refuses mismatched existing files, and generates `model.json`. Weights are excluded from source control and release packages. The license declaration comes from the model card; the included license file is the standard Apache-2.0 text.
 
 | Asset | Bytes | SHA-256 |
 |---|---:|---|
@@ -27,9 +27,21 @@ The identity hashes the complete canonical manifest plus AIRK's runtime specific
 
 ## Bounds and supported profile
 
-Inference handles one input at a time, taking at most the first 16 KiB of UTF-8 text and then the declared 8–512 tokens. Citations and lexical text remain intact; a vector represents only that prefix. Model files are capped at 256 MiB, tokenizer JSON at 4 MiB, dimensions at 2,048, and vocabulary at 100,000 tokens.
+Each inference handles one input, taking at most the first 16 KiB of UTF-8 text and then the declared 8–512 tokens. Indexing schedules up to 32 chunks at a time and executes independent ONNX inferences concurrently against a shared immutable plan. Cache persistence and DiskANN insertion remain ordered on the indexing thread. Citations and lexical text remain intact; a vector represents only that prefix. Model files are capped at 256 MiB, tokenizer JSON at 4 MiB, dimensions at 2,048, and vocabulary at 100,000 tokens.
 
 The adapter accepts the supported BERT operator profile and WordPiece/BertNormalizer/BertPreTokenizer pipeline with bounded special-token processing. It rejects external tensor files, custom domains, control flow, random operators, oversized constants and nonstatic intermediate shapes. Individual declared intermediate tensors are capped at 128 MiB and cumulative declared sizes at 1 GiB. These validation limits are not a process-RSS guarantee: model loading, compiler transformations, allocator overhead and caches also consume memory. Use trusted, licensed assets. Native inference is not forcibly interrupted by a wall-clock deadline.
+
+## Indexing performance and comparison
+
+Normal **Index now** reuses authenticated embeddings for unchanged chunk text and model pipelines. **Reindex** deliberately recomputes embeddings. Both construct an ordered graph for a newly published revision; cached vectors avoid inference, not graph insertion. Worker scheduling preserves the fixed padding, model identity and exact embedding cache contract, so existing generations and cached vectors remain usable. Adaptive padding and multi-input ONNX tensors are not enabled by this optimization.
+
+The default is at most four workers, further limited by available CPUs, pending inputs and estimated intermediate tensor storage. The inference workspace budget is one eighth of detected machine/cgroup memory, clamped to 128 MiB–1 GiB; unknown capacity uses 256 MiB. One worker remains the minimum under the existing single-inference bounds. This is conservative scheduling, not a hard process memory limit. `AIRK_INDEX_WORKERS=1` requests serial execution; values 1–8 are accepted and still respect CPU/memory limits. It affects indexing only and does not change collection configuration or model identity. Set it in the process launching the helper; an already-running VS Code process retains its own environment.
+
+Index JSON reports `embedding_workers` (maximum workers actually used), `embedding_batches`, cache hits/misses, inference/no-vector counts, and wall-clock microseconds for model loading, cache lookup, cache storage, inference and graph insertion. Inference timing includes worker scheduling/joining; it is elapsed time, not the sum of worker CPU time. Existing `publish_us` includes these phases plus lexical/catalog work. A no-op index has zero embedding work and is not a cold-build benchmark.
+
+For a controlled comparison, run the same new release helper against unchanged sources/model once with `AIRK_INDEX_WORKERS=1` and once with `AIRK_INDEX_WORKERS=4`, using `index --full` for both. Preserve the complete JSON reports, repeat in reverse order, and distinguish OS cache effects from embedding cache reuse. Compare wall time and stage timings alongside identical vector counts and retrieval results. Compare ordinary incremental `index` separately; a warm cache should greatly reduce inference counts. Do not compare an old cold build against a new warm-cache run as evidence of parallel speedup.
+
+The local build setup receipt saves aggregate `index_measurements`, including wall time and available native counters, in `local-agent-setup.json`. Older binaries omit unsupported counters rather than reporting invented zeros. Source paths and skipped-file diagnostics are excluded from these measurements.
 
 ## Reproducible qualification
 

@@ -69,9 +69,7 @@ pub(crate) fn extract_selected(
     let adapter = profile.adapter_id.as_str();
     match adapter {
         "pdf" => {
-            let pages = pdf_extract::extract_text_from_mem_by_pages(bytes)
-                .context("PDF text-layer extraction failed")?;
-            ensure!(pages.len() <= 512, "PDF exceeds 512 pages");
+            let pages = crate::pdf_worker::extract(bytes)?;
             from_blocks(
                 "pdf",
                 "pdf-text-layer",

@@ -2,90 +2,25 @@
 import * as vscode from 'vscode';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import { Client, IndexReport, LaunchSpec, Usage, collectionId, configFor, eligibleEvent, launchArgs } from './model';
-import { installJsonConfig, isJsonClient, jsonConfigPath, readJsonConfig } from './agentConfig';
-import { agentChoices, codexConfigPath, connectionAction, createCodexConfig, renderConnectionGuide, verificationPrompt } from './agentConnections';
+import { IndexReport, LaunchSpec, Usage, collectionId, eligibleEvent, launchArgs } from './model';
+import { setupAgent } from './agentSetup';
+import { DashboardView } from './dashboardView';
+import { CollectionItem, CollectionTree } from './collectionTree';
 import { NativeWriteQueue, prepareHelper, probeMcp, runJson } from './native';
+import { installCli } from './cliInstall';
 import { CapacityError, Options, PausedError, Scheduler } from './scheduler';
 import { Coverage, CoverageQueue, coverageDetails, coverageLabel } from './coverage';
 import { RetentionStatus, RetentionPreview, retentionSummary, retentionPolicyForMode } from './retention';
 import { withPolicySnapshot } from './extractionPolicy';
+import { VectorStatus, prepareVectorModel } from './vectorModel';
 import { aboveNormal, authorizeLimitIncrease, indexWithLimitApproval, largerLimitsExplanation, LimitsDescription, ScanLimits } from './ingestionLimits';
 import { historyControl, HistoryAction } from './history';
 import { renderReport, ReportKind } from './report';
 import { openUsagePanel } from './usagePanel';
-import { ControlGroup, DetailStatus, IndexDetail, McpVerification, SidebarCollection, SidebarState, renderSidebar, sidebarContent, sidebarAction, sidebarControlGroups } from './sidebar';
+import { ControlGroup, DetailStatus, IndexDetail, McpVerification, SidebarCollection, SidebarState, sidebarAction, sidebarControlGroups } from './sidebar';
 
 interface KnownCollection { name: string; root: string; lastIndexed?: string }
-class DashboardView implements vscode.WebviewViewProvider, vscode.Disposable {
-    private view?: vscode.WebviewView;
-    private timer?: NodeJS.Timeout;
-    private last = '';
-    private listeners: vscode.Disposable[] = [];
-    constructor(private readonly controller: Controller) {}
-    get visible(): boolean { return this.view?.visible ?? false; }
-    resolveWebviewView(view: vscode.WebviewView): void {
-        this.listeners.forEach(listener => listener.dispose());
-        this.view = view; this.last = '';
-        view.webview.options = { enableScripts: true, localResourceRoots: [] };
-        view.webview.html = renderSidebar(this.controller.sidebarState());
-        this.listeners = [view.webview.onDidReceiveMessage(message =>
-            this.controller.sidebarMessage(message).catch(error => {
-                this.controller.output.appendLine(String(error));
-                void vscode.window.showErrorMessage(`AIRK: ${error instanceof Error ? error.message : String(error)}`);
-            })), view.onDidChangeVisibility(() => { if (view.visible) { this.refresh(); } }),
-        view.onDidDispose(() => { if (this.view === view) { this.view = undefined; } })];
-    }
-    refresh(): void {
-        if (!this.visible || this.timer) { return; }
-        this.timer = setTimeout(() => {
-            this.timer = undefined;
-            if (!this.visible) { return; }
-            const html = sidebarContent(this.controller.sidebarState());
-            if (html !== this.last) { this.last = html; void this.view!.webview.postMessage({ type: 'render', html }); }
-        }, 100);
-    }
-    dispose(): void { clearTimeout(this.timer); this.listeners.forEach(listener => listener.dispose()); this.view = undefined; }
-}
 interface PruneReport { dry_run: boolean; reclaimable_bytes: number; removed_bytes: number; candidates: string[]; pinned: string[]; unreferenced_objects?: number; receipt_cleanup_pending?: boolean }
-class CollectionItem extends vscode.TreeItem {
-    constructor(readonly collection: string, readonly dataDir: string, readonly active: boolean, removable: boolean, name: string,
-        state: string, coverage: string, bytes: number | undefined, lastIndexed: string | undefined, root: string | undefined) {
-        super(name, vscode.TreeItemCollapsibleState.None);
-        this.contextValue = active ? 'airkActiveCollection' : removable ? 'airkInactiveCollection' : 'airkUnavailableCollection';
-        const size = bytes == null ? 'size unknown' : `${(bytes / 1048576).toFixed(2)} MiB`;
-        const last = lastIndexed ? new Date(lastIndexed).toLocaleString() : 'never';
-        this.description = `${state} · ${coverage} · ${size} · indexed ${last}`;
-        this.tooltip = `${name}\n${root ?? collection}\nState: ${state}\nCoverage: ${coverage}\nDisk use: ${size}\nLast indexed: ${last}`;
-        this.iconPath = new vscode.ThemeIcon(state === 'paused' ? 'debug-pause' : state === 'indexed' ? 'database' : 'clock');
-    }
-}
-class CollectionTree implements vscode.TreeDataProvider<CollectionItem> {
-    readonly changed = new vscode.EventEmitter<void>();
-    readonly onDidChangeTreeData = this.changed.event;
-    constructor(private readonly controller: Controller) {}
-    getTreeItem(item: CollectionItem): vscode.TreeItem { return item; }
-    getChildren(): Promise<CollectionItem[]> { return this.controller.collectionTreeItems(); }
-    refresh(): void { this.changed.fire(); }
-    dispose(): void { this.changed.dispose(); }
-}
-const locations: Record<Client, string> = {
-    vscode: 'VS Code: use MCP: List Servers to enable the registered AIRK collection, or merge into .vscode/mcp.json.',
-    claude: 'Install project .mcp.json, then restart Claude Code and review the server in /mcp.',
-    codex: 'Codex: merge the TOML table into .codex/config.toml for a trusted project or your user config.toml, then check its MCP server list.',
-    cursor: 'Cursor: merge into .cursor/mcp.json and enable it in Cursor MCP settings.',
-    gemini: 'Install .gemini/settings.json, then restart Gemini CLI and check /mcp. Existing allow/exclude and approval policies remain in force.',
-    antigravity: 'Install .agents/mcp_config.json for this project. In Antigravity IDE, open MCP Servers → Manage MCP Servers to reload; in the CLI use /mcp reload and /mcp list.',
-    cline: 'Cline: open Configure MCP Servers and merge the entry into the settings file that Cline opens.',
-    roo: 'Roo Code: merge into .roo/mcp.json using Edit Project MCP.',
-    junie: 'Junie: merge into .junie/mcp/mcp.json, then check /mcp.',
-    'copilot-cli': 'Copilot CLI: merge into your MCP configuration, preserving existing server entries and tool policies.',
-    opencode: 'OpenCode: merge into opencode.json under mcp. Verify your installed version uses this schema.',
-    'opencode-v2': 'OpenCode V2: merge into the installed version\'s configuration under mcp.servers.',
-    kilo: 'Kilo Code: merge into kilo.json under mcp, then check Settings → MCP.',
-    'amazon-q': 'Amazon Q Developer: use Tools → Add stdio server and supply these command/args details. This is connection guidance, not a complete default.json agent configuration.',
-    windsurf: 'Windsurf/Devin: identify the installed agent/version and open its MCP configuration UI. Supply these command/args details; legacy Cascade and Devin Local use different configuration schemas.'
-};
 
 class Controller implements vscode.Disposable {
     readonly output = vscode.window.createOutputChannel('AIRK');
@@ -104,14 +39,20 @@ class Controller implements vscode.Disposable {
     private specs = new Map<string, LaunchSpec>();
     private rootBindings: { opened: string; canonical: string }[] = [];
     private helper?: Promise<string>;
+    private cliAttempted = false;
+    private cliStatus?: SidebarState['cliStatus'];
     private refreshRevision = 0;
     private refreshing = false;
     private disposed = false;
     private storageChoice?: Promise<void>;
     private indexErrors = new Map<string, string>();
     private detailViews = new Map<string, DetailStatus>();
+    private vectorViews = new Map<string, VectorStatus>();
+    private vectorProgress = new Map<string, string>();
     private mcpChecks = new Map<string, McpVerification & { result?: { tools: string[]; status: unknown } }>();
     private mcpPending = new Map<string, Promise<void>>();
+    private toolsTerminals = new Map<string, { spec: LaunchSpec; terminal: vscode.Terminal }>();
+    private toolsClosed?: vscode.Disposable;
     private treeUsage?: { dataDir: string; updated: number; entries: Usage[] };
     private usageSummaries = new Map<string, SidebarCollection['usage']>();
 
@@ -189,9 +130,29 @@ class Controller implements vscode.Disposable {
             .catch(error => { this.helper = undefined; throw error; });
         return this.helper;
     }
+    private async setupCli(command: string, explicit: boolean): Promise<void> {
+        try {
+            const errors = await installCli(command, this.context);
+            if (errors.length) { throw new Error(errors.join('\n')); }
+            this.cliStatus = 'ready';
+            const message = 'AIRK CLI installed. Open a new VS Code terminal. Restart external terminal applications to pick up PATH changes.';
+            this.output.appendLine(message);
+            if (explicit) { void vscode.window.showInformationMessage(message); }
+        } catch (error) {
+            this.output.appendLine(`AIRK CLI setup: ${String(error)}`);
+            this.cliStatus = 'failed';
+            if (explicit) { throw error; }
+            void vscode.window.showWarningMessage('AIRK CLI setup could not finish. Indexing remains available. See AIRK output, then run AIRK: Install or Repair CLI.');
+        } finally { this.sidebar.refresh(); }
+    }
+    async installCommandLine(): Promise<void> {
+        this.trusted();
+        await this.setupCli(await this.command(), true);
+    }
     async refresh(): Promise<void> {
         const revision = ++this.refreshRevision;
         if (!vscode.workspace.isTrusted) {
+            this.closeToolsTerminals();
             this.mcpChecks.clear();
             for (const spec of this.specs.values()) { this.scheduler.forget(spec.collection); this.coverage.forget(spec.collection); }
             this.specs.clear(); this.rootBindings = []; this.definitions.fire(); this.updateStatus(); return;
@@ -199,6 +160,11 @@ class Controller implements vscode.Disposable {
         this.refreshing = true;
         try {
             const command = await this.command(), dataDir = await this.dataDir();
+            if (!this.cliAttempted && this.machineValue('cli.autoInstall', true)) {
+                this.cliAttempted = true;
+                await this.setupCli(command, false);
+            }
+            if (!this.cliAttempted && !this.cliStatus && !this.machineValue('cli.autoInstall', true)) { this.cliStatus = 'disabled'; }
             const next = new Map<string, LaunchSpec>();
             const bindings: typeof this.rootBindings = [];
             for (const folder of vscode.workspace.workspaceFolders ?? []) {
@@ -217,6 +183,7 @@ class Controller implements vscode.Disposable {
             }
             const prior = this.specs;
             this.specs = next;
+            this.closeToolsTerminals(next);
             const mcpBindings = new Set([...next.values()].map(spec => this.mcpKey(spec)));
             for (const key of this.usageSummaries.keys()) { if (!mcpBindings.has(key)) { this.usageSummaries.delete(key); } }
             for (const key of this.mcpChecks.keys()) { if (!mcpBindings.has(key)) { this.mcpChecks.delete(key); } }
@@ -310,6 +277,23 @@ class Controller implements vscode.Disposable {
         }
         let report: IndexReport;
         try {
+            const vectors = await runJson<VectorStatus>(spec, 'collections', ['vectors', 'show']);
+            if (typeof vectors.enabled !== 'boolean') { throw new Error('Vector search requires the updated AIRK helper.'); }
+            this.vectorViews.set(this.mcpKey(spec), vectors);
+            if (vectors.enabled) {
+                await prepareVectorModel(spec.dataDir, message => {
+                    this.vectorProgress.set(this.mcpKey(spec), message);
+                    this.output.appendLine(message); this.sidebar.refresh();
+                }, async source => {
+                    this.trusted();
+                    if (this.specs.get(spec.collection)?.dataDir !== spec.dataDir) { throw new Error('Collection storage changed.'); }
+                    await this.writeNative(spec, 'collections', ['vectors', 'install', source]);
+                });
+                this.vectorProgress.set(this.mcpKey(spec), 'Building vector index');
+                this.sidebar.refresh();
+            }
+            this.trusted();
+            if (this.specs.get(spec.collection)?.dataDir !== spec.dataDir) { throw new Error('Collection storage changed.'); }
             report = await indexWithLimitApproval(
                 () => this.writeNative<IndexReport>(spec, 'index', ['--scheduled', ...(automatic ? ['--automatic'] : []), ...(full ? ['--full'] : [])]),
                 error => authorizeLimitIncrease({
@@ -331,7 +315,7 @@ class Controller implements vscode.Disposable {
             if (error instanceof Error && error.message.includes('native automatic scheduling is paused')) { throw new PausedError(error.message); }
             throw error;
         }
-        finally { if (this.specs.get(spec.collection)?.dataDir === spec.dataDir) { this.coverage.request(spec, true); } }
+        finally { this.vectorProgress.delete(this.mcpKey(spec)); await this.refreshVectors(spec); if (this.specs.get(spec.collection)?.dataDir === spec.dataDir) { this.coverage.request(spec, true); } this.sidebar.refresh(); }
         this.output.appendLine(`${spec.name}: generation ${report.generation}; indexed ${report.indexed}, reused ${report.reused}, removed ${report.removed}, skipped ${report.skipped.length + (report.skipped_truncated ?? 0)}`);
         for (const skipped of report.skipped.slice(0, 20)) { this.output.appendLine(`Skipped ${skipped.path}: ${skipped.reason}`); }
         const known = this.context.globalState.get<Record<string, KnownCollection>>('collections', {});
@@ -351,12 +335,13 @@ class Controller implements vscode.Disposable {
         const known = vscode.workspace.isTrusted ? this.context.globalState.get<Record<string, KnownCollection>>('collections', {}) : {};
         return { trusted: vscode.workspace.isTrusted, paused: this.scheduler.isPaused || states.some(state => state.state === 'paused'),
             registrationEnabled: this.registrationEnabled(),
+            cliStatus: this.cliStatus,
             mode: this.options().mode, changingStorage: !!this.storageChoice, groups: this.controlGroups(),
             collections: vscode.workspace.isTrusted ? [...this.specs.values()].map(spec => ({ ...spec,
                 state: states.find(state => state.collection === spec.collection)?.state ?? 'queued',
                 coverage: this.coverage.get(spec.collection), lastIndexed: known[spec.collection]?.lastIndexed,
                 diskBytes: this.treeUsage?.dataDir === spec.dataDir ? this.treeUsage.entries.find(item => item.collection === spec.collection)?.disk_bytes : undefined,
-                error: this.indexErrors.get(JSON.stringify([spec.dataDir, spec.collection])), mcp: this.mcpChecks.get(this.mcpKey(spec)), detail: this.detailViews.get(this.mcpKey(spec)), usage: this.usageSummaries.get(this.mcpKey(spec)) })) : [] };
+                error: this.indexErrors.get(JSON.stringify([spec.dataDir, spec.collection])), mcp: this.mcpChecks.get(this.mcpKey(spec)), detail: this.detailViews.get(this.mcpKey(spec)), vectors: this.vectorViews.get(this.mcpKey(spec)), vectorProgress: this.vectorProgress.get(this.mcpKey(spec)), usage: this.usageSummaries.get(this.mcpKey(spec)) })) : [] };
     }
     async sidebarMessage(message: unknown): Promise<void> {
         const action = sidebarAction(message, new Set(this.controlGroups().flatMap(group => group.commands.map(([, command]) => command))));
@@ -377,8 +362,10 @@ class Controller implements vscode.Disposable {
         }
         const spec = this.specs.get(action.collection);
         if (!spec || spec.dataDir !== action.dataDir) { throw new Error('Collection storage changed. Use the refreshed AIRK dashboard.'); }
+        if (action.type === 'vectors') { await this.setVectors(spec, action.enabled); return; }
         if (action.type === 'detail') { await this.indexDetail(spec, action.level); return; }
         if (action.action === 'verify') { await this.verify(spec); return; }
+        if (action.action === 'tools') { await this.openTools(spec); return; }
         if (action.action === 'mcpDetails') {
             const check = this.mcpChecks.get(this.mcpKey(spec));
             if (check) { await this.showJson('AIRK helper verification; agent connection status is separate', { collection: spec.collection, root: spec.root, dataDir: spec.dataDir, ...check }); }
@@ -411,7 +398,7 @@ class Controller implements vscode.Disposable {
             }
         }
         await Promise.all([...this.specs.values()].filter(spec => refreshDetail || !this.detailViews.has(this.mcpKey(spec)))
-            .map(async spec => { await this.refreshDetail(spec); await this.refreshUsageSummary(spec); }));
+            .map(async spec => { await this.refreshDetail(spec); await this.refreshVectors(spec); await this.refreshUsageSummary(spec); }));
         const byId = new Map(usage.map(item => [item.collection, item]));
         const known = this.context.globalState.get<Record<string, KnownCollection>>('collections', {});
         const states = new Map(this.scheduler.states().map(item => [item.collection, item]));
@@ -440,6 +427,41 @@ class Controller implements vscode.Disposable {
         this.trusted();
         if (item.active || item.dataDir !== await this.dataDir()) { throw new Error('Only an inactive collection in current storage can be removed.'); }
         await this.collections(true, item.collection);
+    }
+    private closeToolsTerminals(next?: Map<string, LaunchSpec>): void {
+        for (const [key, { spec, terminal }] of this.toolsTerminals) {
+            const current = next?.get(spec.collection);
+            if (!current || current.command !== spec.command || current.root !== spec.root || current.dataDir !== spec.dataDir) {
+                terminal.dispose(); this.toolsTerminals.delete(key);
+            }
+        }
+    }
+    async openTools(selected?: LaunchSpec): Promise<void> {
+        this.trusted();
+        const spec = selected ?? await this.chooseSpec(); if (!spec) { return; }
+        this.trusted();
+        const current = this.specs.get(spec.collection);
+        if (this.disposed || this.storageChoice || !current || current.command !== spec.command || current.root !== spec.root || current.dataDir !== spec.dataDir) {
+            throw new Error('Collection storage changed. Use the refreshed AIRK dashboard.');
+        }
+        const key = JSON.stringify([spec.command, spec.root, spec.dataDir, spec.collection]);
+        let entry = this.toolsTerminals.get(key);
+        if (!entry || entry.terminal.exitStatus !== undefined) {
+            entry?.terminal.dispose();
+            if (!this.toolsClosed) {
+                this.toolsClosed = vscode.window.onDidCloseTerminal(closed => {
+                    for (const [id, item] of this.toolsTerminals) { if (item.terminal === closed) { this.toolsTerminals.delete(id); } }
+                });
+            }
+            // Launch the verified helper directly; no shell interpolation or PATH dependency.
+            const terminal = vscode.window.createTerminal({
+                name: `AIRK Tools — ${spec.name}`, cwd: spec.root, shellPath: spec.command,
+                shellArgs: [...launchArgs(spec, 'tools'), 'shell'], env: { AIRK_CLIENT: 'vscode' },
+                location: vscode.TerminalLocation.Panel, isTransient: true
+            });
+            entry = { spec, terminal }; this.toolsTerminals.set(key, entry);
+        }
+        entry.terminal.show();
     }
     async manualIndex(full = false): Promise<void> {
         const spec = await this.chooseSpec(); if (!spec) { return; }
@@ -614,6 +636,24 @@ class Controller implements vscode.Disposable {
         }
         this.coverage.request(spec, true);
     }
+    private async refreshVectors(spec: LaunchSpec): Promise<void> {
+        try {
+            const status = await runJson<VectorStatus>(spec, 'collections', ['vectors', 'show']);
+            if (typeof status.enabled !== 'boolean' || typeof status.published !== 'boolean') { throw new Error('Vector search requires the updated AIRK helper.'); }
+            if (vscode.workspace.isTrusted && this.specs.get(spec.collection)?.dataDir === spec.dataDir) { this.vectorViews.set(this.mcpKey(spec), status); }
+        } catch (error) { this.output.appendLine(`Vector status unavailable: ${String(error)}`); }
+    }
+    async setVectors(spec: LaunchSpec, enabled: boolean): Promise<void> {
+        this.trusted();
+        await this.scheduler.holdWhile(async idle => {
+            await idle; this.trusted();
+            if (this.specs.get(spec.collection)?.dataDir !== spec.dataDir) { throw new Error('Collection storage changed.'); }
+            const status = await this.writeNative<VectorStatus>(spec, 'collections', ['vectors', 'set', '--enabled', String(enabled)]);
+            this.vectorViews.set(this.mcpKey(spec), status);
+        });
+        this.sidebar.refresh();
+        await this.scheduler.request(spec, true, false);
+    }
     private async refreshDetail(spec: LaunchSpec): Promise<void> {
         try {
             const result = await runJson<DetailStatus>(spec, 'collections', ['extraction', 'show']);
@@ -780,101 +820,17 @@ class Controller implements vscode.Disposable {
             args => this.writeNative(spec, 'usage', args));
     }
     async setupAgent(): Promise<void> {
-        this.trusted();
-        const selected = await vscode.window.showQuickPick(agentChoices(), {
-            title: 'Connect a coding agent to AIRK', placeHolder: 'Which agent should use this workspace index?', matchOnDescription: true
-        });
-        if (!selected) { return; }
-        const spec = await this.chooseSpec(); if (!spec) { return; }
-        const client = selected.client;
-        const panel = vscode.window.createWebviewPanel('airk.connection', `AIRK → ${selected.label}`, vscode.ViewColumn.Active,
-            { enableScripts: true, localResourceRoots: [] });
-        let status = client === 'vscode' ? `VS Code registration is ${this.registrationEnabled() ? 'on' : 'off'}. Agent connection has not been verified.`
-            : 'Configuration has not been installed by this guide.';
-        let busy = false, closed = false;
-        const render = () => { panel.webview.html = renderConnectionGuide(client, spec, locations[client], status, !!vscode.env.remoteName, busy); };
-        const checkCurrent = () => {
-            this.trusted();
-            const current = this.specs.get(spec.collection);
-            if (closed || this.storageChoice || this.refreshing || this.disposed || !current || this.mcpKey(current) !== this.mcpKey(spec)) {
-                throw new Error('Workspace or storage changed. Close this guide and run Connect Coding Agent again.');
+        await setupAgent({
+            trusted: () => this.trusted(), chooseSpec: () => this.chooseSpec(),
+            registrationEnabled: () => this.registrationEnabled(), registrationChanged: () => this.registrationChanged(),
+            manageVscodeMcp: () => this.manageVscodeMcp(), verify: spec => this.verify(spec),
+            verification: spec => this.mcpChecks.get(this.mcpKey(spec)), rootBindings: () => this.rootBindings,
+            subscribe: panel => { this.context.subscriptions.push(panel); },
+            isCurrent: spec => {
+                const current = this.specs.get(spec.collection);
+                return !this.storageChoice && !this.refreshing && !this.disposed && !!current && this.mcpKey(current) === this.mcpKey(spec);
             }
-        };
-        const configDocument = (destination: string) => {
-            const samePath = (left: string, right: string) => process.platform === 'win32'
-                ? path.resolve(left).toLowerCase() === path.resolve(right).toLowerCase() : path.resolve(left) === path.resolve(right);
-            const matches = vscode.workspace.textDocuments.filter(document => samePath(document.uri.fsPath, destination)
-                || this.rootBindings.some(binding => samePath(binding.canonical, spec.root)
-                    && samePath(document.uri.fsPath, path.join(binding.opened, path.relative(spec.root, destination)))));
-            if (matches.some(document => document.isDirty)) { throw new Error('Agent configuration has unsaved edits. Save and review it before installing AIRK.'); }
-            return matches[0];
-        };
-        render();
-        const listener = panel.webview.onDidReceiveMessage(async value => {
-            const action = connectionAction(value, client);
-            if (!action || busy || closed) { return; }
-            busy = true;
-            try {
-                checkCurrent();
-                if (action === 'copy' || action === 'copyPrompt') {
-                    await vscode.env.clipboard.writeText(action === 'copy' ? configFor(client, spec) : verificationPrompt(spec));
-                    status = action === 'copy' ? 'Configuration copied. Merge it into the selected agent’s configuration; copying does not install it.' : 'Verification prompt copied. Send it in the selected agent to check its actual connection.';
-                } else if (action === 'createCodex') {
-                    if (vscode.env.remoteName) { throw new Error('Use manual configuration on the host running Codex.'); }
-                    const destination = codexConfigPath(spec);
-                    configDocument(destination);
-                    await createCodexConfig(spec);
-                    status = 'Codex project configuration created. Restart Codex and verify its tools below. Agent connection has not been verified.';
-                } else if (action === 'installJson' && isJsonClient(client)) {
-                    if (vscode.env.remoteName) { throw new Error('Use manual configuration on the host running this agent.'); }
-                    const checkInstall = () => { checkCurrent(); configDocument(jsonConfigPath(client, spec)); };
-                    await installJsonConfig(client, spec, checkInstall, async (destination, before, after) => {
-                        const document = configDocument(destination) ?? await vscode.workspace.openTextDocument(vscode.Uri.file(destination));
-                        const version = document.version;
-                        if (document.isDirty || document.getText() !== before) { throw new Error('Configuration has unsaved or external changes. Review it before installing AIRK.'); }
-                        const edit = new vscode.WorkspaceEdit();
-                        edit.replace(document.uri, new vscode.Range(document.positionAt(0), document.positionAt(before.length)), after);
-                        if (await readJsonConfig(destination) !== before) { throw new Error('Configuration changed on disk. Retry setup.'); }
-                        checkInstall();
-                        if (document.version !== version || !await vscode.workspace.applyEdit(edit)) { throw new Error('Configuration changed during setup. Review the file and retry.'); }
-                        checkCurrent();
-                        if (document.getText() !== after || !await document.save()) { throw new Error('Configuration was not saved. Review the editor’s changes and save manually.'); }
-                    });
-                    status = `${selected.label} project configuration installed. Reload the agent and complete its trust prompts. Agent connection has not been verified.`;
-                } else if (action === 'openJson' && isJsonClient(client)) {
-                    const document = await vscode.workspace.openTextDocument(vscode.Uri.file(jsonConfigPath(client, spec)));
-                    await vscode.window.showTextDocument(document, { viewColumn: vscode.ViewColumn.Beside, preview: false });
-                    status = 'Project configuration opened. Review the AIRK entry and any existing client policies before reloading the agent.';
-                } else if (action === 'enableCopilot') {
-                    if (typeof vscode.lm?.registerMcpServerDefinitionProvider !== 'function'
-                        || !(await vscode.commands.getCommands(true)).includes('workbench.mcp.listServer')) {
-                        throw new Error('This editor does not support AIRK’s MCP registration. Update VS Code or use manual MCP configuration.');
-                    }
-                    checkCurrent();
-                    await vscode.workspace.getConfiguration('airk').update('mcp.registrationEnabled', true, vscode.ConfigurationTarget.Global);
-                    this.registrationChanged();
-                    checkCurrent();
-                    await this.manageVscodeMcp();
-                    status = 'AIRK registration enabled for open workspace collections. Select this collection in VS Code’s MCP controls and complete any start or trust prompts. Copilot’s connection has not been verified.';
-                } else if (action === 'openCodex') {
-                    const document = await vscode.workspace.openTextDocument(vscode.Uri.file(codexConfigPath(spec)));
-                    await vscode.window.showTextDocument(document, { viewColumn: vscode.ViewColumn.Beside, preview: false });
-                    status = 'Existing configuration opened. Merge the AIRK entry without duplicating its table or changing other settings, save, then restart Codex.';
-                } else if (action === 'vscode') {
-                    await this.manageVscodeMcp();
-                    status = `VS Code MCP controls opened. Registration is ${this.registrationEnabled() ? 'on' : 'off'}; enable it in the AIRK sidebar if needed. Other agents use their own configuration.`;
-                } else if (action === 'verify') {
-                    status = 'Checking AIRK helper…'; render();
-                    await this.verify(spec);
-                    const check = this.mcpChecks.get(this.mcpKey(spec));
-                    status = check?.phase === 'verified' ? `AIRK helper verified: ${check.tools?.length ?? 0} tools. Agent connection still needs the verification prompt below.`
-                        : `AIRK helper check did not succeed: ${check?.error ?? 'workspace or storage changed'}`;
-                }
-            } catch (error) { status = error instanceof Error ? error.message : String(error); }
-            finally { busy = false; if (!closed) { render(); } }
         });
-        panel.onDidDispose(() => { closed = true; listener.dispose(); });
-        this.context.subscriptions.push(panel);
     }
     private mcpKey(spec: LaunchSpec): string { return JSON.stringify([spec.collection, spec.root, spec.dataDir, spec.command]); }
     registrationEnabled(): boolean { return this.machineValue('mcp.registrationEnabled', true) === true; }
@@ -958,7 +914,7 @@ class Controller implements vscode.Disposable {
         if (choice?.command) { await vscode.commands.executeCommand(choice.command); }
     }
     configure(): void { const options = this.options(); this.scheduler.configure(options); this.coverage?.configure(options.quietMs, options.mode === 'idle' ? options.idleMs : 0); }
-    dispose(): void { this.disposed = true; clearInterval(this.rescan); clearInterval(this.maintenanceTimer); this.sidebar.dispose(); this.coverage.dispose(); this.scheduler.dispose(); this.definitions.dispose(); this.collectionTree.dispose(); this.status.dispose(); this.output.dispose(); }
+    dispose(): void { this.disposed = true; this.closeToolsTerminals(); this.toolsClosed?.dispose(); clearInterval(this.rescan); clearInterval(this.maintenanceTimer); this.sidebar.dispose(); this.coverage.dispose(); this.scheduler.dispose(); this.definitions.dispose(); this.collectionTree.dispose(); this.status.dispose(); this.output.dispose(); }
 }
 
 export async function activate(context: vscode.ExtensionContext): Promise<{ getServerDefinitions(): Promise<vscode.McpStdioServerDefinition[]> }> {
@@ -973,6 +929,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<{ getS
         }
     };
     const commands: Record<string, () => void | Promise<unknown>> = {
+        installCli: () => controller.installCommandLine(),
+        openTools: () => controller.openTools(),
         menu: () => controller.menu(), index: () => controller.manualIndex(), reindex: () => controller.manualIndex(true),
         indexMode: () => controller.chooseMode(), pause: () => controller.pauseAuto(true),
         resume: async () => { await controller.refresh(); await controller.pauseAuto(false); },

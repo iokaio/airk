@@ -3,13 +3,13 @@
 use crate::{
     bounded::{BoundedDirectory, BudgetWriter, Charge},
     model::{EmbeddingCacheContext, EmbeddingModel},
-    terms, truncate_utf8,
+    terms,
     vector::DiskIndex,
 };
 use airk_core::identity::{PublicationReceipt, RevisionToken, Sha256Digest, revision_digest};
 use airk_core::model_objects::{MAX_MODEL_OBJECT_SET_BYTES, ModelObjectSet};
 use airk_core::publication::InventoryV2;
-use airk_core::{ArtifactSource, Citation, Hit, SearchQuery, SearchResponse, Snapshot};
+use airk_core::{ArtifactSource, Citation, Hit, Snapshot};
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -21,16 +21,17 @@ use std::{
     sync::Mutex,
 };
 use tantivy::{
-    Index, IndexReader, Order, ReloadPolicy, TantivyDocument, Term,
-    collector::TopDocs,
-    query::{BooleanQuery, Occur, Query, RegexQuery, TermQuery},
-    schema::{FAST, Field, INDEXED, IndexRecordOption, STORED, STRING, Schema, Value},
+    Index, IndexReader, ReloadPolicy, TantivyDocument,
+    schema::{FAST, Field, INDEXED, STORED, STRING, Schema},
 };
+
+mod search;
 
 const ENGINE: &str = "tantivy-0.26.2/diskann-0.59.0/airk-file-1/generation-3";
 const ENGINE_V2: &str = "tantivy-0.26.2/diskann-0.59.0/airk-file-1/generation-4/inventory-2";
 const ENGINE_V3: &str =
     "tantivy-0.26.2/diskann-0.59.0/airk-file-1/generation-5/inventory-2/model-objects-1";
+const ENGINE_V4: &str = "tantivy-0.26.2/diskann-0.59.0/airk-file-1/generation-5/inventory-2/model-objects-1/source-context-1";
 const MAX_MANIFEST_V2_BYTES: usize = 128 * 1024;
 const MAX_COMPONENTS_V2: usize = 1024;
 const MAX_INVENTORY_V2_BYTES: usize = airk_core::publication::MAX_INVENTORY_BYTES;
@@ -40,6 +41,9 @@ pub fn retrieval_specification_v2() -> &'static [u8] {
 }
 pub fn retrieval_specification_v3() -> &'static [u8] {
     ENGINE_V3.as_bytes()
+}
+pub fn retrieval_specification_v4() -> &'static [u8] {
+    ENGINE_V4.as_bytes()
 }
 
 /// Kernel-finalized identity plus the bound artifact projection needed to build
@@ -282,10 +286,17 @@ fn build_streaming_components(
         model_directory.is_none() || model_objects.is_none(),
         "conflicting model inputs"
     );
+    let model_started = std::time::Instant::now();
     let model = match model_objects {
         Some((collection, set)) => Some(EmbeddingModel::open_objects(collection, set)?),
         None => model_directory.map(EmbeddingModel::open).transpose()?,
     };
+    let mut local_stats = crate::model::EmbeddingCacheStats::default();
+    if model.is_some()
+        && let Some(context) = cache.as_mut()
+    {
+        context.stats.model_load_us = crate::embedding_batch::elapsed_us(model_started);
+    }
     let descriptor = model
         .as_ref()
         .map(EmbeddingModel::cache_descriptor)
@@ -318,46 +329,74 @@ fn build_streaming_components(
     let mut vectors = 0;
     for path in snapshot.artifacts.keys() {
         let artifact = source.load_artifact(path)?;
-        for chunk in &artifact.chunks {
-            let mut document = TantivyDocument::default();
-            for term in terms(&format!("{path} {}", chunk.text)) {
-                document.add_text(fields.terms, term);
-            }
-            document.add_text(fields.path, path);
-            document.add_u64(fields.ordinal, ordinal);
-            if let (Some(model), Some(graph)) = (&model, &mut graph) {
-                let vector = if let Some(context) = cache.as_mut() {
-                    model.embed_cached(
-                        &chunk.text,
-                        descriptor
-                            .as_ref()
-                            .context("embedding descriptor missing")?,
+        for chunks in artifact
+            .chunks
+            .chunks(crate::embedding_batch::MAX_BATCH_CHUNKS)
+        {
+            let embeddings = if let Some(model) = &model {
+                let texts: Vec<_> = chunks.iter().map(|chunk| chunk.text.as_str()).collect();
+                let descriptor = descriptor
+                    .as_ref()
+                    .context("embedding descriptor missing")?;
+                if let Some(context) = cache.as_mut() {
+                    crate::embedding_batch::embed(
+                        model,
+                        &texts,
+                        descriptor,
                         context.cache,
                         context.bypass,
                         context.stats,
+                        context.max_workers,
+                        context.working_memory_bytes,
                     )?
                 } else {
-                    model.embed_text(&chunk.text)?
-                };
-                if let Some(vector) = vector {
+                    crate::embedding_batch::embed(
+                        model,
+                        &texts,
+                        descriptor,
+                        None,
+                        false,
+                        &mut local_stats,
+                        1,
+                        128 << 20,
+                    )?
+                }
+            } else {
+                vec![None; chunks.len()]
+            };
+            for (chunk, vector) in chunks.iter().zip(embeddings) {
+                let mut document = TantivyDocument::default();
+                for term in terms(&format!("{path} {}", chunk.text)) {
+                    document.add_text(fields.terms, term);
+                }
+                document.add_text(fields.path, path);
+                document.add_u64(fields.ordinal, ordinal);
+                if let Some(graph) = &mut graph
+                    && let Some(vector) = vector
+                {
+                    let started = std::time::Instant::now();
                     document.add_u64(fields.vector, u64::from(graph.insert(&vector)?));
+                    if let Some(context) = cache.as_mut() {
+                        context.stats.graph_insert_us +=
+                            crate::embedding_batch::elapsed_us(started);
+                    }
                     vectors += 1;
                 }
+                let hit = Hit {
+                    citation: Citation {
+                        path: path.clone(),
+                        content_hash: artifact.content_hash.clone(),
+                        start_line: chunk.start_line,
+                        end_line: chunk.end_line,
+                        location: chunk.location.clone(),
+                    },
+                    text: chunk.text.clone(),
+                    truncated: false,
+                };
+                document.add_text(fields.payload, serde_json::to_string(&hit)?);
+                writer.add_document(document)?;
+                ordinal += 1;
             }
-            let hit = Hit {
-                citation: Citation {
-                    path: path.clone(),
-                    content_hash: artifact.content_hash.clone(),
-                    start_line: chunk.start_line,
-                    end_line: chunk.end_line,
-                    location: chunk.location.clone(),
-                },
-                text: chunk.text.clone(),
-                truncated: false,
-            };
-            document.add_text(fields.payload, serde_json::to_string(&hit)?);
-            writer.add_document(document)?;
-            ordinal += 1;
         }
     }
     writer.commit()?;
@@ -579,7 +618,7 @@ fn read_manifest_v2(
     let manifest: ManifestV2 = serde_json::from_slice(&bytes)?;
     ensure!(
         ((manifest.schema == 2 && manifest.engine == ENGINE_V2)
-            || (manifest.schema == 3 && manifest.engine == ENGINE_V3))
+            || (manifest.schema == 3 && matches!(manifest.engine.as_str(), ENGINE_V3 | ENGINE_V4)))
             && manifest.token == receipt.token
             && manifest.collection == collection
             && manifest.inventory_digest == receipt.inventory_digest
@@ -830,13 +869,19 @@ fn prepare_streaming_owned(
     prepare_catalog: impl FnOnce(&Path) -> Result<()>,
     before_publish: impl FnOnce(&PublicationReceipt) -> Result<()>,
 ) -> Result<PublicationReceipt> {
-    let engine = if shared_models { ENGINE_V3 } else { ENGINE_V2 };
     let snapshot = preparation.snapshot;
     ensure!(
         preparation.canonical_inventory.len() <= MAX_INVENTORY_V2_BYTES,
         "oversized v2 inventory"
     );
     let authoritative: InventoryV2 = serde_json::from_slice(preparation.canonical_inventory)?;
+    let engine = if shared_models && authoritative.retrieval_specification == ENGINE_V4 {
+        ENGINE_V4
+    } else if shared_models {
+        ENGINE_V3
+    } else {
+        ENGINE_V2
+    };
     if shared_models {
         if let Some(set) = model_objects {
             set.validate()?;
@@ -1096,217 +1141,6 @@ impl PersistentIndex {
             model_objects: None,
             collection_directory: base.into(),
         })
-    }
-
-    pub fn search(&self, query: &SearchQuery) -> Result<SearchResponse> {
-        query.validate()?;
-        self.verify_retained_manifest()?;
-        let query_terms = terms(&query.text);
-        ensure!(
-            !query_terms.is_empty(),
-            "query must contain a letter or number"
-        );
-        let mut clauses: Vec<(Occur, Box<dyn Query>)> = query_terms
-            .into_iter()
-            .map(|term| {
-                (
-                    Occur::Must,
-                    Box::new(TermQuery::new(
-                        Term::from_field_text(self.fields.terms, &term),
-                        IndexRecordOption::Basic,
-                    )) as Box<dyn Query>,
-                )
-            })
-            .collect();
-        if let Some(prefix) = &query.path_prefix {
-            let escaped: String = prefix
-                .chars()
-                .flat_map(|ch| {
-                    if ".+*?()|[]{}^$\\".contains(ch) {
-                        vec!['\\', ch]
-                    } else {
-                        vec![ch]
-                    }
-                })
-                .collect();
-            clauses.push((
-                Occur::Must,
-                Box::new(RegexQuery::from_pattern(
-                    &format!("(?s:{escaped}.*)"),
-                    self.fields.path,
-                )?),
-            ));
-        }
-        let searcher = self.reader.searcher();
-        let candidates = searcher.search(
-            &BooleanQuery::new(clauses),
-            &TopDocs::with_limit(query.limit + 1).order_by_u64_field("ordinal", Order::Asc),
-        )?;
-        let hits = candidates
-            .into_iter()
-            .map(|(_, address)| self.read_hit(address))
-            .collect::<Result<Vec<_>>>()?;
-        Ok(self.bound(hits, query))
-    }
-
-    pub fn semantic_search(&self, query: &SearchQuery) -> Result<SearchResponse> {
-        query.validate()?;
-        self.verify_retained_manifest()?;
-        ensure!(
-            self.model_sha256.is_some(),
-            "semantic retrieval not ready: provision a local model and reindex"
-        );
-        let mut cached = self
-            .model
-            .lock()
-            .map_err(|_| anyhow::anyhow!("local model cache poisoned"))?;
-        if cached.is_none() {
-            *cached = Some(match &self.model_objects {
-                Some(set) => EmbeddingModel::open_objects(&self.collection_directory, set)?,
-                None => EmbeddingModel::open(&self.directory.join("model"))?,
-            });
-        }
-        let model = cached.as_ref().context("local model unavailable")?;
-        ensure!(
-            Some(model.identity()) == self.model_sha256.as_deref(),
-            "generation model identity mismatch"
-        );
-        let vector = model
-            .embed_text(&query.text)?
-            .context("semantic retrieval not ready: no recognized model tokens")?;
-        drop(cached);
-        let graph = DiskIndex::open(&self.directory.join("vectors.bin"))?;
-        let candidates = graph.search(&vector, (query.limit * 4).clamp(64, 1000))?;
-        let incomplete = candidates.len() < self.vectors;
-        let mut hits = Vec::new();
-        for (id, _) in candidates {
-            let matches = self.reader.searcher().search(
-                &TermQuery::new(
-                    Term::from_field_u64(self.fields.vector, u64::from(id)),
-                    IndexRecordOption::Basic,
-                ),
-                &TopDocs::with_limit(2).order_by_u64_field("ordinal", Order::Asc),
-            )?;
-            ensure!(matches.len() == 1, "vector/lexical identity mismatch");
-            let hit = self.read_hit(matches[0].1)?;
-            if query
-                .path_prefix
-                .as_ref()
-                .is_none_or(|prefix| hit.citation.path.starts_with(prefix))
-            {
-                hits.push(hit);
-            }
-        }
-        let mut response = self.bound(hits, query);
-        response.truncated |= incomplete;
-        Ok(response)
-    }
-
-    /// Reciprocal-rank fusion of lexical and approximate vector candidates, both
-    /// pinned by this generation handle. Missing model state is an explicit error.
-    pub fn hybrid_search(&self, query: &SearchQuery) -> Result<SearchResponse> {
-        query.validate()?;
-        let candidates = SearchQuery {
-            text: query.text.clone(),
-            path_prefix: query.path_prefix.clone(),
-            limit: 100,
-            max_bytes: airk_core::MAX_RESPONSE_BYTES,
-        };
-        let lexical = self.search(&candidates)?;
-        let semantic = self.semantic_search(&candidates)?;
-        let incomplete = lexical.truncated || semantic.truncated;
-        let mut merged = std::collections::BTreeMap::<(String, usize, usize), (f64, Hit)>::new();
-        for response in [lexical, semantic] {
-            for (rank, hit) in response.hits.into_iter().enumerate() {
-                let key = (
-                    hit.citation.path.clone(),
-                    hit.citation.start_line,
-                    hit.citation.end_line,
-                );
-                let score = 1.0 / (61.0 + rank as f64);
-                if let Some((current, existing)) = merged.get_mut(&key) {
-                    *current += score;
-                    if existing.truncated && !hit.truncated {
-                        *existing = hit;
-                    }
-                } else {
-                    merged.insert(key, (score, hit));
-                }
-            }
-        }
-        let mut ranked: Vec<_> = merged.into_values().collect();
-        ranked.sort_by(|a, b| {
-            b.0.total_cmp(&a.0)
-                .then_with(|| a.1.citation.path.cmp(&b.1.citation.path))
-                .then_with(|| a.1.citation.start_line.cmp(&b.1.citation.start_line))
-        });
-        let mut response = self.bound(ranked.into_iter().map(|(_, hit)| hit).collect(), query);
-        response.truncated |= incomplete;
-        Ok(response)
-    }
-
-    // Cached/mapped handles can outlive a removed or replaced directory. Keep
-    // failure reporting consistent with fresh readers without reloading a model.
-    fn verify_retained_manifest(&self) -> Result<()> {
-        if let Some(receipt) = &self.v2_receipt {
-            let manifest = read_manifest_v2(&self.directory, receipt, &self.collection)?;
-            ensure!(
-                manifest.chunks as u64 == self.reader.searcher().num_docs()
-                    && manifest.vectors == self.vectors
-                    && manifest.model_sha256 == self.model_sha256,
-                "cached v2 generation manifest mismatch"
-            );
-            return Ok(());
-        }
-        let manifest = read_manifest(&self.directory)?;
-        ensure!(
-            manifest.schema == 1
-                && manifest.engine == ENGINE
-                && Some(manifest.revision.as_str())
-                    == self.directory.file_name().and_then(|name| name.to_str())
-                && manifest.generation == self.generation
-                && manifest.collection == self.collection
-                && manifest.chunks as u64 == self.reader.searcher().num_docs()
-                && manifest.vectors == self.vectors
-                && manifest.model_sha256 == self.model_sha256,
-            "cached generation manifest identity mismatch"
-        );
-        Ok(())
-    }
-
-    fn read_hit(&self, address: tantivy::DocAddress) -> Result<Hit> {
-        let document: TantivyDocument = self.reader.searcher().doc(address)?;
-        let payload = document
-            .get_first(self.fields.payload)
-            .and_then(|value| value.as_str())
-            .context("missing lexical citation")?;
-        Ok(serde_json::from_str(payload)?)
-    }
-
-    fn bound(&self, hits: Vec<Hit>, query: &SearchQuery) -> SearchResponse {
-        let mut response = SearchResponse {
-            publication: self.v2_receipt.as_ref().map(|receipt| {
-                airk_core::evidence::RevisionEnvelope::new(self.collection.clone(), receipt.token)
-            }),
-            generation: self.generation,
-            collection: self.collection.clone(),
-            hits: Vec::new(),
-            truncated: false,
-        };
-        let mut remaining = query.max_bytes;
-        for mut hit in hits {
-            if remaining == 0 || response.hits.len() == query.limit {
-                response.truncated = true;
-                break;
-            }
-            let (text, truncated) = truncate_utf8(&hit.text, remaining);
-            hit.text = text;
-            hit.truncated |= truncated;
-            remaining -= hit.text.len();
-            response.truncated |= hit.truncated;
-            response.hits.push(hit);
-        }
-        response
     }
 }
 

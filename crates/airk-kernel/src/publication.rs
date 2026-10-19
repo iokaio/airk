@@ -362,7 +362,7 @@ impl Kernel {
             lineage_digest: Sha256Digest::from_bytes([0; 32]),
             profiles,
             files,
-            retrieval_specification: std::str::from_utf8(persistent::retrieval_specification_v3())?
+            retrieval_specification: std::str::from_utf8(persistent::retrieval_specification_v4())?
                 .into(),
             embedding_model: projection.embedding_model.clone(),
             extractor_version: projection.extractor_version.clone(),
@@ -604,7 +604,7 @@ impl Kernel {
         let token = RevisionToken {
             incarnation,
             generation,
-            revision: revision_digest(persistent::retrieval_specification_v3(), &canonical),
+            revision: revision_digest(persistent::retrieval_specification_v4(), &canonical),
         };
         let source = airk_store::blobs::RetainedSource {
             store: &self.store,
@@ -635,6 +635,12 @@ impl Kernel {
                 .map(|cache| cache as &dyn airk_core::embedding::EmbeddingCache),
             bypass: reason == PublicationReason::FullReindex,
             stats: &mut cache_stats,
+            max_workers: airk_retrieval::embedding_batch::worker_limit(
+                std::env::var("AIRK_INDEX_WORKERS").ok().as_deref(),
+                std::thread::available_parallelism().map_or(1, usize::from),
+            )?,
+            working_memory_bytes: (crate::limits::machine::memory_bytes().unwrap_or(2 << 30) / 8)
+                .clamp(128 << 20, 1 << 30) as usize,
         };
         let receipt = persistent::prepare_streaming_v3_cached(
             self.store.directory(),

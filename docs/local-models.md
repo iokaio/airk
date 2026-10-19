@@ -1,6 +1,10 @@
 # Local vector models and retrieval
 
-AIRK provides persistent lexical retrieval without a model. Vector and hybrid retrieval are optional and entirely local. A missing model is explicitly **not ready**, with no remote fallback or fabricated hash vectors.
+AIRK enables vector indexing and hybrid search by default for each collection. The trusted extension prepares the pinned MiniLM model before indexing; the panel shows setup progress and failures. Turn **Vector search** off in the panel to opt out. The saved setting applies to all CLI/MCP connections for that collection. A missing model is explicitly **not ready**; it does not silently disable vectors or use remote inference.
+
+Native-only installations can provision the [pinned model](onnx-models.md) with the supplied script before indexing. Native source indexing without assets can retain lexical evidence, but default hybrid queries remain not ready until a model-bearing generation is published. Explicit `--mode lexical` remains available for individual queries. MCP reads never download files.
+
+The panel installs verified local inputs with `airk collections vectors install <directory>` under native quota reservations. It uses `airk collections vectors show` and `airk collections vectors set --enabled false` (or `true`) to save the collection setting under the native writer lock. Opt-out immediately selects lexical default queries and rejects vector/hybrid queries; the following index omits the model and DiskANN graph. Re-enabling requires indexing again if vectors were removed. Old leased/retained generations and shared input model files are preserved until their normal lifecycle permits cleanup.
 
 The [CPU transformer adapter](onnx-models.md) executes deliberately provisioned ONNX models using tract and a local BERT WordPiece tokenizer. A pinned Apache-2.0 MiniLM recipe, real-model retrieval test and independent ONNX Runtime numerical comparison are provided. Schema 2 binds weights, tokenizer, license, context and pooling into one revision identity. The schema 1 word-vector adapter below remains compatible with existing assets.
 
@@ -10,7 +14,7 @@ The initial embedding adapter averages recognized pretrained word vectors and L2
 
 Place `model.json` and `vocabulary.json` at `<data-dir>/models/local/`.
 
-`vocabulary.json` maps lowercase tokens to equal-length arrays of finite float32-compatible values. Use a model you are authorized to use and redistribute; record its actual license. AIRK does not download a model or silently accept a license. This original test fixture illustrates format, not production quality:
+`vocabulary.json` maps lowercase tokens to equal-length arrays of finite float32-compatible values. Use a model you are authorized to use and redistribute; record its actual license. Custom assets remain an explicit operator input; automatic extension setup uses only the pinned Apache-2.0 MiniLM recipe. This original test fixture illustrates format, not production quality:
 
 ~~~json
 {"authenticate":[1.0,0.0],"login":[0.99,0.01],"invoice":[0.0,1.0]}
@@ -45,7 +49,7 @@ Indexing reuses vectors only for identical chunk input under the complete embedd
 
 ## Query modes and budgets
 
-Lexical mode is the default. Vector mode performs approximate DiskANN retrieval; `--semantic` remains an alias for vector mode. Hybrid mode uses reciprocal-rank fusion with constant 60 over bounded lexical and vector lists from one generation. MCP `airk_search` supports `mode` values `lexical`, `vector`, `hybrid`. Citation paths, hashes and original document locations are preserved.
+Omitting the mode selects hybrid when vectors are enabled, and lexical after the collection opts out. Vector mode performs approximate DiskANN retrieval; `--semantic` remains an alias for vector mode. Hybrid mode uses reciprocal-rank fusion with constant 60 over bounded lexical and vector lists from one generation. MCP `airk_search` supports `mode` values `lexical`, `vector`, `hybrid`. Citation paths, hashes and original document locations are preserved.
 
 The kernel caps hits, response text bytes and vector candidate work. Filtering bounded vector candidates by path can underfill results, and an incomplete scan sets `truncated`. Approximate retrieval does not prove other matching evidence is absent. Each result's generation identifies its source/model revision.
 

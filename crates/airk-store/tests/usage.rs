@@ -38,6 +38,7 @@ fn observation(scope: &UsageScope, id: u8) -> UsageObservation {
         truncated: false,
         response_representation: ResponseRepresentation::LogicalResultJson,
         response_utf8_bytes: Some(400),
+        baseline_unavailable: None,
         baseline: Some(ContextBaseline {
             kind: BaselineKind::FullReturnedSources,
             generation: 1,

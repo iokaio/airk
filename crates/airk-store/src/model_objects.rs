@@ -179,6 +179,69 @@ impl ModelObjects {
     }
 }
 
+/// Install verified input assets once, under native quota/lifecycle ownership.
+/// Source is a private download directory outside managed state. Existing input
+/// models are never replaced; collection publication retains its own copies.
+pub fn install_input_model(
+    source: &Path,
+    set: &ModelObjectSet,
+    quota: &crate::quota::Quota,
+    collection: &str,
+) -> Result<()> {
+    set.validate()?;
+    directory_ancestors(source, false)?;
+    let parent = quota.root().join("models");
+    directory_ancestors(&parent, true)?;
+    let bytes = set.assets.values().map(|reference| reference.bytes).sum();
+    let reservation = quota.reserve(collection, bytes)?;
+    fs::create_dir_all(&parent)?;
+    directory_ancestors(&parent, false)?;
+    let lock_path = parent.join("install.lock");
+    if let Ok(metadata) = fs::symlink_metadata(&lock_path) {
+        ensure!(
+            metadata.is_file() && !metadata.file_type().is_symlink(),
+            "invalid model install lock"
+        );
+    }
+    let lock = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(lock_path)?;
+    lock.try_lock()
+        .context("another AIRK process is installing model assets; retry indexing")?;
+    let destination = parent.join("local");
+    ensure!(
+        !destination.try_exists()?,
+        "local model already exists; preserving existing assets"
+    );
+    let staging = tempfile::tempdir_in(reservation.staging_directory()?)?;
+    for (name, reference) in &set.assets {
+        let input_path = source.join(name.filename());
+        verify_file(&input_path, reference)?;
+        reservation.charge(reference.bytes)?;
+        let target = staging.path().join(name.filename());
+        let mut output = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&target)?;
+        let mut input = File::open(input_path)?.take(reference.bytes);
+        ensure!(
+            std::io::copy(&mut input, &mut output)? == reference.bytes,
+            "model input shortened during install"
+        );
+        output.sync_all()?;
+        verify_file(&target, reference)?;
+    }
+    #[cfg(unix)]
+    File::open(staging.path())?.sync_all()?;
+    fs::rename(staging.path(), &destination)?;
+    #[cfg(unix)]
+    File::open(parent)?.sync_all()?;
+    Ok(())
+}
+
 fn directory_ancestors(path: &Path, missing_allowed: bool) -> Result<()> {
     for ancestor in path.ancestors().filter(|path| !path.as_os_str().is_empty()) {
         match fs::symlink_metadata(ancestor) {

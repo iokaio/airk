@@ -1,14 +1,39 @@
 # Native VS Code extension
 
+**Open AIRK Tools** on each dashboard collection, or **AIRK: Open AIRK Tools** in the Command Palette, opens an interactive console in the Terminal panel. It launches the verified bundled helper directly with that collection's root and storage. Enter `list`, `help airk_search`, `call airk_status`, or `exit`. [Direct MCP tool access](mcp.md#call-tools-without-a-coding-agent) documents JSON/file arguments and standalone equivalents. Trust is required; the console does not trigger indexing. Existing consoles close when their collection bindings change or the extension shuts down.
+
 An independent thin native-helper extension is implemented under [packages/vscode](../packages/vscode). It wraps the Rust kernel and bundles the native helper in platform-specific VSIX packages. Version 1.1.2 uses the stable release channel. Local and ordinary CI candidates contain unsigned helpers; the separate GitHub release workflow signs Windows/macOS downloads. [Windows local build/review instructions](windows-local-build.md) provide the single PowerShell command and an isolated editor test.
 
 [Deployment and packaging](extension-deployment.md) adapts VCP's delivery practices; [CI](ci-and-builds.md) builds matching native and extension candidates on all three operating systems. Actual observed checks remain in [validation](validation.md).
+
+## CLI installation and PATH
+
+On first trusted activation, the extension copies its verified native helper to a stable `cli/bin` directory under its per-user extension storage. The executable is `airk.exe` on Windows and `airk` on macOS/Linux. Updates replace that copy atomically; the directory does not contain an extension version. No Cargo, Rust, administrator permission or system-wide installation is needed. Installation runs when the extension activates, not while VS Code is closed after a VSIX download.
+
+The dashboard's **Use AIRK in your terminal** note starts with `airk --help`, reports setup status, and offers **Install or repair CLI**. The Command Palette also exposes **AIRK: Install or Repair CLI**. A CLI setup failure is logged and shown separately; it does not stop indexing or the collection-scoped tools console.
+
+- **VS Code terminals:** the extension contributes the stable directory through VS Code's terminal environment collection. Open a new terminal after activation.
+- **Windows external terminals:** setup appends the directory to the current user's registry PATH, preserving existing entries, expandable variables and the registry value type. It broadcasts the environment change. Restart Windows Terminal/PowerShell or sign out and back in if a new tab still inherits the old environment.
+- **macOS/Linux external terminals:** setup appends guarded PATH blocks to `.profile`, `.bashrc`, the first existing `.bash_profile`/`.bash_login`, `.zprofile`, `.zshrc`, and fish's `conf.d/airk-path.fish`. It honors absolute `ZDOTDIR` and `XDG_CONFIG_HOME`. Existing commands are preserved and repeated setup does not append duplicate blocks. Open a new shell after setup. Other shells or profiles that exit early may need manual PATH configuration.
+- **Remote workspaces:** installation and PATH changes occur on the extension host (SSH host, WSL distribution or container), not automatically on the local desktop too.
+
+Set `airk.cli.autoInstall` to `false` in **User** settings before activation to skip automatic setup. Workspace values cannot override that choice. This stops future automatic installation; it does not remove an existing CLI or PATH entries. Explicit **Install or Repair CLI** still works. Source collection settings are never baked into this executable: ordinary CLI commands retain their native workspace/storage defaults. Use **Open AIRK Tools** to target an extension-managed collection with its existing root, storage and collection arguments.
+
+If Windows locks a running CLI during an update, the previous executable remains intact and setup reports failure. Close that process and run **Install or Repair CLI**. Redirected/non-file shell startup files are reported for manual configuration rather than overwritten. Existing aliases or another `airk` earlier on PATH can still select an older executable; inspect `Get-Command airk -All` in PowerShell or `command -v airk` in a POSIX shell and remove the stale alias or entry.
+
+VS Code has no general extension-uninstall hook for reversing user shell changes. To remove this CLI, disable automatic setup, remove its `cli/bin` entry from Windows user PATH or remove the marked `# AIRK CLI PATH` blocks from your shell profiles, and delete only the extension storage's `cli` directory. Uninstalling the extension removes its VS Code terminal environment contribution; user PATH/profile edits and the cached executable may remain. Do not delete the sibling indexes directory to remove the CLI.
+
+Windows tests exercise executable discovery and registry-value handling through an isolated registry double. POSIX profile-generation fixtures run on Windows; execution fixtures run on POSIX hosts. These checks do not establish clean-machine macOS/Linux, remote-host or installed-editor qualification.
 
 ## Runtime and distribution
 
 A Node extension host can launch the native AIRK process. Workspace extensions run alongside workspace files; remote windows need the helper on that remote host, not a local path pretending to read remote source. A pure browser extension cannot directly host the current native stack. This follows the documented [extension host model](https://code.visualstudio.com/api/advanced-topics/extension-host).
 
 Package platform-specific helpers for Windows, macOS and Linux. VS Code supports target-specific VSIX packages, including Windows/Linux x64 and ARM64 plus macOS x64 and ARM64. Bundle the right executable and dependency notices so users do not install Docker, Rust, C/C++ tools or Python. Extension updates must preserve a stable helper launch path for separately configured agents. Platform and macOS signing/notarization requirements still need packaging qualification. [Platform packaging documentation](https://code.visualstudio.com/api/working-with-extensions/publishing-extension) supports this delivery approach; the ease-of-use assessment is our inference.
+
+## Vector search
+
+Each collection defaults to local vector indexing and hybrid retrieval. The **Vector search** panel switch saves a native collection policy and requests indexing. Turning it off changes default queries to lexical immediately; the next successful index omits vectors. Turning it on prepares the pinned MiniLM assets (about 91 MB) if absent, then indexes. The panel reports setup/build progress and errors. Existing custom assets are preserved, downloads are size/digest checked and installed atomically, and inference stays local. See [model setup and opt-out behavior](local-models.md).
 
 ## Storage and collection UI
 

@@ -2,7 +2,7 @@
 
 **AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents**
 
-Start with the [combined October 17 release summary](releases-2026-10-17.md) for 1.1.0–1.1.2, current defaults, upgrade steps and qualification evidence. For setup, use [coding-agent integration](agent-integration.md) and [extension controls](vscode-extension.md); for indexing and disk use, use [ingestion limits and detail](ingestion-limits.md), [storage quotas](storage-quotas.md) and [retention](retention.md).
+Start with the [1.1.4 release notes](release-1.1.4.md) and the [combined October 17 release summary](releases-2026-10-17.md) for 1.1.0–1.1.2, current defaults, upgrade steps and qualification evidence. For setup, use [coding-agent integration](agent-integration.md) and [extension controls](vscode-extension.md); for indexing and disk use, use [ingestion limits and detail](ingestion-limits.md), [storage quotas](storage-quotas.md) and [retention](retention.md).
 
 - [Architecture and code boundaries](architecture.md)
 - [Architecture v2: combined implementation and subagent plan](architecture-v2.md)
@@ -25,6 +25,10 @@ Start with the [combined October 17 release summary](releases-2026-10-17.md) for
 - [Explicit local model assets and vector/hybrid retrieval](local-models.md)
 - [Durable native scheduling and crash recovery](native-scheduler.md)
 - [MCP tool contracts](mcp.md)
+- [Request execution, bounded admission and verification costs](request-execution.md)
+- [Code review findings and 1.1.4 implementation record](airkimprovements.md)
+- [Source, parser and provider hardening](ingest-hardening.md)
+- [Resumable inventory/fact discovery and compact outlines](discovery.md)
 - [Coding-agent setup compatibility research](agent-integration.md)
 - [Google Antigravity manual MCP setup](antigravity-mcp.md)
 - [Coding-agent tool alignment and online documentation review](agent-tool-alignment.md)
@@ -36,6 +40,7 @@ Start with the [combined October 17 release summary](releases-2026-10-17.md) for
 - [Usage & Savings PNG previews for 1.1.3](ui/usage-reporting.md)
 - [October 17 combined release notes: 1.1.0–1.1.2](releases-2026-10-17.md)
 - [1.1.3 implementation and qualification: Usage & Savings](release-1.1.3.md)
+- [1.1.4 local candidate: reliable usage comparisons](release-1.1.4.md)
 - [Measuring AIRK's value: sessions, evaluation and overhead](usage-evaluation.md)
 - [1.1.2 implementation and qualification: coding-agent connections](release-1.1.2.md)
 - [1.1.1 implementation and qualification: dashboard, storage and recovery](release-1.1.1.md)

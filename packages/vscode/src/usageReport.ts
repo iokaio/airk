@@ -17,6 +17,15 @@ const clientName = (v: unknown): string => ({ claude_code: 'Claude Code', codex:
 const recordingName = (v: unknown): string => ({ aggregates_only: 'Daily totals', diagnostic_events: 'Daily totals and short-lived diagnostics', disabled: 'Off' })[String(v)] ?? 'Not available';
 const sessionCoverage = (count: unknown, total: unknown): string => `${display(count)} of ${display(total)} sessions measured`;
 const comparison = (report: Data): Data => obj(obj(report.comparisons).full_returned_sources);
+const baselineReason = (key: string): string => ({
+    not_recorded: 'Reason not recorded by the earlier recorder', missing_citation: 'No usable source citation',
+    too_many_sources: 'Too many cited sources', missing_revision: 'Response has no indexed revision',
+    revision_unavailable: 'The cited revision is no longer available', revision_mismatch: 'Revision or response format differs',
+    source_unavailable: 'Cited source is unavailable', source_mismatch: 'Cited source hash differs',
+    inventory_limit: 'Older index exceeds the comparison inventory limit', source_payload_limit: 'Older source payload exceeds the comparison limit',
+    source_text_limit: 'Older source text exceeds the comparison limit', measurement_error: 'Comparison could not be verified'
+})[key] ?? 'Unrecognized comparison reason';
+const evidenceOperations = new Set(['search', 'read_file', 'outline', 'symbols', 'imports', 'document_facts', 'references', 'context', 'code_facts', 'relationships']);
 export function reductionPercent(baseline: unknown, returned: unknown): string {
     const b = integer(baseline), r = integer(returned);
     if (b === undefined || r === undefined || b <= 0n) { return 'Not measured'; }
@@ -51,14 +60,25 @@ export function usageAction(value: unknown): UsageAction | undefined {
 export function renderUsage(value: unknown): string {
     const v = obj(value), report = obj(v.report), health = obj(v.health), c = comparison(report), estimate = obj(c.token_estimate);
     const hasComparison = (integer(c.compared_calls) ?? 0n) > 0n;
+    const compared = integer(c.compared_calls) ?? 0n, eligible = integer(report.eligible_evidence_calls);
+    const unavailable = eligible === undefined ? undefined : eligible - compared;
+    const reasons: unknown[][] = Object.entries(obj(report.baseline_unavailable)).map(([reason, count]) => [baselineReason(reason), count]);
+    const reasonCount = Object.values(obj(report.baseline_unavailable)).reduce<bigint>((sum, count) => sum + (integer(count) ?? 0n), 0n);
+    const unclassified = (integer(report.missing_baseline_calls) ?? 0n) + (integer(report.mismatched_baseline_calls) ?? 0n) - reasonCount;
+    if (unclassified > 0n) { reasons.push([baselineReason('not_recorded'), unclassified.toString()]); }
+    const operationEntries = Object.entries(obj(report.operations));
+    const evidenceCalls = operationEntries.length ? operationEntries.filter(([name]) => evidenceOperations.has(name)).reduce((sum, [, raw]) => sum + (integer(obj(raw).calls) ?? 0n), 0n) : undefined;
+    const otherCalls = evidenceCalls === undefined || integer(report.calls) === undefined ? undefined : integer(report.calls)! - evidenceCalls;
     const days = v.days === 7 ? 7 : 30;
     const controls = `<nav aria-label="Usage report controls"><label for="usage-days">Show <select id="usage-days"><option value="7"${days === 7 ? ' selected' : ''}>Last 7 days</option><option value="30"${days === 30 ? ' selected' : ''}>Last 30 days</option></select></label> ${button('refresh', 'Refresh')} ${button('csv', 'Export spreadsheet')} ${button('markdown', 'Export summary')}</nav>`;
     const status = v.status === 'disabled' ? 'Recording is off. Earlier records can still appear below.' : v.status === 'empty' ? 'No usage recorded yet. Connect an agent and ask it to use AIRK to find something in this collection.'
         : 'This report covers recorded activity. Some requests may be missing; it is not a complete account of your agent sessions.';
     const headline = `<p>${esc(obj(report.scope).collection)} · ${date(report.start_unix_ms)} to ${date(typeof report.end_unix_ms_exclusive === 'number' ? report.end_unix_ms_exclusive - 1 : undefined)} (UTC)</p><p role="status">${esc(status)}</p>`;
     const cards = `<div class="metrics">${card('Estimated tokens avoided', hasComparison ? estimate.nominal_reduction : undefined, 'Estimated tokens avoided compared with sending the complete cited files.')}${card('Smaller results', hasComparison ? reductionPercent(c.baseline_utf8_bytes, c.returned_utf8_bytes) : undefined, 'Only requests with a usable comparison are included. Negative means larger results.')}${card('Requests compared', c.compared_calls ?? 0, `${display(report.eligible_evidence_calls)} evidence requests were eligible for comparison.`)}${card('Recorded AIRK calls', report.calls, 'Includes searches, reads and maintenance. A call does not prove a useful result.')}</div>`;
+    const coverage = `<p><strong>${esc(compared.toString())} of ${esc(eligible?.toString())} eligible requests compared; ${esc(unavailable?.toString())} unavailable.</strong> Evidence requests: ${esc(evidenceCalls?.toString())}. Background and other activity: ${esc(otherCalls?.toString())}. Maintenance and coverage checks receive no token-savings credit.</p>`;
     const explain = `<p>A token is a small piece of text an AI reads. AIRK returns selected passages instead of entire files. We compare those passages, including response formatting, with the complete files cited by the result. Your agent might otherwise have read only part of a file, so this is an estimate, not measured token or bill savings.</p>
-        <p>${hasComparison ? `Using different text-to-token assumptions gives ${esc(estimate.assumption_low)} to ${esc(estimate.assumption_high)} tokens of reduction. This range is not a guarantee.` : 'There are no usable file comparisons yet. Large files, missing citations or a changed index can prevent a comparison.'}</p>
+        <p>${hasComparison ? `Using different text-to-token assumptions gives ${esc(estimate.assumption_low)} to ${esc(estimate.assumption_high)} tokens of reduction. This range is not a guarantee.` : 'There are no usable file comparisons yet. Check the reasons below. After updating AIRK, index this collection to create compact source measurements and restart connected agent MCP sessions. Verify that your agent uses this collection and storage directory.'}</p>
+        ${reasons.length ? table(['Why comparisons were unavailable', 'Requests'], reasons) + '<p>Older missing comparisons cannot be reconstructed from daily totals. New measurements do not fill in earlier history.</p>' : ''}
         <p>Time saved and actual money saved: <strong>not established by AIRK activity alone</strong>. Import matched task results below to compare completed work.</p>`;
     const history = array(v.history).map(raw => { const day = obj(raw), comp = comparison(day); return [date(day.start_unix_ms), day.calls, comp.compared_calls ?? 0, obj(comp.token_estimate).nominal_reduction]; });
     const lifetime = obj(v.lifetime), lc = comparison(lifetime);
@@ -101,7 +121,7 @@ export function renderUsage(value: unknown): string {
         <h3>Recording health</h3><p>History completeness: not certified. Missing observations across processes: ${esc(report.dropped_observations)}. Drops in this report process: ${esc(v.process_dropped_observations)}. Ledger size: ${esc(health.database_bytes)} bytes. Duplicate requests ignored: ${esc(health.duplicate_observations)}.</p>
         ${table(['Client', 'Recorded calls'], Object.entries(obj(report.clients)))}${table(['Content type', 'Recorded calls'], Object.entries(obj(report.content_kinds)))}
         <p>Explicit feedback: ${esc(health.useful_feedback)} useful, ${esc(health.partly_useful_feedback)} partly useful, ${esc(health.not_useful_feedback)} not useful. Unrated results have unknown usefulness.</p></details>`;
-    return controls + headline + cards + section('What do these numbers mean?', explain) + section('Daily activity', table(['UTC date', 'Recorded calls', 'Compared requests', 'Estimated context reduction (tokens)'], history))
+    return controls + headline + cards + coverage + section('What do these numbers mean?', explain) + section('Daily activity', table(['UTC date', 'Recorded calls', 'Compared requests', 'Estimated context reduction (tokens)'], history))
         + section('Longer-term progress', longer) + section('Agent sessions and task results', supplied) + section('What might this be worth?', costs) + technical
         + section('Your local usage history', `<p>Recording: ${esc(recordingName(obj(v.policy).mode))}. Details are retained for ${esc(obj(v.policy).aggregate_retention_days)} days. Queries, file contents and prompts are not stored in the usage ledger.</p>${button('recording', 'Change recording…')} ${button('clear', 'Clear usage history…')}`);
 }

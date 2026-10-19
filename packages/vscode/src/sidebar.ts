@@ -2,6 +2,7 @@
 import { randomBytes } from 'node:crypto';
 import { CoverageView, coverageLabel } from './coverage';
 import { IndexMode } from './model';
+import { VectorStatus } from './vectorModel';
 
 export interface ControlGroup { label: string; commands: [string, string, string][] }
 export interface McpVerification {
@@ -14,22 +15,26 @@ export interface DetailStatus {
 export interface SidebarCollection {
     collection: string; name: string; root: string; dataDir: string; state: string;
     coverage?: CoverageView; diskBytes?: number; lastIndexed?: string; error?: string;
-    mcp?: McpVerification; detail?: DetailStatus;
+    mcp?: McpVerification; detail?: DetailStatus; vectors?: VectorStatus; vectorProgress?: string;
     usage?: { calls: number; reduction?: string; compared: number; checkedAt: number; disabled: boolean };
 }
 export interface SidebarState {
     trusted: boolean; paused: boolean; mode: IndexMode; changingStorage: boolean;
     collections: SidebarCollection[]; groups: ControlGroup[];
     registrationEnabled?: boolean;
+    cliStatus?: 'ready' | 'failed' | 'disabled';
 }
-export type SidebarAction = { type: 'detail'; collection: string; dataDir: string; level: IndexDetail } | { type: 'ready' } | { type: 'mode'; value: IndexMode }
+export type SidebarAction = { type: 'vectors'; collection: string; dataDir: string; enabled: boolean } | { type: 'detail'; collection: string; dataDir: string; level: IndexDetail } | { type: 'ready' } | { type: 'mode'; value: IndexMode }
     | { type: 'registration'; enabled: boolean }
     | { type: 'command'; command: string }
-    | { type: 'collection'; action: 'index' | 'reindex' | 'status' | 'usage' | 'verify' | 'mcpDetails'; collection: string; dataDir: string };
+    | { type: 'collection'; action: 'index' | 'reindex' | 'status' | 'usage' | 'verify' | 'mcpDetails' | 'tools'; collection: string; dataDir: string };
 
 export function sidebarAction(value: unknown, allowed: Set<string>): SidebarAction | undefined {
     if (!value || typeof value !== 'object') { return; }
     const item = value as Record<string, unknown>;
+    if (item.type === 'vectors' && typeof item.collection === 'string' && typeof item.dataDir === 'string' && typeof item.enabled === 'boolean') {
+        return { type: 'vectors', collection: item.collection, dataDir: item.dataDir, enabled: item.enabled };
+    }
     if (item.type === 'detail' && typeof item.collection === 'string' && typeof item.dataDir === 'string'
         && typeof item.level === 'string' && ['essential', 'balanced', 'detailed'].includes(item.level)) {
         return { type: 'detail', collection: item.collection, dataDir: item.dataDir, level: item.level as IndexDetail };
@@ -42,7 +47,7 @@ export function sidebarAction(value: unknown, allowed: Set<string>): SidebarActi
     if (item.type === 'command' && typeof item.command === 'string' && allowed.has(item.command)) {
         return { type: 'command', command: item.command };
     }
-    if (item.type === 'collection' && typeof item.action === 'string' && ['index', 'reindex', 'status', 'usage', 'verify', 'mcpDetails'].includes(item.action)
+    if (item.type === 'collection' && typeof item.action === 'string' && ['index', 'reindex', 'status', 'usage', 'verify', 'mcpDetails', 'tools'].includes(item.action)
         && typeof item.collection === 'string' && typeof item.dataDir === 'string') {
         return { type: 'collection', action: item.action as Extract<SidebarAction, { type: 'collection' }>['action'], collection: item.collection, dataDir: item.dataDir };
     }
@@ -67,6 +72,7 @@ export function sidebarContent(state: SidebarState): string {
         const view = item.coverage, report = view?.report, label = coverageLabel(view);
         const indexing = item.state === 'indexing';
         const status = indexing ? 'Indexing saved files' : state.paused ? 'Auto-indexing paused'
+            : item.state === 'current' && item.vectors?.pending_reindex ? 'Vector change pending'
             : item.state === 'current' && item.detail?.pending_reindex ? 'Detail change pending'
             : item.state === 'current' && (view?.pending || (report && (report.stale || report.missing || report.pending_removals))) ? 'Changes detected'
             : item.state === 'current' && (!report || !report.scan_complete || report.budget_exhausted) ? 'Indexed; coverage unverified' : ({
@@ -81,7 +87,12 @@ export function sidebarContent(state: SidebarState): string {
             ${!item.detail ? '<option>Loading current setting…</option>' : (['essential', 'balanced', 'detailed'] as const).map(level => `<option value="${level}"${item.detail?.configured_detail === level ? ' selected' : ''}>${level === 'balanced' ? 'Balanced (recommended)' : level[0].toUpperCase() + level.slice(1)}</option>`).join('')}</select>
             <p class="muted">Essential: text and citations. Balanced: adds declarations, imports and document facts. Detailed: adds call occurrences and document change tracking.</p>
             ${item.detail ? `<p role="status">Published: <strong>${escape(item.detail.published_detail ?? 'Not indexed')}</strong>${item.detail.pending_reindex ? ' · Change pending indexing' : ''}</p>` : '<p class="muted">Current detail is not available yet.</p>'}
-            <p class="muted">Changing detail rebuilds evidence. The published index remains available until success. History retention and optional models are separate.</p></div>`;
+            <p class="muted">Changing detail rebuilds evidence. The published index remains available until success. History retention and vector search are separate.</p></div>`;
+        const vectors = `<div class="mcp"><h3>Vector search</h3>
+            <label class="toggle"><input id="${escape(item.collection)}-vectors" type="checkbox" role="switch" ${attributes} data-vectors="true"${item.vectors?.enabled !== false ? ' checked' : ''}${disabled || !item.vectors || indexing || state.changingStorage ? ' disabled' : ''}> Include meaning-based matches</label>
+            <p class="muted">On by default. Combines local vector search with keyword results. First setup downloads about 91 MB of model files; your source files stay on this machine. Uses CPU and additional index storage.</p>
+            <p role="status">${escape(item.vectorProgress ?? (!item.vectors ? 'Loading vector setting...' : !item.vectors.enabled ? 'Off: keyword search' : item.vectors.pending_reindex ? 'On: waiting for model setup and indexing' : `On: ${item.vectors.indexed_vectors} indexed vectors`))}</p>
+            ${item.vectors?.pending_reindex ? '<p class="muted">Index now to apply the setting. Previous index data remains until a successful rebuild and normal cleanup.</p>' : ''}</div>`;
         const percentage = /^\d+%$/.test(label) ? Number(label.slice(0, -1)) : undefined;
         const progress = percentage === undefined ? '' : `<progress max="100" value="${percentage}" aria-label="Measured index coverage">${percentage}%</progress>`;
         const last = item.lastIndexed ? new Date(item.lastIndexed).toLocaleString() : 'Not indexed in this editor yet';
@@ -94,7 +105,9 @@ export function sidebarContent(state: SidebarState): string {
             ${mcp?.error ? `<p class="error">${escape(mcp.error.slice(0, 600))}</p>` : ''}
             <div class="actions"><button id="${escape(item.collection)}-verify" ${attributes} data-action="verify"${disabled || checking || state.changingStorage ? ' disabled' : ''}>Check AIRK helper</button>
             <button id="${escape(item.collection)}-mcpDetails" class="secondary" ${attributes} data-action="mcpDetails"${disabled || !mcp || checking ? ' disabled' : ''}>View details</button></div>
-            <p class="muted">Checks this collection’s helper, not whether an agent is connected. Verification updates the index first.</p></div>`;
+            <p class="muted">Checks this collection’s helper, not whether an agent is connected. Verification updates the index first.</p>
+            <button id="${escape(item.collection)}-tools" class="secondary" ${attributes} data-action="tools"${disabled || state.changingStorage ? ' disabled' : ''}>Open AIRK Tools</button>
+            <p class="muted">Call tools directly in the Terminal panel. Includes help, examples and JSON results for this collection.</p></div>`;
         return `<section class="collection"><div class="heading"><h2>${escape(item.name)}</h2><span class="badge${indexing ? ' working' : ''}">${escape(status)}</span></div>
             <p class="path" title="${escape(item.root)}">${escape(item.root)}</p>
             <div class="coverage"><strong>${escape(label)}</strong><span>saved-file coverage</span></div>${progress}
@@ -102,16 +115,20 @@ export function sidebarContent(state: SidebarState): string {
             ${report ? `<p class="muted">${escape(report.extraction_failed)} extraction failures · ${escape(report.unsupported)} unsupported · ${escape(report.capacity_blocked)} capacity blocked</p>` : '<p class="muted">Coverage appears after the first inventory scan.</p>'}
             ${view?.pending && report ? '<p class="muted">Files changed; these counts are from the previous scan.</p>' : ''}
             ${error ? `<p class="error" role="status">${escape(error.slice(0, 600))}</p>` : ''}${actions}
-            <p class="muted">${item.usage ? `Last 30 days: ${escape(item.usage.calls)} recorded calls · ${escape(item.usage.reduction ?? 'Not measured')} estimated tokens avoided versus complete cited files (${escape(item.usage.compared)} comparisons). ${item.usage.disabled ? 'Recording is off. ' : ''}Updated ${escape(new Date(item.usage.checkedAt).toLocaleTimeString())}.` : 'Open Usage &amp; Savings to see activity and estimated savings.'}</p>${detail}
+            <p class="muted">${item.usage ? `Last 30 days: ${escape(item.usage.calls)} recorded calls · ${escape(item.usage.reduction ?? 'Not measured')} estimated tokens avoided versus complete cited files (${escape(item.usage.compared)} comparisons). ${item.usage.disabled ? 'Recording is off. ' : ''}Updated ${escape(new Date(item.usage.checkedAt).toLocaleTimeString())}.` : 'Open Usage &amp; Savings to see activity and estimated savings.'}</p>${vectors}${detail}
             <details id="location-${escape(item.collection)}"><summary>Storage and last index</summary><dl><dt>Index size</dt><dd>${bytes(item.diskBytes)}</dd><dt>Eligible source size</dt><dd>${bytes(report?.eligible_source_bytes)}</dd><dt>Last indexed</dt><dd>${escape(last)}</dd><dt>Index folder</dt><dd class="path">${escape(item.dataDir)}</dd></dl></details>${connection}</section>`;
     }).join('');
     const primaryCommands = new Set(['airk.index', 'airk.reindex', 'airk.indexMode', 'airk.pause', 'airk.resume', 'airk.chooseStorage', 'airk.status', 'airk.verifyMcp', 'airk.setupAgent', 'airk.manageMcp', 'airk.manageVscodeMcp', 'airk.storageLimits', 'airk.retentionPolicy', 'airk.retentionRun']);
     const groups = state.groups.filter(group => group.label !== 'Indexing').map(group => {
-        const rows = group.commands.filter(([, command]) => !primaryCommands.has(command)).map(([label, command, help]) =>
+        const rows = group.commands.filter(([, command]) => !primaryCommands.has(command) && command !== 'airk.installCli').map(([label, command, help]) =>
             `<div class="control">${button(label, command, disabled && command !== 'airk.logs')}<p class="muted">${escape(help)}</p></div>`).join('');
         return `<details id="group-${escape(group.label)}"${group.label === 'Setup and reports' ? ' open' : ''}><summary>${escape(group.label)}</summary>${rows}</details>`;
     }).join('');
     return `<header><h1>AIRK</h1><span class="muted">Local workspace evidence</span></header>${controls}
+        <section><h2>Use AIRK in your terminal</h2>
+        <p>Start with <code>airk --help</code> in a new terminal.</p>
+        <p class="muted">${disabled ? 'Trust this workspace to install the bundled CLI.' : state.cliStatus === 'failed' ? 'CLI setup needs attention. Install or repair it below; see the AIRK output log for details.' : state.cliStatus === 'disabled' ? 'Automatic CLI installation is off. Install it below when you are ready.' : state.cliStatus === 'ready' ? 'CLI installed. Open a new VS Code terminal. Restart external terminal apps after setup to refresh PATH.' : 'The bundled CLI is installed during trusted startup. If the command is unavailable, install or repair it below.'}</p>
+        ${button('Install or repair CLI', 'airk.installCli', disabled)}</section>
         <section>${mode}${state.paused ? '<p class="notice">Automatic jobs are paused. A current pass finishes safely; Index now still works.</p>' : ''}
         ${capacityBlocked && !state.paused ? '<p class="notice">A collection reached its storage limit. Reclaim eligible space or adjust its quota, then Resume.</p>' : ''}
         ${state.changingStorage ? '<p class="notice" role="status">Choosing storage. New indexing jobs are held until this finishes.</p>' : ''}</section>
@@ -141,7 +158,7 @@ export function renderSidebar(state: SidebarState): string {
     restore(vscode.getState());
     dashboard.addEventListener('toggle',remember,true);window.addEventListener('scroll',remember);
     dashboard.addEventListener('click',event=>{const button=event.target.closest('button');if(!button||button.disabled)return;if(button.dataset.action){vscode.postMessage({type:'collection',action:button.dataset.action,collection:button.dataset.collection,dataDir:button.dataset.storage});}else if(button.dataset.command){vscode.postMessage({type:'command',command:button.dataset.command});}});
-    dashboard.addEventListener('change',event=>{if(event.target.dataset.detail)vscode.postMessage({type:'detail',collection:event.target.dataset.collection,dataDir:event.target.dataset.storage,level:event.target.value});if(event.target.id==='mode')vscode.postMessage({type:'mode',value:event.target.value});if(event.target.id==='registration')vscode.postMessage({type:'registration',enabled:event.target.checked});});
+    dashboard.addEventListener('change',event=>{if(event.target.dataset.vectors)vscode.postMessage({type:'vectors',collection:event.target.dataset.collection,dataDir:event.target.dataset.storage,enabled:event.target.checked});if(event.target.dataset.detail)vscode.postMessage({type:'detail',collection:event.target.dataset.collection,dataDir:event.target.dataset.storage,level:event.target.value});if(event.target.id==='mode')vscode.postMessage({type:'mode',value:event.target.value});if(event.target.id==='registration')vscode.postMessage({type:'registration',enabled:event.target.checked});});
     window.addEventListener('message',event=>{if(event.data.type!=='render')return;remember();const state=vscode.getState(),focus=document.activeElement?.id;dashboard.innerHTML=event.data.html;restore(state);if(focus)document.getElementById(focus)?.focus({preventScroll:true});});
     vscode.postMessage({type:'ready'});
     </script></body></html>`;
@@ -157,6 +174,8 @@ export function sidebarControlGroups(): ControlGroup[] {
             ['Pause Auto-indexing', 'airk.pause', 'Stop automatic jobs; keep queued changes'],
             ['Resume Auto-indexing', 'airk.resume', 'Restart automatic jobs after a pause or budget stop']] },
         { label: 'Setup and reports', commands: [
+            ['Install or Repair CLI', 'airk.installCli', 'Make airk available in new terminals'],
+            ['Open AIRK Tools', 'airk.openTools', 'Call MCP tools in a collection terminal with help and examples'],
             ['Connect Coding Agent…', 'airk.setupAgent', 'Choose an agent and follow its setup guide'],
             ['Check AIRK MCP Helper', 'airk.verifyMcp', 'Handshake with the helper and list its tools'],
             ['Manage Agent Connections', 'airk.manageMcp', 'Choose the coding agent to configure'],

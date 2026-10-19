@@ -431,12 +431,14 @@ impl OriginalManifest {
                 self.engine == "tantivy-0.26.2/diskann-0.59.0/airk-file-1/generation-4/inventory-2"
             }
             3 => {
-                self.engine
-                    == "tantivy-0.26.2/diskann-0.59.0/airk-file-1/generation-5/inventory-2/model-objects-1"
-                    && !self
-                        .components
-                        .keys()
-                        .any(|name| name.starts_with("model/"))
+                matches!(
+                    self.engine.as_str(),
+                    "tantivy-0.26.2/diskann-0.59.0/airk-file-1/generation-5/inventory-2/model-objects-1"
+                        | "tantivy-0.26.2/diskann-0.59.0/airk-file-1/generation-5/inventory-2/model-objects-1/source-context-1"
+                ) && !self
+                    .components
+                    .keys()
+                    .any(|name| name.starts_with("model/"))
                     && self.components.contains_key("model-objects.json")
                         == self.model_sha256.is_some()
             }

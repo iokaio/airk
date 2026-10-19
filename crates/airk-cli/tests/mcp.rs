@@ -75,6 +75,84 @@ impl Drop for Session {
 }
 
 #[test]
+fn default_search_uses_vectors_and_live_mcp_connections_observe_panel_opt_out() -> anyhow::Result<()>
+{
+    let root = tempfile::tempdir()?;
+    let state = tempfile::tempdir_in(std::env::temp_dir().canonicalize()?)?;
+    fs::write(root.path().join("auth.txt"), "authenticate")?;
+    let model = state.path().join("models/local");
+    fs::create_dir_all(&model)?;
+    fs::write(
+        model.join("vocabulary.json"),
+        br#"{"authenticate":[1.0,0.0],"login":[0.99,0.01]}"#,
+    )?;
+    fs::write(
+        model.join("model.json"),
+        serde_json::to_vec(&json!({
+            "schema":1,"name":"original-mcp-default-fixture","license":"Apache-2.0","dimensions":2,
+            "sha256":"44c954367402ad93265c92c015fbfa80eaeb8dd7b2ec44b64650d7071df4d2f5"
+        }))?,
+    )?;
+    let cli = |args: &[&str]| -> anyhow::Result<Value> {
+        let output = Command::new(env!("CARGO_BIN_EXE_airk"))
+            .arg("--root")
+            .arg(root.path())
+            .arg("--data-dir")
+            .arg(state.path())
+            .args(["--collection", "project-a"])
+            .args(args)
+            .output()?;
+        anyhow::ensure!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(serde_json::from_slice(&output.stdout)?)
+    };
+    cli(&["index"])?;
+    assert_eq!(
+        cli(&["search", "login"])?["hits"][0]["citation"]["path"],
+        "auth.txt"
+    );
+    let direct = cli(&[
+        "tools",
+        "call",
+        "airk_search",
+        "--args",
+        r#"{"query":"login","mode":"vector"}"#,
+    ])?;
+    let direct: Value = serde_json::from_str(direct["content"][0]["text"].as_str().unwrap())?;
+    assert_eq!(direct["hits"][0]["citation"]["path"], "auth.txt");
+    let mut session = Session::start(root.path(), state.path())?;
+    session.send(json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"vector-default-test","version":"1"}}}))?;
+    session.receive(1)?;
+    session.send(json!({"jsonrpc":"2.0","method":"notifications/initialized"}))?;
+    let evidence = |reply: Value| -> anyhow::Result<Value> {
+        anyhow::ensure!(reply["result"]["isError"] != true, "{reply}");
+        Ok(serde_json::from_str(
+            reply["result"]["content"][0]["text"].as_str().unwrap(),
+        )?)
+    };
+    let first = evidence(session.call(2, "airk_search", json!({"query":"login"}))?)?;
+    assert_eq!(first["hits"][0]["citation"]["path"], "auth.txt");
+    cli(&["collections", "vectors", "set", "--enabled", "false"])?;
+    let disabled = evidence(session.call(3, "airk_search", json!({"query":"login"}))?)?;
+    assert_eq!(disabled["hits"], json!([]));
+    assert_eq!(first["publication"], disabled["publication"]);
+    assert_eq!(
+        session.call(4, "airk_search", json!({"query":"login","mode":"vector"}))?["result"]["isError"],
+        true
+    );
+    cli(&["collections", "vectors", "set", "--enabled", "true"])?;
+    assert_eq!(
+        evidence(session.call(5, "airk_search", json!({"query":"login"}))?)?["hits"][0]["citation"]
+            ["path"],
+        "auth.txt"
+    );
+    Ok(())
+}
+
+#[test]
 fn durable_key_reads_match_cli_and_mcp_and_reject_filter_combinations() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let state = tempfile::tempdir()?;
@@ -326,8 +404,11 @@ fn concurrent_mcp_agents_share_one_index_and_refresh_after_publication() -> anyh
             .map(|agent| {
                 scope.spawn(|| -> anyhow::Result<()> {
                     barrier.wait();
-                    let payload =
-                        evidence(agent.call(2, "airk_search", json!({"query":"authenticate"}))?)?;
+                    let payload = evidence(agent.call(
+                        2,
+                        "airk_search",
+                        json!({"query":"authenticate", "mode":"lexical"}),
+                    )?)?;
                     assert_eq!(payload["generation"], old_generation);
                     assert_eq!(payload["collection"], "project-a");
                     assert_eq!(payload["hits"][0]["text"], old_text.trim_end_matches('\n'));
@@ -355,7 +436,7 @@ fn concurrent_mcp_agents_share_one_index_and_refresh_after_publication() -> anyh
                         let payload = evidence(agent.call(
                             id,
                             "airk_search",
-                            json!({"query":"authenticate"}),
+                            json!({"query":"authenticate", "mode":"lexical"}),
                         )?)?;
                         let generation = payload["generation"].as_u64().expect("generation");
                         assert!(generation == old_generation || generation == old_generation + 1);
@@ -384,7 +465,11 @@ fn concurrent_mcp_agents_share_one_index_and_refresh_after_publication() -> anyh
     assert_eq!(published["generation"], old_generation + 1);
     let mut shared_hash = None;
     for agent in &mut agents {
-        let payload = evidence(agent.call(100, "airk_search", json!({"query":"authenticate"}))?)?;
+        let payload = evidence(agent.call(
+            100,
+            "airk_search",
+            json!({"query":"authenticate", "mode":"lexical"}),
+        )?)?;
         assert_eq!(payload["generation"], published["generation"]);
         assert_eq!(payload["hits"][0]["text"], new_text.trim_end_matches('\n'));
         let hash = payload["hits"][0]["citation"]["content_hash"].clone();
@@ -506,6 +591,14 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
     session.send(json!({"jsonrpc":"2.0","id":2,"method":"tools/list"}))?;
     let listed = session.receive(2)?;
     let tools = listed["result"]["tools"].as_array().expect("tools");
+    let catalog = Command::new(env!("CARGO_BIN_EXE_airk"))
+        .args(["tools", "list", "--json"])
+        .output()?;
+    assert!(catalog.status.success());
+    let catalog: Value = serde_json::from_slice(&catalog.stdout)?;
+    let mut advertised = tools.clone();
+    advertised.sort_by_key(|tool| tool["name"].as_str().unwrap().to_owned());
+    assert_eq!(catalog["tools"], json!(advertised));
     assert_eq!(tools.len(), 16);
     assert!(
         tools
@@ -528,7 +621,11 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
         (7, "airk_file_info", json!({"path":"auth.py"})),
         (8, "airk_context", json!({"path":"auth.py","line":2})),
         (9, "airk_references", json!({"name":"authenticate"})),
-        (10, "airk_search", json!({"query":"authenticate"})),
+        (
+            10,
+            "airk_search",
+            json!({"query":"authenticate", "mode":"lexical"}),
+        ),
         (11, "airk_list_files", json!({})),
         (12, "airk_status", json!({})),
         (13, "airk_capabilities", json!({})),
@@ -554,7 +651,7 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
         ),
         (18, "airk_history", json!({"limit": 2, "max_bytes": 4096})),
     ] {
-        let result = session.call(i, name, args)?;
+        let result = session.call(i, name, args.clone())?;
         assert!(result.get("error").is_none(), "{name}: {result}");
         assert_ne!(result["result"]["isError"], true, "{name}: {result}");
         let payload: Value = serde_json::from_str(
@@ -562,6 +659,42 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
                 .as_str()
                 .expect("JSON payload"),
         )?;
+        let direct = Command::new(env!("CARGO_BIN_EXE_airk"))
+            .arg("--root")
+            .arg(root.path())
+            .arg("--data-dir")
+            .arg(state.path())
+            .args([
+                "--collection",
+                "project-a",
+                "tools",
+                "call",
+                name,
+                "--args",
+                &args.to_string(),
+            ])
+            .env("AIRK_USAGE_MODE", "disabled")
+            .output()?;
+        assert!(
+            direct.status.success(),
+            "{name}: {}",
+            String::from_utf8_lossy(&direct.stderr)
+        );
+        let direct: Value = serde_json::from_slice(&direct.stdout)?;
+        let mut direct: Value =
+            serde_json::from_str(direct["content"][0]["text"].as_str().unwrap())?;
+        if name != "airk_status" {
+            // Status includes changing quota/usage observations.
+            let mut expected = payload.clone();
+            expected.as_object_mut().unwrap().remove("request_id");
+            if name == "airk_changes" {
+                // Each call observes scheduler freshness at its own wall-clock instant.
+                assert!(direct["freshness"]["observed_unix_ms"].is_number());
+                direct["freshness"]["observed_unix_ms"] = Value::Null;
+                expected["freshness"]["observed_unix_ms"] = Value::Null;
+            }
+            assert_eq!(direct, expected, "CLI/MCP result mismatch for {name}");
+        }
         if name != "airk_capabilities" {
             assert_eq!(
                 payload

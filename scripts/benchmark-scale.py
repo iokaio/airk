@@ -197,7 +197,7 @@ def synthetic(binary, directory, count, size, measurements, command_timeout=1800
     probes = sorted(set([0, count // 4, count // 2, count - 1]))
     for sample in range(3):
         for index in probes:
-            found = run(f"search-{sample}-{index}", "search", f"airkprobe{index:08d}", "--limit", "1", "--max-bytes", "512")
+            found = run(f"search-{sample}-{index}", "search", "--mode", "lexical", f"airkprobe{index:08d}", "--limit", "1", "--max-bytes", "512")
             expected = f"group{index // 256:04d}/item{index:08d}.txt"
             if len(found["hits"]) != 1 or found["hits"][0]["citation"]["path"] != expected:
                 raise AssertionError("exact sentinel retrieval gate failed")
@@ -214,8 +214,8 @@ def synthetic(binary, directory, count, size, measurements, command_timeout=1800
     changed = run("changed", "index")
     if changed["indexed"] != 1 or changed["removed"] != 1 or changed["generation"] <= first["generation"]:
         raise AssertionError("changed/deleted source revision gate failed")
-    revised = run("search-revised", "search", "revisedprobe00000000", "--limit", "1")
-    deleted = run("search-deleted", "search", "airkprobe00000001", "--limit", "1")
+    revised = run("search-revised", "search", "--mode", "lexical", "revisedprobe00000000", "--limit", "1")
+    deleted = run("search-deleted", "search", "--mode", "lexical", "airkprobe00000001", "--limit", "1")
     if revised["hits"][0]["citation"]["path"] != path or deleted["hits"]:
         raise AssertionError("published update/delete retrieval gate failed")
     usage = run("usage", "usage", "report")
@@ -284,7 +284,7 @@ def public_corpus(binary, directory, measurements, command_timeout=1800):
     status = run("status", "status")
     for label, query, prefix in [("interpreter", "_PyEval_EvalFrameDefault", "Python/ceval.c"),
                                   ("documentation", "hashlib", "Doc/library/hashlib.rst")]:
-        hits = run(label, "search", query, "--path-prefix", prefix, "--limit", "3", "--max-bytes", "2048")["hits"]
+        hits = run(label, "search", "--mode", "lexical", query, "--path-prefix", prefix, "--limit", "3", "--max-bytes", "2048")["hits"]
         if not hits or any(hit["citation"]["path"] != prefix for hit in hits):
             raise AssertionError("public-corpus exact query gate failed")
         expected_hash = hash_file(root / prefix)[0]

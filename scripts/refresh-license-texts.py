@@ -15,6 +15,8 @@ REPOSITORY_OVERRIDES = {("rsqlite-vfs", "0.1.1"): "https://github.com/Spxg/sqlit
 # 1,418 x86_64) matches Git blob hashes at this exact publication commit, whose
 # architecture manifests identify version 0.4.0 and the MIT/Apache-2.0 choice.
 REVISION_OVERRIDES = {
+    # All 12 payload files in the 0.3.1 archive match this revision's Git blobs.
+    ("htmlescape", "0.3.1"): "1699b539179798e705ad8464128492a0a0092876",
     ("winapi-i686-pc-windows-gnu", "0.4.0"): "9497609ef44cc9bcd16cd2411c0ee6ccaf5483aa",
     ("winapi-x86_64-pc-windows-gnu", "0.4.0"): "9497609ef44cc9bcd16cd2411c0ee6ccaf5483aa",
 }
@@ -43,7 +45,8 @@ def fetch(package):
     base = repository.replace("https://github.com/", "https://raw.githubusercontent.com/") + "/" + revision + "/"
     directory = Path("third_party/licenses") / (package["name"] + "-" + package["version"])
     retrieved = []
-    filenames = ["LICENSE", "LICENSE.txt", "LICENSE.md", "LICENSE-MIT", "LICENSE-APACHE", "COPYING"]
+    filenames = ["LICENSE", "LICENSE.txt", "LICENSE.md", "LICENSE-MIT", "LICENSE-APACHE", "COPYING",
+                 "license", "license.txt", "license.md", "LICENCE", "COPYRIGHT", "NOTICE"]
     # r-efi's pinned AUTHORS file contains its MIT permission text and copyright notices.
     if package["name"] == "r-efi":
         filenames.append("AUTHORS")
@@ -83,6 +86,12 @@ def main():
              json.loads(destination.read_text(encoding="utf-8"))} if destination.exists() else {}
     for record in inventory:
         key = (record["name"], record["version"])
+        previous = prior.get(key, {})
+        if previous.get("revision") == record.get("revision"):
+            # Preserve factual review/declaration evidence for the exact same pin.
+            for field in ("revision_basis", "declaration", "standalone_text_review"):
+                if field in previous:
+                    record[field] = previous[field]
         if record["files"] or not prior.get(key, {}).get("files"):
             prior[key] = record
     inventory = sorted(prior.values(), key=lambda record: (record["name"], record["version"]))

@@ -48,11 +48,27 @@ impl ProviderCommand {
 
 pub(crate) struct Process {
     pub child: Child,
+    #[cfg(target_os = "macos")]
+    memory_limit: Option<usize>,
     #[cfg(windows)]
     job: windows_sys::Win32::Foundation::HANDLE,
 }
+#[derive(Clone, Copy)]
+pub(crate) struct ProcessLimits {
+    pub memory_bytes: usize,
+    pub cpu_seconds: u64,
+}
 impl Process {
     pub fn spawn(spec: &ProviderCommand, directory: &Path, extra: &[String]) -> Result<Self> {
+        Self::spawn_limited(spec, directory, extra, None)
+    }
+
+    fn spawn_limited(
+        spec: &ProviderCommand,
+        directory: &Path,
+        extra: &[String],
+        limits: Option<ProcessLimits>,
+    ) -> Result<Self> {
         let mut command = Command::new(spec.validate()?);
         command
             .args(&spec.args)
@@ -68,15 +84,46 @@ impl Process {
             .env("TMP", directory)
             .env("TEMP", directory);
         command.env("CARGO_NET_OFFLINE", "true");
+        if limits.is_some() {
+            command.env("RAYON_NUM_THREADS", "1");
+        }
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt;
             command.process_group(0);
+            if let Some(limits) = limits {
+                // SAFETY: only async-signal-safe setrlimit calls run between fork and exec.
+                unsafe {
+                    command.pre_exec(move || {
+                        #[cfg(not(target_os = "macos"))]
+                        let resources = [
+                            (libc::RLIMIT_AS, limits.memory_bytes as libc::rlim_t),
+                            (libc::RLIMIT_CPU, limits.cpu_seconds as libc::rlim_t),
+                        ];
+                        // Darwin rejects a finite RLIMIT_AS below the inherited
+                        // parent's existing VM mappings. Observe physical footprint
+                        // from the parent instead; CPU remains a kernel-enforced limit.
+                        #[cfg(target_os = "macos")]
+                        let resources = [(libc::RLIMIT_CPU, limits.cpu_seconds as libc::rlim_t)];
+                        for (resource, value) in resources {
+                            let limit = libc::rlimit {
+                                rlim_cur: value,
+                                rlim_max: value,
+                            };
+                            if libc::setrlimit(resource, &limit) != 0 {
+                                return Err(std::io::Error::last_os_error());
+                            }
+                        }
+                        Ok(())
+                    });
+                }
+            }
         }
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
-            command.creation_flags(0x08000000); // CREATE_NO_WINDOW
+            // No provider instruction can execute before job containment is installed.
+            command.creation_flags(0x08000000 | 0x00000004); // CREATE_NO_WINDOW | CREATE_SUSPENDED
         }
         let child = command
             .spawn()
@@ -95,14 +142,26 @@ impl Process {
                     std::io::Error::last_os_error()
                 );
             }
-            let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
-            limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            let mut job_limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION =
+                unsafe { std::mem::zeroed() };
+            job_limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            if let Some(limits) = limits {
+                job_limits.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_PROCESS_MEMORY
+                    | JOB_OBJECT_LIMIT_JOB_MEMORY
+                    | JOB_OBJECT_LIMIT_ACTIVE_PROCESS
+                    | JOB_OBJECT_LIMIT_PROCESS_TIME;
+                job_limits.ProcessMemoryLimit = limits.memory_bytes;
+                job_limits.JobMemoryLimit = limits.memory_bytes;
+                job_limits.BasicLimitInformation.ActiveProcessLimit = 1;
+                job_limits.BasicLimitInformation.PerProcessUserTimeLimit =
+                    (limits.cpu_seconds * 10_000_000) as i64;
+            }
             let configured = unsafe {
                 SetInformationJobObject(
                     job,
                     JobObjectExtendedLimitInformation,
-                    (&limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
-                    std::mem::size_of_val(&limits) as u32,
+                    (&job_limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+                    std::mem::size_of_val(&job_limits) as u32,
                 )
             };
             let assigned = configured != 0
@@ -118,12 +177,104 @@ impl Process {
                 process.job = std::ptr::null_mut();
                 anyhow::bail!("contain provider process job: {error}");
             }
+            resume_suspended(process.child.id()).context("resume contained provider")?;
             Ok(process)
         }
         #[cfg(not(windows))]
         {
-            Ok(Self { child })
+            Ok(Self {
+                child,
+                #[cfg(target_os = "macos")]
+                memory_limit: limits.map(|limits| limits.memory_bytes),
+            })
         }
+    }
+
+    fn check_memory_budget(&mut self) -> Result<()> {
+        #[cfg(target_os = "macos")]
+        if let Some(limit) = self.memory_limit {
+            // A reaped child has no further allocations. A concurrent exit between
+            // this check and proc_pid_rusage is handled by the second try_wait.
+            if self.child.try_wait()?.is_some() {
+                return Ok(());
+            }
+            let mut usage: libc::rusage_info_v0 = unsafe { std::mem::zeroed() };
+            // SAFETY: the flavor matches this initialized writable buffer, the PID
+            // is our unreaped child, and the API accepts its address as rusage_info_t*.
+            let result = unsafe {
+                libc::proc_pid_rusage(
+                    self.child.id() as i32,
+                    libc::RUSAGE_INFO_V0,
+                    (&mut usage as *mut libc::rusage_info_v0).cast::<libc::rusage_info_t>(),
+                )
+            };
+            if result != 0 {
+                let error = std::io::Error::last_os_error();
+                if self.child.try_wait()?.is_some() {
+                    return Ok(());
+                }
+                return Err(error).context("observe macOS provider memory budget");
+            }
+            ensure!(
+                usage.ri_phys_footprint <= limit as u64,
+                "local provider exceeded its macOS physical-memory budget ({} > {} bytes)",
+                usage.ri_phys_footprint,
+                limit
+            );
+        }
+        Ok(())
+    }
+}
+
+#[cfg(windows)]
+fn resume_suspended(pid: u32) -> Result<()> {
+    use windows_sys::Win32::{
+        Foundation::{CloseHandle, INVALID_HANDLE_VALUE},
+        System::{
+            Diagnostics::ToolHelp::{
+                CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First,
+                Thread32Next,
+            },
+            Threading::{OpenThread, ResumeThread, THREAD_SUSPEND_RESUME},
+        },
+    };
+    // std::process owns the process handle but not the primary thread handle. A
+    // suspended process has exactly its initial thread; enumerate and resume it
+    // only after assignment to the kill-on-close job. All handles are closed.
+    unsafe {
+        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+        ensure!(
+            snapshot != INVALID_HANDLE_VALUE,
+            "snapshot suspended provider threads: {}",
+            std::io::Error::last_os_error()
+        );
+        let result = (|| {
+            let mut entry: THREADENTRY32 = std::mem::zeroed();
+            entry.dwSize = std::mem::size_of::<THREADENTRY32>() as u32;
+            let mut available = Thread32First(snapshot, &mut entry);
+            while available != 0 {
+                if entry.th32OwnerProcessID == pid {
+                    let thread = OpenThread(THREAD_SUSPEND_RESUME, 0, entry.th32ThreadID);
+                    ensure!(
+                        !thread.is_null(),
+                        "open suspended provider thread: {}",
+                        std::io::Error::last_os_error()
+                    );
+                    let resumed = ResumeThread(thread);
+                    let error = std::io::Error::last_os_error();
+                    CloseHandle(thread);
+                    ensure!(
+                        resumed != u32::MAX,
+                        "resume suspended provider thread: {error}"
+                    );
+                    return Ok(());
+                }
+                available = Thread32Next(snapshot, &mut entry);
+            }
+            anyhow::bail!("suspended provider thread missing")
+        })();
+        CloseHandle(snapshot);
+        result
     }
 }
 impl Drop for Process {
@@ -170,8 +321,18 @@ pub(crate) fn run(
     extra: &[String],
     max_output: usize,
 ) -> Result<Vec<u8>> {
+    run_limited(spec, directory, extra, max_output, None)
+}
+
+pub(crate) fn run_limited(
+    spec: &ProviderCommand,
+    directory: &Path,
+    extra: &[String],
+    max_output: usize,
+    limits: Option<ProcessLimits>,
+) -> Result<Vec<u8>> {
     let deadline = Instant::now() + Duration::from_millis(spec.timeout_ms.min(120_000));
-    let mut process = Process::spawn(spec, directory, extra)?;
+    let mut process = Process::spawn_limited(spec, directory, extra, limits)?;
     drop(process.child.stdin.take());
     let stdout = process
         .child
@@ -193,16 +354,23 @@ pub(crate) fn run(
     });
     let result = (|| {
         let mut output = None;
-        for _ in 0..2 {
-            let (is_output, bytes) = receiver
-                .recv_timeout(remaining(deadline)?)
-                .context("provider output timeout/disconnect")?;
+        let mut collected = 0;
+        while collected < 2 {
+            process.check_memory_budget()?;
+            let (is_output, bytes) =
+                match receiver.recv_timeout(remaining(deadline)?.min(Duration::from_millis(5))) {
+                    Ok(message) => message,
+                    Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                    Err(error) => return Err(error).context("provider output disconnect"),
+                };
+            collected += 1;
             let bytes = bytes?;
             if is_output {
                 output = Some(bytes);
             }
         }
         loop {
+            process.check_memory_budget()?;
             if let Some(status) = process.child.try_wait()? {
                 ensure!(
                     status.success(),
@@ -272,6 +440,98 @@ mod tests {
     #[ignore = "invoked only as a bounded subprocess fixture"]
     fn sleeping_fixture() {
         thread::sleep(Duration::from_secs(60));
+    }
+
+    #[test]
+    #[ignore = "invoked only as a bounded subprocess fixture"]
+    fn descendant_fixture() -> Result<()> {
+        // Spawn immediately: containment must exist before any provider code runs.
+        let mut descendant = Command::new(std::env::current_exe()?)
+            .args([
+                "--ignored",
+                "--exact",
+                "provider_process::tests::sleeping_fixture",
+            ])
+            .spawn()?;
+        std::fs::write("descendant.pid", descendant.id().to_string())?;
+        let _ = descendant.wait();
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "invoked only as a bounded subprocess fixture"]
+    fn allocation_fixture() {
+        #[cfg(not(target_os = "macos"))]
+        {
+            let mut bytes = Vec::<u8>::new();
+            assert!(
+                bytes.try_reserve_exact(1024 * 1024 * 1024).is_err(),
+                "child allocation limit was not enforced"
+            );
+            assert!(
+                bytes.try_reserve_exact(1024 * 1024).is_ok(),
+                "ordinary child allocation failed"
+            );
+        }
+        #[cfg(target_os = "macos")]
+        {
+            // Physical footprint requires committed pages, not a virtual reservation.
+            // Grow gradually so the watchdog must detect the named memory reason.
+            let mut committed = Vec::new();
+            for _ in 0..1024 {
+                committed.push(vec![0x5a; 1024 * 1024]);
+                std::hint::black_box(&committed);
+                thread::sleep(Duration::from_millis(2));
+            }
+            thread::sleep(Duration::from_secs(60));
+        }
+    }
+
+    #[test]
+    fn limited_child_memory_and_immediate_descendants_are_contained() -> Result<()> {
+        let temporary = tempfile::tempdir()?;
+        let mut command = ProviderCommand {
+            program: std::env::current_exe()?,
+            args: vec![
+                "--ignored".into(),
+                "--exact".into(),
+                "provider_process::tests::allocation_fixture".into(),
+            ],
+            timeout_ms: 10_000,
+        };
+        let allocation = run_limited(
+            &command,
+            temporary.path(),
+            &[],
+            65_536,
+            Some(ProcessLimits {
+                memory_bytes: 512 * 1024 * 1024,
+                cpu_seconds: 10,
+            }),
+        );
+        #[cfg(not(target_os = "macos"))]
+        allocation?;
+        #[cfg(target_os = "macos")]
+        {
+            let error = allocation.expect_err("committed allocation must trigger the watchdog");
+            assert!(
+                error.to_string().contains("macOS physical-memory budget"),
+                "{error:#}"
+            );
+        }
+        command.args[2] = "provider_process::tests::descendant_fixture".into();
+        command.timeout_ms = 1500;
+        let started = Instant::now();
+        assert!(run(&command, temporary.path(), &[], 65_536).is_err());
+        assert!(
+            temporary.path().join("descendant.pid").is_file(),
+            "descendant fixture never started"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "descendant kept its inherited output pipe open after timeout"
+        );
+        Ok(())
     }
 
     #[test]
