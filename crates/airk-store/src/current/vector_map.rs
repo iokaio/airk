@@ -1,12 +1,81 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Exact current vector identity and bounded citation occurrence pointers.
 //! These are authenticated map values, not ANN search results or evidence bytes.
-use super::{CurrentHead, map};
-use airk_core::identity::Sha256Digest;
+use super::{CurrentHead, CurrentScope, journal::valid_current_path, map};
+use airk_core::{
+    extraction::MAX_EXTRACTION_CHUNKS,
+    identity::{Sha256Digest, framed_digest},
+};
 use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 
 pub const MAX_VECTOR_OCCURRENCES: usize = 128;
+
+/// A path-local ordinal makes every old occurrence addressable after an edit
+/// without a whole-corpus scan or a large list in one authenticated map value.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PathOccurrences {
+    pub version: u32,
+    pub path: String,
+    pub source_hash: Sha256Digest,
+    pub count: u32,
+}
+
+impl PathOccurrences {
+    pub fn validate(&self) -> Result<()> {
+        ensure!(
+            self.version == 1
+                && valid_current_path(&self.path)
+                && usize::try_from(self.count)? <= MAX_EXTRACTION_CHUNKS,
+            "invalid current path occurrence index"
+        );
+        Ok(())
+    }
+
+    pub fn canonical_bytes(&self) -> Result<Vec<u8>> {
+        self.validate()?;
+        let bytes = serde_json::to_vec(self)?;
+        ensure!(
+            bytes.len() <= map::MAX_VALUE_BYTES,
+            "path occurrence index too large"
+        );
+        Ok(bytes)
+    }
+
+    pub fn decode(bytes: &[u8], path: &str) -> Result<Self> {
+        ensure!(
+            bytes.len() <= map::MAX_VALUE_BYTES,
+            "path occurrence index too large"
+        );
+        let index: Self = serde_json::from_slice(bytes)?;
+        ensure!(
+            index.path == path && index.canonical_bytes()? == bytes,
+            "current path occurrence index binding mismatch"
+        );
+        Ok(index)
+    }
+
+    pub fn occurrence_id(&self, scope: &CurrentScope, ordinal: u32) -> Result<Sha256Digest> {
+        self.validate()?;
+        scope.validate()?;
+        ensure!(
+            ordinal < self.count,
+            "current path occurrence ordinal out of range"
+        );
+        Ok(framed_digest(
+            b"current-path-occurrence/1",
+            &[
+                scope.root.as_bytes(),
+                scope.collection.as_bytes(),
+                scope.incarnation.as_bytes(),
+                self.path.as_bytes(),
+                self.source_hash.as_bytes(),
+                &ordinal.to_be_bytes(),
+            ],
+        ))
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
