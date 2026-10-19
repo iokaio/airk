@@ -327,6 +327,13 @@ fn prepared_occurrence(
     };
     Ok(vector_map::PreparedOccurrence {
         pointer: vector_map::OccurrencePointer {
+            members: vec![airk_core::vector_evidence::VectorMemberSpan {
+                chunk_index: 0,
+                span: airk_core::extraction::LocalSpan {
+                    start: 0,
+                    end: input.artifact.extracted_bytes(),
+                },
+            }],
             version: 1,
             embedding_key,
             occurrence_id: index.occurrence_id(&fixture.scope, 0)?,
@@ -347,6 +354,62 @@ fn prepared_occurrence(
         },
         graph_id,
     })
+}
+
+#[test]
+fn semantic_body_preserves_unicode_and_rejects_invalid_or_cross_location_spans() -> Result<()> {
+    use airk_core::{
+        extraction::LocalSpan,
+        vector_evidence::{VectorMemberSpan, materialize},
+    };
+    let fixture = Fixture::new()?;
+    let input = retained_input(&fixture, "alpha\nβeta\nlast")?;
+    let mut retained = fixture.store.load_retrieval_artifact(&input.artifact)?;
+    let member = VectorMemberSpan {
+        chunk_index: 0,
+        span: LocalSpan { start: 6, end: 11 },
+    };
+    let hit = materialize(&retained, std::slice::from_ref(&member))?;
+    assert_eq!(hit.text, "βeta");
+    assert_eq!((hit.citation.start_line, hit.citation.end_line), (2, 2));
+    let mut invalid = member.clone();
+    invalid.span.start = 7;
+    assert!(materialize(&retained, &[invalid]).is_err());
+    assert!(materialize(&retained, &[]).is_err());
+    assert!(materialize(&retained, &[member.clone(), member]).is_err());
+    let original = retained.artifact.chunks[0].clone();
+    let mut first = original.clone();
+    first.text = "alpha\n".into();
+    let mut second = original;
+    second.text = "βeta\nlast".into();
+    second.start_line = 2;
+    retained.artifact.chunks = vec![first, second];
+    let mut local = retained.payload.chunks[0].clone();
+    local.span.end = 6;
+    let mut next = local.clone();
+    next.span = LocalSpan { start: 6, end: 16 };
+    retained.payload.chunks = vec![local, next];
+    let members = vec![
+        VectorMemberSpan {
+            chunk_index: 0,
+            span: LocalSpan { start: 0, end: 6 },
+        },
+        VectorMemberSpan {
+            chunk_index: 1,
+            span: LocalSpan { start: 6, end: 16 },
+        },
+    ];
+    let hit = materialize(&retained, &members)?;
+    assert_eq!(hit.text, "alpha\nβeta\nlast");
+    assert_eq!((hit.citation.start_line, hit.citation.end_line), (1, 3));
+    retained.artifact.chunks[0].location = airk_core::DocumentLocation::Page { number: 1 };
+    retained.artifact.chunks[1].location = airk_core::DocumentLocation::Page { number: 2 };
+    assert!(materialize(&retained, &members).is_err());
+    retained.artifact.chunks[0].location = airk_core::DocumentLocation::Lines { start: 1, end: 1 };
+    retained.artifact.chunks[1].location = airk_core::DocumentLocation::Lines { start: 2, end: 3 };
+    retained.payload.chunks[1].region = Some(1);
+    assert!(materialize(&retained, &members).is_err());
+    Ok(())
 }
 
 #[test]
@@ -379,6 +442,24 @@ fn changed_artifact_attaches_and_replaces_exact_vector_occurrence() -> Result<()
             .is_err()
     );
     assert_eq!(current.phase()?, TransactionPhase::Ready);
+    let mut invalid_span = occurrence.clone();
+    invalid_span.pointer.members[0].span.end += 1;
+    assert!(
+        current
+            .prepare_artifacts_with_occurrences(
+                &fixture.head.token()?,
+                fixture.target(&sealed),
+                &sealed,
+                ArtifactVectorChanges {
+                    artifacts: &[ArtifactChange::Upsert(Box::new(first.clone()))],
+                    occurrences: &[invalid_span],
+                },
+                None,
+                br#"{"engine":"test","sequence":1}"#,
+            )
+            .is_err()
+    );
+    assert_eq!(current.phase()?, TransactionPhase::Ready);
     let pending = current.prepare_artifacts_with_occurrences(
         &fixture.head.token()?,
         fixture.target(&sealed),
@@ -403,6 +484,12 @@ fn changed_artifact_attaches_and_replaces_exact_vector_occurrence() -> Result<()
         read.vector_occurrence_pointers(key)?,
         Some(vec![occurrence.pointer.clone()])
     );
+    let hit = read.occurrence_hit(&fixture.store, &occurrence.pointer)?;
+    assert_eq!(hit.text, "First source");
+    assert_eq!(hit.citation.content_hash, first.artifact.content_hash);
+    let mut forged = occurrence.pointer.clone();
+    forged.members[0].span.end -= 1;
+    assert!(read.occurrence_hit(&fixture.store, &forged).is_err());
     drop(read);
 
     let second = retained_input(&fixture, "Second source")?;
@@ -443,6 +530,13 @@ fn changed_artifact_attaches_and_replaces_exact_vector_occurrence() -> Result<()
     current.commit(&pending, pending.target.lexical_commit)?;
     drop(current);
     drop(writer);
+    assert!(
+        fixture
+            .store
+            .current_read(&fixture.scope)?
+            .occurrence_hit(&fixture.store, &occurrence.pointer)
+            .is_err()
+    );
     let read = fixture.store.current_read(&fixture.scope)?;
     assert_eq!(
         read.vector_occurrence_pointers(key)?,
@@ -632,6 +726,13 @@ fn prepared_map_and_graph_replay_commit_one_authenticated_head() -> Result<()> {
         occurrence_ids: vec![occurrence_id],
     };
     let pointer = vector_map::OccurrencePointer {
+        members: vec![airk_core::vector_evidence::VectorMemberSpan {
+            chunk_index: 0,
+            span: airk_core::extraction::LocalSpan {
+                start: 0,
+                end: input.artifact.extracted_bytes(),
+            },
+        }],
         version: 1,
         embedding_key,
         occurrence_id,
@@ -836,6 +937,13 @@ fn changed_path_retires_only_its_share_of_a_live_vector() -> Result<()> {
         let occurrence_id = path_index.occurrence_id(&fixture.scope, 0)?;
         occurrence_ids.push(occurrence_id);
         let pointer = vector_map::OccurrencePointer {
+            members: vec![airk_core::vector_evidence::VectorMemberSpan {
+                chunk_index: 0,
+                span: airk_core::extraction::LocalSpan {
+                    start: 0,
+                    end: input.artifact.extracted_bytes(),
+                },
+            }],
             version: 1,
             embedding_key,
             occurrence_id,

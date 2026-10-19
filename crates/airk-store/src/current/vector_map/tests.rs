@@ -75,6 +75,10 @@ fn vector_binding_requires_exact_scope_id_key_and_bounded_sorted_occurrences() {
 #[test]
 fn occurrence_pointer_rejects_foreign_id_and_unsafe_path() {
     let pointer = OccurrencePointer {
+        members: vec![airk_core::vector_evidence::VectorMemberSpan {
+            chunk_index: 0,
+            span: airk_core::extraction::LocalSpan { start: 0, end: 5 },
+        }],
         version: 1,
         embedding_key: digest(5),
         occurrence_id: digest(6),

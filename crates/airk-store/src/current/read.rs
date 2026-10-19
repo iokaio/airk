@@ -22,6 +22,47 @@ pub struct CurrentRead {
 }
 
 impl CurrentRead {
+    /// Re-resolve the authenticated pointer under this read gate before loading
+    /// its retained body. Detached or superseded candidate pointers are rejected.
+    pub fn occurrence_hit(
+        &self,
+        store: &FileStore,
+        pointer: &OccurrencePointer,
+    ) -> Result<airk_core::Hit> {
+        pointer.validate()?;
+        let pointers = self
+            .vector_occurrence_pointers(pointer.embedding_key)?
+            .context("current vector binding missing")?;
+        ensure!(
+            pointers.iter().any(|current| current == pointer),
+            "current occurrence expired or differs from committed evidence"
+        );
+        let compact = self
+            .artifact(&pointer.path)?
+            .context("current occurrence artifact missing")?;
+        ensure!(
+            compact
+                .content_hash
+                .parse::<airk_core::identity::Sha256Digest>()?
+                == pointer.source_hash
+                && compact
+                    .retained
+                    .as_ref()
+                    .context("current occurrence extraction missing")?
+                    .object
+                    .parse::<airk_core::identity::Sha256Digest>()?
+                    == pointer.object,
+            "current occurrence source or extraction mismatch"
+        );
+        let retained = store.load_retrieval_artifact(&compact)?;
+        ensure!(
+            retained.payload_digest == pointer.payload_digest,
+            "current occurrence payload mismatch"
+        );
+        store.read_retained_source(&compact)?;
+        airk_core::vector_evidence::materialize(&retained, &pointer.members)
+    }
+
     /// Authenticate the path-local occurrence count and its exact source
     /// identity. The count addresses old IDs during an incremental replacement.
     pub fn path_occurrences(&self, path: &str) -> Result<Option<PathOccurrences>> {
