@@ -569,17 +569,23 @@ impl Kernel {
         let charge: airk_retrieval::bounded::Charge =
             Arc::new(move |bytes| charge_reservation.charge(bytes));
         let mut cache_stats = airk_retrieval::model::EmbeddingCacheStats::default();
-        let vector_cache = if projection.embedding_model.is_some() {
+        let vector_cache = if let Some(objects) = &model_objects {
+            let descriptor = airk_retrieval::model::descriptor_from_objects_metadata(
+                self.store.directory(),
+                objects,
+            )?;
             let trusted = old
                 .as_ref()
                 .and_then(|catalog| catalog.receipt.as_ref())
-                .map(|receipt| self.store.embedding_cache_references(receipt))
+                .map(|receipt| self.store.embedding_cache_manifest(receipt))
                 .transpose()?
-                .unwrap_or_default();
-            Some(
-                airk_store::vector_cache::VectorCache::new(self.store.directory(), charge.clone())?
-                    .with_trusted_references(&trusted)?,
-            )
+                .flatten();
+            Some(airk_store::vector_cache::VectorCache::new(
+                self.store.directory(),
+                &reservation,
+                &descriptor,
+                trusted.as_ref(),
+            )?)
         } else {
             None
         };
@@ -604,6 +610,7 @@ impl Kernel {
             working_memory_bytes: (crate::limits::machine::memory_bytes().unwrap_or(2 << 30) / 8)
                 .clamp(128 << 20, 1 << 30) as usize,
         };
+        let cache_finalize_us = std::cell::Cell::new(0u64);
         let receipt = persistent::prepare_streaming(
             self.store.directory(),
             &persistent::V2Preparation {
@@ -622,10 +629,10 @@ impl Kernel {
             |directory| {
                 if let Some(cache) = &vector_cache {
                     use std::io::Write;
-                    let manifest = airk_store::vector_cache::VectorCacheManifest {
-                        version: 1,
-                        references: cache.references()?,
-                    };
+                    let started = std::time::Instant::now();
+                    let manifest = cache.finalize()?;
+                    cache_finalize_us
+                        .set(u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX));
                     let mut file =
                         reservation.create_file(directory.join("embedding-cache.json"))?;
                     file.write_all(&manifest.canonical_bytes()?)?;
@@ -644,6 +651,22 @@ impl Kernel {
             },
             |receipt| reservation.track_prepared_publication(&expected, receipt),
         )?;
+        cache_stats.cache_finalize_us = cache_finalize_us.get();
+        if let Some(cache) = &vector_cache {
+            let measured = cache.statistics()?;
+            cache_stats.cache_file_opens = measured.file_opens;
+            cache_stats.cache_read_bytes = measured.read_bytes;
+            cache_stats.cache_written_bytes = measured.written_bytes;
+            cache_stats.cache_record_verification_bytes = measured.record_verification_bytes;
+            cache_stats.cache_index_verification_bytes = measured.index_verification_bytes;
+            cache_stats.cache_full_pack_verification_bytes = measured.full_pack_verification_bytes;
+            cache_stats.cache_syncs = measured.syncs;
+            cache_stats.cache_index_hits = measured.index_cache_hits;
+            cache_stats.cache_index_peak_bytes = measured.index_cache_peak_bytes;
+            cache_stats.cache_packs_written = measured.packs_written;
+            cache_stats.cache_packs_reused = measured.packs_reused;
+            cache_stats.cache_compacted_records = measured.compacted_records;
+        }
         if let Some(registry) = &vector_registry {
             let measured = registry.statistics()?;
             cache_stats.vector_registry_rows = measured.rows;

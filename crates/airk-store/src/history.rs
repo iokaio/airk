@@ -513,6 +513,9 @@ fn metadata_bytes(
 fn inventory_dependencies(
     inventory: &airk_core::publication::InventoryV2,
 ) -> Result<Vec<ObjectDependency>> {
+    // Exact historical evidence retains source and extraction payloads only.
+    // Embedding packs remain owned by searchable generation receipts/leases;
+    // copying a history package does not extend their retrieval lifetime.
     let mut union = BTreeMap::new();
     for file in inventory.files.values() {
         for (kind, digest, bytes) in std::iter::once((

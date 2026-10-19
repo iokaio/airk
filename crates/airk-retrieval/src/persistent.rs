@@ -33,7 +33,7 @@ mod search;
 mod vector_inputs;
 mod vector_map;
 
-const ENGINE: &str = "tantivy-0.26.2/diskann-0.59.0/airk-file-1/generation-7/inventory-4/model-objects-1/source-context-1/vector-units-1/vector-map-1/vector-selection-1";
+const ENGINE: &str = "tantivy-0.26.2/diskann-0.59.0/airk-file-1/generation-8/inventory-4/model-objects-1/source-context-1/vector-units-1/vector-map-1/vector-selection-1/embedding-packs-1";
 const MAX_MANIFEST_V2_BYTES: usize = 128 * 1024;
 const MAX_COMPONENTS_V2: usize = 1024;
 const MAX_INVENTORY_V2_BYTES: usize = airk_core::publication::MAX_INVENTORY_BYTES;

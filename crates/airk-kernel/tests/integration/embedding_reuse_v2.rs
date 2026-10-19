@@ -45,9 +45,11 @@ fn manual(kernel: &Kernel) -> Result<()> {
     })?;
     Ok(())
 }
-fn references(store: &FileStore) -> Result<Vec<airk_store::vector_cache::VectorCacheReference>> {
+fn cache_manifest(store: &FileStore) -> Result<airk_store::vector_cache::VectorCacheManifest> {
     let catalog = store.catalog()?.context("catalog missing")?;
-    store.embedding_cache_references(catalog.receipt.as_ref().context("receipt missing")?)
+    store
+        .embedding_cache_manifest(catalog.receipt.as_ref().context("receipt missing")?)?
+        .context("cache manifest missing")
 }
 
 #[test]
@@ -174,30 +176,169 @@ fn forged_self_consistent_cache_entry_cannot_advance_publication() -> Result<()>
     let before = store
         .persistent_revision()?
         .context("publication missing")?;
-    let reference = references(&store)?
+    let reference = cache_manifest(&store)?
+        .references
         .into_iter()
         .next()
         .context("cache reference missing")?;
     let path = store
         .directory()
-        .join("objects/embeddings")
-        .join(reference.key.to_string());
+        .join("objects/embedding-packs")
+        .join(reference.pack.to_string());
     let original = fs::read(&path)?;
     let forged = CachedEmbedding::new(reference.key, vec![0.0, 1.0], 2)?;
-    fs::write(&path, serde_json::to_vec(&forged)?)?;
+    let mut forged_bytes = original.clone();
+    let offset = (airk_store::vector_cache::PACK_HEADER_BYTES
+        + u64::from(reference.record) * airk_store::vector_cache::record_bytes(2)?)
+        as usize;
+    forged_bytes[offset + 36..offset + 68].copy_from_slice(forged.checksum.as_bytes());
+    for (index, value) in forged.vector.iter().enumerate() {
+        forged_bytes[offset + 68 + index * 4..offset + 72 + index * 4]
+            .copy_from_slice(&value.to_be_bytes());
+    }
     fs::write(root.path().join("extra.txt"), "invoice extra evidence\n")?;
-    assert!(kernel.index().is_err());
-    assert_eq!(
-        store
-            .persistent_revision()?
-            .context("publication missing")?
-            .token,
-        before.token
-    );
-    fs::write(path, original)?;
+    let mut corrupt_index = original.clone();
+    *corrupt_index.last_mut().context("empty pack")? ^= 1;
+    for damaged in [forged_bytes, corrupt_index] {
+        fs::write(&path, damaged)?;
+        assert!(kernel.index().is_err());
+        assert_eq!(
+            store
+                .persistent_revision()?
+                .context("publication missing")?
+                .token,
+            before.token
+        );
+        // A reusable computation cache is not queried to answer the already
+        // committed DiskANN index; corruption blocks its reuse, not this read.
+        assert_eq!(
+            kernel.semantic_search(&query())?.hits[0].citation.path,
+            "auth.txt"
+        );
+        fs::write(&path, &original)?;
+    }
     assert_eq!(
         kernel.semantic_search(&query())?.hits[0].citation.path,
         "auth.txt"
+    );
+    Ok(())
+}
+
+#[test]
+fn relocated_collection_reuses_receipt_bound_packs_without_cross_collection_adoption() -> Result<()>
+{
+    let root = tempfile::tempdir()?;
+    let parent = unlinked_tempdir()?;
+    let data = parent.path().join("original-data");
+    model(&data, "original relocation fixture")?;
+    fs::write(
+        root.path().join("auth.txt"),
+        "authenticate retained original evidence\n",
+    )?;
+    let kernel = Kernel::open(root.path(), Some(data.clone()))?;
+    manual(&kernel)?;
+    let cold = kernel.index()?;
+    assert_eq!(cold.embedding_inferences, 1);
+    let store = FileStore::new(data.join("collections/default"));
+    let before = cache_manifest(&store)?;
+    let hits = serde_json::to_value(kernel.semantic_search(&query())?.hits)?;
+    drop(kernel);
+    let destination = parent.path().join("relocated-data");
+    airk_kernel::storage::relocate(&data, &destination)?;
+    let reopened = Kernel::open(root.path(), Some(destination.clone()))?;
+    assert_eq!(
+        serde_json::to_value(reopened.semantic_search(&query())?.hits)?,
+        hits
+    );
+    fs::write(root.path().join("invoice.txt"), "invoice new evidence\n")?;
+    let changed = reopened.index()?;
+    assert_eq!(changed.embedding_cache_hits, 1);
+    assert_eq!(changed.embedding_inferences, 1);
+    let relocated = FileStore::new(destination.join("collections/default"));
+    assert!(
+        cache_manifest(&relocated)?
+            .references
+            .iter()
+            .any(|item| item.key == before.references[0].key)
+    );
+    let other = Kernel::open_collection(root.path(), Some(destination.clone()), "other")?;
+    // Byte-identical foreign objects carry no authority without this collection's receipt.
+    let foreign = destination.join("collections/other/objects/embedding-packs");
+    fs::create_dir_all(&foreign)?;
+    for pack in &before.packs {
+        fs::copy(
+            airk_store::vector_cache::pack_path(relocated.directory(), &pack.sha256)?,
+            foreign.join(pack.sha256.to_string()),
+        )?;
+    }
+    let isolated = other.index()?;
+    assert_eq!(isolated.embedding_cache_hits, 0);
+    assert_eq!(isolated.embedding_inferences, 2);
+    assert_eq!(
+        fs::read_to_string(root.path().join("auth.txt"))?,
+        "authenticate retained original evidence\n"
+    );
+    Ok(())
+}
+
+#[test]
+fn sparse_pack_compaction_keeps_leased_bytes_until_the_old_reader_releases() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let data = unlinked_tempdir()?;
+    model(data.path(), "original compaction fixture")?;
+    for index in 0..4 {
+        fs::write(
+            root.path().join(format!("evidence-{index}.txt")),
+            format!("authenticate original record {index}\n"),
+        )?;
+    }
+    let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    kernel.index()?;
+    let store = FileStore::new(data.path().join("collections/default"));
+    let reader = store.catalog()?.context("catalog missing")?;
+    let before = store
+        .embedding_cache_manifest(reader.receipt.as_ref().unwrap())?
+        .unwrap();
+    assert_eq!((before.packs.len(), before.references.len()), (1, 4));
+    let original_pack =
+        airk_store::vector_cache::pack_path(store.directory(), &before.packs[0].sha256)?;
+    for index in 1..4 {
+        fs::remove_file(root.path().join(format!("evidence-{index}.txt")))?;
+    }
+    let changed = kernel.index()?;
+    assert_eq!(changed.embedding_cache_hits, 1);
+    assert_eq!(changed.embedding_inferences, 0);
+    assert_eq!(changed.embedding_cache_compacted_records, 1);
+    assert_eq!(changed.embedding_cache_packs_written, 1);
+    let after = cache_manifest(&store)?;
+    assert_eq!(
+        (
+            after.packs.len(),
+            after.references.len(),
+            after.packs[0].records
+        ),
+        (1, 1, 1)
+    );
+    assert_ne!(after.packs[0].sha256, before.packs[0].sha256);
+    assert!(original_pack.is_file());
+    assert_eq!(
+        kernel.semantic_search(&query())?.hits[0].citation.path,
+        "evidence-0.txt"
+    );
+    drop(reader);
+    for _ in 0..8 {
+        let outcome = kernel.maintain_retention()?;
+        if !outcome.receipt.pending {
+            break;
+        }
+    }
+    assert!(!original_pack.exists());
+    assert!(
+        airk_store::vector_cache::pack_path(store.directory(), &after.packs[0].sha256)?.is_file()
+    );
+    assert_eq!(
+        fs::read_to_string(root.path().join("evidence-0.txt"))?,
+        "authenticate original record 0\n"
     );
     Ok(())
 }
@@ -216,14 +357,15 @@ fn manual_history_retains_vector_objects_and_automatic_gc_preserves_live_referen
     )?;
     kernel.index()?;
     let store = FileStore::new(data.path().join("collections/default"));
-    let first = references(&store)?
+    let first = cache_manifest(&store)?
+        .packs
         .into_iter()
         .next()
         .context("first vector missing")?;
     let first_path = store
         .directory()
-        .join("objects/embeddings")
-        .join(first.key.to_string());
+        .join("objects/embedding-packs")
+        .join(first.sha256.to_string());
     for text in ["invoice original second\n", "invoice original third\n"] {
         fs::write(root.path().join("evidence.txt"), text)?;
         kernel.index()?;
@@ -251,12 +393,12 @@ fn manual_history_retains_vector_objects_and_automatic_gc_preserves_live_referen
         !first_path.exists(),
         "unreferenced vector is collected after obsolete owner retirement"
     );
-    for reference in references(&store)? {
+    for reference in cache_manifest(&store)?.packs {
         assert!(
             store
                 .directory()
-                .join("objects/embeddings")
-                .join(reference.key.to_string())
+                .join("objects/embedding-packs")
+                .join(reference.sha256.to_string())
                 .exists()
         );
     }

@@ -143,6 +143,24 @@ pub struct EmbeddingCacheStats {
     pub vector_registry_rows: u64,
     /// Allocated registry SQLite pages in bytes, not physical disk I/O.
     pub vector_registry_bytes: u64,
+    /// Application cache file opens, including verification and compaction.
+    pub cache_file_opens: u64,
+    /// Bytes read through the cache adapter, not physical device I/O.
+    pub cache_read_bytes: u64,
+    /// Bytes written through the cache adapter, including staged replacements.
+    pub cache_written_bytes: u64,
+    pub cache_record_verification_bytes: u64,
+    pub cache_index_verification_bytes: u64,
+    pub cache_full_pack_verification_bytes: u64,
+    pub cache_syncs: u64,
+    /// Reuses of an already authenticated pack index within this update.
+    pub cache_index_hits: u64,
+    pub cache_index_peak_bytes: u64,
+    pub cache_packs_written: u64,
+    pub cache_packs_reused: u64,
+    pub cache_compacted_records: u64,
+    /// Final pack sealing, verification and compaction outside per-input stores.
+    pub cache_finalize_us: u64,
     /// Semantic units emitted before embedding cache lookup.
     pub vector_units: u64,
     /// Exact covered source-body bytes, excluding repeated written context.
@@ -477,6 +495,71 @@ pub fn inspect_objects_cache_descriptor(
     );
     Ok(descriptor)
 }
+
+/// Derive the cache descriptor from authenticated, bounded model metadata only.
+///
+/// The caller supplies receipt-bound (or newly verified) object references. This
+/// checks model.json against its object digest and binds every declared asset
+/// digest to that set. It deliberately does not read the weights, tokenizer or
+/// vocabulary: opening the model still verifies those bytes before cache use.
+pub fn descriptor_from_objects_metadata(
+    collection: &Path,
+    set: &ModelObjectSet,
+) -> Result<EmbeddingDescriptor> {
+    set.validate()?;
+    let source = ObjectAssets { collection, set };
+    let bytes = source.read_asset(ModelAssetName::ModelJson, 16_384)?;
+    let schema = serde_json::from_slice::<serde_json::Value>(&bytes)?["schema"].as_u64();
+    let check_asset = |name: ModelAssetName, declared: &str| -> Result<()> {
+        let reference = set
+            .assets
+            .get(&name)
+            .context("model metadata asset missing")?;
+        ensure!(
+            reference.sha256.to_string() == declared,
+            "model metadata disagrees with authenticated asset: {}",
+            name.filename()
+        );
+        Ok(())
+    };
+    let (descriptor, identity) = match schema {
+        Some(1) => {
+            ensure!(set.assets.len() == 2, "model metadata asset set mismatch");
+            let manifest: crate::vector::ModelManifest = serde_json::from_slice(&bytes)?;
+            ensure!(
+                (1..=airk_core::embedding::MAX_EMBEDDING_DIMENSIONS).contains(&manifest.dimensions)
+                    && !manifest.name.trim().is_empty()
+                    && !manifest.license.trim().is_empty(),
+                "unsupported local embedding metadata"
+            );
+            check_asset(ModelAssetName::VocabularyJson, &manifest.sha256)?;
+            (
+                descriptor_from_manifest(DescriptorManifest::Word(&manifest))?,
+                manifest.sha256,
+            )
+        }
+        Some(2) => {
+            ensure!(set.assets.len() == 4, "model metadata asset set mismatch");
+            let (manifest, identity) = onnx_manifest(&bytes)?;
+            check_asset(ModelAssetName::ModelOnnx, &manifest.model_sha256)?;
+            check_asset(ModelAssetName::TokenizerJson, &manifest.tokenizer_sha256)?;
+            check_asset(ModelAssetName::License, &manifest.license_sha256)?;
+            (
+                descriptor_from_manifest(DescriptorManifest::Onnx(&manifest))?,
+                identity,
+            )
+        }
+        _ => anyhow::bail!("unsupported model metadata schema"),
+    };
+    ensure!(
+        descriptor.identity()? == set.pipeline_digest && identity == set.legacy_identity,
+        "model metadata disagrees with authenticated pipeline; rebuild the index with airk index --full"
+    );
+    Ok(descriptor)
+}
+
+#[cfg(test)]
+mod object_metadata_tests;
 
 impl EmbeddingModel {
     pub(crate) fn planning_context_tokens(&self) -> Option<usize> {
