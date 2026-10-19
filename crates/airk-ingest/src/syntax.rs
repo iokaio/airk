@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Native grammar profiles. Syntax facts never imply cross-file name resolution.
+use crate::semantic_projection::SemanticSeeds;
 use airk_core::continuity::{CodeFingerprints, MAX_CONTINUITY_HASH_BYTES};
+use airk_core::extraction::{IndexDetail, LocalSpan};
 use airk_core::identity::framed_digest;
 use airk_core::location::HostBudget;
 use airk_core::{CodeEvidence, CodeSpan, DocumentLocation, EvidenceBasis, Fact};
@@ -11,6 +13,79 @@ pub struct Analysis {
     pub language: String,
     pub status: String,
     pub facts: Vec<Fact>,
+}
+
+pub(crate) struct SelectedAnalysis {
+    pub(crate) analysis: Analysis,
+    /// None means a specialized adapter still supplies full raw facts for seeds.
+    pub(crate) seeds: Option<SemanticSeeds>,
+}
+
+fn detail_profile(adapter_id: &str) -> Option<Profile> {
+    // Repairs and specialized/repository adapters retain their full analysis
+    // until their selected-evidence equivalence has been separately qualified.
+    if matches!(
+        adapter_id,
+        "rust"
+            | "python"
+            | "javascript"
+            | "typescript"
+            | "tsx"
+            | "go"
+            | "java"
+            | "c"
+            | "cpp"
+            | "csharp"
+            | "bash"
+            | "powershell"
+            | "lua"
+            | "swift"
+            | "kotlin"
+            | "json"
+            | "yaml"
+            | "toml"
+            | "css"
+    ) {
+        profile_id(adapter_id)
+    } else {
+        None
+    }
+}
+
+pub(crate) fn analyze_selected_with_detail(
+    path: &str,
+    text: &str,
+    adapter_id: &str,
+    detail: IndexDetail,
+) -> anyhow::Result<SelectedAnalysis> {
+    let Some(profile) = detail_profile(adapter_id) else {
+        return Ok(SelectedAnalysis {
+            analysis: analyze_selected(path, text, adapter_id)?,
+            seeds: None,
+        });
+    };
+    let mut budget = HostBudget::new(500_000, 10_000, 16_777_216)?;
+    analyze_profile_with_detail(path, text, Some(profile), &mut budget, false, detail)
+}
+
+pub(crate) fn analyze_selected_budgeted_with_detail(
+    path: &str,
+    text: &str,
+    adapter_id: &str,
+    detail: IndexDetail,
+    budget: &mut HostBudget,
+) -> anyhow::Result<SelectedAnalysis> {
+    anyhow::ensure!(
+        text.len() <= crate::MAX_STRUCTURED_BYTES,
+        "child source exceeds native ceiling"
+    );
+    let Some(profile) = detail_profile(adapter_id) else {
+        return Ok(SelectedAnalysis {
+            analysis: analyze_selected_budgeted(path, text, adapter_id, budget)?,
+            seeds: None,
+        });
+    };
+    analyze_profile_with_detail(path, text, Some(profile), budget, true, detail)
 }
 
 struct Profile {
@@ -159,11 +234,28 @@ fn analyze_profile_budgeted(
     budget: &mut HostBudget,
     shared: bool,
 ) -> anyhow::Result<Analysis> {
+    Ok(
+        analyze_profile_with_detail(path, text, selected, budget, shared, IndexDetail::Detailed)?
+            .analysis,
+    )
+}
+
+fn analyze_profile_with_detail(
+    path: &str,
+    text: &str,
+    selected: Option<Profile>,
+    budget: &mut HostBudget,
+    shared: bool,
+    detail: IndexDetail,
+) -> anyhow::Result<SelectedAnalysis> {
     let Some(profile) = selected else {
-        return Ok(Analysis {
-            language: "text".into(),
-            status: "text-only".into(),
-            facts: Vec::new(),
+        return Ok(SelectedAnalysis {
+            analysis: Analysis {
+                language: "text".into(),
+                status: "text-only".into(),
+                facts: Vec::new(),
+            },
+            seeds: None,
         });
     };
     budget.charge(1, 0, 0, 0)?;
@@ -181,15 +273,19 @@ fn analyze_profile_budgeted(
         _ => None,
     };
     if let Some(format) = repository_format {
-        return crate::repository_binding::analyze(
-            path,
-            text,
-            tree.root_node(),
-            format,
-            profile.language,
-        );
+        return Ok(SelectedAnalysis {
+            analysis: crate::repository_binding::analyze(
+                path,
+                text,
+                tree.root_node(),
+                format,
+                profile.language,
+            )?,
+            seeds: None,
+        });
     }
     let mut facts = Vec::new();
+    let mut seeds = SemanticSeeds::default();
     let mut pending = vec![tree.root_node()];
     let mut visited = 0;
     let mut fingerprint_bytes = 0usize;
@@ -224,7 +320,9 @@ fn analyze_profile_budgeted(
             } else {
                 None
             };
-            if let Some(kind) = kind {
+            if let Some(kind) =
+                kind.filter(|kind| detail != IndexDetail::Essential || *kind == "definition")
+            {
                 let name = if kind == "call" {
                     call_target(node, text)
                 } else if matches!(kind, "import" | "inherits" | "exception_handler") {
@@ -233,71 +331,102 @@ fn analyze_profile_budgeted(
                     fact_name(node, text)
                 };
                 if let Some(name) = name.filter(|name| !name.trim().is_empty()) {
-                    let start = node.start_position().row + 1;
-                    let end = node.end_position().row + usize::from(node.end_position().column > 0);
-                    budget.charge(0, 1, 0, 0)?;
-                    facts.push(Fact {
-                        code: if kind == "key" {
-                            None
-                        } else {
-                            Some(code_evidence(
-                                path,
-                                node,
-                                text,
-                                &profile,
-                                kind,
-                                name.trim(),
-                                EvidenceBudget {
-                                    fingerprint_bytes: &mut fingerprint_bytes,
-                                    host: shared.then_some(&mut *budget),
-                                },
-                            )?)
-                        },
-                        name: bounded_name(name.trim()),
-                        kind: kind.into(),
-                        syntax_kind: node.kind().into(),
-                        start_line: start,
-                        end_line: end.max(start),
-                        document: None,
-                        location: DocumentLocation::Lines {
-                            start,
-                            end: end.max(start),
-                        },
-                    });
-                    if kind == "call"
-                        && let Some(rule) = framework_call(profile.language, name.trim())
-                    {
-                        let mut cue = facts.last().expect("call fact").clone();
-                        cue.kind = rule.into();
-                        let evidence = cue.code.as_mut().expect("code call");
-                        evidence.basis = EvidenceBasis::StructuralRule;
-                        evidence.producer = "airk-framework-cues".into();
-                        evidence.producer_version = "1".into();
-                        evidence.coverage="Matched a written call pattern; aliases, framework identity and runtime behavior unverified".into();
-                        budget.charge(0, 1, 0, 0)?;
-                        facts.push(cue);
-                    }
                     if kind == "definition" {
-                        let definition = facts.last().expect("definition").clone();
-                        for rule in annotation_rules(
-                            profile.language,
-                            definition
-                                .code
-                                .as_ref()
-                                .map_or(&[], |c| c.modifiers.as_slice()),
-                        ) {
-                            let mut cue = definition.clone();
-                            cue.kind = rule.into();
-                            let evidence = cue.code.as_mut().expect("definition evidence");
-                            evidence.basis = EvidenceBasis::StructuralRule;
-                            evidence.producer = "airk-framework-cues".into();
-                            evidence.producer_version = "1".into();
-                            evidence.coverage="Recognized written attribute/annotation; framework binding, security and runtime behavior unverified".into();
+                        if detail == IndexDetail::Essential {
+                            // Hidden written hints still consume shared metadata admission.
                             budget.charge(0, 1, 0, 0)?;
-                            facts.push(cue);
                         }
+                        let end = node
+                            .child_by_field_name("body")
+                            .map_or(node.end_byte(), |body| body.start_byte());
+                        seeds.definition(
+                            None,
+                            LocalSpan {
+                                start: node.start_byte(),
+                                end: node.end_byte(),
+                            },
+                            (node.start_byte() < end).then_some(LocalSpan {
+                                start: node.start_byte(),
+                                end,
+                            }),
+                        )?;
                     }
-                    anyhow::ensure!(facts.len() <= 10_000, "file exceeds 10000 syntax facts");
+                    let framework = (kind == "call")
+                        .then(|| framework_call(profile.language, name.trim()))
+                        .flatten();
+                    if detail != IndexDetail::Essential
+                        && (detail == IndexDetail::Detailed
+                            || kind != "call"
+                            || framework.is_some())
+                    {
+                        let start = node.start_position().row + 1;
+                        let end =
+                            node.end_position().row + usize::from(node.end_position().column > 0);
+                        budget.charge(0, 1, 0, 0)?;
+                        let mut fact = Fact {
+                            code: if kind == "key" {
+                                None
+                            } else {
+                                Some(code_evidence(
+                                    path,
+                                    node,
+                                    text,
+                                    &profile,
+                                    kind,
+                                    name.trim(),
+                                    EvidenceBudget {
+                                        fingerprint_bytes: &mut fingerprint_bytes,
+                                        host: shared.then_some(&mut *budget),
+                                    },
+                                )?)
+                            },
+                            name: bounded_name(name.trim()),
+                            kind: kind.into(),
+                            syntax_kind: node.kind().into(),
+                            start_line: start,
+                            end_line: end.max(start),
+                            document: None,
+                            location: DocumentLocation::Lines {
+                                start,
+                                end: end.max(start),
+                            },
+                        };
+                        if let Some(rule) = framework {
+                            if detail == IndexDetail::Detailed {
+                                let mut cue = fact.clone();
+                                framework_evidence(&mut cue, rule);
+                                facts.push(fact);
+                                budget.charge(0, 1, 0, 0)?;
+                                facts.push(cue);
+                            } else {
+                                framework_evidence(&mut fact, rule);
+                                facts.push(fact);
+                            }
+                        } else {
+                            facts.push(fact);
+                        }
+                        if kind == "definition" {
+                            let definition = facts.last().expect("definition").clone();
+                            for rule in annotation_rules(
+                                profile.language,
+                                definition
+                                    .code
+                                    .as_ref()
+                                    .map_or(&[], |c| c.modifiers.as_slice()),
+                            ) {
+                                let mut cue = definition.clone();
+                                cue.kind = rule.into();
+                                let evidence = cue.code.as_mut().expect("definition evidence");
+                                evidence.basis = EvidenceBasis::StructuralRule;
+                                evidence.producer = "airk-framework-cues".into();
+                                evidence.producer_version = "1".into();
+                                evidence.coverage="Recognized written attribute/annotation; framework binding, security and runtime behavior unverified".into();
+                                budget.charge(0, 1, 0, 0)?;
+                                facts.push(cue);
+                            }
+                        }
+                        anyhow::ensure!(facts.len() <= 10_000, "file exceeds 10000 syntax facts");
+                    }
                 }
             }
         }
@@ -323,10 +452,31 @@ fn analyze_profile_budgeted(
         profile.language,
         "php" | "ruby" | "sql" | "sql-postgresql" | "sql-mysql"
     ) {
-        crate::syntax_repairs::enrich(analysis, path, text, tree.root_node(), profile.language)
+        Ok(SelectedAnalysis {
+            analysis: crate::syntax_repairs::enrich(
+                analysis,
+                path,
+                text,
+                tree.root_node(),
+                profile.language,
+            )?,
+            seeds: None,
+        })
     } else {
-        Ok(analysis)
+        Ok(SelectedAnalysis {
+            analysis,
+            seeds: Some(seeds),
+        })
     }
+}
+
+fn framework_evidence(fact: &mut Fact, rule: &str) {
+    fact.kind = rule.into();
+    let evidence = fact.code.as_mut().expect("code call");
+    evidence.basis = EvidenceBasis::StructuralRule;
+    evidence.producer = "airk-framework-cues".into();
+    evidence.producer_version = "1".into();
+    evidence.coverage = "Matched a written call pattern; aliases, framework identity and runtime behavior unverified".into();
 }
 
 fn call_kind(language: &str, kind: &str) -> bool {
@@ -412,6 +562,8 @@ fn code_evidence(
     name: &str,
     work: EvidenceBudget<'_>,
 ) -> anyhow::Result<CodeEvidence> {
+    #[cfg(test)]
+    detail_tests::record_evidence(kind);
     let EvidenceBudget {
         fingerprint_bytes,
         host: mut budget,
@@ -1281,6 +1433,9 @@ fn profile_id(adapter_id: &str) -> Option<Profile> {
         keys,
     })
 }
+
+#[cfg(test)]
+mod detail_tests;
 
 #[cfg(test)]
 mod tests {

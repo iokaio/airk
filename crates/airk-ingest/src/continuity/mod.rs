@@ -17,11 +17,23 @@ pub(crate) fn prepare_with_prose_text(
     profile: &airk_core::extraction::ExtractionProfile,
     prose_text: Option<&str>,
 ) -> anyhow::Result<()> {
+    prepare_with_seeds(payload, profile, prose_text, None)
+}
+
+pub(crate) fn prepare_with_seeds(
+    payload: &mut airk_core::extraction::ExtractionPayload,
+    profile: &airk_core::extraction::ExtractionProfile,
+    prose_text: Option<&str>,
+    seeds: Option<&crate::semantic_projection::SemanticSeeds>,
+) -> anyhow::Result<()> {
     use airk_core::continuity::*;
     use airk_core::extraction::IndexDetail;
     let detail = IndexDetail::from_profile(profile)?;
-    payload.semantic_projection = crate::semantic_projection::capture(payload)?;
-    crate::detail::select(payload, detail);
+    payload.semantic_projection = match seeds {
+        Some(seeds) => crate::semantic_projection::capture_with_seeds(payload, seeds)?,
+        None => crate::semantic_projection::capture(payload)?,
+    };
+    crate::detail::select(payload, detail)?;
     if detail == IndexDetail::Essential {
         for family in [ContinuityFamily::Code, ContinuityFamily::Documents] {
             payload.continuity_coverage.insert(
@@ -109,7 +121,16 @@ pub fn prepare_native(
     bytes: &[u8],
     profile: &airk_core::extraction::ExtractionProfile,
 ) -> anyhow::Result<airk_core::extraction::ExtractionPayload> {
+    prepare_native_with_seeds(artifact, bytes, profile, None)
+}
+
+pub(crate) fn prepare_native_with_seeds(
+    artifact: &airk_core::Artifact,
+    bytes: &[u8],
+    profile: &airk_core::extraction::ExtractionProfile,
+    seeds: Option<&crate::semantic_projection::SemanticSeeds>,
+) -> anyhow::Result<airk_core::extraction::ExtractionPayload> {
     let mut payload = crate::adapters::legacy::convert_native_legacy(artifact, bytes, profile)?;
-    prepare(&mut payload, profile)?;
+    prepare_with_seeds(&mut payload, profile, None, seeds)?;
     Ok(payload)
 }

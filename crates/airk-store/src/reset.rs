@@ -15,7 +15,7 @@ use std::{
     time::Duration,
 };
 
-pub const CURRENT_RETRIEVAL_ENGINE: &str = "tantivy-0.26.2/diskann-0.59.0/airk-file-1/generation-8/inventory-4/model-objects-1/source-context-1/vector-units-1/vector-map-1/vector-selection-1/embedding-packs-1";
+pub const CURRENT_RETRIEVAL_ENGINE: &str = "tantivy-0.26.2/diskann-0.59.0/airk-file-1/generation-9/inventory-4/model-objects-1/source-context-1/vector-units-1/vector-map-1/vector-selection-1/embedding-packs-1/detail-projection-2";
 const INTENT: &str = "index-reset.json";
 const MAX_INTENT: u64 = 16_384;
 const MAX_ENTRIES: usize = 1_000_000;

@@ -3,7 +3,7 @@
 use crate::adapters::{legacy::convert_native_legacy, registry::AdapterRegistry};
 use airk_core::{
     Artifact, Fact,
-    extraction::{ExtractionPayload, ExtractionProfile, LocalRegion, LocalSyntaxId},
+    extraction::{ExtractionPayload, ExtractionProfile, IndexDetail, LocalRegion, LocalSyntaxId},
     location::{ByteSpan, HostBudget, MapSegment, Mapping, RegionLocation, SourceMap},
 };
 use anyhow::{Context, Result, ensure};
@@ -48,6 +48,15 @@ pub(crate) fn extract(
     path: &str,
     bytes: &[u8],
     profile: &ExtractionProfile,
+) -> Result<ExtractionPayload> {
+    extract_with_detail(path, bytes, profile, IndexDetail::from_profile(profile)?)
+}
+
+fn extract_with_detail(
+    path: &str,
+    bytes: &[u8],
+    profile: &ExtractionProfile,
+    detail: IndexDetail,
 ) -> Result<ExtractionPayload> {
     let text = std::str::from_utf8(bytes)?;
     ensure!(
@@ -153,6 +162,7 @@ pub(crate) fn extract(
         }
     };
     let mut prose_text = None;
+    let mut prose_seeds = None;
     if matches!(
         profile.adapter_id.as_str(),
         "mdx" | "rmd" | "haskell-literate"
@@ -168,17 +178,30 @@ pub(crate) fn extract(
             }
         }
         budget.charge(masked.len(), 0, 0, 0)?;
-        let prose = crate::documents::extract_selected(
-            path,
-            &masked,
-            &registry.get("markdown").unwrap().profile,
+        let mut prose_profile = registry.get("markdown").unwrap().profile.clone();
+        prose_profile
+            .options
+            .insert("index_detail".into(), detail.as_str().into());
+        let prose = crate::documents::extract_selected(path, &masked, &prose_profile)?;
+        budget.charge(
+            0,
+            prose
+                .facts
+                .len()
+                .max(prose.semantic_seeds.as_ref().map_or(0, |s| s.len())),
+            0,
+            0,
         )?;
-        budget.charge(0, prose.facts.len(), 0, 0)?;
+        prose_seeds = prose.semantic_seeds;
         facts.extend(prose.facts);
         prose_text = Some(String::from_utf8(masked)?);
     }
     let raw = artifact(path, text, profile, facts, partial);
     let mut payload = convert_native_legacy(&raw, bytes, profile)?;
+    let mut semantic_seeds = crate::semantic_projection::SemanticSeeds::from_payload(&payload)?;
+    if let Some(seeds) = prose_seeds {
+        semantic_seeds.extend(seeds)?;
+    }
     payload.contract_version = 2;
     payload.partial = partial;
     payload.diagnostics = diagnostics;
@@ -220,29 +243,55 @@ pub(crate) fn extract(
             }
             continue;
         }
-        let child = if child_id == "markdown" {
+        let (child, child_seeds) = if child_id == "markdown" {
             budget.charge(region.text.len(), 0, 0, 0)?;
+            let mut child_profile = region.profile.clone();
+            child_profile
+                .options
+                .insert("index_detail".into(), detail.as_str().into());
             let extracted =
-                crate::documents::extract_selected(path, region.text.as_bytes(), &region.profile)?;
-            budget.charge(0, extracted.facts.len(), 0, 0)?;
-            artifact(path, &region.text, &region.profile, extracted.facts, false)
+                crate::documents::extract_selected(path, region.text.as_bytes(), &child_profile)?;
+            budget.charge(
+                0,
+                extracted
+                    .facts
+                    .len()
+                    .max(extracted.semantic_seeds.as_ref().map_or(0, |s| s.len())),
+                0,
+                0,
+            )?;
+            (
+                artifact(path, &region.text, &region.profile, extracted.facts, false),
+                extracted.semantic_seeds,
+            )
         } else {
-            let analysis = crate::syntax::analyze_selected_budgeted(
+            let selected = crate::syntax::analyze_selected_budgeted_with_detail(
                 path,
                 &region.text,
                 child_id,
+                detail,
                 &mut budget,
             )?;
-            artifact(
-                path,
-                &region.text,
-                &region.profile,
-                analysis.facts,
-                analysis.status == "partial-syntax",
+            (
+                artifact(
+                    path,
+                    &region.text,
+                    &region.profile,
+                    selected.analysis.facts,
+                    selected.analysis.status == "partial-syntax",
+                ),
+                selected.seeds,
             )
         };
         let mut child_payload =
             convert_native_legacy(&child, region.text.as_bytes(), &region.profile)?;
+        semantic_seeds.extend_in_region(
+            match child_seeds {
+                Some(seeds) => seeds,
+                None => crate::semantic_projection::SemanticSeeds::from_payload(&child_payload)?,
+            },
+            region.id,
+        )?;
         child_payload.chunks = crate::chunking::partition(&child_payload, &[])?;
         payload.partial |= child_payload.partial || child.parse_status == "partial-syntax";
         let fact_offset = u32::try_from(payload.facts.len())?;
@@ -278,7 +327,12 @@ pub(crate) fn extract(
         }
         payload.regions.push(region);
     }
-    crate::continuity::prepare_with_prose_text(&mut payload, profile, prose_text.as_deref())?;
+    crate::continuity::prepare_with_seeds(
+        &mut payload,
+        profile,
+        prose_text.as_deref(),
+        Some(&semantic_seeds),
+    )?;
     if profile.adapter_id == "notebook" {
         // The original JSON is a mapping domain, never a retrieval chunk.
         payload.chunks.retain(|chunk| chunk.region.is_some());
@@ -292,4 +346,56 @@ pub(crate) fn extract(
     }
     payload.validate()?;
     Ok(payload)
+}
+
+#[cfg(test)]
+mod selected_tests {
+    use super::*;
+
+    #[test]
+    fn selected_composite_payloads_match_full_analysis_reference() -> Result<()> {
+        let registry = AdapterRegistry::baseline();
+        let notebook = serde_json::json!({"nbformat":4,"nbformat_minor":5,"metadata":{"kernelspec":{"language":"python"}},"cells":[{"cell_type":"markdown","metadata":{},"source":["# Café\r\n","### Requirements\r\n","The service must use 20 ms.\r\n"]},{"cell_type":"code","metadata":{},"execution_count":null,"outputs":[],"source":["def value():\n","    return 3\n"]}]}).to_string();
+        for (path, text) in [
+            (
+                "a.mdx",
+                "# Café\r\n\r\n## Requirements\r\n\r\nThe service must use 20 ms.\r\n\r\n```python\r\ndef value():\r\n    return 3\r\n```\r\n\r\n# Tail\r\n",
+            ),
+            ("a.ipynb", notebook.as_str()),
+            (
+                "a.Rmd",
+                "# Requirements\n\nThe API must use 20 ms.\n\n```{r}\nvalue <- function(x) { x + 1 }\n```\n\n# Tail\n",
+            ),
+        ] {
+            for detail in [
+                IndexDetail::Essential,
+                IndexDetail::Balanced,
+                IndexDetail::Detailed,
+            ] {
+                let policy = crate::adapters::profile::ExtractionPolicy {
+                    version: 3,
+                    detail: Some(detail),
+                    rules: vec![],
+                };
+                let mut profile = policy
+                    .select_with_prefix(&registry, path, text.as_bytes())?
+                    .profile;
+                profile
+                    .options
+                    .insert("index_detail".into(), detail.as_str().into());
+                let reference =
+                    extract_with_detail(path, text.as_bytes(), &profile, IndexDetail::Detailed)?;
+                let selected = extract(path, text.as_bytes(), &profile)?;
+                assert_eq!(
+                    serde_json::to_value(&selected)?,
+                    serde_json::to_value(&reference)?,
+                    "{path} {detail:?}"
+                );
+                if detail == IndexDetail::Essential {
+                    assert!(selected.facts.is_empty());
+                }
+            }
+        }
+        Ok(())
+    }
 }

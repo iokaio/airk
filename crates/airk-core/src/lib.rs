@@ -21,7 +21,7 @@ pub mod vector_selection;
 pub use code::*;
 
 pub const SCHEMA_VERSION: u32 = 3;
-pub const EXTRACTOR_VERSION: &str = "native-facts/8";
+pub const EXTRACTOR_VERSION: &str = "native-facts/9";
 pub const MAX_RESPONSE_BYTES: usize = 65_536;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]

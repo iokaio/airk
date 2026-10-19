@@ -581,7 +581,7 @@ impl AdapterRegistry {
                         "native-facts/7"
                     }
                     .to_owned()
-                        + "/sizing-1",
+                        + "/sizing-1/detail-2",
                     language: id.into(),
                     dialect: match id {
                         "sql-postgresql" => Some("postgresql".into()),
