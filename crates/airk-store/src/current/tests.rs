@@ -188,6 +188,7 @@ fn gates_pin_one_request_prepared_is_readable_and_old_tokens_expire() -> Result<
     assert_eq!(read.token()?, token);
     assert!(read.require_token(&fixture.head.token()?).is_err());
     assert_eq!(read.read(1)?.bytes, vec![7; 16]);
+    assert!(read.vector_for_graph_id(1).is_err());
     assert_eq!(read.counts()?.allocated_count, 2);
     Ok(())
 }

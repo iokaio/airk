@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::{
-    CurrentHead, CurrentScope, CurrentToken, database, decode_head, gate::Gate, graph,
-    journal::CapturedInput, map,
+    CurrentHead, CurrentScope, CurrentToken, database, decode_head,
+    gate::Gate,
+    graph,
+    journal::CapturedInput,
+    map,
+    vector_map::{OccurrencePointer, VectorBinding},
 };
 use crate::FileStore;
 use airk_core::graph_storage::{GraphCounts, GraphRecord, GraphRecordReader, GraphScope};
@@ -18,6 +22,78 @@ pub struct CurrentRead {
 }
 
 impl CurrentRead {
+    /// An exact embedding-key lookup checked against the authenticated graph
+    /// record. An absent key has a complete bucket proof; no SQL candidate list
+    /// is trusted to establish absence.
+    pub fn vector_binding(
+        &self,
+        embedding_key: airk_core::identity::Sha256Digest,
+    ) -> Result<Option<VectorBinding>> {
+        let Some(bytes) = self.map_get(map::MapDomain::Vector, embedding_key.as_bytes())? else {
+            return Ok(None);
+        };
+        let binding = VectorBinding::decode(&bytes, &self.head, embedding_key)?;
+        let record = self.read(binding.graph_id)?;
+        ensure!(
+            record.embedding_key == Some(embedding_key)
+                && record.live == !binding.occurrence_ids.is_empty(),
+            "current vector binding differs from graph record"
+        );
+        Ok(Some(binding))
+    }
+
+    /// Resolve an ANN candidate by physical ID. A live graph node without an
+    /// exact authenticated key mapping is corruption, never an empty result.
+    pub fn vector_for_graph_id(&self, graph_id: u32) -> Result<VectorBinding> {
+        let record = self.read(graph_id)?;
+        ensure!(record.live, "current graph candidate is not live");
+        let embedding_key = record
+            .embedding_key
+            .context("current graph candidate has no key")?;
+        let binding = self
+            .vector_binding(embedding_key)?
+            .context("live graph candidate has no current vector binding")?;
+        ensure!(
+            binding.graph_id == graph_id,
+            "current graph candidate ID mismatch"
+        );
+        Ok(binding)
+    }
+
+    /// Returns bounded authenticated pointers only. The caller must load and
+    /// verify each pointed-to occurrence object before rendering a citation.
+    pub fn vector_occurrence_pointers(
+        &self,
+        embedding_key: airk_core::identity::Sha256Digest,
+    ) -> Result<Option<Vec<OccurrencePointer>>> {
+        let Some(binding) = self.vector_binding(embedding_key)? else {
+            return Ok(None);
+        };
+        let mut pointers = Vec::with_capacity(binding.occurrence_ids.len());
+        for occurrence_id in binding.occurrence_ids {
+            let bytes = self
+                .map_get(map::MapDomain::Occurrence, occurrence_id.as_bytes())?
+                .context("current vector occurrence pointer missing")?;
+            let pointer = OccurrencePointer::decode(&bytes, occurrence_id)?;
+            ensure!(
+                pointer.embedding_key == embedding_key,
+                "current occurrence vector key mismatch"
+            );
+            let artifact = self
+                .artifact(&pointer.path)?
+                .context("current occurrence artifact missing")?;
+            ensure!(
+                artifact
+                    .content_hash
+                    .parse::<airk_core::identity::Sha256Digest>()?
+                    == pointer.source_hash,
+                "current occurrence source hash mismatch"
+            );
+            pointers.push(pointer);
+        }
+        Ok(Some(pointers))
+    }
+
     /// Authenticates the compact record and path. Call FileStore's verified
     /// retained-object reader before using referenced source or extraction bytes.
     pub fn artifact(&self, path: &str) -> Result<Option<airk_core::Artifact>> {
