@@ -5,7 +5,7 @@ use super::{
     graph,
     journal::{CapturedInput, committed_lexical_manifest},
     map,
-    vector_map::{OccurrencePointer, VectorBinding},
+    vector_map::{OccurrencePointer, PathOccurrences, VectorBinding},
 };
 use crate::FileStore;
 use airk_core::graph_storage::{GraphCounts, GraphRecord, GraphRecordReader, GraphScope};
@@ -22,6 +22,26 @@ pub struct CurrentRead {
 }
 
 impl CurrentRead {
+    /// Authenticate the path-local occurrence count and its exact source
+    /// identity. The count addresses old IDs during an incremental replacement.
+    pub fn path_occurrences(&self, path: &str) -> Result<Option<PathOccurrences>> {
+        let Some(bytes) = self.map_get(map::MapDomain::PathOccurrences, path.as_bytes())? else {
+            return Ok(None);
+        };
+        let index = PathOccurrences::decode(&bytes, path)?;
+        let artifact = self
+            .artifact(path)?
+            .context("current path occurrence index has no catalog artifact")?;
+        ensure!(
+            artifact
+                .content_hash
+                .parse::<airk_core::identity::Sha256Digest>()?
+                == index.source_hash,
+            "current path occurrence source identity mismatch"
+        );
+        Ok(Some(index))
+    }
+
     /// Exact manifest bytes bound to this request's current head. Retrieval
     /// must also verify the physical Tantivy files before trusting candidates.
     pub fn lexical_manifest(&self) -> Result<Vec<u8>> {

@@ -208,7 +208,7 @@ impl ArtifactChange {
     }
 }
 
-fn valid_current_path(path: &str) -> bool {
+pub(crate) fn valid_current_path(path: &str) -> bool {
     !path.is_empty()
         && path.len() <= 8192
         && !path.contains(['\\', ':', '\0'])
