@@ -33,6 +33,7 @@ fn serial_parallel_and_incremental_vectors_preserve_retrieval() -> Result<()> {
         "/// Recover account {n} using a time-limited password reset link.\npub fn recover_{n}() -> usize {{ {n} }}\n\n"
     )).collect();
     fs::write(root.join("recovery.rs"), &source)?;
+    fs::write(root.join("initial-blank.txt"), " \n")?;
     let model = std::env::var("AIRK_TEST_MODEL_DIR")?;
     run(
         &root,
@@ -62,7 +63,7 @@ fn serial_parallel_and_incremental_vectors_preserve_retrieval() -> Result<()> {
                 .as_u64()
                 .context("blanks missing")?
                 > 0,
-        "fixture must distinguish neural work from blank gaps"
+        "fixture must distinguish neural work from the blank source"
     );
     ensure!(
         serial["embedding_tokenized_inputs"]
@@ -88,8 +89,15 @@ fn serial_parallel_and_incremental_vectors_preserve_retrieval() -> Result<()> {
         "token and plan measurements do not reconcile"
     );
     ensure!(
-        serial["embedding_workers"] == 1 && serial["embedding_batches"].as_u64().unwrap_or(0) >= 2,
-        "fixture did not exercise multiple batches: {serial}"
+        serial["embedding_workers"] == 1 && serial["embedding_batches"].as_u64().unwrap_or(0) > 0,
+        "fixture did not exercise serial batching: {serial}"
+    );
+    ensure!(
+        serial["vector_units"] == serial["embedding_inputs"]
+            && serial["vector_body_bytes"].as_u64() == Some((source.len() + 2) as u64)
+            && serial["embedding_inputs"].as_u64().unwrap_or(u64::MAX) < 72
+            && serial["embedding_truncated_inputs"] == 0,
+        "semantic planning must cover the complete body with fewer inputs and no truncation: {serial}"
     );
     let query = ["search", "recover account password", "--mode", "vector"];
     let before = run(&root, &data, "1", &query)?;

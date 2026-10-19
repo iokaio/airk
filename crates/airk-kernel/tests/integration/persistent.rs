@@ -356,45 +356,50 @@ fn hybrid_fuses_candidates_beyond_payload_budget_and_preserves_padding_invarianc
 }
 
 #[test]
-fn hybrid_keeps_distinct_single_line_chunks_and_merges_each_identity_once() -> Result<()> {
+fn hybrid_coalesces_members_but_keeps_distinct_single_line_bodies() -> Result<()> {
     let root = tempfile::tempdir()?;
     let data = unlinked_tempdir()?;
     custom_model(data.path(), &serde_json::json!({"needle":[1.0,0.0]}))?;
-    fs::write(
-        root.path().join("long.txt"),
-        format!("{:8192}needle SECOND", "needle FIRST"),
-    )?;
+    let original = format!("{:8192}needle SECOND", "needle FIRST");
+    fs::write(root.path().join("long.txt"), &original)?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
     kernel.index()?;
     let mut search = query("needle");
-    search.max_bytes = 20_000;
+    search.max_bytes = 30_000;
     let lexical = kernel.search(&search)?;
     let hybrid = kernel.hybrid_search(&search)?;
     assert_eq!(lexical.hits.len(), 2);
-    assert_eq!(hybrid.hits.len(), 2);
-    assert_eq!(
-        hybrid.hits[0].citation.start_line,
-        hybrid.hits[1].citation.start_line
-    );
-    assert_eq!(
-        hybrid.hits[0].citation.end_line,
-        hybrid.hits[1].citation.end_line
-    );
-    assert!(hybrid.hits.iter().any(|hit| hit.text.contains("FIRST")));
-    assert!(hybrid.hits.iter().any(|hit| hit.text.contains("SECOND")));
+    assert_eq!(hybrid.hits.len(), 1);
+    assert_eq!(hybrid.hits[0].text, original);
+    assert_eq!(hybrid.hits[0].citation.start_line, 1);
+    assert_eq!(hybrid.hits[0].citation.end_line, 1);
     assert!(!hybrid.truncated);
-    // Repeated text is still distinct evidence when chunk ordinals differ.
-    fs::write(
-        root.path().join("long.txt"),
-        format!("{0:8192}{0:8192}", "needle SAME"),
-    )?;
+    // More than one semantic body on the same source line remains distinct.
+    let repeated = format!("{0:8192}{0:8192}{0:8192}", "needle SAME");
+    fs::write(root.path().join("long.txt"), &repeated)?;
     kernel.index()?;
-    assert_eq!(kernel.hybrid_search(&search)?.hits.len(), 2);
+    let hybrid = kernel.hybrid_search(&search)?;
+    assert_eq!(hybrid.hits.len(), 2);
+    assert!(
+        hybrid
+            .hits
+            .iter()
+            .all(|hit| hit.citation.start_line == 1 && hit.citation.end_line == 1)
+    );
+    assert_eq!(
+        hybrid
+            .hits
+            .iter()
+            .map(|hit| hit.text.as_str())
+            .collect::<String>(),
+        repeated
+    );
+    assert!(!hybrid.truncated);
     fs::write(root.path().join("long.txt"), "éé needle")?;
     kernel.index()?;
     search.max_bytes = 3;
     let bounded = kernel.hybrid_search(&search)?;
-    assert_eq!(bounded.hits[0].text, "é");
+    assert_eq!(bounded.hits[0].text, "nee");
     assert!(bounded.truncated);
     Ok(())
 }

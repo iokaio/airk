@@ -565,8 +565,8 @@ fn save_connection(
     ensure!(version <= 2, "unsupported SQLite schema");
     let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     tx.execute_batch("CREATE TABLE IF NOT EXISTS revision(id INTEGER PRIMARY KEY CHECK(id=1), root TEXT NOT NULL, collection TEXT NOT NULL, generation INTEGER NOT NULL, schema_version INTEGER NOT NULL, payload TEXT NOT NULL); CREATE TABLE IF NOT EXISTS index_components(id INTEGER PRIMARY KEY CHECK(id=1), payload TEXT NOT NULL); DELETE FROM index_components; PRAGMA user_version=1;")?;
-    let measure_context =
-        inventory.is_some_and(|i| i.retrieval_specification.ends_with("/source-context-1"));
+    let measure_context = inventory
+        .is_some_and(|i| i.retrieval_specification == crate::reset::CURRENT_RETRIEVAL_ENGINE);
     if measure_context {
         tx.execute_batch("CREATE TABLE usage_sources(path TEXT PRIMARY KEY,source_hash TEXT NOT NULL,payload TEXT NOT NULL)")?;
     }

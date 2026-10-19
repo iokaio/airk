@@ -7,6 +7,7 @@ pub mod model;
 mod onnx;
 pub mod persistent;
 pub mod vector;
+pub mod vector_units;
 use airk_core::{Citation, Hit, SearchQuery, SearchResponse, Snapshot};
 use anyhow::{Result, ensure};
 use std::collections::{BTreeMap, BTreeSet};

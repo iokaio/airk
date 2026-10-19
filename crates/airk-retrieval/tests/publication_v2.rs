@@ -1,90 +1,51 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Original fixtures for privately finalized retrieval generations and receipts.
+mod support;
 use airk_core::{
     Artifact, Chunk, DocumentLocation, SearchQuery, Snapshot,
-    changes::{FileStamps, FileState},
-    extraction::ExtractionProfile,
-    identity::ArtifactId,
     identity::{Incarnation, RevisionToken, Sha256Digest, revision_digest},
-    publication::{InventoryFile, InventoryV2},
+    publication::InventoryV2,
 };
 use airk_retrieval::persistent::{
-    self, ManifestV2, PersistentIndex, V2Preparation, prepare_streaming_v2,
-    retrieval_specification_v2,
+    self, ManifestV2, PersistentIndex, V2Preparation, retrieval_specification,
 };
 use anyhow::Result;
 use sha2::{Digest, Sha256};
-use std::{collections::BTreeMap, fs, path::Path, sync::Arc};
+use std::{fs, path::Path, sync::Arc};
 
 const LINEAGE: &[u8] = b"{\"generation\":1}";
 
 fn inventory(source: &Snapshot) -> Result<InventoryV2> {
-    let profile = ExtractionProfile {
-        contract_version: 1,
-        adapter_id: "text".into(),
-        adapter_version: "native-facts/7".into(),
-        language: "text".into(),
-        dialect: None,
-        grammar_identity: None,
-        mapping_version: 1,
-        chunk_version: 1,
-        options: BTreeMap::new(),
-        configuration_inputs: BTreeMap::new(),
-    };
-    let profile_id = profile.identity()?;
-    let artifact = &source.artifacts["one.txt"];
-    let source_hash = artifact.content_hash.parse()?;
-    Ok(InventoryV2 {
-        embedding_pipeline_digest: None,
-        index_detail: None,
-        extraction_policy_digest: None,
-        version: 2,
-        incarnation: Incarnation::from_bytes([1; 16]),
-        generation: source.generation,
-        collection: source.collection.clone(),
-        root: source.root.clone(),
-        roots: BTreeMap::new(),
-        lineage_digest: Sha256Digest::from_bytes(Sha256::digest(LINEAGE).into()),
-        profiles: BTreeMap::from([(profile_id, profile)]),
-        files: BTreeMap::from([(
-            "one.txt".into(),
-            InventoryFile {
-                continuity: Vec::new(),
-                continuity_coverage: Default::default(),
-                state: FileState {
-                    artifact_id: ArtifactId::from_bytes([2; 16]),
-                    stamps: FileStamps {
-                        first_generation: 1,
-                        path_generation: 1,
-                        content_generation: 1,
-                        evidence_generation: 1,
-                    },
-                    source_hash,
-                    profile_id,
-                    payload_digest: source_hash,
-                    evidence_digest: source_hash,
-                    root: source.root.clone(),
-                    path: "one.txt".into(),
-                },
-                source_bytes: artifact.bytes,
-                payload_bytes: artifact.bytes,
-                extracted_bytes: artifact.extracted_bytes(),
-                chunks: 1,
-                indexed_lines: 1,
-                facts: 0,
-                raw_source: true,
-                language: "text".into(),
-                extraction_method: "utf8".into(),
-                parse_status: "complete".into(),
-            },
-        )]),
-        retrieval_specification: String::from_utf8(retrieval_specification_v2().to_vec())?,
-        embedding_model: None,
-        extractor_version: source.extractor_version.clone(),
-        analysis: None,
-        imported_facts: vec![],
-        imported_relationships: vec![],
-    })
+    let mut inventory = support::inventory(source, &support::FixtureSource::new(source)?, None)?;
+    inventory.lineage_digest = support::digest(LINEAGE);
+    Ok(inventory)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_fixture(
+    base: &Path,
+    preparation: &V2Preparation<'_>,
+    model: Option<&Path>,
+    source: &Snapshot,
+    charge: Option<airk_retrieval::bounded::Charge>,
+    staging: Option<&Path>,
+    catalog: impl FnOnce(&Path) -> Result<()>,
+) -> Result<airk_core::identity::PublicationReceipt> {
+    let source = support::FixtureSource::new(source)?;
+    let objects = model
+        .map(|model| support::install_model(base, model))
+        .transpose()?;
+    persistent::prepare_streaming(
+        base,
+        preparation,
+        objects.as_ref(),
+        &source,
+        charge,
+        staging,
+        None,
+        catalog,
+        |_| Ok(()),
+    )
 }
 
 fn fixture() -> Snapshot {
@@ -117,7 +78,7 @@ fn token(inventory: &[u8]) -> RevisionToken {
     RevisionToken {
         incarnation: Incarnation::from_bytes([1; 16]),
         generation: 1,
-        revision: revision_digest(retrieval_specification_v2(), inventory),
+        revision: revision_digest(retrieval_specification(), inventory),
     }
 }
 
@@ -147,7 +108,7 @@ fn receipt_binds_exact_inventory_and_post_callback_catalog() -> Result<()> {
         canonical_inventory: inventory,
         token: token(inventory),
     };
-    let receipt = prepare_streaming_v2(&base, &preparation, None, &source, None, None, catalog)?;
+    let receipt = prepare_fixture(&base, &preparation, None, &source, None, None, catalog)?;
     let generation = base
         .join("generations")
         .join(receipt.token.revision.to_string());
@@ -171,12 +132,8 @@ fn receipt_binds_exact_inventory_and_post_callback_catalog() -> Result<()> {
         max_bytes: 1024,
     };
     assert_eq!(reader.search(&query)?.hits[0].citation.path, "one.txt");
-    assert!(
-        PersistentIndex::open_revision(&base, &receipt.token.revision.to_string(), 1, "default")
-            .is_err()
-    );
     assert!(PersistentIndex::open_v2(&base, "other", &receipt).is_err());
-    assert!(prepare_streaming_v2(&base, &preparation, None, &source, None, None, catalog).is_err());
+    assert!(prepare_fixture(&base, &preparation, None, &source, None, None, catalog).is_err());
     fs::write(generation.join("manifest.json"), b"{}")?;
     assert!(reader.search(&query).is_err());
     Ok(())
@@ -195,7 +152,7 @@ fn empty_locked_lexical_component_verifies_without_reading_locked_bytes() -> Res
         canonical_inventory: &bytes,
         token: token(&bytes),
     };
-    let receipt = prepare_streaming_v2(&base, &preparation, None, &source, None, None, catalog)?;
+    let receipt = prepare_fixture(&base, &preparation, None, &source, None, None, catalog)?;
     let directory = base
         .join("generations")
         .join(receipt.token.revision.to_string());
@@ -231,6 +188,8 @@ fn component_corruption_and_unowned_sidecars_fail_reopen() -> Result<()> {
         "lineage.json",
         "inventory.json",
         "unexpected.sqlite",
+        "vector-map/meta.json",
+        "vector-map/unlisted.bin",
     ] {
         let temp = tempfile::tempdir()?;
         let base = temp.path().join("collection");
@@ -239,8 +198,7 @@ fn component_corruption_and_unowned_sidecars_fail_reopen() -> Result<()> {
             canonical_inventory: inventory,
             token: token(inventory),
         };
-        let receipt =
-            prepare_streaming_v2(&base, &preparation, None, &source, None, None, catalog)?;
+        let receipt = prepare_fixture(&base, &preparation, None, &source, None, None, catalog)?;
         fs::write(
             base.join("generations")
                 .join(receipt.token.revision.to_string())
@@ -270,7 +228,7 @@ fn callback_failure_missing_catalog_and_component_mutation_never_publish() -> Re
             canonical_inventory: inventory,
             token: token(inventory),
         };
-        let result = prepare_streaming_v2(
+        let result = prepare_fixture(
             &base,
             &preparation,
             None,
@@ -319,7 +277,7 @@ fn bad_token_and_quota_failure_do_not_reach_callback() -> Result<()> {
             canonical_inventory: inventory,
             token: revision,
         };
-        let result = prepare_streaming_v2(
+        let result = prepare_fixture(
             &base,
             &preparation,
             None,
@@ -371,7 +329,7 @@ fn mismatched_projection_incarnation_specification_and_noncanonical_inventory_ar
             token: revision,
         };
         assert!(
-            prepare_streaming_v2(&base, &preparation, None, &source, None, None, |_| panic!(
+            prepare_fixture(&base, &preparation, None, &source, None, None, |_| panic!(
                 "invalid identity reached catalog callback"
             ))
             .is_err()
@@ -399,6 +357,8 @@ fn local_vector_assets_are_receipt_bound_and_reopened() -> Result<()> {
     let source = fixture();
     let mut authoritative = inventory(&source)?;
     authoritative.embedding_model = Some(airk_retrieval::model::inspect(&model)?.identity);
+    authoritative.embedding_pipeline_digest =
+        Some(airk_retrieval::model::inspect_cache_descriptor(&model)?.identity()?);
     let snapshot = authoritative.projection()?;
     let bytes = authoritative.canonical_bytes()?;
     let preparation = V2Preparation {
@@ -406,7 +366,7 @@ fn local_vector_assets_are_receipt_bound_and_reopened() -> Result<()> {
         canonical_inventory: &bytes,
         token: token(&bytes),
     };
-    let receipt = prepare_streaming_v2(
+    let receipt = prepare_fixture(
         &base,
         &preparation,
         Some(&model),
@@ -420,7 +380,7 @@ fn local_vector_assets_are_receipt_bound_and_reopened() -> Result<()> {
         .join(receipt.token.revision.to_string());
     let manifest: ManifestV2 =
         serde_json::from_slice(&fs::read(generation.join("manifest.json"))?)?;
-    for name in ["vectors.bin", "model/model.json", "model/vocabulary.json"] {
+    for name in ["vectors.bin", "model-objects.json", "vector-map/meta.json"] {
         assert!(manifest.components.contains_key(name));
     }
     let reader = PersistentIndex::open_v2(&base, "default", &receipt)?;
@@ -438,29 +398,39 @@ fn local_vector_assets_are_receipt_bound_and_reopened() -> Result<()> {
         "one.txt"
     );
     drop(reader);
-    fs::write(generation.join("model/vocabulary.json"), b"{}")?;
+    let objects = airk_retrieval::model::inspect_object_plan(&model)?;
+    let object = &objects.assets[&airk_core::model_objects::ModelAssetName::VocabularyJson];
+    fs::write(
+        base.join("objects/models").join(object.sha256.to_string()),
+        b"{}",
+    )?;
     assert!(PersistentIndex::open_v2(&base, "default", &receipt).is_err());
     Ok(())
 }
 
 #[test]
-fn legacy_preparation_still_reopens_unchanged() -> Result<()> {
+fn old_manifest_rejection_explains_full_rebuild_before_new_field_deserialization() -> Result<()> {
     let temp = tempfile::tempdir()?;
     let base = temp.path().join("collection");
-    let snapshot = fixture();
-    persistent::prepare(&base, &snapshot, None)?;
-    let reader = PersistentIndex::open(&base, &snapshot)?;
-    assert_eq!(
-        reader
-            .search(&SearchQuery {
-                text: "aurora".into(),
-                path_prefix: None,
-                limit: 1,
-                max_bytes: 1024
-            })?
-            .hits
-            .len(),
-        1
-    );
+    let source = fixture();
+    let authoritative = inventory(&source)?;
+    let bytes = authoritative.canonical_bytes()?;
+    let preparation = V2Preparation {
+        snapshot: &authoritative.projection()?,
+        canonical_inventory: &bytes,
+        token: token(&bytes),
+    };
+    let mut receipt = prepare_fixture(&base, &preparation, None, &source, None, None, catalog)?;
+    let path = base
+        .join("generations")
+        .join(receipt.token.revision.to_string())
+        .join("manifest.json");
+    let bytes = br#"{"schema":3,"engine":"old-generation"}"#;
+    fs::write(path, bytes)?;
+    receipt.manifest_digest = support::digest(bytes);
+    let error = PersistentIndex::open_v2(&base, &source.collection, &receipt)
+        .err()
+        .unwrap();
+    assert!(error.to_string().contains("airk index --full"), "{error}");
     Ok(())
 }

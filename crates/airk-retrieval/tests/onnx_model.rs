@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
+mod support;
 use airk_core::{Artifact, Chunk, DocumentLocation, SearchQuery, Snapshot};
-use airk_retrieval::{
-    model,
-    persistent::{self, PersistentIndex},
-};
+use airk_retrieval::{model, persistent::PersistentIndex};
 use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf};
@@ -52,8 +50,9 @@ fn real_transformer_publishes_reopens_and_keeps_generation_assets_isolated() -> 
             },
         );
     }
-    persistent::prepare(&base, &snapshot, Some(&directory))?;
-    let index = PersistentIndex::open(&base, &snapshot)?;
+    let source = support::FixtureSource::new(&snapshot)?;
+    let receipt = support::prepare(&base, &snapshot, &source, Some(&directory))?;
+    let index = PersistentIndex::open_v2(&base, &snapshot.collection, &receipt)?;
     let query = SearchQuery {
         text: "Recover access after forgetting a login secret".into(),
         path_prefix: None,
@@ -66,25 +65,25 @@ fn real_transformer_publishes_reopens_and_keeps_generation_assets_isolated() -> 
         answer.hits[0].citation.content_hash,
         snapshot.artifacts["auth.txt"].content_hash
     );
-    // A fresh read reopens copied assets, independent of the provisioned source directory.
-    let copied = persistent::component_directory(&base, &snapshot)?.join("model");
-    assert_eq!(
-        model::inspect(&copied)?.identity,
-        snapshot.embedding_model.as_ref().unwrap().as_str()
-    );
+    // Receipt-bound shared objects remain independent of provisioned source assets.
+    let set = model::inspect_object_plan(&directory)?;
+    model::inspect_objects_cache_descriptor(&base, &set)?;
     drop(index);
-    let reopened = PersistentIndex::open(&base, &snapshot)?;
+    let reopened = PersistentIndex::open_v2(&base, &snapshot.collection, &receipt)?;
     assert_eq!(
         reopened.hybrid_search(&query)?.hits[0].citation.path,
         "auth.txt"
     );
-    let mut manifest: serde_json::Value =
-        serde_json::from_slice(&fs::read(copied.join("model.json"))?)?;
+    drop(reopened);
+    let manifest_object = &set.assets[&airk_core::model_objects::ModelAssetName::ModelJson];
+    let copied = base
+        .join("objects/models")
+        .join(manifest_object.sha256.to_string());
+    let mut manifest: serde_json::Value = serde_json::from_slice(&fs::read(&copied)?)?;
     manifest["max_tokens"] = serde_json::json!(128);
-    fs::write(copied.join("model.json"), serde_json::to_vec(&manifest)?)?;
-    let altered = PersistentIndex::open(&base, &snapshot)?;
+    fs::write(copied, serde_json::to_vec(&manifest)?)?;
     assert!(
-        altered.semantic_search(&query).is_err(),
+        PersistentIndex::open_v2(&base, &snapshot.collection, &receipt).is_err(),
         "changed tokenization cannot pair with old vectors"
     );
     Ok(())

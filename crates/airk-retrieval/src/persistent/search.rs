@@ -3,6 +3,7 @@
 use super::*;
 use crate::{terms, truncate_utf8};
 use airk_core::{SearchQuery, SearchResponse};
+use std::{collections::BTreeSet, sync::Arc};
 use tantivy::{
     DocAddress, Order, Term,
     collector::TopDocs,
@@ -11,16 +12,18 @@ use tantivy::{
 };
 
 const HYBRID_CANDIDATES: usize = 100;
-// Exact scoped comparisons operate on at most this many chunks. The path query
+// Exact scoped comparisons operate on at most this many graph nodes. The path query
 // fetches one lookahead; remaining scope is explicitly reported as incomplete.
-const MAX_SCOPED_CHUNKS: usize = crate::vector::MAX_SCOPED_VECTOR_READS;
+const MAX_SCOPED_NODES: usize = crate::vector::MAX_SCOPED_VECTOR_READS;
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct Candidate {
     // Already persisted in every supported lexical schema; unique across the
     // generation, even when multiple chunks have identical display coordinates.
     ordinal: u64,
-    address: DocAddress,
+    address: Option<DocAddress>,
+    window: Option<Arc<vector_map::Occurrence>>,
+    semantic_rank: Option<usize>,
 }
 
 struct Candidates {
@@ -52,10 +55,19 @@ impl PersistentIndex {
         let mut merged = BTreeMap::<u64, (f64, Candidate)>::new();
         for branch in [lexical, semantic] {
             for (rank, candidate) in branch.values.into_iter().enumerate() {
-                merged
-                    .entry(candidate.ordinal)
-                    .or_insert((0.0, candidate))
-                    .0 += 1.0 / (61.0 + rank as f64);
+                let score = 1.0 / (61.0 + candidate.semantic_rank.unwrap_or(rank) as f64);
+                match merged.entry(candidate.ordinal) {
+                    std::collections::btree_map::Entry::Vacant(entry) => {
+                        entry.insert((score, candidate));
+                    }
+                    std::collections::btree_map::Entry::Occupied(mut entry) => {
+                        entry.get_mut().0 += score;
+                        // A semantic tail match must survive an earlier lexical vote.
+                        if candidate.window.is_some() {
+                            entry.get_mut().1 = candidate;
+                        }
+                    }
+                }
             }
         }
         let mut ranked: Vec<_> = merged.into_values().collect();
@@ -73,6 +85,10 @@ impl PersistentIndex {
     }
 
     fn path_query(&self, prefix: &str) -> Result<RegexQuery> {
+        Self::path_query_field(prefix, self.fields.path)
+    }
+
+    fn path_query_field(prefix: &str, field: Field) -> Result<RegexQuery> {
         let escaped: String = prefix
             .chars()
             .flat_map(|ch| {
@@ -85,7 +101,7 @@ impl PersistentIndex {
             .collect();
         Ok(RegexQuery::from_pattern(
             &format!("(?s:{escaped}.*)"),
-            self.fields.path,
+            field,
         )?)
     }
 
@@ -130,7 +146,9 @@ impl PersistentIndex {
                 .map(|(ordinal, address)| {
                     Ok(Candidate {
                         ordinal: ordinal.context("missing generation chunk ordinal")?,
-                        address,
+                        address: Some(address),
+                        window: None,
+                        semantic_rank: None,
                     })
                 })
                 .collect::<Result<_>>()?,
@@ -138,38 +156,38 @@ impl PersistentIndex {
         })
     }
 
-    fn vector_candidate(&self, id: u32) -> Result<Candidate> {
+    fn lexical_address(&self, ordinal: u64) -> Result<DocAddress> {
         let candidates = self.ordered_candidates(
             &TermQuery::new(
-                Term::from_field_u64(self.fields.vector, u64::from(id)),
+                Term::from_field_u64(self.fields.ordinal, ordinal),
                 IndexRecordOption::Basic,
             ),
             1,
         )?;
         ensure!(
             !candidates.incomplete && candidates.values.len() == 1,
-            "vector/lexical identity mismatch"
+            "vector/lexical ordinal mismatch"
         );
-        Ok(candidates.values[0])
+        candidates.values[0]
+            .address
+            .context("lexical address missing")
     }
 
-    // Every supported builder assigns sequential vector IDs in chunk ordinal
-    // order, skipping unembedded chunks. Binary search resolves that existing
-    // relation in <=32 postings lookups without reading any stored text and
-    // without adding a new persisted field or scanning all vectors.
-    fn vector_id(&self, ordinal: u64) -> Result<Option<u32>> {
-        let mut low = 1u64;
-        let mut high = self.vectors as u64 + 1;
-        while low < high {
-            let middle = low + (high - low) / 2;
-            let id = u32::try_from(middle).context("vector id overflow")?;
-            match self.vector_candidate(id)?.ordinal.cmp(&ordinal) {
-                std::cmp::Ordering::Equal => return Ok(Some(id)),
-                std::cmp::Ordering::Less => low = middle + 1,
-                std::cmp::Ordering::Greater => high = middle,
-            }
-        }
-        Ok(None)
+    fn occurrence_addresses(
+        &self,
+        query: &dyn Query,
+        limit: usize,
+    ) -> Result<(Vec<DocAddress>, bool)> {
+        let mut matches = self.map_reader.searcher().search(
+            query,
+            &TopDocs::with_limit(limit + 1).order_by_u64_field("map_ordinal", Order::Asc),
+        )?;
+        let incomplete = matches.len() > limit;
+        matches.truncate(limit);
+        Ok((
+            matches.into_iter().map(|(_, address)| address).collect(),
+            incomplete,
+        ))
     }
 
     fn vector_candidates(&self, query: &SearchQuery, limit: usize) -> Result<Candidates> {
@@ -182,10 +200,14 @@ impl PersistentIndex {
             .lock()
             .map_err(|_| anyhow::anyhow!("local model cache poisoned"))?;
         if cached.is_none() {
-            *cached = Some(match &self.model_objects {
-                Some(set) => EmbeddingModel::open_objects(&self.collection_directory, set)?,
-                None => EmbeddingModel::open(&self.directory.join("model"))?,
-            });
+            let set = self
+                .model_objects
+                .as_ref()
+                .context("indexed model objects missing; rebuild with airk index --full")?;
+            *cached = Some(EmbeddingModel::open_objects(
+                &self.collection_directory,
+                set,
+            )?);
         }
         let model = cached.as_ref().context("local model unavailable")?;
         ensure!(
@@ -197,35 +219,150 @@ impl PersistentIndex {
             .context("semantic retrieval not ready: no recognized model tokens")?;
         drop(cached);
         let graph = DiskIndex::open(&self.directory.join("vectors.bin"))?;
+        let mut decoded_remaining = vector_map::MAX_DECODED_BYTES;
+        let mut members_remaining = vector_map::MAX_POSTINGS;
+        let mut incomplete = false;
+        let mut selected = BTreeMap::<u64, (f32, usize, Arc<vector_map::Occurrence>)>::new();
+        let mut occurrence_rank = 0usize;
+        let mut admit = |distance: f32, occurrence: vector_map::Occurrence| -> bool {
+            let rank = occurrence_rank;
+            occurrence_rank += 1;
+            let occurrence = Arc::new(occurrence);
+            for member in &occurrence.members {
+                if members_remaining == 0 {
+                    return false;
+                }
+                members_remaining -= 1;
+                if member.blank {
+                    continue;
+                }
+                selected
+                    .entry(member.lexical_ordinal)
+                    .or_insert_with(|| (distance, rank, occurrence.clone()));
+            }
+            true
+        };
+        let wanted = (limit * 4).clamp(64, 1000);
         if let Some(prefix) = query
             .path_prefix
             .as_deref()
             .filter(|prefix| !prefix.is_empty())
         {
-            let scoped = self.ordered_candidates(&self.path_query(prefix)?, MAX_SCOPED_CHUNKS)?;
-            let mut mapping = BTreeMap::new();
-            for candidate in scoped.values {
-                if let Some(id) = self.vector_id(candidate.ordinal)? {
-                    mapping.insert(id, candidate);
+            let (addresses, more) = self.occurrence_addresses(
+                &Self::path_query_field(prefix, self.map_fields.path)?,
+                vector_map::MAX_POSTINGS,
+            )?;
+            incomplete |= more;
+            let mut scoped = BTreeMap::<u32, Vec<vector_map::Occurrence>>::new();
+            let mut retained_members = 0usize;
+            for address in addresses {
+                let Some((id, occurrence)) = vector_map::read(
+                    &self.map_reader,
+                    &self.map_fields,
+                    address,
+                    self.vectors,
+                    self.reader.searcher().num_docs(),
+                    &mut decoded_remaining,
+                )?
+                else {
+                    incomplete = true;
+                    break;
+                };
+                ensure!(
+                    occurrence.path.starts_with(prefix),
+                    "vector occurrence path mismatch"
+                );
+                if (!scoped.contains_key(&id) && scoped.len() == MAX_SCOPED_NODES)
+                    || retained_members + occurrence.members.len() > vector_map::MAX_POSTINGS
+                {
+                    incomplete = true;
+                    break;
+                }
+                retained_members += occurrence.members.len();
+                let entries = scoped.entry(id).or_default();
+                if entries.len() == vector_map::MAX_NODE_OCCURRENCES {
+                    incomplete = true;
+                    continue;
+                }
+                entries.push(occurrence);
+            }
+            let mut ranked = graph.search_subset(&vector, scoped.keys().copied(), wanted)?;
+            ranked.sort_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
+            incomplete |= ranked.len() < scoped.len();
+            for (id, distance) in ranked {
+                for occurrence in scoped
+                    .remove(&id)
+                    .context("scoped vector mapping missing")?
+                {
+                    if !admit(distance, occurrence) {
+                        incomplete = true;
+                        break;
+                    }
                 }
             }
-            let ranked = graph.search_subset(&vector, mapping.keys().copied(), limit + 1)?;
-            let incomplete = scoped.incomplete || ranked.len() > limit;
-            let values = ranked
-                .into_iter()
-                .take(limit)
-                .map(|(id, _)| mapping[&id])
-                .collect();
-            return Ok(Candidates { values, incomplete });
+        } else {
+            let mut ranked = graph.search(&vector, wanted)?;
+            incomplete |= ranked.len() < self.vectors;
+            ranked.sort_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
+            let mut postings_remaining = vector_map::MAX_POSTINGS;
+            'graphs: for (id, distance) in ranked {
+                if postings_remaining == 0 {
+                    incomplete = true;
+                    break;
+                }
+                let (addresses, more) = self.occurrence_addresses(
+                    &TermQuery::new(
+                        Term::from_field_u64(self.map_fields.graph_id, u64::from(id)),
+                        IndexRecordOption::Basic,
+                    ),
+                    postings_remaining.min(vector_map::MAX_NODE_OCCURRENCES),
+                )?;
+                incomplete |= more;
+                ensure!(!addresses.is_empty(), "graph node has no vector occurrence");
+                postings_remaining -= addresses.len();
+                for address in addresses {
+                    let Some((mapped_id, occurrence)) = vector_map::read(
+                        &self.map_reader,
+                        &self.map_fields,
+                        address,
+                        self.vectors,
+                        self.reader.searcher().num_docs(),
+                        &mut decoded_remaining,
+                    )?
+                    else {
+                        incomplete = true;
+                        break 'graphs;
+                    };
+                    ensure!(mapped_id == id, "vector occurrence graph identity mismatch");
+                    if !admit(distance, occurrence) {
+                        incomplete = true;
+                        break 'graphs;
+                    }
+                }
+            }
         }
-        let mut ranked = graph.search(&vector, (limit * 4).clamp(64, 1000))?;
-        let incomplete = ranked.len() < self.vectors || ranked.len() > limit;
-        ranked.sort_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
-        ranked.truncate(limit);
-        let values = ranked
-            .into_iter()
-            .map(|(id, _)| self.vector_candidate(id))
-            .collect::<Result<_>>()?;
+        let mut ranked: Vec<_> = selected.into_iter().collect();
+        ranked.sort_by(|a, b| {
+            a.1.0
+                .total_cmp(&b.1.0)
+                .then_with(|| a.1.1.cmp(&b.1.1))
+                .then_with(|| a.0.cmp(&b.0))
+        });
+        let mut chosen = BTreeSet::new();
+        let mut values = Vec::new();
+        for (ordinal, (_, rank, occurrence)) in ranked {
+            if !chosen.contains(&occurrence.occurrence_id) && chosen.len() == limit {
+                incomplete = true;
+                continue;
+            }
+            chosen.insert(occurrence.occurrence_id);
+            values.push(Candidate {
+                ordinal,
+                address: None,
+                window: Some(occurrence),
+                semantic_rank: Some(rank),
+            });
+        }
         Ok(Candidates { values, incomplete })
     }
 
@@ -234,42 +371,80 @@ impl PersistentIndex {
     // pays whole-component verification costs until authenticated block reads
     // are available. Verification is performed once per hybrid request.
     fn verify_retained_components(&self) -> Result<()> {
-        if let Some(receipt) = &self.v2_receipt {
-            let manifest = verify_directory_v2(&self.directory, receipt, &self.collection)?;
-            ensure!(
-                manifest.chunks as u64 == self.reader.searcher().num_docs()
-                    && manifest.vectors == self.vectors
-                    && manifest.model_sha256 == self.model_sha256,
-                "cached v2 generation manifest mismatch"
-            );
-            if let Some(set) = &self.model_objects {
-                crate::model::inspect_objects_cache_descriptor(&self.collection_directory, set)?;
-            }
-            return Ok(());
-        }
-        let manifest = read_manifest(&self.directory)?;
+        let receipt = self
+            .v2_receipt
+            .as_ref()
+            .context("publication receipt missing")?;
+        let manifest = verify_directory_v2(&self.directory, receipt, &self.collection)?;
         ensure!(
-            manifest.schema == 1
-                && manifest.engine == ENGINE
-                && Some(manifest.revision.as_str())
-                    == self.directory.file_name().and_then(|name| name.to_str())
-                && manifest.generation == self.generation
-                && manifest.collection == self.collection
-                && manifest.chunks as u64 == self.reader.searcher().num_docs()
+            manifest.chunks as u64 == self.reader.searcher().num_docs()
+                && manifest.vector_occurrences as u64 == self.map_reader.searcher().num_docs()
+                && manifest.vector_occurrences == self.vector_occurrences
                 && manifest.vectors == self.vectors
                 && manifest.model_sha256 == self.model_sha256,
-            "cached generation manifest identity mismatch"
+            "cached generation manifest mismatch"
         );
+        if let Some(set) = &self.model_objects {
+            crate::model::inspect_objects_cache_descriptor(&self.collection_directory, set)?;
+        }
         Ok(())
     }
 
-    fn read_hit(&self, address: DocAddress) -> Result<Hit> {
+    fn read_hit(&self, address: DocAddress, remaining: &mut usize) -> Result<Option<Hit>> {
         let document: TantivyDocument = self.reader.searcher().doc(address)?;
         let payload = document
             .get_first(self.fields.payload)
             .and_then(|value| value.as_str())
             .context("missing lexical citation")?;
-        Ok(serde_json::from_str(payload)?)
+        ensure!(
+            payload.len() <= airk_core::extraction::MAX_TEXT_BYTES + (1 << 20),
+            "oversized lexical citation"
+        );
+        if payload.len() > *remaining {
+            return Ok(None);
+        }
+        *remaining -= payload.len();
+        Ok(Some(serde_json::from_str(payload)?))
+    }
+
+    fn occurrence_body(
+        &self,
+        occurrence: &vector_map::Occurrence,
+        remaining: &mut usize,
+    ) -> Result<Option<String>> {
+        let mut text = String::with_capacity(occurrence.body.span.end - occurrence.body.span.start);
+        let mut cached = None::<(u64, Hit)>;
+        for member in &occurrence.members {
+            if cached
+                .as_ref()
+                .is_none_or(|(ordinal, _)| *ordinal != member.lexical_ordinal)
+            {
+                let Some(hit) =
+                    self.read_hit(self.lexical_address(member.lexical_ordinal)?, remaining)?
+                else {
+                    return Ok(None);
+                };
+                ensure!(
+                    hit.citation.path == occurrence.path
+                        && hit.citation.content_hash == occurrence.source_hash.to_string(),
+                    "vector body source differs from lexical citation"
+                );
+                cached = Some((member.lexical_ordinal, hit));
+            }
+            let hit = &cached.as_ref().context("lexical body unavailable")?.1;
+            member.span_in_chunk.validate(&hit.text)?;
+            let part = &hit.text[member.span_in_chunk.start..member.span_in_chunk.end];
+            ensure!(
+                part.trim().is_empty() == member.blank,
+                "vector evidence blank marker mismatch"
+            );
+            text.push_str(part);
+        }
+        ensure!(
+            text.len() == occurrence.body.span.end - occurrence.body.span.start,
+            "vector body byte count mismatch"
+        );
+        Ok(Some(text))
     }
 
     fn materialize(&self, candidates: Candidates, query: &SearchQuery) -> Result<SearchResponse> {
@@ -283,14 +458,49 @@ impl PersistentIndex {
             truncated: candidates.incomplete,
         };
         let mut remaining = query.max_bytes;
+        let mut decoded_remaining = 32 << 20;
+        let mut occurrences = BTreeSet::new();
+        let mut covered_ordinals = BTreeSet::new();
         for candidate in candidates.values {
+            if covered_ordinals.contains(&candidate.ordinal) {
+                continue;
+            }
+            if let Some(occurrence) = &candidate.window
+                && !occurrences.insert(occurrence.occurrence_id)
+            {
+                continue;
+            }
             if remaining == 0 || response.hits.len() == query.limit {
                 response.truncated = true;
                 break;
             }
-            // At most one complete indexed chunk is decoded at a time; all
-            // other candidates retain only their ordinal and document address.
-            let mut hit = self.read_hit(candidate.address)?;
+            let mut hit = if let Some(occurrence) = candidate.window {
+                let Some(text) = self.occurrence_body(&occurrence, &mut decoded_remaining)? else {
+                    response.truncated = true;
+                    break;
+                };
+                let hit = focused_body(&occurrence, &text, &query.text, remaining)?;
+                covered_ordinals.extend(
+                    occurrence
+                        .members
+                        .iter()
+                        .map(|member| member.lexical_ordinal),
+                );
+                hit
+            } else {
+                let Some(hit) = self.read_hit(
+                    candidate
+                        .address
+                        .context("lexical candidate has no address")?,
+                    &mut decoded_remaining,
+                )?
+                else {
+                    response.truncated = true;
+                    break;
+                };
+                covered_ordinals.insert(candidate.ordinal);
+                hit
+            };
             let (text, truncated) = truncate_utf8(&hit.text, remaining);
             hit.text = text;
             hit.truncated |= truncated;
@@ -300,4 +510,115 @@ impl PersistentIndex {
         }
         Ok(response)
     }
+}
+
+/// Focus only when the response allowance cannot carry the complete original body.
+/// Word/line matching selects an original byte span; repeated input context is absent.
+fn focus_span(text: &str, query: &str, allowance: usize) -> airk_core::location::ByteSpan {
+    use airk_core::location::ByteSpan;
+    if text.len() <= allowance {
+        return ByteSpan {
+            start: 0,
+            end: text.len(),
+        };
+    }
+    let query = terms(query);
+    let mut selected = None;
+    let mut offset = 0;
+    for line in text.split_inclusive('\n') {
+        let start = offset + line.len() - line.trim_start().len();
+        if start < offset + line.len() {
+            let score = terms(line).intersection(&query).count();
+            if selected.is_none_or(|(_, _, best)| score > best) {
+                selected = Some((start, offset + line.len(), score));
+            }
+        }
+        offset += line.len();
+    }
+    let (mut start, end, score) = selected.unwrap_or((0, text.len(), 0));
+    if score > 0 {
+        let mut word = None;
+        for (index, character) in text[start..end]
+            .char_indices()
+            .chain(std::iter::once((end - start, ' ')))
+        {
+            if character.is_alphanumeric() || character == '_' {
+                word.get_or_insert(index);
+            } else if let Some(begin) = word.take()
+                && !terms(&text[start + begin..start + index]).is_disjoint(&query)
+            {
+                if begin >= allowance {
+                    start += begin.saturating_sub(allowance / 4);
+                }
+                break;
+            }
+        }
+    }
+    while !text.is_char_boundary(start) {
+        start -= 1;
+    }
+    let mut end = text.len().min(start.saturating_add(allowance));
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    // A one-byte allowance may not fit a complete scalar; its full source span
+    // remains valid while the final UTF8 byte-budget truncation returns no text.
+    if end == start {
+        end = start + text[start..].chars().next().map_or(0, char::len_utf8);
+    }
+    ByteSpan { start, end }
+}
+
+fn focused_body(
+    occurrence: &vector_map::Occurrence,
+    text: &str,
+    query: &str,
+    allowance: usize,
+) -> Result<Hit> {
+    let span = focus_span(text, query, allowance);
+    span.validate(text)?;
+    ensure!(span.start < span.end, "empty semantic body focus");
+    let body = &occurrence.body;
+    let mut enclosing_citation = false;
+    let (location, start_line, end_line) = if let Some(projection) = &body.projection {
+        match projection.focus(text, span)? {
+            Some(location) => location,
+            None => {
+                // Some decoded edges cannot be subdivided. Keep the authenticated
+                // enclosing original-body citation and mark this excerpt incomplete.
+                enclosing_citation = true;
+                (body.location.clone(), body.start_line, body.end_line)
+            }
+        }
+    } else {
+        let first = body.start_line
+            + text[..span.start]
+                .bytes()
+                .filter(|byte| *byte == b'\n')
+                .count();
+        let last = first
+            + text.as_bytes()[span.start..span.end - 1]
+                .iter()
+                .filter(|byte| **byte == b'\n')
+                .count();
+        let location = match &body.location {
+            airk_core::DocumentLocation::Lines { .. } => airk_core::DocumentLocation::Lines {
+                start: first,
+                end: last,
+            },
+            location => location.clone(),
+        };
+        (location, first, last)
+    };
+    Ok(Hit {
+        citation: Citation {
+            path: occurrence.path.clone(),
+            content_hash: occurrence.source_hash.to_string(),
+            start_line,
+            end_line,
+            location,
+        },
+        text: text[span.start..span.end].into(),
+        truncated: enclosing_citation || span.start > 0 || span.end < text.len(),
+    })
 }

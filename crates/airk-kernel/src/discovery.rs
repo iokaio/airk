@@ -24,15 +24,12 @@ impl Kernel {
         let catalog = self.catalog()?;
         let snapshot = &catalog.snapshot;
         let publication = Self::catalog_envelope(&catalog);
-        ensure!(
-            publication.is_some() || options.cursor.is_none(),
-            "legacy discovery cannot resume; reindex first"
-        );
         let binding = discovery::binding(
             &publication
                 .as_ref()
-                .map(|p| p.token.to_string())
-                .unwrap_or_else(|| "legacy".into()),
+                .context("indexed publication missing; rebuild with airk index --full")?
+                .token
+                .to_string(),
             "list_files",
             (&snapshot.collection, prefix),
         )?;
@@ -111,79 +108,10 @@ impl Kernel {
                     .is_none_or(|language| language.len() <= 128),
             "fact filter too long"
         );
-        if let Some(response) =
-            self.store
-                .facts_page(&self.root_id(), &self.collection, query, false, options)?
-        {
-            return Ok(response);
-        }
-        ensure!(
-            options.cursor.is_none(),
-            "legacy discovery cannot resume; reindex first"
-        );
-        let snapshot = self.load()?;
-        let mut response = FactsResponse {
-            page: Default::default(),
-            outline: Vec::new(),
-            indexing: airk_core::extraction::IndexCoverage::default(),
-            publication: None,
-            generation: snapshot.generation,
-            collection: snapshot.collection.clone(),
-            facts: Vec::new(),
-            truncated: false,
-        };
-        response.page.record_bytes = Some(0);
-        'files: for (path, a) in &snapshot.artifacts {
-            if (if query.path_exact {
-                path != &query.path_prefix
-            } else {
-                !path.starts_with(&query.path_prefix)
-            }) || query.language.as_ref().is_some_and(|l| l != &a.language)
-            {
-                continue;
-            }
-            for fact in &a.facts {
-                if query.document_only
-                    && (fact.code.is_some()
-                        || matches!(fact.kind.as_str(), "definition" | "import"))
-                {
-                    continue;
-                }
-                if query.kind.as_ref().is_some_and(|k| k != &fact.kind) {
-                    continue;
-                }
-                if query.name.as_ref().is_some_and(|n| {
-                    if query.exact_name {
-                        n != &fact.name
-                    } else {
-                        !fact.name.to_lowercase().contains(&n.to_lowercase())
-                    }
-                }) {
-                    continue;
-                }
-                let hit = FactHit {
-                    continuity_key: None,
-                    name: fact.name.clone(),
-                    kind: fact.kind.clone(),
-                    syntax_kind: fact.syntax_kind.clone(),
-                    language: a.language.clone(),
-                    document: fact.document.clone(),
-                    code: fact.code.clone(),
-                    citation: Citation {
-                        path: path.clone(),
-                        content_hash: a.content_hash.clone(),
-                        start_line: fact.start_line,
-                        end_line: fact.end_line,
-                        location: fact.location.clone(),
-                    },
-                };
-                if !discovery::append_fact(&mut response, hit, false, query.limit, query.max_bytes)?
-                {
-                    break 'files;
-                }
-            }
-        }
-        Ok(response)
+        self.require_current_index()?;
+        self.store
+            .facts_page(&self.root_id(), &self.collection, query, false, options)?
+            .context("indexed fact catalog missing; rebuild with airk index --full")
     }
 
     pub fn code_facts(&self, query: &FactQuery) -> Result<FactsResponse> {
@@ -203,9 +131,10 @@ impl Kernel {
                 && query.language.as_ref().is_none_or(|l| l.len() <= 128),
             "code fact filter too long"
         );
+        self.require_current_index()?;
         self.store
             .facts_page(&self.root_id(), &self.collection, query, true, options)?
-            .context("run airk index to migrate legacy facts to SQLite")
+            .context("indexed code fact catalog missing; rebuild with airk index --full")
     }
 
     pub fn outline(&self, path: &str, limit: usize, max_bytes: usize) -> Result<FactsResponse> {

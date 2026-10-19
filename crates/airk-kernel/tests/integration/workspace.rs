@@ -420,14 +420,14 @@ fn document_categories_roundtrip_with_metadata_budgets_and_extractor_refresh() -
     let legacy_kernel = Kernel::open(root.path(), Some(legacy_state.path().into()))?;
     assert!(
         legacy_kernel
-            .facts(&fact_query("requirement", 8192))?
-            .facts
-            .is_empty()
+            .facts(&fact_query("requirement", 8192))
+            .is_err()
     );
-    let refreshed = legacy_kernel.index()?;
+    assert!(legacy_kernel.index().is_err());
+    let refreshed = legacy_kernel.reindex()?;
     assert_eq!(refreshed.indexed, 2);
     assert_eq!(refreshed.reused, 0);
-    assert_eq!(refreshed.generation, first.generation + 1);
+    assert_eq!(refreshed.generation, 1);
     assert_eq!(
         Kernel::open(root.path(), Some(legacy_state.path().into()))?
             .facts(&fact_query("requirement", 8192))?

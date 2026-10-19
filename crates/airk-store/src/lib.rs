@@ -22,6 +22,8 @@ pub mod model_objects;
 mod normalized;
 pub mod quota;
 pub mod relocation;
+pub mod reset;
+pub use reset::IndexFormat;
 pub mod retention;
 pub mod roots;
 pub mod scheduler;
@@ -125,6 +127,7 @@ impl FileStore {
     }
     pub fn receipt(&self, token: &RevisionToken) -> Result<Option<PublicationReceipt>> {
         let _lifecycle = self.lifecycle(false)?;
+        self.ensure_index_ready()?;
         sqlite::receipt(&self.directory, token)
     }
     /// Reject a token contradicting a retained receipt; absence is not ancestry proof.
@@ -227,6 +230,7 @@ impl FileStore {
     }
     pub fn persistent_revision(&self) -> Result<Option<PersistentRevision>> {
         let _lifecycle = self.lifecycle(false)?;
+        self.ensure_index_ready()?;
         if !self.directory.join("index.sqlite3").exists() {
             return Ok(None);
         }
@@ -367,6 +371,7 @@ impl FileStore {
 impl SnapshotStore for FileStore {
     fn load(&self) -> Result<Option<Snapshot>> {
         let _lifecycle = self.lifecycle(false)?;
+        self.ensure_index_ready()?;
         if self.directory.join("index.sqlite3").exists() {
             if self
                 .persistent_revision()?

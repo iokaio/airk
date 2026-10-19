@@ -2,7 +2,7 @@
 //! One preparation/finalization path for all collection writers.
 use crate::Kernel;
 use airk_core::{
-    Artifact, Snapshot,
+    Snapshot,
     changes::{
         ChangeCause, ChangeDimension, ChangeEvent, ChangeSubject, ContinuityBasis, FileStamps,
         FileState, PublicationReason,
@@ -17,7 +17,6 @@ use anyhow::{Context, Result, ensure};
 use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
-    path::Path,
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -34,65 +33,6 @@ fn random_identity() -> Result<[u8; 16]> {
 }
 
 impl Kernel {
-    /// Convert only verified output; unknown legacy provider identities are not
-    /// silently relabeled as native syntax. Live bytes must match indexed bytes.
-    pub(crate) fn retain_v2(
-        &self,
-        artifact: &Artifact,
-        bytes: Option<&[u8]>,
-        reservation: &airk_store::quota::Reservation,
-    ) -> Result<Artifact> {
-        if artifact
-            .retained
-            .as_ref()
-            .is_some_and(|reference| reference.profile.is_some())
-        {
-            self.store.load_retained(artifact)?;
-            return Ok(artifact.clone());
-        }
-        let hydrated = self.store.load_retained(artifact)?;
-        let source;
-        let bytes = if let Some(bytes) = bytes {
-            bytes
-        } else {
-            source = if artifact
-                .retained
-                .as_ref()
-                .is_some_and(|reference| reference.raw_source)
-            {
-                self.store.read_retained_source(artifact)?
-            } else {
-                let roots = self.configured_roots()?;
-                let location =
-                    airk_store::roots::source_location(&self.root_id(), &roots, &artifact.path)?;
-                airk_ingest::read_selected_source(
-                    Path::new(&location.root),
-                    &self.data_root,
-                    &location.relative_path,
-                )?
-            };
-            &source
-        };
-        let profile = airk_ingest::adapters::legacy::legacy_profile(&hydrated)?;
-        let payload = airk_ingest::continuity::prepare_native(&hydrated, bytes, &profile)?;
-        let prepared = airk_core::binding::bind_payload(
-            &payload,
-            &profile,
-            airk_core::binding::ArtifactBinding {
-                path: &hydrated.path,
-                source_hash: hydrated.content_hash.parse()?,
-                source_bytes: hydrated.bytes,
-            },
-        )?;
-        self.store.retain_payload_with_budget(
-            &prepared,
-            &payload,
-            &profile,
-            Some(bytes),
-            Some(reservation),
-        )
-    }
-
     pub(crate) fn publish_v2(
         &self,
         writer: &airk_store::WriterLock,
@@ -129,10 +69,23 @@ impl Kernel {
             snapshot.root == self.root_id() && snapshot.collection == self.collection,
             "foreign publication binding"
         );
-        let expected = self.store.expected_head()?;
-        let old = self.store.catalog()?;
+        let resetting = self.store.reset_required()?;
+        let expected = if resetting {
+            airk_store::ExpectedHead::Empty
+        } else {
+            self.store.expected_head()?
+        };
+        let old = if resetting {
+            None
+        } else {
+            self.store.catalog()?
+        };
         let prior = old.as_ref().and_then(|catalog| catalog.inventory.as_ref());
-        let committed = self.store.committed_revision()?;
+        let committed = if resetting {
+            None
+        } else {
+            self.store.committed_revision()?
+        };
         let parent = match &committed {
             Some(airk_store::CommittedRevision::V2 { receipt, .. }) => Some(receipt.token),
             _ => None,
@@ -158,8 +111,15 @@ impl Kernel {
         projection.schema_version = airk_core::publication::SNAPSHOT_PROJECTION_VERSION;
         projection.storage_format = 2;
         projection.persistent_indexes = true;
-        for artifact in projection.artifacts.values_mut() {
-            *artifact = self.retain_v2(artifact, None, &reservation)?;
+        for artifact in projection.artifacts.values() {
+            ensure!(
+                artifact
+                    .retained
+                    .as_ref()
+                    .is_some_and(|reference| reference.profile.is_some()),
+                "indexed extraction profile missing; rebuild with airk index --full"
+            );
+            self.store.load_retained(artifact)?;
         }
         let producer_domain = digest(&serde_json::to_vec(&(
             &projection.analysis,
@@ -300,36 +260,11 @@ impl Kernel {
                 .receipt
                 .as_ref()
                 .context("metadata publication requires a receipt-authenticated prior model")?;
-            if let Some(objects) = self.store.model_object_set(receipt)? {
-                Some(objects)
-            } else {
-                // Schema-two generations retain inline assets. Bind the plan
-                // to their receipt-authenticated bytes before copying anything
-                // into the immutable pool; never use current provisioning.
-                let components = self.store.legacy_model_components(receipt)?;
-                let directory = self
-                    .store
-                    .directory()
-                    .join("generations")
-                    .join(receipt.token.revision.to_string())
-                    .join("model");
-                let objects = airk_retrieval::model::inspect_object_plan(&directory)?;
-                ensure!(
-                    objects.assets == components
-                        && Some(objects.legacy_identity.as_str())
-                            == projection.embedding_model.as_deref()
-                        && prior
-                            .and_then(|inventory| inventory.embedding_pipeline_digest)
-                            .is_none_or(|pipeline| pipeline == objects.pipeline_digest),
-                    "prior inline model disagrees with authenticated publication"
-                );
-                airk_store::model_objects::ModelObjects::new(self.store.directory()).retain(
-                    &directory,
-                    &objects,
-                    &reservation,
-                )?;
-                Some(objects)
-            }
+            Some(
+                self.store
+                    .model_object_set(receipt)?
+                    .context("indexed model objects missing; rebuild with airk index --full")?,
+            )
         };
         let applied_policy = if matches!(
             reason,
@@ -337,7 +272,11 @@ impl Kernel {
                 | PublicationReason::Index
                 | PublicationReason::FullReindex
         ) {
-            Some(self.extraction_policy()?)
+            Some(if resetting {
+                self.rebuild_extraction_policy()?
+            } else {
+                self.extraction_policy()?
+            })
         } else {
             None
         };
@@ -362,7 +301,7 @@ impl Kernel {
             lineage_digest: Sha256Digest::from_bytes([0; 32]),
             profiles,
             files,
-            retrieval_specification: std::str::from_utf8(persistent::retrieval_specification_v4())?
+            retrieval_specification: std::str::from_utf8(persistent::retrieval_specification())?
                 .into(),
             embedding_model: projection.embedding_model.clone(),
             extractor_version: projection.extractor_version.clone(),
@@ -588,11 +527,7 @@ impl Kernel {
             parent,
             &inventory,
             now,
-            if old.is_some() && prior.is_none() {
-                PublicationReason::Migration
-            } else {
-                reason
-            },
+            reason,
             crate::lineage::PendingLineage {
                 events: reconciled.events,
                 resolvers: reconciled.resolvers,
@@ -604,7 +539,7 @@ impl Kernel {
         let token = RevisionToken {
             incarnation,
             generation,
-            revision: revision_digest(persistent::retrieval_specification_v4(), &canonical),
+            revision: revision_digest(persistent::retrieval_specification(), &canonical),
         };
         let source = airk_store::blobs::RetainedSource {
             store: &self.store,
@@ -642,7 +577,7 @@ impl Kernel {
             working_memory_bytes: (crate::limits::machine::memory_bytes().unwrap_or(2 << 30) / 8)
                 .clamp(128 << 20, 1 << 30) as usize,
         };
-        let receipt = persistent::prepare_streaming_v3_cached(
+        let receipt = persistent::prepare_streaming(
             self.store.directory(),
             &persistent::V2Preparation {
                 snapshot: &projection,
@@ -681,6 +616,10 @@ impl Kernel {
         )?;
         self.store
             .publish_catalog_v2(&inventory, &receipt, &expected, &reservation)?;
+        if resetting {
+            self.store
+                .finish_index_reset(writer, &self.root_id(), &self.collection)?;
+        }
         // Publication is already committed. Cache disposal must neither report
         // a failed publication nor retain superseded idle leases. Active calls
         // own independent Arc pins; drop potentially large indexes outside locks.

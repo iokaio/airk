@@ -271,6 +271,37 @@ pub struct LocalChunk {
     pub region: Option<u32>,
 }
 
+/// Written semantic boundaries captured before optional evidence selection.
+/// Coordinates remain local to the host or mapped region; no public path is stored.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SemanticBoundary {
+    pub region: Option<u32>,
+    pub span: LocalSpan,
+    pub group: u32,
+    pub context: Option<LocalSpan>,
+    /// A leaf's own written signature, used only when its body needs splitting.
+    pub split_context: Option<LocalSpan>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SemanticProjection {
+    pub version: u32,
+    pub boundaries: Vec<SemanticBoundary>,
+}
+
+impl Default for SemanticProjection {
+    fn default() -> Self {
+        Self {
+            version: 1,
+            boundaries: Vec::new(),
+        }
+    }
+}
+
+pub const MAX_SEMANTIC_BOUNDARIES: usize = 100_000;
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum LocalRelationshipTarget {
@@ -332,6 +363,8 @@ pub struct ExtractionPayload {
     pub facts: Vec<LocalFact>,
     pub syntax_identities: Vec<LocalSyntaxIdentity>,
     pub chunks: Vec<LocalChunk>,
+    /// Required in serialized payloads. Obsolete indexes must be rebuilt.
+    pub semantic_projection: SemanticProjection,
     pub regions: Vec<LocalRegion>,
     pub relationships: Vec<LocalRelationship>,
     pub continuity: Vec<ContinuityDescriptor>,
@@ -450,6 +483,42 @@ impl ExtractionPayload {
                     .text),
             }
         };
+        anyhow::ensure!(
+            self.semantic_projection.version == 1
+                && self.semantic_projection.boundaries.len() <= MAX_SEMANTIC_BOUNDARIES,
+            "unsupported or excessive semantic projection; rebuild the index with airk index --full"
+        );
+        let mut prior_boundary = None;
+        let mut groups = BTreeMap::new();
+        for boundary in &self.semantic_projection.boundaries {
+            let text = local_text(boundary.region)?;
+            anyhow::ensure!(
+                boundary.span.start < boundary.span.end,
+                "empty semantic boundary"
+            );
+            for span in std::iter::once(&boundary.span)
+                .chain(boundary.context.iter())
+                .chain(boundary.split_context.iter())
+            {
+                crate::location::ByteSpan {
+                    start: span.start,
+                    end: span.end,
+                }
+                .validate(text)?;
+            }
+            if let Some((region, end)) = prior_boundary {
+                anyhow::ensure!(
+                    boundary.region > region
+                        || (boundary.region == region && boundary.span.start >= end),
+                    "semantic boundaries overlap or are unordered"
+                );
+            }
+            prior_boundary = Some((boundary.region, boundary.span.end));
+            let identity = (boundary.region, boundary.context.clone());
+            if let Some(prior) = groups.insert(boundary.group, identity.clone()) {
+                anyhow::ensure!(prior == identity, "semantic group context changed");
+            }
+        }
         let mut syntax_identities = BTreeMap::new();
         let mut syntax_tuples = std::collections::BTreeSet::new();
         for identity in &self.syntax_identities {
@@ -702,6 +771,7 @@ mod tests {
     fn empty_payload() -> ExtractionPayload {
         ExtractionPayload {
             continuity_coverage: BTreeMap::new(),
+            semantic_projection: Default::default(),
             contract_version: 1,
             extraction_method: "ocr-tesseract".into(),
             parse_status: "{\"schema\":1,\"pages_with_text\":0,\"first_page\":2,\"last_page\":2}"
@@ -890,9 +960,44 @@ mod tests {
     }
 
     #[test]
+    fn semantic_projection_is_required_and_rejects_invalid_bindings() -> anyhow::Result<()> {
+        let mut payload = empty_payload();
+        payload.text = "é body".into();
+        let mut old = serde_json::to_value(&payload)?;
+        old.as_object_mut().unwrap().remove("semantic_projection");
+        assert!(serde_json::from_value::<ExtractionPayload>(old).is_err());
+        payload.semantic_projection.boundaries = vec![SemanticBoundary {
+            region: None,
+            span: LocalSpan {
+                start: 0,
+                end: payload.text.len(),
+            },
+            group: 0,
+            context: None,
+            split_context: None,
+        }];
+        payload.validate()?;
+        payload.semantic_projection.boundaries[0].span.start = 1;
+        assert!(payload.validate().is_err());
+        payload.semantic_projection.boundaries[0].span.start = 0;
+        let mut overlapping = payload.semantic_projection.boundaries[0].clone();
+        overlapping.span.start = 2;
+        payload.semantic_projection.boundaries.push(overlapping);
+        assert!(payload.validate().is_err());
+        payload.semantic_projection.boundaries.pop();
+        payload.semantic_projection.boundaries[0].region = Some(99);
+        assert!(payload.validate().is_err());
+        payload.semantic_projection.boundaries[0].region = None;
+        payload.semantic_projection.version = 99;
+        assert!(payload.validate().is_err());
+        Ok(())
+    }
+
+    #[test]
     fn payload_rejects_invalid_utf8_spans_and_owner_cycles() {
         let mut p = ExtractionPayload {
             continuity_coverage: BTreeMap::new(),
+            semantic_projection: Default::default(),
             contract_version: 1,
             extraction_method: "fixture".into(),
             parse_status: "syntax".into(),

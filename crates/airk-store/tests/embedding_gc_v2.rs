@@ -83,8 +83,7 @@ fn publish(
         lineage_digest: digest(&serde_json::to_vec(&lineage)?),
         profiles: BTreeMap::new(),
         files: BTreeMap::new(),
-        retrieval_specification:
-            "tantivy-0.26.2/diskann-0.59.0/airk-file-1/generation-4/inventory-2".into(),
+        retrieval_specification: airk_store::reset::CURRENT_RETRIEVAL_ENGINE.into(),
         embedding_model: None,
         extractor_version: "original-fixture/1".into(),
         analysis: None,
@@ -117,7 +116,12 @@ fn publish(
     )?;
     reservation.charge(bytes.len() as u64)?;
     fs::write(staging.join("inventory.json"), &bytes)?;
-    let mut names = vec!["inventory.json", "lineage.json", "catalog.sqlite"];
+    let mut names = vec![
+        "inventory.json",
+        "lineage.json",
+        "catalog.sqlite",
+        "vector-map/meta.json",
+    ];
     if let Some(references) = references {
         let mut references = references.to_vec();
         references.sort_by_key(|reference| reference.key);
@@ -130,14 +134,16 @@ fn publish(
         fs::write(staging.join("embedding-cache.json"), sidecar)?;
         names.push("embedding-cache.json");
     }
+    fs::create_dir_all(staging.join("vector-map"))?;
+    fs::write(staging.join("vector-map/meta.json"), b"{}")?;
     let mut components = BTreeMap::new();
     for name in names {
         let bytes = fs::read(staging.join(name))?;
         components.insert(name, json!({"bytes":bytes.len(),"sha256":digest(&bytes)}));
     }
     let manifest = serde_json::to_vec(
-        &json!({"schema":2,"engine":inventory.retrieval_specification,"token":token,
-        "collection":collection,"chunks":0,"vectors":0,"model_sha256":null,"embedding":"none",
+        &json!({"schema":4,"engine":inventory.retrieval_specification,"token":token,
+        "collection":collection,"chunks":0,"vectors":0,"vector_occurrences":0,"model_sha256":null,"embedding":"none",
         "inventory_digest":digest(&bytes),"components":components}),
     )?;
     reservation.charge(manifest.len() as u64)?;
