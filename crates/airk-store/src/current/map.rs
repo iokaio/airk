@@ -5,6 +5,7 @@ use super::CurrentScope;
 use airk_core::identity::{Sha256Digest, framed_digest};
 use anyhow::{Context, Result, ensure};
 use rusqlite::{Connection, OptionalExtension, params};
+use std::collections::BTreeMap;
 
 const HEIGHT: u8 = 16;
 pub const MAX_BUCKET_BYTES: usize = 512 * 1024;
@@ -366,6 +367,166 @@ pub(crate) fn put(
         put_node(connection, scope, height + 1, index, digest)?;
     }
     Ok(digest)
+}
+
+/// Predicts the exact post-commit map root while the committed SQL tree stays
+/// readable. The final SQL transaction must replay the same ordered mutations
+/// with `put` and require equality with `root()` before publishing the head.
+pub(crate) struct MapPlan<'a> {
+    connection: &'a Connection,
+    scope: &'a CurrentScope,
+    root: Sha256Digest,
+    buckets: BTreeMap<u16, Vec<Entry>>,
+    nodes: BTreeMap<(u8, u16), Sha256Digest>,
+    bucket_bytes: usize,
+    operations: usize,
+    poisoned: bool,
+}
+
+impl<'a> MapPlan<'a> {
+    pub fn new(
+        connection: &'a Connection,
+        scope: &'a CurrentScope,
+        root: Sha256Digest,
+    ) -> Result<Self> {
+        scope.validate()?;
+        Ok(Self {
+            connection,
+            scope,
+            root,
+            buckets: BTreeMap::new(),
+            nodes: BTreeMap::new(),
+            bucket_bytes: 0,
+            operations: 0,
+            poisoned: false,
+        })
+    }
+
+    pub fn root(&self) -> Result<Sha256Digest> {
+        ensure!(!self.poisoned, "current map plan is poisoned");
+        Ok(self.root)
+    }
+
+    fn node(&self, height: u8, index: u16) -> Result<Sha256Digest> {
+        match self.nodes.get(&(height, index)) {
+            Some(digest) => Ok(*digest),
+            None => node(self.connection, self.scope, height, index),
+        }
+    }
+
+    fn bucket(&self, prefix: u16) -> Result<(Vec<Entry>, Sha256Digest)> {
+        match self.buckets.get(&prefix) {
+            Some(entries) if entries.is_empty() => Ok((Vec::new(), empty(self.scope, 0))),
+            Some(entries) => {
+                let bytes = encode(prefix, entries)?;
+                Ok((entries.clone(), leaf(self.scope, prefix, &bytes)))
+            }
+            None => bucket(self.connection, self.scope, prefix),
+        }
+    }
+
+    fn proven(&self, key: Sha256Digest) -> Result<Vec<Entry>> {
+        let prefix = prefix(key);
+        let (entries, mut digest) = self.bucket(prefix)?;
+        let mut index = prefix;
+        for height in 0..HEIGHT {
+            let sibling = self.node(height, index ^ 1)?;
+            let (left, right) = if index & 1 == 0 {
+                (digest, sibling)
+            } else {
+                (sibling, digest)
+            };
+            index >>= 1;
+            digest = branch(self.scope, height + 1, index, left, right)?;
+        }
+        ensure!(digest == self.root, "planned current map proof mismatch");
+        Ok(entries)
+    }
+
+    pub fn put(&mut self, key: Sha256Digest, value: Option<&[u8]>) -> Result<()> {
+        ensure!(!self.poisoned, "current map plan is poisoned");
+        let result = self.put_inner(key, value);
+        if result.is_err() {
+            self.poisoned = true;
+        }
+        result
+    }
+
+    fn put_inner(&mut self, key: Sha256Digest, value: Option<&[u8]>) -> Result<()> {
+        ensure!(
+            self.operations < 65_536,
+            "current map plan operation bound exceeded"
+        );
+        if let Some(value) = value {
+            ensure!(
+                value.len() <= MAX_VALUE_BYTES,
+                "map plan value limit exceeded"
+            );
+        }
+        let prefix = prefix(key);
+        let mut entries = self.proven(key)?;
+        match entries.binary_search_by_key(&key, |entry| entry.key) {
+            Ok(position) if let Some(value) = value => entries[position].value = value.to_vec(),
+            Ok(position) => {
+                entries.remove(position);
+            }
+            Err(position) if let Some(value) = value => entries.insert(
+                position,
+                Entry {
+                    key,
+                    value: value.to_vec(),
+                },
+            ),
+            Err(_) => return Ok(()),
+        }
+        let size = if entries.is_empty() {
+            0
+        } else {
+            encode(prefix, &entries)?.len()
+        };
+        let old_size = match self.buckets.get(&prefix) {
+            Some(old) if !old.is_empty() => encode(prefix, old)?.len(),
+            _ => 0,
+        };
+        let next_bytes = self
+            .bucket_bytes
+            .checked_sub(old_size)
+            .and_then(|bytes| bytes.checked_add(size))
+            .context("current map plan byte overflow")?;
+        ensure!(
+            next_bytes <= 64 * 1024 * 1024,
+            "current map plan byte bound exceeded"
+        );
+        let mut digest = if entries.is_empty() {
+            empty(self.scope, 0)
+        } else {
+            leaf(self.scope, prefix, &encode(prefix, &entries)?)
+        };
+        self.buckets.insert(prefix, entries);
+        self.nodes.insert((0, prefix), digest);
+        let mut index = prefix;
+        for height in 0..HEIGHT {
+            let sibling = self.node(height, index ^ 1)?;
+            let (left, right) = if index & 1 == 0 {
+                (digest, sibling)
+            } else {
+                (sibling, digest)
+            };
+            index >>= 1;
+            digest = branch(self.scope, height + 1, index, left, right)?;
+            if height + 1 < HEIGHT {
+                self.nodes.insert((height + 1, index), digest);
+            }
+        }
+        ensure!(
+            self.nodes.len() <= 1_048_576,
+            "current map plan node bound exceeded"
+        );
+        self.bucket_bytes = next_bytes;
+        self.root = digest;
+        self.operations += 1;
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy, Debug)]

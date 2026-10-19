@@ -25,6 +25,99 @@ fn artifact(number: usize) -> Result<Sha256Digest> {
 }
 
 #[test]
+fn private_map_plan_predicts_multi_key_root_without_changing_committed_rows() -> Result<()> {
+    let connection = database()?;
+    let scope = scope();
+    let mut base = empty_root(&scope)?;
+    for number in 0..24 {
+        base = put(&connection, &scope, base, artifact(number)?, Some(b"old"))?;
+    }
+    let changes = [
+        (artifact(2)?, Some(b"edited".as_slice())),
+        (artifact(3)?, None),
+        (artifact(50)?, Some(b"added".as_slice())),
+        (artifact(51)?, Some(b"another".as_slice())),
+    ];
+    let mut plan = MapPlan::new(&connection, &scope, base)?;
+    for (key, value) in changes {
+        plan.put(key, value)?;
+    }
+    let planned = plan.root()?;
+    assert_ne!(planned, base);
+    assert_eq!(
+        get(&connection, &scope, base, artifact(2)?)?,
+        Some(b"old".to_vec())
+    );
+    assert_eq!(
+        get(&connection, &scope, base, artifact(3)?)?,
+        Some(b"old".to_vec())
+    );
+    assert_eq!(get(&connection, &scope, base, artifact(50)?)?, None);
+    let mut committed = base;
+    for (key, value) in changes {
+        committed = put(&connection, &scope, committed, key, value)?;
+    }
+    assert_eq!(committed, planned);
+    assert_eq!(
+        get(&connection, &scope, planned, artifact(2)?)?,
+        Some(b"edited".to_vec())
+    );
+    assert_eq!(get(&connection, &scope, planned, artifact(3)?)?, None);
+    assert_eq!(
+        get(&connection, &scope, planned, artifact(50)?)?,
+        Some(b"added".to_vec())
+    );
+    Ok(())
+}
+
+#[test]
+fn failed_map_plan_is_poisoned_and_cannot_supply_a_target_root() -> Result<()> {
+    let connection = database()?;
+    let scope = scope();
+    let mut plan = MapPlan::new(&connection, &scope, empty_root(&scope)?)?;
+    assert!(
+        plan.put(artifact(1)?, Some(&vec![0; MAX_VALUE_BYTES + 1]))
+            .is_err()
+    );
+    assert!(plan.root().is_err());
+    assert!(plan.put(artifact(2)?, Some(b"valid")).is_err());
+    Ok(())
+}
+
+#[test]
+fn map_plan_preserves_two_keys_in_one_hash_bucket() -> Result<()> {
+    let connection = database()?;
+    let scope = scope();
+    let mut seen = BTreeMap::new();
+    let (first, second) = (0..20_000)
+        .find_map(|number| {
+            let key = artifact(number).ok()?;
+            seen.insert(prefix(key), key).map(|prior| (prior, key))
+        })
+        .context("fixture found no map bucket collision")?;
+    let base = empty_root(&scope)?;
+    let mut plan = MapPlan::new(&connection, &scope, base)?;
+    plan.put(first, Some(b"first"))?;
+    plan.put(second, Some(b"second"))?;
+    plan.put(first, Some(b"edited"))?;
+    let predicted = plan.root()?;
+    let mut committed = base;
+    committed = put(&connection, &scope, committed, first, Some(b"first"))?;
+    committed = put(&connection, &scope, committed, second, Some(b"second"))?;
+    committed = put(&connection, &scope, committed, first, Some(b"edited"))?;
+    assert_eq!(predicted, committed);
+    assert_eq!(
+        get(&connection, &scope, committed, first)?,
+        Some(b"edited".to_vec())
+    );
+    assert_eq!(
+        get(&connection, &scope, committed, second)?,
+        Some(b"second".to_vec())
+    );
+    Ok(())
+}
+
+#[test]
 fn keys_prove_membership_absence_collision_and_complete_bounded_enumeration() -> Result<()> {
     let connection = database()?;
     let scope = scope();
