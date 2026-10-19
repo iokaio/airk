@@ -62,10 +62,11 @@ impl Fixture {
             record_bytes: 16,
         };
         let head = CurrentHead {
-            version: 1,
+            version: 2,
             scope: scope.clone(),
             sequence: 0,
             artifact_root: map::empty_root(&scope)?,
+            lexical_sequence: 0,
             lexical_commit: Sha256Digest::from_bytes([5; 32]),
             graph_head: GraphHead::empty(graph_scope)?,
         };
@@ -482,6 +483,13 @@ fn lexical_manifest_is_bound_at_bootstrap_and_replayed_with_the_new_head() -> Re
         fixture
             .store
             .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    let mut pointer_only = fixture.target(&sealed);
+    pointer_only.lexical_sequence = pointer_only.sequence;
+    assert!(
+        current
+            .prepare(&fixture.head.token()?, pointer_only, &sealed, &[], None)
+            .is_err()
+    );
     assert!(
         current
             .prepare(&fixture.head.token()?, target.clone(), &sealed, &[], None)

@@ -156,10 +156,11 @@ fn nonempty_base_changes_remain_proven_and_seal_releases_the_reader() -> Result<
         incarnation: graph_scope.incarnation,
     };
     let mut head = CurrentHead {
-        version: 1,
+        version: 2,
         scope: scope.clone(),
         sequence: 0,
         artifact_root: crate::current::map::empty_root(&scope)?,
+        lexical_sequence: 0,
         lexical_commit: Sha256Digest::from_bytes([5; 32]),
         graph_head: GraphHead::empty(graph_scope)?,
     };

@@ -68,6 +68,9 @@ pub struct CurrentHead {
     pub sequence: u64,
     /// Authentication root for per-artifact and keyed current mappings.
     pub artifact_root: Sha256Digest,
+    /// Sequence whose immutable Tantivy directory is selected by this head.
+    /// Graph-only commits retain the prior lexical sequence.
+    pub lexical_sequence: u64,
     pub lexical_commit: Sha256Digest,
     pub graph_head: GraphHead,
 }
@@ -77,7 +80,9 @@ impl CurrentHead {
         self.scope.validate()?;
         self.graph_head.validate()?;
         ensure!(
-            self.version == 1 && self.sequence <= i64::MAX as u64,
+            self.version == 2
+                && self.sequence <= i64::MAX as u64
+                && self.lexical_sequence <= self.sequence,
             "unsupported current head"
         );
         let graph = &self.graph_head.scope;
@@ -89,11 +94,15 @@ impl CurrentHead {
         );
         if self.sequence == 0 {
             ensure!(
-                self.artifact_root == map::empty_root(&self.scope)?,
+                self.artifact_root == map::empty_root(&self.scope)? && self.lexical_sequence == 0,
                 "initial current catalog is not empty"
             );
         }
         Ok(())
+    }
+    pub fn lexical_directory_name(&self) -> Result<String> {
+        self.validate()?;
+        Ok(format!("lexical-{}", self.lexical_sequence))
     }
     pub fn canonical_bytes(&self) -> Result<Vec<u8>> {
         self.validate()?;
@@ -108,7 +117,7 @@ impl CurrentHead {
         Ok(CurrentToken {
             incarnation: self.scope.incarnation,
             sequence: self.sequence,
-            digest: framed_digest(b"current-index-head/1", &[&self.canonical_bytes()?]),
+            digest: framed_digest(b"current-index-head/2", &[&self.canonical_bytes()?]),
         })
     }
 }

@@ -360,8 +360,12 @@ fn pending(connection: &Connection, scope: &CurrentScope) -> Result<Option<Pendi
             && transaction.expected == head.token()?
             && transaction.target.scope == *scope
             && transaction.graph.base == head.graph_head
-            && (transaction.lexical_manifest_bytes > 0
-                || transaction.target.lexical_commit == head.lexical_commit),
+            && (if transaction.lexical_manifest_bytes > 0 {
+                transaction.target.lexical_sequence == transaction.target.sequence
+            } else {
+                transaction.target.lexical_commit == head.lexical_commit
+                    && transaction.target.lexical_sequence == head.lexical_sequence
+            }),
         "current journal base or scope mismatch"
     );
     Ok(Some(transaction))
@@ -1096,12 +1100,13 @@ impl CurrentWriter<'_> {
     pub fn prepare_lexical(
         &mut self,
         expected: &CurrentToken,
-        target: CurrentHead,
+        mut target: CurrentHead,
         graph_delta: &dyn PreparedGraphDelta,
         inputs: &dyn CapturedInputs,
         model: Option<ModelObjectSet>,
         lexical_manifest: &[u8],
     ) -> Result<PendingTransaction> {
+        target.lexical_sequence = target.sequence;
         self.prepare_components(
             expected,
             target,
@@ -1177,6 +1182,7 @@ impl CurrentWriter<'_> {
             plan.put(change.key(), change.value())?;
         }
         target.artifact_root = plan.root()?;
+        target.lexical_sequence = target.sequence;
         target.lexical_commit = framed_digest(b"current-lexical-manifest/1", &[lexical_manifest]);
         self.prepare_components(
             expected,
@@ -1244,10 +1250,15 @@ impl CurrentWriter<'_> {
             "current target does not extend the exact base"
         );
         if let Some(bytes) = changes.lexical_manifest {
+            ensure!(
+                target.lexical_sequence == target.sequence,
+                "changed lexical component must select the target sequence directory"
+            );
             verify_lexical_manifest(bytes, target.lexical_commit)?;
         } else {
             ensure!(
-                target.lexical_commit == head.lexical_commit,
+                target.lexical_commit == head.lexical_commit
+                    && target.lexical_sequence == head.lexical_sequence,
                 "changed lexical commit has no captured manifest"
             );
         }

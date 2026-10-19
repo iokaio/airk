@@ -28,10 +28,11 @@ fn head() -> CurrentHead {
     graph_head.allocated_count = 3;
     graph_head.live_nodes = 1;
     CurrentHead {
-        version: 1,
+        version: 2,
         artifact_root: map::empty_root(&scope).unwrap(),
         scope,
         sequence: 1,
+        lexical_sequence: 0,
         lexical_commit: digest(4),
         graph_head,
     }
