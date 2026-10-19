@@ -152,10 +152,12 @@ pub struct OccurrencePointer {
     pub source_hash: Sha256Digest,
     pub payload_digest: Sha256Digest,
     pub object: Sha256Digest,
+    pub members: Vec<airk_core::vector_evidence::VectorMemberSpan>,
 }
 
 impl OccurrencePointer {
     pub fn validate(&self) -> Result<()> {
+        airk_core::vector_evidence::validate_members(&self.members)?;
         ensure!(
             self.version == 1
                 && !self.path.is_empty()
