@@ -32,6 +32,8 @@ flowchart LR
 
 Core must remain free of parser, filesystem, inference and transport implementations. Adapters call kernel services rather than bypassing validation or collection scope. MemoryStore is an available in-memory snapshot adapter; the CLI kernel uses FileStore and immutable retrieval components.
 
+The isolated [single-current-index foundation](current-index-foundation.md) adds neutral authenticated graph contracts in core, a mutable DiskANN provider in retrieval and owner-scoped journal, gate and quota support in store. It qualifies incremental graph updates and process-death recovery. Normal indexing and request routing still use the generation publication described below. S8 replaces that runtime and its historical APIs at a rebuild-only boundary, with no old-format reader or migration.
+
 The [v2 publication contract](v2-publication-contract.md) defines the current authoritative inventory, path-free native payloads, exact revision tokens, receipt-bound publication. Bounded file/code/document changes, remembered-evidence validation and conditional reads use the [identity and change contract](v2-identity-contract.md). Obsolete derived formats require an explicit rebuild; no compatibility reader or migration is used by the kernel. The [execution ledger](architecture-v2-ledger.md) distinguishes implemented behavior from completed qualification gates.
 
 ## Current indexing and retrieval

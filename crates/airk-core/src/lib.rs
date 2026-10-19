@@ -11,6 +11,7 @@ pub mod discovery;
 pub mod embedding;
 pub mod evidence;
 pub mod extraction;
+pub mod graph_storage;
 pub mod identity;
 pub mod location;
 pub mod mapped_binding;

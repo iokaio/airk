@@ -26,6 +26,8 @@ const MAX_RESERVATIONS: usize = 1024;
 const MAX_ENTRIES: usize = 1_000_000;
 pub(crate) const PREPARED_PUBLICATION_MAX: u64 = 4096;
 const PREPARED_PUBLICATION: &str = "prepared-publication.json";
+mod current;
+pub use current::{CurrentGrant, CurrentGrantScope};
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -351,9 +353,14 @@ impl Quota {
                 }
             } else {
                 ensure!(
-                    ["ledger.lock", "policy.json", "reservations"]
-                        .iter()
-                        .any(|allowed| name == *allowed),
+                    [
+                        "ledger.lock",
+                        "policy.json",
+                        "reservations",
+                        "current-grants"
+                    ]
+                    .iter()
+                    .any(|allowed| name == *allowed),
                     "unexpected quota control entry"
                 );
             }
@@ -610,6 +617,11 @@ impl Quota {
             // potentially large staging trees during an implicit usage hook.
             records.push(LiveRecord { record });
         }
+        records.extend(current::records(self, false, deadline)?);
+        ensure!(
+            records.len() <= MAX_RESERVATIONS,
+            "quota reservation count exhausted"
+        );
         Ok(records)
     }
     fn live_records(&self) -> Result<Vec<LiveRecord>> {
@@ -693,6 +705,11 @@ impl Quota {
                 }
             }
         }
+        live.extend(current::records(self, true, None)?);
+        ensure!(
+            live.len() <= MAX_RESERVATIONS,
+            "quota reservation count exhausted"
+        );
         Ok(live)
     }
     fn measure(
