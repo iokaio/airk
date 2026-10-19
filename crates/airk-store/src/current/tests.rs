@@ -336,7 +336,13 @@ fn prepared_map_and_graph_replay_commit_one_authenticated_head() -> Result<()> {
     let (_reservation, sealed) = fixture.sealed()?;
     let mut target = fixture.target(&sealed);
     let embedding_key = Sha256Digest::from_bytes([6; 32]);
-    let occurrence_id = Sha256Digest::from_bytes([8; 32]);
+    let path_occurrences = vector_map::PathOccurrences {
+        version: 1,
+        path: input.artifact.path.clone(),
+        source_hash: input.artifact.content_hash.parse()?,
+        count: 1,
+    };
+    let occurrence_id = path_occurrences.occurrence_id(&fixture.scope, 0)?;
     let binding = vector_map::VectorBinding {
         version: 1,
         embedding_key,
@@ -372,6 +378,12 @@ fn prepared_map_and_graph_replay_commit_one_authenticated_head() -> Result<()> {
             occurrence_id.as_bytes(),
             Some(pointer.canonical_bytes()?),
         )?,
+        map::MapChange::new(
+            &fixture.scope,
+            map::MapDomain::PathOccurrences,
+            input.artifact.path.as_bytes(),
+            Some(path_occurrences.canonical_bytes()?),
+        )?,
     ];
     changes.sort_by_key(map::MapChange::key);
     let connection = database::open_reader(&fixture.store.directory().join("index.sqlite3"))?;
@@ -395,7 +407,7 @@ fn prepared_map_and_graph_replay_commit_one_authenticated_head() -> Result<()> {
         None,
         &changes,
     )?;
-    assert_eq!(pending.map_count, 3);
+    assert_eq!(pending.map_count, 4);
     current.mark_applying(&pending)?;
     drop(current);
     drop(writer);
@@ -417,6 +429,10 @@ fn prepared_map_and_graph_replay_commit_one_authenticated_head() -> Result<()> {
         input.artifact.content_hash
     );
     assert_eq!(read.vector_for_graph_id(1)?, binding);
+    assert_eq!(
+        read.path_occurrences(&input.artifact.path)?,
+        Some(path_occurrences)
+    );
     assert_eq!(
         read.vector_occurrence_pointers(embedding_key)?,
         Some(vec![pointer])

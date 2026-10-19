@@ -196,6 +196,8 @@ S8 isolated restart recovery now reads the captured database capacity, opens the
 
 The next S8 mapping prerequisite is a proof-checked read through the private map plan. It observes pending upserts and removals while the committed SQL tree remains unchanged, so a changed path can derive its old occurrence/vector removals against the exact base root. Changed-artifact preparation now checks its prior compact catalog binding before replacing it. Point-read and corrupt-bucket tests cover planner behavior. The locked workspace run passed 903 tests, zero failed and 18 ignored across 47 suites; build, formatting, clippy, repository and whitespace checks passed. Typed per-artifact mapping publication and the runtime cutover remain pending.
 
+S8 now has a compact authenticated path occurrence index: one bounded count and exact source hash per path, with scope/path/source/ordinal-derived occurrence IDs. It lets an incremental updater address only that path's old vector citations rather than enumerate the whole vector map, while an edit to the source hash mints distinct IDs. The selected reader validates the count against the current catalog artifact. A cross-component replay test binds the path index, occurrence pointer, vector binding and graph record in one head. The locked workspace run passed 904 tests, zero failed and 18 ignored across 47 suites; build, formatting, clippy, repository and whitespace checks passed. Publication logic that removes old citations and merges shared embedding bindings is still pending; the schema is rebuild-only.
+
 ## Recommendation
 
 Keep exact source evidence, useful structural facts, and vector retrieval, but stop making their granularity and publication cost inseparable. Prioritize:

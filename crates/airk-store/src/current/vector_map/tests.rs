@@ -93,3 +93,36 @@ fn occurrence_pointer_rejects_foreign_id_and_unsafe_path() {
     wrong.path = "../outside".into();
     assert!(wrong.canonical_bytes().is_err());
 }
+
+#[test]
+fn path_occurrences_address_only_the_exact_scope_and_source() {
+    let head = head();
+    let index = PathOccurrences {
+        version: 1,
+        path: "docs/example.md".into(),
+        source_hash: digest(7),
+        count: 2,
+    };
+    let bytes = index.canonical_bytes().unwrap();
+    assert_eq!(PathOccurrences::decode(&bytes, &index.path).unwrap(), index);
+    assert!(PathOccurrences::decode(&bytes, "docs/other.md").is_err());
+    assert!(index.occurrence_id(&head.scope, 2).is_err());
+    assert_ne!(
+        index.occurrence_id(&head.scope, 0).unwrap(),
+        index.occurrence_id(&head.scope, 1).unwrap()
+    );
+    let mut other = head.scope.clone();
+    other.incarnation = Incarnation::from_bytes([8; 16]);
+    assert_ne!(
+        index.occurrence_id(&head.scope, 0).unwrap(),
+        index.occurrence_id(&other, 0).unwrap()
+    );
+    let mut edited = index.clone();
+    edited.source_hash = digest(9);
+    assert_ne!(
+        index.occurrence_id(&head.scope, 0).unwrap(),
+        edited.occurrence_id(&head.scope, 0).unwrap()
+    );
+    edited.path = "../escape".into();
+    assert!(edited.canonical_bytes().is_err());
+}
