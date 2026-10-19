@@ -65,7 +65,7 @@ impl Fixture {
             version: 1,
             scope: scope.clone(),
             sequence: 0,
-            artifact_root: Sha256Digest::from_bytes([4; 32]),
+            artifact_root: map::empty_root(&scope)?,
             lexical_commit: Sha256Digest::from_bytes([5; 32]),
             graph_head: GraphHead::empty(graph_scope)?,
         };
@@ -324,6 +324,131 @@ fn replay_uses_captured_bytes_and_detects_corruption_without_live_fallback() -> 
         fs::read_to_string(std::path::Path::new(&fixture.scope.root).join("evidence.txt"))?,
         "Later live edit"
     );
+    Ok(())
+}
+
+#[test]
+fn catalog_only_artifact_updates_are_atomic_authenticated_and_revision_bound() -> Result<()> {
+    let fixture = Fixture::new()?;
+    let source = std::path::Path::new(&fixture.scope.root).join("evidence.txt");
+    fs::write(&source, "Original evidence.")?;
+    let original = retained_input(&fixture, "Original evidence.")?;
+    let initial = fixture.store.current_read(&fixture.scope)?.token()?;
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    assert!(
+        current
+            .commit_artifact(&initial, "other.txt", Some(&original))
+            .is_err()
+    );
+    assert_eq!(current.head()?, fixture.head);
+    let first = current.commit_artifact(&initial, "evidence.txt", Some(&original))?;
+    assert!(first.maintenance_error.is_none());
+    assert_ne!(first.token, initial);
+    assert_eq!(
+        current
+            .commit_artifact(&first.token, "evidence.txt", Some(&original))?
+            .token,
+        first.token
+    );
+    drop(current);
+    drop(writer);
+    let read = fixture.store.current_read(&fixture.scope)?;
+    assert!(read.require_token(&initial).is_err());
+    assert_eq!(
+        serde_json::to_value(read.artifact("evidence.txt")?)?,
+        serde_json::to_value(Some(&original.artifact))?
+    );
+    assert!(read.artifact("missing.txt")?.is_none());
+    assert_eq!(read.map_entries(map::MapVisitLimits::default())?.len(), 1);
+    drop(read);
+    fs::write(&source, "Later live edit")?;
+    assert_eq!(
+        fixture.store.read_retained_source(&original.artifact)?,
+        b"Original evidence."
+    );
+    let changed = retained_input(&fixture, "Later live edit")?;
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    assert!(
+        current
+            .commit_artifact(&initial, "evidence.txt", Some(&changed))
+            .is_err()
+    );
+    let second = current.commit_artifact(&first.token, "evidence.txt", Some(&changed))?;
+    assert!(second.maintenance_error.is_none());
+    drop(current);
+    drop(writer);
+    assert_eq!(
+        serde_json::to_value(
+            fixture
+                .store
+                .current_read(&fixture.scope)?
+                .artifact("evidence.txt")?
+        )?,
+        serde_json::to_value(Some(&changed.artifact))?
+    );
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    let third = current.commit_artifact(&second.token, "evidence.txt", None)?;
+    assert!(third.maintenance_error.is_none());
+    drop(current);
+    drop(writer);
+    let read = fixture.store.current_read(&fixture.scope)?;
+    assert!(read.artifact("evidence.txt")?.is_none());
+    assert!(read.map_entries(map::MapVisitLimits::default())?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn catalog_only_corruption_cannot_forge_a_hit_or_an_absence() -> Result<()> {
+    for mutation in [
+        "UPDATE current_map_buckets SET content=zeroblob(length(content)) WHERE prefix=?1",
+        "DELETE FROM current_map_buckets WHERE prefix=?1",
+    ] {
+        let fixture = Fixture::new()?;
+        let input = retained_input(&fixture, "Authenticated body.")?;
+        let initial = fixture.store.current_read(&fixture.scope)?.token()?;
+        let writer = fixture.store.lock()?;
+        let mut current =
+            fixture
+                .store
+                .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+        current.commit_artifact(&initial, "evidence.txt", Some(&input))?;
+        drop(current);
+        drop(writer);
+        let key = map::key(&fixture.scope, map::MapDomain::Artifact, b"evidence.txt")?;
+        {
+            let connection = database::open_writer(
+                &fixture.store.directory().join("index.sqlite3"),
+                CAPACITY,
+                false,
+            )?;
+            connection.execute(
+                mutation,
+                [i64::from(u16::from_be_bytes(
+                    key.as_bytes()[..2].try_into()?,
+                ))],
+            )?;
+        }
+        assert!(
+            fixture
+                .store
+                .current_read(&fixture.scope)?
+                .artifact("evidence.txt")
+                .is_err(),
+            "{mutation}"
+        );
+    }
     Ok(())
 }
 

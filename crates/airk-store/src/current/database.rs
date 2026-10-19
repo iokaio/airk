@@ -9,7 +9,7 @@ use rusqlite::{
 use std::io::{Read, Write};
 use std::{fs, path::Path, time::Duration};
 
-pub const DATABASE_VERSION: u32 = 100;
+pub const DATABASE_VERSION: u32 = 101;
 pub const PAGE_BYTES: u64 = 4096;
 const APPLICATION_ID: i32 = 0x4149_524b;
 pub const MAX_DATABASE_BYTES: u64 = 16 * 1024 * 1024 * 1024 * 1024;

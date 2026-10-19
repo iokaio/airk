@@ -88,7 +88,7 @@ impl Fixture {
             version: 1,
             scope: scope.clone(),
             sequence: 0,
-            artifact_root: framed_digest(b"foundation-no-catalog/1", &[]),
+            artifact_root: airk_store::current::map::empty_root(&scope)?,
             lexical_commit: framed_digest(b"foundation-no-lexical/1", &[]),
             graph_head: GraphHead::empty(graph_scope)?,
         };

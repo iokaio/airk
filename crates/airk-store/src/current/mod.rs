@@ -4,6 +4,7 @@ mod database;
 mod gate;
 pub mod graph;
 mod journal;
+pub mod map;
 mod read;
 
 pub use database::{DATABASE_VERSION, PAGE_BYTES, journal_bound};
@@ -50,7 +51,7 @@ pub struct CurrentHead {
     pub version: u32,
     pub scope: CurrentScope,
     pub sequence: u64,
-    /// Reserved for the authenticated per-artifact catalog adopted by S8.
+    /// Authentication root for per-artifact and keyed current mappings.
     pub artifact_root: Sha256Digest,
     pub lexical_commit: Sha256Digest,
     pub graph_head: GraphHead,
@@ -71,6 +72,12 @@ impl CurrentHead {
                 && graph.incarnation == self.scope.incarnation,
             "current graph belongs to another collection"
         );
+        if self.sequence == 0 {
+            ensure!(
+                self.artifact_root == map::empty_root(&self.scope)?,
+                "initial current catalog is not empty"
+            );
+        }
         Ok(())
     }
     pub fn canonical_bytes(&self) -> Result<Vec<u8>> {
