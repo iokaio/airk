@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Qualifies real DiskANN algorithms across the authenticated store/journal boundary.
 use airk_core::{
-    Artifact, Chunk, DocumentLocation,
+    Artifact, Chunk, DocumentLocation, SearchQuery,
     graph_storage::{GraphHead, GraphRecordReader, GraphScope, PreparedGraphDelta},
     identity::{Incarnation, Sha256Digest, framed_digest},
 };
 use airk_retrieval::{
     bounded::Charge,
-    current_lexical::{CurrentLexical, LexicalChange, LexicalManifest},
+    current_lexical::{CurrentLexical, LexicalChange, LexicalManifest, VerifiedCurrentLexical},
     vector::mutable::{self, MutableDiskIndex, SearchLimits},
 };
 use airk_store::{
@@ -261,6 +261,24 @@ fn current_store_commits_verified_lexical_fork_with_graph_in_one_head() -> Resul
     let committed = LexicalManifest::decode(&committed_bytes, read.head().lexical_commit)?;
     committed.verify(&target_path, read.head().lexical_commit)?;
     assert_eq!(committed_bytes, replacement_bytes);
+    let lexical = VerifiedCurrentLexical::open(
+        &target_path,
+        Arc::new(|_| Ok(())),
+        &committed_bytes,
+        read.head().lexical_commit,
+    )?;
+    let candidates = lexical.search(&SearchQuery {
+        text: "searchable evidence".into(),
+        path_prefix: Some("docs/".into()),
+        limit: 2,
+        max_bytes: 1024,
+    })?;
+    assert_eq!(candidates.values.len(), 1);
+    assert_eq!(
+        candidates.values[0].hit.citation.content_hash,
+        artifact.content_hash
+    );
+    assert!(!candidates.incomplete);
     old_manifest.verify(&base_path, old_head.lexical_commit)?;
     Ok(())
 }

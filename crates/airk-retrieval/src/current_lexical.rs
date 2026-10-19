@@ -7,7 +7,7 @@ use crate::{
     terms,
 };
 use airk_core::{
-    Artifact, Citation, Hit,
+    Artifact, Citation, Hit, SearchQuery,
     identity::{Sha256Digest, framed_digest},
 };
 use anyhow::{Context, Result, ensure};
@@ -18,7 +18,7 @@ use std::{
 use tantivy::{
     Index, Order, TantivyDocument, Term,
     collector::TopDocs,
-    query::TermQuery,
+    query::{BooleanQuery, Occur, Query, RegexQuery, TermQuery},
     schema::{FAST, Field, IndexRecordOption, STORED, STRING, Schema, Value},
 };
 
@@ -34,6 +34,7 @@ struct Fields {
     terms: Field,
     path: Field,
     stable_id: Field,
+    sort_key: Field,
     local: Field,
     payload: Field,
 }
@@ -44,6 +45,7 @@ fn schema() -> (Schema, Fields) {
         terms: builder.add_text_field("terms", STRING),
         path: builder.add_text_field("path", STRING | STORED),
         stable_id: builder.add_text_field("stable_id", STRING | STORED),
+        sort_key: builder.add_u64_field("sort_key", FAST | STORED),
         local: builder.add_u64_field("local", FAST | STORED),
         payload: builder.add_text_field("payload", STORED),
     };
@@ -87,6 +89,162 @@ pub struct CurrentLexical {
     directory: PathBuf,
     index: Index,
     fields: Fields,
+}
+
+/// A request-scoped reader whose active Tantivy files were authenticated
+/// against the exact current-head manifest before opening the searcher.
+/// The owner holds the collection's shared gate until all hits are checked
+/// against retained current artifacts and the response has been materialized.
+pub struct VerifiedCurrentLexical {
+    index: CurrentLexical,
+    _ticket: VerifiedLexicalManifest,
+}
+
+/// An engine candidate, not publishable evidence. The owning kernel verifies
+/// its path, source hash, local chunk and text against the current catalog's
+/// retained object under the same read gate before returning it to a caller.
+#[derive(Clone, Debug)]
+pub struct CurrentLexicalCandidate {
+    pub stable_id: Sha256Digest,
+    pub local: u64,
+    pub hit: Hit,
+}
+
+#[derive(Clone, Debug)]
+pub struct CurrentLexicalCandidates {
+    pub values: Vec<CurrentLexicalCandidate>,
+    /// A match was omitted by the candidate count. The owner additionally
+    /// reports any text-budget truncation during response materialization.
+    pub incomplete: bool,
+}
+
+impl VerifiedCurrentLexical {
+    pub fn open(
+        directory: &Path,
+        charge: Charge,
+        manifest_bytes: &[u8],
+        expected: Sha256Digest,
+    ) -> Result<Self> {
+        let manifest = LexicalManifest::decode(manifest_bytes, expected)?;
+        let ticket = manifest.verify_owned(directory, expected)?;
+        let index = CurrentLexical::open(directory, charge)?;
+        Ok(Self {
+            index,
+            _ticket: ticket,
+        })
+    }
+
+    pub fn search(&self, query: &SearchQuery) -> Result<CurrentLexicalCandidates> {
+        query.validate()?;
+        let query_terms = terms(&query.text);
+        ensure!(
+            !query_terms.is_empty(),
+            "query must contain a letter or number"
+        );
+        let mut clauses: Vec<(Occur, Box<dyn Query>)> = query_terms
+            .into_iter()
+            .map(|term| {
+                (
+                    Occur::Must,
+                    Box::new(TermQuery::new(
+                        Term::from_field_text(self.index.fields.terms, &term),
+                        IndexRecordOption::Basic,
+                    )) as Box<dyn Query>,
+                )
+            })
+            .collect();
+        if let Some(prefix) = query
+            .path_prefix
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        {
+            let escaped: String = prefix
+                .chars()
+                .flat_map(|character| {
+                    if ".+*?()|[]{}^$\\".contains(character) {
+                        vec!['\\', character]
+                    } else {
+                        vec![character]
+                    }
+                })
+                .collect();
+            clauses.push((
+                Occur::Must,
+                Box::new(RegexQuery::from_pattern(
+                    &format!("(?s:{escaped}.*)"),
+                    self.index.fields.path,
+                )?),
+            ));
+        }
+        let reader = self.index.index.reader()?;
+        reader.reload()?;
+        let searcher = reader.searcher();
+        let matches = searcher.search(
+            &BooleanQuery::new(clauses),
+            &TopDocs::with_limit(query.limit + 1).order_by_u64_field("sort_key", Order::Asc),
+        )?;
+        let incomplete = matches.len() > query.limit;
+        let mut values = Vec::with_capacity(matches.len().min(query.limit));
+        for (_, address) in matches.into_iter().take(query.limit) {
+            let document: TantivyDocument = searcher.doc(address)?;
+            let field_text = |field: Field| -> Result<&str> {
+                document
+                    .get_first(field)
+                    .and_then(|value| value.as_str())
+                    .context("current lexical stored field missing")
+            };
+            let path = field_text(self.index.fields.path)?;
+            validate_path(path)?;
+            ensure!(
+                query
+                    .path_prefix
+                    .as_ref()
+                    .is_none_or(|prefix| path.starts_with(prefix)),
+                "current lexical candidate escaped path scope"
+            );
+            let local = document
+                .get_first(self.index.fields.local)
+                .and_then(|value| value.as_u64())
+                .context("current lexical local ordinal missing")?;
+            let stable_id = field_text(self.index.fields.stable_id)?.parse::<Sha256Digest>()?;
+            ensure!(
+                stable_id == self::stable_id(path, local)?,
+                "current lexical candidate identity mismatch"
+            );
+            let sort_key = document
+                .get_first(self.index.fields.sort_key)
+                .and_then(|value| value.as_u64())
+                .context("current lexical sort key missing")?;
+            ensure!(
+                sort_key == u64::from_be_bytes(stable_id.as_bytes()[..8].try_into()?),
+                "current lexical sort key mismatch"
+            );
+            let hit: Hit = serde_json::from_str(field_text(self.index.fields.payload)?)?;
+            ensure!(
+                hit.citation.path == path
+                    && hit.citation.start_line > 0
+                    && hit.citation.start_line <= hit.citation.end_line
+                    && hit.citation.content_hash.parse::<Sha256Digest>().is_ok()
+                    && !hit.truncated,
+                "invalid current lexical candidate citation"
+            );
+            values.push(CurrentLexicalCandidate {
+                stable_id,
+                local,
+                hit,
+            });
+        }
+        ensure!(
+            {
+                let mut seen = std::collections::BTreeSet::new();
+                values
+                    .iter()
+                    .all(|candidate| seen.insert(candidate.stable_id))
+            },
+            "duplicate current lexical candidate identity"
+        );
+        Ok(CurrentLexicalCandidates { values, incomplete })
+    }
 }
 
 impl CurrentLexical {
@@ -184,9 +342,11 @@ impl CurrentLexical {
                         document.add_text(self.fields.terms, term);
                     }
                     document.add_text(self.fields.path, change.path);
-                    document.add_text(
-                        self.fields.stable_id,
-                        stable_id(change.path, local as u64)?.to_string(),
+                    let id = stable_id(change.path, local as u64)?;
+                    document.add_text(self.fields.stable_id, id.to_string());
+                    document.add_u64(
+                        self.fields.sort_key,
+                        u64::from_be_bytes(id.as_bytes()[..8].try_into()?),
                     );
                     document.add_u64(self.fields.local, local as u64);
                     document.add_text(

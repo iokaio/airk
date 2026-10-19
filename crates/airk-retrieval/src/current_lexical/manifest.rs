@@ -135,7 +135,7 @@ impl LexicalManifest {
     pub fn validate(&self) -> Result<()> {
         ensure!(
             self.version == 1
-                && self.engine == "tantivy-0.26.2/current-lexical-1"
+                && self.engine == "tantivy-0.26.2/current-lexical-2"
                 && !self.files.is_empty()
                 && self.files.len() <= MAX_MANIFEST_FILES,
             "unsupported or oversized current lexical manifest"
@@ -329,7 +329,7 @@ impl CurrentLexical {
         }
         let manifest = LexicalManifest {
             version: 1,
-            engine: "tantivy-0.26.2/current-lexical-1".to_owned(),
+            engine: "tantivy-0.26.2/current-lexical-2".to_owned(),
             files,
             total_bytes,
         };
