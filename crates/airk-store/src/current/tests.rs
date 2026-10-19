@@ -424,6 +424,180 @@ fn prepared_map_and_graph_replay_commit_one_authenticated_head() -> Result<()> {
 }
 
 #[test]
+fn lexical_manifest_is_bound_at_bootstrap_and_replayed_with_the_new_head() -> Result<()> {
+    let mut fixture = Fixture::empty()?;
+    let initial_bytes = serde_json::to_vec(&serde_json::json!({"engine":"test","version":1}))?;
+    let initial_digest =
+        airk_core::identity::framed_digest(b"current-lexical-manifest/1", &[&initial_bytes]);
+    fixture.head.lexical_commit = initial_digest;
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    current.initialize(fixture.head.clone())?;
+    drop(current);
+    drop(writer);
+    let read = fixture.store.current_read(&fixture.scope)?;
+    assert!(read.lexical_manifest().is_err());
+    drop(read);
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    assert!(
+        current
+            .install_initial_lexical_manifest(&fixture.head.token()?, b"wrong")
+            .is_err()
+    );
+    assert_eq!(
+        current
+            .install_initial_lexical_manifest(&fixture.head.token()?, &initial_bytes)?
+            .token,
+        fixture.head.token()?
+    );
+    assert_eq!(
+        current
+            .install_initial_lexical_manifest(&fixture.head.token()?, &initial_bytes)?
+            .token,
+        fixture.head.token()?
+    );
+    drop(current);
+    drop(writer);
+    assert_eq!(
+        fixture
+            .store
+            .current_read(&fixture.scope)?
+            .lexical_manifest()?,
+        initial_bytes
+    );
+    let (_reservation, sealed) = fixture.sealed()?;
+    let next_bytes = serde_json::to_vec(&serde_json::json!({"engine":"test","version":2}))?;
+    let mut target = fixture.target(&sealed);
+    target.lexical_commit =
+        airk_core::identity::framed_digest(b"current-lexical-manifest/1", &[&next_bytes]);
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    assert!(
+        current
+            .prepare(&fixture.head.token()?, target.clone(), &sealed, &[], None)
+            .is_err()
+    );
+    let pending = current.prepare_lexical(
+        &fixture.head.token()?,
+        target,
+        &sealed,
+        &[],
+        None,
+        &next_bytes,
+    )?;
+    assert_eq!(pending.lexical_manifest_bytes, next_bytes.len() as u64);
+    current.mark_applying(&pending)?;
+    drop(current);
+    drop(writer);
+    assert!(fixture.store.current_read(&fixture.scope).is_err());
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    current.mark_applying(&pending)?;
+    let committed = current.commit(&pending, pending.target.lexical_commit)?;
+    drop(current);
+    drop(writer);
+    let read = fixture.store.current_read(&fixture.scope)?;
+    assert_eq!(read.token()?, committed.token);
+    assert_eq!(read.lexical_manifest()?, next_bytes);
+    assert!(read.require_token(&fixture.head.token()?).is_err());
+    Ok(())
+}
+
+#[test]
+fn corrupt_staged_lexical_manifest_never_advances_the_current_head() -> Result<()> {
+    let mut fixture = Fixture::empty()?;
+    let initial_bytes = serde_json::to_vec(&serde_json::json!({"engine":"test","version":1}))?;
+    fixture.head.lexical_commit =
+        airk_core::identity::framed_digest(b"current-lexical-manifest/1", &[&initial_bytes]);
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    current.initialize(fixture.head.clone())?;
+    current.install_initial_lexical_manifest(&fixture.head.token()?, &initial_bytes)?;
+    drop(current);
+    drop(writer);
+    let (_reservation, sealed) = fixture.sealed()?;
+    let next_bytes = serde_json::to_vec(&serde_json::json!({"engine":"test","version":2}))?;
+    let mut target = fixture.target(&sealed);
+    target.lexical_commit =
+        airk_core::identity::framed_digest(b"current-lexical-manifest/1", &[&next_bytes]);
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    let pending = current.prepare_lexical(
+        &fixture.head.token()?,
+        target,
+        &sealed,
+        &[],
+        None,
+        &next_bytes,
+    )?;
+    let tamper = rusqlite::Connection::open(fixture.store.directory().join("index.sqlite3"))?;
+    tamper.execute(
+        "UPDATE current_pending_lexical SET content=zeroblob(length(content))",
+        [],
+    )?;
+    drop(tamper);
+    assert!(current.mark_applying(&pending).is_err());
+    assert_eq!(current.phase()?, TransactionPhase::Prepared);
+    drop(current);
+    drop(writer);
+    assert_eq!(
+        fixture
+            .store
+            .current_read(&fixture.scope)?
+            .lexical_manifest()?,
+        initial_bytes
+    );
+    let repair = rusqlite::Connection::open(fixture.store.directory().join("index.sqlite3"))?;
+    repair.execute(
+        "UPDATE current_pending_lexical SET content=?1",
+        [&next_bytes],
+    )?;
+    drop(repair);
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    current.mark_applying(&pending)?;
+    let tamper = rusqlite::Connection::open(fixture.store.directory().join("index.sqlite3"))?;
+    tamper.execute(
+        "UPDATE current_pending_lexical SET content=zeroblob(length(content))",
+        [],
+    )?;
+    drop(tamper);
+    assert!(
+        current
+            .commit(&pending, pending.target.lexical_commit)
+            .is_err()
+    );
+    assert_eq!(current.phase()?, TransactionPhase::Applying);
+    assert_eq!(current.head()?, fixture.head);
+    drop(current);
+    drop(writer);
+    assert!(fixture.store.current_read(&fixture.scope).is_err());
+    Ok(())
+}
+
+#[test]
 fn changed_pending_map_bytes_block_applying_and_commit_without_advancing_head() -> Result<()> {
     let fixture = Fixture::new()?;
     let input = retained_input(&fixture, "Captured citation body.")?;
