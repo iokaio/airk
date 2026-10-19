@@ -23,7 +23,9 @@ use tantivy::{
 };
 
 mod manifest;
-pub use manifest::{LexicalFile, LexicalManifest};
+pub use manifest::{LexicalFile, LexicalManifest, VerifiedLexicalManifest};
+mod fork;
+pub use fork::LexicalForkWork;
 
 pub const MAX_CHANGED_ARTIFACTS: usize = 65_536;
 pub const MAX_PATH_DOCUMENTS: usize = 8_192;
