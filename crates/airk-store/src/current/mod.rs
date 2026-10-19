@@ -26,6 +26,20 @@ pub const MAX_HEAD_BYTES: usize = 65_536;
 pub const MAX_PENDING_INPUTS: usize = 65_536;
 pub const MAX_INPUT_METADATA_BYTES: usize = 262_144;
 pub const MAX_PENDING_METADATA_BYTES: u64 = 64 * 1024 * 1024;
+pub const MAX_LEXICAL_MANIFEST_BYTES: usize = 1024 * 1024;
+
+pub(crate) fn verify_lexical_manifest(bytes: &[u8], expected: Sha256Digest) -> Result<()> {
+    ensure!(
+        !bytes.is_empty() && bytes.len() <= MAX_LEXICAL_MANIFEST_BYTES,
+        "current lexical manifest byte bound exceeded"
+    );
+    serde_json::from_slice::<serde_json::Value>(bytes)?;
+    ensure!(
+        framed_digest(b"current-lexical-manifest/1", &[bytes]) == expected,
+        "current lexical manifest digest mismatch"
+    );
+    Ok(())
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

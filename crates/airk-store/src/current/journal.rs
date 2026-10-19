@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Captured, bounded replay state survives disposable staging and process death.
 use super::{
-    CurrentHead, CurrentScope, CurrentToken, MAX_INPUT_METADATA_BYTES, MAX_PENDING_INPUTS,
-    MAX_PENDING_METADATA_BYTES, database, decode_head, gate::Gate, graph, map,
+    CurrentHead, CurrentScope, CurrentToken, MAX_INPUT_METADATA_BYTES, MAX_LEXICAL_MANIFEST_BYTES,
+    MAX_PENDING_INPUTS, MAX_PENDING_METADATA_BYTES, database, decode_head, gate::Gate, graph, map,
+    verify_lexical_manifest,
 };
 use crate::{
     FileStore, WriterLock,
@@ -232,6 +233,7 @@ pub struct PendingTransaction {
     pub map_count: u64,
     pub map_bytes: u64,
     pub map_digest: Sha256Digest,
+    pub lexical_manifest_bytes: u64,
     pub model: Option<ModelObjectSet>,
     pub database_capacity_bytes: u64,
 }
@@ -242,12 +244,13 @@ impl PendingTransaction {
         self.graph.validate()?;
         database::validate_capacity(self.database_capacity_bytes)?;
         ensure!(
-            self.version == 2
+            self.version == 3
                 && self.inputs_count <= MAX_PENDING_INPUTS as u64
                 && self.metadata_bytes <= MAX_PENDING_METADATA_BYTES
                 && self.object_bytes <= MAX_CAPTURED_OBJECT_BYTES
                 && self.map_count <= MAX_PENDING_MAP_CHANGES
                 && self.map_bytes <= MAX_PENDING_MAP_BYTES
+                && self.lexical_manifest_bytes <= MAX_LEXICAL_MANIFEST_BYTES as u64
                 && self.graph.target == self.target.graph_head
                 && self.expected.incarnation == self.target.scope.incarnation
                 && self.expected.sequence.checked_add(1) == Some(self.target.sequence),
@@ -296,7 +299,9 @@ fn create(connection: &Connection) -> Result<()> {
     connection.execute_batch("CREATE TABLE current_state(id INTEGER PRIMARY KEY CHECK(id=1),phase TEXT NOT NULL CHECK(phase IN('ready','prepared','applying')),head BLOB NOT NULL CHECK(length(head)<=65536));
         CREATE TABLE current_pending(id INTEGER PRIMARY KEY CHECK(id=1),transaction_id TEXT NOT NULL,descriptor BLOB NOT NULL CHECK(length(descriptor)<=196608),digest TEXT NOT NULL);
         CREATE TABLE current_pending_inputs(path TEXT PRIMARY KEY,metadata BLOB NOT NULL CHECK(length(metadata)<=262144)) WITHOUT ROWID;
-        CREATE TABLE current_pending_map(key BLOB PRIMARY KEY CHECK(typeof(key)='blob' AND length(key)=32),value BLOB CHECK(value IS NULL OR (typeof(value)='blob' AND length(value)<=262144))) WITHOUT ROWID;")?;
+        CREATE TABLE current_pending_map(key BLOB PRIMARY KEY CHECK(typeof(key)='blob' AND length(key)=32),value BLOB CHECK(value IS NULL OR (typeof(value)='blob' AND length(value)<=262144))) WITHOUT ROWID;
+        CREATE TABLE current_lexical_manifest(id INTEGER PRIMARY KEY CHECK(id=1),content BLOB NOT NULL CHECK(typeof(content)='blob' AND length(content) BETWEEN 1 AND 1048576));
+        CREATE TABLE current_pending_lexical(id INTEGER PRIMARY KEY CHECK(id=1),content BLOB NOT NULL CHECK(typeof(content)='blob' AND length(content) BETWEEN 1 AND 1048576));")?;
     graph::create(connection)?;
     super::map::create(connection)
 }
@@ -335,7 +340,9 @@ fn pending(connection: &Connection, scope: &CurrentScope) -> Result<Option<Pendi
             && transaction.id.to_string() == id
             && transaction.expected == head.token()?
             && transaction.target.scope == *scope
-            && transaction.graph.base == head.graph_head,
+            && transaction.graph.base == head.graph_head
+            && (transaction.lexical_manifest_bytes > 0
+                || transaction.target.lexical_commit == head.lexical_commit),
         "current journal base or scope mismatch"
     );
     Ok(Some(transaction))
@@ -490,6 +497,34 @@ fn visit_pending_map(
     Ok(())
 }
 
+fn pending_lexical(
+    connection: &Connection,
+    pending: &PendingTransaction,
+) -> Result<Option<Vec<u8>>> {
+    let count: i64 =
+        connection.query_row("SELECT count(*) FROM current_pending_lexical", [], |row| {
+            row.get(0)
+        })?;
+    ensure!(
+        count == i64::from(pending.lexical_manifest_bytes > 0),
+        "pending lexical manifest row count mismatch"
+    );
+    if count == 0 {
+        return Ok(None);
+    }
+    let bytes: Option<Vec<u8>> = connection.query_row(
+        "SELECT CASE WHEN typeof(content)='blob' AND length(content) BETWEEN 1 AND 1048576 THEN content END FROM current_pending_lexical WHERE id=1",
+        [], |row| row.get(0),
+    )?;
+    let bytes = bytes.context("invalid pending lexical manifest bytes")?;
+    ensure!(
+        bytes.len() as u64 == pending.lexical_manifest_bytes,
+        "pending lexical manifest length mismatch"
+    );
+    verify_lexical_manifest(&bytes, pending.target.lexical_commit)?;
+    Ok(Some(bytes))
+}
+
 fn verify_model(store: &FileStore, model: &Option<ModelObjectSet>) -> Result<()> {
     if let Some(model) = model {
         model.validate()?;
@@ -512,6 +547,11 @@ pub struct CurrentWriter<'a> {
     scope: CurrentScope,
     capacity: u64,
     _gate: Gate,
+}
+
+struct ComponentChanges<'a> {
+    map: &'a [map::MapChange],
+    lexical_manifest: Option<&'a [u8]>,
 }
 
 impl FileStore {
@@ -829,6 +869,82 @@ impl CurrentWriter<'_> {
         grant.release(self.writer)
     }
 
+    /// Complete a fresh sequence-zero index after the verified empty Tantivy
+    /// component has been synced. A restart can retry the exact same manifest;
+    /// readers requiring lexical evidence fail until the row exists.
+    pub fn install_initial_lexical_manifest(
+        &mut self,
+        expected: &CurrentToken,
+        bytes: &[u8],
+    ) -> Result<CurrentCommit> {
+        let (phase, head) = state(self.connection()?, &self.scope)?;
+        ensure!(
+            phase == TransactionPhase::Ready
+                && self.pending()?.is_none()
+                && head.sequence == 0
+                && head.token()? == *expected,
+            "initial lexical manifest requires the exact empty current head"
+        );
+        verify_lexical_manifest(bytes, head.lexical_commit)?;
+        let existing: Option<Vec<u8>> = self
+            .connection()?
+            .query_row(
+                "SELECT content FROM current_lexical_manifest WHERE id=1",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if let Some(existing) = existing {
+            ensure!(
+                existing == bytes,
+                "initial lexical manifest differs from committed bytes"
+            );
+            return Ok(CurrentCommit {
+                token: *expected,
+                maintenance_error: None,
+            });
+        }
+        let id = framed_digest(
+            b"current-initial-lexical-manifest/1",
+            &[&serde_json::to_vec(expected)?, bytes],
+        );
+        let allowance = database::allowance(
+            self.connection
+                .as_mut()
+                .context("current database missing")?,
+            self.capacity,
+        )?;
+        let grant_scope = self.grant_scope(id);
+        let mut grant = match self.quota.current_grant(self.writer, &grant_scope)? {
+            Some(grant) => grant,
+            None => self
+                .quota
+                .reserve_current(self.writer, grant_scope, allowance)?,
+        };
+        if grant.capacity() < allowance {
+            grant.resize(self.writer, allowance)?;
+        }
+        crate::capacity::require_growth(self.quota.root(), allowance)?;
+        let transaction = self
+            .connection
+            .as_mut()
+            .context("current database missing")?
+            .transaction()?;
+        transaction.execute(
+            "INSERT OR ROLLBACK INTO current_lexical_manifest(id,content) VALUES(1,?1)",
+            [bytes],
+        )?;
+        transaction.commit()?;
+        let maintenance_error = grant
+            .release(self.writer)
+            .err()
+            .map(|error| error.to_string());
+        Ok(CurrentCommit {
+            token: *expected,
+            maintenance_error,
+        })
+    }
+
     /// Publish a catalog-only artifact change in one rollback-journaled SQL
     /// transaction. This path is useful when no lexical or graph component
     /// changes; combined changes use the captured multi-component protocol.
@@ -955,6 +1071,31 @@ impl CurrentWriter<'_> {
         self.prepare_mapped(expected, target, graph_delta, inputs, model, &[])
     }
 
+    /// Stage a replacement lexical manifest with the graph and current head.
+    /// The owning retrieval adapter must authenticate the referenced files
+    /// before preparation; this store binds the exact manifest bytes.
+    pub fn prepare_lexical(
+        &mut self,
+        expected: &CurrentToken,
+        target: CurrentHead,
+        graph_delta: &dyn PreparedGraphDelta,
+        inputs: &dyn CapturedInputs,
+        model: Option<ModelObjectSet>,
+        lexical_manifest: &[u8],
+    ) -> Result<PendingTransaction> {
+        self.prepare_components(
+            expected,
+            target,
+            graph_delta,
+            inputs,
+            model,
+            ComponentChanges {
+                map: &[],
+                lexical_manifest: Some(lexical_manifest),
+            },
+        )
+    }
+
     pub(crate) fn prepare_mapped(
         &mut self,
         expected: &CurrentToken,
@@ -963,6 +1104,28 @@ impl CurrentWriter<'_> {
         inputs: &dyn CapturedInputs,
         model: Option<ModelObjectSet>,
         map_changes: &[map::MapChange],
+    ) -> Result<PendingTransaction> {
+        self.prepare_components(
+            expected,
+            target,
+            graph_delta,
+            inputs,
+            model,
+            ComponentChanges {
+                map: map_changes,
+                lexical_manifest: None,
+            },
+        )
+    }
+
+    fn prepare_components(
+        &mut self,
+        expected: &CurrentToken,
+        target: CurrentHead,
+        graph_delta: &dyn PreparedGraphDelta,
+        inputs: &dyn CapturedInputs,
+        model: Option<ModelObjectSet>,
+        changes: ComponentChanges<'_>,
     ) -> Result<PendingTransaction> {
         let (phase, head) = state(self.connection()?, &self.scope)?;
         ensure!(
@@ -985,6 +1148,14 @@ impl CurrentWriter<'_> {
                 && graph_descriptor.target == target.graph_head,
             "current target does not extend the exact base"
         );
+        if let Some(bytes) = changes.lexical_manifest {
+            verify_lexical_manifest(bytes, target.lexical_commit)?;
+        } else {
+            ensure!(
+                target.lexical_commit == head.lexical_commit,
+                "changed lexical commit has no captured manifest"
+            );
+        }
         verify_model(&self.store, &model)?;
         let id = transaction_id(expected, &target, &graph_descriptor, &model)?;
         let grant_scope = self.grant_scope(id);
@@ -1016,7 +1187,7 @@ impl CurrentWriter<'_> {
         })?;
         let mut map_digest = MapDigest::new();
         let mut map_plan = map::MapPlan::new(&transaction, &self.scope, head.artifact_root)?;
-        for change in map_changes {
+        for change in changes.map {
             map_digest.add(change.key(), change.value())?;
             map_plan.put(change.key(), change.value())?;
             transaction.execute(
@@ -1028,8 +1199,14 @@ impl CurrentWriter<'_> {
             map_plan.root()? == target.artifact_root,
             "planned current map root differs from captured target"
         );
+        if let Some(bytes) = changes.lexical_manifest {
+            transaction.execute(
+                "INSERT OR ROLLBACK INTO current_pending_lexical(id,content) VALUES(1,?1)",
+                [bytes],
+            )?;
+        }
         let pending = PendingTransaction {
-            version: 2,
+            version: 3,
             id,
             expected: *expected,
             target,
@@ -1041,6 +1218,9 @@ impl CurrentWriter<'_> {
             map_count: map_digest.count,
             map_bytes: map_digest.bytes,
             map_digest: map_digest.finish(),
+            lexical_manifest_bytes: changes
+                .lexical_manifest
+                .map_or(0, |bytes| bytes.len() as u64),
             model,
             database_capacity_bytes: self.capacity,
         };
@@ -1109,6 +1289,7 @@ impl CurrentWriter<'_> {
         let already_applying = self.phase()? == TransactionPhase::Applying;
         self.visit_captured(pending, &mut |_| Ok(()))?;
         visit_pending_map(self.connection()?, pending, &mut |_, _| Ok(()))?;
+        pending_lexical(self.connection()?, pending)?;
         let mut grant = self.grant(pending)?;
         let connection = self
             .connection
@@ -1156,6 +1337,7 @@ impl CurrentWriter<'_> {
         }
         crate::capacity::require_growth(self.quota.root(), allowance)?;
         let transaction = connection.transaction()?;
+        let lexical_manifest = pending_lexical(&transaction, pending)?;
         graph::apply(&transaction, pending.id, &pending.graph)?;
         // Start from the authenticated committed base, not an empty map.
         let mut map_root = state(&transaction, &self.scope)?.1.artifact_root;
@@ -1167,9 +1349,16 @@ impl CurrentWriter<'_> {
             map_root == pending.target.artifact_root,
             "replayed current map root differs from prepared target"
         );
+        if let Some(bytes) = lexical_manifest {
+            transaction.execute(
+                "INSERT INTO current_lexical_manifest(id,content) VALUES(1,?1) ON CONFLICT(id) DO UPDATE SET content=excluded.content",
+                [bytes],
+            )?;
+        }
         graph::cleanup(&transaction, pending.id)?;
         transaction.execute("DELETE FROM current_pending_inputs", [])?;
         transaction.execute("DELETE FROM current_pending_map", [])?;
+        transaction.execute("DELETE FROM current_pending_lexical", [])?;
         transaction.execute("DELETE FROM current_pending WHERE id=1", [])?;
         transaction.execute(
             "UPDATE OR ROLLBACK current_state SET phase='ready',head=?1 WHERE id=1",
@@ -1204,6 +1393,7 @@ impl CurrentWriter<'_> {
         graph::cleanup(&transaction, pending.id)?;
         transaction.execute("DELETE FROM current_pending_inputs", [])?;
         transaction.execute("DELETE FROM current_pending_map", [])?;
+        transaction.execute("DELETE FROM current_pending_lexical", [])?;
         transaction.execute("DELETE FROM current_pending", [])?;
         transaction.execute(
             "UPDATE OR ROLLBACK current_state SET phase='ready' WHERE id=1",
