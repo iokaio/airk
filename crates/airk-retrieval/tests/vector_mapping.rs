@@ -339,6 +339,8 @@ fn receipt_bound_manifest_counts_and_map_schema_are_checked() -> Result<()> {
         ("vectors", 2),
         ("vector_occurrences", 0),
         ("vector_occurrences", 2),
+        ("vector_eligible_artifacts", 2),
+        ("vector_excluded_artifacts", 1),
     ] {
         let mut manifest: serde_json::Value = serde_json::from_slice(&original)?;
         manifest[field] = count.into();
@@ -666,22 +668,375 @@ fn shared_graph_occurrence_fanout_is_bounded_and_scope_filters_before_expansion(
         .artifacts
         .extend(self::snapshot("wanted/file.txt", &["needle\n"]).artifacts);
     let source = support::FixtureSource::new(&snapshot)?;
-    let mut receipt = support::prepare(&base, &snapshot, &source, Some(&model))?;
-    let records = records(&base, &receipt)?;
-    let directory = directory(&base, &receipt);
-    // Explicitly construct a future interned graph: all exact inputs share node1,
-    // while each original occurrence and its stable evidence identities remain.
-    write_map_records(&directory, &records)?;
-    fs::remove_file(directory.join("vectors.bin"))?;
-    let mut graph = airk_retrieval::vector::DiskIndex::create(&directory.join("vectors.bin"), 2)?;
-    assert_eq!(graph.insert(&[1.0, 0.0])?, 1);
-    graph.finish()?;
-    drop(graph);
-    rebind(&directory, &mut receipt, 1)?;
+    let receipt = support::prepare(&base, &snapshot, &source, Some(&model))?;
+    assert_eq!(
+        records(&base, &receipt)?.len(),
+        130,
+        "persist every alias before bounded query expansion"
+    );
     let index = PersistentIndex::open_v2(&base, &snapshot.collection, &receipt)?;
+    assert_eq!(
+        index.vectors, 1,
+        "exact inputs share a production graph node"
+    );
     assert!(index.semantic_search(&query(None, 100))?.truncated);
     let scoped = index.semantic_search(&query(Some("wanted/"), 100))?;
     assert_eq!(scoped.hits[0].citation.path, "wanted/file.txt");
     assert!(!scoped.truncated);
+    Ok(())
+}
+
+#[derive(Default)]
+struct FixtureCache {
+    entries: std::sync::Mutex<
+        BTreeMap<airk_core::identity::Sha256Digest, airk_core::embedding::CachedEmbedding>,
+    >,
+    lookups: std::sync::atomic::AtomicUsize,
+}
+impl airk_core::embedding::EmbeddingCache for FixtureCache {
+    fn lookup(
+        &self,
+        key: &airk_core::identity::Sha256Digest,
+    ) -> Result<Option<airk_core::embedding::CachedEmbedding>> {
+        self.lookups
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(self.entries.lock().unwrap().get(key).cloned())
+    }
+    fn store(&self, entry: &airk_core::embedding::CachedEmbedding) -> Result<()> {
+        self.entries
+            .lock()
+            .unwrap()
+            .insert(entry.key, entry.clone());
+        Ok(())
+    }
+}
+
+#[test]
+fn exact_inputs_reuse_across_batches_artifacts_and_full_rebuild_without_persisting_negative_cache()
+-> Result<()> {
+    use airk_retrieval::model::{EmbeddingCacheContext, EmbeddingCacheStats};
+    let temp = tempfile::tempdir()?;
+    let model = model(temp.path())?;
+    let mut snapshot = snapshot("positive.txt", &vec!["needle\n"; 65]);
+    snapshot
+        .artifacts
+        .extend(self::snapshot("unknown.txt", &vec!["unrecognized\n"; 65]).artifacts);
+    snapshot
+        .artifacts
+        .extend(self::snapshot("alias/positive.txt", &["needle\n"]).artifacts);
+    let source = support::FixtureSource::new(&snapshot)?;
+    let cache = FixtureCache::default();
+    for (run, bypass) in [false, false, true].into_iter().enumerate() {
+        let base = temp.path().join(format!("run-{run}"));
+        let mut stats = EmbeddingCacheStats::default();
+        let before = cache.lookups.load(std::sync::atomic::Ordering::SeqCst);
+        let receipt = support::prepare_options(
+            &base,
+            &snapshot,
+            &source,
+            Some(&model),
+            Default::default(),
+            &support::FixtureRegistry::default(),
+            Some(&mut EmbeddingCacheContext {
+                cache: Some(&cache),
+                bypass,
+                stats: &mut stats,
+                max_workers: 1,
+                working_memory_bytes: 128 << 20,
+            }),
+        )?;
+        assert_eq!(stats.vector_units, 131);
+        assert_eq!(stats.vector_reused_inputs, 129);
+        assert_eq!(stats.vector_graph_nodes, 1);
+        assert_eq!(stats.vector_eligible_artifacts, 3);
+        assert_eq!(stats.vector_excluded_artifacts, 0);
+        assert_eq!(
+            stats.inputs, 2,
+            "only distinct unseen inputs reach embedding/cache lookup"
+        );
+        assert_eq!(
+            stats.no_vector, 1,
+            "OOV is evaluated once per build, not cached persistently"
+        );
+        assert_eq!(stats.hits, u64::from(run == 1));
+        assert_eq!(stats.inferences, if run == 1 { 1 } else { 2 });
+        let lookups = cache.lookups.load(std::sync::atomic::Ordering::SeqCst) - before;
+        assert_eq!(lookups, if bypass { 0 } else { 2 });
+        assert_eq!(cache.entries.lock().unwrap().len(), 1);
+        let index = PersistentIndex::open_v2(&base, &snapshot.collection, &receipt)?;
+        assert_eq!(index.vectors, 1);
+        assert_eq!(records(&base, &receipt)?.len(), 66);
+        assert_eq!(
+            index.semantic_search(&query(Some("alias/"), 100))?.hits[0]
+                .citation
+                .path,
+            "alias/positive.txt"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn shared_node_survives_canonical_alias_delete_and_move() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let model = model(temp.path())?;
+    let mut snapshot = snapshot("a-first.txt", &["needle\n"]);
+    snapshot
+        .artifacts
+        .extend(self::snapshot("b-second.txt", &["needle\n"]).artifacts);
+    snapshot
+        .artifacts
+        .extend(self::snapshot("wanted/third.txt", &["needle\n"]).artifacts);
+    for state in 0..3 {
+        if state == 1 {
+            snapshot.artifacts.remove("a-first.txt");
+        }
+        if state == 2 {
+            snapshot.artifacts.remove("wanted/third.txt");
+            snapshot
+                .artifacts
+                .extend(self::snapshot("moved/third.txt", &["needle\n"]).artifacts);
+        }
+        let base = temp.path().join(format!("state-{state}"));
+        let receipt = support::prepare(
+            &base,
+            &snapshot,
+            &support::FixtureSource::new(&snapshot)?,
+            Some(&model),
+        )?;
+        let index = PersistentIndex::open_v2(&base, &snapshot.collection, &receipt)?;
+        assert_eq!(index.vectors, 1);
+        let mut all = query(None, 4096);
+        all.limit = 10;
+        for response in [index.semantic_search(&all)?, index.hybrid_search(&all)?] {
+            assert_eq!(response.hits.len(), snapshot.artifacts.len());
+            assert!(!response.truncated);
+            assert!(
+                response
+                    .hits
+                    .iter()
+                    .all(|hit| snapshot.artifacts.contains_key(&hit.citation.path))
+            );
+        }
+        let scope = if state == 2 { "moved/" } else { "wanted/" };
+        assert!(
+            index.semantic_search(&query(Some(scope), 100))?.hits[0]
+                .citation
+                .path
+                .starts_with(scope)
+        );
+        if state == 2 {
+            assert!(
+                index
+                    .semantic_search(&query(Some("wanted/"), 100))?
+                    .hits
+                    .is_empty()
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn exact_bytes_written_context_and_pipeline_remain_separate_graph_inputs() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let model = model(temp.path())?;
+    let snapshot = snapshot(
+        "contexts.txt",
+        &[
+            "distant heading\n",
+            "needle body\n",
+            "needle heading\n",
+            "needle body\n",
+            "needle body ",
+        ],
+    );
+    let mut source = support::FixtureSource::new(&snapshot)?;
+    let retained = source.artifacts.get_mut("contexts.txt").unwrap();
+    retained.payload.semantic_projection.boundaries[1].context =
+        Some(retained.payload.chunks[0].span.clone());
+    retained.payload.semantic_projection.boundaries[3].context =
+        Some(retained.payload.chunks[2].span.clone());
+    retained.payload_digest = support::digest(&serde_json::to_vec(&retained.payload)?);
+    let first = temp.path().join("first");
+    let receipt = support::prepare(&first, &snapshot, &source, Some(&model))?;
+    let index = PersistentIndex::open_v2(&first, &snapshot.collection, &receipt)?;
+    assert_eq!(index.vectors, 5);
+    let before = records(&first, &receipt)?;
+    assert_ne!(
+        before[1]["embedding_key"], before[3]["embedding_key"],
+        "written contexts distinguish equal bodies"
+    );
+    assert_ne!(
+        before[3]["embedding_key"], before[4]["embedding_key"],
+        "exact input bytes are not approximated"
+    );
+    let manifest_path = model.join("model.json");
+    let mut manifest: serde_json::Value = serde_json::from_slice(&fs::read(&manifest_path)?)?;
+    manifest["name"] = "different original pipeline fixture".into();
+    fs::write(manifest_path, serde_json::to_vec(&manifest)?)?;
+    let second = temp.path().join("second");
+    let receipt = support::prepare(&second, &snapshot, &source, Some(&model))?;
+    let after = records(&second, &receipt)?;
+    assert_ne!(
+        before[1]["embedding_key"], after[1]["embedding_key"],
+        "complete pipeline identity binds exact inputs"
+    );
+    Ok(())
+}
+
+#[test]
+fn vector_selection_preserves_lockfile_lexical_evidence_and_skips_its_planner() -> Result<()> {
+    use airk_core::vector_selection::VectorSelectionPolicy;
+    use airk_retrieval::model::{EmbeddingCacheContext, EmbeddingCacheStats};
+    let temp = tempfile::tempdir()?;
+    let model = model(temp.path())?;
+    let mut snapshot = snapshot("Cargo.lock", &["needle dependency_version 42\n"]);
+    snapshot
+        .artifacts
+        .extend(self::snapshot("source.txt", &["needle behavior\n"]).artifacts);
+    let mut source = support::FixtureSource::new(&snapshot)?;
+    let retained = source.artifacts.get_mut("Cargo.lock").unwrap();
+    // This explicit test carrier is valid retained text but has no semantic
+    // coverage. An eligible artifact would fail the planner's coverage check.
+    retained.payload.semantic_projection.boundaries.clear();
+    retained.payload_digest = support::digest(&serde_json::to_vec(&retained.payload)?);
+    let policy = VectorSelectionPolicy::parse(
+        br#"{"version":1,"exclusions":[{"id":"lockfiles","basename":"Cargo.lock"}]}"#,
+    )?;
+    let digest = policy.digest()?;
+    let base = temp.path().join("selected");
+    let mut stats = EmbeddingCacheStats::default();
+    let receipt = support::prepare_options(
+        &base,
+        &snapshot,
+        &source,
+        Some(&model),
+        policy.clone(),
+        &support::FixtureRegistry::default(),
+        Some(&mut EmbeddingCacheContext {
+            cache: None,
+            bypass: false,
+            stats: &mut stats,
+            max_workers: 1,
+            working_memory_bytes: 128 << 20,
+        }),
+    )?;
+    let index = PersistentIndex::open_v2(&base, &snapshot.collection, &receipt)?;
+    assert_eq!(index.vector_selection_digest, digest);
+    assert_eq!(
+        (
+            index.vector_eligible_artifacts,
+            index.vector_excluded_artifacts
+        ),
+        (1, 1)
+    );
+    assert_eq!(stats.vector_units, 1);
+    assert_eq!(
+        (
+            stats.vector_eligible_artifacts,
+            stats.vector_excluded_artifacts
+        ),
+        (1, 1)
+    );
+    let mut exact = query(Some("Cargo.lock"), 4096);
+    exact.text = "dependency_version 42".into();
+    assert_eq!(
+        index.search(&exact)?.hits[0].text,
+        "needle dependency_version 42\n"
+    );
+    assert!(
+        index
+            .semantic_search(&query(Some("Cargo.lock"), 4096))?
+            .hits
+            .is_empty()
+    );
+    assert_eq!(
+        index.hybrid_search(&query(Some("Cargo.lock"), 4096))?.hits[0]
+            .citation
+            .path,
+        "Cargo.lock"
+    );
+    assert_eq!(records(&base, &receipt)?.len(), 1);
+    let error =
+        support::prepare(&temp.path().join("all"), &snapshot, &source, Some(&model)).unwrap_err();
+    assert!(error.to_string().contains("semantic"), "{error}");
+    // Applied policy is inspectable even when global vectors are disabled.
+    let base = temp.path().join("model-disabled");
+    let receipt = support::prepare_options(
+        &base,
+        &snapshot,
+        &source,
+        None,
+        policy,
+        &support::FixtureRegistry::default(),
+        None,
+    )?;
+    let index = PersistentIndex::open_v2(&base, &snapshot.collection, &receipt)?;
+    assert_eq!(index.vectors, 0);
+    assert_eq!(
+        (
+            index.vector_eligible_artifacts,
+            index.vector_excluded_artifacts
+        ),
+        (1, 1)
+    );
+    Ok(())
+}
+
+#[test]
+fn registry_corruption_or_write_failure_never_publishes_a_partial_graph() -> Result<()> {
+    use airk_core::{
+        identity::Sha256Digest,
+        vector_selection::{PreparedVectorNode, VectorNodeRegistry},
+    };
+    use airk_retrieval::model::{EmbeddingCacheContext, EmbeddingCacheStats};
+    struct BrokenRegistry {
+        corrupt: bool,
+    }
+    impl VectorNodeRegistry for BrokenRegistry {
+        fn lookup(&self, _: Sha256Digest) -> Result<Option<PreparedVectorNode>> {
+            Ok(self
+                .corrupt
+                .then_some(PreparedVectorNode { graph_id: Some(99) }))
+        }
+        fn remember(&self, _: Sha256Digest, _: PreparedVectorNode) -> Result<()> {
+            anyhow::bail!("original fixture registry reservation denied")
+        }
+    }
+    let temp = tempfile::tempdir()?;
+    let model = model(temp.path())?;
+    let snapshot = snapshot("original.txt", &["needle\n"]);
+    let source = support::FixtureSource::new(&snapshot)?;
+    for corrupt in [true, false] {
+        let base = temp.path().join(format!("corrupt-{corrupt}"));
+        let mut stats = EmbeddingCacheStats::default();
+        let error = support::prepare_options(
+            &base,
+            &snapshot,
+            &source,
+            Some(&model),
+            Default::default(),
+            &BrokenRegistry { corrupt },
+            Some(&mut EmbeddingCacheContext {
+                cache: None,
+                bypass: false,
+                stats: &mut stats,
+                max_workers: 1,
+                working_memory_bytes: 128 << 20,
+            }),
+        )
+        .unwrap_err();
+        assert!(
+            error.to_string().contains(if corrupt {
+                "outside this build's graph"
+            } else {
+                "reservation denied"
+            }),
+            "{error}"
+        );
+        assert_eq!(stats.inputs, u64::from(!corrupt));
+        assert!(fs::read_dir(base.join("generations"))?.next().is_none());
+    }
     Ok(())
 }

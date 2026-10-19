@@ -177,6 +177,18 @@ pub struct IndexReport {
     #[serde(default)]
     pub embedding_plan_cache_peak_bytes: u64,
     #[serde(default)]
+    pub vector_eligible_artifacts: u64,
+    #[serde(default)]
+    pub vector_excluded_artifacts: u64,
+    #[serde(default)]
+    pub vector_reused_inputs: u64,
+    #[serde(default)]
+    pub vector_graph_nodes: u64,
+    #[serde(default)]
+    pub vector_registry_rows: u64,
+    #[serde(default)]
+    pub vector_registry_bytes: u64,
+    #[serde(default)]
     pub vector_units: u64,
     #[serde(default)]
     pub vector_body_bytes: u64,

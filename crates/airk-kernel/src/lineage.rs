@@ -257,13 +257,11 @@ fn family_gap(
     family: ContinuityFamily,
     events: &[ChangeEvent],
 ) -> Option<CoverageReason> {
-    if inventory.version <= 2
-        || inventory.files.values().any(|file| {
-            file.continuity_coverage
-                .get(&family)
-                .is_none_or(|coverage| !coverage.supported)
-        })
-    {
+    if inventory.files.values().any(|file| {
+        file.continuity_coverage
+            .get(&family)
+            .is_none_or(|coverage| !coverage.supported)
+    }) {
         return Some(CoverageReason::Unsupported);
     }
     let partial = inventory.files.values().any(|file| {
@@ -310,7 +308,7 @@ fn advance_family_gaps(
         (&mut coverage.code, code),
         (&mut coverage.documents, documents),
     ] {
-        // Legacy/unsupported projections stay explicitly unsupported even when
+        // Unsupported projections stay explicitly unsupported even when
         // an independently bounded event buffer also overflows.
         if affected
             && floor.complete_after <= generation
@@ -394,7 +392,7 @@ mod tests {
 
     fn supported_inventory(generation: u64) -> InventoryV2 {
         let mut inventory = inventory(generation);
-        inventory.version = 3;
+        inventory.version = airk_core::publication::INVENTORY_VERSION;
         inventory.files.insert(
             "note.txt".into(),
             InventoryFile {
@@ -643,7 +641,7 @@ mod tests {
     }
 
     #[test]
-    fn lost_current_events_gap_both_families_but_legacy_stays_unsupported() -> Result<()> {
+    fn lost_current_events_gap_both_families_but_unsupported_stays_explicit() -> Result<()> {
         let first = observe(None, &supported_inventory(1), vec![], true)?;
         let result = observe(
             Some(&first),
@@ -659,13 +657,17 @@ mod tests {
             }
         );
         assert_eq!(result.coverage.documents, result.coverage.code);
-        let legacy = observe(None, &inventory(1), vec![], false)?;
+        let mut unsupported = supported_inventory(1);
+        for file in unsupported.files.values_mut() {
+            file.continuity_coverage.clear();
+        }
+        let unsupported = observe(None, &unsupported, vec![], false)?;
         assert_eq!(
-            legacy.coverage.code.reason,
+            unsupported.coverage.code.reason,
             Some(CoverageReason::Unsupported)
         );
         assert_eq!(
-            legacy.coverage.documents.reason,
+            unsupported.coverage.documents.reason,
             Some(CoverageReason::Unsupported)
         );
         Ok(())
@@ -673,10 +675,11 @@ mod tests {
 
     fn inventory(generation: u64) -> InventoryV2 {
         InventoryV2 {
+            vector_selection: Default::default(),
             embedding_pipeline_digest: None,
             index_detail: None,
             extraction_policy_digest: None,
-            version: 2,
+            version: airk_core::publication::INVENTORY_VERSION,
             incarnation: Incarnation::from_bytes([1; 16]),
             generation,
             root: "/original-fixture".into(),
@@ -764,10 +767,14 @@ mod tests {
                 basis: ContinuityBasis::Unknown,
             }],
         };
+        let mut current = supported_inventory(3);
+        for file in current.files.values_mut() {
+            file.continuity_coverage.clear();
+        }
         let result = build(
             Some(&previous),
             Some(token(2)),
-            &inventory(3),
+            &current,
             now,
             PublicationReason::Index,
             PendingLineage {

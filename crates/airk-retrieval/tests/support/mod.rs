@@ -16,7 +16,7 @@ use airk_retrieval::{
 };
 use anyhow::Result;
 use sha2::{Digest, Sha256};
-pub use source::FixtureSource;
+pub use source::{FixtureRegistry, FixtureSource};
 use std::{collections::BTreeMap, fs, path::Path};
 
 pub const LINEAGE: &[u8] = b"original retrieval fixture lineage";
@@ -87,7 +87,8 @@ pub fn inventory(
         );
     }
     Ok(InventoryV2 {
-        version: 3,
+        version: 4,
+        vector_selection: Default::default(),
         incarnation: Incarnation::from_bytes([1; 16]),
         generation: snapshot.generation.max(1),
         collection: snapshot.collection.clone(),
@@ -114,10 +115,32 @@ pub fn prepare(
     source: &dyn RetrievalSource,
     directory: Option<&Path>,
 ) -> Result<PublicationReceipt> {
+    prepare_options(
+        base,
+        snapshot,
+        source,
+        directory,
+        Default::default(),
+        &FixtureRegistry::default(),
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn prepare_options(
+    base: &Path,
+    snapshot: &Snapshot,
+    source: &dyn RetrievalSource,
+    directory: Option<&Path>,
+    selection: airk_core::vector_selection::VectorSelectionPolicy,
+    registry: &dyn airk_core::vector_selection::VectorNodeRegistry,
+    cache: Option<&mut model::EmbeddingCacheContext<'_>>,
+) -> Result<PublicationReceipt> {
     let set = directory
         .map(|directory| install_model(base, directory))
         .transpose()?;
-    let inventory = inventory(snapshot, source, set.as_ref())?;
+    let mut inventory = inventory(snapshot, source, set.as_ref())?;
+    inventory.vector_selection = selection;
     let canonical = inventory.canonical_bytes()?;
     let token = RevisionToken {
         incarnation: inventory.incarnation,
@@ -133,9 +156,10 @@ pub fn prepare(
         },
         set.as_ref(),
         source,
+        Some(registry),
         None,
         None,
-        None,
+        cache,
         |directory| {
             fs::write(
                 directory.join("catalog.sqlite"),

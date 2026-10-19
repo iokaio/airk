@@ -40,6 +40,7 @@ fn prepare_fixture(
         preparation,
         objects.as_ref(),
         &source,
+        Some(&support::FixtureRegistry::default()),
         charge,
         staging,
         None,
