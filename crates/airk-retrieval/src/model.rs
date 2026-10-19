@@ -654,6 +654,25 @@ impl EmbeddingModel {
         }
     }
 
+    /// Execute the same bounded, cache-aware batches for incremental current
+    /// updates as for a fresh build. Scheduling does not change input identity.
+    pub fn embed_batch(
+        &self,
+        texts: &[&str],
+        context: &mut EmbeddingCacheContext<'_>,
+    ) -> Result<Vec<Option<Vec<f32>>>> {
+        crate::embedding_batch::embed(
+            self,
+            texts,
+            &self.cache_descriptor()?,
+            context.cache,
+            context.bypass,
+            context.stats,
+            context.max_workers,
+            context.working_memory_bytes,
+        )
+    }
+
     /// Complete pipeline identity, separate from the legacy model display identity.
     pub fn cache_descriptor(&self) -> Result<EmbeddingDescriptor> {
         descriptor_from_manifest(match self {

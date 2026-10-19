@@ -14,6 +14,7 @@ pub const MAX_BUCKET_ENTRIES: usize = 128;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MapDomain {
+    Metadata,
     Artifact,
     Vector,
     Occurrence,
@@ -59,6 +60,7 @@ impl MapChange {
 impl MapDomain {
     fn label(self) -> &'static [u8] {
         match self {
+            Self::Metadata => b"metadata",
             Self::Artifact => b"artifact",
             Self::Vector => b"vector",
             Self::Occurrence => b"occurrence",

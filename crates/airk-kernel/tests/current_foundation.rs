@@ -25,6 +25,9 @@ use std::{collections::BTreeSet, sync::Arc, time::Instant};
 const DIMENSIONS: usize = 8;
 const CAPACITY: u64 = 16 * 1024 * 1024;
 
+#[path = "current_foundation/update.rs"]
+mod current_update;
+
 fn pipeline() -> Sha256Digest {
     framed_digest(b"current-foundation-original-fixture/1", &[])
 }
@@ -70,6 +73,9 @@ struct Fixture {
 }
 impl Fixture {
     fn new() -> Result<Self> {
+        Self::with_pipeline(pipeline())
+    }
+    fn with_pipeline(embedding_pipeline: Sha256Digest) -> Result<Self> {
         let directory = tempfile::tempdir()?;
         let quota = Quota::open(directory.path().join("state"))?;
         let store = FileStore::new(quota.root().join("collections/foundation"));
@@ -88,7 +94,7 @@ impl Fixture {
             root: scope.root.clone(),
             incarnation: scope.incarnation,
             graph_instance: Incarnation::from_bytes([2; 16]),
-            specification: mutable::specification(DIMENSIONS, pipeline())?,
+            specification: mutable::specification(DIMENSIONS, embedding_pipeline)?,
             record_bytes: mutable::record_bytes(DIMENSIONS)?,
         };
         let lexical_path = store.directory().join("lexical-0");
@@ -187,11 +193,23 @@ fn retained_lexical_artifact(
         grammar_identity: None,
         mapping_version: 1,
         chunk_version: 3,
-        options: Default::default(),
+        options: std::collections::BTreeMap::from([("index_detail".into(), "balanced".into())]),
         configuration_inputs: Default::default(),
     };
     let payload = ExtractionPayload {
-        semantic_projection: Default::default(),
+        semantic_projection: airk_core::extraction::SemanticProjection {
+            version: 1,
+            boundaries: vec![airk_core::extraction::SemanticBoundary {
+                region: None,
+                span: LocalSpan {
+                    start: 0,
+                    end: text.len(),
+                },
+                group: 0,
+                context: None,
+                split_context: None,
+            }],
+        },
         continuity_coverage: Default::default(),
         contract_version: 1,
         extraction_method: "utf8".into(),
