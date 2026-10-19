@@ -173,8 +173,11 @@ class McpReader:
             self.request("initialize", {"protocolVersion": "2024-11-05", "capabilities": {},
                                         "clientInfo": {"name": "airk-original-benchmark", "version": "1"}})
             self._send({"jsonrpc": "2.0", "method": "notifications/initialized"})
-        except BaseException:
-            self.close()
+        except BaseException as error:
+            try:
+                self.close()
+            except Exception as cleanup_error:
+                error.add_note(f"MCP cleanup failed: {cleanup_error}")
             raise
 
     def _read(self):
@@ -193,8 +196,14 @@ class McpReader:
                 pass
 
     def _send(self, payload):
-        self.process.stdin.write(json.dumps(payload).encode() + b"\n")
-        self.process.stdin.flush()
+        try:
+            self.process.stdin.write(json.dumps(payload).encode() + b"\n")
+            self.process.stdin.flush()
+        except OSError as error:
+            # A worker can exit before initialization reaches its stdin, even
+            # before the reader thread observes EOF. Keep that race in the same
+            # explicit worker-failure contract as a closed response stream.
+            raise RuntimeError("MCP worker closed stdout or input pipe") from error
 
     def request(self, method, params):
         self.sequence += 1
@@ -222,13 +231,20 @@ class McpReader:
         return json.loads(next(item["text"] for item in result["content"] if item["type"] == "text"))
 
     def close(self):
-        if self.process.poll() is None:
-            self.process.kill()
-        self.process.wait(timeout=10)
-        self.thread.join(timeout=10)
-        self.process.stdin.close()
-        self.process.stdout.close()
-        self.errors.close()
+        try:
+            if self.process.poll() is None:
+                self.process.kill()
+            self.process.wait(timeout=10)
+        finally:
+            self.thread.join(timeout=10)
+            for stream in (self.process.stdin, self.process.stdout, self.errors):
+                try:
+                    stream.close()
+                except OSError:
+                    # Buffered stdin.close may retry the failed write after the
+                    # child exits. This must not replace the request failure or
+                    # prevent stdout/stderr from being released.
+                    pass
 
 
 def read_samples(command, path, workers, reads):

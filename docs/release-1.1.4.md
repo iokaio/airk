@@ -35,7 +35,7 @@ Local validation uses Windows, Rust/Cargo 1.98.0, Python 3.13.7 and Node 24.21.0
 | Workspace build, formatting and clippy with warnings denied | Passed. |
 | Complete workspace tests and doc-tests | Passed, including all 211 kernel integration tests; designated worker/model/campaign ignores remain explicit. |
 | Extension with rebuilt native helper | 82 passed, 2 skipped: POSIX shell startup and separately supplied old-helper upgrade. |
-| Python contracts | 122 tests, 4 platform/optional-input skips. |
+| Python contracts | 123 tests, 4 platform/optional-input skips. |
 | Repository links/SPDX/guidance and whitespace | Passed for 665 public files; contributor guidance is byte-identical. |
 | License bundle | Passed for 467 packages; four declaration-only upstream gaps remain below. |
 | Persistent MCP qualification | Passed all nine judgments on both fixture sizes, with 27 warm samples per usage mode and 8 concurrent samples per size. |

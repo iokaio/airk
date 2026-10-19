@@ -7,6 +7,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 SPEC = importlib.util.spec_from_file_location("benchmark_v2", Path(__file__).parents[1] / "benchmark-v2.py")
@@ -184,6 +185,28 @@ class V2BenchmarkTests(unittest.TestCase):
     def test_closed_worker_fails_promptly(self):
         with self.assertRaisesRegex(RuntimeError, "closed stdout"):
             BENCHMARK.McpReader([sys.executable, "-c", "pass"], timeout=2)
+
+    def test_worker_exits_before_initialize_send_and_cleanup_preserves_error(self):
+        popen = BENCHMARK.subprocess.Popen
+
+        def already_exited(*args, **kwargs):
+            process = popen(*args, **kwargs)
+            process.wait(timeout=5)
+            return process
+
+        # Guarantee that the child has exited before the initializer can write,
+        # rather than relying on the runner's thread/process scheduling order.
+        reader = BENCHMARK.McpReader.__new__(BENCHMARK.McpReader)
+        with mock.patch.object(BENCHMARK.subprocess, "Popen", side_effect=already_exited):
+            with self.assertRaisesRegex(RuntimeError, "closed stdout or input pipe") as caught:
+                reader.__init__([sys.executable, "-c", "pass"], timeout=2)
+        self.assertIsInstance(caught.exception.__cause__, OSError)
+        self.assertIsNotNone(reader.process.returncode)
+        self.assertFalse(reader.thread.is_alive())
+        self.assertTrue(reader.process.stdin.closed)
+        self.assertTrue(reader.process.stdout.closed)
+        self.assertTrue(reader.errors.closed)
+        reader.close()  # Cleanup also remains safe when called twice.
 
     def test_unresponsive_worker_is_bounded(self):
         with self.assertRaises(TimeoutError):
