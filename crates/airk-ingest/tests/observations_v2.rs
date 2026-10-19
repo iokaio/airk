@@ -5,13 +5,13 @@ use airk_core::{
 };
 use airk_ingest::{
     IndexReport, ScanLimits,
-    adapters::{legacy::convert_native_legacy, profile::ExtractionPolicy},
+    adapters::profile::ExtractionPolicy,
     observations::{
         DisappearanceCause as Cause, ReuseBasis, ReuseRequest, ScanObservation, VerifiedReuse,
     },
-    scan_observed_v2_with_budgets,
+    scan_observed_v2_with_budgets, scan_payloads_with_budgets,
 };
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::{collections::BTreeMap, fs, path::Path};
 
 fn run(
@@ -198,20 +198,33 @@ fn copy_reuses_before_parsing_but_changes_inventory_and_full_scan_bypasses_looku
     let data = tempfile::tempdir()?;
     let bytes = b"pub fn original_publication_fixture() -> u32 { 42 }\n";
     fs::write(root.path().join("one.rs"), bytes)?;
-    let (previous, _, _) = run(
+    let policy = ExtractionPolicy {
+        detail: None,
+        version: 1,
+        rules: vec![],
+    };
+    let mut retained_payload = None;
+    let (previous, _, _) = scan_payloads_with_budgets(
         root.path(),
         data.path(),
         &empty(root.path())?,
         &BTreeMap::new(),
         ScanLimits::default(),
+        &policy,
+        false,
+        |_| Ok(None),
+        |_, artifact, _, payload| {
+            retained_payload = payload.cloned();
+            Ok(artifact.clone())
+        },
     )?;
+    let payload = retained_payload.context("fresh extraction payload missing")?;
     fs::write(root.path().join("two.rs"), bytes)?;
     let mut lookup_calls = 0;
     let mut lookup = |request: ReuseRequest<'_>| -> Result<Option<VerifiedReuse>> {
         lookup_calls += 1;
         assert_eq!(request.canonical_root, previous.root);
         assert_eq!(request.source_bytes, bytes.len());
-        let payload = convert_native_legacy(&previous.artifacts["one.rs"], bytes, request.profile)?;
         let artifact = bind_payload(
             &payload,
             request.profile,
@@ -229,11 +242,6 @@ fn copy_reuses_before_parsing_but_changes_inventory_and_full_scan_bypasses_looku
                 ReuseBasis::PriorContent
             },
         }))
-    };
-    let policy = ExtractionPolicy {
-        detail: None,
-        version: 1,
-        rules: vec![],
     };
     let (next, report, observed) = scan_observed_v2_with_budgets(
         root.path(),

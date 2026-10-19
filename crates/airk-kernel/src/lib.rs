@@ -370,6 +370,7 @@ impl Kernel {
     }
 
     fn index_with_mode(&self, full: bool) -> Result<IndexReport> {
+        let extraction = limits::configured_extraction_execution()?;
         self.release_idle_pins();
         let writer = self.store.lock()?;
         ensure!(
@@ -388,13 +389,18 @@ impl Kernel {
             self.store
                 .reset_obsolete_index(&writer, &self.root_id(), &self.collection)?;
             // Recovery does not read or prune obsolete catalog/history formats.
-            return self.index_attempt(true, &writer);
+            return self.index_attempt(true, &writer, extraction);
         }
         self.prepare_retention(&writer)?;
-        self.with_pressure_retry(&writer, || self.index_attempt(full, &writer))
+        self.with_pressure_retry(&writer, || self.index_attempt(full, &writer, extraction))
     }
 
-    fn index_attempt(&self, full: bool, writer: &airk_store::WriterLock) -> Result<IndexReport> {
+    fn index_attempt(
+        &self,
+        full: bool,
+        writer: &airk_store::WriterLock,
+        extraction: limits::ExtractionAdmission,
+    ) -> Result<IndexReport> {
         let resetting = self.store.reset_required()?;
         let mut previous = if resetting {
             self.empty_snapshot()
@@ -462,7 +468,7 @@ impl Kernel {
                 }
             }
         }
-        let (mut snapshot, mut report, observation) = airk_ingest::scan_payloads_with_budgets(
+        let (mut snapshot, mut report, observation) = airk_ingest::scan_payloads_with_execution(
             &self.root,
             &self.data_root,
             &previous,
@@ -470,6 +476,7 @@ impl Kernel {
             self.scan_limits()?,
             &policy,
             full,
+            extraction.execution,
             |request| {
                 use airk_ingest::observations::{ReuseBasis, VerifiedReuse};
                 let profile = request.profile;
@@ -533,29 +540,20 @@ impl Kernel {
                 {
                     return Ok(artifact.clone());
                 }
-                let hydrated = self.store.load_retained(artifact)?;
-                let payload = match fresh_payload {
-                    Some(payload) => payload.clone(),
-                    None => airk_ingest::continuity::prepare_native(&hydrated, bytes, profile)?,
-                };
-                let prepared = airk_core::binding::bind_payload(
-                    &payload,
-                    profile,
-                    airk_core::binding::ArtifactBinding {
-                        path: &hydrated.path,
-                        source_hash: hydrated.content_hash.parse()?,
-                        source_bytes: hydrated.bytes,
-                    },
-                )?;
+                // Every fresh job supplies its prepared payload and the coordinator
+                // has already bound it. Borrow both instead of cloning/rebinding
+                // the complete extraction or repeating continuity preparation.
+                let payload = fresh_payload.context("fresh extraction payload missing")?;
                 self.store.retain_payload_with_budget(
-                    &prepared,
-                    &payload,
+                    artifact,
+                    payload,
                     profile,
                     Some(bytes),
                     Some(&reservation),
                 )
             },
         )?;
+        report.extraction_workers_requested = extraction.requested;
         report.scan_extract_us =
             u64::try_from(scan_started.elapsed().as_micros()).unwrap_or(u64::MAX);
         snapshot.persistent_indexes = true;

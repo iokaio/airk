@@ -186,6 +186,7 @@ pub(crate) fn extract(bytes: &[u8]) -> Result<Extracted> {
     let mut output = Extracted {
         chunks: Vec::new(),
         facts: Vec::new(),
+        semantic_seeds: None,
         language: "xlsx".into(),
         method: "xlsx-worksheet-rows".into(),
         parse_status: "extracted-spreadsheet; formulas-not-evaluated".into(),
