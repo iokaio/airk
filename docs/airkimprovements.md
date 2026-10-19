@@ -2,7 +2,7 @@
 
 Review date: October 18, 2026. Scope: the current 1.1.4 working tree, including existing modified and untracked source files, based on Git commit `836688b4c68e31ee4074d3f218576b7549d385c5`. The findings below preserve the original review evidence. The implementation record tracks the subsequent authorized 1.1.4 changes.
 
-## Implementation record — 1.1.4
+## Implementation record - 1.1.4
 
 The user authorized implementation, validation, documentation, PR merge and publication of 1.1.4. The existing version bump is preserved. The original findings and review-time measurements below remain historical evidence; source line anchors refer to that reviewed tree.
 
