@@ -70,6 +70,34 @@ pub(crate) fn create_owner(directory: &Path, scope: &CurrentScope, capacity: u64
     crate::durability::persist_synced(file, &directory.join(OWNER_FILE))
 }
 
+/// The exclusive collection writer calls this only after reserving an allowance
+/// for the larger limit. The new owner bound is durable before SQLite may use it.
+pub(crate) fn grow_owner(
+    directory: &Path,
+    scope: &CurrentScope,
+    previous: u64,
+    next: u64,
+) -> Result<()> {
+    validate_capacity(next)?;
+    ensure!(next > previous, "current database capacity must grow");
+    ensure!(
+        check_owner(directory, scope)? == previous,
+        "current database capacity changed under writer"
+    );
+    let bytes = serde_json::to_vec(&Owner {
+        version: DATABASE_VERSION,
+        scope: scope.clone(),
+        capacity: next,
+    })?;
+    ensure!(
+        bytes.len() <= 65_536,
+        "current ownership header exceeds bound"
+    );
+    let mut file = tempfile::NamedTempFile::new_in(directory)?;
+    file.write_all(&bytes)?;
+    crate::durability::persist_synced(file, &directory.join(OWNER_FILE))
+}
+
 pub(crate) fn validate_capacity(bytes: u64) -> Result<u64> {
     ensure!(
         (PAGE_BYTES * 16..=MAX_DATABASE_BYTES).contains(&bytes) && bytes.is_multiple_of(PAGE_BYTES),
