@@ -22,6 +22,9 @@ use tantivy::{
     schema::{FAST, Field, IndexRecordOption, STORED, STRING, Schema, Value},
 };
 
+mod manifest;
+pub use manifest::{LexicalFile, LexicalManifest};
+
 pub const MAX_CHANGED_ARTIFACTS: usize = 65_536;
 pub const MAX_PATH_DOCUMENTS: usize = 8_192;
 
