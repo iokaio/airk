@@ -6,6 +6,7 @@ use super::{
     journal::CapturedInput,
     map,
     vector_map::{OccurrencePointer, VectorBinding},
+    verify_lexical_manifest,
 };
 use crate::FileStore;
 use airk_core::graph_storage::{GraphCounts, GraphRecord, GraphRecordReader, GraphScope};
@@ -22,6 +23,19 @@ pub struct CurrentRead {
 }
 
 impl CurrentRead {
+    /// Exact manifest bytes bound to this request's current head. Retrieval
+    /// must also verify the physical Tantivy files before trusting candidates.
+    pub fn lexical_manifest(&self) -> Result<Vec<u8>> {
+        self.with_connection(|connection| {
+            let bytes: Option<Vec<u8>> = connection.query_row(
+                "SELECT CASE WHEN typeof(content)='blob' AND length(content) BETWEEN 1 AND 1048576 THEN content END FROM current_lexical_manifest WHERE id=1",
+                [], |row| row.get(0),
+            ).context("current lexical manifest missing")?;
+            let bytes = bytes.context("invalid current lexical manifest row")?;
+            verify_lexical_manifest(&bytes, self.head.lexical_commit)?;
+            Ok(bytes)
+        })
+    }
     /// An exact embedding-key lookup checked against the authenticated graph
     /// record. An absent key has a complete bucket proof; no SQL candidate list
     /// is trusted to establish absence.
