@@ -291,11 +291,22 @@ fn build_streaming_components(
         Some((collection, set)) => Some(EmbeddingModel::open_objects(collection, set)?),
         None => model_directory.map(EmbeddingModel::open).transpose()?,
     };
-    let mut local_stats = crate::model::EmbeddingCacheStats::default();
+    let mut local_stats = crate::model::EmbeddingCacheStats {
+        plan_cache_peak_bytes: model
+            .as_ref()
+            .map(EmbeddingModel::plan_cache_peak_bytes)
+            .transpose()?
+            .unwrap_or(0),
+        ..Default::default()
+    };
     if model.is_some()
         && let Some(context) = cache.as_mut()
     {
         context.stats.model_load_us = crate::embedding_batch::elapsed_us(model_started);
+        context.stats.plan_cache_peak_bytes = context
+            .stats
+            .plan_cache_peak_bytes
+            .max(local_stats.plan_cache_peak_bytes);
     }
     let descriptor = model
         .as_ref()
@@ -754,7 +765,7 @@ fn open_components_v2(
         } else {
             ensure!(
                 crate::model::inspect(&directory.join("model"))?.identity == *identity,
-                "v2 model identity mismatch"
+                "indexed model identity mismatch; rebuild the index with airk index --full"
             );
         }
         ensure!(

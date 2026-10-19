@@ -65,6 +65,29 @@ fn serial_parallel_and_incremental_vectors_preserve_retrieval() -> Result<()> {
         "fixture must distinguish neural work from blank gaps"
     );
     ensure!(
+        serial["embedding_tokenized_inputs"]
+            .as_u64()
+            .context("tokenized inputs missing")?
+            >= serial["embedding_actual_forwards"]
+                .as_u64()
+                .context("forwards missing")?
+            && serial["embedding_input_tokens"]
+                .as_u64()
+                .context("input tokens missing")?
+                >= serial["embedding_embedded_tokens"]
+                    .as_u64()
+                    .context("embedded tokens missing")?
+            && serial["embedding_padding_tokens"]
+                .as_u64()
+                .context("padding missing")?
+                > 0
+            && serial["embedding_plan_compilations"]
+                .as_u64()
+                .context("compilations missing")?
+                > 0,
+        "token and plan measurements do not reconcile"
+    );
+    ensure!(
         serial["embedding_workers"] == 1 && serial["embedding_batches"].as_u64().unwrap_or(0) >= 2,
         "fixture did not exercise multiple batches: {serial}"
     );
@@ -121,6 +144,17 @@ fn serial_parallel_and_incremental_vectors_preserve_retrieval() -> Result<()> {
         fs::read_to_string(root.join("recovery.rs"))? == source,
         "source changed"
     );
-    eprintln!("serial={serial}\nparallel={parallel}\nincremental={incremental}");
+    fs::write(root.join("blank.txt"), " \n")?;
+    let cached = run(&root, &data, "4", &["index"])?;
+    ensure!(
+        cached["embedding_actual_forwards"] == 0
+            && cached["embedding_plan_compilations"] == 0
+            && cached["embedding_plan_cache_peak_bytes"]
+                .as_u64()
+                .unwrap_or(0)
+                > 0,
+        "a cached update must report retained template memory without inventing plan work"
+    );
+    eprintln!("serial={serial}\nparallel={parallel}\nincremental={incremental}\ncached={cached}");
     Ok(())
 }

@@ -571,6 +571,14 @@ impl Kernel {
             report.embedding_blank_inputs = embedding.blank_inputs;
             report.embedding_duplicate_inputs = embedding.duplicate_inputs;
             report.embedding_actual_forwards = embedding.actual_forwards;
+            report.embedding_tokenized_inputs = embedding.tokenized_inputs;
+            report.embedding_input_tokens = embedding.input_tokens;
+            report.embedding_embedded_tokens = embedding.embedded_tokens;
+            report.embedding_padding_tokens = embedding.padding_tokens;
+            report.embedding_truncated_inputs = embedding.truncated_inputs;
+            report.embedding_plan_compilations = embedding.plan_compilations;
+            report.embedding_plan_compile_us = embedding.plan_compile_us;
+            report.embedding_plan_cache_peak_bytes = embedding.plan_cache_peak_bytes;
             report.embedding_model_load_us = embedding.model_load_us;
             report.embedding_cache_lookup_us = embedding.cache_lookup_us;
             report.embedding_cache_store_us = embedding.cache_store_us;
