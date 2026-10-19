@@ -27,6 +27,7 @@ fn profile() -> ExtractionProfile {
 fn payload(text: &str) -> ExtractionPayload {
     ExtractionPayload {
         continuity_coverage: BTreeMap::new(),
+        semantic_projection: Default::default(),
         contract_version: 2,
         extraction_method: "utf8".into(),
         parse_status: "fixture".into(),

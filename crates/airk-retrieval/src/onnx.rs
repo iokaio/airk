@@ -637,6 +637,25 @@ impl OnnxModel {
         ))
     }
 
+    pub(crate) fn planning_tokens(&self, text: &str) -> Result<model::PlanningTokens> {
+        ensure!(
+            text.len() <= model::MAX_INPUT_BYTES,
+            "vector planning input exceeds byte bound"
+        );
+        let encoding = self
+            .raw_tokenizer
+            .encode(text, false)
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        ensure!(
+            encoding.len() <= 65_536,
+            "ONNX tokenizer exceeds output-token budget"
+        );
+        Ok(model::PlanningTokens {
+            offsets: encoding.get_offsets().to_vec(),
+            special_tokens: self.special_tokens,
+        })
+    }
+
     fn encode_input(&self, original: &str) -> Result<Option<EncodedInput>> {
         let text = model::onnx_input_prefix(original);
         if text.trim().is_empty() {

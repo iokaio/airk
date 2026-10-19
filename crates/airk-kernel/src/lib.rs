@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! A single workspace boundary and one application service for CLI and MCP.
 use airk_core::{
-    Artifact, ArtifactSource, Citation, DocumentLocation, FactHit, FactsResponse, Hit, SearchQuery,
+    Artifact, ArtifactSource, Citation, DocumentLocation, FactsResponse, Hit, SearchQuery,
     SearchResponse, Snapshot, validate_budget,
 };
 pub use airk_core::{FactQuery, RelationshipQuery};
@@ -33,11 +33,7 @@ mod tokenization;
 pub mod usage;
 pub mod vectors;
 pub mod watcher;
-use airk_retrieval::{
-    LexicalIndex,
-    persistent::{self, PersistentIndex},
-    truncate_utf8,
-};
+use airk_retrieval::{persistent::PersistentIndex, truncate_utf8};
 use airk_store::{CollectionUsage, FileStore};
 use anyhow::{Context, Result, ensure};
 use serde::Serialize;
@@ -61,7 +57,7 @@ pub struct Kernel {
 
 struct CachedIndex {
     revision: String,
-    index: CachedBackend,
+    index: Box<PersistentIndex>,
 }
 
 #[cfg(windows)]
@@ -96,11 +92,6 @@ fn managed_data_path(path: PathBuf) -> Result<PathBuf> {
             Err(error) => return Err(error).context("resolve managed data directory"),
         }
     }
-}
-
-enum CachedBackend {
-    Persistent(Box<PersistentIndex>),
-    Legacy(LexicalIndex),
 }
 
 #[derive(Serialize)]
@@ -256,6 +247,11 @@ impl Kernel {
     }
 
     fn load_optional(&self) -> Result<Option<Snapshot>> {
+        match self.store.index_format(&self.root_id(), &self.collection)? {
+            airk_store::IndexFormat::Empty => return Ok(None),
+            airk_store::IndexFormat::Current => {}
+            _ => anyhow::bail!("obsolete or interrupted index; rebuild with airk index --full"),
+        }
         let snapshot = self.store.catalog()?.map(|catalog| catalog.snapshot);
         if let Some(snapshot) = &snapshot {
             ensure!(
@@ -275,7 +271,17 @@ impl Kernel {
             .context("workspace is not indexed; run airk index first")
     }
 
+    fn require_current_index(&self) -> Result<()> {
+        ensure!(
+            self.store.index_format(&self.root_id(), &self.collection)?
+                == airk_store::IndexFormat::Current,
+            "workspace is not indexed in the current format; rebuild with airk index --full"
+        );
+        Ok(())
+    }
+
     fn catalog(&self) -> Result<Arc<airk_store::blobs::Catalog>> {
+        self.require_current_index()?;
         let cached = self
             .catalog_cache
             .lock()
@@ -353,25 +359,44 @@ impl Kernel {
         self.index_with_mode(false)
     }
 
-    /// Re-extract all sources without removing the last successful snapshot.
+    /// Re-extract all sources. Obsolete derived formats are reset before rebuilding.
     pub fn reindex(&self) -> Result<IndexReport> {
         self.index_with_mode(true)
     }
 
     fn index_with_mode(&self, full: bool) -> Result<IndexReport> {
+        self.release_idle_pins();
         let writer = self.store.lock()?;
         ensure!(
             !self.root.starts_with(self.data_root.canonicalize()?),
             "data directory must not contain the workspace root"
         );
+        let format = self.store.index_format(&self.root_id(), &self.collection)?;
+        if matches!(
+            format,
+            airk_store::IndexFormat::Obsolete | airk_store::IndexFormat::ResetRequired
+        ) {
+            ensure!(
+                full,
+                "obsolete or interrupted index; rebuild with airk index --full"
+            );
+            self.store
+                .reset_obsolete_index(&writer, &self.root_id(), &self.collection)?;
+            // Recovery does not read or prune obsolete catalog/history formats.
+            return self.index_attempt(true, &writer);
+        }
         self.prepare_retention(&writer)?;
         self.with_pressure_retry(&writer, || self.index_attempt(full, &writer))
     }
 
     fn index_attempt(&self, full: bool, writer: &airk_store::WriterLock) -> Result<IndexReport> {
-        let mut previous = self
-            .load_optional()?
-            .unwrap_or_else(|| self.empty_snapshot());
+        let resetting = self.store.reset_required()?;
+        let mut previous = if resetting {
+            self.empty_snapshot()
+        } else {
+            self.load_optional()?
+                .unwrap_or_else(|| self.empty_snapshot())
+        };
         if full {
             previous.extractor_version.clear();
         }
@@ -386,15 +411,22 @@ impl Kernel {
         } else {
             None
         };
-        let prior_pipeline = self
-            .store
-            .catalog()?
-            .and_then(|catalog| catalog.inventory)
-            .and_then(|inventory| inventory.embedding_pipeline_digest);
+        let prior_pipeline = if resetting {
+            None
+        } else {
+            self.store
+                .catalog()?
+                .and_then(|catalog| catalog.inventory)
+                .and_then(|inventory| inventory.embedding_pipeline_digest)
+        };
         let roots = self.configured_roots()?;
         let reservation = self.publication_reservation()?;
         let scan_started = std::time::Instant::now();
-        let configured_policy = self.extraction_policy()?;
+        let configured_policy = if resetting {
+            self.rebuild_extraction_policy()?
+        } else {
+            self.extraction_policy()?
+        };
         let policy = configured_policy.policy;
         let mut prior_content = std::collections::BTreeMap::new();
         if !full {
@@ -438,7 +470,7 @@ impl Kernel {
                             .retained
                             .as_ref()
                             .and_then(|reference| reference.profile.as_ref())
-                            .is_none_or(|old_profile| old_profile == profile)
+                            .is_some_and(|old_profile| old_profile == profile)
                 });
                 let cached = prior_content
                     .get(&(
@@ -457,24 +489,14 @@ impl Kernel {
                 if old_root.root != current_root.root {
                     return Ok(None);
                 }
-                if old
-                    .retained
-                    .as_ref()
-                    .is_none_or(|reference| reference.profile.is_none())
-                    && old.language != "ocr"
-                    && (previous.extractor_version != airk_core::EXTRACTOR_VERSION
-                        || profile.adapter_version != "native-facts/7/sizing-1")
-                {
-                    return Ok(None);
-                }
-                let hydrated = self.store.load_retained(old)?;
                 let actual = old
                     .retained
                     .as_ref()
-                    .and_then(|r| r.profile.clone())
-                    .map(Ok)
-                    .unwrap_or_else(|| airk_ingest::adapters::legacy::legacy_profile(&hydrated))?;
-                if actual != *profile {
+                    .and_then(|r| r.profile.as_ref())
+                    .context(
+                        "indexed extraction profile missing; rebuild with airk index --full",
+                    )?;
+                if actual != profile {
                     return Ok(None);
                 }
                 let basis = if old.path == request.path {
@@ -486,13 +508,7 @@ impl Kernel {
                 rebound.path = request.path.into();
                 // Typed path-free binding reconstructs all destination syntax IDs.
                 // Retained objects remain shared only by verified source/profile.
-                if rebound
-                    .retained
-                    .as_ref()
-                    .is_some_and(|reference| reference.profile.is_some())
-                {
-                    self.store.load_retained(&rebound)?;
-                }
+                self.store.load_retained(&rebound)?;
                 Ok(Some(VerifiedReuse {
                     artifact: rebound,
                     basis,
@@ -579,6 +595,9 @@ impl Kernel {
             report.embedding_plan_compilations = embedding.plan_compilations;
             report.embedding_plan_compile_us = embedding.plan_compile_us;
             report.embedding_plan_cache_peak_bytes = embedding.plan_cache_peak_bytes;
+            report.vector_units = embedding.vector_units;
+            report.vector_body_bytes = embedding.vector_body_bytes;
+            report.vector_planning_us = embedding.vector_planning_us;
             report.embedding_model_load_us = embedding.model_load_us;
             report.embedding_cache_lookup_us = embedding.cache_lookup_us;
             report.embedding_cache_store_us = embedding.cache_store_us;
@@ -631,87 +650,17 @@ impl Kernel {
                 imported_relationships: revision.imported_relationships,
             });
         }
-        let snapshot = self.load()?;
-        let persistent = if snapshot.persistent_indexes {
-            Some(PersistentIndex::open(self.store.directory(), &snapshot)?)
-        } else {
-            None
-        };
-        Ok(Status {
-            retention: self.retention_observation(None),
-            publication: None,
-            source_roots: snapshot
-                .roots
-                .clone()
-                .into_iter()
-                .chain([(String::new(), snapshot.root.clone())])
-                .collect(),
-            generation: snapshot.generation,
-            collection: snapshot.collection,
-            files: snapshot.artifacts.len(),
-            chunks: snapshot.artifacts.values().map(Artifact::chunk_count).sum(),
-            source_bytes: snapshot.artifacts.values().map(|a| a.bytes).sum(),
-            extractor_version: snapshot.extractor_version,
-            exact_fact_backend: if self.store.directory().join("index.sqlite3").exists() {
-                "sqlite"
-            } else {
-                "legacy-json"
-            },
-            lexical_backend: if persistent.is_some() {
-                "tantivy"
-            } else {
-                "legacy-memory"
-            },
-            vector_backend: "microsoft-diskann-0.59.0/airk-file-provider-1",
-            local_model_ready: persistent
-                .as_ref()
-                .is_some_and(|index| index.model_sha256.is_some()),
-            indexed_vectors: persistent.as_ref().map_or(0, |index| index.vectors),
-            vectors_enabled: self.vectors_enabled()?,
-            semantic_producer: snapshot.analysis.as_ref().map(|m| m.producer.clone()),
-            imported_facts: snapshot.imported_facts.len(),
-            imported_relationships: snapshot.imported_relationships.len(),
-        })
+        anyhow::bail!(
+            "workspace is not indexed in the current format; rebuild with airk index --full"
+        )
     }
 
     pub fn search(&self, query: &SearchQuery) -> Result<SearchResponse> {
         query.validate()?;
-        if let Some(revision) = self.persistent_revision()? {
-            let cache = self.cached_persistent(revision)?;
-            if let CachedBackend::Persistent(index) = &cache.index {
-                return index.search(query);
-            }
-            anyhow::bail!("persistent cache identity mismatch");
-        }
-        let snapshot = self.load()?;
-        let cached = self
-            .cache
-            .lock()
-            .map_err(|_| anyhow::anyhow!("index cache poisoned"))?
-            .clone();
-        let revision = persistent::revision_id(&snapshot)?;
-        let cache =
-            if let Some(cached) = cached.as_ref().filter(|cached| cached.revision == revision) {
-                cached.clone()
-            } else {
-                let built = Arc::new(CachedIndex {
-                    revision,
-                    index: if snapshot.persistent_indexes {
-                        CachedBackend::Persistent(Box::new(PersistentIndex::open(
-                            self.store.directory(),
-                            &snapshot,
-                        )?))
-                    } else {
-                        CachedBackend::Legacy(LexicalIndex::build(&snapshot))
-                    },
-                });
-                self.install_index(&cached, built.clone())?;
-                built
-            };
-        match &cache.index {
-            CachedBackend::Persistent(index) => index.search(query),
-            CachedBackend::Legacy(index) => index.search(&snapshot, query),
-        }
+        let revision = self.persistent_revision()?.context(
+            "workspace is not indexed in the current format; rebuild with airk index --full",
+        )?;
+        self.cached_persistent(revision)?.index.search(query)
     }
 
     pub fn semantic_search(&self, query: &SearchQuery) -> Result<SearchResponse> {
@@ -732,9 +681,7 @@ impl Kernel {
             .persistent_revision()?
             .context("vector retrieval not ready: reindex with a provisioned local model")?;
         let cache = self.cached_persistent(revision)?;
-        let CachedBackend::Persistent(index) = &cache.index else {
-            anyhow::bail!("persistent cache identity mismatch");
-        };
+        let index = &cache.index;
         if hybrid {
             index.hybrid_search(query)
         } else {
@@ -758,7 +705,7 @@ impl Kernel {
         let (revision, index) = self.pin_revision(revision)?;
         let built = Arc::new(CachedIndex {
             revision: serde_json::to_string(&revision)?,
-            index: CachedBackend::Persistent(Box::new(index)),
+            index: Box::new(index),
         });
         self.install_index(&cached, built.clone())?;
         Ok(built)
@@ -794,20 +741,14 @@ impl Kernel {
     ) -> Result<(airk_store::PersistentRevision, PersistentIndex)> {
         for _ in 0..3 {
             let opened = (|| {
-                if let Some(token) = revision.token {
-                    let receipt = self
-                        .store
-                        .receipt(&token)?
-                        .context("committed receipt missing")?;
-                    PersistentIndex::open_v2(self.store.directory(), &revision.collection, &receipt)
-                } else {
-                    PersistentIndex::open_revision(
-                        self.store.directory(),
-                        &revision.revision,
-                        revision.generation,
-                        &revision.collection,
-                    )
-                }
+                let token = revision
+                    .token
+                    .context("obsolete index format; rebuild with airk index --full")?;
+                let receipt = self
+                    .store
+                    .receipt(&token)?
+                    .context("committed receipt missing")?;
+                PersistentIndex::open_v2(self.store.directory(), &revision.collection, &receipt)
             })();
             match opened {
                 Ok(index) => return Ok((revision, index)),
@@ -1079,6 +1020,7 @@ impl Kernel {
             "direction must be incoming or outgoing"
         );
         ensure!((1..=3).contains(&query.hops), "hops must be 1..3");
+        self.require_current_index()?;
         self.store
             .relationships(&self.root_id(), &self.collection, query)
     }

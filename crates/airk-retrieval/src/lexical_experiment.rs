@@ -179,8 +179,7 @@ fn expected_schema() -> Schema {
     let mut schema = Schema::builder();
     schema.add_text_field("terms", STRING);
     schema.add_text_field("path", STRING);
-    schema.add_u64_field("ordinal", FAST);
-    schema.add_u64_field("vector", INDEXED);
+    schema.add_u64_field("ordinal", FAST | INDEXED);
     schema.add_text_field("payload", STORED);
     schema.build()
 }

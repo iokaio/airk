@@ -290,7 +290,7 @@ pub fn prepare(request: ExperimentRequest<'_>) -> Result<ExperimentMetrics> {
                 tx.execute(&format!("DELETE FROM {table} WHERE path=?1"), [path])?;
             }
         }
-        for table in ["files", "continuity_records"] {
+        for table in ["files", "continuity_records", "usage_sources"] {
             tx.execute(&format!("DELETE FROM {table} WHERE path=?1"), [path])?;
         }
     }
@@ -319,6 +319,11 @@ pub fn prepare(request: ExperimentRequest<'_>) -> Result<ExperimentMetrics> {
         }
         let artifact = request.source.load_artifact(path)?;
         loaded += 1;
+        let size = airk_core::usage::SourceContextSize::measure(&artifact)?;
+        tx.execute(
+            "INSERT INTO usage_sources VALUES(?1,?2,?3)",
+            params![path, artifact.content_hash, serde_json::to_string(&size)?],
+        )?;
         insert_artifact(&tx, &artifact, file)?;
         // Imported rows share the same path namespace but are independent of native rows.
         for fact in request

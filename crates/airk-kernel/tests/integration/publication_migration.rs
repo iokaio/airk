@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Original migration fixtures exercise the public kernel publication boundary.
-use airk_core::{
-    Artifact, ArtifactSource, Chunk, DocumentLocation, Snapshot, changes::PublicationReason,
-};
+//! Obsolete snapshots are rejected; full rebuild never migrates OCR or evidence.
+use airk_core::{Artifact, Chunk, DocumentLocation, Snapshot};
 use airk_ingest::ocr::OcrProvenance;
 use airk_kernel::Kernel;
 use airk_store::FileStore;
@@ -59,7 +57,7 @@ fn save_legacy(
     bytes: &[u8],
 ) -> Result<Vec<u8>> {
     let mut snapshot = Snapshot::empty(root.canonicalize()?.to_string_lossy().into_owned());
-    // Existing 1.0.0 OCR must survive a newer native extractor/profile version.
+    // Original obsolete fixture: OCR must be explicitly rerun after a rebuild.
     snapshot.extractor_version = "native-facts/7".into();
     snapshot.generation = 11;
     snapshot.storage_format = 1;
@@ -76,7 +74,7 @@ fn save_legacy(
 }
 
 #[test]
-fn legacy_retained_ocr_migrates_without_executables_and_reopens_exact_evidence() -> Result<()> {
+fn obsolete_json_ocr_is_rejected_without_migrating_derived_evidence() -> Result<()> {
     let root = tempfile::tempdir()?;
     let data = tempfile::tempdir()?;
     let source = b"\x89PNG\r\n\x1a\noriginal binary fixture\0";
@@ -86,58 +84,18 @@ fn legacy_retained_ocr_migrates_without_executables_and_reopens_exact_evidence()
     let original_legacy_bytes = save_legacy(root.path(), &store, &artifact, source)?;
     let original_head = store.expected_head()?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
-    let report = kernel.index()?;
-    assert_eq!(
-        report.reused, 1,
-        "migration reuses explicit OCR, not native image fallback"
-    );
-    let catalog = store.catalog()?.unwrap();
-    let receipt = catalog.receipt.as_ref().unwrap();
-    assert_eq!(receipt.token.generation, 12);
-    assert_eq!(
-        catalog.lineage.as_ref().unwrap().observation.reason,
-        PublicationReason::Migration
-    );
+    assert!(kernel.index().is_err());
     assert!(
-        catalog
-            .lineage
-            .as_ref()
-            .unwrap()
-            .observation
-            .parent
-            .is_none()
+        kernel.reindex().is_err(),
+        "unbound JSON-only state requires explicit derived-state removal"
     );
-    assert_ne!(store.expected_head()?, original_head);
-    assert_eq!(
-        serde_json::to_value(catalog.load_artifact("scan.png")?)?,
-        serde_json::to_value(&artifact)?
-    );
-    assert!(
-        catalog.snapshot.artifacts["scan.png"]
-            .retained
-            .as_ref()
-            .unwrap()
-            .profile
-            .as_ref()
-            .is_some_and(|profile| profile.language == "ocr")
-    );
+    assert!(kernel.read_file("scan.png", 1, 1, 4096).is_err());
+    assert_eq!(store.expected_head()?, original_head);
     assert_eq!(
         fs::read(store.directory().join("snapshot.json"))?,
         original_legacy_bytes
     );
     assert_eq!(fs::read(root.path().join("scan.png"))?, source);
-    let token = receipt.token;
-    drop(catalog);
-    drop(kernel);
-    let reopened = Kernel::open(root.path(), Some(data.path().into()))?;
-    let response = reopened.read_file("scan.png", 1, 1, 4096)?;
-    assert_eq!(
-        response.hits[0].citation.location,
-        DocumentLocation::Page { number: 2 }
-    );
-    assert_eq!(response.hits[0].text, artifact.chunks[0].text);
-    assert_eq!(reopened.index()?.generation, token.generation);
-    assert_eq!(store.catalog()?.unwrap().receipt.unwrap().token, token);
     Ok(())
 }
 
@@ -181,7 +139,7 @@ fn malformed_legacy_ocr_and_corrupt_retained_output_never_advance_pointer() -> R
 }
 
 #[test]
-fn aliased_legacy_ocr_keeps_original_root_and_distinct_binding() -> Result<()> {
+fn obsolete_ocr_rejection_preserves_alias_configuration_and_original_source() -> Result<()> {
     let root = tempfile::tempdir()?;
     let alias = tempfile::tempdir()?;
     let data = tempfile::tempdir()?;
@@ -198,23 +156,14 @@ fn aliased_legacy_ocr_keeps_original_root_and_distinct_binding() -> Result<()> {
         store.directory().join("snapshot.json"),
         serde_json::to_vec_pretty(&snapshot)?,
     )?;
-    kernel.index()?;
-    let catalog = store.catalog()?.unwrap();
-    let file = &catalog.inventory.as_ref().unwrap().files["@docs/scan.png"];
+    let config = fs::read(store.directory().join("roots.json"))?;
+    assert!(kernel.index().is_err());
+    assert!(kernel.read_file("@docs/scan.png", 1, 1, 4096).is_err());
+    assert_eq!(fs::read(store.directory().join("roots.json"))?, config);
     assert_eq!(
-        file.state.root,
+        kernel.configured_roots()?["docs"],
         alias.path().canonicalize()?.to_string_lossy()
     );
-    assert_eq!(file.state.path, "scan.png");
-    assert_eq!(
-        serde_json::to_value(catalog.load_artifact("@docs/scan.png")?)?,
-        serde_json::to_value(&artifact)?
-    );
-    assert_eq!(
-        kernel.source_location("@docs/scan.png")?.root,
-        file.state.root
-    );
-    assert!(kernel.read_file("scan.png", 1, 1, 4096).is_err());
     assert_eq!(fs::read(alias.path().join("scan.png"))?, source);
     Ok(())
 }

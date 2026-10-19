@@ -298,6 +298,7 @@ fn read_transaction(directory: &Path) -> Result<PinnedConnection> {
 }
 
 fn read_transaction_once(directory: &Path) -> Result<PinnedConnection> {
+    crate::reset::ensure_ready(directory)?;
     for _ in 0..3 {
         let conn = connect_root_once(directory, false)?;
         conn.execute_batch("BEGIN DEFERRED")?;

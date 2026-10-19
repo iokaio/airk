@@ -750,7 +750,7 @@ fn gc(
             Err(error) => return Err(error.into()),
         }
         let model_references =
-            if manifest["schema"].as_u64() == Some(3) && !manifest["model_sha256"].is_null() {
+            if manifest["schema"].as_u64() == Some(4) && !manifest["model_sha256"].is_null() {
                 let sidecar = entry.path().join("model-objects.json");
                 let size = sidecar.symlink_metadata()?.len();
                 work.metadata(size)?;

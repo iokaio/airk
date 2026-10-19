@@ -347,6 +347,9 @@ pub enum IndexMetric {
     EmbeddingTruncatedInputs,
     EmbeddingPlanCompilations,
     EmbeddingPlanCompileUs,
+    VectorUnits,
+    VectorBodyBytes,
+    VectorPlanningUs,
     EmbeddingCacheHits,
     EmbeddingCacheMisses,
     EmbeddingModelLoadUs,
@@ -357,7 +360,7 @@ pub enum IndexMetric {
 }
 
 impl IndexMetric {
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 21] = [
         Self::EmbeddingInputs,
         Self::EmbeddingBlankInputs,
         Self::EmbeddingDuplicateInputs,
@@ -369,6 +372,9 @@ impl IndexMetric {
         Self::EmbeddingTruncatedInputs,
         Self::EmbeddingPlanCompilations,
         Self::EmbeddingPlanCompileUs,
+        Self::VectorUnits,
+        Self::VectorBodyBytes,
+        Self::VectorPlanningUs,
         Self::EmbeddingCacheHits,
         Self::EmbeddingCacheMisses,
         Self::EmbeddingModelLoadUs,
@@ -391,6 +397,9 @@ impl IndexMetric {
             Self::EmbeddingTruncatedInputs => "embedding_truncated_inputs",
             Self::EmbeddingPlanCompilations => "embedding_plan_compilations",
             Self::EmbeddingPlanCompileUs => "embedding_plan_compile_us",
+            Self::VectorUnits => "vector_units",
+            Self::VectorBodyBytes => "vector_body_bytes",
+            Self::VectorPlanningUs => "vector_planning_us",
             Self::EmbeddingCacheHits => "embedding_cache_hits",
             Self::EmbeddingCacheMisses => "embedding_cache_misses",
             Self::EmbeddingModelLoadUs => "embedding_model_load_us",

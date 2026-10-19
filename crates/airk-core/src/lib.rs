@@ -81,6 +81,19 @@ pub trait ArtifactSource {
     fn load_artifact(&self, path: &str) -> anyhow::Result<Artifact>;
 }
 
+/// Authenticated neutral extraction and its bound display evidence, loaded together.
+/// Retrieval units are planned from the payload, independently of display chunks.
+pub struct RetrievalArtifact {
+    pub artifact: Artifact,
+    pub profile: extraction::ExtractionProfile,
+    pub payload: extraction::ExtractionPayload,
+    pub payload_digest: identity::Sha256Digest,
+}
+
+pub trait RetrievalSource {
+    fn load_retrieval_artifact(&self, path: &str) -> anyhow::Result<RetrievalArtifact>;
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Snapshot {
     pub schema_version: u32,
