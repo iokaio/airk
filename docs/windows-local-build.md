@@ -8,6 +8,8 @@ pwsh -NoProfile -File scripts/build-windows.ps1
 
 This builds the Windows x64 release executable and a matching platform VSIX. It runs Rust formatting, clippy and workspace tests, archive tests, repository checks, TypeScript compilation, extension tests and a real native MCP-adapter test. Both archives are verified against allowlisted payload hashes. No signing or Marketplace credentials are needed, and nothing is published or deployed.
 
+Every build also prepares the pinned MiniLM model in ignored `target/local-vector-model/` (about 91 MB downloaded on first use) and tests the built executable with real embeddings and DiskANN retrieval. Repeat builds verify and reuse those assets. This gate covers native model installation, default hybrid and explicit vector queries, opt-out/re-enable, and invalid-model rollback; a failure stops the build. Weights are not included in the VSIX. On first indexing in a trusted workspace, the extension prepares its local model and builds the collection's DiskANN index automatically; existing opt-out, pause and manual-indexing choices remain in effect.
+
 ## Developer prerequisites
 
 - Windows x64 and PowerShell 7.
@@ -30,6 +32,7 @@ Every run creates a fresh ignored `artifacts/local/<timestamp>-<id>/` directory:
 | vscode/publish/ | Matching VSIX, extension manifest and SHA256SUMS |
 | build.log | Original local build/check output |
 | result.json | Native/VSIX paths and whether checks/editor tests ran |
+| vector-check.json | Real-model/DiskANN verification and process measurements |
 
 The build-tree executable is `target/x86_64-pc-windows-msvc/release/airk.exe`. The script prints its path, the VSIX path and the build directory. It leaves prior run directories intact and never deletes index state or source files. Intermediate staging and compiler outputs are not distributed.
 
@@ -39,7 +42,27 @@ If you deliberately want to omit routine checks during an iterative build:
 pwsh -NoProfile -File scripts/build-windows.ps1 -SkipChecks
 ```
 
-Compilation, helper version validation and native/VSIX archive verification still run. `result.json` explicitly records that checks were skipped.
+Compilation, real-model/DiskANN verification, helper version validation and native/VSIX archive verification still run. `result.json` explicitly records that routine checks were skipped and points to the vector verification report.
+
+## Install and prepare this checkout for local agent testing
+
+The optional root-level `build-local.ps1` is a personal, Git-ignored entry point. It builds and installs the verified VSIX into your normal VS Code profile, then invokes the tracked `scripts/setup-local-test.py` helper. Local setup prepares the model through the native quota-managed installer, updates or creates this checkout's Codex project MCP entry, indexes its collection and verifies the saved launch through MCP status, a revision-pinned README read checked against live source bytes, lexical search, default search and explicit vector search. A saved vector opt-out is preserved and reported; enabled vectors must have a ready model and populated DiskANN index. Existing custom models are preserved and validated during indexing. It checks the MCP helper version against the installed candidate. The verification process disables its own usage recording so setup probes do not look like agent evidence requests.
+
+Existing collection/root/storage arguments, other servers, comments, environment settings and tool policies are preserved. The AIRK command points to the digest-verified `native/stage/airk.exe` in that build's retained directory, and `AIRK_CLIENT=codex` labels future agent requests. A later build does not overwrite the running helper. Keep a configured build directory until a newer setup replaces it. Ambiguous/redirected configuration, custom wrappers, unsupported TOML layouts, disabled AIRK servers and policies excluding the smoke-test tools fail explicitly rather than being overwritten.
+
+First setup in the default VS Code profile uses its standard AIRK storage location. Existing storage always wins. Supply `-IndexStorage` for a different first-setup storage path; a named editor profile requires an existing AIRK binding or an explicit matching path. `-SkipAgentSetup` deliberately installs only the extension. These switches apply to the personal wrapper, not `scripts/build-windows.ps1`.
+
+Local setup waits and retries when another AIRK process holds the collection writer lock. It reports the wait every 30 seconds and uses the original step deadline (five minutes for model installation, one hour for indexing), including time spent waiting. It does not stop the existing writer or remove lock files. Other errors fail immediately with native diagnostics. Setup wall-time measurements include any writer wait; native phase timings measure the successful indexing attempt.
+
+If installation succeeds but agent setup fails, repair/retry without rebuilding:
+
+```powershell
+python scripts/setup-local-test.py --build-record artifacts/local/<build-directory>
+```
+
+For first setup without the wrapper, add `--data-dir` with the absolute storage directory shown by the AIRK dashboard. `--skip-index` only verifies an already current index and rejects a stale README or enabled vectors without a ready model/index. A successful run writes `local-agent-setup.json` beside `local-install.json`; look for `verification.vector_search: "passed"` (or `"opted_out"`) and `verification.default_search: "passed"`. The install receipt alone proves extension installation, not agent readiness. Python 3.11+ is required for this configuration helper.
+
+Reload the VS Code window and restart existing Codex sessions afterward. Changing the saved command cannot replace a worker already running inside an agent. This smoke verifies the configured MCP launch, not that a coding model has discovered or selected AIRK. Claude Code and other external agents retain their separate configuration; use Connect Coding Agent to refresh those entries.
 
 ## Review in an isolated editor
 

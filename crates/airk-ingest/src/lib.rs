@@ -5,7 +5,9 @@ use anyhow::{Context, Result, ensure};
 use ignore::WalkBuilder;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{collections::BTreeMap, fs::File, io::Read, path::Path};
+#[cfg(test)]
+use std::fs::File;
+use std::{collections::BTreeMap, path::Path};
 
 mod actions;
 pub mod adapters;
@@ -35,6 +37,7 @@ mod razor;
 mod repository_binding;
 mod repository_syntax;
 mod scss;
+mod source_read;
 mod specialist_business;
 mod specialist_gpu;
 mod specialist_hardware;
@@ -120,6 +123,7 @@ impl ScanLimits {
 mod documents;
 pub mod inventory;
 pub mod ocr;
+pub mod pdf_worker;
 mod prose;
 mod provider_process;
 pub mod providers;
@@ -143,6 +147,20 @@ pub struct IndexReport {
     pub embedding_inferences: u64,
     #[serde(default)]
     pub embedding_no_vector: u64,
+    #[serde(default)]
+    pub embedding_model_load_us: u64,
+    #[serde(default)]
+    pub embedding_cache_lookup_us: u64,
+    #[serde(default)]
+    pub embedding_cache_store_us: u64,
+    #[serde(default)]
+    pub embedding_inference_us: u64,
+    #[serde(default)]
+    pub vector_graph_insert_us: u64,
+    #[serde(default)]
+    pub embedding_workers: usize,
+    #[serde(default)]
+    pub embedding_batches: u64,
     #[serde(default)]
     pub scan_extract_us: u64,
     #[serde(default)]
@@ -692,6 +710,9 @@ fn scan_observed_profiled(
                 })() {
                     Ok(extracted) => extracted,
                     Err(error) => {
+                        if error.is::<pdf_worker::CapacityFailure>() {
+                            return Err(error);
+                        }
                         if previous.artifacts.contains_key(&path) {
                             let unsupported = !matches!(
                                 profile.adapter_id.as_str(),
@@ -972,35 +993,7 @@ pub fn read_selected_source(root: &Path, data_dir: &Path, relative: &str) -> Res
 }
 
 fn read_source_with_budget(root: &Path, path: &Path, remaining: usize) -> Result<Vec<u8>> {
-    let before = path.symlink_metadata()?;
-    ensure!(
-        before.is_file() && !before.file_type().is_symlink(),
-        "source changed to symlink or non-file during scan"
-    );
-    ensure!(
-        path.canonicalize()?.starts_with(root),
-        "source escaped workspace"
-    );
-    let mut bytes = Vec::new();
-    File::open(path)?
-        .take((MAX_FILE_BYTES + 1).min(remaining) as u64)
-        .read_to_end(&mut bytes)?;
-    let after = path.symlink_metadata()?;
-    ensure!(
-        after.is_file()
-            && !after.file_type().is_symlink()
-            && path.canonicalize()?.starts_with(root),
-        "source changed during scan"
-    );
-    ensure!(
-        before.len() == after.len() && before.modified()? == after.modified()?,
-        "source changed during scan; retry indexing"
-    );
-    ensure!(
-        bytes.len() as u64 == before.len() || bytes.len() > MAX_FILE_BYTES,
-        "workspace raw source read budget exhausted; previous generation retained"
-    );
-    Ok(bytes)
+    source_read::read(root, path, MAX_FILE_BYTES, remaining)
 }
 
 fn excluded(name: &str) -> bool {

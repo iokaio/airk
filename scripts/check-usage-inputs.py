@@ -5,9 +5,11 @@ from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 import os
+import queue
 from pathlib import Path
 import subprocess
 import tempfile
+import threading
 import time
 import uuid
 
@@ -43,16 +45,73 @@ def main():
             return path
 
         indexed = run("index")
-        request = run("search", "fixture")
+        request = run("search", "--mode", "lexical", "fixture")
         native_calls = run("usage", "report")["report"]["calls"]
         with ThreadPoolExecutor(max_workers=4) as workers:
-            replies = list(workers.map(lambda _: run("search", "fixture"), range(40)))
+            replies = list(workers.map(lambda _: run("search", "--mode", "lexical", "fixture"), range(40)))
         assert all(reply["hits"] for reply in replies)
         assert len({reply["request_id"] for reply in replies}) == 40
         native_calls += 40
         concurrent = run("usage", "report")
         assert concurrent["report"]["calls"] == native_calls, "concurrent CLI observations were lost"
         assert concurrent["lifetime"]["calls"] == native_calls
+        comparisons = concurrent["report"]["comparisons"]["full_returned_sources"]
+        assert comparisons["compared_calls"] == 41
+        assert concurrent["report"]["eligible_evidence_calls"] == 41
+        assert concurrent["report"]["missing_baseline_calls"] == 0
+        assert concurrent["report"]["baseline_unavailable"] == {}
+        assert int(comparisons["returned_utf8_bytes"]) > 0
+        assert int(comparisons["token_estimate"]["nominal_reduction"]) < 0, "Tiny complete-file results must preserve expansion from response overhead"
+        # Exercise the actual stdio adapter, including a conditional response
+        # with no evidence payload. No fake provider/token measurements.
+        with (base / "mcp-errors.log").open("w", encoding="utf-8") as errors:
+            child = subprocess.Popen([str(binary), "--root", str(root), "--data-dir", str(state),
+                                      "--collection", "usage-fixture", "mcp"], stdin=subprocess.PIPE,
+                                     stdout=subprocess.PIPE, stderr=errors, text=True, encoding="utf-8",
+                                     env=dict(environment, AIRK_CLIENT="codex"))
+            responses = queue.Queue()
+            reader = threading.Thread(target=lambda: [responses.put(line) for line in child.stdout], daemon=True)
+            reader.start()
+
+            def rpc(identifier, method, params):
+                child.stdin.write(json.dumps({"jsonrpc": "2.0", "id": identifier, "method": method, "params": params}) + "\n")
+                child.stdin.flush()
+                while True:
+                    response = json.loads(responses.get(timeout=30))
+                    if response.get("id") == identifier:
+                        assert "error" not in response, response
+                        return response["result"]
+
+            try:
+                rpc(1, "initialize", {"protocolVersion": "2025-11-25", "capabilities": {},
+                                      "clientInfo": {"name": "airk-usage-fixture", "version": "1"}})
+                child.stdin.write(json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}) + "\n")
+                child.stdin.flush()
+                arguments = {"path": "fixture.txt", "start_line": 1, "end_line": 1, "max_bytes": 200}
+                reply = rpc(2, "tools/call", {"name": "airk_read_file", "arguments": arguments})
+                assert not reply.get("isError"), reply
+                read = json.loads(reply["content"][0]["text"])
+                reply = rpc(3, "tools/call", {"name": "airk_read_file", "arguments": {**arguments, "if_evidence": read["read"]["validator"]}})
+                assert not reply.get("isError"), reply
+                assert json.loads(reply["content"][0]["text"])["read"]["status"] == "not_modified"
+                reply = rpc(4, "tools/call", {"name": "airk_search", "arguments": {"query": "fixture", "mode": "lexical"}})
+                assert not reply.get("isError"), reply
+            finally:
+                child.stdin.close()
+                try:
+                    child.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    child.kill()
+                    child.wait(timeout=10)
+                reader.join(timeout=5)
+                child.stdout.close()
+        native_calls += 3
+        mcp_report = run("usage", "report")["report"]
+        assert mcp_report["calls"] == native_calls
+        assert mcp_report["eligible_evidence_calls"] == 43
+        assert mcp_report["comparisons"]["full_returned_sources"]["compared_calls"] == 43
+        assert mcp_report["missing_baseline_calls"] == 0
+        assert mcp_report["clients"]["codex"] >= 3
         measurement = write_json("measurement.json", {
             "schema_version": 1, "event_id": uuid.uuid4().hex,
             "unix_ms": int(time.time() * 1000), "client": "codex", "content_kind": "code",

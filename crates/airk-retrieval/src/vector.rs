@@ -25,6 +25,7 @@ const HEADER: u64 = 32;
 const DEGREE: usize = 48;
 const MAX_DIMENSIONS: usize = 2048;
 const MAX_VECTOR_READS: usize = 65_536;
+pub(crate) const MAX_SCOPED_VECTOR_READS: usize = 4096;
 const MAGIC: &[u8; 8] = b"AIRKANN1";
 
 /// A deliberately provisioned local word-vector model. No network or hashed fallback.
@@ -280,6 +281,31 @@ impl DiskIndex {
         use diskann::graph::SearchOutputBuffer;
         let len = output.current_len();
         Ok(ids.into_iter().zip(distances).take(len).collect())
+    }
+
+    /// Exact comparisons for a bounded path-filtered subset of this same disk
+    /// graph. This does not replace DiskANN construction or unfiltered ANN.
+    pub(crate) fn search_subset(
+        &self,
+        query: &[f32],
+        ids: impl IntoIterator<Item = u32>,
+        limit: usize,
+    ) -> Result<Vec<(u32, f32)>> {
+        ensure!((1..=1000).contains(&limit), "vector limit must be 1..1000");
+        validate_vector(query, self.inner.provider().dimensions)?;
+        let mut ranked = Vec::new();
+        for (read, id) in ids.into_iter().enumerate() {
+            ensure!(
+                read < MAX_SCOPED_VECTOR_READS,
+                "scoped vector-read budget exceeded"
+            );
+            ensure!(id != 0, "reserved vector id in scoped search");
+            let record = self.inner.provider().read_record(id)?;
+            ranked.push((id, L2.evaluate_similarity(query, &record.0)));
+        }
+        ranked.sort_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
+        ranked.truncate(limit);
+        Ok(ranked)
     }
 }
 
@@ -588,6 +614,31 @@ impl glue::PruneStrategy<FileProvider> for Strategy {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exact_subset_bounds_record_reads_and_uses_stable_ties() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let mut graph = DiskIndex::create(&directory.path().join("subset.bin"), 2)?;
+        for vector in [[1.0, 0.0], [0.0, 1.0], [0.0, 1.0]] {
+            graph.insert(&vector)?;
+        }
+        graph.finish()?;
+        let before = graph.io_stats().record_reads;
+        let ranked = graph.search_subset(&[0.0, 1.0], [3, 2], 2)?;
+        assert_eq!(
+            ranked.iter().map(|item| item.0).collect::<Vec<_>>(),
+            vec![2, 3]
+        );
+        assert_eq!(graph.io_stats().record_reads - before, 2);
+        let before = graph.io_stats().record_reads;
+        assert!(
+            graph
+                .search_subset(&[0.0, 1.0], std::iter::repeat_n(1, 4097), 1)
+                .is_err()
+        );
+        assert_eq!(graph.io_stats().record_reads - before, 4096);
+        Ok(())
+    }
 
     #[test]
     fn diskann_reopens_with_recall_against_exact_oracle() -> Result<()> {

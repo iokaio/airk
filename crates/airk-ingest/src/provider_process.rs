@@ -51,8 +51,22 @@ pub(crate) struct Process {
     #[cfg(windows)]
     job: windows_sys::Win32::Foundation::HANDLE,
 }
+#[derive(Clone, Copy)]
+pub(crate) struct ProcessLimits {
+    pub memory_bytes: usize,
+    pub cpu_seconds: u64,
+}
 impl Process {
     pub fn spawn(spec: &ProviderCommand, directory: &Path, extra: &[String]) -> Result<Self> {
+        Self::spawn_limited(spec, directory, extra, None)
+    }
+
+    fn spawn_limited(
+        spec: &ProviderCommand,
+        directory: &Path,
+        extra: &[String],
+        limits: Option<ProcessLimits>,
+    ) -> Result<Self> {
         let mut command = Command::new(spec.validate()?);
         command
             .args(&spec.args)
@@ -68,15 +82,39 @@ impl Process {
             .env("TMP", directory)
             .env("TEMP", directory);
         command.env("CARGO_NET_OFFLINE", "true");
+        if limits.is_some() {
+            command.env("RAYON_NUM_THREADS", "1");
+        }
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt;
             command.process_group(0);
+            if let Some(limits) = limits {
+                // SAFETY: only async-signal-safe setrlimit calls run between fork and exec.
+                unsafe {
+                    command.pre_exec(move || {
+                        for (resource, value) in [
+                            (libc::RLIMIT_AS, limits.memory_bytes as libc::rlim_t),
+                            (libc::RLIMIT_CPU, limits.cpu_seconds as libc::rlim_t),
+                        ] {
+                            let limit = libc::rlimit {
+                                rlim_cur: value,
+                                rlim_max: value,
+                            };
+                            if libc::setrlimit(resource, &limit) != 0 {
+                                return Err(std::io::Error::last_os_error());
+                            }
+                        }
+                        Ok(())
+                    });
+                }
+            }
         }
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
-            command.creation_flags(0x08000000); // CREATE_NO_WINDOW
+            // No provider instruction can execute before job containment is installed.
+            command.creation_flags(0x08000000 | 0x00000004); // CREATE_NO_WINDOW | CREATE_SUSPENDED
         }
         let child = command
             .spawn()
@@ -95,14 +133,26 @@ impl Process {
                     std::io::Error::last_os_error()
                 );
             }
-            let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
-            limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            let mut job_limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION =
+                unsafe { std::mem::zeroed() };
+            job_limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            if let Some(limits) = limits {
+                job_limits.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_PROCESS_MEMORY
+                    | JOB_OBJECT_LIMIT_JOB_MEMORY
+                    | JOB_OBJECT_LIMIT_ACTIVE_PROCESS
+                    | JOB_OBJECT_LIMIT_PROCESS_TIME;
+                job_limits.ProcessMemoryLimit = limits.memory_bytes;
+                job_limits.JobMemoryLimit = limits.memory_bytes;
+                job_limits.BasicLimitInformation.ActiveProcessLimit = 1;
+                job_limits.BasicLimitInformation.PerProcessUserTimeLimit =
+                    (limits.cpu_seconds * 10_000_000) as i64;
+            }
             let configured = unsafe {
                 SetInformationJobObject(
                     job,
                     JobObjectExtendedLimitInformation,
-                    (&limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
-                    std::mem::size_of_val(&limits) as u32,
+                    (&job_limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+                    std::mem::size_of_val(&job_limits) as u32,
                 )
             };
             let assigned = configured != 0
@@ -118,12 +168,65 @@ impl Process {
                 process.job = std::ptr::null_mut();
                 anyhow::bail!("contain provider process job: {error}");
             }
+            resume_suspended(process.child.id()).context("resume contained provider")?;
             Ok(process)
         }
         #[cfg(not(windows))]
         {
             Ok(Self { child })
         }
+    }
+}
+
+#[cfg(windows)]
+fn resume_suspended(pid: u32) -> Result<()> {
+    use windows_sys::Win32::{
+        Foundation::{CloseHandle, INVALID_HANDLE_VALUE},
+        System::{
+            Diagnostics::ToolHelp::{
+                CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First,
+                Thread32Next,
+            },
+            Threading::{OpenThread, ResumeThread, THREAD_SUSPEND_RESUME},
+        },
+    };
+    // std::process owns the process handle but not the primary thread handle. A
+    // suspended process has exactly its initial thread; enumerate and resume it
+    // only after assignment to the kill-on-close job. All handles are closed.
+    unsafe {
+        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+        ensure!(
+            snapshot != INVALID_HANDLE_VALUE,
+            "snapshot suspended provider threads: {}",
+            std::io::Error::last_os_error()
+        );
+        let result = (|| {
+            let mut entry: THREADENTRY32 = std::mem::zeroed();
+            entry.dwSize = std::mem::size_of::<THREADENTRY32>() as u32;
+            let mut available = Thread32First(snapshot, &mut entry);
+            while available != 0 {
+                if entry.th32OwnerProcessID == pid {
+                    let thread = OpenThread(THREAD_SUSPEND_RESUME, 0, entry.th32ThreadID);
+                    ensure!(
+                        !thread.is_null(),
+                        "open suspended provider thread: {}",
+                        std::io::Error::last_os_error()
+                    );
+                    let resumed = ResumeThread(thread);
+                    let error = std::io::Error::last_os_error();
+                    CloseHandle(thread);
+                    ensure!(
+                        resumed != u32::MAX,
+                        "resume suspended provider thread: {error}"
+                    );
+                    return Ok(());
+                }
+                available = Thread32Next(snapshot, &mut entry);
+            }
+            anyhow::bail!("suspended provider thread missing")
+        })();
+        CloseHandle(snapshot);
+        result
     }
 }
 impl Drop for Process {
@@ -170,8 +273,18 @@ pub(crate) fn run(
     extra: &[String],
     max_output: usize,
 ) -> Result<Vec<u8>> {
+    run_limited(spec, directory, extra, max_output, None)
+}
+
+pub(crate) fn run_limited(
+    spec: &ProviderCommand,
+    directory: &Path,
+    extra: &[String],
+    max_output: usize,
+    limits: Option<ProcessLimits>,
+) -> Result<Vec<u8>> {
     let deadline = Instant::now() + Duration::from_millis(spec.timeout_ms.min(120_000));
-    let mut process = Process::spawn(spec, directory, extra)?;
+    let mut process = Process::spawn_limited(spec, directory, extra, limits)?;
     drop(process.child.stdin.take());
     let stdout = process
         .child
@@ -272,6 +385,73 @@ mod tests {
     #[ignore = "invoked only as a bounded subprocess fixture"]
     fn sleeping_fixture() {
         thread::sleep(Duration::from_secs(60));
+    }
+
+    #[test]
+    #[ignore = "invoked only as a bounded subprocess fixture"]
+    fn descendant_fixture() -> Result<()> {
+        // Spawn immediately: containment must exist before any provider code runs.
+        let mut descendant = Command::new(std::env::current_exe()?)
+            .args([
+                "--ignored",
+                "--exact",
+                "provider_process::tests::sleeping_fixture",
+            ])
+            .spawn()?;
+        std::fs::write("descendant.pid", descendant.id().to_string())?;
+        let _ = descendant.wait();
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "invoked only as a bounded subprocess fixture"]
+    fn allocation_fixture() {
+        let mut bytes = Vec::<u8>::new();
+        assert!(
+            bytes.try_reserve_exact(1024 * 1024 * 1024).is_err(),
+            "child allocation limit was not enforced"
+        );
+        assert!(
+            bytes.try_reserve_exact(1024 * 1024).is_ok(),
+            "ordinary child allocation failed"
+        );
+    }
+
+    #[test]
+    fn limited_child_memory_and_immediate_descendants_are_contained() -> Result<()> {
+        let temporary = tempfile::tempdir()?;
+        let mut command = ProviderCommand {
+            program: std::env::current_exe()?,
+            args: vec![
+                "--ignored".into(),
+                "--exact".into(),
+                "provider_process::tests::allocation_fixture".into(),
+            ],
+            timeout_ms: 10_000,
+        };
+        run_limited(
+            &command,
+            temporary.path(),
+            &[],
+            65_536,
+            Some(ProcessLimits {
+                memory_bytes: 512 * 1024 * 1024,
+                cpu_seconds: 10,
+            }),
+        )?;
+        command.args[2] = "provider_process::tests::descendant_fixture".into();
+        command.timeout_ms = 1500;
+        let started = Instant::now();
+        assert!(run(&command, temporary.path(), &[], 65_536).is_err());
+        assert!(
+            temporary.path().join("descendant.pid").is_file(),
+            "descendant fixture never started"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "descendant kept its inherited output pipe open after timeout"
+        );
+        Ok(())
     }
 
     #[test]

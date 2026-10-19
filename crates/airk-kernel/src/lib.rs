@@ -6,12 +6,14 @@ use airk_core::{
 };
 pub use airk_core::{FactQuery, RelationshipQuery};
 use airk_ingest::IndexReport;
+pub use airk_ingest::pdf_worker::dispatch as dispatch_pdf_worker;
 
 pub mod analysis;
 pub mod changes;
 mod conditional;
 mod continuity;
 pub mod coverage;
+mod discovery;
 pub mod extraction;
 mod historical;
 mod suggestions;
@@ -29,6 +31,7 @@ pub mod service;
 pub mod storage;
 mod tokenization;
 pub mod usage;
+pub mod vectors;
 pub mod watcher;
 use airk_retrieval::{
     LexicalIndex,
@@ -115,6 +118,7 @@ pub struct Status {
     pub lexical_backend: &'static str,
     pub vector_backend: &'static str,
     pub local_model_ready: bool,
+    pub vectors_enabled: bool,
     pub indexed_vectors: usize,
     pub semantic_producer: Option<String>,
     pub imported_facts: usize,
@@ -123,6 +127,8 @@ pub struct Status {
 
 #[derive(Serialize)]
 pub struct FileList {
+    #[serde(flatten)]
+    pub page: airk_core::discovery::DiscoveryPage,
     pub publication: Option<airk_core::evidence::RevisionEnvelope>,
     pub generation: u64,
     pub collection: String,
@@ -561,6 +567,13 @@ impl Kernel {
             report.embedding_cache_misses = embedding.misses;
             report.embedding_inferences = embedding.inferences;
             report.embedding_no_vector = embedding.no_vector;
+            report.embedding_model_load_us = embedding.model_load_us;
+            report.embedding_cache_lookup_us = embedding.cache_lookup_us;
+            report.embedding_cache_store_us = embedding.cache_store_us;
+            report.embedding_inference_us = embedding.inference_us;
+            report.vector_graph_insert_us = embedding.graph_insert_us;
+            report.embedding_workers = embedding.workers;
+            report.embedding_batches = embedding.batches;
         } else {
             // Reuse must not report success for a corrupt retained component.
             self.pin_revision(
@@ -599,6 +612,7 @@ impl Kernel {
                 lexical_backend: "tantivy",
                 vector_backend: "microsoft-diskann-0.59.0/airk-file-provider-1",
                 local_model_ready: index.model_sha256.is_some(),
+                vectors_enabled: self.vectors_enabled()?,
                 indexed_vectors: index.vectors,
                 semantic_producer: revision.semantic_producer,
                 imported_facts: revision.imported_facts,
@@ -641,6 +655,7 @@ impl Kernel {
                 .as_ref()
                 .is_some_and(|index| index.model_sha256.is_some()),
             indexed_vectors: persistent.as_ref().map_or(0, |index| index.vectors),
+            vectors_enabled: self.vectors_enabled()?,
             semantic_producer: snapshot.analysis.as_ref().map(|m| m.producer.clone()),
             imported_facts: snapshot.imported_facts.len(),
             imported_relationships: snapshot.imported_relationships.len(),
@@ -696,6 +711,10 @@ impl Kernel {
     }
 
     fn vector_search(&self, query: &SearchQuery, hybrid: bool) -> Result<SearchResponse> {
+        ensure!(
+            self.vectors_enabled()?,
+            "vector search is disabled for this collection; enable it in the AIRK panel"
+        );
         query.validate()?;
         let revision = self
             .persistent_revision()?
@@ -797,6 +816,9 @@ impl Kernel {
     }
 
     fn configured_model(&self) -> Result<Option<String>> {
+        if !self.vectors_enabled()? {
+            return Ok(None);
+        }
         let directory = self.data_root.join("models/local");
         if directory.exists() {
             Ok(Some(airk_retrieval::model::inspect(&directory)?.identity))
@@ -821,30 +843,6 @@ impl Kernel {
         // The reservation includes temporary and retained bytes together. Each
         // provider charges before writes; exhausting it leaves the active pin intact.
         quota.reserve_available(&self.collection, u64::MAX)
-    }
-
-    pub fn list_files(&self, prefix: &str, limit: usize, max_bytes: usize) -> Result<FileList> {
-        validate_budget(limit, max_bytes)?;
-        ensure!(prefix.len() <= 4096, "prefix exceeds 4096 bytes");
-        let catalog = self.catalog()?;
-        let snapshot = &catalog.snapshot;
-        let mut response = FileList {
-            publication: Self::catalog_envelope(&catalog),
-            generation: snapshot.generation,
-            collection: snapshot.collection.clone(),
-            paths: Vec::new(),
-            truncated: false,
-        };
-        let mut remaining = max_bytes;
-        for path in snapshot.artifacts.keys().filter(|p| p.starts_with(prefix)) {
-            if response.paths.len() >= limit || path.len() > remaining {
-                response.truncated = true;
-                break;
-            }
-            remaining -= path.len();
-            response.paths.push(path.clone());
-        }
-        Ok(response)
     }
 
     pub fn read_file(
@@ -1052,116 +1050,6 @@ impl Kernel {
         })
     }
 
-    pub fn facts(&self, query: &FactQuery) -> Result<FactsResponse> {
-        validate_budget(query.limit, query.max_bytes)?;
-        ensure!(
-            query.path_prefix.len() <= 4096
-                && query.name.as_ref().is_none_or(|n| n.len() <= 1024)
-                && query.kind.as_ref().is_none_or(|kind| kind.len() <= 128)
-                && query
-                    .language
-                    .as_ref()
-                    .is_none_or(|language| language.len() <= 128),
-            "fact filter too long"
-        );
-        if let Some(response) = self
-            .store
-            .facts(&self.root_id(), &self.collection, query, false)?
-        {
-            return Ok(response);
-        }
-        let snapshot = self.load()?;
-        let mut response = FactsResponse {
-            indexing: airk_core::extraction::IndexCoverage::default(),
-            publication: None,
-            generation: snapshot.generation,
-            collection: snapshot.collection.clone(),
-            facts: Vec::new(),
-            truncated: false,
-        };
-        let mut remaining = query.max_bytes;
-        'files: for (path, a) in &snapshot.artifacts {
-            if (if query.path_exact {
-                path != &query.path_prefix
-            } else {
-                !path.starts_with(&query.path_prefix)
-            }) || query.language.as_ref().is_some_and(|l| l != &a.language)
-            {
-                continue;
-            }
-            for fact in &a.facts {
-                if query.document_only
-                    && (fact.code.is_some()
-                        || matches!(fact.kind.as_str(), "definition" | "import"))
-                {
-                    continue;
-                }
-                if query.kind.as_ref().is_some_and(|k| k != &fact.kind) {
-                    continue;
-                }
-                if query.name.as_ref().is_some_and(|n| {
-                    if query.exact_name {
-                        n != &fact.name
-                    } else {
-                        !fact.name.to_lowercase().contains(&n.to_lowercase())
-                    }
-                }) {
-                    continue;
-                }
-                let bytes = fact.name.len()
-                    + path.len()
-                    + fact
-                        .document
-                        .as_ref()
-                        .map(serde_json::to_vec)
-                        .transpose()?
-                        .map_or(0, |value| value.len())
-                    + fact
-                        .code
-                        .as_ref()
-                        .map(serde_json::to_vec)
-                        .transpose()?
-                        .map_or(0, |v| v.len());
-                if response.facts.len() == query.limit || bytes > remaining {
-                    response.truncated = true;
-                    break 'files;
-                }
-                remaining -= bytes;
-                response.facts.push(FactHit {
-                    continuity_key: None,
-                    name: fact.name.clone(),
-                    kind: fact.kind.clone(),
-                    syntax_kind: fact.syntax_kind.clone(),
-                    language: a.language.clone(),
-                    document: fact.document.clone(),
-                    code: fact.code.clone(),
-                    citation: Citation {
-                        path: path.clone(),
-                        content_hash: a.content_hash.clone(),
-                        start_line: fact.start_line,
-                        end_line: fact.end_line,
-                        location: fact.location.clone(),
-                    },
-                });
-            }
-        }
-        Ok(response)
-    }
-
-    pub fn code_facts(&self, query: &FactQuery) -> Result<FactsResponse> {
-        validate_budget(query.limit, query.max_bytes)?;
-        ensure!(
-            query.path_prefix.len() <= 4096
-                && query.name.as_ref().is_none_or(|n| n.len() <= 1024)
-                && query.kind.as_ref().is_none_or(|k| k.len() <= 128)
-                && query.language.as_ref().is_none_or(|l| l.len() <= 128),
-            "code fact filter too long"
-        );
-        self.store
-            .facts(&self.root_id(), &self.collection, query, true)?
-            .context("run airk index to migrate legacy facts to SQLite")
-    }
-
     pub fn relationships(
         &self,
         query: &RelationshipQuery,
@@ -1308,22 +1196,6 @@ impl Kernel {
             Ok(())
         })?;
         self.status()
-    }
-
-    pub fn outline(&self, path: &str, limit: usize, max_bytes: usize) -> Result<FactsResponse> {
-        self.file_info(path)?;
-        // Full exact file lookup, not a prefix that could include neighboring files.
-        self.facts(&FactQuery {
-            path_prefix: path.into(),
-            name: None,
-            kind: None,
-            language: None,
-            exact_name: false,
-            limit,
-            max_bytes,
-            path_exact: true,
-            document_only: false,
-        })
     }
 
     pub fn context(

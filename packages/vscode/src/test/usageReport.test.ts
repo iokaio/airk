@@ -28,6 +28,21 @@ test('supplied task deltas require fully measured matching pairs and retain fail
     assert.match(html, /&lt;script&gt;/);
 });
 
+test('usage explains unavailable comparisons and separates evidence from polling without backfilling old reasons', () => {
+    const html = renderUsage({ report: { calls: 3779, eligible_evidence_calls: 5, missing_baseline_calls: 5,
+        mismatched_baseline_calls: 0, comparisons: {}, baseline_unavailable: { inventory_limit: 2 },
+        operations: { read_file: { calls: 4 }, symbols: { calls: 1 }, collection_maintenance: { calls: 2865 }, coverage: { calls: 844 }, index: { calls: 59 }, status: { calls: 4 }, file_info: { calls: 1 }, capabilities: { calls: 1 } }
+    } });
+    assert.match(html, /0 of 5 eligible requests compared; 5 unavailable/);
+    assert.match(html, /Evidence requests: 5/);
+    assert.match(html, /Background and other activity: 3,774/);
+    assert.match(html, /Older index exceeds the comparison inventory limit<\/td><td>2/);
+    assert.match(html, /Reason not recorded by the earlier recorder<\/td><td>3/);
+    assert.match(html, /restart connected agent MCP sessions/);
+    assert.match(html, /cannot be reconstructed/);
+    assert.ok(!html.includes('<strong>0%</strong>'));
+});
+
 test('usage actions reject arbitrary commands, paths, invalid windows and surplus keys', () => {
     assert.deepEqual(usageAction({ type: 'usage', action: 'days', days: 7 }), { type: 'usage', action: 'days', days: 7 });
     for (const input of [{ type: 'usage', action: 'days', days: 365 }, { type: 'usage', action: 'clear', path: 'x' }, { type: 'usage', action: 'runCommand' }, null]) {

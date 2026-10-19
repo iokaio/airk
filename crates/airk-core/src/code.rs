@@ -45,7 +45,7 @@ pub struct CodeSpan {
     pub end_byte: usize,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct FactQuery {
     pub path_prefix: String,
     pub name: Option<String>,

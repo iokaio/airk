@@ -122,6 +122,14 @@ pub struct EmbeddingCacheStats {
     pub misses: u64,
     pub inferences: u64,
     pub no_vector: u64,
+    /// Wall time for each disjoint phase; inference includes worker scheduling.
+    pub cache_lookup_us: u64,
+    pub cache_store_us: u64,
+    pub inference_us: u64,
+    pub graph_insert_us: u64,
+    pub model_load_us: u64,
+    pub workers: usize,
+    pub batches: u64,
 }
 
 pub struct EmbeddingCacheContext<'a> {
@@ -129,6 +137,8 @@ pub struct EmbeddingCacheContext<'a> {
     /// Full rebuild skips lookup, but verifies/stores recomputed entries.
     pub bypass: bool,
     pub stats: &'a mut EmbeddingCacheStats,
+    pub max_workers: usize,
+    pub working_memory_bytes: usize,
 }
 
 pub(crate) fn read_asset(directory: &Path, name: &str, maximum: u64) -> Result<Vec<u8>> {
@@ -457,16 +467,22 @@ impl EmbeddingModel {
         bypass: bool,
         stats: &mut EmbeddingCacheStats,
     ) -> Result<Option<Vec<f32>>> {
+        let started = std::time::Instant::now();
         airk_core::embedding::embedding_key(descriptor, text.as_bytes())?;
         if let Some(cache) = cache.filter(|_| !bypass) {
             if let Some(vector) = lookup_embedding(cache, descriptor, text.as_bytes())? {
                 stats.hits += 1;
+                stats.cache_lookup_us += crate::embedding_batch::elapsed_us(started);
                 return Ok(Some(vector));
             }
             stats.misses += 1;
         }
+        stats.cache_lookup_us += crate::embedding_batch::elapsed_us(started);
         stats.inferences += 1;
+        let started = std::time::Instant::now();
         let vector = self.embed_text(text)?;
+        stats.inference_us += crate::embedding_batch::elapsed_us(started);
+        let started = std::time::Instant::now();
         if let Some(vector) = &vector {
             if let Some(cache) = cache {
                 store_embedding(cache, descriptor, text.as_bytes(), vector.clone())?;
@@ -474,6 +490,7 @@ impl EmbeddingModel {
         } else {
             stats.no_vector += 1;
         }
+        stats.cache_store_us += crate::embedding_batch::elapsed_us(started);
         Ok(vector)
     }
 }

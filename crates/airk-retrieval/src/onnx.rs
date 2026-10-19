@@ -11,6 +11,7 @@ pub struct OnnxModel {
     pub(crate) identity: String,
     tokenizer: Tokenizer,
     plan: Arc<TypedRunnableModel>,
+    pub(crate) workspace_bytes: usize,
     inputs: Vec<String>,
 }
 
@@ -139,7 +140,7 @@ fn validate_graph(proto: &pb::ModelProto) -> Result<()> {
     Ok(())
 }
 
-fn validate_plan(model: &TypedModel) -> Result<()> {
+fn validate_plan(model: &TypedModel) -> Result<usize> {
     let mut total = 0usize;
     for node in model.nodes() {
         for output in &node.outputs {
@@ -172,7 +173,7 @@ fn validate_plan(model: &TypedModel) -> Result<()> {
         total <= 1_073_741_824,
         "ONNX graph declared tensor sizes exceed 1 GiB"
     );
-    Ok(())
+    Ok(total)
 }
 
 impl OnnxModel {
@@ -318,13 +319,14 @@ impl OnnxModel {
             "ONNX output must be float32 [1,tokens,dimensions]"
         );
         let optimized = typed.into_optimized()?;
-        validate_plan(&optimized)?;
+        let workspace_bytes = validate_plan(&optimized)?;
         let plan = optimized.into_runnable()?;
         Ok(Self {
             manifest,
             identity,
             tokenizer,
             plan,
+            workspace_bytes,
             inputs,
         })
     }

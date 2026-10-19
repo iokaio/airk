@@ -496,7 +496,9 @@ impl AdapterRegistry {
                 profile: ExtractionProfile {
                     contract_version: if crate::composite::is_host(id) { 2 } else { 1 },
                     adapter_id: id.into(),
-                    adapter_version: if matches!(
+                    adapter_version: if id == "pdf" {
+                        "pdf-isolated/1"
+                    } else if matches!(
                         id,
                         "html" | "scss" | "vue" | "svelte" | "astro" | "mdx" | "razor" | "notebook"
                     ) {

@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 import { strict as assert } from 'node:assert';
-import { test } from 'node:test';
+import { afterEach, beforeEach, mock, test } from 'node:test';
 import Module from 'node:module';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { RetentionStatus, retentionSummary } from '../retention';
+import * as cliInstall from '../cliInstall';
+
+beforeEach(() => { mock.method(cliInstall, 'installCli', async () => []); });
+afterEach(() => { mock.restoreAll(); });
 
 test('retention status distinguishes unknown bytes, pending work and failed cleanup', () => {
     const status: RetentionStatus = { collection: 'original', policy: { policy: { version: 1, mode: 'manual', searchable_predecessors: 1 }, origin: 'existing_manual', digest: 'fixture' }, protected_bytes: null, pending_intents: 2, pending_bytes: null, last_maintenance: { error: 'original cleanup failure' } };

@@ -180,6 +180,8 @@ jobs:
         run: python scripts/ci-metrics.py run --name release-compile -- cargo build --release --locked -p airk-cli --target ${{ matrix.target }}
       - name: Bounded code indexing correctness and measurement smoke
         run: python scripts/benchmark-code.py --binary target/${{ matrix.target }}/release/${{ matrix.executable }} --files 64 --output artifacts/benchmarks/${{ matrix.target }}.json
+      - name: Persistent retrieval ranking and scoped recall receipts
+        run: python scripts/check-retrieval-quality.py --binary target/${{ matrix.target }}/release/${{ matrix.executable }} --output artifacts/benchmarks/${{ matrix.target }}-retrieval.json
       - name: DOCX and XLSX table indexing through the public CLI
         run: python scripts/check-document-tables.py --binary target/${{ matrix.target }}/release/${{ matrix.executable }}
       - name: Source aliases and storage quota lifecycle through the public CLI
@@ -214,6 +216,7 @@ jobs:
           path: |
             artifacts/benchmarks/${{ matrix.target }}.json
             artifacts/benchmarks/${{ matrix.target }}-faults.json
+            artifacts/benchmarks/${{ matrix.target }}-retrieval.json
           if-no-files-found: error
           retention-days: 7
       - name: Retain matching extension and checksums

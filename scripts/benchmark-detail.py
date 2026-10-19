@@ -176,14 +176,14 @@ def main():
                     assert bool(symbols["facts"]) == (level != "essential")
                     row["mcp"].append({"tool": "symbols", "attempt": attempt, "seconds": seconds, "count": len(symbols["facts"])})
                 for query, positive in [(workspace["query"], True), (foreign["query"], False)]:
-                    evidence, seconds = client.call("airk_search", {"query": query, "limit": 10})
+                    evidence, seconds = client.call("airk_search", {"mode": "lexical", "query": query, "limit": 10})
                     assert bool(evidence["hits"]) == positive
                     row["mcp"].append({"tool": "search", "positive": positive, "seconds": seconds})
                 evidence, seconds = client.call("airk_read_file", {"path": workspace["path"], "start_line": 1, "end_line": 1})
                 assert evidence["hits"]
                 evidence, _ = client.call("airk_list_files", {"prefix": foreign["path"]})
                 assert not evidence["paths"]
-                client.call("airk_search", {"query": foreign["query"], "collection": "foreign"}, rejected=True)
+                client.call("airk_search", {"mode": "lexical", "query": foreign["query"], "collection": "foreign"}, rejected=True)
                 client.call("airk_read_file", {"path": "../foreign/file", "start_line": 1, "end_line": 2}, rejected=True)
                 row["isolation_and_citations_passed"] = True
                 save(output / "summary-private.json", result)
@@ -228,10 +228,10 @@ def main():
                         facts, _ = client.call("airk_symbols", {"name": workspace["query"]})
                         assert bool(facts["facts"]) == (level != "essential")
                         assert facts["indexing"]["level"] == level
-                        evidence, _ = client.call("airk_search", {"query": workspace["query"], "limit": 10})
+                        evidence, _ = client.call("airk_search", {"mode": "lexical", "query": workspace["query"], "limit": 10})
                         assert evidence["hits"]
                         foreign = next(w for w in workspaces if w["label"] != workspace["label"])
-                        evidence, _ = client.call("airk_search", {"query": foreign["query"], "limit": 10})
+                        evidence, _ = client.call("airk_search", {"mode": "lexical", "query": foreign["query"], "limit": 10})
                         assert not evidence["hits"]
                         row["one_file_edit_in_isolated_copy"]["mcp_passed"] = True
                     finally:
@@ -255,9 +255,9 @@ def main():
                             assert bool(facts["facts"]) == (level != "essential")
                             evidence, _ = client.call("airk_read_file", {"path": workspace["path"], "start_line": 1, "end_line": 1})
                             assert evidence["hits"]
-                            evidence, _ = client.call("airk_search", {"query": workspace["query"], "limit": 10})
+                            evidence, _ = client.call("airk_search", {"mode": "lexical", "query": workspace["query"], "limit": 10})
                             assert evidence["hits"]
-                            evidence, _ = client.call("airk_search", {"query": foreign["query"], "limit": 10})
+                            evidence, _ = client.call("airk_search", {"mode": "lexical", "query": foreign["query"], "limit": 10})
                             assert not evidence["hits"]
                             row["automatic_cleanup"]["mcp_passed"] = True
                         finally:

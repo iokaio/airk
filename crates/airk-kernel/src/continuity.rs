@@ -26,6 +26,8 @@ impl crate::Kernel {
         crate::validate_budget(limit, max_bytes)?;
         let catalog = self.catalog()?;
         let mut response = airk_core::FactsResponse {
+            page: Default::default(),
+            outline: Vec::new(),
             indexing: catalog
                 .inventory
                 .as_ref()

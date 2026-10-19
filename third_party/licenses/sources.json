@@ -5,7 +5,17 @@
     "revision": "ac107d55f0d31a9d47955082238ab9e4fb157cdb",
     "repository": "https://github.com/jrmuizel/adobe-cmap-parser",
     "files": [],
-    "missing_text": true
+    "missing_text": true,
+    "declaration": {
+      "file": "Cargo.toml",
+      "url": "https://raw.githubusercontent.com/jrmuizel/adobe-cmap-parser/ac107d55f0d31a9d47955082238ab9e4fb157cdb/Cargo.toml",
+      "sha256": "a213b5a96e692c1473cb156fc19028fee007014656c3dfa6c40e24135ef3a769",
+      "archive_match": true
+    },
+    "standalone_text_review": {
+      "date": "2026-10-18",
+      "result": "No standalone legal text found in the complete pinned upstream Git tree; publisher declaration retained, release legal review unresolved."
+    }
   },
   {
     "name": "arborium-cobol",
@@ -127,10 +137,21 @@
   {
     "name": "htmlescape",
     "version": "0.3.1",
-    "revision": null,
+    "revision": "1699b539179798e705ad8464128492a0a0092876",
     "repository": "https://github.com/veddan/rust-htmlescape",
     "files": [],
-    "missing_text": true
+    "missing_text": true,
+    "revision_basis": "All 12 distributed archive payload files match Git blob hashes at this revision; generated .cargo-ok excluded.",
+    "declaration": {
+      "file": "Cargo.toml",
+      "url": "https://raw.githubusercontent.com/veddan/rust-htmlescape/1699b539179798e705ad8464128492a0a0092876/Cargo.toml",
+      "sha256": "daad7e32ff2b04d0a74c3c9364a7c209f9b5a71f60193ca3c393f8fa6cc0dd7f",
+      "archive_match": true
+    },
+    "standalone_text_review": {
+      "date": "2026-10-18",
+      "result": "No standalone legal text found in the complete pinned upstream Git tree; publisher declaration retained, release legal review unresolved."
+    }
   },
   {
     "name": "nom-language",
@@ -166,7 +187,17 @@
     "revision": "47b792ba04c5f3b6e478072b2efb8e1a2a06ec7e",
     "repository": "https://github.com/jrmuizel/pdf-extract",
     "files": [],
-    "missing_text": true
+    "missing_text": true,
+    "declaration": {
+      "file": "Cargo.toml",
+      "url": "https://raw.githubusercontent.com/jrmuizel/pdf-extract/47b792ba04c5f3b6e478072b2efb8e1a2a06ec7e/Cargo.toml",
+      "sha256": "58c439e4f241594ee5318cac623f17d28ed41ec6e7d67eaae1a84703691cd1d0",
+      "archive_match": true
+    },
+    "standalone_text_review": {
+      "date": "2026-10-18",
+      "result": "No standalone legal text found in the complete pinned upstream Git tree; publisher declaration retained, release legal review unresolved."
+    }
   },
   {
     "name": "r-efi",
@@ -660,7 +691,17 @@
     "revision": "55d193e28c9a5909be02a5b1f91fd3f76b076747",
     "repository": "https://github.com/jrmuizel/type1-encoding-parser",
     "files": [],
-    "missing_text": true
+    "missing_text": true,
+    "declaration": {
+      "file": "Cargo.toml",
+      "url": "https://raw.githubusercontent.com/jrmuizel/type1-encoding-parser/55d193e28c9a5909be02a5b1f91fd3f76b076747/Cargo.toml",
+      "sha256": "3ecd26d53abb6ed11e82871d5d633d4bb49463df9be71c7e32f32bed81b4506f",
+      "archive_match": true
+    },
+    "standalone_text_review": {
+      "date": "2026-10-18",
+      "result": "No standalone legal text found in the complete pinned upstream Git tree; publisher declaration retained, release legal review unresolved."
+    }
   },
   {
     "name": "winapi-i686-pc-windows-gnu",

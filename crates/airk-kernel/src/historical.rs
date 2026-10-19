@@ -367,12 +367,25 @@ impl Kernel {
         limit: usize,
         max_bytes: usize,
         options: &EvidenceReadOptions,
+        page: &airk_core::discovery::DiscoveryOptions,
     ) -> Result<ConditionalRead<FactsResponse>> {
         self.historical_read(
             path,
             options,
-            ("outline/1", limit, max_bytes),
+            ("outline/2", limit, max_bytes, page),
             |view, file, served| {
+                let binding = airk_core::discovery::binding(
+                    &served.token.to_string(),
+                    "outline",
+                    (
+                        path,
+                        page.compact,
+                        options.follow_moves,
+                        options.artifact_id,
+                        options.known_hash,
+                    ),
+                )?;
+                airk_core::discovery::decode(page.cursor.as_deref(), &binding)?;
                 let artifact = view.artifact(path)?;
                 let keys = airk_core::continuity::FactKeyIndex::new(&file.continuity);
                 let mut facts: Vec<_> = artifact
@@ -415,6 +428,8 @@ impl Kernel {
                     ))
                 });
                 let mut response = FactsResponse {
+                    page: Default::default(),
+                    outline: Vec::new(),
                     indexing: view.inventory().index_detail.unwrap_or_default().into(),
                     publication: Some(served),
                     generation: view.snapshot().generation,
@@ -422,16 +437,14 @@ impl Kernel {
                     facts: vec![],
                     truncated: false,
                 };
-                let mut remaining = max_bytes;
-                for fact in facts {
-                    let bytes = serde_json::to_vec(&fact)?.len();
-                    if response.facts.len() >= limit || bytes > remaining {
-                        response.truncated = true;
-                        break;
-                    }
-                    remaining -= bytes;
-                    response.facts.push(fact);
-                }
+                airk_core::discovery::paginate_facts(
+                    &mut response,
+                    facts,
+                    page,
+                    &binding,
+                    limit,
+                    max_bytes,
+                )?;
                 Ok(response)
             },
         )

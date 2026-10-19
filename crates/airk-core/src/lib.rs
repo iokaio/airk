@@ -7,6 +7,7 @@ pub mod binding;
 pub mod changes;
 pub mod code;
 pub mod continuity;
+pub mod discovery;
 pub mod embedding;
 pub mod evidence;
 pub mod extraction;
@@ -333,6 +334,10 @@ pub struct FactHit {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FactsResponse {
+    #[serde(flatten)]
+    pub page: discovery::DiscoveryPage,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub outline: Vec<discovery::CompactFact>,
     #[serde(default)]
     pub indexing: crate::extraction::IndexCoverage,
     #[serde(default, skip_serializing_if = "Option::is_none")]

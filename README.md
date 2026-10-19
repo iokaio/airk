@@ -1,14 +1,20 @@
 # AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents
 
-**Version 1.1.3 · Development candidate.** [Usage & Savings changes](docs/release-1.1.3.md). The latest published packages remain 1.1.2. Download [native ZIPs and platform VSIX packages](https://github.com/iokaio/airk/releases/tag/v1.1.2). The [October 17 release summary](docs/releases-2026-10-17.md) combines the changes in 1.1.0, 1.1.1 and 1.1.2, with upgrade guidance and qualification limits.
+**Version 1.1.4.** [Release notes and upgrade guidance](docs/release-1.1.4.md). Download published [native ZIPs and platform VSIX packages](https://github.com/iokaio/airk/releases).
 
 **Give Claude Code, Codex, Gemini CLI/Antigravity, GitHub Copilot and other MCP-capable agents a shared, local index of your workspace.** AIRK indexes files and returns bounded facts and passages with source paths, hashes and original locations. The agent supplies the reasoning. Runtime storage uses memory and local disk.
 
 [Document indexing](docs/document-indexing.md) specializes headings, dates, requirements, numeric bounds/units, qualitative cues and design/architecture/feature/decision language for Markdown, text and extracted documents. DOCX tables and XLSX worksheets retain row/cell evidence and original locations. These are cited evidence candidates, with category-filtered retrieval through MCP and the CLI.
 
-This is an independent, runnable open-source project. Munarium, VCP and local reference files inform the design; their implementations are not dependencies. Persistent Tantivy lexical indexes, SQLite exact facts and an independent disk file provider for Microsoft DiskANN publish coherent revisions. Optional [local models](docs/local-models.md), including [CPU ONNX transformer inference](docs/onnx-models.md), enable vector and hybrid retrieval. AIRK does not download models or use remote inference; model quality must be evaluated for the intended corpus.
+This is an independent, runnable open-source project. Munarium, VCP and local reference files inform the design; their implementations are not dependencies. Persistent Tantivy lexical indexes, SQLite exact facts and an independent disk file provider for Microsoft DiskANN publish coherent revisions. Vector indexing and hybrid retrieval are enabled by default. The trusted panel prepares the pinned [local CPU embedding model](docs/onnx-models.md) on first use (about 91 MB); turn **Vector search** off per collection to opt out. Inference and source data stay local. Model quality must be evaluated for the intended corpus.
 
 [Code facts and relationships](docs/code-facts-and-relationships.md) add scopes, signatures, written types, call/framework candidates and optional source/build-bound SCIP imports. Sixteen read-only MCP tools expose bounded evidence with explicit syntax versus producer provenance. Native indexing needs no external compiler/indexer installation.
+
+## What's new in 1.1.4
+
+Warm retrieval validates publication integrity, hybrid search ranks distinct chunks before applying text budgets, and scoped vector searches use bounded matching candidates. Discovery tools support revision-bound continuation cursors and compact outlines. PDF parsing runs in a local resource-limited worker, source traversal uses protected handles, and CLI shell setup rejects redirected or hard-linked profiles. [Request execution](docs/request-execution.md) keeps optional accounting off the MCP protocol thread.
+
+Usage comparisons use compact full-source byte measurements from the response's exact indexed revision. New generations can compare small excerpts from large repositories without the former 8 MiB inventory/retained-payload and 1 MiB text comparison limits. The report distinguishes evidence requests from background activity and explains unavailable comparisons. Index once with the new helper and restart agent MCP sessions; older missing comparisons remain unmeasured. See [upgrade and local validation](docs/release-1.1.4.md).
 
 ## What's new in 1.1.3
 
@@ -47,6 +53,8 @@ Add `-OpenReview` to install the generated VSIX in an isolated editor profile. T
 cargo install --path crates/airk-cli --locked
 ~~~
 
+For native-only use, [provision the local model](docs/onnx-models.md#default-setup-and-native-provisioning) before indexing to enable the default hybrid search. The extension handles this setup automatically. Explicit `--mode lexical` remains available for a model-free query.
+
 From your own workspace:
 
 ~~~console
@@ -58,9 +66,16 @@ airk refs authenticate --collection project-a
 airk index . --collection project-a
 airk coverage --refresh --collection project-a
 airk usage report --collection project-a
+airk tools list
+airk tools help airk_search
+airk tools shell --collection project-a
 ~~~
 
 Setup indexes the workspace and prints client-specific configuration using actual absolute paths. It never overwrites client settings. Use --client codex for TOML, --client vscode or cursor for editor configurations, and other supported formats listed in [agent integration](docs/agent-integration.md). Commands return JSON; MCP uses stdio and needs no Python bridge, port, service account or API key.
+
+Select **Open AIRK Tools** on a dashboard collection to open an interactive tools console in VS Code's Terminal panel. It includes help and examples and calls the same MCP handlers without a coding agent. The standalone CLI also supports `tools call <tool> --args-file query.json`; see [direct MCP tool access](docs/mcp.md#call-tools-without-a-coding-agent).
+
+The extension installs its bundled CLI during the first trusted startup and updates it with the extension. Open a new terminal and run `airk --help`; restart external terminal applications to pick up PATH changes. No Cargo installation is needed. The dashboard includes a CLI getting-started note and **Install or repair CLI** button. See [CLI installation and PATH](docs/vscode-extension.md#cli-installation-and-path) for platform behavior and troubleshooting.
 
 State defaults to .airk/collections/<id> under the workspace. Choose a shared user-controlled disk with --data-dir. Each MCP launch fixes its root and collection; retrieval tools cannot switch collections.
 
@@ -90,7 +105,7 @@ See the [format matrix](docs/formats.md) for the broader language, build-file an
 
 The AIRK sidebar offers **Essential**, **Balanced** (the default for new collections), and **Detailed** for each collection. Essential keeps searchable text and exact citations. Balanced adds declarations, imports, useful structural/document facts and declaration change tracking. Detailed also retains individual calls and document-unit change tracking. Existing collections keep their previous Detailed behavior until changed.
 
-The panel shows configured and published levels separately. Changing a level rebuilds evidence; the previous index stays available until the rebuild succeeds. Native fact and relationship responses explicitly report omitted detail. Storage quotas, retained generations and optional models are separate controls. See [index detail](docs/ingestion-limits.md#index-detail) for CLI equivalents and costs.
+The panel shows configured and published levels separately. Changing a level rebuilds evidence; the previous index stays available until the rebuild succeeds. Native fact and relationship responses explicitly report omitted detail. Storage quotas, retained generations and vector search are separate controls. See [index detail](docs/ingestion-limits.md#index-detail) for CLI equivalents and costs.
 
 ## Storage and maintenance
 

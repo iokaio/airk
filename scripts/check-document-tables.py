@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -35,10 +36,12 @@ def main():
             "word/document.xml": '<w:document xmlns:w="w"><w:body><w:tbl><w:tr><w:trPr><w:tblHeader/></w:trPr><w:tc><w:p><w:r><w:t>ID</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Requirement</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>REQ-8</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>The cache must hold at least 8 MiB.</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>Ordinary background information.</w:t></w:r></w:p></w:body></w:document>',
         })
         originals = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in [xlsx, docx]}
+        environment = dict(os.environ)
+        environment.pop("AIRK_USAGE_MODE", None)
 
         def run(*command):
             completed = subprocess.run([str(binary), "--root", str(root), "--data-dir", str(base / "state"),
-                                        "--collection", "tables", *command], capture_output=True, check=True, timeout=120)
+                                        "--collection", "tables", *command], capture_output=True, check=True, timeout=120, env=environment)
             return json.loads(completed.stdout)
 
         indexed = run("index")
@@ -67,9 +70,9 @@ def main():
         header = next(fact for fact in run("facts", docx.name, "--kind", "table_row")["facts"]
                       if fact["citation"]["location"]["TableRow"]["row"] == 1)
         assert header["document"]["table"]["is_header"] is True
-        search = run("search", "200", "--path-prefix", xlsx.name)
+        search = run("search", "--mode", "lexical", "200", "--path-prefix", xlsx.name)
         assert search["hits"][0]["citation"]["location"]["WorksheetRow"]["row"] == 14
-        assert sum(len(hit["text"].encode()) for hit in run("search", "200", "--max-bytes", "17")["hits"]) <= 17
+        assert sum(len(hit["text"].encode()) for hit in run("search", "--mode", "lexical", "200", "--max-bytes", "17")["hits"]) <= 17
         for path in [xlsx, docx]:
             assert hashlib.sha256(path.read_bytes()).hexdigest() == originals[path.name], "Source file was modified"
         # Retrieval stays on indexed bytes until a successful new generation.
@@ -83,7 +86,7 @@ def main():
                 "xl/_rels/workbook.xml.rels": '<Relationships><Relationship Id="r1" Type="o/worksheet" Target="worksheets/spec.xml"/></Relationships>',
                 "xl/worksheets/spec.xml": worksheet,
             })
-        assert run("search", "200", "--path-prefix", xlsx.name)["generation"] == search["generation"]
+        assert run("search", "--mode", "lexical", "200", "--path-prefix", xlsx.name)["generation"] == search["generation"]
         changed = run("index")
         assert changed["generation"] > indexed["generation"]
         assert not run("facts", xlsx.name)["facts"], "Failed replacement must not retain stale evidence"
@@ -91,6 +94,10 @@ def main():
             assert not run("facts", name)["facts"], "Malformed input must not publish table evidence"
             assert any(item["path"] == name for item in changed["skipped"]), changed
         assert run("facts", docx.name, "--kind", "table_row")["facts"], "Unrelated document lost"
+        report = run("usage", "report")["report"]
+        assert report["missing_baseline_calls"] == 0, report
+        assert report["comparisons"]["full_returned_sources"]["compared_calls"] == report["eligible_evidence_calls"]
+        assert report["content_kinds"]["docx"] > 0 and report["content_kinds"]["xlsx"] > 0
     print("DOCX/XLSX public CLI smoke passed: facts, headers, original coordinates/hashes, formula caches, merges, malformed inputs, budgets and retained revision.")
 
 

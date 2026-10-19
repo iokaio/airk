@@ -79,7 +79,7 @@ def run_campaign(binary, base, attempts, full_disk):
         assert digest(source_file) == expected_hash, "Publication changed the original source"
         call("index")
         assert call("info", "requirement.md")["content_hash"] == expected_hash
-        assert call("search", marker)["hits"], "Recovery lost current evidence"
+        assert call("search", "--mode", "lexical", marker)["hits"], "Recovery lost current evidence"
         cases.append({"kind": "process_kill", "delay_ms": delay * 1000,
                       "killed_before_exit": killed, "elapsed_ms": round((time.monotonic()-started)*1000),
                       "new_managed_files_observed": len(seen-before),
@@ -118,7 +118,7 @@ def run_campaign(binary, base, attempts, full_disk):
         assert call("status")["generation"] == old_generation
         assert call("info", "requirement.md")["content_hash"] == old_hash
         call("index")
-        assert call("search", "REQDISKFULL")["hits"]
+        assert call("search", "--mode", "lexical", "REQDISKFULL")["hits"]
         cases.append({"kind":"isolated_tmpfs_full_admission", "filler_bytes":written,
                       "scope":"full-volume rejection and recovery; not mid-publication ENOSPC",
                       "error":failure, "atomic_revision_and_recovery":True})

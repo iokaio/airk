@@ -105,12 +105,14 @@ impl ManifestV2 {
                     && !self.components.contains_key("model-objects.json")
             }
             3 => {
-                self.engine
-                    == "tantivy-0.26.2/diskann-0.59.0/airk-file-1/generation-5/inventory-2/model-objects-1"
-                    && !self
-                        .components
-                        .keys()
-                        .any(|path| path.starts_with("model/"))
+                matches!(
+                    self.engine.as_str(),
+                    "tantivy-0.26.2/diskann-0.59.0/airk-file-1/generation-5/inventory-2/model-objects-1"
+                        | "tantivy-0.26.2/diskann-0.59.0/airk-file-1/generation-5/inventory-2/model-objects-1/source-context-1"
+                ) && !self
+                    .components
+                    .keys()
+                    .any(|path| path.starts_with("model/"))
                     && self.components.contains_key("model-objects.json")
                         == self.model_sha256.is_some()
             }
@@ -412,6 +414,33 @@ fn verify_components(
     directory: &Path,
     receipt: &airk_core::identity::PublicationReceipt,
 ) -> Result<ManifestV2> {
+    Ok(verify_selected_components(base, directory, receipt, false)?.0)
+}
+
+/// A usage baseline reads authenticated catalog rows only. It must not become
+/// an integrity gate for the independent retrieval operation, whose verifier
+/// continues to hash every generation component and referenced model asset.
+pub(crate) fn verify_usage_catalog(
+    base: &Path,
+    receipt: &airk_core::identity::PublicationReceipt,
+    metrics: &mut crate::UsageReadMetrics,
+) -> Result<()> {
+    let started = std::time::Instant::now();
+    let directory = base
+        .join("generations")
+        .join(receipt.token.revision.to_string());
+    let (_, bytes) = verify_selected_components(base, &directory, receipt, true)?;
+    metrics.verification_bytes = bytes;
+    metrics.verification_us = started.elapsed().as_micros().min(u128::from(u64::MAX)) as u64;
+    Ok(())
+}
+
+fn verify_selected_components(
+    base: &Path,
+    directory: &Path,
+    receipt: &airk_core::identity::PublicationReceipt,
+    catalog_only: bool,
+) -> Result<(ManifestV2, u64)> {
     let directory = directory.to_path_buf();
     for path in [base.join("generations"), directory.clone()] {
         ensure!(
@@ -431,6 +460,7 @@ fn verify_components(
         131_072,
     )?;
     let manifest: ManifestV2 = serde_json::from_slice(&bytes)?;
+    let mut verified_bytes = bytes.len() as u64;
     ensure!(
         manifest.supported_format()
             && manifest.token == receipt.token
@@ -524,6 +554,9 @@ fn verify_components(
             file.metadata()?.is_file() && file.metadata()?.len() == component.bytes,
             "component length mismatch"
         );
+        if catalog_only && relative != "catalog.sqlite" {
+            continue;
+        }
         let mut hash = Sha256::new();
         let mut buffer = [0u8; 65_536];
         let mut total = 0u64;
@@ -543,6 +576,7 @@ fn verify_components(
             total = total
                 .checked_add(count as u64)
                 .context("component length overflow")?;
+            verified_bytes = verified_bytes.saturating_add(count as u64);
             ensure!(
                 total <= component.bytes,
                 "component grew during verification"
@@ -557,7 +591,7 @@ fn verify_components(
             "component checksum mismatch"
         );
     }
-    Ok(manifest)
+    Ok((manifest, verified_bytes))
 }
 
 /// Reuse semantic validation only after re-authenticating every component byte.

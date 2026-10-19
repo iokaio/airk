@@ -9,6 +9,19 @@ import subprocess
 from urllib.parse import quote
 
 
+def declaration_provenance(source, record):
+    """Authenticate a pinned publisher declaration; this does not supply legal text."""
+    if not record or not record.get("declaration"):
+        return {}
+    manifest = source / "Cargo.toml.orig"
+    if not manifest.is_file():
+        manifest = source / "Cargo.toml"
+    if hashlib.sha256(manifest.read_bytes()).hexdigest() != record["declaration"]["sha256"]:
+        raise ValueError("Pinned publisher declaration digest mismatch: " + record["name"])
+    return {key: record[key] for key in ("revision", "revision_basis", "declaration", "standalone_text_review")
+            if key in record}
+
+
 def software_bill_of_materials(metadata):
     """CycloneDX 1.6 inventory of Cargo's resolved build graph, including dev/host crates."""
     purls = {package["id"]: "pkg:cargo/" + quote(package["name"], safe="") + "@" + quote(package["version"], safe="")
@@ -42,9 +55,10 @@ def main():
     ], text=True, encoding="utf-8"))
     workspace_ids = set(metadata["workspace_members"])
     pinned_path=Path("third_party/licenses/sources.json")
+    pinned_records = {}
     if pinned_path.exists():
-        import hashlib
         for record in json.loads(pinned_path.read_text(encoding="utf-8")):
+            pinned_records[(record["name"], record["version"])] = record
             for item in record["files"]:
                 path=pinned_path.parent/(record["name"]+"-"+record["version"])/item["file"]
                 if hashlib.sha256(path.read_bytes()).hexdigest()!=item["sha256"]:
@@ -83,6 +97,7 @@ def main():
                            "license": package.get("license"), "authors": package.get("authors"),
                            "repository": package.get("repository"),
                            "note": "Publisher declares a license but supplies no separate license text. Review before publishing."}
+            declaration.update(declaration_provenance(source, pinned_records.get((package["name"], package["version"]))))
             (destination / "UPSTREAM-LICENSE-DECLARATION.json").write_text(json.dumps(declaration, indent=2) + "\n", encoding="utf-8")
             print("Release review needed for license declaration without separate text: " + package["name"])
     (args.output / "inventory.json").write_text(json.dumps(inventory, indent=2) + "\n", encoding="utf-8")

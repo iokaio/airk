@@ -127,11 +127,11 @@ def main():
                 request_path.write_text(json.dumps(request), encoding="utf-8")
                 published = call("ocr", name, "--request", request_path)
                 assert published["provenance"]["first_page"] == page
-                hits = call("search", "200", "--path-prefix", name)["hits"]
+                hits = call("search", "--mode", "lexical", "200", "--path-prefix", name)["hits"]
                 assert hits and all(hit["citation"]["location"] == {"Page": {"number": page}} for hit in hits)
                 assert all(hit["citation"]["content_hash"] == hashlib.sha256(content).hexdigest() for hit in hits)
                 call("index")
-                assert call("search", "200", "--path-prefix", name)["hits"], "Unchanged OCR extraction was lost"
+                assert call("search", "--mode", "lexical", "200", "--path-prefix", name)["hits"], "Unchanged OCR extraction was lost"
                 assert (root / name).read_bytes() == content
                 qualified.append("ocr-" + Path(name).suffix[1:])
     print("Local provider CLI qualification passed: " + ", ".join(qualified) + "; native evidence, provenance, original sources, stale rejection and reindex invalidation.")

@@ -22,20 +22,30 @@ pub(crate) fn present(conn: &Connection) -> Result<bool> {
     Ok(exists)
 }
 
+/// Query projection adds a generation-local row identity without changing persisted schemas.
+pub(crate) fn fact_projection(with_identity: bool) -> String {
+    let common = "'$.name',f.name,'$.kind',f.kind,'$.language',f.language,'$.citation.path',ef.path,'$.citation.content_hash',lower(hex(ef.source_hash)),'$.citation.start_line',f.line";
+    let identity = if with_identity {
+        "f.rowid AS discovery_id,"
+    } else {
+        ""
+    };
+    format!("SELECT {identity}ef.path AS path,f.name,f.folded_name,f.qualified_name,f.symbol_id,f.kind,f.language,f.is_code,f.is_document,f.line,
+        CASE WHEN f.is_code=1 THEN json_set(f.payload,{common},'$.code.qualified_name',f.qualified_name,'$.code.symbol_id',f.symbol_id,'$.code.basis',json_extract(p.payload,'$.basis'),'$.code.producer',json_extract(p.payload,'$.producer'),'$.code.producer_version',json_extract(p.payload,'$.producer_version'),'$.code.coverage',json_extract(p.payload,'$.coverage'))
+        ELSE json_set(f.payload,{common}) END AS payload
+        FROM fact_rows f JOIN evidence_files ef ON ef.id=f.file_id LEFT JOIN evidence_producers p ON p.id=f.producer_id")
+}
+
 pub(crate) fn create(tx: &Transaction<'_>) -> Result<()> {
     tx.execute_batch("CREATE TABLE normalized_evidence(version INTEGER NOT NULL); INSERT INTO normalized_evidence VALUES(1);
         CREATE TABLE evidence_files(id INTEGER PRIMARY KEY,path TEXT NOT NULL,source_hash BLOB NOT NULL CHECK(length(source_hash)=32),UNIQUE(path,source_hash));
         CREATE TABLE evidence_producers(id INTEGER PRIMARY KEY,payload TEXT NOT NULL UNIQUE);
         CREATE TABLE fact_rows(file_id INTEGER NOT NULL,name TEXT NOT NULL,folded_name TEXT NOT NULL,qualified_name TEXT NOT NULL,symbol_id TEXT NOT NULL,kind TEXT NOT NULL,language TEXT NOT NULL,is_code INTEGER NOT NULL,is_document INTEGER NOT NULL,line INTEGER NOT NULL,producer_id INTEGER,payload TEXT NOT NULL,imported INTEGER NOT NULL);
         CREATE TABLE edge_rows(file_id INTEGER NOT NULL,source TEXT NOT NULL,target TEXT NOT NULL,kind TEXT NOT NULL,line INTEGER NOT NULL,producer_id INTEGER NOT NULL,payload TEXT NOT NULL,imported INTEGER NOT NULL);")?;
-    let common = "'$.name',f.name,'$.kind',f.kind,'$.language',f.language,'$.citation.path',ef.path,'$.citation.content_hash',lower(hex(ef.source_hash)),'$.citation.start_line',f.line";
-    tx.execute_batch(&format!("CREATE VIEW facts AS SELECT ef.path AS path,f.name,f.folded_name,f.qualified_name,f.symbol_id,f.kind,f.language,f.is_code,f.is_document,f.line,
-        CASE WHEN f.is_code=1 THEN json_set(f.payload,{common},'$.code.qualified_name',f.qualified_name,'$.code.symbol_id',f.symbol_id,'$.code.basis',json_extract(p.payload,'$.basis'),'$.code.producer',json_extract(p.payload,'$.producer'),'$.code.producer_version',json_extract(p.payload,'$.producer_version'),'$.code.coverage',json_extract(p.payload,'$.coverage'))
-        ELSE json_set(f.payload,{common}) END AS payload
-        FROM fact_rows f JOIN evidence_files ef ON ef.id=f.file_id LEFT JOIN evidence_producers p ON p.id=f.producer_id;
+    tx.execute_batch(&format!("CREATE VIEW facts AS {};
         CREATE VIEW relationships AS SELECT e.source,e.target,e.kind,ef.path AS path,e.line,
         json_set(e.payload,'$.source',e.source,'$.target',e.target,'$.kind',e.kind,'$.citation.path',ef.path,'$.citation.content_hash',lower(hex(ef.source_hash)),'$.citation.start_line',e.line,'$.basis',json_extract(p.payload,'$.basis'),'$.producer',json_extract(p.payload,'$.producer'),'$.producer_version',json_extract(p.payload,'$.producer_version')) AS payload
-        FROM edge_rows e JOIN evidence_files ef ON ef.id=e.file_id JOIN evidence_producers p ON p.id=e.producer_id;"))?;
+        FROM edge_rows e JOIN evidence_files ef ON ef.id=e.file_id JOIN evidence_producers p ON p.id=e.producer_id;", fact_projection(false)))?;
     Ok(())
 }
 

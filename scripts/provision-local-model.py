@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Deliberately provision pinned Apache-2.0 MiniLM assets; AIRK runtime never downloads."""
+"""Deliberately provision pinned Apache-2.0 MiniLM assets; native reads never download."""
 import argparse
 import hashlib
 import json

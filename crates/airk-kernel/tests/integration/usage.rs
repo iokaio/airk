@@ -22,6 +22,7 @@ fn observation(id: u8) -> UsageObservation {
         truncated: false,
         response_representation: ResponseRepresentation::McpToolResultJson,
         response_utf8_bytes: Some(4_800),
+        baseline_unavailable: None,
         baseline: Some(ContextBaseline {
             kind: BaselineKind::FullReturnedSources,
             generation: 4,
@@ -401,9 +402,43 @@ fn failed_empty_missing_and_incompatible_baselines_never_inflate_reduction() -> 
     assert_eq!(report.excluded_from_estimation_calls, 2);
     assert_eq!(report.missing_baseline_calls, 1);
     assert_eq!(report.mismatched_baseline_calls, 2);
+    assert_eq!(
+        report.baseline_unavailable[&BaselineUnavailable::NotRecorded],
+        1
+    );
+    assert_eq!(
+        report.baseline_unavailable[&BaselineUnavailable::RevisionMismatch],
+        2
+    );
     let search = &report.operations[&UsageOperation::Search];
     assert_eq!(search.failed, 1);
     assert_eq!(search.empty, 1);
+    Ok(())
+}
+
+#[test]
+fn unavailable_reason_buckets_merge_and_old_reports_remain_readable() -> anyhow::Result<()> {
+    let mut event = observation(100);
+    event.baseline = None;
+    event.baseline_unavailable = Some(BaselineUnavailable::InventoryLimit);
+    let report = summarize(
+        &event.scope,
+        0,
+        200,
+        [&event],
+        ByteTokenHeuristic::default(),
+    )?;
+    let mut old = serde_json::to_value(&report)?;
+    old.as_object_mut().unwrap().remove("baseline_unavailable");
+    let mut old: UsageReport = serde_json::from_value(old)?;
+    assert!(old.baseline_unavailable.is_empty());
+    old.merge(&report)?;
+    assert_eq!(old.missing_baseline_calls, 2);
+    assert_eq!(
+        old.baseline_unavailable[&BaselineUnavailable::InventoryLimit],
+        1
+    );
+    assert!(old.comparisons.is_empty());
     Ok(())
 }
 

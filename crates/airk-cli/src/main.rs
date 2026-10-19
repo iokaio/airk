@@ -6,6 +6,8 @@ use airk_kernel::{FactQuery, Kernel};
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
+mod tools;
+
 #[derive(clap::Args, Default)]
 struct EvidenceOptions {
     #[arg(long)]
@@ -85,6 +87,11 @@ mod continuity_argument_tests {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Inspect and call the read-only MCP tools, or open an interactive tools console.
+    Tools {
+        #[command(subcommand)]
+        action: tools::ToolsCommand,
+    },
     /// Inspect observed indexed changes and validate remembered evidence.
     Changes {
         #[arg(long)]
@@ -149,8 +156,11 @@ enum Command {
     },
     /// Query enriched code syntax and imported facts without broad source text.
     CodeFacts {
+        /// Continue the same revision-bound discovery with unchanged filters.
+        #[arg(long)]
+        cursor: Option<String>,
         /// Durable symbol key from indexed continuity evidence; excludes textual filters.
-        #[arg(long, conflicts_with_all = ["name", "kind", "language", "path_prefix"])]
+        #[arg(long, conflicts_with_all = ["name", "kind", "language", "path_prefix", "cursor"])]
         symbol_key: Option<airk_core::identity::SymbolKey>,
         #[arg(long)]
         name: Option<String>,
@@ -210,7 +220,7 @@ enum Command {
     },
     /// Show the active snapshot and counts.
     Status,
-    /// Retrieve bounded lexical evidence as JSON.
+    /// Retrieve bounded evidence using the collection default (hybrid unless opted out).
     Search {
         query: String,
         #[arg(long, value_enum, conflicts_with = "semantic")]
@@ -227,6 +237,9 @@ enum Command {
     },
     /// List indexed paths by prefix.
     Files {
+        /// Continue the same revision-bound discovery with unchanged filters.
+        #[arg(long)]
+        cursor: Option<String>,
         #[arg(default_value = "")]
         prefix: String,
         #[arg(long, default_value_t = 10)]
@@ -256,6 +269,12 @@ enum Command {
     },
     /// Retrieve a file's native and imported code/document outline.
     Outline {
+        /// Continue the same revision-bound discovery with unchanged filters.
+        #[arg(long)]
+        cursor: Option<String>,
+        /// Return names, kinds, original locations, spans and durable keys.
+        #[arg(long)]
+        compact: bool,
         #[command(flatten)]
         evidence: EvidenceOptions,
         path: String,
@@ -266,6 +285,9 @@ enum Command {
     },
     /// Find exact native syntax and imported provider definitions.
     Symbol {
+        /// Continue the same revision-bound discovery with unchanged filters.
+        #[arg(long)]
+        cursor: Option<String>,
         name: String,
         #[arg(long)]
         language: Option<String>,
@@ -274,13 +296,19 @@ enum Command {
     },
     /// Retrieve native import declarations.
     Imports {
+        /// Continue the same revision-bound discovery with unchanged filters.
+        #[arg(long)]
+        cursor: Option<String>,
         #[arg(default_value = "")]
         path_prefix: String,
     },
     /// Retrieve structured document/configuration facts.
     Facts {
+        /// Continue the same revision-bound discovery with unchanged filters.
+        #[arg(long)]
+        cursor: Option<String>,
         /// Durable document key; excludes textual filters.
-        #[arg(long, conflicts_with_all = ["name", "kind", "path_prefix"])]
+        #[arg(long, conflicts_with_all = ["name", "kind", "path_prefix", "cursor"])]
         document_key: Option<airk_core::identity::DocumentKey>,
         #[arg(default_value = "")]
         path_prefix: String,
@@ -421,6 +449,7 @@ impl Command {
     fn usage_operation(&self) -> Option<UsageOperation> {
         Some(match self {
             Self::Usage { .. }
+            | Self::Tools { .. }
             | Self::Mcp
             | Self::Host
             | Self::Schedule { .. }
@@ -533,7 +562,25 @@ enum AnalysisCommand {
 }
 
 #[derive(Subcommand)]
+enum VectorCommand {
+    Show,
+    /// Verify and install local model inputs under native storage quotas.
+    Install {
+        source: PathBuf,
+    },
+    Set {
+        #[arg(long, action = clap::ArgAction::Set)]
+        enabled: bool,
+    },
+}
+
+#[derive(Subcommand)]
 enum CollectionCommand {
+    /// Inspect or save the collection vector setting used by the panel.
+    Vectors {
+        #[command(subcommand)]
+        action: VectorCommand,
+    },
     /// Inspect or explicitly administer optional retained history.
     History {
         #[command(subcommand)]
@@ -873,9 +920,21 @@ fn client_config(kernel: &Kernel, client: SetupClient) -> anyhow::Result<String>
     Ok(serde_json::to_string(&config)?)
 }
 
+fn main() -> anyhow::Result<()> {
+    if airk_kernel::dispatch_pdf_worker()? {
+        return Ok(());
+    }
+    main_async()
+}
+
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main_async() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    if let Command::Tools { action } = &cli.command
+        && tools::inspect(action)?
+    {
+        return Ok(());
+    }
     if matches!(cli.command, Command::Service { .. }) && cli.data_dir.is_none() {
         anyhow::bail!("service lifecycle requires explicit --data-dir");
     }
@@ -913,6 +972,7 @@ async fn main() -> anyhow::Result<()> {
         ),
     };
     let result = async { match cli.command {
+        Command::Tools { action } => tools::run(action, kernel.clone()).await,
         Command::Storage { .. } => unreachable!("handled before opening kernel"),
         Command::Service { action } => {
             let manager = airk_kernel::service::ServiceManager::for_kernel(&kernel)?;
@@ -1030,6 +1090,7 @@ async fn main() -> anyhow::Result<()> {
             }
         },
         Command::CodeFacts {
+            cursor,
             symbol_key,
             name,
             kind,
@@ -1039,7 +1100,7 @@ async fn main() -> anyhow::Result<()> {
             max_bytes,
         } => if let Some(key) = symbol_key {
             recorder.print(&kernel.continuity_facts(airk_core::continuity::ContinuityKey::Symbol(key), limit, max_bytes)?)
-        } else { recorder.print(&kernel.code_facts(&FactQuery {
+        } else { recorder.print(&kernel.code_facts_page(&FactQuery {
             path_prefix,
             name,
             kind,
@@ -1049,7 +1110,7 @@ async fn main() -> anyhow::Result<()> {
             max_bytes,
             path_exact: false,
             document_only: false,
-        })?) },
+        }, &airk_core::discovery::DiscoveryOptions { cursor, compact: false })?) },
         Command::Relationships {
             symbol,
             direction,
@@ -1068,6 +1129,11 @@ async fn main() -> anyhow::Result<()> {
             max_bytes,
         })?),
         Command::Collections { action } => match action {
+            CollectionCommand::Vectors { action } => match action {
+                VectorCommand::Show => recorder.print(&kernel.vector_status()?),
+                VectorCommand::Install { source } => recorder.print(&kernel.install_vector_model(&source)?),
+                VectorCommand::Set { enabled } => recorder.print(&kernel.configure_vectors(enabled)?),
+            },
             CollectionCommand::Extraction { action } => match action {
                 ExtractionCommand::Show => recorder.print(&kernel.extraction_policy()?),
                 ExtractionCommand::Detail { level } => recorder.print(&kernel.configure_index_detail(serde_json::from_value(serde_json::Value::String(level))?)?),
@@ -1211,17 +1277,20 @@ async fn main() -> anyhow::Result<()> {
             max_bytes,
         } => {
             let query = SearchQuery { text: query, path_prefix, limit, max_bytes };
-            recorder.print(&match mode.unwrap_or(if semantic { SearchMode::Vector } else { SearchMode::Lexical }) {
-                SearchMode::Lexical => kernel.search(&query)?,
-                SearchMode::Vector => kernel.semantic_search(&query)?,
-                SearchMode::Hybrid => kernel.hybrid_search(&query)?,
+            recorder.print(&match mode {
+                Some(SearchMode::Lexical) => kernel.search(&query)?,
+                Some(SearchMode::Vector) => kernel.semantic_search(&query)?,
+                Some(SearchMode::Hybrid) => kernel.hybrid_search(&query)?,
+                None if semantic => kernel.semantic_search(&query)?,
+                None => kernel.default_search(&query)?,
             })
         },
         Command::Files {
+            cursor,
             prefix,
             limit,
             max_bytes,
-        } => recorder.print(&kernel.list_files(&prefix, limit, max_bytes)?),
+        } => recorder.print(&kernel.list_files_page(&prefix, limit, max_bytes, &airk_core::discovery::DiscoveryOptions { cursor, compact: false })?),
         Command::Read {
             evidence,
             path,
@@ -1237,16 +1306,19 @@ async fn main() -> anyhow::Result<()> {
         Command::Mcp => airk_mcp::serve(kernel.clone()).await,
         Command::Info { path, evidence } => recorder.print(&kernel.file_info_conditional(&path, &evidence.into())?),
         Command::Outline {
+            cursor,
+            compact,
             evidence,
             path,
             limit,
             max_bytes,
-        } => recorder.print(&kernel.outline_conditional(&path, limit, max_bytes, &evidence.into())?),
+        } => recorder.print(&kernel.outline_conditional_page(&path, limit, max_bytes, &evidence.into(), &airk_core::discovery::DiscoveryOptions { cursor, compact })?),
         Command::Symbol {
+            cursor,
             name,
             language,
             path_prefix,
-        } => recorder.print(&kernel.facts(&FactQuery {
+        } => recorder.print(&kernel.facts_page(&FactQuery {
             path_prefix,
             name: Some(name),
             kind: Some("definition".into()),
@@ -1256,8 +1328,8 @@ async fn main() -> anyhow::Result<()> {
             max_bytes: 8192,
             path_exact: false,
             document_only: false,
-        })?),
-        Command::Imports { path_prefix } => recorder.print(&kernel.facts(&FactQuery {
+        }, &airk_core::discovery::DiscoveryOptions { cursor, compact: false })?),
+        Command::Imports { path_prefix, cursor } => recorder.print(&kernel.facts_page(&FactQuery {
             path_prefix,
             name: None,
             kind: Some("import".into()),
@@ -1267,8 +1339,9 @@ async fn main() -> anyhow::Result<()> {
             max_bytes: 8192,
             path_exact: false,
             document_only: false,
-        })?),
+        }, &airk_core::discovery::DiscoveryOptions { cursor, compact: false })?),
         Command::Facts {
+            cursor,
             document_key,
             path_prefix,
             name,
@@ -1277,7 +1350,7 @@ async fn main() -> anyhow::Result<()> {
             max_bytes,
         } => if let Some(key) = document_key {
             recorder.print(&kernel.continuity_facts(airk_core::continuity::ContinuityKey::Document(key), limit, max_bytes)?)
-        } else { recorder.print(&kernel.facts(&FactQuery {
+        } else { recorder.print(&kernel.facts_page(&FactQuery {
             path_prefix,
             name,
             kind,
@@ -1287,7 +1360,7 @@ async fn main() -> anyhow::Result<()> {
             max_bytes,
             path_exact: false,
             document_only: true,
-        })?) },
+        }, &airk_core::discovery::DiscoveryOptions { cursor, compact: false })?) },
         Command::Refs { name, path_prefix } => {
             recorder.print(&kernel.references(&name, &path_prefix, 50, 8192)?)
         }

@@ -4,7 +4,13 @@
 
 Everything runs on your machine. There is no cloud service, API key, Docker, Rust or Python to install: the native helper is bundled in the extension.
 
-> **Version 1.1.3 · Development candidate.** Packages target Windows x64, Linux x64 and macOS (Intel and Apple Silicon). Large-repository performance, macOS and remote-host qualification, and semantic-search quality are still being measured. See [Known limits](#known-limits).
+> **Version 1.1.4 · Development candidate.** Packages target Windows x64, Linux x64 and macOS (Intel and Apple Silicon). Large-repository performance, macOS and remote-host qualification, and semantic-search quality are still being measured. See [Known limits](#known-limits).
+
+## What's new in 1.1.4
+
+**Open AIRK Tools** on any collection opens a console in VS Code's Terminal panel. Enter `list`, `help airk_search`, or `call airk_status` to inspect and call MCP tools directly. Help includes argument schemas, defaults and examples. The console uses the selected collection and bundled helper; no coding agent or PATH setup is required.
+
+**Usage & Savings** now shows how many eligible requests were compared, why comparisons were unavailable, and how much recorded activity was evidence retrieval versus background work. New index generations retain compact source-size measurements tied to the exact cited revision. After updating, index the collection and restart connected agent MCP sessions. Earlier missing comparisons remain unmeasured; estimated context reductions are not verified bill savings.
 
 ## What's new in 1.1.3
 
@@ -65,6 +71,10 @@ Document extraction keeps heading context, dates, requirement IDs and modality (
 5. **Verify.** **AIRK: Check AIRK MCP Helper** confirms that the helper starts, lists its tools and reports collection status. Then ask your agent about a file you know and check that its answer cites a path. Verification proves AIRK is healthy; it does not prove that a particular agent has enabled the server.
 
 The **Get Started with AIRK** walkthrough (**Help › Welcome**) links these steps.
+
+**Use AIRK from your terminal:** the extension installs the bundled CLI on first trusted startup. Open a new VS Code terminal and run `airk --help`. Restart external terminal applications after setup so they receive the updated PATH. No Rust or Cargo installation is required. The AIRK dashboard includes this command and an **Install or repair CLI** button; the same action is available as **AIRK: Install or Repair CLI** in the Command Palette.
+
+Windows setup adds the CLI directory to your user PATH. macOS/Linux setup adds guarded PATH entries to Bash, Zsh and fish startup files. Remote windows install on the remote extension host. Set `airk.cli.autoInstall` to `false` in User settings to skip automatic setup. See [CLI installation and PATH](https://github.com/iokaio/airk/blob/main/docs/vscode-extension.md#cli-installation-and-path) for update behavior, cleanup and troubleshooting.
 
 Automatic indexing starts in trusted workspaces using per-user storage by default. To use another drive, run **AIRK: Choose Index Storage Folder…**. Opening the picker holds new indexing jobs. If a pass is already running, AIRK shows progress while it finishes before switching folders. Cancelling the picker keeps the current location and restores scheduling; an existing pause remains paused. Existing indexes stay in their previous location. Restart connected agents after changing storage.
 
@@ -191,7 +201,7 @@ Automatic retention trims eligible old generations after publication and before 
 
 The AIRK sidebar offers **Essential**, **Balanced** (the default for new collections), and **Detailed** for each collection. Essential keeps searchable text and exact citations. Balanced adds declarations, imports, useful structural/document facts and declaration change tracking. Detailed also retains individual calls and document-unit change tracking. Existing collections keep their previous Detailed behavior until changed.
 
-The panel shows the configured and published levels separately. Changing a level rebuilds evidence; the previous index stays available until the rebuild succeeds. Storage quotas, retained generations and optional models are separate controls. Native fact and relationship responses explicitly report omitted detail. See [ingestion limits and index detail](https://github.com/iokaio/airk/blob/main/docs/ingestion-limits.md) for limits and CLI equivalents.
+The panel shows the configured and published levels separately. Changing a level rebuilds evidence; the previous index stays available until the rebuild succeeds. Storage quotas, retained generations and vector search are separate controls. Native fact and relationship responses explicitly report omitted detail. See [ingestion limits and index detail](https://github.com/iokaio/airk/blob/main/docs/ingestion-limits.md) for limits and CLI equivalents.
 
 ## Commands
 
@@ -252,7 +262,7 @@ Reports open as formatted panels; **Open as JSON** shows the full native output.
 
 ## Privacy and network
 
-AIRK has no telemetry and no network service. Indexes and usage aggregates stay on this machine. Optional vector search uses only model files you provision through the AIRK CLI; nothing is downloaded, and there is no remote fallback.
+AIRK has no telemetry or remote inference service. Indexes, source text and usage aggregates stay on this machine. Vector search is on by default: first indexing downloads about 91 MB of pinned Apache-2.0 MiniLM assets over HTTPS, verifies their sizes and SHA-256 digests, then runs inference locally on CPU. Existing custom models are preserved. Turn **Vector search** off on a collection card to opt out; the saved setting applies to every agent using that collection. Download failures are shown and do not silently turn vectors off.
 
 What happens after AIRK returns evidence is up to the agent you connected. That agent decides whether to send retrieved text to its model provider, under its own settings. AIRK cannot see or control that.
 
@@ -267,7 +277,7 @@ What happens after AIRK returns evidence is up to the agent you connected. That 
 
 - **Size.** Automatic limits allow up to 256 MiB per source file, 32 MiB extracted text per file and 100,000 files. Eligible source uses one eighth of detected machine memory, capped at 2 GiB (512 MiB when detection is unavailable); extracted text gets twice that allowance. Existing saved policies remain unchanged. UTF-8 files above 4 MiB retain searchable text with partial text-only status, without structural facts. Disk quotas and format limits still apply; larger permitted workloads are not performance-qualified. Use **AIRK: Show Ingestion Limits** to inspect effective limits, memory detection, the storage path, quota and cached coverage totals/largest files. Use **AIRK: Show Collection Status and Coverage** for fresh measurements and **AIRK: Configure Ingestion Limits…** to restore automatic sizing or review/import a six-field limits JSON. When indexing hits a collection budget, **Review larger limit** lets you enter a larger allowance up to the displayed hard ceiling. **Save limit and retry** explains that larger limits may increase indexing time, memory and disk usage, then saves the approved budget and retries once. Cancellation preserves the existing limits; per-file extraction bounds and disk quotas remain enforced. See [ingestion limits](https://github.com/iokaio/airk/blob/main/docs/ingestion-limits.md) for the JSON format, CLI commands and independent extraction/storage limits.
 - **Code facts are syntax, not semantics.** Definitions, imports, references and relationships come from grammar parsing and are labeled as candidates. Resolved references require an optional SCIP import or a local LSP run through the CLI. Textual references include matches in strings and comments.
-- **Vector search is optional and unqualified.** It needs local model files you provision. Relevance on real codebases has not been measured.
+- **Vector search defaults on and can be disabled in the panel.** Model setup needs network access once, or pre-provisioned local assets. CPU, index storage and relevance depend on the corpus; broad real-codebase quality has not been established.
 - **Not extracted:** scanned or image-only PDFs, encrypted documents, legacy DOC/PPT/XLS, DOCX headers, footers and comments, PPTX notes, and XLSX charts and pivot caches. OCR is available through the CLI for selected pages; the extension does not run it.
 - **Unsigned local and CI helpers.** Ordinary CI and Marketplace packaging use unsigned native helpers. The separate GitHub release workflow signs Windows helpers and signs/notarizes Mac helpers; check the provenance of the package you install.
 

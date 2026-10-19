@@ -33,6 +33,8 @@ node_modules/
 /packages/vscode/out/
 # Electron CLI diagnostics, not source.
 /debug.log
+# Personal local build/install entry point; never package or publish it.
+/build-local.ps1
 .env
 .env.*
 *.local.toml

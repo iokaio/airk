@@ -52,9 +52,9 @@ export async function prepareHelper(extensionPath: string, storage: string, vers
     return destination;
 }
 
-export function runText(command: string, args: string[], cwd?: string): Promise<string> {
+export function runText(command: string, args: string[], cwd?: string, timeout = 300000): Promise<string> {
     return new Promise((resolve, reject) => {
-        execFile(command, args, { cwd, env: { ...process.env, AIRK_CLIENT: 'vscode' }, windowsHide: true, maxBuffer: 16 * 1024 * 1024, timeout: 300000 }, (error, stdout, stderr) => {
+        execFile(command, args, { cwd, env: { ...process.env, AIRK_CLIENT: 'vscode' }, windowsHide: true, maxBuffer: 16 * 1024 * 1024, timeout }, (error, stdout, stderr) => {
             if (error) { reject(new Error(stderr.trim() || error.message)); }
             else { resolve(stdout); }
         });
@@ -62,7 +62,7 @@ export function runText(command: string, args: string[], cwd?: string): Promise<
 }
 
 export async function runJson<T>(spec: LaunchSpec, command: string, extra: string[] = []): Promise<T> {
-    return JSON.parse(await runText(spec.command, [...launchArgs(spec, command), ...extra], spec.root)) as T;
+    return JSON.parse(await runText(spec.command, [...launchArgs(spec, command), ...extra], spec.root, command === 'index' ? 3600000 : 300000)) as T;
 }
 
 /** Real bounded stdio initialization/tool-list/status probe, independent of any coding agent. */

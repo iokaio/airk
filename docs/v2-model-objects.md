@@ -1,7 +1,8 @@
 # Collection-owned model objects
 
-AIRK uses locally provisioned models. It does not download or bundle weights,
-tokenizers, or model licenses. The model directory remains an explicit input;
+AIRK uses local models. The trusted extension provisions pinned weights,
+tokenizer and license files on first setup; native-only installations provision
+them explicitly. No weights are bundled in releases. The model directory is an input;
 published generations use verified immutable copies owned by their collection.
 
 ## Storage and identity

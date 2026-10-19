@@ -37,6 +37,11 @@ try {
     }
     Invoke-AirkTool cargo @('build', '--release', '--locked', '-p', 'airk-cli', '--target', $airkTarget)
     $env:AIRK_TEST_BINARY = Join-Path $airkRoot "target/$airkTarget/release/airk.exe"
+    # Default retrieval is hybrid: even a quick build must prove the real model/graph works.
+    $airkModel = Join-Path $airkRoot 'target/local-vector-model'
+    $airkVectorReport = Join-Path $airkOutput 'vector-check.json'
+    Invoke-AirkTool $airkPython @('scripts/provision-local-model.py', '--destination', $airkModel, '--download')
+    Invoke-AirkTool $airkPython @('scripts/check-transformer-model.py', '--binary', $env:AIRK_TEST_BINARY, '--model-dir', $airkModel, '--report', $airkVectorReport)
     if (-not $SkipChecks) {
         Invoke-AirkTool $airkPython @('scripts/benchmark-code.py', '--binary', $env:AIRK_TEST_BINARY, '--files', '64', '--output', (Join-Path $airkOutput 'code-benchmark.json'))
         Invoke-AirkTool $airkPython @('scripts/check-document-tables.py', '--binary', $env:AIRK_TEST_BINARY)
@@ -68,7 +73,8 @@ try {
         }
     }
     @{ schema = 'airk-local-build/1'; target = $airkTarget; native = $env:AIRK_TEST_BINARY; vsix = $airkVsix;
-        checksSkipped = [bool]$SkipChecks; editorTests = [bool]$RunEditorTests; output = $airkOutput } |
+        checksSkipped = [bool]$SkipChecks; editorTests = [bool]$RunEditorTests; output = $airkOutput;
+        vectorCheck = $airkVectorReport } |
         ConvertTo-Json | Set-Content -LiteralPath (Join-Path $airkOutput 'result.json') -Encoding utf8NoBOM
     Write-Output "Windows executable: $env:AIRK_TEST_BINARY"
     Write-Output "Review VSIX: $airkVsix"

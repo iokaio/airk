@@ -28,6 +28,7 @@ pub mod scheduler;
 mod sqlite;
 pub mod usage;
 pub mod vector_cache;
+pub mod vector_policy;
 mod verified_cache;
 
 #[derive(Clone, Debug)]
@@ -63,6 +64,22 @@ pub struct PersistentRevision {
 
 pub const ROOT_POINTER_VERSION: u32 = 5;
 pub const IMMUTABLE_CATALOG_VERSION: u32 = 3;
+
+pub enum UsageSourceSizes {
+    Available(Vec<airk_core::usage::SourceContextSize>),
+    /// The retained generation predates compact source measurements.
+    Legacy,
+    Unavailable(airk_core::usage::BaselineUnavailable),
+}
+
+/// Logical reads of authenticated bytes, not physical device I/O. Lookup time
+/// includes binding/lease/SQL work and excludes the separately timed verifier.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct UsageReadMetrics {
+    pub verification_bytes: u64,
+    pub verification_us: u64,
+    pub lookup_us: u64,
+}
 
 #[derive(Clone, Debug)]
 pub enum CommittedRevision {

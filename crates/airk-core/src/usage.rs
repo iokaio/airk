@@ -210,6 +210,128 @@ pub struct ContextBaseline {
     pub unique_sources: u32,
 }
 
+/// Fixed categories only: never persist error text, paths or citations in usage.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum BaselineUnavailable {
+    NotRecorded,
+    MissingCitation,
+    TooManySources,
+    MissingRevision,
+    RevisionUnavailable,
+    RevisionMismatch,
+    SourceUnavailable,
+    SourceMismatch,
+    InventoryLimit,
+    SourcePayloadLimit,
+    SourceTextLimit,
+    MeasurementError,
+}
+
+/// Per-source counts stored with an immutable catalog, not in the usage ledger.
+/// Both levels of JSON escaping are measured, so MCP framing stays comparable.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SourceContextSize {
+    pub source_hash: String,
+    pub content_kind: ContentKind,
+    pub chunks: u64,
+    pub hit_bytes: u64,
+    pub escaped_hit_bytes: u64,
+}
+
+impl SourceContextSize {
+    pub fn measure(artifact: &crate::Artifact) -> Result<Self> {
+        let mut result = Self {
+            source_hash: artifact.content_hash.clone(),
+            content_kind: content_kind(&artifact.language, &artifact.extraction_method),
+            chunks: artifact.chunks.len() as u64,
+            hit_bytes: 0,
+            escaped_hit_bytes: 0,
+        };
+        for chunk in &artifact.chunks {
+            let hit = crate::Hit {
+                citation: crate::Citation {
+                    path: artifact.path.clone(),
+                    content_hash: artifact.content_hash.clone(),
+                    start_line: chunk.start_line,
+                    end_line: chunk.end_line,
+                    location: chunk.location.clone(),
+                },
+                text: chunk.text.clone(),
+                truncated: false,
+            };
+            let json = serde_json::to_string(&hit)?;
+            result.hit_bytes = result
+                .hit_bytes
+                .checked_add(json.len() as u64)
+                .context("context size overflow")?;
+            result.escaped_hit_bytes = result
+                .escaped_hit_bytes
+                .checked_add((serde_json::to_string(&json)?.len() - 2) as u64)
+                .context("context size overflow")?;
+        }
+        Ok(result)
+    }
+}
+
+pub fn full_source_context_bytes(
+    sources: &[SourceContextSize],
+    collection: &str,
+    generation: u64,
+    representation: ResponseRepresentation,
+) -> Result<u64> {
+    let empty = serde_json::to_string(&crate::SearchResponse {
+        publication: None,
+        generation,
+        collection: collection.into(),
+        hits: vec![],
+        truncated: false,
+    })?;
+    let mut bytes = match representation {
+        ResponseRepresentation::LogicalResultJson => empty.len() as u64,
+        ResponseRepresentation::McpToolResultJson => serde_json::to_vec(
+            &serde_json::json!({"content":[{"type":"text","text":empty}],"isError":false}),
+        )?
+        .len() as u64,
+    };
+    let mut chunks = 0u64;
+    for source in sources {
+        chunks = chunks
+            .checked_add(source.chunks)
+            .context("context size overflow")?;
+        bytes = bytes
+            .checked_add(match representation {
+                ResponseRepresentation::LogicalResultJson => source.hit_bytes,
+                ResponseRepresentation::McpToolResultJson => source.escaped_hit_bytes,
+            })
+            .context("context size overflow")?;
+    }
+    bytes
+        .checked_add(chunks.saturating_sub(1))
+        .context("context size overflow")
+}
+
+pub fn content_kind(language: &str, extraction: &str) -> ContentKind {
+    if extraction.contains("pdf") {
+        ContentKind::Pdf
+    } else if extraction.contains("docx") {
+        ContentKind::Docx
+    } else if extraction.contains("xlsx") {
+        ContentKind::Xlsx
+    } else if extraction.contains("pptx") {
+        ContentKind::Pptx
+    } else {
+        match language {
+            "markdown" => ContentKind::Markdown,
+            "svg" => ContentKind::Svg,
+            "json" | "yaml" | "toml" | "html" | "css" | "xml" | "csv" | "tsv" | "ini"
+            | "dockerfile" => ContentKind::StructuredText,
+            "text" | "plain" | "unknown" => ContentKind::PlainText,
+            _ => ContentKind::Code,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct IndexWork {
     pub indexed: u64,
@@ -324,6 +446,8 @@ pub struct UsageObservation {
     pub response_representation: ResponseRepresentation,
     pub response_utf8_bytes: Option<u64>,
     pub baseline: Option<ContextBaseline>,
+    #[serde(default)]
+    pub baseline_unavailable: Option<BaselineUnavailable>,
     pub index_work: Option<IndexWork>,
     #[serde(default)]
     pub resources: Option<ResourceMeasurement>,
@@ -350,7 +474,7 @@ pub struct UsageFeedback {
     pub usefulness: Usefulness,
 }
 
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -542,6 +666,12 @@ impl UsageReport {
                 .checked_add(*value)
                 .ok_or_else(|| anyhow::anyhow!("usage aggregate overflow"))?;
         }
+        for (key, value) in &other.baseline_unavailable {
+            let total = self.baseline_unavailable.entry(*key).or_default();
+            *total = total
+                .checked_add(*value)
+                .context("usage aggregate overflow")?;
+        }
         for (key, source) in &other.comparisons {
             let target = self.comparisons.entry(*key).or_default();
             add!(
@@ -669,6 +799,8 @@ pub struct UsageReport {
     pub eligible_evidence_calls: u64,
     pub missing_baseline_calls: u64,
     pub mismatched_baseline_calls: u64,
+    #[serde(default)]
+    pub baseline_unavailable: BTreeMap<BaselineUnavailable, u64>,
     pub excluded_from_estimation_calls: u64,
     pub outside_scope_or_window: u64,
     pub duplicate_observations: u64,
@@ -705,6 +837,7 @@ pub fn summarize<'a>(
         eligible_evidence_calls: 0,
         missing_baseline_calls: 0,
         mismatched_baseline_calls: 0,
+        baseline_unavailable: BTreeMap::new(),
         excluded_from_estimation_calls: 0,
         outside_scope_or_window: 0,
         duplicate_observations: 0,
@@ -749,6 +882,14 @@ pub fn summarize<'a>(
         report.eligible_evidence_calls += 1;
         let (Some(baseline), Some(returned)) = (&event.baseline, event.response_utf8_bytes) else {
             report.missing_baseline_calls += 1;
+            *report
+                .baseline_unavailable
+                .entry(
+                    event
+                        .baseline_unavailable
+                        .unwrap_or(BaselineUnavailable::NotRecorded),
+                )
+                .or_default() += 1;
             continue;
         };
         if Some(baseline.generation) != event.generation
@@ -756,6 +897,10 @@ pub fn summarize<'a>(
             || baseline.unique_sources == 0
         {
             report.mismatched_baseline_calls += 1;
+            *report
+                .baseline_unavailable
+                .entry(BaselineUnavailable::RevisionMismatch)
+                .or_default() += 1;
             continue;
         }
         let compared = report.comparisons.entry(baseline.kind).or_default();

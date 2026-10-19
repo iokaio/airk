@@ -50,7 +50,7 @@ def main():
         assert status["files"] == 2
         assert call("coverage", "--refresh")["percent"] == 100
         indexed_path = "@requirements/requirements.md"
-        hit = call("search", "REQ-81", "--path-prefix", "@requirements/")["hits"][0]
+        hit = call("search", "--mode", "lexical", "REQ-81", "--path-prefix", "@requirements/")["hits"][0]
         assert hit["citation"]["path"] == indexed_path
         assert hit["citation"]["content_hash"] == hashlib.sha256(original_text.encode()).hexdigest()
         original_location = call("collections", "roots", "locate", indexed_path)
@@ -58,9 +58,9 @@ def main():
         call("collections", "roots", "remove", "requirements")
         call("collections", "roots", "add", "requirements", replacement)
         assert call("collections", "roots", "locate", indexed_path) == original_location
-        assert call("search", "REQ-81")["generation"] == status["generation"]
+        assert call("search", "--mode", "lexical", "REQ-81")["generation"] == status["generation"]
         call("index")
-        assert not call("search", "REQ-81")["hits"]
+        assert not call("search", "--mode", "lexical", "REQ-81")["hits"]
         assert call("collections", "roots", "locate", indexed_path)["root"] != original_location["root"]
 
         original_policy = call("collections", "quota", "policy")
@@ -96,7 +96,7 @@ def main():
         data = destination
         assert call("status") == published
         assert call("coverage", "--refresh")["percent"] == 100
-        assert call("search", "Replacement")["hits"]
+        assert call("search", "--mode", "lexical", "Replacement")["hits"]
         call("collections", "remove", "storage-fixture")
         assert (root / "main.md").read_text(encoding="utf-8") == changed_text
         assert (specs / "requirements.md").read_text(encoding="utf-8") == original_text
