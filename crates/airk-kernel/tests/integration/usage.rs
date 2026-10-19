@@ -481,11 +481,18 @@ fn index_reuse_and_latency_are_measured_separately_from_token_estimates() -> any
         index_disk_growth_bytes: Some(-10),
         scan_extract_us: Some(4),
         publish_us: Some(2),
+        metrics: [
+            (IndexMetric::EmbeddingActualForwards, 0),
+            (IndexMetric::EmbeddingInputs, 12),
+        ]
+        .into_iter()
+        .collect(),
         ..IndexWork::default()
     });
     let mut second = first.clone();
     second.event_id = [2; 16];
     second.elapsed_us = 16_000_000;
+    second.index_work.as_mut().unwrap().metrics.clear();
     let report = summarize(
         &first.scope,
         0,
@@ -506,6 +513,23 @@ fn index_reuse_and_latency_are_measured_separately_from_token_estimates() -> any
     assert_eq!(index.index_work.scan_extract_samples, 2);
     assert_eq!(index.index_work.scan_extract_us, 8);
     assert_eq!(index.index_work.publish_us, 4);
+    let forwards = &index.index_work.metrics[&IndexMetric::EmbeddingActualForwards];
+    assert_eq!((forwards.samples, forwards.value), (1, 0));
+    assert_eq!(
+        index.index_work.metrics[&IndexMetric::EmbeddingInputs].value,
+        12
+    );
+    assert!(
+        !index
+            .index_work
+            .metrics
+            .contains_key(&IndexMetric::EmbeddingInferenceUs)
+    );
+    let mut merged = report.clone();
+    merged.merge(&report)?;
+    let inputs = &merged.operations[&UsageOperation::Index].index_work.metrics
+        [&IndexMetric::EmbeddingInputs];
+    assert_eq!((inputs.samples, inputs.value), (2, 24));
     assert_eq!(index.latency_buckets[1], 1);
     assert_eq!(index.latency_buckets[7], 1);
     assert_eq!(UsagePolicy::default().mode, RecordingMode::AggregatesOnly);

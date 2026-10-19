@@ -567,6 +567,10 @@ impl Kernel {
             report.embedding_cache_misses = embedding.misses;
             report.embedding_inferences = embedding.inferences;
             report.embedding_no_vector = embedding.no_vector;
+            report.embedding_inputs = embedding.inputs;
+            report.embedding_blank_inputs = embedding.blank_inputs;
+            report.embedding_duplicate_inputs = embedding.duplicate_inputs;
+            report.embedding_actual_forwards = embedding.actual_forwards;
             report.embedding_model_load_us = embedding.model_load_us;
             report.embedding_cache_lookup_us = embedding.cache_lookup_us;
             report.embedding_cache_store_us = embedding.cache_store_us;

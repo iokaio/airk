@@ -147,6 +147,16 @@ pub struct IndexReport {
     pub embedding_inferences: u64,
     #[serde(default)]
     pub embedding_no_vector: u64,
+    /// Inputs presented to the embedding adapter, including cache hits and blanks.
+    #[serde(default)]
+    pub embedding_inputs: u64,
+    #[serde(default)]
+    pub embedding_blank_inputs: u64,
+    #[serde(default)]
+    pub embedding_duplicate_inputs: u64,
+    /// Actual neural plan executions; static word-vector lookups do not count.
+    #[serde(default)]
+    pub embedding_actual_forwards: u64,
     #[serde(default)]
     pub embedding_model_load_us: u64,
     #[serde(default)]

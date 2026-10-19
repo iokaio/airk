@@ -118,8 +118,18 @@ pub enum EmbeddingModel {
 
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct EmbeddingCacheStats {
+    /// Logical inputs presented, including cache hits and blank inputs.
+    pub inputs: u64,
+    /// Inputs whose effective model text is whitespace-only.
+    pub blank_inputs: u64,
+    /// Repeated nonblank exact inputs within bounded ONNX batches.
+    pub duplicate_inputs: u64,
+    /// Successful ONNX plan executions, excluding cache hits and blank inputs.
+    pub actual_forwards: u64,
     pub hits: u64,
     pub misses: u64,
+    /// Legacy logical uncached evaluations, including blanks and duplicate misses.
+    /// This is not a count of neural model executions; use actual_forwards.
     pub inferences: u64,
     pub no_vector: u64,
     /// Wall time for each disjoint phase; inference includes worker scheduling.
@@ -139,6 +149,15 @@ pub struct EmbeddingCacheContext<'a> {
     pub stats: &'a mut EmbeddingCacheStats,
     pub max_workers: usize,
     pub working_memory_bytes: usize,
+}
+
+/// Match the ONNX adapter's bounded UTF-8 prefix before its early blank return.
+pub(crate) fn onnx_input_is_blank(text: &str) -> bool {
+    let mut end = text.len().min(MAX_INPUT_BYTES);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text[..end].trim().is_empty()
 }
 
 pub(crate) fn read_asset(directory: &Path, name: &str, maximum: u64) -> Result<Vec<u8>> {
@@ -469,6 +488,19 @@ impl EmbeddingModel {
     ) -> Result<Option<Vec<f32>>> {
         let started = std::time::Instant::now();
         airk_core::embedding::embedding_key(descriptor, text.as_bytes())?;
+        stats.inputs += 1;
+        let is_onnx = matches!(self, Self::Onnx(_));
+        let blank = if is_onnx {
+            onnx_input_is_blank(text)
+        } else {
+            text.trim().is_empty()
+        };
+        stats.blank_inputs += u64::from(blank);
+        if is_onnx && blank {
+            stats.inferences += 1;
+            stats.no_vector += 1;
+            return Ok(None);
+        }
         if let Some(cache) = cache.filter(|_| !bypass) {
             if let Some(vector) = lookup_embedding(cache, descriptor, text.as_bytes())? {
                 stats.hits += 1;
@@ -481,6 +513,7 @@ impl EmbeddingModel {
         stats.inferences += 1;
         let started = std::time::Instant::now();
         let vector = self.embed_text(text)?;
+        stats.actual_forwards += u64::from(is_onnx);
         stats.inference_us += crate::embedding_batch::elapsed_us(started);
         let started = std::time::Instant::now();
         if let Some(vector) = &vector {
@@ -727,6 +760,13 @@ mod tests {
             stats.inferences, 5,
             "no-vector outcome is not fabricated or cached as a vector"
         );
+        assert_eq!(stats.inputs, 6);
+        assert_eq!(
+            stats.actual_forwards, 0,
+            "word vectors execute no ONNX plan"
+        );
+        assert_eq!(stats.blank_inputs, 0);
+        assert_eq!(stats.duplicate_inputs, 0);
         manifest.name = "different manifest".into();
         fs::write(
             directory.path().join("model.json"),
