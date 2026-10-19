@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Qualified single-current-index storage foundation. Runtime adoption is separate.
+pub mod collection;
 mod database;
 pub mod discovery;
 mod gate;
@@ -135,6 +136,34 @@ pub struct CurrentToken {
 }
 
 impl crate::FileStore {
+    /// Discover the persisted incarnation without consulting any old catalog.
+    /// A missing owner is empty only if no current database/bootstrap exists;
+    /// malformed or interrupted ownership is never silently reset.
+    pub fn current_scope(&self, root: &str, collection: &str) -> Result<Option<CurrentScope>> {
+        crate::validate_collection(collection)?;
+        ensure!(
+            self.directory().file_name().and_then(|name| name.to_str()) == Some(collection),
+            "foreign current collection path"
+        );
+        if !self.directory().try_exists()? {
+            return Ok(None);
+        }
+        let _gate = gate::Gate::shared(self)?;
+        database::reject_legacy_collection(self.directory())?;
+        if !self.directory().join(database::OWNER_FILE).try_exists()? {
+            ensure!(
+                !self.directory().join("current.sqlite3").try_exists()?
+                    && !self
+                        .directory()
+                        .join("current-bootstrap.json")
+                        .try_exists()?,
+                "current ownership header missing; rebuild the managed collection"
+            );
+            return Ok(None);
+        }
+        database::discover_scope(self.directory(), root, collection).map(Some)
+    }
+
     /// Read the captured capacity bound before opening a recovering writer.
     pub fn current_database_capacity(&self, scope: &CurrentScope) -> Result<u64> {
         scope.validate()?;

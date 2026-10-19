@@ -457,6 +457,7 @@ fn changed_artifact_attaches_and_replaces_exact_vector_occurrence() -> Result<()
                 fixture.target(&sealed),
                 &sealed,
                 ArtifactVectorChanges {
+                    configuration: None,
                     artifacts: &[ArtifactChange::Upsert(Box::new(first.clone()))],
                     occurrences: &[foreign],
                 },
@@ -475,6 +476,7 @@ fn changed_artifact_attaches_and_replaces_exact_vector_occurrence() -> Result<()
                 fixture.target(&sealed),
                 &sealed,
                 ArtifactVectorChanges {
+                    configuration: None,
                     artifacts: &[ArtifactChange::Upsert(Box::new(first.clone()))],
                     occurrences: &[invalid_span],
                 },
@@ -489,6 +491,7 @@ fn changed_artifact_attaches_and_replaces_exact_vector_occurrence() -> Result<()
         fixture.target(&sealed),
         &sealed,
         ArtifactVectorChanges {
+            configuration: None,
             artifacts: &[ArtifactChange::Upsert(Box::new(first.clone()))],
             occurrences: std::slice::from_ref(&occurrence),
         },
@@ -544,6 +547,7 @@ fn changed_artifact_attaches_and_replaces_exact_vector_occurrence() -> Result<()
         target,
         &sealed,
         ArtifactVectorChanges {
+            configuration: None,
             artifacts: &[ArtifactChange::Upsert(Box::new(second.clone()))],
             occurrences: std::slice::from_ref(&replacement),
         },
@@ -604,6 +608,7 @@ fn changed_artifact_attaches_and_replaces_exact_vector_occurrence() -> Result<()
         target,
         &sealed,
         ArtifactVectorChanges {
+            configuration: None,
             artifacts: &[ArtifactChange::Upsert(Box::new(alias))],
             occurrences: std::slice::from_ref(&additional),
         },
@@ -672,6 +677,7 @@ fn new_occurrence_cannot_adopt_unmapped_committed_graph_node() -> Result<()> {
             target,
             &sealed,
             ArtifactVectorChanges {
+                configuration: None,
                 artifacts: &[ArtifactChange::Upsert(Box::new(input))],
                 occurrences: &[occurrence],
             },
@@ -1628,8 +1634,26 @@ fn catalog_only_corruption_cannot_forge_a_hit_or_an_absence() -> Result<()> {
 #[test]
 fn current_scope_and_owned_header_reject_foreign_state_before_recovery() -> Result<()> {
     let fixture = Fixture::new()?;
+    assert_eq!(
+        fixture
+            .store
+            .current_scope(&fixture.scope.root, &fixture.scope.collection)?,
+        Some(fixture.scope.clone())
+    );
     let mut foreign = fixture.scope.clone();
     foreign.root.push_str("/other");
+    assert!(
+        fixture
+            .store
+            .current_scope(&foreign.root, &foreign.collection)
+            .is_err()
+    );
+    assert!(
+        fixture
+            .store
+            .current_scope(&fixture.scope.root, "another")
+            .is_err()
+    );
     assert!(fixture.store.current_read(&foreign).is_err());
     let writer = fixture.store.lock()?;
     assert!(
@@ -1652,6 +1676,47 @@ fn current_scope_and_owned_header_reject_foreign_state_before_recovery() -> Resu
     assert_eq!(
         before,
         fs::read(fixture.store.directory().join("current.sqlite3"))?
+    );
+    Ok(())
+}
+
+#[test]
+fn current_scope_discovery_distinguishes_empty_missing_and_corrupt_ownership() -> Result<()> {
+    let fixture = Fixture::empty()?;
+    assert!(
+        fixture
+            .store
+            .current_scope(&fixture.scope.root, &fixture.scope.collection)?
+            .is_none()
+    );
+    let lock = fixture.store.lock()?;
+    fixture
+        .store
+        .current_write(&lock, &fixture.quota, &fixture.scope, CAPACITY)?
+        .initialize(fixture.head.clone())?;
+    drop(lock);
+    let owner = fixture.store.directory().join(database::OWNER_FILE);
+    let bytes = fs::read(&owner)?;
+    fs::write(&owner, b"malformed")?;
+    assert!(
+        fixture
+            .store
+            .current_scope(&fixture.scope.root, &fixture.scope.collection)
+            .is_err()
+    );
+    fs::remove_file(&owner)?;
+    assert!(
+        fixture
+            .store
+            .current_scope(&fixture.scope.root, &fixture.scope.collection)
+            .is_err()
+    );
+    fs::write(owner, bytes)?;
+    assert_eq!(
+        fixture
+            .store
+            .current_scope(&fixture.scope.root, &fixture.scope.collection)?,
+        Some(fixture.scope.clone())
     );
     Ok(())
 }

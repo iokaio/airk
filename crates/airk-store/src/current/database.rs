@@ -44,6 +44,25 @@ struct Owner {
 }
 
 pub(crate) fn check_owner(directory: &Path, scope: &CurrentScope) -> Result<u64> {
+    let owner = read_owner(directory)?;
+    ensure!(owner.scope == *scope, "foreign current ownership header");
+    Ok(owner.capacity)
+}
+
+pub(crate) fn discover_scope(
+    directory: &Path,
+    root: &str,
+    collection: &str,
+) -> Result<CurrentScope> {
+    let owner = read_owner(directory)?;
+    ensure!(
+        owner.scope.root == root && owner.scope.collection == collection,
+        "foreign current ownership header"
+    );
+    Ok(owner.scope)
+}
+
+fn read_owner(directory: &Path) -> Result<Owner> {
     let path = directory.join(OWNER_FILE);
     let metadata = fs::symlink_metadata(&path)
         .context("current ownership header missing; run airk index --full")?;
@@ -59,13 +78,12 @@ pub(crate) fn check_owner(directory: &Path, scope: &CurrentScope) -> Result<u64>
     );
     let owner: Owner = serde_json::from_slice(&bytes)?;
     validate_capacity(owner.capacity)?;
+    owner.scope.validate()?;
     ensure!(
-        owner.version == DATABASE_VERSION
-            && owner.scope == *scope
-            && serde_json::to_vec(&owner)? == bytes,
+        owner.version == DATABASE_VERSION && serde_json::to_vec(&owner)? == bytes,
         "foreign current ownership header"
     );
-    Ok(owner.capacity)
+    Ok(owner)
 }
 
 pub(crate) fn create_owner(directory: &Path, scope: &CurrentScope, capacity: u64) -> Result<()> {

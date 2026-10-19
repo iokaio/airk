@@ -206,6 +206,7 @@ pub enum ArtifactChange {
 pub struct ArtifactVectorChanges<'a> {
     pub artifacts: &'a [ArtifactChange],
     pub occurrences: &'a [PreparedOccurrence],
+    pub configuration: Option<&'a super::collection::CollectionConfiguration>,
 }
 
 impl ArtifactChange {
@@ -1162,6 +1163,11 @@ impl CurrentWriter<'_> {
         let mut changes = vec![change];
         let planned_root = {
             let mut plan = map::MapPlan::new(self.connection()?, &self.scope, base.artifact_root)?;
+            let mut collection = super::collection::CollectionPlan::load(&plan, &self.scope, None)?;
+            collection.update(
+                previous.as_ref().map(|input| &input.artifact),
+                input.map(|input| &input.artifact),
+            )?;
             let mut postings = super::postings::PostingChanges::default();
             postings.update(
                 &mut plan,
@@ -1172,20 +1178,53 @@ impl CurrentWriter<'_> {
             )?;
             plan.put(identity, changes[0].value())?;
             changes.extend(postings.into_changes());
+            changes.extend(collection.finish(&mut plan, &self.scope)?);
             plan.root()?
         };
+        self.commit_catalog_changes(expected, base, changes, planned_root)
+    }
+
+    /// Attach applied configuration to a newly bootstrapped empty collection.
+    /// This is not a migration path for a populated current or legacy index.
+    pub fn initialize_collection(
+        &mut self,
+        expected: &CurrentToken,
+        configuration: &super::collection::CollectionConfiguration,
+    ) -> Result<CurrentCommit> {
+        let (phase, base) = state(self.connection()?, &self.scope)?;
+        ensure!(
+            phase == TransactionPhase::Ready
+                && self.pending()?.is_none()
+                && *expected == base.token()?
+                && base.sequence == 0
+                && base.artifact_root == map::empty_root(&self.scope)?,
+            "current collection initialization requires an empty bootstrap"
+        );
+        committed_lexical_manifest(self.connection()?, &base)?;
+        if let Some(model) = &configuration.model {
+            ModelObjects::new(self.store.directory()).verify(model, MAX_CAPTURED_OBJECT_BYTES)?;
+        }
+        let mut plan = map::MapPlan::new(self.connection()?, &self.scope, base.artifact_root)?;
+        let collection =
+            super::collection::CollectionPlan::load(&plan, &self.scope, Some(configuration))?;
+        let changes = collection
+            .finish(&mut plan, &self.scope)?
+            .into_iter()
+            .collect();
+        let root = plan.root()?;
+        self.commit_catalog_changes(expected, base, changes, root)
+    }
+
+    fn commit_catalog_changes(
+        &mut self,
+        expected: &CurrentToken,
+        base: CurrentHead,
+        changes: Vec<map::MapChange>,
+        planned_root: Sha256Digest,
+    ) -> Result<CurrentCommit> {
         let id = framed_digest(
-            b"current-catalog-only-update/1",
-            &[
-                &serde_json::to_vec(expected)?,
-                identity.as_bytes(),
-                &framed_digest(
-                    b"current-catalog-value/1",
-                    &[changes[0].value().unwrap_or(&[])],
-                )
-                .as_bytes()[..],
-                &[u8::from(changes[0].value().is_some())],
-            ],
+            b"current-catalog-only-update/2",
+            &[&serde_json::to_vec(expected)?, planned_root.as_bytes()],
         );
         let allowance = database::allowance(
             self.connection
@@ -1302,6 +1341,7 @@ impl CurrentWriter<'_> {
             ArtifactVectorChanges {
                 artifacts: changes,
                 occurrences: &[],
+                configuration: None,
             },
             model,
             lexical_manifest,
@@ -1366,6 +1406,9 @@ impl CurrentWriter<'_> {
             "changed-artifact publication base expired"
         );
         let mut plan = map::MapPlan::new(self.connection()?, &self.scope, base.artifact_root)?;
+        let mut collection =
+            super::collection::CollectionPlan::load(&plan, &self.scope, update.configuration)?;
+        collection.verify_model(&model)?;
         let mut postings = super::postings::PostingChanges::default();
         for change in changes {
             let key = map::key(
@@ -1390,6 +1433,13 @@ impl CurrentWriter<'_> {
                     .map(|a| a.content_hash.parse::<Sha256Digest>())
                     .transpose()?,
             );
+            collection.update(
+                previous.as_ref(),
+                match change {
+                    ArtifactChange::Upsert(input) => Some(&input.artifact),
+                    ArtifactChange::Delete(_) => None,
+                },
+            )?;
             postings.update(
                 &mut plan,
                 &self.scope,
@@ -1407,6 +1457,7 @@ impl CurrentWriter<'_> {
             plan.put(key, value.as_deref())?;
         }
         map_changes.extend(postings.into_changes());
+        map_changes.extend(collection.finish(&mut plan, &self.scope)?);
         let reattached = occurrences
             .iter()
             .map(|item| item.pointer.embedding_key)
