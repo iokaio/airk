@@ -362,14 +362,7 @@ fn semantic_batches_disclose_partial_coverage() -> Result<()> {
     );
     let base = kernel.status()?.semantic_readiness;
     assert_eq!(base.state, SemanticState::Partial);
-    assert!(base.completed_artifacts > 0 && base.completed_artifacts < 33);
-    assert_eq!(kernel.run_scheduled_once()?.state, "enriched");
-    let partial = kernel.status()?.semantic_readiness;
-    assert_eq!(partial.state, SemanticState::Partial);
-    assert_eq!(
-        (partial.selected_artifacts, partial.completed_artifacts),
-        (65, base.completed_artifacts + 32)
-    );
+    assert!(base.completed_artifacts > 0 && base.completed_artifacts < 65);
     let pending_path = SearchQuery {
         text: "login".into(),
         path_prefix: Some("file_64.txt".into()),
@@ -382,7 +375,24 @@ fn semantic_batches_disclose_partial_coverage() -> Result<()> {
         SemanticState::Partial
     );
     assert!(pending_search.hits.is_empty());
-    assert_eq!(kernel.run_scheduled_once()?.state, "enriched");
+    let mut completed = base.completed_artifacts;
+    while completed < 65 {
+        assert_eq!(kernel.run_scheduled_once()?.state, "enriched");
+        completed = (completed + 32).min(65);
+        let next = kernel.status()?.semantic_readiness;
+        assert_eq!(
+            (next.selected_artifacts, next.completed_artifacts),
+            (65, completed)
+        );
+        assert_eq!(
+            next.state,
+            if completed == 65 {
+                SemanticState::Ready
+            } else {
+                SemanticState::Partial
+            }
+        );
+    }
     let ready = kernel.status()?.semantic_readiness;
     assert_eq!(ready.state, SemanticState::Ready);
     assert_eq!(

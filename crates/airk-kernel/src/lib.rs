@@ -328,6 +328,13 @@ impl Kernel {
     }
 
     fn publication_reservation(&self) -> Result<airk_store::quota::Reservation> {
+        self.publication_reservation_with_limit(4 << 30)
+    }
+
+    fn publication_reservation_with_limit(
+        &self,
+        maximum: u64,
+    ) -> Result<airk_store::quota::Reservation> {
         let quota = airk_store::quota::Quota::open(&self.data_root)?;
         // The reservation includes temporary and retained bytes together. Each
         // provider charges before writes; exhausting it leaves the active pin intact.
@@ -345,7 +352,7 @@ impl Kernel {
                     .saturating_sub(c.reserved_bytes)
             })
             .min(root_free);
-        quota.reserve_available(&self.collection, (free / 2).min(4 << 30))
+        quota.reserve_available(&self.collection, (free / 2).min(maximum))
     }
 
     pub fn read_file(
