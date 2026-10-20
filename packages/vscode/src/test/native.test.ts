@@ -32,6 +32,44 @@ test('native writer queue isolates data directories and collections', async () =
     assert.equal(calls.at(-1), 'same', 'The same native writer must wait even through a path spelling alias');
 });
 
+test('native semantic adapter finishes bounded batches and honors saved pause without a service', { skip: !process.env.AIRK_TEST_BINARY }, async () => {
+    const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'airk-semantic-adapter-'));
+    const directory = await fs.realpath(temporary);
+    try {
+        const root = path.join(directory, 'source'), dataDir = path.join(directory, 'state');
+        const model = path.join(dataDir, 'models', 'local');
+        await fs.mkdir(root); await fs.mkdir(model, { recursive: true });
+        const vocabulary = JSON.stringify({ authenticate: [1, 0], login: [1, 0] });
+        await fs.writeFile(path.join(model, 'vocabulary.json'), vocabulary);
+        await fs.writeFile(path.join(model, 'model.json'), JSON.stringify({ schema: 1,
+            name: 'original-semantic-adapter-fixture', license: 'Apache-2.0', dimensions: 2,
+            sha256: createHash('sha256').update(vocabulary).digest('hex') }));
+        for (let file = 0; file < 65; file++) { await fs.writeFile(path.join(root, `file_${String(file).padStart(2, '0')}.txt`), 'authenticate\n'); }
+        const spec: LaunchSpec = { command: path.resolve(process.env.AIRK_TEST_BINARY!), root, dataDir,
+            collection: 'semantic-adapter', name: 'Fixture' };
+        await runJson(spec, 'index', ['--scheduled']);
+        type Ready = {state: string; completed_artifacts: number; selected_artifacts: number};
+        let status = await runJson<Ready>(spec, 'semantic', ['status']);
+        assert.equal(status.state, 'partial'); assert.ok(status.completed_artifacts < 65);
+        await runJson(spec, 'schedule', ['pause']);
+        assert.equal((await runJson<{state: string}>(spec, 'semantic', ['run', '--scheduled'])).state, 'paused');
+        const paused = await runJson<Ready>(spec, 'semantic', ['status']);
+        assert.equal(paused.state, status.state); assert.equal(paused.completed_artifacts, status.completed_artifacts);
+        await runJson(spec, 'schedule', ['resume']);
+        let passes = 0;
+        while (status.state !== 'ready') {
+            assert.ok(++passes <= 3, 'Semantic indexing stopped advancing');
+            assert.equal((await runJson<{state: string}>(spec, 'semantic', ['run', '--scheduled'])).state, 'enriched');
+            const next = await runJson<Ready>(spec, 'semantic', ['status']);
+            assert.equal(next.completed_artifacts, Math.min(65, status.completed_artifacts + 32));
+            status = next;
+        }
+        assert.equal(status.completed_artifacts, 65);
+        assert.equal((await runJson<{state: string}>(spec, 'semantic', ['run', '--scheduled'])).state, 'idle');
+        assert.equal(await fs.readFile(path.join(root, 'file_64.txt'), 'utf8'), 'authenticate\n');
+    } finally { await removeFixture(directory, 'airk-semantic-adapter-'); }
+});
+
 // Keep ordinary adapter tests on AIRK_TEST_BINARY; only this test needs an old helper.
 // AIRK_TEST_UPGRADE_BINARY remains supported for earlier qualification commands.
 const previousHelperBinary = process.env.AIRK_TEST_PREVIOUS_BINARY || process.env.AIRK_TEST_BINARY;

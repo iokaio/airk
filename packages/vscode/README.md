@@ -4,7 +4,11 @@
 
 Everything runs on your machine. There is no cloud service, API key, Docker, Rust or Python to install: the native helper is bundled in the extension.
 
-> **Version 1.2.1.** Packages support Windows x64, Linux x64 and macOS (Intel and Apple Silicon). AIRK 1.2 starts a fresh current index; existing 1.1 indexes and settings remain untouched. See [the 1.2.1 documentation update](https://github.com/iokaio/airk/blob/main/docs/release-1.2.1.md), [the 1.2 behavior notes](https://github.com/iokaio/airk/blob/main/docs/release-1.2.0.md), and [Known limits](#known-limits).
+> **Version 1.2.2.** Packages support Windows x64, Linux x64 and macOS (Intel and Apple Silicon). AIRK 1.2 starts a fresh current index; existing 1.1 indexes and settings remain untouched. See [the 1.2.2 semantic indexing fix](https://github.com/iokaio/airk/blob/main/docs/release-1.2.2.md), [the 1.2 behavior notes](https://github.com/iokaio/airk/blob/main/docs/release-1.2.0.md), and [Known limits](#known-limits).
+
+## What's new in 1.2.2
+
+The VS Code extension continues unfinished semantic batches after **Index now** and when reopening a trusted workspace, without a separately installed service. The dashboard shows semantic indexing independently of saved-file coverage, even at 100%. Pause, failure blocking and collection/storage changes apply between batches. Manual mode still completes already requested semantic work, and previously committed evidence remains available.
 
 ## What's new in 1.2.1
 
@@ -77,7 +81,7 @@ Document extraction keeps heading context, dates, requirement IDs and modality (
 
 ## Get started
 
-1. **Install the stable extension** from the VS Code Marketplace, or download the matching 1.2.1 VSIX from [GitHub Releases](https://github.com/iokaio/airk/releases) and use **Extensions: Install from VSIX…**. Packages target `win32-x64`, `linux-x64`, `darwin-x64` and `darwin-arm64`. If you previously opted into pre-release versions, use **Switch to Release Version** in the extension menu to stay on stable updates.
+1. **Install the stable extension** from the VS Code Marketplace, or download the matching 1.2.2 VSIX from [GitHub Releases](https://github.com/iokaio/airk/releases) and use **Extensions: Install from VSIX…**. Packages target `win32-x64`, `linux-x64`, `darwin-x64` and `darwin-arm64`. If you previously opted into pre-release versions, use **Switch to Release Version** in the extension menu to stay on stable updates.
 2. **Open a folder and trust it.** AIRK does not start its helper or read files in an untrusted window.
 3. **Index.** Click the **AIRK** status-bar item and choose **Index Now**, or run **AIRK: Index Now**. The status item then shows measured coverage, for example `AIRK: 97%`, and its tooltip lists stale, missing and failed files.
 4. **Connect an agent.**

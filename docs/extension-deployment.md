@@ -12,16 +12,16 @@ VCP's Windows deployment uses a separately installed engine, machine-scoped path
 
 ## Implemented VSIX construction
 
-The original construction record used **1.1.1**; the checked-in native/helper/extension version for this documentation update is **1.2.1**. The visible extension name is **AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents**, its identity is `iokaio.airk`, and its description has no beta label. VSCE sets the actual pre-release flag in the VSIX; a version below 1.0 by itself does not establish that channel. Keep a purely numeric version, because VS Code does not support a `-beta` suffix in its extension version field. [Official pre-release rules](https://code.visualstudio.com/api/working-with-extensions/publishing-extension#pre-release-extensions) describe the flag and separate release/pre-release versions.
+The original construction record used **1.1.1**; the checked-in native/helper/extension version for this semantic indexing fix is **1.2.2**. The visible extension name is **AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents**, its identity is `iokaio.airk`, and its description has no beta label. VSCE sets the actual pre-release flag in the VSIX; a version below 1.0 by itself does not establish that channel. Keep a purely numeric version, because VS Code does not support a `-beta` suffix in its extension version field. [Official pre-release rules](https://code.visualstudio.com/api/working-with-extensions/publishing-extension#pre-release-extensions) describe the flag and separate release/pre-release versions.
 
-| Platform | 1.2.1 VSIX filename |
+| Platform | 1.2.2 VSIX filename |
 |---|---|
-| Windows x64 | airk-1.2.1-win32-x64.vsix |
-| Linux x64 | airk-1.2.1-linux-x64.vsix |
-| macOS Apple Silicon | airk-1.2.1-darwin-arm64.vsix |
-| macOS Intel | airk-1.2.1-darwin-x64.vsix |
+| Windows x64 | airk-1.2.2-win32-x64.vsix |
+| Linux x64 | airk-1.2.2-linux-x64.vsix |
+| macOS Apple Silicon | airk-1.2.2-darwin-arm64.vsix |
+| macOS Intel | airk-1.2.2-darwin-x64.vsix |
 
-The 1.2.1 patch uses the stable channel. Future previews must use a separate, deliberately selected version. A regular release must use a distinct version; the same Marketplace version cannot be both release and pre-release. Platform packages share the version and extension identity, with their target and bundled native helper distinguished in the artifact. No Marketplace listing or publication is created by the local build.
+The 1.2.2 patch uses the stable channel. Future previews must use a separate, deliberately selected version. A regular release must use a distinct version; the same Marketplace version cannot be both release and pre-release. Platform packages share the version and extension identity, with their target and bundled native helper distinguished in the artifact. No Marketplace listing or publication is created by the local build.
 
 The extension has its own package, checked-in npm lock and pinned Node/TypeScript/VSCE versions. CI restores with `npm ci --ignore-scripts` and compiles on the same native runner as its helper. [The extension packager](../scripts/package-extension.py) builds a fresh allowlisted stage containing compiled runtime modules, manifest, required media/docs, the verified helper and legal notices. Exclude tests, development dependencies, source maps, indexes, fixtures, reference files and arbitrary checkout contents.
 

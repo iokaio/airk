@@ -6,12 +6,14 @@ export interface Clock { now(): number; set(fn: () => void, ms: number): unknown
 const systemClock: Clock = { now: () => Date.now(), set: (fn, ms) => setTimeout(fn, ms), clear: timer => clearTimeout(timer as NodeJS.Timeout) };
 export class CapacityError extends Error {}
 export class PausedError extends Error {}
-type State = 'queued' | 'indexing' | 'current' | 'partial' | 'failed' | 'capacity-limited' | 'paused';
+export type SemanticResult = 'pending' | 'ready' | 'paused';
+type State = 'queued' | 'indexing' | 'enriching' | 'semantic-pending' | 'current' | 'partial' | 'failed' | 'capacity-limited' | 'paused';
 interface Waiter { revision: number; resolve(): void; reject(error: unknown): void }
 interface Job {
     spec: LaunchSpec; revision: number; completed: number; first: number; last: number;
     ended: number; manual: boolean; full: boolean; blocked: boolean; state: State; waiters: Waiter[];
     runningRevision?: number; runningFull?: boolean;
+    semanticPending: boolean; semanticAt: number; baseState: 'current' | 'partial';
 }
 
 /** Batches UI events; the native kernel remains the sole index writer/publisher. */
@@ -21,6 +23,7 @@ export class Scheduler {
     private busy = false;
     private paused = false;
     private stopped = false;
+    private resumeRevision = 0;
     private holds = 0;
     private idleWaiters = new Set<() => void>();
     private lastActivity: number;
@@ -28,18 +31,27 @@ export class Scheduler {
         private readonly run: (spec: LaunchSpec, full: boolean, automatic: boolean) => Promise<IndexReport>,
         private readonly changed: () => void,
         private readonly failed: (spec: LaunchSpec, error: unknown) => void,
-        private readonly clock: Clock = systemClock) { this.lastActivity = clock.now(); }
+        private readonly clock: Clock = systemClock,
+        private readonly enrich?: (spec: LaunchSpec) => Promise<SemanticResult>) { this.lastActivity = clock.now(); }
 
     configure(options: Options): void { this.options = options; this.schedule(); }
     activity(): void { this.lastActivity = this.clock.now(); this.schedule(); }
     pause(): void { this.paused = true; this.schedule(); }
-    resume(): void { this.paused = false; for (const job of this.jobs.values()) { job.blocked = false; } this.schedule(); }
+    resume(): void {
+        this.resumeRevision++;
+        this.paused = false;
+        for (const job of this.jobs.values()) {
+            job.blocked = false;
+            if (job.semanticPending && job.state === 'paused') { job.state = 'semantic-pending'; }
+        }
+        this.schedule();
+    }
     get isPaused(): boolean { return this.paused; }
     get isBusy(): boolean { return this.busy; }
     get canRunMaintenance(): boolean {
         return !this.busy && !this.stopped && !this.holds
             && this.clock.now() - this.lastActivity >= Math.max(10000, this.options.idleMs)
-            && ![...this.jobs.values()].some(job => job.revision > job.completed && Number.isFinite(this.due(job)));
+            && ![...this.jobs.values()].some(job => Number.isFinite(this.nextDue(job)));
     }
     /** Hold new jobs during storage selection without changing the user's pause state. */
     async holdWhile<T>(operation: (idle: Promise<void>) => Promise<T>): Promise<T> {
@@ -54,8 +66,8 @@ export class Scheduler {
     }
     states(): { collection: string; name: string; state: string; pending: boolean }[] {
         return [...this.jobs.values()].map(job => ({ collection: job.spec.collection, name: job.spec.name,
-            state: this.paused && job.state !== 'indexing' ? 'paused' : job.state,
-            pending: job.revision > job.completed }));
+            state: this.paused && !['indexing', 'enriching'].includes(job.state) ? 'paused' : job.state,
+            pending: job.revision > job.completed || job.semanticPending }));
     }
     forget(collection: string): void {
         const job = this.jobs.get(collection);
@@ -69,7 +81,8 @@ export class Scheduler {
         let job = this.jobs.get(spec.collection);
         if (!job) {
             job = { spec, revision: 0, completed: 0, first: now, last: now, ended: -Infinity,
-                manual: false, full: false, blocked: false, state: 'queued', waiters: [] };
+                manual: false, full: false, blocked: false, state: 'queued', waiters: [],
+                semanticPending: false, semanticAt: now, baseState: 'current' };
             this.jobs.set(spec.collection, job);
         }
         // Repeated explicit clicks share the existing up-to-date pass. Filesystem
@@ -82,10 +95,35 @@ export class Scheduler {
         if (!capacityBlocked) { job.blocked = false; }
         const alreadyRunning = job.runningRevision === job.revision;
         job.manual ||= manual && !alreadyRunning; job.full ||= full && !alreadyRunning;
-        if (job.state !== 'indexing' && !capacityBlocked) { job.state = 'queued'; }
+        if (!['indexing', 'enriching'].includes(job.state) && !capacityBlocked) { job.state = 'queued'; }
         const promise = manual ? new Promise<void>((resolve, reject) => job!.waiters.push({ revision: job!.revision, resolve, reject })) : Promise.resolve();
         this.schedule();
         return promise;
+    }
+    /** Observe durable work without requesting a new source scan or clearing failures. */
+    observeSemantic(spec: LaunchSpec, pending: boolean): void {
+        if (this.stopped || !this.enrich) { return; }
+        let job = this.jobs.get(spec.collection);
+        if (!job && pending) {
+            const now = this.clock.now();
+            job = { spec, revision: 0, completed: 0, first: now, last: now, ended: -Infinity,
+                manual: false, full: false, blocked: false, state: 'semantic-pending', waiters: [],
+                semanticPending: true, semanticAt: now, baseState: 'current' };
+            this.jobs.set(spec.collection, job);
+        }
+        if (!job) { return; }
+        job.semanticPending = pending;
+        if (!job.blocked && job.revision === job.completed && !['indexing', 'enriching'].includes(job.state)) {
+            job.state = pending ? 'semantic-pending' : job.baseState;
+        }
+        this.schedule();
+    }
+    private nextDue(job: Job): number {
+        const source = job.revision > job.completed ? this.due(job) : Infinity;
+        // Manual/on-save modes control new source scans, not completion of an
+        // already requested semantic build. Explicit Pause still stops batches.
+        const semantic = this.enrich && job.semanticPending && !this.paused && !job.blocked ? job.semanticAt : Infinity;
+        return Math.min(source, semantic);
     }
     private due(job: Job): number {
         if (job.manual) { return this.clock.now(); }
@@ -100,11 +138,32 @@ export class Scheduler {
         if (this.timer !== undefined) { this.clock.clear(this.timer); this.timer = undefined; }
         this.changed();
         if (this.busy || this.stopped || this.holds) { return; }
-        const pending = [...this.jobs.values()].filter(job => job.revision > job.completed);
-        pending.sort((a, b) => this.due(a) - this.due(b));
+        const pending = [...this.jobs.values()].filter(job => Number.isFinite(this.nextDue(job)));
+        pending.sort((a, b) => this.nextDue(a) - this.nextDue(b));
         const job = pending[0];
-        if (!job || !Number.isFinite(this.due(job))) { return; }
-        this.timer = this.clock.set(() => { this.timer = undefined; void this.execute(job); }, Math.max(0, this.due(job) - this.clock.now()));
+        if (!job) { return; }
+        this.timer = this.clock.set(() => {
+            this.timer = undefined;
+            void (job.revision > job.completed && this.due(job) <= this.clock.now() ? this.execute(job) : this.executeSemantic(job));
+        }, Math.max(0, this.nextDue(job) - this.clock.now()));
+    }
+    private async executeSemantic(job: Job): Promise<void> {
+        if (this.stopped || !this.enrich) { return; }
+        const resumeRevision = this.resumeRevision;
+        this.busy = true; job.state = 'enriching'; this.changed();
+        try {
+            const result = await this.enrich(job.spec);
+            job.semanticPending = result !== 'ready';
+            job.blocked = result === 'paused' && resumeRevision === this.resumeRevision;
+            job.state = job.blocked ? 'paused' : job.revision > job.completed ? 'queued'
+                : job.semanticPending ? 'semantic-pending' : job.baseState;
+        } catch (error) {
+            job.blocked = true; job.state = 'failed'; this.failed(job.spec, error);
+        } finally {
+            this.busy = false; job.semanticAt = this.clock.now() + 1000;
+            for (const ready of this.idleWaiters) { ready(); }
+            this.idleWaiters.clear(); this.schedule();
+        }
     }
     private async execute(job: Job): Promise<void> {
         if (this.stopped) { return; }
@@ -115,7 +174,8 @@ export class Scheduler {
         try {
             const report = await this.run(job.spec, full, automatic);
             job.completed = revision;
-            job.state = job.revision > revision ? 'queued' : report.skipped.length ? 'partial' : 'current';
+            job.baseState = report.skipped.length ? 'partial' : 'current';
+            job.state = job.revision > revision ? 'queued' : job.semanticPending ? 'semantic-pending' : job.baseState;
             for (const waiter of job.waiters.filter(w => w.revision <= revision)) { waiter.resolve(); }
             job.waiters = job.waiters.filter(w => w.revision > revision);
             if (job.revision > revision) { job.first = job.last; }

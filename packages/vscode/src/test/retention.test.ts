@@ -58,6 +58,9 @@ test('current maintenance replaces historical controls; extraction and quota cha
     const native = require('../native'), priorPrepare = native.prepareHelper, priorRun = native.runJson;
     native.prepareHelper = async () => '/original/helper';
     native.runJson = async (_spec: unknown, command: string, extra: string[] = []) => {
+        if (command === 'collections' && extra[0] === 'vectors' && extra[1] === 'show') {
+            return { enabled: false, published: false, indexed_vectors: 0, semantic_readiness: { state: 'disabled' } };
+        }
         calls.push([command, ...extra]);
         if (extra[0] === 'quota') {
             if (extra[1] === 'policy') { return structuredClone(quotaPolicy); }

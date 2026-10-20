@@ -31,6 +31,102 @@ function addReportApi(stub: any): void {
     });
 }
 
+test('extension continues semantic work without a service and rejects closed bindings after queued writes', { timeout: 15000 }, async () => {
+    for (const scenario of ['index', 'reopen', 'close']) {
+        const reopen = scenario !== 'index';
+        const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'airk-semantic-editor-'));
+        const root = path.join(directory, 'Project'), storage = path.join(directory, 'Host');
+        await fs.mkdir(root);
+        const commands = new Map<string, () => Promise<unknown>>(), state = new Map<string, unknown>();
+        const disposable = { dispose() {} }, event = () => disposable;
+        let dashboard: any, completed = reopen ? 32 : 65, scans = 0, batches = 0;
+        const errors: string[] = [];
+        const stub = {
+            workspace: { isTrusted: true, workspaceFolders: [{ name: 'Project', uri: { scheme: 'file', fsPath: root } }],
+                getConfiguration: () => ({ get: (key: string, fallback: unknown) => key === 'index.mode' ? 'manual' : fallback, inspect: () => undefined }),
+                createFileSystemWatcher: () => ({ ...disposable, onDidChange: event, onDidCreate: event, onDidDelete: event }),
+                onDidSaveTextDocument: event, onDidChangeTextDocument: event, onDidGrantWorkspaceTrust: event,
+                onDidChangeWorkspaceFolders: event, onDidChangeConfiguration: event },
+            window: { createOutputChannel: () => ({ ...disposable, appendLine() {}, show() {} }),
+                createStatusBarItem: () => ({ ...disposable, show() {} }), onDidChangeTextEditorSelection: event, onDidChangeActiveTextEditor: event,
+                showInformationMessage() {}, showErrorMessage: (error: string) => { errors.push(error); },
+                withProgress: async (_options: unknown, run: () => Promise<unknown>) => run() },
+            commands: { registerCommand: (name: string, handler: () => Promise<unknown>) => { commands.set(name, handler); return disposable; } },
+            env: {}, StatusBarAlignment: { Left: 1 }, ProgressLocation: { Notification: 1 },
+            EventEmitter: class { event = event; fire() {} dispose() {} }, lm: {}
+        };
+        addTreeApi(stub, undefined, provider => { dashboard = provider; });
+        const native = require('../native'), vectors = require('../vectorModel');
+        mock.method(native, 'prepareHelper', async () => '/fixture/airk');
+        mock.method(vectors, 'prepareVectorModel', async () => {});
+        mock.method(native, 'runJson', async (spec: {root: string; dataDir: string}, command: string, extra: string[] = []) => {
+            assert.equal(spec.root, await fs.realpath(root));
+            assert.equal(spec.dataDir, await fs.realpath(path.join(storage, 'indexes')));
+            if (command === 'collections' && extra[0] === 'vectors') {
+                return { enabled: true, published: true, indexed_vectors: completed, pending_reindex: false, default_search_mode: 'hybrid',
+                    semantic_readiness: { state: completed < 65 ? 'partial' : 'ready', completed_artifacts: completed,
+                        selected_artifacts: 65, completed_units: completed, selected_units: 65, failure: null } };
+            }
+            if (command === 'index') {
+                assert.deepEqual(extra, ['--scheduled']); scans++; completed = 32;
+                return { generation: 1, indexed: 65, reused: 0, removed: 0, skipped: [] };
+            }
+            if (command === 'semantic') {
+                assert.deepEqual(extra, ['run', '--scheduled']); batches++; completed = Math.min(65, completed + 32);
+                return { state: 'enriched', error: null };
+            }
+            assert.notEqual(command, 'service', 'The extension must not install a background service');
+            return { scan_complete: true, eligible: 65, current: 65, indexed: true };
+        });
+        const loader = Module as unknown as { _load: (...args: any[]) => any }, original = loader._load;
+        loader._load = function(request: string, ...args: any[]) { return request === 'vscode' ? stub : original.call(this, request, ...args); };
+        const context = { subscriptions: [] as { dispose(): void }[], extensionPath: '/fixture/extension',
+            extension: { packageJSON: { version: '1.2.2' } }, globalStorageUri: { fsPath: storage },
+            globalState: { get: (key: string, fallback: unknown) => state.get(key) ?? fallback,
+                update: async (key: string, value: unknown) => { state.set(key, value); } } };
+        try {
+            for (const module of ['../extension', '../agentSetup', '../dashboardView', '../collectionTree']) { delete require.cache[require.resolve(module)]; }
+            await require('../extension').activate(context);
+            assert.equal(dashboard.visible, false);
+            if (scenario === 'close') {
+                const controller = dashboard.controller, spec = [...controller.specs.values()][0];
+                let release!: () => void;
+                const held = controller.nativeWrites.run(spec, () => new Promise<void>(resolve => { release = resolve; }));
+                try {
+                    const deadline = Date.now() + 2000;
+                    while (!controller.scheduler.isBusy) {
+                        assert.ok(Date.now() < deadline, 'Semantic batch was not queued');
+                        await new Promise(resolve => setTimeout(resolve, 10));
+                    }
+                    stub.workspace.workspaceFolders = [];
+                    await controller.refresh();
+                } finally { release(); await held; }
+                await new Promise(resolve => setTimeout(resolve, 20));
+                assert.equal(batches, 0, 'A queued write cannot launch a helper for a closed folder');
+                assert.equal(controller.scheduler.states().length, 0);
+                continue;
+            }
+            if (!reopen) { await commands.get('airk.index')!(); }
+            const deadline = Date.now() + 5000;
+            while (dashboard.controller.sidebarState().collections[0]?.vectors?.semantic_readiness?.state !== 'ready' || batches < 2) {
+                assert.ok(Date.now() < deadline, 'Semantic completion stalled without a service');
+                await new Promise(resolve => setTimeout(resolve, 20));
+            }
+            assert.equal(batches, 2); assert.equal(scans, reopen ? 0 : 1);
+            assert.equal(dashboard.controller.sidebarState().collections[0].vectors.semantic_readiness.completed_artifacts, 65);
+            assert.deepEqual(errors, []);
+        } finally {
+            context.subscriptions.forEach(item => item.dispose());
+            loader._load = original; mock.restoreAll();
+            mock.method(cliInstall, 'installCli', async () => []);
+            const resolved = await fs.realpath(directory);
+            assert.equal(path.dirname(resolved), await fs.realpath(os.tmpdir()));
+            assert.ok(path.basename(resolved).startsWith('airk-semantic-editor-'));
+            await fs.rm(resolved, { recursive: true, force: true });
+        }
+    }
+});
+
 test('storage picker holds startup indexing, waits for active writes, and restores scheduling on cancellation or invalid paths', { timeout: 20000 }, async () => {
     for (const scenario of ['startup', 'busy', 'cancel', 'invalid', 'root-added']) {
         const busy = scenario === 'busy' || scenario === 'root-added';
@@ -192,6 +288,9 @@ test('trusted MCP definitions ignore workspace storage overrides and reconnect w
     const calls: string[] = [];
     native.prepareHelper = async () => '/fixture/airk';
     native.runJson = async (_spec: unknown, command: string, extra: string[] = []) => {
+        if (command === 'collections' && extra[0] === 'vectors') {
+            return { enabled: false, published: false, indexed_vectors: 0, pending_reindex: false, default_search_mode: 'lexical' };
+        }
         calls.push(command);
         if (command === 'collections') {
             if (extra[0] === 'remove') { removals++; return {}; }

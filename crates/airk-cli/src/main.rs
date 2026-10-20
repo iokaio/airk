@@ -379,7 +379,11 @@ enum ScheduleCommand {
 #[derive(Subcommand)]
 enum SemanticCommand {
     Status,
-    Run,
+    Run {
+        /// Run one collection-scoped batch, honoring scheduler pause and failures.
+        #[arg(long)]
+        scheduled: bool,
+    },
     Policy {
         #[arg(value_parser = ["partial_hybrid", "lexical_while_pending", "require_complete"])]
         mode: String,
@@ -514,7 +518,7 @@ impl Command {
                 action: SemanticCommand::Status,
             } => UsageOperation::Status,
             Self::Semantic {
-                action: SemanticCommand::Run,
+                action: SemanticCommand::Run { .. },
             } => UsageOperation::Index,
             Self::Semantic {
                 action: SemanticCommand::Policy { .. },
@@ -1396,7 +1400,8 @@ async fn main_async() -> anyhow::Result<()> {
         },
         Command::Semantic { action } => match action {
             SemanticCommand::Status => recorder.print(&kernel.status()?.semantic_readiness),
-            SemanticCommand::Run => {
+            SemanticCommand::Run { scheduled: true } => recorder.print(&kernel.run_scheduled_enrichment()?),
+            SemanticCommand::Run { scheduled: false } => {
                 kernel.resume_current_enrichment()?;
                 recorder.print(&kernel.status()?.semantic_readiness)
             }

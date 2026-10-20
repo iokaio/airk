@@ -42,6 +42,19 @@ test('tools button opens a collection-bound console and is disabled without trus
     assert.equal(sidebarAction({ ...action, dataDir: undefined }, new Set()), undefined);
 });
 
+test('semantic indexing remains visible independently of complete saved-file coverage', () => {
+    const sample = structuredClone(state);
+    sample.collections[0].state = 'enriching';
+    sample.collections[0].coverage!.report!.current = 1000;
+    const html = sidebarContent(sample);
+    assert.match(html, /100%/);
+    assert.match(html, /Building semantic index/);
+    assert.doesNotMatch(html, /Indexing saved files/);
+    assert.match(html, /data-action="index"[^>]*disabled/);
+    sample.collections[0].state = 'semantic-pending';
+    assert.match(sidebarContent(sample), /Semantic indexing pending/);
+});
+
 test('CLI getting-started note reports setup failures and keeps repair behind workspace trust', () => {
     assert.match(sidebarContent({ ...state, cliStatus: 'ready' }), /<code>airk --help<\/code>/);
     assert.match(sidebarContent({ ...state, cliStatus: 'ready' }), /Restart external terminal apps/);

@@ -409,6 +409,65 @@ fn semantic_batches_disclose_partial_coverage() -> Result<()> {
 }
 
 #[test]
+fn editor_semantic_batches_resume_after_reopen_and_preserve_scope_and_pause() -> Result<()> {
+    let root = unlinked_tempdir()?;
+    let foreign = unlinked_tempdir()?;
+    let data = unlinked_tempdir()?;
+    model(&data.path().join("models/local"), 2)?;
+    for file in 0..65 {
+        std::fs::write(
+            root.path().join(format!("file_{file:02}.txt")),
+            "authenticate\n",
+        )?;
+    }
+    std::fs::write(foreign.path().join("foreign.txt"), "authenticate\n")?;
+    let other = Kernel::open_collection(foreign.path(), Some(data.path().into()), "foreign")?;
+    other.scheduled_index(false, false)?;
+    let foreign_head = other.status()?.publication;
+    std::fs::write(
+        foreign.path().join("foreign.txt"),
+        "changed outside workspace\n",
+    )?;
+    other.schedule_enqueue(false)?;
+
+    let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    kernel.scheduled_index(false, false)?;
+    let mut completed = kernel.status()?.semantic_readiness.completed_artifacts;
+    assert!(completed < 65);
+    kernel.schedule_pause(true)?;
+    assert_eq!(kernel.run_scheduled_enrichment()?.state, "paused");
+    assert_eq!(
+        kernel.status()?.semantic_readiness.completed_artifacts,
+        completed
+    );
+    kernel.schedule_pause(false)?;
+    let queue = airk_store::scheduler::Queue::new(data.path());
+    let worker = queue.worker_lock()?.expect("fixture worker lock");
+    assert_eq!(kernel.run_scheduled_enrichment()?.state, "busy");
+    drop(worker);
+    drop(kernel);
+
+    while completed < 65 {
+        let reopened = Kernel::open(root.path(), Some(data.path().into()))?;
+        assert_eq!(reopened.run_scheduled_enrichment()?.state, "enriched");
+        completed = (completed + 32).min(65);
+        assert_eq!(
+            reopened.status()?.semantic_readiness.completed_artifacts,
+            completed
+        );
+        assert_eq!(other.status()?.publication, foreign_head);
+    }
+    let reopened = Kernel::open(root.path(), Some(data.path().into()))?;
+    assert_eq!(
+        reopened.status()?.semantic_readiness.state,
+        SemanticState::Ready
+    );
+    assert_eq!(reopened.run_scheduled_enrichment()?.state, "idle");
+    assert_eq!(other.status()?.publication, foreign_head);
+    Ok(())
+}
+
+#[test]
 fn corrupt_model_blocks_enrichment_without_losing_base_evidence() -> Result<()> {
     let root = unlinked_tempdir()?;
     let data = unlinked_tempdir()?;
@@ -422,7 +481,7 @@ fn corrupt_model_blocks_enrichment_without_losing_base_evidence() -> Result<()> 
         .expect("model object")?
         .path();
     std::fs::write(object, b"corrupt fixture")?;
-    assert_eq!(kernel.run_scheduled_once()?.state, "semantic_failed");
+    assert_eq!(kernel.run_scheduled_enrichment()?.state, "semantic_failed");
     assert_eq!(
         kernel.status()?.semantic_readiness.state,
         SemanticState::Pending
@@ -434,6 +493,9 @@ fn corrupt_model_blocks_enrichment_without_losing_base_evidence() -> Result<()> 
             .blocked
     );
     assert_eq!(kernel.run_scheduled_once()?.state, "idle");
+    let blocked = kernel.run_scheduled_enrichment()?;
+    assert_eq!(blocked.state, "blocked");
+    assert!(blocked.error.is_some());
     let query = SearchQuery {
         text: "authenticate".into(),
         path_prefix: None,
