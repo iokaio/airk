@@ -17,13 +17,16 @@ use rusqlite::params;
 use serde::Serialize;
 use std::{
     collections::{BTreeMap, VecDeque},
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 pub(crate) use journal::{apply, cleanup, stage};
 pub(crate) use sql::{create, read_record};
 
-const FILE_NAME: &str = "current-graph-overlay.sqlite3";
+static NEXT_OVERLAY: AtomicU64 = AtomicU64::new(0);
 const MAX_OVERLAY_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 const MAX_DIRTY_RECORDS: u64 = 1_000_000;
 const PAGE_ROWS: usize = 64;
@@ -120,8 +123,13 @@ impl GraphOverlay {
     ) -> Result<Self> {
         limits.validate()?;
         base_head.validate()?;
+        // One reservation can publish several progressive batches. Each sealed
+        // overlay remains private until that batch's journal has consumed it.
+        let ordinal = NEXT_OVERLAY.fetch_add(1, Ordering::Relaxed);
         let database = reservation.open_private_sqlite(
-            reservation.staging_directory()?.join(FILE_NAME),
+            reservation
+                .staging_directory()?
+                .join(format!("current-graph-overlay-{ordinal}.sqlite3")),
             limits.maximum_bytes,
         )?;
         database
@@ -177,9 +185,7 @@ impl GraphOverlay {
                     sql::read_proof(connection, &self.base_head, id)
                 })?;
                 let bytes = usize::try_from(self.base_head.scope.record_bytes)? + 32 * 32;
-                let capacity = (MAX_BASE_PROOF_CACHE_BYTES / bytes)
-                    .min(MAX_BASE_PROOFS)
-                    .max(1);
+                let capacity = (MAX_BASE_PROOF_CACHE_BYTES / bytes).clamp(1, MAX_BASE_PROOFS);
                 if state.base_proof_order.len() == capacity {
                     let old = state
                         .base_proof_order

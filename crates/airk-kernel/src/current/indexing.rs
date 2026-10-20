@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Scan preparation and publication for the single current index.
-use super::{CurrentUpdater, SemanticUpdate, enrichment};
+use super::{CurrentUpdater, SemanticUpdate, enrichment, progress};
 use crate::Kernel;
 use airk_core::{
+    Artifact,
     graph_storage::{GraphHead, GraphScope},
     identity::{Incarnation, framed_digest},
+    model_objects::ModelObjectSet,
 };
 use airk_retrieval::{
     current_lexical::CurrentLexical,
@@ -26,6 +28,186 @@ fn incarnation() -> Result<Incarnation> {
     let mut bytes = [0; 16];
     getrandom::fill(&mut bytes).map_err(|e| anyhow::anyhow!("allocate current identity: {e}"))?;
     Ok(Incarnation::from_bytes(bytes))
+}
+
+struct ProgressiveBase<'a> {
+    kernel: &'a Kernel,
+    quota: &'a Quota,
+    writer: &'a WriterLock,
+    reservation: &'a airk_store::quota::Reservation,
+    scope: &'a CurrentScope,
+    configuration: &'a CollectionConfiguration,
+    model: Option<&'a EmbeddingModel>,
+    objects: Option<&'a ModelObjectSet>,
+    selection: &'a airk_core::vector_selection::VectorSelectionPolicy,
+    stats: &'a mut EmbeddingCacheStats,
+    previous: &'a airk_core::Snapshot,
+    snapshot: airk_core::Snapshot,
+    semantic_work: Option<enrichment::SemanticWork>,
+    scan_work: progress::ScanWork,
+    batch: std::collections::BTreeMap<String, ArtifactChange>,
+    next_batch: usize,
+    processed: u64,
+    committed: u64,
+    current: airk_ingest::CurrentIndexWork,
+    first_ready_us: Option<u64>,
+    started: std::time::Instant,
+}
+
+impl ProgressiveBase<'_> {
+    fn observe(&mut self, artifact: &Artifact) -> Result<()> {
+        self.processed += 1;
+        let same = self
+            .previous
+            .artifacts
+            .get(&artifact.path)
+            .map(serde_json::to_vec)
+            .transpose()?
+            == Some(serde_json::to_vec(artifact)?);
+        if !same {
+            self.snapshot
+                .artifacts
+                .insert(artifact.path.clone(), artifact.clone());
+            self.batch.insert(
+                artifact.path.clone(),
+                ArtifactChange::Upsert(Box::new(CapturedInput {
+                    artifact: artifact.clone(),
+                })),
+            );
+            if self.batch.len() >= self.next_batch {
+                self.flush()?;
+                self.next_batch = (self.next_batch * 2).min(4096);
+            }
+        }
+        Ok(())
+    }
+
+    fn flush(&mut self) -> Result<()> {
+        if self.batch.is_empty() {
+            return Ok(());
+        }
+        let selected = self
+            .objects
+            .map(|objects| {
+                enrichment::prepare_work(
+                    &self.snapshot,
+                    &self.batch,
+                    self.semantic_work.as_ref(),
+                    self.selection,
+                    objects.pipeline_digest,
+                    false,
+                )
+            })
+            .transpose()?;
+        let mut next_scan_work = self.scan_work.clone();
+        next_scan_work.advanced(self.processed, self.committed + self.batch.len() as u64)?;
+        let mut resources = vec![
+            next_scan_work.resource_change(&self.kernel.store, self.reservation)?,
+            airk_store::current::resources::ResourceChange {
+                key: "analysis".into(),
+                reference: None,
+            },
+        ];
+        resources.push(
+            selected
+                .as_ref()
+                .map(|work| work.resource_change(&self.kernel.store, self.reservation))
+                .transpose()?
+                .unwrap_or(airk_store::current::resources::ResourceChange {
+                    key: "semantic-work".into(),
+                    reference: None,
+                }),
+        );
+        let semantic = self
+            .model
+            .zip(self.objects)
+            .map(|(model, objects)| SemanticUpdate {
+                model,
+                objects: objects.clone(),
+                selection: self.selection,
+                defer: true,
+                cache: EmbeddingCacheContext {
+                    cache: None,
+                    bypass: false,
+                    stats: self.stats,
+                    max_workers: 1,
+                    working_memory_bytes: 128 << 20,
+                },
+            });
+        let changes = std::mem::take(&mut self.batch)
+            .into_values()
+            .collect::<Vec<_>>();
+        let result = CurrentUpdater {
+            store: &self.kernel.store,
+            quota: self.quota,
+            scope: self.scope,
+            writer: self.writer,
+            reservation: self.reservation,
+            configuration: Some(self.configuration),
+        }
+        .apply_scanned(&changes, semantic, &resources, &Default::default())
+        .context("publish progressive base batch")?;
+        self.committed += changes.len() as u64;
+        self.scan_work = next_scan_work;
+        self.semantic_work = selected;
+        self.current.changed_artifacts = self
+            .current
+            .changed_artifacts
+            .saturating_add(result.lexical.changed.changed_artifacts);
+        self.current.lexical_documents = self
+            .current
+            .lexical_documents
+            .saturating_add(result.lexical.changed.added_documents);
+        self.current.graph_records = self
+            .current
+            .graph_records
+            .saturating_add(result.graph.sealed_records);
+        self.current.graph_read_bytes = self
+            .current
+            .graph_read_bytes
+            .saturating_add(result.graph.read_bytes);
+        self.current.graph_base_record_reads = self
+            .current
+            .graph_base_record_reads
+            .saturating_add(result.graph.base_record_reads);
+        self.current.graph_proof_cache_hits = self
+            .current
+            .graph_proof_cache_hits
+            .saturating_add(result.graph.base_proof_cache_hits);
+        self.current.graph_proof_cache_evictions = self
+            .current
+            .graph_proof_cache_evictions
+            .saturating_add(result.graph.base_proof_cache_evictions);
+        self.current.linked_lexical_bytes = self
+            .current
+            .linked_lexical_bytes
+            .saturating_add(result.lexical.hardlinked_bytes);
+        self.first_ready_us.get_or_insert_with(|| {
+            u64::try_from(self.started.elapsed().as_micros()).unwrap_or(u64::MAX)
+        });
+        Ok(())
+    }
+
+    fn fail(&mut self, error: &anyhow::Error) -> Result<()> {
+        self.scan_work.advanced(self.processed, self.committed)?;
+        self.scan_work.fail(error);
+        CurrentUpdater {
+            store: &self.kernel.store,
+            quota: self.quota,
+            scope: self.scope,
+            writer: self.writer,
+            reservation: self.reservation,
+            configuration: None,
+        }
+        .apply_with_resources(
+            &[],
+            None,
+            &[self
+                .scan_work
+                .resource_change(&self.kernel.store, self.reservation)?],
+        )?;
+        Ok(())
+    }
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -277,14 +459,15 @@ impl Kernel {
             model: objects.clone(),
         };
         let existing = self.current_scope()?;
-        let (applied, prior_semantic_work) = if let Some(scope) = &existing {
+        let (applied, prior_semantic_work, prior_scan_work) = if let Some(scope) = &existing {
             let read = self.store.current_read(scope)?;
             (
                 read.collection_state()?,
                 enrichment::read_work(&read, &self.store)?,
+                progress::read_work(&read, &self.store)?,
             )
         } else {
-            (None, None)
+            (None, None, None)
         };
         let configuration_changed = applied
             .as_ref()
@@ -294,6 +477,76 @@ impl Kernel {
         if full {
             previous.extractor_version.clear();
         }
+        let progressive_enabled = defer_completion
+            && !full
+            && previous.artifacts.is_empty()
+            && (existing.is_none()
+                || (!configuration_changed
+                    && prior_scan_work
+                        .as_ref()
+                        .is_some_and(|work| !work.complete())));
+        let mut stats = EmbeddingCacheStats {
+            model_load_us,
+            ..Default::default()
+        };
+        let progressive_scope = if progressive_enabled {
+            Some(match &existing {
+                Some(scope) => scope.clone(),
+                None => self
+                    .bootstrap_current(
+                        &writer,
+                        &quota,
+                        &configuration,
+                        model.as_ref().map_or(1, EmbeddingModel::dimensions),
+                        &reservation,
+                    )
+                    .context("bootstrap progressive current")?,
+            })
+        } else {
+            None
+        };
+        let mut progressive = if let Some(scope) = &progressive_scope {
+            let scan_work = progress::ScanWork::start()?;
+            CurrentUpdater {
+                store: &self.store,
+                quota: &quota,
+                scope,
+                writer: &writer,
+                reservation: &reservation,
+                configuration: None,
+            }
+            .apply_with_resources(
+                &[],
+                None,
+                &[scan_work.resource_change(&self.store, &reservation)?],
+            )
+            .context("publish progressive scan start")?;
+            Some(ProgressiveBase {
+                kernel: self,
+                quota: &quota,
+                writer: &writer,
+                reservation: &reservation,
+                scope,
+                configuration: &configuration,
+                model: model.as_ref(),
+                objects: objects.as_ref(),
+                selection: &selection,
+                stats: &mut stats,
+                previous: &previous,
+                snapshot: previous.clone(),
+                semantic_work: prior_semantic_work.clone(),
+                scan_work,
+                batch: Default::default(),
+                next_batch: 32,
+                processed: 0,
+                committed: 0,
+                current: Default::default(),
+                first_ready_us: None,
+                started: index_started,
+            })
+        } else {
+            None
+        };
         let mut reusable = std::collections::BTreeMap::new();
         for artifact in previous.artifacts.values() {
             let profile = artifact
@@ -310,7 +563,7 @@ impl Kernel {
                 .or_insert(artifact);
         }
         let scan_started = std::time::Instant::now();
-        let (snapshot, mut report, observation) = airk_ingest::scan_payloads_with_execution(
+        let scan_result = airk_ingest::scan_payloads_with_execution(
             &self.root,
             &self.data_root,
             &previous,
@@ -362,34 +615,59 @@ impl Kernel {
                 }))
             },
             |profile, artifact, bytes, payload| {
-                if artifact
+                let retained = if artifact
                     .retained
                     .as_ref()
                     .is_some_and(|r| r.profile.as_ref() == Some(profile))
                 {
-                    return Ok(artifact.clone());
+                    artifact.clone()
+                } else {
+                    self.store.retain_payload_with_budget(
+                        artifact,
+                        payload.context("fresh extraction payload missing")?,
+                        profile,
+                        Some(bytes),
+                        Some(&reservation),
+                    )?
+                };
+                if let Some(progressive) = progressive.as_mut() {
+                    progressive.observe(&retained)?;
                 }
-                self.store.retain_payload_with_budget(
-                    artifact,
-                    payload.context("fresh extraction payload missing")?,
-                    profile,
-                    Some(bytes),
-                    Some(&reservation),
-                )
+                Ok(retained)
             },
-        )?;
+        );
+        if let Err(error) = &scan_result
+            && let Some(progressive) = progressive.as_mut()
+        {
+            let _ = progressive.fail(error);
+        }
+        let (snapshot, mut report, observation) = scan_result?;
+        let progressive_first_ready_us = progressive.as_ref().and_then(|p| p.first_ready_us);
+        let progressive_current = progressive.as_ref().map(|p| p.current.clone());
+        let progressive_work = progressive.as_ref().and_then(|p| p.semantic_work.clone());
+        let mut final_scan_work = progressive.as_ref().map(|p| p.scan_work.clone());
+        drop(progressive);
+        if let Some(work) = final_scan_work.as_mut() {
+            work.finish(snapshot.artifacts.len() as u64)?;
+        }
         report.extraction_workers_requested = execution.requested;
         report.scan_extract_us =
             u64::try_from(scan_started.elapsed().as_micros()).unwrap_or(u64::MAX);
+        let committed_previous = if progressive_enabled {
+            self.load_optional()?
+                .context("progressive current state missing")?
+        } else {
+            previous.clone()
+        };
         let mut changes = std::collections::BTreeMap::new();
         for (path, artifact) in &snapshot.artifacts {
-            let same = previous
+            let same = committed_previous
                 .artifacts
                 .get(path)
                 .map(serde_json::to_vec)
                 .transpose()?
                 == Some(serde_json::to_vec(artifact)?);
-            if full || configuration_changed || !same {
+            if full || (configuration_changed && !progressive_enabled) || !same {
                 changes.insert(
                     path.clone(),
                     ArtifactChange::Upsert(Box::new(CapturedInput {
@@ -398,12 +676,22 @@ impl Kernel {
                 );
             }
         }
-        for path in previous
+        for path in committed_previous
             .artifacts
             .keys()
             .filter(|p| !snapshot.artifacts.contains_key(*p))
         {
             changes.insert(path.clone(), ArtifactChange::Delete(path.clone()));
+        }
+        if final_scan_work.is_none()
+            && (!changes.is_empty()
+                || prior_scan_work
+                    .as_ref()
+                    .is_some_and(|work| !work.complete()))
+        {
+            let mut work = progress::ScanWork::start()?;
+            work.finish(snapshot.artifacts.len() as u64)?;
+            final_scan_work = Some(work);
         }
         let semantic_work = objects
             .as_ref()
@@ -411,7 +699,7 @@ impl Kernel {
                 enrichment::prepare_work(
                     &snapshot,
                     &changes,
-                    prior_semantic_work.as_ref(),
+                    progressive_work.as_ref().or(prior_semantic_work.as_ref()),
                     &selection,
                     objects.pipeline_digest,
                     full,
@@ -419,19 +707,17 @@ impl Kernel {
             })
             .transpose()?;
         let moves = compatible_moves(&self.store, &previous, &snapshot, &observation)?;
-        let scope = match existing {
+        let scope = match progressive_scope.or(existing) {
             Some(scope) => scope,
-            None => self.bootstrap_current(
-                &writer,
-                &quota,
-                &configuration,
-                model.as_ref().map_or(1, EmbeddingModel::dimensions),
-                &reservation,
-            )?,
-        };
-        let mut stats = EmbeddingCacheStats {
-            model_load_us,
-            ..Default::default()
+            None => self
+                .bootstrap_current(
+                    &writer,
+                    &quota,
+                    &configuration,
+                    model.as_ref().map_or(1, EmbeddingModel::dimensions),
+                    &reservation,
+                )
+                .context("bootstrap final current")?,
         };
         let started = std::time::Instant::now();
         let analysis_expired = previous.analysis.as_ref().is_some_and(|manifest| {
@@ -440,7 +726,12 @@ impl Kernel {
         let retry_failed_semantic = prior_semantic_work
             .as_ref()
             .is_some_and(|work| work.failure.is_some());
-        if !changes.is_empty() || configuration_changed || analysis_expired || retry_failed_semantic
+        if !changes.is_empty()
+            || configuration_changed
+            || analysis_expired
+            || retry_failed_semantic
+            || progressive_enabled
+            || final_scan_work.is_some()
         {
             let semantic_resource = semantic_work
                 .as_ref()
@@ -472,6 +763,19 @@ impl Kernel {
                     })
                 })
                 .transpose()?;
+            let mut resources = vec![
+                airk_store::current::resources::ResourceChange {
+                    key: "analysis".into(),
+                    reference: None,
+                },
+                semantic_resource.unwrap_or(airk_store::current::resources::ResourceChange {
+                    key: "semantic-work".into(),
+                    reference: None,
+                }),
+            ];
+            if let Some(work) = &final_scan_work {
+                resources.push(work.resource_change(&self.store, &reservation)?);
+            }
             let result = CurrentUpdater {
                 store: &self.store,
                 quota: &quota,
@@ -483,38 +787,47 @@ impl Kernel {
             .apply_scanned(
                 &changes.into_values().collect::<Vec<_>>(),
                 semantic,
-                &[
-                    airk_store::current::resources::ResourceChange {
-                        key: "analysis".into(),
-                        reference: None,
-                    },
-                    semantic_resource.unwrap_or(airk_store::current::resources::ResourceChange {
-                        key: "semantic-work".into(),
-                        reference: None,
-                    }),
-                ],
+                &resources,
                 &moves,
-            )?;
+            )
+            .context("publish final scanned current")?;
             report.generation = result.commit.token.sequence;
             report.maintenance_error = result.commit.maintenance_error;
-            report.current = Some(airk_ingest::CurrentIndexWork {
-                changed_artifacts: result.lexical.changed.changed_artifacts,
-                lexical_documents: result.lexical.changed.added_documents,
-                graph_records: result.graph.sealed_records,
-                graph_read_bytes: result.graph.read_bytes,
-                graph_base_record_reads: result.graph.base_record_reads,
-                graph_proof_cache_hits: result.graph.base_proof_cache_hits,
-                graph_proof_cache_evictions: result.graph.base_proof_cache_evictions,
-                linked_lexical_bytes: result.lexical.hardlinked_bytes,
-            });
+            let mut work = progressive_current.unwrap_or_default();
+            work.changed_artifacts = work
+                .changed_artifacts
+                .saturating_add(result.lexical.changed.changed_artifacts);
+            work.lexical_documents = work
+                .lexical_documents
+                .saturating_add(result.lexical.changed.added_documents);
+            work.graph_records = work
+                .graph_records
+                .saturating_add(result.graph.sealed_records);
+            work.graph_read_bytes = work
+                .graph_read_bytes
+                .saturating_add(result.graph.read_bytes);
+            work.graph_base_record_reads = work
+                .graph_base_record_reads
+                .saturating_add(result.graph.base_record_reads);
+            work.graph_proof_cache_hits = work
+                .graph_proof_cache_hits
+                .saturating_add(result.graph.base_proof_cache_hits);
+            work.graph_proof_cache_evictions = work
+                .graph_proof_cache_evictions
+                .saturating_add(result.graph.base_proof_cache_evictions);
+            work.linked_lexical_bytes = work
+                .linked_lexical_bytes
+                .saturating_add(result.lexical.hardlinked_bytes);
+            report.current = Some(work);
         } else {
             let read = self.store.current_read(&scope)?;
             super::open_selected_lexical(&self.store, &read, Arc::new(|_| Ok(())))?;
             report.generation = read.head().sequence;
-            report.current = Some(Default::default());
+            report.current = Some(progressive_current.unwrap_or_default());
         }
-        report.first_ready_us =
-            Some(u64::try_from(index_started.elapsed().as_micros()).unwrap_or(u64::MAX));
+        report.first_ready_us = progressive_first_ready_us.or_else(|| {
+            Some(u64::try_from(index_started.elapsed().as_micros()).unwrap_or(u64::MAX))
+        });
         drop(writer);
         drop(reservation);
         if !defer_completion

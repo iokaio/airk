@@ -986,6 +986,7 @@ mod tests {
         let baseline = airk_core::SearchResponse {
             publication: None,
             semantic_readiness: None,
+            discovery_readiness: None,
             generation: read.head().sequence,
             collection: read.head().scope.collection.clone(),
             hits: hits.clone(),

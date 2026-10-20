@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use airk_core::{
     SearchQuery,
-    readiness::{DefaultSearchPolicy, SemanticState},
+    readiness::{DefaultSearchPolicy, DiscoveryState, SemanticState},
 };
 use airk_kernel::Kernel;
 use anyhow::Result;
@@ -196,6 +196,47 @@ fn scheduled_base_is_readable_before_restart_resumes_semantic_work() -> Result<(
     assert_eq!(ready.indexed_vectors, 1);
     assert_ne!(pending.publication, ready.publication);
     assert_eq!(reopened.default_search(&query)?.hits.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn scheduled_cold_scan_commits_bounded_batches_and_closes_discovery() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let data = tempfile::tempdir()?;
+    for file in 0..40 {
+        std::fs::write(
+            root.path().join(format!("fixture_{file:02}.txt")),
+            format!("distinct fixture {file:02}\n"),
+        )?;
+    }
+    let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    kernel.configure_vectors(false)?;
+    let report = kernel.scheduled_index(false, false)?;
+    assert_eq!(report.current.unwrap().changed_artifacts, 40);
+    assert!(report.generation >= 3);
+    assert!(report.first_ready_us.is_some());
+    let status = kernel.status()?;
+    assert_eq!(status.files, 40);
+    assert_eq!(status.discovery_readiness.state, DiscoveryState::Ready);
+    assert_eq!(status.discovery_readiness.total_artifacts, Some(40));
+    assert_eq!(status.discovery_readiness.committed_artifacts, 40);
+    let query = SearchQuery {
+        text: "distinct fixture 39".into(),
+        path_prefix: Some("fixture_39.txt".into()),
+        limit: 10,
+        max_bytes: 4096,
+    };
+    assert_eq!(
+        kernel.search(&query)?.hits[0].citation.path,
+        "fixture_39.txt"
+    );
+    drop(kernel);
+    let reopened = Kernel::open(root.path(), Some(data.path().into()))?;
+    assert_eq!(
+        reopened.status()?.discovery_readiness.state,
+        DiscoveryState::Ready
+    );
+    assert_eq!(reopened.index()?.current.unwrap().changed_artifacts, 0);
     Ok(())
 }
 

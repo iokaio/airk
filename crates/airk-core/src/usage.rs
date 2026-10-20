@@ -283,6 +283,7 @@ pub fn full_source_context_bytes(
     let empty = serde_json::to_string(&crate::SearchResponse {
         publication: None,
         semantic_readiness: None,
+        discovery_readiness: None,
         generation,
         collection: collection.into(),
         hits: vec![],

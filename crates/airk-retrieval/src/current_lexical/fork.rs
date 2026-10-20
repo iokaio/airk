@@ -118,7 +118,8 @@ impl CurrentLexical {
                     "lexical fork metadata copy changed length"
                 );
             } else {
-                fs::hard_link(source, staging.path().join(&file.name))?;
+                fs::hard_link(source, staging.path().join(&file.name))
+                    .with_context(|| format!("hardlink lexical file {}", file.name))?;
                 hardlinked_files += 1;
                 hardlinked_bytes = hardlinked_bytes
                     .checked_add(file.bytes)
@@ -143,7 +144,8 @@ impl CurrentLexical {
         });
         let manifest = private.capture_manifest(Some((&base.manifest, base.digest)))?;
         drop(private);
-        fs::rename(staging.path(), target)?;
+        fs::rename(staging.path(), target)
+            .with_context(|| format!("publish lexical fork {}", target.display()))?;
         let _ = staging.keep();
         Directory::sync_directory(&tantivy::directory::MmapDirectory::open(parent)?)?;
         let result = CurrentLexical::open(target, charge)?;
