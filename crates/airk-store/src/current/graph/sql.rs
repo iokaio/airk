@@ -73,6 +73,7 @@ pub(super) fn dirty_record(
     .transpose()
 }
 
+#[derive(Clone)]
 pub(super) struct Proof {
     pub record: Option<GraphRecord>,
     pub siblings: merkle::Siblings,

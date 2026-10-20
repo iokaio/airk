@@ -182,6 +182,8 @@ fn nonempty_base_changes_remain_proven_and_seal_releases_the_reader() -> Result<
             }
         } else if turn == 1 {
             assert_eq!(overlay.read(1)?, record(1));
+            assert_eq!(overlay.read(1)?, record(1));
+            assert_eq!(overlay.statistics()?.base_proof_cache_hits, 1);
             let mut changed = record(1);
             changed.bytes[0] = 42;
             overlay.put(1, changed)?;

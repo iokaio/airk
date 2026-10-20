@@ -15,7 +15,10 @@ use airk_core::graph_storage::*;
 use anyhow::{Context, Result, ensure};
 use rusqlite::params;
 use serde::Serialize;
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::{BTreeMap, VecDeque},
+    sync::{Arc, Mutex},
+};
 
 pub(crate) use journal::{apply, cleanup, stage};
 pub(crate) use sql::{create, read_record};
@@ -24,6 +27,8 @@ const FILE_NAME: &str = "current-graph-overlay.sqlite3";
 const MAX_OVERLAY_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 const MAX_DIRTY_RECORDS: u64 = 1_000_000;
 const PAGE_ROWS: usize = 64;
+const MAX_BASE_PROOFS: usize = 256;
+const MAX_BASE_PROOF_CACHE_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug)]
 pub struct GraphOverlayLimits {
@@ -63,6 +68,8 @@ impl GraphOverlayLimits {
 pub struct GraphStatistics {
     pub operations: u64,
     pub base_record_reads: u64,
+    pub base_proof_cache_hits: u64,
+    pub base_proof_cache_evictions: u64,
     pub proof_nodes: u64,
     /// Logical fixed-record/proof bytes processed, not physical device I/O.
     pub read_bytes: u64,
@@ -78,6 +85,8 @@ struct State {
     base: Option<Arc<super::CurrentRead>>,
     counts: GraphCounts,
     statistics: GraphStatistics,
+    base_proofs: BTreeMap<u32, sql::Proof>,
+    base_proof_order: VecDeque<u32>,
     failed: bool,
 }
 pub struct GraphOverlay {
@@ -126,6 +135,8 @@ impl GraphOverlay {
                 base,
                 counts: base_head.counts(),
                 statistics: GraphStatistics::default(),
+                base_proofs: BTreeMap::new(),
+                base_proof_order: VecDeque::new(),
                 failed: false,
             }),
             base_head,
@@ -156,9 +167,30 @@ impl GraphOverlay {
         );
         match &state.base {
             Some(base) => {
+                if let Some(proof) = state.base_proofs.get(&id) {
+                    state.statistics.base_proof_cache_hits += 1;
+                    return Ok(proof.clone());
+                }
                 state.statistics.base_record_reads += 1;
                 state.statistics.proof_nodes += 32;
-                base.with_connection(|connection| sql::read_proof(connection, &self.base_head, id))
+                let proof = base.with_connection(|connection| {
+                    sql::read_proof(connection, &self.base_head, id)
+                })?;
+                let bytes = usize::try_from(self.base_head.scope.record_bytes)? + 32 * 32;
+                let capacity = (MAX_BASE_PROOF_CACHE_BYTES / bytes)
+                    .min(MAX_BASE_PROOFS)
+                    .max(1);
+                if state.base_proof_order.len() == capacity {
+                    let old = state
+                        .base_proof_order
+                        .pop_front()
+                        .context("base proof cache order missing")?;
+                    state.base_proofs.remove(&old);
+                    state.statistics.base_proof_cache_evictions += 1;
+                }
+                state.base_proof_order.push_back(id);
+                state.base_proofs.insert(id, proof.clone());
+                Ok(proof)
             }
             None => sql::Proof::empty(&self.base_head, id),
         }
