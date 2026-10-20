@@ -36,7 +36,8 @@ test('native writer queue isolates data directories and collections', async () =
 // AIRK_TEST_UPGRADE_BINARY remains supported for earlier qualification commands.
 const previousHelperBinary = process.env.AIRK_TEST_PREVIOUS_BINARY || process.env.AIRK_TEST_BINARY;
 const upgradedHelperBinary = process.env.AIRK_TEST_PREVIOUS_BINARY ? process.env.AIRK_TEST_BINARY : process.env.AIRK_TEST_UPGRADE_BINARY;
-const previousToolCount = process.env.AIRK_TEST_PREVIOUS_TOOL_COUNT === '14' ? 14 : 15;
+const previousToolCount = process.env.AIRK_TEST_PREVIOUS_TOOL_COUNT === '14' ? 14
+    : process.env.AIRK_TEST_PREVIOUS_TOOL_COUNT === '15' ? 15 : 16;
 test('cached old helper survives extension replacement and a changed trusted helper uses a new path',
     { skip: !previousHelperBinary || !upgradedHelperBinary }, async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'airk-helper-upgrade-'));
@@ -75,28 +76,28 @@ test('cached old helper survives extension replacement and a changed trusted hel
         assert.equal((await runText(newCached, ['--version'])).trim(), `airk ${newVersion}`);
         assert.equal((await probeMcp(oldAgent, previousToolCount)).tools.length, previousToolCount, 'Existing agent command still works after replacement');
         const newAgent = { ...oldAgent, command: newCached };
-        assert.equal((await probeMcp(newAgent)).tools.length, 16);
         const readArguments = ['fixture.rs', '--start-line', '1', '--end-line', '1'];
         const oldRead = await runJson<{ hits: { text: string }[] }>(oldAgent, 'read', readArguments);
         assert.ok(oldRead.hits.some(hit => hit.text.includes('helper_upgrade_fixture')));
 
-        // Use a real new writer and explicit history enablement to establish the
-        // newer on-disk contract; do not fake a schema or helper version in files.
+        // 1.2 builds an independent current-index namespace and leaves the old
+        // helper's derived collection untouched.
         await runJson(newAgent, 'index', ['--full']);
-        await runJson(newAgent, 'collections', ['history', 'set', '--json', JSON.stringify({
+        assert.equal((await probeMcp(newAgent)).tools.length, 16);
+        await assert.rejects(runJson(newAgent, 'collections', ['history', 'set', '--json', JSON.stringify({
             version: 1, enabled: true, recent: 3, hourly_hours: 24,
             max_packages: 12, max_bytes: 268435456, quota_basis_points: 1000
-        })]);
-        const beforeOldAttempt = await runJson<{ read: { publication: { token: string } }; hits: { text: string }[] }>(newAgent, 'read', readArguments);
+        })]), /unsupported/i);
+        const beforeOldAttempt = await runJson<{ read: { publication: { token: unknown } }; hits: { text: string }[] }>(newAgent, 'read', readArguments);
         assert.ok(beforeOldAttempt.hits.some(hit => hit.text.includes('helper_upgrade_fixture')));
-        await assert.rejects(runJson(oldAgent, 'read', readArguments), /unsupported.*(?:schema|format|version)|(?:schema|format|version).*unsupported/i,
-            'The preserved real old helper must fail closed on the newly enabled storage contract');
-        const afterOldAttempt = await runJson<{ read: { publication: { token: string } } }>(newAgent, 'read', readArguments);
-        assert.equal(afterOldAttempt.read.publication.token, beforeOldAttempt.read.publication.token);
+        const retainedOldRead = await runJson<{ hits: { text: string }[] }>(oldAgent, 'read', readArguments);
+        assert.deepEqual(retainedOldRead.hits, oldRead.hits, 'The old namespace stays independently readable');
+        const afterOldAttempt = await runJson<{ read: { publication: { token: unknown } } }>(newAgent, 'read', readArguments);
+        assert.deepEqual(afterOldAttempt.read.publication.token, beforeOldAttempt.read.publication.token);
         assert.equal(await fs.readFile(path.join(root, 'fixture.rs'), 'utf8'), 'fn helper_upgrade_fixture() {}\n');
         assert.equal(createHash('sha256').update(await fs.readFile(oldCached)).digest('hex'), oldDigest);
         assert.equal((await runText(oldCached, ['--version'])).trim(), `airk ${oldVersion}`,
-            'Format rejection does not replace or disable the cached old executable');
+            'The new namespace does not replace or disable the cached old executable');
     } finally { await removeFixture(directory, 'airk-helper-upgrade-'); }
 });
 
@@ -145,17 +146,14 @@ test('extension native adapter indexes, rebuilds, probes MCP, isolates and remov
         const probe = await probeMcp(spec); assert.equal(probe.tools.length, 16);
         assert.ok(probe.tools.includes('airk_changes'));
         assert.ok(probe.tools.includes('airk_history'));
-        const retention = await runJson<{ policy: { policy: { version: number; mode: string; searchable_predecessors: number } }; history_supported: boolean }>(spec, 'collections', ['retention', 'show']);
-        assert.equal(retention.history_supported, true);
-        assert.equal(retention.policy.policy.mode, 'automatic', 'New collections visibly use the qualified automatic default');
-        const manualRetention = JSON.stringify({ ...retention.policy.policy, mode: 'manual' });
-        await runJson(spec, 'collections', ['retention', 'preview', '--json', manualRetention]);
-        const configured = await runJson<{ policy: { mode: string } }>(spec, 'collections', ['retention', 'set', '--json', manualRetention]);
-        assert.equal(configured.policy.mode, 'manual');
-        await runJson(spec, 'collections', ['retention', 'run']);
-        const maintained = await runJson<{ receipt: { state: string; pending: boolean } }>(spec, 'collections', ['retention', 'run', '--apply']);
-        assert.ok(['complete', 'pending'].includes(maintained.receipt.state));
-        if (maintained.receipt.state === 'pending') { assert.equal(maintained.receipt.pending, true); }
+        await assert.rejects(runJson(spec, 'collections', ['retention', 'show']), /generation retention is unsupported/i);
+        await assert.rejects(runJson(spec, 'collections', ['prune', '--apply']), /unsupported/i);
+        const beforeMaintenance = await runJson<{ publication: { token: unknown } }>(spec, 'status');
+        const maintained = await runJson<{ removed_files: number; pending: boolean }>(spec, 'collections', ['maintain']);
+        assert.equal(maintained.pending, false);
+        assert.equal(maintained.removed_files, 0, 'Publication already reclaimed obsolete current objects');
+        const afterMaintenance = await runJson<{ publication: { token: unknown } }>(spec, 'status');
+        assert.deepEqual(afterMaintenance.publication.token, beforeMaintenance.publication.token);
         assert.ok(probe.tools.includes('airk_code_facts')); assert.ok(probe.tools.includes('airk_relationships'));
         const second = { ...spec, root: other, collection: collectionId(other), name: 'B' };
         await runJson(second, 'index');
