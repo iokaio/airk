@@ -1997,6 +1997,40 @@ fn initialization_replays_exact_captured_bootstrap_after_process_death() -> Resu
 }
 
 #[test]
+fn cold_rollback_journal_is_retired_by_admitted_writer_without_changing_head() -> Result<()> {
+    for bytes in [0, 512] {
+        let fixture = Fixture::new()?;
+        let writer = fixture.store.lock()?;
+        let _grant = fixture.quota.reserve_current(
+            &writer,
+            crate::quota::CurrentGrantScope {
+                collection: fixture.scope.collection.clone(),
+                incarnation: fixture.scope.incarnation,
+                transaction: Sha256Digest::from_bytes([99; 32]),
+            },
+            1 << 20,
+        )?;
+        let journal = fixture.store.directory().join("current.sqlite3-journal");
+        fs::write(&journal, vec![0u8; bytes])?;
+        assert!(fixture.store.current_read(&fixture.scope).is_err());
+        let current =
+            fixture
+                .store
+                .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+        assert_eq!(current.head()?, fixture.head);
+        assert_eq!(current.phase()?, TransactionPhase::Ready);
+        drop(current);
+        drop(writer);
+        assert!(!journal.exists(), "cold journal still blocks readers");
+        assert_eq!(
+            fixture.store.current_read(&fixture.scope)?.head(),
+            &fixture.head
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn oversized_recovery_journal_is_rejected_before_database_open() -> Result<()> {
     let fixture = Fixture::new()?;
     let writer = fixture.store.lock()?;
