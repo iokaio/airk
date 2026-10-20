@@ -50,6 +50,8 @@ Search verifies current candidates against authenticated source/extraction ident
 
 ## Scheduling, cleanup and scale
 
+The 1.2.2 extension drives one native semantic batch per active trusted collection at a time after indexing and on reopen. These calls share the existing scheduler worker lock and native pause/failure policy, but do not select work from other collections. The editor queue yields between batches and refreshes readiness independently of source coverage; no service installation is required.
+
 The native scheduler serializes submitted work and persists revisions, pause, explicit requests and blocked failures in the 1.2 namespace. Coverage remains an independent observation of saved source files. The extension manages collection-scoped controls and coalesced requests; it neither implements indexing nor claims live editor buffers are indexed.
 
 Quota-admitted database growth reserves the larger SQLite bound and rollback allowance before publication. Postcommit cleanup proves current ownership before removing bounded unreferenced objects and lexical forks. `collections maintain` repeats cleanup without publishing. Active requests block destructive collection operations; idle connections do not. Fresh 1.2 collection/settings ownership isolates old indexes rather than migrating them. See [collections](collections.md), [recovery](operations.md#recovery) and [quota limits](storage-quotas.md).

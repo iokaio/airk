@@ -62,7 +62,8 @@ export function runText(command: string, args: string[], cwd?: string, timeout =
 }
 
 export async function runJson<T>(spec: LaunchSpec, command: string, extra: string[] = []): Promise<T> {
-    return JSON.parse(await runText(spec.command, [...launchArgs(spec, command), ...extra], spec.root, command === 'index' ? 3600000 : 300000)) as T;
+    return JSON.parse(await runText(spec.command, [...launchArgs(spec, command), ...extra], spec.root,
+        command === 'index' || (command === 'semantic' && extra[0] === 'run') ? 3600000 : 300000)) as T;
 }
 
 /** Real bounded stdio initialization/tool-list/status probe, independent of any coding agent. */

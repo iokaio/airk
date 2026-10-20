@@ -46,6 +46,39 @@ impl std::fmt::Display for ScanPaused {
 impl std::error::Error for ScanPaused {}
 
 impl Kernel {
+    /// Advance one semantic batch for this collection only. Editor hosts use
+    /// this after base indexing and on reopen, without installing a service or
+    /// executing queued source scans for other workspace roots.
+    pub fn run_scheduled_enrichment(&self) -> Result<RunOutcome> {
+        let queue = self.queue()?;
+        let outcome = |state, error| RunOutcome {
+            state,
+            collection: Some(self.collection.clone()),
+            revision: None,
+            report: None,
+            error,
+            maintenance: None,
+        };
+        let Some(worker) = queue.worker_lock()? else {
+            return Ok(outcome("busy", None));
+        };
+        let Some(job) = queue.status(&self.collection, &self.root_id())? else {
+            return Ok(outcome("unregistered", None));
+        };
+        if job.paused {
+            return Ok(outcome("paused", None));
+        }
+        if job.blocked {
+            return Ok(outcome("blocked", job.error));
+        }
+        // Unlike a root-wide worker searching for eligible collections, an
+        // editor request must surface a failure to read its selected index.
+        self.status()?;
+        Ok(self
+            .continue_semantic(&queue, &worker, &[job])?
+            .unwrap_or_else(|| outcome("idle", None)))
+    }
+
     fn continue_semantic(
         &self,
         queue: &Queue,

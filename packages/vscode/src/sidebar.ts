@@ -73,8 +73,10 @@ export function sidebarContent(state: SidebarState): string {
     const mode = `<label for="mode">Automatic indexing</label><div class="row"><select id="mode"${disabled ? ' disabled' : ''}>${modes.map(([value, label]) => `<option value="${value}"${state.mode === value ? ' selected' : ''}>${label}</option>`).join('')}</select>${button(state.paused || capacityBlocked ? 'Resume' : 'Pause', state.paused || capacityBlocked ? 'airk.resume' : 'airk.pause', disabled)}</div>`;
     const collections = state.collections.map(item => {
         const view = item.coverage, report = view?.report, label = coverageLabel(view);
-        const indexing = item.state === 'indexing';
-        const status = indexing ? 'Indexing saved files' : state.paused ? 'Auto-indexing paused'
+        const indexing = item.state === 'indexing' || item.state === 'enriching';
+        const status = item.state === 'enriching' ? 'Building semantic index'
+            : item.state === 'indexing' ? 'Indexing saved files' : state.paused ? 'Auto-indexing paused'
+            : item.state === 'semantic-pending' ? 'Semantic indexing pending'
             : item.state === 'current' && item.vectors?.pending_reindex ? 'Vector change pending'
             : item.state === 'current' && item.detail?.pending_reindex ? 'Detail change pending'
             : item.state === 'current' && (view?.pending || (report && (report.stale || report.missing || report.pending_removals))) ? 'Changes detected'

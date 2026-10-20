@@ -1,6 +1,6 @@
 # AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents
 
-**Version 1.2.1.** See the [1.2.1 documentation update](docs/release-1.2.1.md) and [1.2.0 behavior and upgrade notes](docs/release-1.2.0.md). Download published [native ZIPs and platform VSIX packages](https://github.com/iokaio/airk/releases).
+**Version 1.2.2.** See the [1.2.2 semantic indexing fix](docs/release-1.2.2.md) and [1.2.0 behavior and upgrade notes](docs/release-1.2.0.md). Download published [native ZIPs and platform VSIX packages](https://github.com/iokaio/airk/releases).
 
 **Give Claude Code, Codex, Gemini CLI/Antigravity, GitHub Copilot and other MCP-capable agents a shared, local index of your workspace.** AIRK indexes files and returns bounded facts and passages with source paths, hashes and original locations. The agent supplies the reasoning. Runtime storage uses memory and local disk.
 
@@ -9,6 +9,10 @@
 This is an independent, runnable open-source project. Munarium, VCP and local reference files inform the design; their implementations are not dependencies. Tantivy lexical indexes, authenticated SQLite records and mutable Microsoft DiskANN publish one coherent current revision. Vector indexing and hybrid retrieval are enabled by default. The trusted panel prepares the pinned [local CPU embedding model](docs/onnx-models.md) on first use (about 91 MB); turn **Vector search** off per collection to opt out. Inference and source data stay local. Model quality must be evaluated for the intended corpus.
 
 [Code facts and relationships](docs/code-facts-and-relationships.md) add scopes, signatures, written types, call/framework candidates and optional source/build-bound SCIP imports. Sixteen read-only MCP tools expose bounded evidence with explicit syntax versus producer provenance. Native indexing needs no external compiler/indexer installation.
+
+## What's new in 1.2.2
+
+The VS Code extension continues unfinished semantic batches after **Index now** and when reopening a trusted workspace, without a separately installed service. The dashboard shows semantic indexing independently of saved-file coverage, even at 100%. Pause, failure blocking and collection/storage changes apply between batches. Manual mode still completes already requested semantic work, and previously committed evidence remains available.
 
 ## What's new in 1.2.1
 

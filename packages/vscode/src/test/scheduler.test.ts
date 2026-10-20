@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { CapacityError, Clock, Options, Scheduler } from '../scheduler';
+import { CapacityError, Clock, Options, Scheduler, SemanticResult } from '../scheduler';
 import { IndexReport, LaunchSpec } from '../model';
 
 const spec: LaunchSpec = { command: '/fixture/airk', root: '/fixture/project', dataDir: '/fixture/state', collection: 'project-fixture', name: 'Fixture' };
@@ -23,6 +23,98 @@ class FakeClock implements Clock {
         throw new Error('Scheduler timer loop');
     }
 }
+
+test('semantic batches finish after Index Now without another source edit or background service', async () => {
+    const clock = new FakeClock(); let scans = 0, batches = 0;
+    const scheduler = new Scheduler({ ...options, mode: 'manual' }, async () => {
+        scans++; scheduler.observeSemantic(spec, true); return report;
+    }, () => {}, () => {}, clock, async () => ++batches < 3 ? 'pending' : 'ready');
+    const indexed = scheduler.request(spec, true);
+    await clock.advance(0); await indexed;
+    assert.equal(scans, 1); assert.equal(batches, 1);
+    assert.equal(scheduler.states()[0].state, 'semantic-pending');
+    // Manual-mode edits must not strand the already requested semantic build.
+    await scheduler.request(spec);
+    await clock.advance(2000);
+    assert.equal(batches, 3); assert.equal(scans, 1);
+    assert.equal(scheduler.states()[0].pending, true, 'The manual source edit still awaits Index Now');
+    await clock.advance(10000); assert.equal(batches, 3);
+    scheduler.dispose();
+});
+
+test('reopened semantic jobs run in manual mode, yield between collections, and honor pause', async () => {
+    const clock = new FakeClock(), ran: string[] = [];
+    const other = { ...spec, collection: 'second', root: '/fixture/second' };
+    const scheduler = new Scheduler({ ...options, mode: 'manual' }, async () => { throw new Error('Unexpected source scan'); },
+        () => {}, () => {}, clock, async current => { ran.push(current.collection); return ran.length < 4 ? 'pending' : 'ready'; });
+    scheduler.pause(); scheduler.observeSemantic(spec, true); scheduler.observeSemantic(other, true);
+    await clock.advance(5000); assert.equal(ran.length, 0);
+    scheduler.resume(); await clock.advance(0);
+    assert.deepEqual(ran, [spec.collection, other.collection]);
+    scheduler.pause(); await clock.advance(5000); assert.equal(ran.length, 2);
+    scheduler.resume(); await clock.advance(2000);
+    assert.deepEqual(ran, [spec.collection, other.collection, spec.collection, other.collection, spec.collection]);
+    assert.ok(scheduler.states().every(item => !item.pending));
+    scheduler.dispose();
+});
+
+test('semantic failures and native pause stop retries until explicit resume', async () => {
+    for (const outcome of ['error', 'paused'] as const) {
+        const clock = new FakeClock(); let calls = 0, failures = 0;
+        const scheduler = new Scheduler(options, async () => report, () => {}, () => { failures++; }, clock, async () => {
+            calls++;
+            if (calls === 1) { if (outcome === 'error') { throw new Error('model unavailable'); } return 'paused'; }
+            return 'ready';
+        });
+        scheduler.observeSemantic(spec, true); await clock.advance(0);
+        scheduler.observeSemantic(spec, true); await clock.advance(10000);
+        assert.equal(calls, 1); assert.equal(failures, outcome === 'error' ? 1 : 0);
+        scheduler.resume(); await clock.advance(0);
+        assert.equal(calls, 2); assert.equal(scheduler.states()[0].pending, false);
+        scheduler.dispose();
+    }
+});
+
+test('storage selection waits for a semantic batch and removed collections never continue', async () => {
+    const clock = new FakeClock(); let batches = 0, release!: (result: SemanticResult) => void;
+    let held = false;
+    const scheduler = new Scheduler(options, async () => report, () => {}, () => {}, clock, async () => {
+        batches++; return new Promise<SemanticResult>(resolve => { release = resolve; });
+    });
+    scheduler.observeSemantic(spec, true); await clock.advance(0);
+    assert.equal(scheduler.isBusy, true);
+    const selecting = scheduler.holdWhile(async idle => {
+        await idle; held = true; scheduler.forget(spec.collection);
+    });
+    await flush(); assert.equal(held, false);
+    release('pending'); await selecting; await clock.advance(10000);
+    assert.equal(held, true); assert.equal(batches, 1); assert.equal(scheduler.states().length, 0);
+    scheduler.dispose();
+});
+
+test('a late native pause response cannot undo a newer Resume request', async () => {
+    const clock = new FakeClock(); let calls = 0, release!: (result: SemanticResult) => void;
+    const scheduler = new Scheduler(options, async () => report, () => {}, () => {}, clock, async () => {
+        calls++;
+        return calls === 1 ? new Promise<SemanticResult>(resolve => { release = resolve; }) : 'ready';
+    });
+    scheduler.observeSemantic(spec, true); await clock.advance(0);
+    scheduler.resume(); release('paused'); await flush();
+    await clock.advance(1000);
+    assert.equal(calls, 2); assert.equal(scheduler.states()[0].pending, false);
+    scheduler.dispose();
+});
+
+test('closing the extension during a semantic batch retains work without starting another batch', async () => {
+    const clock = new FakeClock(); let batches = 0, release!: (result: SemanticResult) => void;
+    const scheduler = new Scheduler(options, async () => report, () => {}, () => {}, clock, async () => {
+        batches++; return new Promise<SemanticResult>(resolve => { release = resolve; });
+    });
+    scheduler.observeSemantic(spec, true); await clock.advance(0);
+    scheduler.dispose(); release('pending'); await clock.advance(10000);
+    scheduler.observeSemantic(spec, true); await clock.advance(10000);
+    assert.equal(batches, 1); assert.equal(clock.timers.size, 0);
+});
 
 test('storage selection holds automatic and explicit jobs until the current write settles', async () => {
     for (const fail of [false, true]) {

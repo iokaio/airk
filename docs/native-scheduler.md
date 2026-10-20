@@ -20,6 +20,8 @@ Channel overflow, backend errors and explicit native rescan signals conservative
 
 ## Explicit per-user installation
 
+The VS Code extension does not need this service to finish semantic indexing. From 1.2.2 it calls `semantic run --scheduled` for its active trusted workspace collections after indexing and on reopen. Each call advances at most one semantic batch under the same worker lock, honors native pause and failure blocking, and never runs another collection's jobs. Closing the workspace stops further calls. The service below is optional for continuing work when the editor is closed.
+
 An installed worker uses the same queue, root bindings, aliases, quotas and locks as a foreground worker. Installation is optional, never performed by MCP reads or extension activation. An explicit data directory is required:
 
 ```console

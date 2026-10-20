@@ -8,7 +8,7 @@ import { DashboardView } from './dashboardView';
 import { CollectionItem, CollectionTree } from './collectionTree';
 import { NativeWriteQueue, prepareHelper, probeMcp, runJson } from './native';
 import { installCli } from './cliInstall';
-import { CapacityError, Options, PausedError, Scheduler } from './scheduler';
+import { CapacityError, Options, PausedError, Scheduler, SemanticResult } from './scheduler';
 import { Coverage, CoverageQueue, coverageDetails, coverageLabel } from './coverage';
 import { withPolicySnapshot } from './extractionPolicy';
 import { VectorStatus, prepareVectorModel } from './vectorModel';
@@ -55,7 +55,7 @@ class Controller implements vscode.Disposable {
             () => this.updateStatus(), (spec, error) => {
                 this.indexErrors.set(JSON.stringify([spec.dataDir, spec.collection]), String(error));
                 this.output.appendLine(`${spec.name}: ${String(error)}`);
-            });
+            }, undefined, spec => this.enrich(spec));
         this.coverage = new CoverageQueue(spec => this.writeNative<Coverage>(spec, 'coverage', ['--refresh']), () => this.updateStatus());
         this.configure();
         this.rescan = setInterval(() => {
@@ -168,6 +168,9 @@ class Controller implements vscode.Disposable {
             }
             await this.context.globalState.update('collections-1.2', known);
             await this.rememberStorage(dataDir);
+            // Resume already committed semantic work even when the dashboard is
+            // hidden or source indexing is in Manual mode.
+            await Promise.all([...next.values()].map(spec => this.refreshVectors(spec)));
             if (JSON.stringify([...prior.values()]) !== JSON.stringify([...next.values()])) { this.definitions.fire(); }
         } finally { this.refreshing = false; this.updateStatus(); }
     }
@@ -182,7 +185,8 @@ class Controller implements vscode.Disposable {
         const state = states.find(state => state.collection === spec?.collection);
         const view = spec && this.coverage?.get(spec.collection);
         const summary = !vscode.workspace.isTrusted ? 'Trust required' : this.refreshing ? 'Starting'
-            : state?.state === 'indexing' ? 'Indexing' : state?.state === 'capacity-limited' ? 'Storage budget'
+            : state?.state === 'indexing' ? 'Indexing' : state?.state === 'enriching' ? 'Building semantic index'
+            : state?.state === 'semantic-pending' ? 'Semantic indexing pending' : state?.state === 'capacity-limited' ? 'Storage budget'
             : state?.state === 'failed' ? 'Failed' : state?.state === 'paused' ? 'Paused' : !spec ? this.specs.size ? 'Choose folder' : 'Open a folder'
             : coverageLabel(view || undefined);
         this.status.text = `$(database) AIRK: ${summary}`;
@@ -377,7 +381,7 @@ class Controller implements vscode.Disposable {
             const active = !!spec && spec.dataDir === dataDir;
             const state = scheduler?.state === 'failed' ? 'failed'
                 : active && (this.scheduler.isPaused || scheduler?.state === 'paused') ? 'paused'
-                : active && scheduler?.state === 'indexing' ? 'indexing'
+                : active && scheduler && ['indexing', 'enriching', 'semantic-pending'].includes(scheduler.state) ? scheduler.state
                 : active && (scheduler?.pending || view?.pending) ? 'pending'
                 : entry?.status === 'indexed' ? 'indexed' : 'pending';
             const coverage = active ? coverageLabel(view) : 'coverage unavailable';
@@ -565,12 +569,49 @@ class Controller implements vscode.Disposable {
         }
         this.coverage.request(spec, true);
     }
-    private async refreshVectors(spec: LaunchSpec): Promise<void> {
+    private currentSpec(spec: LaunchSpec): boolean {
+        const current = this.specs.get(spec.collection);
+        return !this.disposed && vscode.workspace.isTrusted && !!current && this.mcpKey(current) === this.mcpKey(spec);
+    }
+    private async enrich(spec: LaunchSpec): Promise<SemanticResult> {
+        if (!this.currentSpec(spec)) { return 'ready'; }
+        this.indexErrors.delete(JSON.stringify([spec.dataDir, spec.collection]));
+        const result = await this.nativeWrites.run(spec, async () => {
+            // A collection may have closed or changed storage while this write
+            // waited behind coverage or another native operation.
+            if (!this.currentSpec(spec)) { return undefined; }
+            return runJson<{state: string; error?: string | null}>(spec, 'semantic', ['run', '--scheduled']);
+        });
+        if (!result || !this.currentSpec(spec)) { return 'ready'; }
+        if (result.state === 'paused') { return 'paused'; }
+        if (result.state === 'blocked' || result.state === 'semantic_failed') {
+            throw new Error(result.error || 'Semantic indexing failed. Use Resume or Index now after resolving the error.');
+        }
+        if (result.state === 'unregistered') { throw new Error('Semantic work has no scheduler registration. Use Index now to resume it.'); }
+        if (!['enriched', 'busy', 'idle'].includes(result.state)) { throw new Error(`Unexpected semantic indexing state: ${result.state}`); }
+        const status = await this.refreshVectors(spec, true);
+        if (!this.currentSpec(spec)) { return 'ready'; }
+        this.treeUsage = undefined;
+        this.sidebar.refresh();
+        if (status?.semantic_readiness?.state === 'failed') {
+            throw new Error(status.semantic_readiness.failure || 'Semantic indexing failed.');
+        }
+        return status?.enabled && ['pending', 'partial'].includes(status.semantic_readiness?.state ?? '') ? 'pending' : 'ready';
+    }
+    private async refreshVectors(spec: LaunchSpec, strict = false): Promise<VectorStatus | undefined> {
         try {
             const status = await runJson<VectorStatus>(spec, 'collections', ['vectors', 'show']);
             if (typeof status.enabled !== 'boolean' || typeof status.published !== 'boolean') { throw new Error('Vector search requires the updated AIRK helper.'); }
-            if (vscode.workspace.isTrusted && this.specs.get(spec.collection)?.dataDir === spec.dataDir) { this.vectorViews.set(this.mcpKey(spec), status); }
-        } catch (error) { this.output.appendLine(`Vector status unavailable: ${String(error)}`); }
+            if (this.currentSpec(spec)) {
+                this.vectorViews.set(this.mcpKey(spec), status);
+                this.scheduler.observeSemantic(spec, status.enabled && ['pending', 'partial', 'failed'].includes(status.semantic_readiness?.state ?? ''));
+            }
+            return status;
+        } catch (error) {
+            this.output.appendLine(`Vector status unavailable: ${String(error)}`);
+            if (strict) { throw error; }
+            return undefined;
+        }
     }
     async setVectors(spec: LaunchSpec, enabled: boolean): Promise<void> {
         this.trusted();
