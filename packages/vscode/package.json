@@ -2,7 +2,7 @@
   "name": "airk",
   "displayName": "AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents",
   "description": "Give Claude Code, Codex, Gemini CLI/Antigravity, Copilot and other MCP agents a local index of your workspace that returns bounded, cited evidence. No cloud service, API key or Docker.",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "icon": "images/icon.png",
   "publisher": "iokaio",
   "license": "Apache-2.0",
@@ -467,7 +467,7 @@
             "minimum": 0,
             "scope": "machine",
             "order": 2,
-            "markdownDescription": "Soft limit, in bytes, on all index data in the current storage folder. `0` turns the limit off. Source files and the helper cache are not counted. Example: `2147483648` is 2 GiB.\n\nWhen usage reaches the limit, automatic indexing stops and the status bar shows **Storage budget**. **Index Now** still runs and can exceed the limit. Nothing is deleted automatically: reclaim space with **Trim Obsolete Index Generations…** or **Remove Unneeded Collection…**, or raise the limit, then run **Resume Auto-indexing**."
+            "markdownDescription": "Soft limit, in bytes, on all index data in the current storage folder. `0` turns the limit off. Source files and the helper cache are not counted. Example: `2147483648` is 2 GiB.\n\nWhen usage reaches the limit, automatic indexing stops and the status bar shows **Storage budget**. **Index Now** still runs and can exceed the limit. Nothing is deleted automatically: reclaim unreferenced current objects or remove an unneeded collection, or raise the limit, then run **Resume Auto-indexing**."
           }
         }
       }

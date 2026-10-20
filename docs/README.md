@@ -2,10 +2,10 @@
 
 **AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents**
 
-Start with the [1.1.4 release notes](release-1.1.4.md) and the [combined October 17 release summary](releases-2026-10-17.md) for 1.1.0–1.1.2, current defaults, upgrade steps and qualification evidence. For setup, use [coding-agent integration](agent-integration.md) and [extension controls](vscode-extension.md); for indexing and disk use, use [ingestion limits and detail](ingestion-limits.md), [storage quotas](storage-quotas.md) and [retention](retention.md).
+Start with the [1.2.1 documentation update](release-1.2.1.md) and [1.2.0 behavior and upgrade notes](release-1.2.0.md) for current defaults, upgrade steps and qualification limits. For setup, use [coding-agent integration](agent-integration.md) and [extension controls](vscode-extension.md); for indexing and disk use, use [ingestion limits and detail](ingestion-limits.md), [storage quotas](storage-quotas.md), [current-index operation](current-index-runtime.md) and [current-object cleanup](retention.md). The 1.1 release notes and v2 design records below are historical.
 
 - [Architecture and code boundaries](architecture.md)
-- [Architecture v2: combined implementation and subagent plan](architecture-v2.md)
+- [Historical architecture v2 implementation plan](architecture-v2.md)
 - [Proposed change tracing and bounded development indexes](change-tracing-plan.md)
 - [Decision 001: focused local retrieval](decisions/001-local-retrieval-kernel.md)
 - [Design inspiration and independent implementation](inspiration.md)
@@ -13,14 +13,14 @@ Start with the [1.1.4 release notes](release-1.1.4.md) and the [combined October
 - [Ingestion limits, machine sizing and index detail](ingestion-limits.md)
 - [Per-collection extraction policy](extraction-policy.md)
 - [Measured scale and performance qualification](scale-qualification.md)
-- [Indexing cost analysis, experiments and enhancement plan](indexingenhancements.md)
+- [1.2 indexing optimization and qualification record](indexingenhancements.md)
 - [Document requirements, dates and design indexing](document-indexing.md)
 - [Code-indexing recommendations and optional semantic-provider review](code-indexing-options.md)
 - [Implemented SQLite code facts, relationships and SCIP imports](code-facts-and-relationships.md)
 - [Collections and selected DiskANN architecture](collections.md)
 - [Shared storage quotas and reservation limits](storage-quotas.md)
-- [Searchable generation retention and maintenance](retention.md)
-- [Historical content and checkpoints](v2-history-controls.md)
+- [Current-object cleanup and retired history controls](retention.md)
+- [Historical v2 design: content and checkpoints, not available in 1.2](v2-history-controls.md)
 - [Transactional storage relocation and recovery](storage-relocation.md)
 - [Additional source folders and revision-bound aliases](source-roots.md)
 - [Explicit local model assets and vector/hybrid retrieval](local-models.md)
@@ -34,6 +34,7 @@ Start with the [1.1.4 release notes](release-1.1.4.md) and the [combined October
 - [Google Antigravity manual MCP setup](antigravity-mcp.md)
 - [Coding-agent tool alignment and online documentation review](agent-tool-alignment.md)
 - [Agent Lean index modes and MCP efficiency plan](mcp-prioritization.md)
+- [1.2.1 documentation update](release-1.2.1.md)
 - [1.2.0 current-index, Agent Lean and compression behavior](release-1.2.0.md)
 - [Workspace indexing coverage and clickable footer](index-coverage.md)
 - [Native VS Code extension and limits](vscode-extension.md)
@@ -43,7 +44,7 @@ Start with the [1.1.4 release notes](release-1.1.4.md) and the [combined October
 - [Usage & Savings PNG previews for 1.1.3](ui/usage-reporting.md)
 - [October 17 combined release notes: 1.1.0–1.1.2](releases-2026-10-17.md)
 - [1.1.3 implementation and qualification: Usage & Savings](release-1.1.3.md)
-- [1.1.4 local candidate: reliable usage comparisons](release-1.1.4.md)
+- [Historical 1.1.4 record: reliable usage comparisons](release-1.1.4.md)
 - [Measuring AIRK's value: sessions, evaluation and overhead](usage-evaluation.md)
 - [1.1.2 implementation and qualification: coding-agent connections](release-1.1.2.md)
 - [1.1.1 implementation and qualification: dashboard, storage and recovery](release-1.1.1.md)

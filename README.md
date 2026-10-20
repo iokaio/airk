@@ -1,6 +1,6 @@
 # AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents
 
-**Version 1.2.0.** See the [1.2.0 behavior and upgrade notes](docs/release-1.2.0.md). Download published [native ZIPs and platform VSIX packages](https://github.com/iokaio/airk/releases).
+**Version 1.2.1.** See the [1.2.1 documentation update](docs/release-1.2.1.md) and [1.2.0 behavior and upgrade notes](docs/release-1.2.0.md). Download published [native ZIPs and platform VSIX packages](https://github.com/iokaio/airk/releases).
 
 **Give Claude Code, Codex, Gemini CLI/Antigravity, GitHub Copilot and other MCP-capable agents a shared, local index of your workspace.** AIRK indexes files and returns bounded facts and passages with source paths, hashes and original locations. The agent supplies the reasoning. Runtime storage uses memory and local disk.
 
@@ -9,6 +9,10 @@
 This is an independent, runnable open-source project. Munarium, VCP and local reference files inform the design; their implementations are not dependencies. Tantivy lexical indexes, authenticated SQLite records and mutable Microsoft DiskANN publish one coherent current revision. Vector indexing and hybrid retrieval are enabled by default. The trusted panel prepares the pinned [local CPU embedding model](docs/onnx-models.md) on first use (about 91 MB); turn **Vector search** off per collection to opt out. Inference and source data stay local. Model quality must be evaluated for the intended corpus.
 
 [Code facts and relationships](docs/code-facts-and-relationships.md) add scopes, signatures, written types, call/framework candidates and optional source/build-bound SCIP imports. Sixteen read-only MCP tools expose bounded evidence with explicit syntax versus producer provenance. Native indexing needs no external compiler/indexer installation.
+
+## What's new in 1.2.1
+
+The extension's Details/Marketplace description and repository documentation now explain the 1.2 behavior and current controls. One storage-budget message was corrected; indexing and retrieval behavior remain as in 1.2.0. See the [release notes](docs/release-1.2.1.md).
 
 ## What's new in 1.2.0
 
@@ -29,8 +33,8 @@ Open **Usage & Savings** on any collection to see how much smaller AIRK results 
 ## What's new in 1.1.0–1.1.2
 
 - **Workstation indexing:** automatic source allowances scale with machine memory, up to 2 GiB per collection. Coverage reports measured bytes and large files; reviewed limit increases preserve existing policies and retry once. [Ingestion limits](docs/ingestion-limits.md) distinguish raw-file admission from extracted-text and parser limits.
-- **Collection dashboard:** inspect coverage and MCP helper health, index or reindex a collection, pause automatic work, choose storage and select Essential, Balanced or Detailed evidence. New collections default to Balanced; existing collections retain their previous detail until changed.
-- **Storage and recovery:** one current index per collection, incremental Tantivy/DiskANN updates, quota-admitted database growth and captured transaction replay. Defaults are 100 GiB per collection and 500 GiB per storage root. Historical generations/checkpoints are unsupported in 1.2.
+- **Collection dashboard:** inspect coverage and MCP helper health, index or reindex a collection, pause automatic work, choose storage and select evidence detail. The current controls are described below; the 1.1 labels were Essential, Balanced and Detailed.
+- **Storage and recovery:** the 1.1 line introduced storage and recovery controls. Version 1.2 replaced historical generations with one authenticated current index. Defaults are 100 GiB per collection and 500 GiB per storage root.
 - **Coding-agent connections:** a persistent setup guide creates missing Codex project configuration, installs Claude Code/Gemini CLI/Antigravity project entries while preserving other settings, or opens Copilot's explicit registration controls. Helper health and actual agent discovery are checked separately.
 
 See the [combined release notes](docs/releases-2026-10-17.md) for release provenance, measured Windows results and changes that require an explicit upgrade action.
@@ -109,7 +113,7 @@ See the [format matrix](docs/formats.md) for the broader language, build-file an
 
 ### Choose indexing detail
 
-The AIRK sidebar offers **Essential**, **Balanced** (the default for new collections), and **Detailed** for each collection. Essential keeps searchable text and exact citations. Balanced adds declarations, imports, useful structural/document facts and declaration change tracking. Detailed also retains individual calls and document-unit change tracking. Existing collections keep their previous Detailed behavior until changed.
+The AIRK sidebar offers **Search Only**, **Agent Lean**, **Rich Structure** (the default for new collections), and **Detailed**. Search Only keeps searchable text and exact citations. Agent Lean keeps selected declarations, imports and useful document facts with compact MCP replies. Rich Structure adds broader structural facts and declaration tracking. Detailed also retains individual calls and document-unit tracking. Existing saved choices keep their meanings.
 
 The panel shows configured and published levels separately. Changing a level rebuilds evidence; preparation keeps the current head readable, and Applying requires completion or recovery before reads resume. Native fact and relationship responses explicitly report omitted detail. Storage quotas, current-object cleanup and vector search are separate controls. See [index detail](docs/ingestion-limits.md#index-detail) for CLI equivalents and costs.
 

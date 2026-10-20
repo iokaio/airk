@@ -33,7 +33,7 @@ Usage accounting has a separate best-effort contract: successful and failed jobs
 
 ## Downloadable candidates
 
-Ordinary CI and local extension packaging default to the stable channel for the checked-in version, currently 1.1.2. A stable candidate is still an unpublished build artifact; release workflows verify and publish it separately. The [October 17 release summary](releases-2026-10-17.md) identifies published versions and their source commits. Future previews require an explicit channel and a distinct version.
+Ordinary CI and local extension packaging default to the stable channel for the checked-in version. A stable candidate is still an unpublished build artifact; release workflows verify and publish it separately. The [1.2 release notes](release-1.2.0.md) describe current behavior, while the [October 17 release summary](releases-2026-10-17.md) records earlier published versions. Future previews require an explicit channel and a distinct version.
 
 Successful native jobs upload an artifact named `airk-native-<target>-<commit>-<run-id>-<attempt>` to the workflow run's Artifacts section. It contains:
 

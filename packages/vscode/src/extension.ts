@@ -241,7 +241,7 @@ class Controller implements vscode.Disposable {
         if (automatic && maxBytes > 0) {
             const usage = await runJson<Usage[]>(spec, 'collections', ['list']);
             if (usage.reduce((bytes, item) => bytes + item.disk_bytes, 0) >= maxBytes) {
-                throw new CapacityError('Index storage budget (airk.storage.maxBytes) reached; automatic indexing stopped. Trim old generations, remove unused collections or raise the budget, then run Resume Auto-indexing. Index Now still works.');
+                throw new CapacityError('Index storage budget (airk.storage.maxBytes) reached; automatic indexing stopped. Reclaim unreferenced current objects, remove unused collections or raise the budget, then run Resume Auto-indexing. Index Now still works.');
             }
         }
         let report: IndexReport;
