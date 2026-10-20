@@ -2,6 +2,7 @@
 
 AIRK is an independent Artifact Indexing and Retrieval Kernel. Read README.md, CONTRIBUTING.md, docs/architecture.md and the affected component before changing code. Follow more specific guidance when present.
 
+- Before every commit, push, or PR creation cycle, update the affected documentation and verify that the README, documentation index, release notes, and VSIX/Marketplace description agree with the current version and implemented behavior. Keep dated historical records identifiable instead of rewriting them as current guidance.
 - Use AIRK MCP first by default for repository discovery and indexed code/document evidence unless the user instructs otherwise. Prefer focused search, symbols, outlines and bounded reads; retain revision identity and check freshness/coverage when relevant. Verify live source before edits. If AIRK is unavailable, incompatible, stale for the required evidence or lacks the needed capability, briefly state why and use direct tools for that work. Editing, builds, tests and Git operations remain direct-tool work; do not repeatedly retry a failing MCP call.
 - Keep scope local: file discovery, native extraction, indexes and bounded retrieval. Do not add agent reasoning, orchestration, external databases or cloud providers.
 - DiskANN is the selected final disk-backed vector engine; the runnable scaffold's lexical map/SQLite retained snapshot is a bootstrap adapter, not that final implementation.
