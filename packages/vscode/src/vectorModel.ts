@@ -6,7 +6,13 @@ import * as os from 'node:os';
 
 export interface VectorStatus {
     enabled: boolean; published: boolean; indexed_vectors: number; pending_reindex: boolean;
-    default_search_mode: 'hybrid' | 'lexical';
+    default_search_mode: 'hybrid' | 'lexical' | 'requires_complete';
+    semantic_readiness?: {
+        state: 'disabled' | 'pending' | 'partial' | 'ready' | 'failed';
+        selected_artifacts: number; completed_artifacts: number;
+        selected_units: number | null; completed_units: number;
+        failure: string | null;
+    };
 }
 export interface ModelAsset { name: string; url: string; bytes: number; sha256: string }
 const source = 'https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2';

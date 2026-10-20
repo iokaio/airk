@@ -5,7 +5,9 @@ use super::{OccurrencePointer, PathOccurrences, PreparedOccurrence, VectorBindin
 use crate::{
     FileStore,
     current::{
-        CurrentHead, CurrentScope, MAX_PENDING_VECTOR_INPUTS, graph, journal::ArtifactChange, map,
+        CurrentHead, CurrentScope, MAX_PENDING_VECTOR_INPUTS, graph,
+        journal::{ArtifactChange, CapturedInput},
+        map,
     },
 };
 use airk_core::{
@@ -211,6 +213,7 @@ pub(crate) fn retire_changed_paths(
 pub(crate) fn attach_new_occurrences(
     context: &mut VectorPlanContext<'_, '_>,
     changes: &[ArtifactChange],
+    vector_inputs: Option<&[CapturedInput]>,
     occurrences: &[PreparedOccurrence],
 ) -> Result<Vec<map::MapChange>> {
     let VectorPlanContext {
@@ -238,6 +241,24 @@ pub(crate) fn attach_new_occurrences(
     for change in changes {
         if let ArtifactChange::Upsert(input) = change {
             inputs.insert(input.artifact.path.as_str(), input.as_ref());
+        }
+    }
+    if let Some(vector_inputs) = vector_inputs {
+        ensure!(
+            changes.is_empty(),
+            "vector-only inputs cannot rewrite artifacts"
+        );
+        for input in vector_inputs {
+            let key = map::key(
+                scope,
+                map::MapDomain::Artifact,
+                input.artifact.path.as_bytes(),
+            )?;
+            ensure!(
+                plan.get(key)?.as_deref() == Some(input.bytes()?.as_slice())
+                    && inputs.insert(input.artifact.path.as_str(), input).is_none(),
+                "vector-only input differs from current artifact"
+            );
         }
     }
     let mut by_path = BTreeMap::<&str, Vec<&PreparedOccurrence>>::new();

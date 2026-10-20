@@ -82,6 +82,7 @@ fn managed_data_path(path: PathBuf) -> Result<PathBuf> {
 pub struct Status {
     pub retention: maintenance::RetentionObservation,
     pub publication: Option<airk_core::evidence::RevisionEnvelope>,
+    pub semantic_readiness: airk_core::readiness::SemanticReadiness,
     pub source_roots: std::collections::BTreeMap<String, String>,
     pub generation: u64,
     pub collection: String,
@@ -256,7 +257,7 @@ impl Kernel {
     }
 
     fn index_with_mode(&self, full: bool) -> Result<IndexReport> {
-        self.index_current(full)
+        self.index_current(full, false)
     }
 
     pub fn status(&self) -> Result<Status> {
@@ -404,6 +405,7 @@ impl Kernel {
         }
         Ok(SearchResponse {
             publication,
+            semantic_readiness: None,
             generation: snapshot.generation,
             collection: snapshot.collection.clone(),
             truncated,
@@ -622,6 +624,7 @@ impl Kernel {
         let snapshot = self.current_scan_projection(&read)?;
         let mut evidence = SearchResponse {
             publication: Some(current::runtime::envelope(&read)?),
+            semantic_readiness: Some(current::enrichment::readiness(&read, &self.store)?),
             generation: snapshot.generation,
             collection: snapshot.collection.clone(),
             hits: Vec::new(),

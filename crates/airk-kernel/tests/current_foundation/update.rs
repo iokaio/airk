@@ -165,6 +165,7 @@ fn coordinator_reuses_shared_vectors_tombstones_and_resurrects_exact_ids() -> Re
                 model: &model,
                 objects: objects.clone(),
                 selection: &selection,
+                defer: false,
                 cache: EmbeddingCacheContext {
                     cache: None,
                     bypass: false,

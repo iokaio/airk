@@ -91,6 +91,7 @@ impl Kernel {
             model,
             objects: configuration.model.clone().expect("loaded model"),
             selection: &configuration.vector_selection,
+            defer: false,
             cache: airk_retrieval::model::EmbeddingCacheContext {
                 cache: None,
                 bypass: false,

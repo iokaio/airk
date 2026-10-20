@@ -205,6 +205,9 @@ pub enum ArtifactChange {
 
 pub struct ArtifactVectorChanges<'a> {
     pub artifacts: &'a [ArtifactChange],
+    /// Captured current artifacts used only to attach vectors; their catalog
+    /// and lexical documents are not rewritten by this transaction.
+    pub vector_inputs: Option<&'a [CapturedInput]>,
     pub occurrences: &'a [PreparedOccurrence],
     pub configuration: Option<&'a super::collection::CollectionConfiguration>,
 }
@@ -1344,6 +1347,7 @@ impl CurrentWriter<'_> {
             graph_delta,
             ArtifactVectorChanges {
                 artifacts: changes,
+                vector_inputs: None,
                 occurrences: &[],
                 configuration: None,
             },
@@ -1410,6 +1414,7 @@ impl CurrentWriter<'_> {
         resources: &[super::resources::ResourceChange],
     ) -> Result<PendingTransaction> {
         let changes = update.artifacts;
+        let vector_inputs = update.vector_inputs;
         let occurrences = update.occurrences;
         ensure!(
             changes.len() <= MAX_PENDING_INPUTS
@@ -1441,6 +1446,19 @@ impl CurrentWriter<'_> {
                 path.as_bytes(),
                 value,
             )?);
+        }
+        if let Some(vector_inputs) = vector_inputs {
+            ensure!(
+                changes.is_empty()
+                    && vector_inputs.len() <= MAX_PENDING_INPUTS
+                    && vector_inputs
+                        .windows(2)
+                        .all(|pair| pair[0].artifact.path < pair[1].artifact.path),
+                "invalid vector-only input batch"
+            );
+            for input in vector_inputs {
+                inputs.push(input.clone());
+            }
         }
         map_changes.sort_by_key(map::MapChange::key);
         ensure!(
@@ -1548,6 +1566,7 @@ impl CurrentWriter<'_> {
             map_changes.extend(vector_map::attach_new_occurrences(
                 &mut context,
                 changes,
+                vector_inputs,
                 occurrences,
             )?);
         }

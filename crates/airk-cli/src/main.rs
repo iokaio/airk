@@ -220,6 +220,11 @@ enum Command {
     },
     /// Show the active snapshot and counts.
     Status,
+    /// Inspect or resume durable semantic enrichment and select default search behavior.
+    Semantic {
+        #[command(subcommand)]
+        action: SemanticCommand,
+    },
     /// Retrieve bounded evidence using the collection default (hybrid unless opted out).
     Search {
         query: String,
@@ -362,6 +367,16 @@ enum ScheduleCommand {
 }
 
 #[derive(Subcommand)]
+enum SemanticCommand {
+    Status,
+    Run,
+    Policy {
+        #[arg(value_parser = ["partial_hybrid", "lexical_while_pending", "require_complete"])]
+        mode: String,
+    },
+}
+
+#[derive(Subcommand)]
 enum ServiceCommand {
     Plan,
     Install,
@@ -469,6 +484,15 @@ impl Command {
             Self::Setup { .. } | Self::Index { full: false, .. } => UsageOperation::Index,
             Self::Index { full: true, .. } => UsageOperation::Reindex,
             Self::Status => UsageOperation::Status,
+            Self::Semantic {
+                action: SemanticCommand::Status,
+            } => UsageOperation::Status,
+            Self::Semantic {
+                action: SemanticCommand::Run,
+            } => UsageOperation::Index,
+            Self::Semantic {
+                action: SemanticCommand::Policy { .. },
+            } => UsageOperation::CollectionMaintenance,
             Self::Search { .. } => UsageOperation::Search,
             Self::Files { .. } => UsageOperation::ListFiles,
             Self::Read { .. } => UsageOperation::ReadFile,
@@ -977,7 +1001,14 @@ fn main() -> anyhow::Result<()> {
     if airk_kernel::dispatch_pdf_worker()? {
         return Ok(());
     }
-    main_async()
+    // The command dispatcher's async state exceeds the Windows main-thread
+    // stack in debug builds. Keep PDF workers on the original entry path.
+    std::thread::Builder::new()
+        .name("airk-cli".into())
+        .stack_size(8 << 20)
+        .spawn(main_async)?
+        .join()
+        .map_err(|_| anyhow::anyhow!("AIRK CLI thread panicked"))?
 }
 
 #[tokio::main]
@@ -1327,6 +1358,22 @@ async fn main_async() -> anyhow::Result<()> {
             kernel.index()?
         }),
         Command::Status => recorder.print(&kernel.status()?),
+        Command::Semantic { action } => match action {
+            SemanticCommand::Status => recorder.print(&kernel.status()?.semantic_readiness),
+            SemanticCommand::Run => {
+                kernel.resume_current_enrichment()?;
+                recorder.print(&kernel.status()?.semantic_readiness)
+            }
+            SemanticCommand::Policy { mode } => {
+                let policy = match mode.as_str() {
+                    "partial_hybrid" => airk_core::readiness::DefaultSearchPolicy::PartialHybrid,
+                    "lexical_while_pending" => airk_core::readiness::DefaultSearchPolicy::LexicalWhilePending,
+                    "require_complete" => airk_core::readiness::DefaultSearchPolicy::RequireComplete,
+                    _ => unreachable!("validated by clap"),
+                };
+                recorder.print(&kernel.set_default_semantic_search_policy(policy)?)
+            }
+        },
         Command::Search {
             query,
             mode,

@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
-use airk_core::SearchQuery;
+use airk_core::{
+    SearchQuery,
+    readiness::{DefaultSearchPolicy, SemanticState},
+};
 use airk_kernel::Kernel;
 use anyhow::Result;
 
@@ -144,6 +147,238 @@ fn model(directory: &std::path::Path, dimensions: usize) -> Result<()> {
             "dimensions":dimensions,"sha256":format!("{:x}", Sha256::digest(&vocabulary))
         }))?,
     )?;
+    Ok(())
+}
+
+#[test]
+fn scheduled_base_is_readable_before_restart_resumes_semantic_work() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let data = tempfile::tempdir()?;
+    model(&data.path().join("models/local"), 2)?;
+    std::fs::write(root.path().join("a.txt"), "authenticate\n")?;
+    let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    let base = kernel.scheduled_index(false, false)?;
+    assert!(base.first_ready_us.is_some());
+    assert!(base.fully_ready_us.is_none());
+    let pending = kernel.status()?;
+    assert_eq!(pending.semantic_readiness.state, SemanticState::Pending);
+    assert_eq!(pending.semantic_readiness.selected_artifacts, 1);
+    assert_eq!(pending.semantic_readiness.completed_artifacts, 0);
+    assert_eq!(pending.indexed_vectors, 0);
+    let query = SearchQuery {
+        text: "authenticate".into(),
+        path_prefix: None,
+        limit: 10,
+        max_bytes: 4096,
+    };
+    assert_eq!(kernel.search(&query)?.hits.len(), 1);
+    assert_eq!(
+        kernel
+            .default_search(&query)?
+            .semantic_readiness
+            .unwrap()
+            .state,
+        SemanticState::Pending
+    );
+    kernel.set_default_semantic_search_policy(DefaultSearchPolicy::LexicalWhilePending)?;
+    assert_eq!(kernel.default_search(&query)?.hits.len(), 1);
+    kernel.set_default_semantic_search_policy(DefaultSearchPolicy::RequireComplete)?;
+    assert!(kernel.default_search(&query).is_err());
+    kernel.schedule_pause(true)?;
+    assert_eq!(kernel.run_scheduled_once()?.state, "idle");
+    kernel.schedule_pause(false)?;
+    drop(kernel);
+    let reopened = Kernel::open(root.path(), Some(data.path().into()))?;
+    assert_eq!(reopened.run_scheduled_once()?.state, "enriched");
+    let ready = reopened.status()?;
+    assert_eq!(ready.semantic_readiness.state, SemanticState::Ready);
+    assert_eq!(ready.semantic_readiness.completed_artifacts, 1);
+    assert_eq!(ready.indexed_vectors, 1);
+    assert_ne!(pending.publication, ready.publication);
+    assert_eq!(reopened.default_search(&query)?.hits.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn direct_index_reports_one_lexical_write_for_one_semantic_file() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let data = tempfile::tempdir()?;
+    model(&data.path().join("models/local"), 2)?;
+    std::fs::write(root.path().join("a.txt"), "authenticate\n")?;
+    let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    let report = kernel.index()?;
+    assert_eq!(report.current.expect("current work").lexical_documents, 1);
+    assert!(report.first_ready_us.is_some());
+    assert!(report.fully_ready_us.is_some());
+    assert_eq!(
+        kernel.status()?.semantic_readiness.state,
+        SemanticState::Ready
+    );
+    Ok(())
+}
+
+#[test]
+fn superseding_base_discards_old_pending_vector_binding() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let data = tempfile::tempdir()?;
+    model(&data.path().join("models/local"), 2)?;
+    std::fs::write(root.path().join("a.txt"), "authenticate\n")?;
+    let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    kernel.scheduled_index(false, false)?;
+    let old = kernel.status()?.publication;
+    std::fs::write(root.path().join("a.txt"), "login\n")?;
+    kernel.scheduled_index(false, false)?;
+    assert_eq!(
+        kernel.status()?.semantic_readiness.state,
+        SemanticState::Pending
+    );
+    assert_ne!(old, kernel.status()?.publication);
+    let query = SearchQuery {
+        text: "authenticate".into(),
+        path_prefix: None,
+        limit: 10,
+        max_bytes: 4096,
+    };
+    assert!(kernel.search(&query)?.hits.is_empty());
+    assert_eq!(kernel.run_scheduled_once()?.state, "enriched");
+    let semantic = kernel.semantic_search(&query)?;
+    assert_eq!(
+        semantic.semantic_readiness.unwrap().state,
+        SemanticState::Ready
+    );
+    assert_eq!(semantic.hits[0].text, "login\n");
+    Ok(())
+}
+
+#[test]
+fn semantic_batches_disclose_partial_coverage() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let data = tempfile::tempdir()?;
+    model(&data.path().join("models/local"), 2)?;
+    for file in 0..33 {
+        std::fs::write(
+            root.path().join(format!("file_{file:02}.txt")),
+            "authenticate\n",
+        )?;
+    }
+    let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    kernel.scheduled_index(false, false)?;
+    assert_eq!(
+        kernel.status()?.semantic_readiness.state,
+        SemanticState::Pending
+    );
+    assert_eq!(kernel.run_scheduled_once()?.state, "enriched");
+    let partial = kernel.status()?.semantic_readiness;
+    assert_eq!(partial.state, SemanticState::Partial);
+    assert_eq!(
+        (partial.selected_artifacts, partial.completed_artifacts),
+        (33, 32)
+    );
+    let pending_path = SearchQuery {
+        text: "login".into(),
+        path_prefix: Some("file_32.txt".into()),
+        limit: 10,
+        max_bytes: 4096,
+    };
+    let pending_search = kernel.semantic_search(&pending_path)?;
+    assert_eq!(
+        pending_search.semantic_readiness.unwrap().state,
+        SemanticState::Partial
+    );
+    assert!(pending_search.hits.is_empty());
+    assert_eq!(kernel.run_scheduled_once()?.state, "enriched");
+    let ready = kernel.status()?.semantic_readiness;
+    assert_eq!(ready.state, SemanticState::Ready);
+    assert_eq!(
+        (ready.selected_artifacts, ready.completed_artifacts),
+        (33, 33)
+    );
+    let full = kernel.reindex()?;
+    assert_eq!(full.vector_eligible_artifacts, 33);
+    assert_eq!(
+        kernel.status()?.semantic_readiness.state,
+        SemanticState::Ready
+    );
+    Ok(())
+}
+
+#[test]
+fn corrupt_model_blocks_enrichment_without_losing_base_evidence() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let data = tempfile::tempdir()?;
+    model(&data.path().join("models/local"), 2)?;
+    std::fs::write(root.path().join("a.txt"), "authenticate\n")?;
+    let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    kernel.scheduled_index(false, false)?;
+    let model_objects = data.path().join("collections-1.2/default/objects/models");
+    let object = std::fs::read_dir(model_objects)?
+        .next()
+        .expect("model object")?
+        .path();
+    std::fs::write(object, b"corrupt fixture")?;
+    assert_eq!(kernel.run_scheduled_once()?.state, "semantic_failed");
+    assert_eq!(
+        kernel.status()?.semantic_readiness.state,
+        SemanticState::Pending
+    );
+    assert!(
+        kernel
+            .schedule_status()?
+            .expect("scheduled collection")
+            .blocked
+    );
+    assert_eq!(kernel.run_scheduled_once()?.state, "idle");
+    let query = SearchQuery {
+        text: "authenticate".into(),
+        path_prefix: None,
+        limit: 10,
+        max_bytes: 4096,
+    };
+    assert_eq!(kernel.search(&query)?.hits.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn semantic_failure_child() -> Result<()> {
+    let Ok(root) = std::env::var("AIRK_SEMANTIC_FAILURE_TEST_ROOT") else {
+        return Ok(());
+    };
+    let data = std::env::var("AIRK_SEMANTIC_FAILURE_TEST_DATA")?;
+    let kernel = Kernel::open(root, Some(data.into()))?;
+    assert!(kernel.resume_current_enrichment().is_err());
+    Ok(())
+}
+
+#[test]
+fn failed_semantic_batch_is_persisted_and_does_not_hide_exact_evidence() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let data = tempfile::tempdir()?;
+    model(&data.path().join("models/local"), 2)?;
+    std::fs::write(root.path().join("a.txt"), "authenticate\n")?;
+    let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    kernel.scheduled_index(false, false)?;
+    let result = std::process::Command::new(std::env::current_exe()?)
+        .arg("--exact")
+        .arg("semantic_failure_child")
+        .env("AIRK_SEMANTIC_FAILURE_TEST_ROOT", root.path())
+        .env("AIRK_SEMANTIC_FAILURE_TEST_DATA", data.path())
+        .env("AIRK_INDEX_WORKERS", "invalid")
+        .output()?;
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let status = kernel.status()?;
+    assert_eq!(status.semantic_readiness.state, SemanticState::Failed);
+    assert_eq!(status.semantic_readiness.completed_artifacts, 0);
+    let query = SearchQuery {
+        text: "authenticate".into(),
+        path_prefix: None,
+        limit: 10,
+        max_bytes: 4096,
+    };
+    assert_eq!(kernel.search(&query)?.hits.len(), 1);
     Ok(())
 }
 

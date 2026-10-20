@@ -22,6 +22,7 @@ mod update;
 pub use update::{CurrentUpdateResult, CurrentUpdateStage, CurrentUpdater, SemanticUpdate};
 mod changes;
 mod conditional;
+pub(crate) mod enrichment;
 mod indexing;
 mod metadata;
 mod publication;

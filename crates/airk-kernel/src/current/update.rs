@@ -19,8 +19,8 @@ use airk_retrieval::{
 use airk_store::{
     FileStore, WriterLock,
     current::{
-        ArtifactChange, ArtifactVectorChanges, CurrentCommit, CurrentRead, CurrentScope,
-        MAX_PENDING_INPUTS, MAX_PENDING_VECTOR_INPUTS, TransactionPhase,
+        ArtifactChange, ArtifactVectorChanges, CapturedInput, CurrentCommit, CurrentRead,
+        CurrentScope, MAX_PENDING_INPUTS, MAX_PENDING_VECTOR_INPUTS, TransactionPhase,
         graph::{GraphOverlay, GraphOverlayLimits, GraphStatistics},
         map::MapDomain,
         vector_map::{OccurrencePointer, PathOccurrences, PreparedOccurrence},
@@ -37,6 +37,8 @@ pub struct SemanticUpdate<'a> {
     pub objects: ModelObjectSet,
     pub selection: &'a VectorSelectionPolicy,
     pub cache: EmbeddingCacheContext<'a>,
+    /// Publish exact evidence and retire incompatible vectors before inference.
+    pub defer: bool,
 }
 
 pub struct CurrentUpdateResult {
@@ -294,7 +296,7 @@ impl CurrentUpdater<'_> {
         semantic: Option<SemanticUpdate<'_>>,
         observer: &mut dyn FnMut(CurrentUpdateStage),
     ) -> Result<CurrentUpdateResult> {
-        self.apply_resources_observed(changes, semantic, &[], None, observer)
+        self.apply_resources_observed(changes, semantic, &[], None, None, observer)
     }
 
     pub fn apply_with_resources(
@@ -303,7 +305,7 @@ impl CurrentUpdater<'_> {
         semantic: Option<SemanticUpdate<'_>>,
         resources: &[airk_store::current::resources::ResourceChange],
     ) -> Result<CurrentUpdateResult> {
-        self.apply_resources_observed(changes, semantic, resources, None, &mut |_| {})
+        self.apply_resources_observed(changes, semantic, resources, None, None, &mut |_| {})
     }
 
     pub(crate) fn apply_scanned(
@@ -313,7 +315,26 @@ impl CurrentUpdater<'_> {
         resources: &[airk_store::current::resources::ResourceChange],
         moves: &BTreeMap<String, String>,
     ) -> Result<CurrentUpdateResult> {
-        self.apply_resources_observed(changes, semantic, resources, Some(moves), &mut |_| {})
+        self.apply_resources_observed(changes, semantic, resources, Some(moves), None, &mut |_| {})
+    }
+
+    /// Attach vectors to already committed exact artifacts. The captured inputs
+    /// are validated against the current map and journaled without rewriting
+    /// their source, fact, posting or lexical rows.
+    pub(crate) fn apply_enrichment(
+        &self,
+        inputs: &[CapturedInput],
+        semantic: SemanticUpdate<'_>,
+        resources: &[airk_store::current::resources::ResourceChange],
+    ) -> Result<CurrentUpdateResult> {
+        self.apply_resources_observed(
+            &[],
+            Some(semantic),
+            resources,
+            None,
+            Some(inputs),
+            &mut |_| {},
+        )
     }
 
     fn apply_resources_observed(
@@ -322,6 +343,7 @@ impl CurrentUpdater<'_> {
         semantic: Option<SemanticUpdate<'_>>,
         resources: &[airk_store::current::resources::ResourceChange],
         moves: Option<&BTreeMap<String, String>>,
+        semantic_inputs: Option<&[CapturedInput]>,
         observer: &mut dyn FnMut(CurrentUpdateStage),
     ) -> Result<CurrentUpdateResult> {
         ensure!(
@@ -331,6 +353,16 @@ impl CurrentUpdater<'_> {
                     .windows(2)
                     .all(|pair| path(&pair[0]) < path(&pair[1])),
             "invalid current changed-path batch"
+        );
+        ensure!(
+            semantic_inputs.is_none_or(|inputs| {
+                changes.is_empty()
+                    && inputs.len() <= MAX_PENDING_INPUTS
+                    && inputs
+                        .windows(2)
+                        .all(|pair| pair[0].artifact.path < pair[1].artifact.path)
+            }),
+            "invalid current semantic-only input batch"
         );
         let capacity = self.store.current_database_capacity(self.scope)?;
         {
@@ -351,7 +383,7 @@ impl CurrentUpdater<'_> {
             .transpose()?;
         let owned_cache = semantic
             .as_ref()
-            .filter(|s| s.cache.cache.is_none())
+            .filter(|s| !s.defer && s.cache.cache.is_none())
             .map(|s| {
                 airk_store::vector_cache::VectorCache::new(
                     self.store.directory(),
@@ -365,6 +397,7 @@ impl CurrentUpdater<'_> {
             model: s.model,
             objects: s.objects,
             selection: s.selection,
+            defer: s.defer,
             cache: EmbeddingCacheContext {
                 cache: s.cache.cache.or(owned_cache
                     .as_ref()
@@ -419,7 +452,7 @@ impl CurrentUpdater<'_> {
         let replacing = semantic
             .as_ref()
             .map(|s| -> Result<bool> {
-                Ok(s.cache.bypass
+                Ok((s.cache.bypass && semantic_inputs.is_none())
                     || base.graph_head.scope.specification
                         != airk_retrieval::vector::mutable::specification(
                             s.model.dimensions(),
@@ -493,10 +526,18 @@ impl CurrentUpdater<'_> {
             })
             .transpose()?;
         let mut captured_bytes = 0usize;
-        for change in changes {
-            let ArtifactChange::Upsert(input) = change else {
-                continue;
-            };
+        let inputs = semantic_inputs
+            .map(|inputs| inputs.iter().collect::<Vec<_>>())
+            .unwrap_or_else(|| {
+                changes
+                    .iter()
+                    .filter_map(|change| match change {
+                        ArtifactChange::Upsert(input) => Some(input.as_ref()),
+                        ArtifactChange::Delete(_) => None,
+                    })
+                    .collect()
+            });
+        for input in inputs {
             let reference = input
                 .artifact
                 .retained
@@ -522,6 +563,9 @@ impl CurrentUpdater<'_> {
                     )?
                     .eligible
                 {
+                    if semantic.defer {
+                        continue;
+                    }
                     semantic.cache.stats.vector_eligible_artifacts += 1;
                     let mut units = Vec::with_capacity(MAX_BATCH_CHUNKS);
                     let mut ordinal = 0;
@@ -557,7 +601,11 @@ impl CurrentUpdater<'_> {
         }
         drop(graph);
         if let Some(semantic) = semantic.as_mut() {
-            semantic.cache.stats.vector_registry_rows = plan.registry.len() as u64;
+            semantic.cache.stats.vector_registry_rows = semantic
+                .cache
+                .stats
+                .vector_registry_rows
+                .max(plan.registry.len() as u64);
         }
         let occurrences = std::mem::take(&mut plan.occurrences);
         drop(plan);
@@ -567,23 +615,42 @@ impl CurrentUpdater<'_> {
             let manifest = cache.finalize()?;
             if let Some(semantic) = semantic.as_mut() {
                 let statistics = cache.statistics()?;
-                semantic.cache.stats.cache_finalize_us =
-                    u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
-                semantic.cache.stats.cache_file_opens = statistics.file_opens;
-                semantic.cache.stats.cache_read_bytes = statistics.read_bytes;
-                semantic.cache.stats.cache_written_bytes = statistics.written_bytes;
-                semantic.cache.stats.cache_record_verification_bytes =
-                    statistics.record_verification_bytes;
-                semantic.cache.stats.cache_index_verification_bytes =
-                    statistics.index_verification_bytes;
-                semantic.cache.stats.cache_full_pack_verification_bytes =
-                    statistics.full_pack_verification_bytes;
-                semantic.cache.stats.cache_syncs = statistics.syncs;
-                semantic.cache.stats.cache_index_hits = statistics.index_cache_hits;
-                semantic.cache.stats.cache_index_peak_bytes = statistics.index_cache_peak_bytes;
-                semantic.cache.stats.cache_packs_written = statistics.packs_written;
-                semantic.cache.stats.cache_packs_reused = statistics.packs_reused;
-                semantic.cache.stats.cache_compacted_records = statistics.compacted_records;
+                let stats = &mut semantic.cache.stats;
+                stats.cache_finalize_us = stats.cache_finalize_us.saturating_add(
+                    u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
+                );
+                stats.cache_file_opens =
+                    stats.cache_file_opens.saturating_add(statistics.file_opens);
+                stats.cache_read_bytes =
+                    stats.cache_read_bytes.saturating_add(statistics.read_bytes);
+                stats.cache_written_bytes = stats
+                    .cache_written_bytes
+                    .saturating_add(statistics.written_bytes);
+                stats.cache_record_verification_bytes = stats
+                    .cache_record_verification_bytes
+                    .saturating_add(statistics.record_verification_bytes);
+                stats.cache_index_verification_bytes = stats
+                    .cache_index_verification_bytes
+                    .saturating_add(statistics.index_verification_bytes);
+                stats.cache_full_pack_verification_bytes = stats
+                    .cache_full_pack_verification_bytes
+                    .saturating_add(statistics.full_pack_verification_bytes);
+                stats.cache_syncs = stats.cache_syncs.saturating_add(statistics.syncs);
+                stats.cache_index_hits = stats
+                    .cache_index_hits
+                    .saturating_add(statistics.index_cache_hits);
+                stats.cache_index_peak_bytes = stats
+                    .cache_index_peak_bytes
+                    .max(statistics.index_cache_peak_bytes);
+                stats.cache_packs_written = stats
+                    .cache_packs_written
+                    .saturating_add(statistics.packs_written);
+                stats.cache_packs_reused = stats
+                    .cache_packs_reused
+                    .saturating_add(statistics.packs_reused);
+                stats.cache_compacted_records = stats
+                    .cache_compacted_records
+                    .saturating_add(statistics.compacted_records);
             }
             let reference = self
                 .store
@@ -647,6 +714,7 @@ impl CurrentUpdater<'_> {
             &sealed,
             ArtifactVectorChanges {
                 artifacts: changes,
+                vector_inputs: semantic_inputs,
                 occurrences: &occurrences,
                 configuration: self.configuration,
             },
