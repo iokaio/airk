@@ -101,8 +101,7 @@ impl CurrentRead {
                 && query
                     .language
                     .as_ref()
-                    .is_none_or(|language| language.len() <= 128)
-                && (!options.compact || query.path_exact),
+                    .is_none_or(|language| language.len() <= 128),
             "invalid current fact filters or compact representation"
         );
         let imported = self.analysis(store)?;
@@ -225,7 +224,7 @@ impl CurrentRead {
             work += bytes;
             let mut artifact =
                 store.load_retained_bounded(&compact, retained.object_bytes as u64)?;
-            store.read_retained_source(&compact)?;
+            store.verify_retained_source(&compact)?;
             if let Some(facts) = imported_facts.remove(&path) {
                 self.verify_analysis_path(imported.as_ref().expect("imported facts"), &path)?;
                 artifact.facts.extend(facts);

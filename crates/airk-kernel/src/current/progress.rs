@@ -23,6 +23,12 @@ pub(super) struct ScanWork {
     committed_artifacts: u64,
     total_artifacts: Option<u64>,
     failure: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    paused: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
 }
 
 impl ScanWork {
@@ -39,12 +45,14 @@ impl ScanWork {
             committed_artifacts: 0,
             total_artifacts: None,
             failure: None,
+            paused: false,
         })
     }
 
     pub fn advanced(&mut self, processed: u64, committed: u64) -> Result<()> {
         ensure!(
             self.total_artifacts.is_none()
+                && !self.paused
                 && self.failure.is_none()
                 && processed >= self.processed_artifacts
                 && committed >= self.committed_artifacts
@@ -58,7 +66,7 @@ impl ScanWork {
 
     pub fn finish(&mut self, total: u64) -> Result<()> {
         ensure!(
-            self.failure.is_none() && total >= self.processed_artifacts,
+            self.failure.is_none() && !self.paused && total >= self.processed_artifacts,
             "invalid progressive scan total"
         );
         self.total_artifacts = Some(total);
@@ -68,7 +76,11 @@ impl ScanWork {
     }
 
     pub fn fail(&mut self, error: &anyhow::Error) {
-        self.failure = Some(format!("{error:#}").chars().take(1024).collect());
+        if error.is::<crate::scheduler::ScanPaused>() {
+            self.paused = true;
+        } else {
+            self.failure = Some(format!("{error:#}").chars().take(1024).collect());
+        }
     }
 
     fn validate(&self) -> Result<()> {
@@ -102,7 +114,9 @@ impl ScanWork {
     fn readiness(&self) -> DiscoveryReadiness {
         DiscoveryReadiness {
             version: 1,
-            state: if self.failure.is_some() {
+            state: if self.paused {
+                DiscoveryState::Paused
+            } else if self.failure.is_some() {
                 DiscoveryState::Failed
             } else if self.total_artifacts.is_some() {
                 DiscoveryState::Ready

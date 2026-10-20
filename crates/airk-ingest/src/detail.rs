@@ -7,11 +7,14 @@ use anyhow::{Context, Result, ensure};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) fn select(payload: &mut ExtractionPayload, detail: IndexDetail) -> Result<()> {
-    payload.facts.retain(|fact| match detail {
-        IndexDetail::Detailed => true,
-        IndexDetail::Balanced => fact.kind != "call",
-        IndexDetail::Essential => false,
-    });
+    payload.facts.retain(|fact| detail.retains_fact(&fact.kind));
+    if detail == IndexDetail::AgentLean {
+        for fact in &mut payload.facts {
+            if let Some(code) = &mut fact.code {
+                code.fingerprints = None;
+            }
+        }
+    }
     // Fact IDs also address relationships and document continuity. Renumber
     // before continuity generation so returned fact ordinals stay consistent.
     let ids: BTreeMap<_, _> = payload

@@ -23,8 +23,19 @@ struct StoredPolicy {
 
 impl FileStore {
     pub fn vector_policy_bytes(&self, owner_root: &str) -> Result<Option<Vec<u8>>> {
+        self.owned_policy_bytes(owner_root, "vector-policy.json")
+    }
+    pub(crate) fn owned_policy_bytes(
+        &self,
+        owner_root: &str,
+        name: &str,
+    ) -> Result<Option<Vec<u8>>> {
+        ensure!(
+            matches!(name, "vector-policy.json" | "compression-policy.json"),
+            "unsupported policy name"
+        );
         let _lease = self.lifecycle(false)?;
-        let path = self.directory().join("vector-policy.json");
+        let path = self.directory().join(name);
         let metadata = match fs::symlink_metadata(&path) {
             Ok(value) => value,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -63,6 +74,20 @@ impl FileStore {
         owner_root: &str,
         bytes: &[u8],
     ) -> Result<()> {
+        self.configure_owned_policy_bytes(writer, quota, owner_root, "vector-policy.json", bytes)
+    }
+    pub(crate) fn configure_owned_policy_bytes(
+        &self,
+        writer: &WriterLock,
+        quota: &Quota,
+        owner_root: &str,
+        name: &str,
+        bytes: &[u8],
+    ) -> Result<()> {
+        ensure!(
+            matches!(name, "vector-policy.json" | "compression-policy.json"),
+            "unsupported policy name"
+        );
         ensure!(
             bytes.len() <= MAX_CONFIG_BYTES && owner_root.len() <= MAX_ROOT_BYTES,
             "vector policy exceeds bound"
@@ -85,7 +110,7 @@ impl FileStore {
                 == directory,
             "foreign vector policy quota"
         );
-        self.vector_policy_bytes(owner_root)?;
+        self.owned_policy_bytes(owner_root, name)?;
         let policy = StoredPolicy {
             version: 1,
             owner_root: owner_root.into(),
@@ -102,7 +127,7 @@ impl FileStore {
         let mut temporary = tempfile::NamedTempFile::new_in(&directory)?;
         temporary.write_all(&bytes)?;
         temporary.as_file().sync_all()?;
-        temporary.persist(directory.join("vector-policy.json"))?;
+        temporary.persist(directory.join(name))?;
         #[cfg(unix)]
         fs::File::open(&directory)?.sync_all()?;
         Ok(())

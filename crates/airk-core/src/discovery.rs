@@ -33,6 +33,34 @@ pub struct CompactFact {
     pub continuity_key: Option<ContinuityKey>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub span: Option<crate::CodeSpan>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub qualified_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub basis: Option<crate::code::EvidenceBasis>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub producer: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub coverage: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub symbol_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub heading_path: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub document_basis: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parser_version: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub details_truncated: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub statement_truncated: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub table: Option<crate::TableEvidence>,
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
 }
 
 impl From<&FactHit> for CompactFact {
@@ -44,6 +72,25 @@ impl From<&FactHit> for CompactFact {
             citation: hit.citation.clone(),
             continuity_key: hit.continuity_key,
             span: hit.code.as_ref().and_then(|code| code.span.clone()),
+            qualified_name: hit.code.as_ref().map(|code| code.qualified_name.clone()),
+            signature: hit.code.as_ref().and_then(|code| code.signature.clone()),
+            basis: hit.code.as_ref().map(|code| code.basis.clone()),
+            producer: hit.code.as_ref().map(|code| code.producer.clone()),
+            coverage: hit.code.as_ref().map(|code| code.coverage.clone()),
+            symbol_id: hit.code.as_ref().map(|code| code.symbol_id.clone()),
+            heading_path: hit.document.as_ref().map(|doc| doc.heading_path.clone()),
+            document_basis: hit.document.as_ref().map(|doc| doc.basis.clone()),
+            parser_version: hit.document.as_ref().map(|doc| doc.parser_version.clone()),
+            details_truncated: hit.code.as_ref().is_some_and(|code| code.details_truncated)
+                || hit
+                    .document
+                    .as_ref()
+                    .is_some_and(|doc| doc.details_truncated),
+            statement_truncated: hit
+                .document
+                .as_ref()
+                .is_some_and(|doc| doc.statement_truncated),
+            table: hit.document.as_ref().and_then(|doc| doc.table.clone()),
         }
     }
 }
@@ -224,6 +271,59 @@ pub fn paginate_facts(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compact_documents_preserve_truncation_and_table_interpretation() -> Result<()> {
+        let hit = FactHit {
+            continuity_key: None,
+            name: "Limit: 15".into(),
+            kind: "table_row".into(),
+            syntax_kind: "row".into(),
+            language: "xlsx".into(),
+            citation: crate::Citation {
+                path: "limits.xlsx".into(),
+                content_hash: "a".repeat(64),
+                start_line: 1,
+                end_line: 1,
+                location: crate::DocumentLocation::Block { number: 1 },
+            },
+            code: None,
+            document: Some(crate::DocumentEvidence {
+                parser_version: "original-table-fixture/1".into(),
+                basis: "written cells; formula result is cached".into(),
+                heading_path: vec!["Limits".into()],
+                details_truncated: true,
+                statement_truncated: true,
+                table: Some(crate::TableEvidence {
+                    row: 1,
+                    cells: vec![crate::TableCellEvidence {
+                        column: 2,
+                        address: Some("B1".into()),
+                        value: "15".into(),
+                        formula: Some("SUM(A1:A2)".into()),
+                        cached_value: true,
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+        };
+        let compact = serde_json::to_value(CompactFact::from(&hit))?;
+        assert_eq!(compact["statement_truncated"], true);
+        assert_eq!(compact["details_truncated"], true);
+        assert_eq!(
+            compact["document_basis"],
+            hit.document.as_ref().unwrap().basis
+        );
+        assert_eq!(compact["table"]["cells"][0]["cached_value"], true);
+        assert_eq!(compact["table"]["cells"][0]["formula"], "SUM(A1:A2)");
+        assert_eq!(
+            compact["citation"]["content_hash"],
+            hit.citation.content_hash
+        );
+        Ok(())
+    }
 
     #[test]
     fn cursors_bound_argument_size_without_copying_large_source_names() -> Result<()> {

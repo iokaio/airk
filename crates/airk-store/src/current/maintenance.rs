@@ -44,9 +44,19 @@ impl CurrentRead {
                 .context("current reclamation extraction missing")?;
             reference.object.parse::<Sha256Digest>()?;
             artifact.content_hash.parse::<Sha256Digest>()?;
-            retained.insert(PathBuf::from("objects/artifacts").join(&reference.object));
+            let payload = reference
+                .payload_encoding
+                .as_ref()
+                .map_or(reference.object.as_str(), |r| r.stored_digest.as_str());
+            payload.parse::<Sha256Digest>()?;
+            retained.insert(PathBuf::from("objects/artifacts").join(payload));
             if reference.raw_source {
-                retained.insert(PathBuf::from("objects/sources").join(&artifact.content_hash));
+                let source = reference
+                    .source_encoding
+                    .as_ref()
+                    .map_or(artifact.content_hash.as_str(), |r| r.stored_digest.as_str());
+                source.parse::<Sha256Digest>()?;
+                retained.insert(PathBuf::from("objects/sources").join(source));
             }
             if let Some(bytes) = self.map_get(MapDomain::FileMetadata, path.as_bytes())? {
                 let reference: FileMetadataRef = serde_json::from_slice(&bytes)?;
@@ -63,9 +73,13 @@ impl CurrentRead {
                 );
                 let file = store.read_current_metadata(&reference)?;
                 super::metadata::verify(&artifact, &file, self.head().sequence)?;
-                retained.insert(
-                    PathBuf::from("current-metadata").join(format!("{}.json", reference.digest)),
-                );
+                retained.insert(PathBuf::from("current-metadata").join(format!(
+                        "{}.json",
+                        reference
+                            .encoding
+                            .as_ref()
+                            .map_or(reference.digest.to_string(), |e| e.stored_digest.clone())
+                    )));
             }
         }
         if let Some(model) = state.configuration.model {

@@ -760,6 +760,42 @@ fn put(
     Ok(())
 }
 
+fn put_encoded(
+    base: &Path,
+    kind: &str,
+    bytes: &[u8],
+    digest: &str,
+    reservation: Option<&crate::quota::Reservation>,
+    mode: airk_core::compression::CompressionMode,
+) -> Result<Option<airk_core::compression::EncodedObject>> {
+    if let Some((encoded, reference)) = crate::compression::encode(bytes, mode)? {
+        put(base, kind, &encoded, &reference.stored_digest, reservation)?;
+        Ok(Some(reference))
+    } else {
+        put(base, kind, bytes, digest, reservation)?;
+        Ok(None)
+    }
+}
+
+fn read_object(
+    base: &Path,
+    kind: &str,
+    digest: &str,
+    encoding: Option<&airk_core::compression::EncodedObject>,
+    maximum: u64,
+) -> Result<Vec<u8>> {
+    if let Some(encoding) = encoding {
+        crate::compression::read_all(
+            &object_path(base, kind, &encoding.stored_digest)?,
+            encoding,
+            digest,
+            maximum,
+        )
+    } else {
+        read_verified(&object_path(base, kind, digest)?, digest, maximum)
+    }
+}
+
 impl FileStore {
     /// Store one extraction and its original bytes, returning compact inventory metadata.
     pub fn retain_artifact(&self, artifact: &Artifact, source: Option<&[u8]>) -> Result<Artifact> {
@@ -801,6 +837,8 @@ impl FileStore {
         put(self.directory(), "artifacts", &bytes, &object, reservation)?;
         let mut compact = artifact.clone();
         compact.retained = Some(ArtifactRef {
+            source_encoding: None,
+            payload_encoding: None,
             profile: None,
             object,
             object_bytes: bytes.len(),
@@ -822,6 +860,25 @@ impl FileStore {
         source: Option<&[u8]>,
         reservation: Option<&crate::quota::Reservation>,
     ) -> Result<Artifact> {
+        self.retain_payload_encoded(
+            artifact,
+            payload,
+            profile,
+            source,
+            reservation,
+            airk_core::compression::CompressionMode::Off,
+        )
+    }
+
+    pub fn retain_payload_encoded(
+        &self,
+        artifact: &Artifact,
+        payload: &airk_core::extraction::ExtractionPayload,
+        profile: &airk_core::extraction::ExtractionProfile,
+        source: Option<&[u8]>,
+        reservation: Option<&crate::quota::Reservation>,
+        mode: airk_core::compression::CompressionMode,
+    ) -> Result<Artifact> {
         payload.validate()?;
         profile.identity()?;
         let bound = airk_core::binding::bind_payload(
@@ -839,28 +896,43 @@ impl FileStore {
             serde_json::to_vec(&bound)? == serde_json::to_vec(&expected)?,
             "path-free conversion changed artifact evidence"
         );
-        if let Some(source) = source {
+        let source_encoding = if let Some(source) = source {
             ensure!(
                 source.len() == artifact.bytes,
                 "source byte count changed before retention"
             );
-            put(
+            put_encoded(
                 self.directory(),
                 "sources",
                 source,
                 &artifact.content_hash,
                 reservation,
-            )?;
-        }
+                mode,
+            )?
+        } else {
+            artifact
+                .retained
+                .as_ref()
+                .and_then(|r| r.source_encoding.clone())
+        };
         let bytes = serde_json::to_vec(payload)?;
         ensure!(
             bytes.len() as u64 <= MAX_ARTIFACT_BYTES,
             "path-free payload exceeds byte limit"
         );
         let object = format!("{:x}", Sha256::digest(&bytes));
-        put(self.directory(), "artifacts", &bytes, &object, reservation)?;
+        let payload_encoding = put_encoded(
+            self.directory(),
+            "artifacts",
+            &bytes,
+            &object,
+            reservation,
+            mode,
+        )?;
         let mut compact = artifact.clone();
         compact.retained = Some(ArtifactRef {
+            source_encoding,
+            payload_encoding,
             object,
             object_bytes: bytes.len(),
             raw_source: source.is_some()
@@ -958,9 +1030,11 @@ impl FileStore {
             .retained
             .as_ref()
             .context("retained reference missing")?;
-        let bytes = read_verified(
-            &object_path(self.directory(), "artifacts", &reference.object)?,
+        let bytes = read_object(
+            self.directory(),
+            "artifacts",
             &reference.object,
+            reference.payload_encoding.as_ref(),
             MAX_ARTIFACT_BYTES.min(maximum),
         )?;
         ensure!(
@@ -1002,6 +1076,95 @@ impl FileStore {
         self.read_retained_source_bounded(entry, airk_core::extraction::MAX_SOURCE_BYTES as u64)
     }
 
+    /// Authenticate retained source identity without allocating/decoding a copy
+    /// when evidence materialization uses the independently verified payload.
+    pub fn verify_retained_source(&self, entry: &Artifact) -> Result<()> {
+        ensure!(
+            entry.bytes <= airk_core::extraction::MAX_SOURCE_BYTES
+                && entry.retained.as_ref().is_some_and(|r| r.raw_source),
+            "retained source unavailable or oversized"
+        );
+        if let Some(encoding) = entry
+            .retained
+            .as_ref()
+            .and_then(|r| r.source_encoding.as_ref())
+        {
+            ensure!(
+                crate::compression::verify(
+                    &object_path(self.directory(), "sources", &encoding.stored_digest)?,
+                    encoding,
+                    &entry.content_hash,
+                    entry.bytes as u64
+                )? == entry.bytes,
+                "encoded source length mismatch"
+            );
+        } else {
+            let path = object_path(self.directory(), "sources", &entry.content_hash)?;
+            let mut file = File::open(&path)?;
+            ensure!(
+                file.metadata()?.is_file() && file.metadata()?.len() == entry.bytes as u64,
+                "retained source length mismatch"
+            );
+            let mut hash = Sha256::new();
+            let mut buffer = [0u8; 65536];
+            let mut total = 0usize;
+            loop {
+                let count = file.read(&mut buffer)?;
+                if count == 0 {
+                    break;
+                }
+                total = total
+                    .checked_add(count)
+                    .context("source verification overflow")?;
+                ensure!(
+                    total <= entry.bytes,
+                    "retained source grew during verification"
+                );
+                hash.update(&buffer[..count]);
+            }
+            ensure!(
+                total == entry.bytes && format!("{:x}", hash.finalize()) == entry.content_hash,
+                "retained source digest mismatch"
+            );
+        }
+        Ok(())
+    }
+
+    pub fn read_retained_source_range(
+        &self,
+        entry: &Artifact,
+        range: std::ops::Range<usize>,
+        max_decoded_bytes: usize,
+    ) -> Result<Vec<u8>> {
+        ensure!(
+            range.start <= range.end
+                && range.end <= entry.bytes
+                && entry.bytes <= airk_core::extraction::MAX_SOURCE_BYTES
+                && entry.retained.as_ref().is_some_and(|r| r.raw_source),
+            "source range outside admitted object"
+        );
+        if let Some(encoding) = entry
+            .retained
+            .as_ref()
+            .and_then(|r| r.source_encoding.as_ref())
+        {
+            crate::compression::read_range(
+                &object_path(self.directory(), "sources", &encoding.stored_digest)?,
+                encoding,
+                &entry.content_hash,
+                entry.bytes as u64,
+                range,
+                max_decoded_bytes,
+            )
+        } else {
+            ensure!(
+                entry.bytes <= max_decoded_bytes,
+                "raw source verification exceeds decoded-work allowance"
+            );
+            Ok(self.read_retained_source(entry)?[range].to_vec())
+        }
+    }
+
     pub fn read_retained_source_bounded(&self, entry: &Artifact, maximum: u64) -> Result<Vec<u8>> {
         let maximum = maximum.min(airk_core::extraction::MAX_SOURCE_BYTES as u64);
         ensure!(
@@ -1012,12 +1175,16 @@ impl FileStore {
             entry.retained.as_ref().is_some_and(|r| r.raw_source),
             "original source bytes unavailable in legacy retained state; reindex from source"
         );
-        let path = object_path(self.directory(), "sources", &entry.content_hash)?;
-        ensure!(
-            path.symlink_metadata()?.is_file(),
-            "retained source is not a regular file"
-        );
-        let bytes = read_verified(&path, &entry.content_hash, maximum)?;
+        let bytes = read_object(
+            self.directory(),
+            "sources",
+            &entry.content_hash,
+            entry
+                .retained
+                .as_ref()
+                .and_then(|r| r.source_encoding.as_ref()),
+            maximum,
+        )?;
         ensure!(
             bytes.len() == entry.bytes,
             "retained source byte count mismatch"

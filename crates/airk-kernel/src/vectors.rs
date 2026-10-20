@@ -6,7 +6,7 @@ use airk_core::{
     identity::{RevisionToken, Sha256Digest},
     vector_selection::VectorSelectionPolicy,
 };
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
@@ -35,12 +35,26 @@ pub struct VectorStatus {
 
 #[derive(Serialize)]
 pub struct VectorSelectionStatus {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preview: Option<VectorSelectionPreview>,
     pub policy: VectorSelectionPolicy,
     pub digest: Sha256Digest,
     pub applied_digest: Option<Sha256Digest>,
     pub pending_reindex: bool,
     pub origin: &'static str,
     pub publication: Option<RevisionToken>,
+}
+
+#[derive(Serialize)]
+pub struct VectorSelectionPreview {
+    pub examined_files: usize,
+    pub eligible_files: usize,
+    pub excluded_files: usize,
+    pub changed_files: usize,
+    pub complete: bool,
+    pub affected_paths: Vec<(String, airk_core::vector_selection::VectorSelectionDecision)>,
+    pub paths_truncated: bool,
+    pub selected_units: Option<u64>,
 }
 
 impl Kernel {
@@ -83,7 +97,22 @@ impl Kernel {
 
     /// Saved policy used for the next publication; does not interpret old indexes.
     pub fn vector_selection(&self) -> Result<VectorSelectionPolicy> {
-        Ok(self.vector_policy()?.selection.unwrap_or_default())
+        self.vector_policy()?
+            .selection
+            .map(Ok)
+            .unwrap_or_else(|| self.default_vector_selection())
+    }
+
+    fn default_vector_selection(&self) -> Result<VectorSelectionPolicy> {
+        Ok(
+            if self.rebuild_extraction_policy()?.configured_detail
+                == airk_core::extraction::IndexDetail::AgentLean
+            {
+                VectorSelectionPolicy::agent_lean()
+            } else {
+                VectorSelectionPolicy::default()
+            },
+        )
     }
 
     fn published_vector_status(&self) -> Result<Option<crate::Status>> {
@@ -100,7 +129,11 @@ impl Kernel {
 
     fn status_for_vector_policy(&self, policy: VectorPolicy) -> Result<VectorStatus> {
         let enabled = policy.enabled;
-        let selection_digest = policy.selection.unwrap_or_default().digest()?;
+        let selection_digest = policy
+            .selection
+            .map(Ok)
+            .unwrap_or_else(|| self.default_vector_selection())?
+            .digest()?;
         let status = self.published_vector_status()?;
         let published = status.as_ref().is_some_and(|s| s.local_model_ready);
         let applied_selection_digest = status.as_ref().and_then(|s| s.vector_selection_digest);
@@ -164,7 +197,13 @@ impl Kernel {
         } else {
             "default"
         };
-        self.selection_status(policy.selection.unwrap_or_default(), origin)
+        self.selection_status(
+            policy
+                .selection
+                .map(Ok)
+                .unwrap_or_else(|| self.default_vector_selection())?,
+            origin,
+        )
     }
 
     fn selection_status(
@@ -176,7 +215,63 @@ impl Kernel {
         let digest = policy.digest()?;
         let status = self.published_vector_status()?;
         let applied_digest = status.as_ref().and_then(|s| s.vector_selection_digest);
+        let preview = if origin == "preview" {
+            let mut preview = VectorSelectionPreview {
+                examined_files: 0,
+                eligible_files: 0,
+                excluded_files: 0,
+                changed_files: 0,
+                complete: true,
+                affected_paths: Vec::new(),
+                paths_truncated: false,
+                selected_units: None,
+            };
+            if let Some(scope) = self.current_scope()? {
+                let read = self.store.current_read(&scope)?;
+                let page = read.lookup_paths(
+                    airk_store::current::postings::Lookup::Files,
+                    "",
+                    None,
+                    4097,
+                )?;
+                preview.complete = page.paths.len() <= 4096 && page.next_after.is_none();
+                let selected = policy.validated()?;
+                let applied = read
+                    .collection_state()?
+                    .context("selection preview configuration missing")?
+                    .configuration
+                    .vector_selection;
+                let applied = applied.validated()?;
+                for path in page.paths.into_iter().take(4096) {
+                    let artifact = read
+                        .artifact(&path)?
+                        .context("selection preview artifact missing")?;
+                    let profile = artifact
+                        .retained
+                        .as_ref()
+                        .and_then(|r| r.profile.as_ref())
+                        .context("selection preview profile missing")?;
+                    let decision = selected.decision(&path, profile, &artifact.language)?;
+                    let old = applied.decision(&path, profile, &artifact.language)?;
+                    preview.examined_files += 1;
+                    preview.eligible_files += usize::from(decision.eligible);
+                    preview.excluded_files += usize::from(!decision.eligible);
+                    if decision.eligible != old.eligible {
+                        preview.changed_files += 1;
+                        if preview.affected_paths.len() < 32 {
+                            preview.affected_paths.push((path, decision));
+                        } else {
+                            preview.paths_truncated = true;
+                        }
+                    }
+                }
+            }
+            Some(preview)
+        } else {
+            None
+        };
         Ok(VectorSelectionStatus {
+            preview,
             policy,
             digest,
             applied_digest,

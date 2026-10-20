@@ -165,7 +165,7 @@ fn selection_cli_rejects_invalid_bounded_inputs_without_changing_configuration()
             .success()
         );
         for invalid in [
-            r#"{"version":2,"exclusions":[]}"#,
+            r#"{"version":3,"exclusions":[]}"#,
             r#"{"version":1,"exclusions":[],"unknown":true}"#,
             r#"{"version":1,"exclusions":[{"id":"all"}]}"#,
             r#"{"version":1,"exclusions":[{"id":"same","suffix":".txt"},{"id":"same","suffix":".rs"}]}"#,

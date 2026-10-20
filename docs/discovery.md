@@ -14,7 +14,7 @@ Call `airk_list_files` again with the returned `cursor` and unchanged `prefix`. 
 
 ## Compact outlines
 
-`airk_outline` accepts `compact: true`. Compact records appear in `outline`, while the default rich records remain in `facts`. Each compact record contains its name, kind, syntax kind, original citation, available byte span and durable continuity key. It omits signatures, documentation, producer detail and document metadata. Use the durable key with `airk_code_facts` or `airk_document_facts` for rich details; imported facts without a durable key remain queryable using their exact name and path.
+`airk_outline` accepts `compact: true`. Compact records appear in `outline`, while the default rich records remain in `facts`. Each compact record contains its name, kind, syntax kind, original citation, available byte span and durable continuity key. Available code details include qualified name, written signature, producer and partial-coverage basis. Document records retain heading context, parser/basis, truncation flags and table cell interpretation (including formulas and cached-value flags). Fingerprints and broad rich metadata are omitted. Code/document facts also accept `compact`, defaulting to compact only for applied Agent Lean; `compact: false` expands details. Use the durable key with `airk_code_facts` or `airk_document_facts` for rich details; imported facts without a durable key remain queryable using their exact name and path.
 
 ```json
 {"path":"crates/example/src/lib.rs","compact":true,"limit":100,"max_bytes":32768}

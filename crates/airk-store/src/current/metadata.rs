@@ -20,6 +20,8 @@ pub const MAX_METADATA_BYTES: usize = 16 * 1024 * 1024;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FileMetadataRef {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub encoding: Option<airk_core::compression::EncodedObject>,
     pub path: String,
     pub digest: Sha256Digest,
     pub bytes: usize,
@@ -39,6 +41,20 @@ impl FileStore {
         file: &InventoryFile,
         reservation: &Reservation,
     ) -> Result<FileMetadataRef> {
+        self.retain_current_metadata_encoded(
+            path,
+            file,
+            reservation,
+            airk_core::compression::CompressionMode::Off,
+        )
+    }
+    pub fn retain_current_metadata_encoded(
+        &self,
+        path: &str,
+        file: &InventoryFile,
+        reservation: &Reservation,
+        mode: airk_core::compression::CompressionMode,
+    ) -> Result<FileMetadataRef> {
         ensure!(
             super::journal::valid_current_path(path),
             "invalid current metadata path"
@@ -49,12 +65,22 @@ impl FileStore {
             "current metadata byte limit exceeded"
         );
         let digest = framed_digest(b"current-file-metadata/1", &[&bytes]);
+        let encoded = crate::compression::encode(&bytes, mode)?;
         let reference = FileMetadataRef {
+            encoding: encoded.as_ref().map(|(_, encoding)| encoding.clone()),
             path: path.into(),
             digest,
             bytes: bytes.len(),
         };
-        let destination = object(self, digest);
+        let destination = object(
+            self,
+            reference
+                .encoding
+                .as_ref()
+                .map(|e| e.stored_digest.parse())
+                .transpose()?
+                .unwrap_or(digest),
+        );
         let directory = destination.parent().context("metadata parent missing")?;
         if !directory.try_exists()? {
             std::fs::create_dir(directory)?;
@@ -71,7 +97,11 @@ impl FileStore {
             std::fs::create_dir_all(destination.parent().context("metadata parent missing")?)?;
             // A killed writer leaves only reservation-owned disposable state.
             let mut temporary = tempfile::NamedTempFile::new_in(reservation.staging_directory()?)?;
-            temporary.write_all(&bytes)?;
+            temporary.write_all(
+                encoded
+                    .as_ref()
+                    .map_or(bytes.as_slice(), |(encoded, _)| encoded.as_slice()),
+            )?;
             crate::durability::persist_synced(temporary, &destination)?;
         }
         self.read_current_metadata(&reference)?;
@@ -84,7 +114,15 @@ impl FileStore {
                 && super::journal::valid_current_path(&reference.path),
             "invalid current metadata reference"
         );
-        let path = object(self, reference.digest);
+        let path = object(
+            self,
+            reference
+                .encoding
+                .as_ref()
+                .map(|e| e.stored_digest.parse())
+                .transpose()?
+                .unwrap_or(reference.digest),
+        );
         let directory = path.parent().context("metadata directory missing")?;
         ensure!(
             std::fs::symlink_metadata(directory)?.is_dir()
@@ -97,13 +135,26 @@ impl FileStore {
         ensure!(
             metadata.is_file()
                 && !metadata.file_type().is_symlink()
-                && metadata.len() == reference.bytes as u64,
+                && metadata.len()
+                    == reference
+                        .encoding
+                        .as_ref()
+                        .map_or(reference.bytes as u64, |e| e.stored_bytes),
             "current metadata size or ownership mismatch"
         );
         let mut bytes = Vec::new();
-        std::fs::File::open(path)?
-            .take(reference.bytes as u64 + 1)
-            .read_to_end(&mut bytes)?;
+        if let Some(encoding) = &reference.encoding {
+            bytes = crate::compression::read_all(
+                &path,
+                encoding,
+                &encoding.logical_digest,
+                MAX_METADATA_BYTES as u64,
+            )?;
+        } else {
+            std::fs::File::open(path)?
+                .take(reference.bytes as u64 + 1)
+                .read_to_end(&mut bytes)?;
+        }
         ensure!(
             bytes.len() == reference.bytes
                 && framed_digest(b"current-file-metadata/1", &[&bytes]) == reference.digest,

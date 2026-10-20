@@ -3,6 +3,18 @@
 use crate::identity::Sha256Digest;
 use serde::{Deserialize, Serialize};
 
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct IndexProgress {
+    pub phase: &'static str,
+    pub revision: Option<String>,
+    pub processed_artifacts: u64,
+    pub committed_artifacts: u64,
+    pub total_artifacts: Option<u64>,
+    pub selected_artifacts: Option<u64>,
+    pub completed_artifacts: Option<u64>,
+    pub completed_units: Option<u64>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SemanticState {
@@ -55,6 +67,7 @@ pub struct DiscoveryReadiness {
 pub enum DiscoveryState {
     Pending,
     Partial,
+    Paused,
     Ready,
     Failed,
 }

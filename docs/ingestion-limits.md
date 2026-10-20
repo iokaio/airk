@@ -20,14 +20,16 @@ Each collection selects how much derived evidence to retain. **Balanced is the d
 
 | Level | Retained native evidence | Deliberate omissions |
 |---|---|---|
-| Essential | Searchable text, source paths/hashes, exact original locations | Structured facts, relationships and symbol/document-unit continuity |
-| Balanced | Essential plus adapter-supported declarations, signatures, imports, structural/configuration/document facts and declaration continuity | Individual call occurrences and document-unit continuity |
+| Search Only (`essential`) | Searchable text, source paths/hashes, exact original locations | Structured facts, relationships and symbol/document-unit continuity |
+| Rich Structure (`balanced`) | Essential plus adapter-supported declarations, signatures, imports, structural/configuration/document facts and declaration continuity | Individual call occurrences and document-unit continuity |
+| Agent Lean (`agent_lean`) | Searchable text, exact locations, declarations/signatures/imports, selected local structure and document facts | Generic call occurrences, continuity fingerprints and broad document inventories |
 | Detailed | The full existing adapter-supported fact/relationship and continuity output | Adapter limitations still apply; no claim of complete resolution |
 
 In the sidebar, choose **Index detail → Evidence to retain** on the collection card. Review the explanation and choose **Save and index** or **Save for next index**. The card distinguishes the configured level from the published level while a change is pending. Changing detail preserves adapter-selection overrides and affects only that collection. The CLI equivalent is:
 
 ```console
 airk collections extraction show
+airk collections extraction detail agent_lean
 airk collections extraction detail essential
 airk collections extraction detail balanced
 airk collections extraction detail detailed
@@ -38,6 +40,12 @@ Detail is included in extraction identity. An ordinary index pass re-extracts fi
 All levels keep text and citation accuracy, including original document locations. Qualified common grammar adapters apply detail during their syntax walk: Essential avoids rich code metadata and fingerprints, while Balanced avoids generic call evidence but keeps recognized framework cues. Essential Markdown/plain-text extraction collects heading boundaries without classifying dates, quantities or requirements. PDF/PPTX use the same selected prose path after native text extraction; DOCX/XLSX and other unqualified producers retain full extraction followed by selection. [Extraction policy](extraction-policy.md#detail-aware-extraction) lists the qualified scope. Parsers still run within their existing source/node budgets; reduced detail does not promise proportional time savings.
 
 Written definition and heading spans are captured independently of optional facts. They preserve vector-planning boundaries, written context and native/mapped locations even when Essential retains no facts. File, parsing, memory-work and disk quotas remain independent. Fact and relationship responses include an `indexing` object naming the published level and deliberate omissions. An empty result at a reduced level must not be interpreted as proof that the source has no such facts.
+
+### Execution and compression
+
+`airk execution` reports CPU/memory admission and the storage-root slot policy. `AIRK_EXECUTION_MODE` selects `automatic`, `interactive` or `throughput`; existing worker settings remain bounded ceilings. These estimates do not enforce an RSS limit. `airk index --scheduled --progress` emits committed progress as JSON on stderr, preserving final stdout JSON. Discovery totals remain unknown until a complete inventory.
+
+Optional retained-object compression is off by default. `airk compression set automatic` affects future immutable writes; `airk compression repack --max-files 32` rewrites a bounded batch through the recovery journal. Continue with the returned `next_after` using `--after`. See [the release notes](release-1.2.0.md#optional-lossless-retained-object-compression) for byte limits, exact evidence guarantees and accounting scope.
 
 ## Inspect and configure
 

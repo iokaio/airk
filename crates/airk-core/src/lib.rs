@@ -6,10 +6,12 @@ use std::collections::BTreeMap;
 pub mod binding;
 pub mod changes;
 pub mod code;
+pub mod compression;
 pub mod continuity;
 pub mod discovery;
 pub mod embedding;
 pub mod evidence;
+pub mod execution;
 pub mod extraction;
 pub mod graph_storage;
 pub mod identity;
@@ -53,6 +55,10 @@ pub struct Artifact {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ArtifactRef {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_encoding: Option<compression::EncodedObject>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payload_encoding: Option<compression::EncodedObject>,
     pub object: String,
     #[serde(default)]
     pub object_bytes: usize,

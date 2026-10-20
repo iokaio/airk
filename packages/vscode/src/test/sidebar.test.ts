@@ -144,7 +144,10 @@ test('detail selection shows configured and published levels and validates messa
     sample.collections[0].detail = { configured_detail: 'balanced', published_detail: 'detailed', pending_reindex: true };
     const html = sidebarContent(sample);
     assert.match(html, /value="balanced" selected/);
-    assert.match(html, /Published: <strong>detailed/);
+    assert.match(html, /Published: <strong>Detailed \(advanced\)/);
+    assert.match(html, /Agent Lean/);
+    assert.match(html, /Rich Structure/);
+    assert.match(html, /Search Only/);
     assert.match(html, /Change pending indexing/);
     assert.match(html, /Detail change pending/);
     assert.doesNotMatch(html, /Index current/);
@@ -152,6 +155,10 @@ test('detail selection shows configured and published levels and validates messa
     assert.deepEqual(sidebarAction({ type: 'detail', collection: 'a', dataDir: '/data', level: 'essential' }, new Set()),
         { type: 'detail', collection: 'a', dataDir: '/data', level: 'essential' });
     assert.equal(sidebarAction({ type: 'detail', collection: 'a', dataDir: '/data', level: 'unbounded' }, new Set()), undefined);
+    assert.deepEqual(sidebarAction({ type: 'detail', collection: 'a', dataDir: '/data', level: 'agent_lean' }, new Set()),
+        { type: 'detail', collection: 'a', dataDir: '/data', level: 'agent_lean' });
+    assert.deepEqual(sidebarAction({ type: 'collection', action: 'compression', collection: 'a', dataDir: '/data' }, new Set()),
+        { type: 'collection', action: 'compression', collection: 'a', dataDir: '/data' });
 });
 
 test('successful indexing does not claim current coverage after new changes or an incomplete scan', () => {
