@@ -142,6 +142,11 @@ pub struct CurrentIndexWork {
     pub lexical_documents: u64,
     pub graph_records: u64,
     pub graph_read_bytes: u64,
+    /// Verified base-record fetches; repeated visits may be served by an
+    /// update-local authenticated proof cache.
+    pub graph_base_record_reads: u64,
+    pub graph_proof_cache_hits: u64,
+    pub graph_proof_cache_evictions: u64,
     pub linked_lexical_bytes: u64,
 }
 

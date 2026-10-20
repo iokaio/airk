@@ -502,6 +502,9 @@ impl Kernel {
                 lexical_documents: result.lexical.changed.added_documents,
                 graph_records: result.graph.sealed_records,
                 graph_read_bytes: result.graph.read_bytes,
+                graph_base_record_reads: result.graph.base_record_reads,
+                graph_proof_cache_hits: result.graph.base_proof_cache_hits,
+                graph_proof_cache_evictions: result.graph.base_proof_cache_evictions,
                 linked_lexical_bytes: result.lexical.hardlinked_bytes,
             });
         } else {
