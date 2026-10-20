@@ -43,7 +43,7 @@ class V2BenchmarkTests(unittest.TestCase):
                         return {"generation": 2 if step == 3 else 1,
                                 "indexed": (2, 0, 1)[step - 1], "reused": (0, 2, 1)[step - 1],
                                 "embedding_inferences": (2, 0, 1)[step - 1], "embedding_no_vector": 0,
-                                "embedding_cache_hits": int(step == 3) + int(fault == "counts")}
+                                "embedding_cache_hits": int(fault == "counts")}
                     if command == "search":
                         response = self.read_response("login.txt", (root / "login.txt").read_bytes(), 2)
                         response.pop("read")
