@@ -97,7 +97,7 @@ impl ChangesArgs {
 pub struct SearchArgs {
     /// Default hybrid retrieval; explicit lexical uses AND terms.
     pub query: String,
-    /// Omit for the collection default: hybrid unless vectors are disabled in the panel.
+    /// Omit for the saved collection policy; pending vectors are disclosed in the response.
     pub mode: Option<SearchMode>,
     /// Compatibility alias for vector-only retrieval.
     #[serde(default)]
@@ -751,7 +751,7 @@ impl AirkServer {
             "relationship_limits": {"hops":3,"results":100,"payload_bytes":65536,"traversal_ms":250,"visited_symbols":100},
             "local_usage": "Content-free local aggregates are enabled by default; AIRK_USAGE_MODE=disabled opts out. CLI reports include measured stages, logical disk growth and process CPU where the host supports it; physical I/O remains unknown. Optional client/session imports, local tokenizer calibration and user-supplied price scenarios stay labeled; estimates are counterfactual context, never provider bills.",
             "search_modes": ["lexical", "vector", "hybrid"],
-            "default_search": "Hybrid unless the collection has opted out in the panel. Missing model/index readiness fails explicitly. The trusted extension prepares pinned local MiniLM assets; MCP reads never download.",
+            "default_search": "Saved policy selects partial hybrid, lexical while pending, or requires complete vectors; vector opt-out selects lexical. Search and status disclose committed semantic readiness. MCP reads never start enrichment or download models.",
             "semantic_search": "Vector/hybrid modes support explicitly provisioned local static word vectors or schema-2 CPU ONNX transformer models with a local BERT WordPiece tokenizer. Assets/specification bind the indexed generation. DiskANN retrieval remains approximate; MCP reads never download or use network inference. Small real-model tests do not establish production corpus quality. semantic=true aliases vector.",
             "limitations": ["No universal native type/name resolution or complete caller graph","Optional providers require provisioning; embedding models require corpus qualification","LSP evidence queries selected symbol positions; external/unindexed locations are rejected","OCR covers selected pages and may misrecognize layout/text","No legacy binary Office formats","No SVG rendering","Composite child evidence has explicit mapping, grammar and resource limits"]
         }))).await

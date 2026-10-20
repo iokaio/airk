@@ -13,7 +13,7 @@ Multiple agents can launch independent stdio connections against the same root/d
 | airk_search | query; mode, path_prefix, limit, max_bytes | Lexical, local vector or hybrid evidence, original locations and truncation |
 | airk_read_file | path, start_line, end_line; max_bytes | Inclusive indexed line range |
 | airk_list_files | prefix, limit, max_bytes, cursor | Indexed paths only |
-| airk_status | none | Collection generation/counts/extractor |
+| airk_status | none | Collection generation/counts/extractor and committed semantic readiness |
 | airk_file_info | path | Language, method, parse status, hash, counts and line basis |
 | airk_outline | path; limit, max_bytes, cursor, compact | Exact-file rich facts or compact names/kinds/spans/keys |
 | airk_symbols | name, language, path_prefix; limit, max_bytes, cursor | Exact native definition names; omit name to list |
@@ -33,7 +33,7 @@ File/fact discovery and outlines accept revision/filter-bound keyset cursors. `r
 
 `airk_history` returns an explicit unsupported error in 1.2. Capabilities advertise historical reads/checkpoints as unsupported. Use source control for source history.
 
-`airk_search.mode` accepts `lexical` (explicit AND-term retrieval), `vector` (approximate similarity using an explicitly provisioned local word-vector or CPU ONNX model), or `hybrid` (bounded reciprocal-rank fusion of both branches from one pinned generation). Omitting `mode` selects hybrid by default, or lexical when the collection has opted out through the panel. The saved opt-out also rejects explicit vector/hybrid requests. Vector/hybrid modes fail explicitly if the matching model/index is unavailable; they do not download models or fall back to a cloud provider. `semantic: true` is a compatibility alias for vector and cannot be combined with an explicit mode. Similarity is not complete language understanding, answer generation, resolved references or a relevance guarantee.
+`airk_search.mode` accepts `lexical` (explicit AND-term retrieval), `vector` (approximate similarity using an explicitly provisioned local word-vector or CPU ONNX model), or `hybrid` (bounded reciprocal-rank fusion of both branches from one pinned generation). Omitting `mode` uses the saved collection policy: partial hybrid by default, lexical while vectors are pending if selected, or an explicit unavailable result until vectors are complete if required. The panel's vector opt-out selects lexical and rejects explicit vector/hybrid requests. Search results and `airk_status` disclose pending, partial, ready or failed semantic coverage against the exact current publication. Explicit vector requests never silently fall back to lexical evidence. These read-only tools do not start enrichment, download models or use cloud inference. `semantic: true` is a compatibility alias for vector and cannot be combined with an explicit mode. Similarity is not complete language understanding, answer generation, resolved references or a relevance guarantee.
 
 Successful result objects can include an opaque `request_id` for optional local usefulness feedback. [Usage reporting](usage-reporting.md) defaults to content-free daily aggregates and measures the serialized tool-result envelope once per outer call. `AIRK_USAGE_MODE=disabled` opts out. Recording failures never change tool success/error results; reports, feedback and recording controls remain CLI/extension maintenance operations and add no MCP tools.
 

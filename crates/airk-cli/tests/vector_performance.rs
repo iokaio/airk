@@ -211,8 +211,10 @@ fn exact_alias_inputs_share_one_native_forward_and_graph_node_with_explicit_sele
         ensure!(
             report["vector_registry_rows"] == 1
                 && report["vector_registry_bytes"] == 0
-                && report["current"]["graph_records"] == 2,
-            "bounded in-memory registry must share one live node plus the seed: {report}"
+                && report["current"]["graph_records"]
+                    .as_u64()
+                    .is_some_and(|n| (2..=4).contains(&n)),
+            "bounded semantic batches must share one live node with bounded graph work: {report}"
         );
         ensure!(
             run(&root, &data, "4", &["status"])?["indexed_vectors"] == 1,
@@ -380,8 +382,8 @@ fn distinct_native_inputs_use_packs_and_preserve_warm_and_full_retrieval() -> Re
             && cold["vector_graph_nodes"] == 64
             && cold["embedding_inferences"] == 64
             && cold["embedding_cache_hits"] == 0
-            && cold["embedding_cache_packs_written"] == 1,
-        "distinct inputs did not produce one packed cache: {cold}"
+            && cold["embedding_cache_packs_written"] == 2,
+        "distinct inputs did not produce one cache pack per semantic batch: {cold}"
     );
     for field in ["embedding_cache_file_opens", "embedding_cache_syncs"] {
         ensure!(
@@ -455,10 +457,11 @@ fn distinct_native_inputs_use_packs_and_preserve_warm_and_full_retrieval() -> Re
         full["embedding_cache_hits"] == 0
             && full["embedding_inferences"] == 64
             && full["vector_graph_nodes"] == 64
-            && full["embedding_cache_packs_written"] == 1
-            && full["embedding_cache_packs_reused"] == 1
+            && counter(&full, "embedding_cache_packs_written")?
+                + counter(&full, "embedding_cache_packs_reused")?
+                == 2
             && counter(&full, "embedding_cache_record_verification_bytes")? > 0,
-        "full rebuild must recompute and verify matching packed values: {full}"
+        "full rebuild must recompute and verify packed values across semantic batches: {full}"
     );
     ensure!(
         run(&root, &data, "4", &query)?["hits"] == before["hits"],

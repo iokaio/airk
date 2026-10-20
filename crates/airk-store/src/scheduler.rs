@@ -447,6 +447,28 @@ impl Queue {
         Ok(())
     }
 
+    /// Stop automatic semantic retries after a failed attempt. A new explicit
+    /// request or Resume clears this block without losing committed evidence.
+    pub fn block_semantic(&self, lock: &WorkerLock, job: &ScheduledJob, error: &str) -> Result<()> {
+        ensure!(
+            lock.directory == self.directory,
+            "scheduler worker belongs to another data root"
+        );
+        let mut end = error.len().min(4096);
+        while !error.is_char_boundary(end) {
+            end -= 1;
+        }
+        let changed = self.open()?.execute(
+            "UPDATE jobs SET blocked=1,error=?3 WHERE collection=?1 AND root=?2 AND running=0 AND revision=completed",
+            params![job.collection, job.root, &error[..end]],
+        )?;
+        ensure!(
+            changed == 1,
+            "semantic scheduler binding changed before failure"
+        );
+        Ok(())
+    }
+
     pub fn forget(&self, collection: &str, root: &str) -> Result<()> {
         let lock = self
             .worker_lock()?

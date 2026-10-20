@@ -33,6 +33,7 @@ const MAX_POINTER_BYTES: usize = 64 << 20;
 #[derive(Clone, Copy, Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CurrentSearchMode {
+    Default,
     Lexical,
     Vector,
     Hybrid,
@@ -43,6 +44,7 @@ pub struct CurrentSearchEvidence {
     pub token: CurrentToken,
     pub collection: String,
     pub mode: CurrentSearchMode,
+    pub semantic_readiness: airk_core::readiness::SemanticReadiness,
     pub hits: Vec<Hit>,
     pub truncated: bool,
 }
@@ -97,6 +99,28 @@ pub fn search_current(
     if let Some(expected) = expected {
         read.require_token(expected)?;
     }
+    let semantic_readiness = super::enrichment::readiness(&read, store)?;
+    let mode = if matches!(mode, CurrentSearchMode::Default) {
+        use airk_core::readiness::{DefaultSearchPolicy, SemanticState};
+        if semantic_readiness.state == SemanticState::Disabled {
+            CurrentSearchMode::Lexical
+        } else if semantic_readiness.state != SemanticState::Ready {
+            match semantic_readiness.default_search_policy {
+                DefaultSearchPolicy::PartialHybrid => CurrentSearchMode::Hybrid,
+                DefaultSearchPolicy::LexicalWhilePending => CurrentSearchMode::Lexical,
+                DefaultSearchPolicy::RequireComplete => {
+                    anyhow::bail!(
+                        "complete semantic coverage required; current state is {:?}",
+                        semantic_readiness.state
+                    )
+                }
+            }
+        } else {
+            CurrentSearchMode::Hybrid
+        }
+    } else {
+        mode
+    };
     let mut branches = Vec::new();
     if matches!(mode, CurrentSearchMode::Lexical | CurrentSearchMode::Hybrid) {
         let lexical = open_selected_lexical(store, &read, charge)?;
@@ -203,6 +227,7 @@ pub fn search_current(
         token: read.token()?,
         collection: scope.collection.clone(),
         mode,
+        semantic_readiness,
         hits,
         truncated: incomplete,
     })

@@ -33,7 +33,7 @@ Package platform-specific helpers for Windows, macOS and Linux. VS Code supports
 
 ## Vector search
 
-Each collection defaults to local vector indexing and hybrid retrieval. The **Vector search** panel switch saves a native collection policy and requests indexing. Turning it off changes default queries to lexical immediately; the next successful index omits vectors. Turning it on prepares the pinned MiniLM assets (about 91 MB) if absent, then indexes. The panel reports setup/build progress and errors. Existing custom assets are preserved, downloads are size/digest checked and installed atomically, and inference stays local. See [model setup and opt-out behavior](local-models.md).
+Each collection defaults to local vector indexing and hybrid retrieval. The **Vector search** panel switch saves a native collection policy and requests indexing. Turning it off changes default queries to lexical immediately; the next successful index omits vectors. Turning it on prepares the pinned MiniLM assets (about 91 MB) if absent, then indexes. Scheduled indexing publishes lexical/fact evidence first, then the native scheduler commits bounded vector batches. The panel shows pending, partial, ready or failed semantic coverage with completed and selected file counts. A paused collection keeps its pending work; Resume permits it to continue. Existing custom assets are preserved, downloads are size/digest checked and installed atomically, and inference stays local. See [model setup and opt-out behavior](local-models.md) and [semantic readiness](current-index-runtime.md#semantic-readiness-and-deferred-work).
 
 ## Storage and collection UI
 
