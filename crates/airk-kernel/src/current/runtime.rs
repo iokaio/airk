@@ -104,6 +104,7 @@ impl Kernel {
         let analysis = read.analysis(&self.store)?;
         let c = &state.configuration;
         let semantic_readiness = super::enrichment::readiness(&read, &self.store)?;
+        let discovery_readiness = super::progress::readiness(&read, &self.store)?;
         Ok(Status {
             retention: crate::maintenance::RetentionObservation {
                 policy: None,
@@ -114,6 +115,7 @@ impl Kernel {
             },
             publication: Some(envelope(&read)?),
             semantic_readiness,
+            discovery_readiness,
             source_roots: c
                 .roots
                 .clone()
@@ -157,6 +159,7 @@ impl Kernel {
                 revision(evidence.token),
             )),
             semantic_readiness: Some(evidence.semantic_readiness),
+            discovery_readiness: Some(evidence.discovery_readiness),
             generation: evidence.token.sequence,
             collection: evidence.collection,
             hits: evidence.hits,

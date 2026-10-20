@@ -136,7 +136,7 @@ mod spreadsheets;
 pub mod syntax;
 mod tables;
 
-#[derive(Default, Debug, Serialize, Deserialize)]
+#[derive(Clone, Default, Debug, Serialize, Deserialize)]
 pub struct CurrentIndexWork {
     pub changed_artifacts: usize,
     pub lexical_documents: u64,

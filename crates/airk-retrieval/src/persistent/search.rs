@@ -456,6 +456,7 @@ impl PersistentIndex {
                 airk_core::evidence::RevisionEnvelope::new(self.collection.clone(), receipt.token)
             }),
             semantic_readiness: None,
+            discovery_readiness: None,
             generation: self.generation,
             collection: self.collection.clone(),
             hits: Vec::new(),

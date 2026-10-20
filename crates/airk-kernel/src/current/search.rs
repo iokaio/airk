@@ -45,6 +45,7 @@ pub struct CurrentSearchEvidence {
     pub collection: String,
     pub mode: CurrentSearchMode,
     pub semantic_readiness: airk_core::readiness::SemanticReadiness,
+    pub discovery_readiness: airk_core::readiness::DiscoveryReadiness,
     pub hits: Vec<Hit>,
     pub truncated: bool,
 }
@@ -100,8 +101,17 @@ pub fn search_current(
         read.require_token(expected)?;
     }
     let semantic_readiness = super::enrichment::readiness(&read, store)?;
+    let discovery_readiness = super::progress::readiness(&read, store)?;
     let mode = if matches!(mode, CurrentSearchMode::Default) {
-        use airk_core::readiness::{DefaultSearchPolicy, SemanticState};
+        use airk_core::readiness::{DefaultSearchPolicy, DiscoveryState, SemanticState};
+        if semantic_readiness.default_search_policy == DefaultSearchPolicy::RequireComplete
+            && discovery_readiness.state != DiscoveryState::Ready
+        {
+            anyhow::bail!(
+                "complete discovery coverage required; current state is {:?}",
+                discovery_readiness.state
+            );
+        }
         if semantic_readiness.state == SemanticState::Disabled {
             CurrentSearchMode::Lexical
         } else if semantic_readiness.state != SemanticState::Ready {
@@ -152,7 +162,8 @@ pub fn search_current(
         }
         branches.push(vector_candidates(store, &read, &selection)?);
     }
-    let mut incomplete = branches.iter().any(|branch| branch.incomplete);
+    let mut incomplete = branches.iter().any(|branch| branch.incomplete)
+        || discovery_readiness.state != airk_core::readiness::DiscoveryState::Ready;
     // The same lexical chunk receives one vote from each branch. Semantic
     // passages can span multiple chunks; their occurrence is emitted only once.
     let mut merged = BTreeMap::<Sha256Digest, (f64, Candidate)>::new();
@@ -228,6 +239,7 @@ pub fn search_current(
         collection: scope.collection.clone(),
         mode,
         semantic_readiness,
+        discovery_readiness,
         hits,
         truncated: incomplete,
     })

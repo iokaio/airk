@@ -366,16 +366,22 @@ impl CurrentUpdater<'_> {
         );
         let capacity = self.store.current_database_capacity(self.scope)?;
         {
-            let mut writer =
-                self.store
-                    .current_write(self.writer, self.quota, self.scope, capacity)?;
+            let mut writer = self
+                .store
+                .current_write(self.writer, self.quota, self.scope, capacity)
+                .context("open current writer for cleanup")?;
             ensure!(
                 writer.phase()? == TransactionPhase::Ready && writer.pending()?.is_none(),
                 "current update requires recovery first"
             );
-            writer.reclaim_lexical_candidates()?;
+            writer
+                .reclaim_lexical_candidates()
+                .context("reclaim prior lexical candidates")?;
         }
-        let read = self.store.current_read(self.scope)?;
+        let read = self
+            .store
+            .current_read(self.scope)
+            .context("open current update read")?;
         let trusted_cache = read
             .resource(self.store, "embedding-cache")?
             .as_deref()
@@ -420,7 +426,8 @@ impl CurrentUpdater<'_> {
             configuration,
             self.reservation,
             moves,
-        )?;
+        )
+        .context("prepare current metadata")?;
         if let (Some(configuration), Some(semantic)) = (configuration, semantic.as_ref()) {
             ensure!(
                 configuration.vector_selection.digest()? == semantic.selection.digest()?,
@@ -445,10 +452,12 @@ impl CurrentUpdater<'_> {
             "current semantic model is required for changed artifacts"
         );
         let manifest = LexicalManifest::decode(&read.lexical_manifest()?, base.lexical_commit)?;
-        let verified = manifest.verify_owned(
-            &self.store.directory().join(base.lexical_directory_name()?),
-            base.lexical_commit,
-        )?;
+        let verified = manifest
+            .verify_owned(
+                &self.store.directory().join(base.lexical_directory_name()?),
+                base.lexical_commit,
+            )
+            .context("verify current lexical base")?;
         let replacing = semantic
             .as_ref()
             .map(|s| -> Result<bool> {
@@ -475,9 +484,11 @@ impl CurrentUpdater<'_> {
             )?;
             scope.record_bytes =
                 airk_retrieval::vector::mutable::record_bytes(semantic.model.dimensions())?;
-            GraphOverlay::empty(self.reservation, scope, graph_limits)?
+            GraphOverlay::empty(self.reservation, scope, graph_limits)
+                .context("create replacement graph overlay")?
         } else {
-            GraphOverlay::new(self.reservation, read.clone(), graph_limits)?
+            GraphOverlay::new(self.reservation, read.clone(), graph_limits)
+                .context("open current graph overlay")?
         });
         let mut plan = VectorPlan {
             read: &read,
@@ -669,7 +680,8 @@ impl CurrentUpdater<'_> {
         drop(read);
         let sealed = Arc::try_unwrap(overlay)
             .map_err(|_| anyhow::anyhow!("current graph retained preparation reader"))?
-            .seal()?;
+            .seal()
+            .context("seal current graph overlay")?;
         let sealed = if replacing {
             sealed.replacing(base.graph_head.clone())?
         } else {
@@ -702,31 +714,38 @@ impl CurrentUpdater<'_> {
                 )),
                 ArtifactChange::Delete(_) => Ok(None),
             },
-        )?;
+        )
+        .context("fork current lexical component")?;
         drop(lexical);
         let manifest_bytes = ticket.manifest().canonical_bytes()?;
         let mut writer = self
             .store
             .current_write(self.writer, self.quota, self.scope, capacity)?;
-        let pending = writer.prepare_artifacts_with_resources(
-            &base.token()?,
-            target,
-            &sealed,
-            ArtifactVectorChanges {
-                artifacts: changes,
-                vector_inputs: semantic_inputs,
-                occurrences: &occurrences,
-                configuration: self.configuration,
-            },
-            captured_model,
-            &manifest_bytes,
-            &metadata,
-            &resources,
-        )?;
+        let pending = writer
+            .prepare_artifacts_with_resources(
+                &base.token()?,
+                target,
+                &sealed,
+                ArtifactVectorChanges {
+                    artifacts: changes,
+                    vector_inputs: semantic_inputs,
+                    occurrences: &occurrences,
+                    configuration: self.configuration,
+                },
+                captured_model,
+                &manifest_bytes,
+                &metadata,
+                &resources,
+            )
+            .context("prepare current journal")?;
         observer(CurrentUpdateStage::Prepared);
-        writer.mark_applying(&pending)?;
+        writer
+            .mark_applying(&pending)
+            .context("mark current journal applying")?;
         observer(CurrentUpdateStage::Applying);
-        let mut committed = writer.commit(&pending, pending.target.lexical_commit)?;
+        let mut committed = writer
+            .commit(&pending, pending.target.lexical_commit)
+            .context("commit current journal")?;
         observer(CurrentUpdateStage::Committed);
         if let Err(error) = writer.reclaim_lexical_candidates() {
             let message = format!("current lexical cleanup: {error:#}");

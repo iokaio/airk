@@ -13,6 +13,11 @@ export interface VectorStatus {
         selected_units: number | null; completed_units: number;
         failure: string | null;
     };
+    discovery_readiness?: {
+        state: 'pending' | 'partial' | 'ready' | 'failed';
+        processed_artifacts: number; committed_artifacts: number;
+        total_artifacts: number | null; failure: string | null;
+    };
 }
 export interface ModelAsset { name: string; url: string; bytes: number; sha256: string }
 const source = 'https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2';
