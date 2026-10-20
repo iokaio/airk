@@ -24,6 +24,11 @@ use airk_store::{
 use anyhow::{Context, Result, ensure};
 use std::sync::Arc;
 
+#[cfg(test)]
+mod tests;
+
+const MAX_INDEX_RESERVATION_BYTES: u64 = 32 << 30;
+
 fn incarnation() -> Result<Incarnation> {
     let mut bytes = [0; 16];
     getrandom::fill(&mut bytes).map_err(|e| anyhow::anyhow!("allocate current identity: {e}"))?;
@@ -34,7 +39,6 @@ struct ProgressiveBase<'a> {
     kernel: &'a Kernel,
     quota: &'a Quota,
     writer: &'a WriterLock,
-    reservation: &'a airk_store::quota::Reservation,
     scope: &'a CurrentScope,
     configuration: &'a CollectionConfiguration,
     model: Option<&'a EmbeddingModel>,
@@ -119,6 +123,11 @@ impl ProgressiveBase<'_> {
             return Ok(());
         }
         self.check_pause()?;
+        // Each publication owns its temporary capacity. Completed transactions
+        // must not consume the scan's long-lived capture allowance.
+        let reservation = self
+            .kernel
+            .publication_reservation_with_limit(MAX_INDEX_RESERVATION_BYTES)?;
         let mut selected = self
             .objects
             .map(|objects| {
@@ -140,7 +149,7 @@ impl ProgressiveBase<'_> {
         let mut next_scan_work = self.scan_work.clone();
         next_scan_work.advanced(self.processed, self.committed + self.batch.len() as u64)?;
         let mut resources = vec![
-            next_scan_work.resource_change(&self.kernel.store, self.reservation)?,
+            next_scan_work.resource_change(&self.kernel.store, &reservation)?,
             airk_store::current::resources::ResourceChange {
                 key: "analysis".into(),
                 reference: None,
@@ -149,7 +158,7 @@ impl ProgressiveBase<'_> {
         resources.push(
             selected
                 .as_ref()
-                .map(|work| work.resource_change(&self.kernel.store, self.reservation))
+                .map(|work| work.resource_change(&self.kernel.store, &reservation))
                 .transpose()?
                 .unwrap_or(airk_store::current::resources::ResourceChange {
                     key: "semantic-work".into(),
@@ -180,11 +189,12 @@ impl ProgressiveBase<'_> {
             quota: self.quota,
             scope: self.scope,
             writer: self.writer,
-            reservation: self.reservation,
+            reservation: &reservation,
             configuration: Some(self.configuration),
         }
         .apply_scanned(&changes, semantic, &resources, &Default::default())
         .context("publish progressive base batch")?;
+        drop(reservation);
         self.committed += changes.len() as u64;
         self.batch_bytes = 0;
         self.last_flush = std::time::Instant::now();
@@ -277,12 +287,15 @@ impl ProgressiveBase<'_> {
         drop(read);
         work.pending.drain(..count);
         work.completed_artifacts += count as u64;
+        let reservation = self
+            .kernel
+            .publication_reservation_with_limit(MAX_INDEX_RESERVATION_BYTES)?;
         let updater = CurrentUpdater {
             store: &self.kernel.store,
             quota: self.quota,
             scope: self.scope,
             writer: self.writer,
-            reservation: self.reservation,
+            reservation: &reservation,
             configuration: None,
         };
         match updater.apply_enrichment(
@@ -355,7 +368,7 @@ impl ProgressiveBase<'_> {
                 updater.apply_with_resources(
                     &[],
                     None,
-                    &[failed.resource_change(&self.kernel.store, self.reservation)?],
+                    &[failed.resource_change(&self.kernel.store, &reservation)?],
                 )?;
                 self.semantic_work = Some(failed);
             }
@@ -366,12 +379,15 @@ impl ProgressiveBase<'_> {
     fn fail(&mut self, error: &anyhow::Error) -> Result<()> {
         self.scan_work.advanced(self.processed, self.committed)?;
         self.scan_work.fail(error);
+        let reservation = self
+            .kernel
+            .publication_reservation_with_limit(MAX_INDEX_RESERVATION_BYTES)?;
         CurrentUpdater {
             store: &self.kernel.store,
             quota: self.quota,
             scope: self.scope,
             writer: self.writer,
-            reservation: self.reservation,
+            reservation: &reservation,
             configuration: None,
         }
         .apply_with_resources(
@@ -379,7 +395,7 @@ impl ProgressiveBase<'_> {
             None,
             &[self
                 .scan_work
-                .resource_change(&self.kernel.store, self.reservation)?],
+                .resource_change(&self.kernel.store, &reservation)?],
         )?;
         Ok(())
     }
@@ -615,7 +631,7 @@ impl Kernel {
             });
         let reservation = quota.reserve_available(
             &self.collection,
-            (root_free.min(collection_free) / 2).min(32 << 30),
+            (root_free.min(collection_free) / 2).min(MAX_INDEX_RESERVATION_BYTES),
         )?;
         let model_directory = self.data_root.join("models/local");
         let model_started = std::time::Instant::now();
@@ -694,18 +710,20 @@ impl Kernel {
         let mut progressive = if let Some(scope) = &progressive_scope {
             let scan_work = progress::ScanWork::start()?;
             if previous.artifacts.is_empty() {
+                let publication =
+                    self.publication_reservation_with_limit(MAX_INDEX_RESERVATION_BYTES)?;
                 CurrentUpdater {
                     store: &self.store,
                     quota: &quota,
                     scope,
                     writer: &writer,
-                    reservation: &reservation,
+                    reservation: &publication,
                     configuration: None,
                 }
                 .apply_with_resources(
                     &[],
                     None,
-                    &[scan_work.resource_change(&self.store, &reservation)?],
+                    &[scan_work.resource_change(&self.store, &publication)?],
                 )
                 .context("publish progressive scan start")?;
             }
@@ -713,7 +731,6 @@ impl Kernel {
                 kernel: self,
                 quota: &quota,
                 writer: &writer,
-                reservation: &reservation,
                 scope,
                 configuration: &configuration,
                 model: model.as_ref(),
