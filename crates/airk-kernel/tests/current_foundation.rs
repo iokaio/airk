@@ -76,7 +76,7 @@ impl Fixture {
         Self::with_pipeline(pipeline())
     }
     fn with_pipeline(embedding_pipeline: Sha256Digest) -> Result<Self> {
-        let directory = tempfile::tempdir()?;
+        let directory = unlinked_tempdir()?;
         let quota = Quota::open(directory.path().join("state"))?;
         let store = FileStore::new(quota.root().join("collections-1.2/foundation"));
         std::fs::create_dir_all(store.directory())?;
@@ -254,6 +254,11 @@ fn retained_lexical_artifact(
         Some(&reservation),
     )?;
     Ok((artifact, CapturedInput { artifact: compact }))
+}
+
+fn unlinked_tempdir() -> Result<tempfile::TempDir> {
+    // Model guards require real ancestors; macOS exposes temporary paths through /var.
+    Ok(tempfile::Builder::new().tempdir_in(std::env::temp_dir().canonicalize()?)?)
 }
 
 #[test]

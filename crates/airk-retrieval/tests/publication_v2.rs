@@ -97,7 +97,7 @@ fn catalog(directory: &Path) -> Result<()> {
 
 #[test]
 fn receipt_binds_exact_inventory_and_post_callback_catalog() -> Result<()> {
-    let temp = tempfile::tempdir()?;
+    let temp = support::unlinked_tempdir()?;
     let base = temp.path().join("collection");
     let source = fixture();
     let authoritative = inventory(&source)?;
@@ -142,7 +142,7 @@ fn receipt_binds_exact_inventory_and_post_callback_catalog() -> Result<()> {
 
 #[test]
 fn empty_locked_lexical_component_verifies_without_reading_locked_bytes() -> Result<()> {
-    let temp = tempfile::tempdir()?;
+    let temp = support::unlinked_tempdir()?;
     let base = temp.path().join("collection");
     let source = fixture();
     let authoritative = inventory(&source)?;
@@ -192,7 +192,7 @@ fn component_corruption_and_unowned_sidecars_fail_reopen() -> Result<()> {
         "vector-map/meta.json",
         "vector-map/unlisted.bin",
     ] {
-        let temp = tempfile::tempdir()?;
+        let temp = support::unlinked_tempdir()?;
         let base = temp.path().join("collection");
         let preparation = V2Preparation {
             snapshot: &snapshot,
@@ -222,7 +222,7 @@ fn callback_failure_missing_catalog_and_component_mutation_never_publish() -> Re
     let bytes = authoritative.canonical_bytes()?;
     let inventory = bytes.as_slice();
     for mode in 0..4 {
-        let temp = tempfile::tempdir()?;
+        let temp = support::unlinked_tempdir()?;
         let base = temp.path().join("collection");
         let preparation = V2Preparation {
             snapshot: &snapshot,
@@ -267,7 +267,7 @@ fn bad_token_and_quota_failure_do_not_reach_callback() -> Result<()> {
     let bytes = authoritative.canonical_bytes()?;
     let inventory = bytes.as_slice();
     for bad_token in [true, false] {
-        let temp = tempfile::tempdir()?;
+        let temp = support::unlinked_tempdir()?;
         let base = temp.path().join("collection");
         let mut revision = token(inventory);
         if bad_token {
@@ -305,7 +305,7 @@ fn mismatched_projection_incarnation_specification_and_noncanonical_inventory_ar
     let authoritative = inventory(&source)?;
     let bytes = authoritative.canonical_bytes()?;
     for mode in 0..4 {
-        let temp = tempfile::tempdir()?;
+        let temp = support::unlinked_tempdir()?;
         let base = temp.path().join("collection");
         let mut snapshot = authoritative.projection()?;
         let mut bytes = bytes.clone();
@@ -342,7 +342,7 @@ fn mismatched_projection_incarnation_specification_and_noncanonical_inventory_ar
 
 #[test]
 fn local_vector_assets_are_receipt_bound_and_reopened() -> Result<()> {
-    let temp = tempfile::tempdir()?;
+    let temp = support::unlinked_tempdir()?;
     let base = temp.path().join("collection");
     let model = temp.path().join("original-model");
     fs::create_dir(&model)?;
@@ -411,7 +411,7 @@ fn local_vector_assets_are_receipt_bound_and_reopened() -> Result<()> {
 
 #[test]
 fn old_manifest_rejection_explains_full_rebuild_before_new_field_deserialization() -> Result<()> {
-    let temp = tempfile::tempdir()?;
+    let temp = support::unlinked_tempdir()?;
     let base = temp.path().join("collection");
     let source = fixture();
     let authoritative = inventory(&source)?;

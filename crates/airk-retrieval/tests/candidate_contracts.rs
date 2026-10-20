@@ -19,7 +19,7 @@ fn unembedded_display_chunks_do_not_consume_vector_scope_budget() -> Result<()> 
 }
 
 fn scope_fixture(large_graph: bool) -> Result<()> {
-    let temporary = tempfile::tempdir()?;
+    let temporary = support::unlinked_tempdir()?;
     let base = temporary.path().join("collection");
     let model_directory = temporary.path().join("model");
     fs::create_dir(&model_directory)?;

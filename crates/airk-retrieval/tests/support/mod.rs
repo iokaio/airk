@@ -19,6 +19,11 @@ use sha2::{Digest, Sha256};
 pub use source::{FixtureRegistry, FixtureSource};
 use std::{collections::BTreeMap, fs, path::Path};
 
+pub fn unlinked_tempdir() -> Result<tempfile::TempDir> {
+    // Model guards require real ancestors; macOS exposes temporary paths through /var.
+    Ok(tempfile::Builder::new().tempdir_in(std::env::temp_dir().canonicalize()?)?)
+}
+
 pub const LINEAGE: &[u8] = b"original retrieval fixture lineage";
 pub fn digest(bytes: &[u8]) -> Sha256Digest {
     Sha256Digest::from_bytes(Sha256::digest(bytes).into())

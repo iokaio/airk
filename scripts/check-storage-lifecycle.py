@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Public CLI smoke for aliases, revision binding, quotas, relocation and retention."""
+"""Public CLI smoke for aliases, current revisions, quotas and relocation."""
 import argparse
 import hashlib
 import json
@@ -38,10 +38,11 @@ def main():
             assert result.returncode == 0, (command, result.stderr)
             return json.loads(result.stdout)
 
-        # This scenario verifies explicit prune preview/apply, so preserve its
-        # old generations instead of relying on the automatic new-user default.
+        # Historical controls explicitly reject the retired generation contract.
+        # Current-object reclamation runs automatically after publication.
         call("collections", "retention", "set", "--json", json.dumps({
-            "version": 1, "mode": "manual", "searchable_predecessors": 0}))
+            "version": 1, "mode": "manual", "searchable_predecessors": 0}),
+            succeeds=False, error_terms=("generation retention is unsupported",))
         call("index")
         assert call("collections", "roots", "add", "requirements", specs)["pending_index"]
         assert call("coverage", "--refresh")["percent"] is None
@@ -81,10 +82,12 @@ def main():
         call("collections", "quota", "set", policy_file)
         call("index")
         assert call("status")["generation"] > generation
-        preview = call("collections", "prune")
-        assert preview["dry_run"] and preview["candidates"]
-        applied = call("collections", "prune", "--apply")
-        assert not applied["dry_run"] and applied["removed_bytes"] > 0
+        call("collections", "prune", succeeds=False, error_terms=("unsupported",))
+        current = call("status")["publication"]["token"]
+        maintained = call("collections", "maintain")
+        assert not maintained["pending"]
+        assert call("status")["publication"]["token"] == current
+        assert call("collections", "maintain")["removed_files"] == 0
         published = call("status")
         destination = base / "relocated-state"
         plan = call("storage", "plan", destination)
@@ -92,16 +95,21 @@ def main():
         moved = call("storage", "relocate", destination)
         assert moved["files"] == plan["files"] and moved["old_state_retained"]
         call("status", succeeds=False, error_terms=("relocated", "relocation"))
-        assert (data / "collections" / "storage-fixture").is_dir()
+        assert (data / "collections-1.2" / "storage-fixture").is_dir()
         data = destination
-        assert call("status") == published
+        relocated = call("status")
+        # Admission and freshness are current observations, independent of the
+        # authenticated publication preserved by a storage relocation.
+        stable = lambda status: {key: value for key, value in status.items()
+                                 if key not in ("execution", "freshness")}
+        assert stable(relocated) == stable(published), (relocated, published)
         assert call("coverage", "--refresh")["percent"] == 100
         assert call("search", "--mode", "lexical", "Replacement")["hits"]
         call("collections", "remove", "storage-fixture")
         assert (root / "main.md").read_text(encoding="utf-8") == changed_text
         assert (specs / "requirements.md").read_text(encoding="utf-8") == original_text
         assert (replacement / "requirements.md").read_text(encoding="utf-8") == replacement_text
-    print("Storage CLI smoke passed: aliases, pinned origins, quota rollback, relocation, pruning and source-safe removal.")
+    print("Storage CLI smoke passed: aliases, pinned origins, quota rollback, relocation, current-object maintenance and source-safe removal.")
 
 
 if __name__ == "__main__":
