@@ -20,18 +20,11 @@ pub(super) fn seal(
     );
     // Two bounded dirty-row passes, base proofs, candidate sibling reads and
     // at most 33 final nodes per changed ID. Charge this conservative allowance
-    // before reading any seal pages; counters describe admitted logical bytes.
+    // as logical work; it does not represent resident memory or physical I/O.
     let read_bytes = stored
         .checked_mul(3 * u64::from(base.scope.record_bytes) + 64 + 2 * 32 * 32 + 33 * 37)
         .ok_or_else(|| anyhow::anyhow!("graph seal read bound overflow"))?;
-    ensure!(
-        read_bytes
-            <= limits
-                .maximum_read_bytes
-                .saturating_sub(state.statistics.read_bytes),
-        "graph seal read-byte limit exceeded"
-    );
-    state.statistics.read_bytes += read_bytes;
+    state.statistics.read_bytes = state.statistics.read_bytes.saturating_add(read_bytes);
     let mut root = base.merkle_root;
     let mut counts = base.counts();
     let mut cursor = None;

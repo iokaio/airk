@@ -17,7 +17,7 @@ pub mod local;
 
 #[derive(Default, Deserialize, Serialize, schemars::JsonSchema)]
 pub struct EvidenceArgs {
-    /// Exact retained revision token; unavailable history never falls back to current bytes.
+    /// Exact current token; a superseded token expires without historical fallback.
     pub revision: Option<String>,
     /// Representation validator returned by this same read and options.
     pub if_evidence: Option<String>,
@@ -701,7 +701,7 @@ impl AirkServer {
 
     #[tool(
         name = "airk_history",
-        description = "List bounded retained publication receipts or verify availability of one exact revision. Listing verifies receipt identity; exact file/context/outline/info reads verify retained bytes. Historical graph/full-text/vector search is unsupported. No live or current byte fallback.",
+        description = "Unsupported in AIRK 1.2. Only the current index is retained; historical availability and reads have been removed.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -735,16 +735,16 @@ impl AirkServer {
             "request_admission": admission,
             "discovery": {"cursor_tools":["airk_list_files","airk_outline","airk_symbols","airk_imports","airk_code_facts","airk_document_facts"], "binding":"exact publication, filters and representation", "compact_outline":true, "budget":"complete serialized records; framing is additional", "expired_cursor":"restart discovery"},
             "adapters": Kernel::extraction_adapters(),
-            "index_detail": {"new_collection_default":"balanced", "levels":["essential","balanced","detailed"], "coverage":"Fact and relationship responses report their published indexing level and deliberate omissions. Configured changes apply only after a successful index. Optional provider imports and history retention are separate."},
-            "history": {"exact_reads":["airk_file_info","airk_read_file","airk_outline","airk_context"],"availability":"airk_history","optional_retention":true,"search":false,"live_fallback":false,"mutations":"CLI/extension only"},
-            "changes": {"observed_indexed_changes":true,"selectors":64,"selector_bytes":32768,"max_payload_bytes":65536,"exact_revision_tokens":true,"live_source_verified":false,"symbol_continuity":"adapter-specific conservative coverage","document_continuity":"adapter-specific conservative coverage"},
+            "index_detail": {"new_collection_default":"balanced", "levels":["essential","balanced","detailed"], "coverage":"Fact and relationship responses report their published indexing level and deliberate omissions. Configured changes apply only after a successful index. Optional provider imports preserve their source and producer binding."},
+            "history": {"supported":false,"exact_reads":[],"optional_retention":false,"search":false,"live_fallback":false,"checkpoints":false,"reason":"AIRK 1.2 retains one current index"},
+            "changes": {"observed_indexed_changes":false,"remembered_evidence_validation":true,"expired_baseline":"baseline_unavailable","selectors":64,"selector_bytes":32768,"max_payload_bytes":65536,"exact_revision_tokens":true,"live_source_verified":false,"symbol_continuity":"adapter-specific conservative coverage","document_continuity":"adapter-specific conservative coverage"},
             "conditional_reads": {"tools":["airk_file_info","airk_read_file","airk_outline","airk_context"],"validator":"representation-specific if_evidence","follow_moves_default":false,"move_basis":"unique compatible exact content; not filesystem intent"},
             "code": ["rust","python","javascript/jsx","typescript/tsx","go","java","c","cpp","csharp","ruby","php","bash","powershell","lua","swift","kotlin","sql"],
             "structured": ["markdown","json","yaml","toml","html","css","xml","svg","csv","tsv","ini","dockerfile"],
             "documents": ["UTF-8 text","text-layer PDF","DOCX main-body paragraphs/tables with original row locations","XLSX worksheet cells and row facts","PPTX slide text in presentation order"],
             "fallback": "UTF-8 lexical retrieval for all other extensions",
             "document_cues": ["English requirement/modality and design/architecture/feature/decision candidates", "heading context", "ISO and English calendar dates; numeric slash dates retain unknown locale", "written numeric bounds/ranges/units; no unit conversion"],
-            "exact_fact_backend": "embedded SQLite; legacy JSON migrates at next successful index",
+            "exact_fact_backend": "authenticated current SQLite; 1.1 indexes require a fresh 1.2 rebuild",
             "code_evidence": ["syntax scopes/signatures/written parameters and return types", "syntax call, inheritance, containment and import candidates", "versioned structural framework cues"],
             "optional_analysis": "Explicit source/build/digest-bound SCIP imports and local LSP/Ctags execution through the CLI. LSP queries advertised document symbols, references, definitions, types, implementations and call hierarchy against private source copies. Ctags supplies syntax declarations only. Provider assertions are not AIRK compiler certification or complete resolution; source/build changes invalidate the imported domain.",
             "optional_ocr": "Explicit CLI-only Tesseract OCR with local traineddata and optional Poppler pdftoppm for selected PDF pages; PNG/JPEG/BMP also supported. Bounded local processes preserve original source hashes/page locations and executable/model provenance. Recognition may be wrong; no automatic OCR or model download.",

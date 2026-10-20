@@ -53,20 +53,36 @@ pub struct CollectionCounts {
     pub facts: u64,
     pub source_bytes: u64,
     pub extracted_bytes: u64,
+    pub vector_eligible: u64,
+    pub vector_excluded: u64,
 }
 
 impl CollectionCounts {
-    fn update(&mut self, artifact: &Artifact, insert: bool) -> Result<()> {
+    fn update(
+        &mut self,
+        artifact: &Artifact,
+        selection: &VectorSelectionPolicy,
+        insert: bool,
+    ) -> Result<()> {
         let retained = artifact
             .retained
             .as_ref()
             .context("current collection requires retained metadata")?;
+        let profile = retained
+            .profile
+            .as_ref()
+            .context("current collection profile missing")?;
+        let eligible = selection
+            .decision(&artifact.path, profile, &artifact.language)?
+            .eligible;
         for (count, amount) in [
             (&mut self.files, 1),
             (&mut self.chunks, retained.chunks as u64),
             (&mut self.facts, retained.facts as u64),
             (&mut self.source_bytes, artifact.bytes as u64),
             (&mut self.extracted_bytes, retained.extracted_bytes as u64),
+            (&mut self.vector_eligible, u64::from(eligible)),
+            (&mut self.vector_excluded, u64::from(!eligible)),
         ] {
             *count = if insert {
                 count.checked_add(amount)
@@ -97,7 +113,7 @@ impl CollectionState {
         );
         Ok(bytes)
     }
-    fn decode(bytes: &[u8]) -> Result<Self> {
+    pub(super) fn decode(bytes: &[u8]) -> Result<Self> {
         ensure!(
             bytes.len() <= map::MAX_VALUE_BYTES,
             "oversized current collection state"
@@ -121,11 +137,22 @@ impl CurrentRead {
 }
 
 pub(crate) struct CollectionPlan {
+    prior_selection: VectorSelectionPolicy,
     state: Option<CollectionState>,
     required_previous: Option<u64>,
     visited_previous: u64,
 }
 impl CollectionPlan {
+    pub(crate) fn require_all_previous(&mut self) -> Result<()> {
+        self.required_previous = Some(
+            self.state
+                .as_ref()
+                .context("graph replacement requires collection metadata")?
+                .counts
+                .files,
+        );
+        Ok(())
+    }
     pub(crate) fn verify_model(&self, captured: &Option<ModelObjectSet>) -> Result<()> {
         ensure!(
             self.state
@@ -142,6 +169,10 @@ impl CollectionPlan {
     ) -> Result<Self> {
         let old = plan.get(map::key(scope, map::MapDomain::Metadata, KEY)?)?;
         let mut state = old.as_deref().map(CollectionState::decode).transpose()?;
+        let prior_selection = state
+            .as_ref()
+            .map(|s| s.configuration.vector_selection.clone())
+            .unwrap_or_default();
         let mut required_previous = None;
         if let Some(configuration) = configuration {
             configuration.validate()?;
@@ -163,6 +194,7 @@ impl CollectionPlan {
             }
         }
         Ok(Self {
+            prior_selection,
             state,
             required_previous,
             visited_previous: 0,
@@ -176,7 +208,9 @@ impl CollectionPlan {
         if let Some(state) = &mut self.state {
             if let Some(previous) = previous {
                 self.visited_previous += 1;
-                state.counts.update(previous, false)?;
+                state
+                    .counts
+                    .update(previous, &self.prior_selection, false)?;
             }
             if let Some(next) = next {
                 let profile = next
@@ -193,7 +227,9 @@ impl CollectionPlan {
                         == state.configuration.index_detail.as_str(),
                     "current artifact detail differs from applied configuration"
                 );
-                state.counts.update(next, true)?;
+                state
+                    .counts
+                    .update(next, &state.configuration.vector_selection, true)?;
             }
         }
         Ok(())

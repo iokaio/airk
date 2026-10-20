@@ -103,7 +103,7 @@ fn four_conditional_reads_and_remembered_paths_preserve_exact_identity() -> Resu
         &["changes", "--since", token, "--path", "weather.py"],
     )?;
     assert_eq!(unchanged["baseline_status"], "verified");
-    assert_eq!(unchanged["validations"][0]["outcome"], "unchanged");
+    assert_eq!(unchanged["validations"][0]["outcome"], "current");
     assert!(
         unchanged["changes"]
             .as_array()
@@ -124,7 +124,8 @@ fn four_conditional_reads_and_remembered_paths_preserve_exact_identity() -> Resu
         &["changes", "--since", token, "--path", "weather.py"],
     )?;
     assert_ne!(changed["to"], token);
-    assert_eq!(changed["validations"][0]["outcome"], "modified");
+    assert_eq!(changed["baseline_status"], "baseline_unavailable");
+    assert_eq!(changed["validations"][0]["outcome"], "current");
     Ok(())
 }
 
@@ -196,36 +197,32 @@ fn equal_generation_foreign_and_forked_tokens_are_rejected() -> Result<()> {
         second["publication"]["incarnation"]
     );
     let token = first["to"].as_str().context("token")?;
-    assert!(
-        !run(
-            root.path(),
-            second_state.path(),
-            &["changes", "--since", token]
-        )?
-        .status
-        .success()
-    );
-    let mut fork: airk_core::identity::RevisionToken = token.parse()?;
-    fork.revision = airk_core::identity::Sha256Digest::from_bytes([0x5a; 32]);
-    assert!(
-        !run(
-            root.path(),
-            first_state.path(),
-            &["changes", "--since", &fork.to_string()]
-        )?
-        .status
-        .success()
-    );
-    let mut future: airk_core::identity::RevisionToken = token.parse()?;
-    future.generation += 1;
-    assert!(
-        !run(
-            root.path(),
-            first_state.path(),
-            &["changes", "--since", &future.to_string()]
-        )?
-        .status
-        .success()
-    );
+    for (state, candidate) in [
+        (second_state.path(), token.to_owned()),
+        (first_state.path(), {
+            let mut t: airk_core::identity::RevisionToken = token.parse()?;
+            t.revision = airk_core::identity::Sha256Digest::from_bytes([0x5a; 32]);
+            t.to_string()
+        }),
+        (first_state.path(), {
+            let mut t: airk_core::identity::RevisionToken = token.parse()?;
+            t.generation += 1;
+            t.to_string()
+        }),
+    ] {
+        assert_eq!(
+            call(root.path(), state, &["changes", "--since", &candidate])?["baseline_status"],
+            "baseline_unavailable"
+        );
+        assert!(
+            !run(
+                root.path(),
+                state,
+                &["info", "identity.txt", "--revision", &candidate]
+            )?
+            .status
+            .success()
+        );
+    }
     Ok(())
 }

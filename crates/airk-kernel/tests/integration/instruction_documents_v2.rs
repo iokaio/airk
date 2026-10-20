@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Original instruction documents are indexed evidence, never executable instructions.
+use super::current_inspection::InspectCurrent;
 use airk_core::FactQuery;
 use airk_kernel::Kernel;
 use airk_store::FileStore;
@@ -16,8 +17,8 @@ fn instruction_markdown_retains_documents_untrusted_cues_and_safe_move_reuse() -
     fs::write(root.path().join("AGENTS.md"), &source)?;
     let kernel = Kernel::open(root.path(), Some(state.path().into()))?;
     kernel.index()?;
-    let store = FileStore::new(state.path().join("collections/default"));
-    let initial = store.catalog()?.unwrap();
+    let store = FileStore::new(state.path().join("collections-1.2/default"));
+    let initial = store.current_test_catalog()?.unwrap();
     let file = initial.inventory.as_ref().unwrap().files["AGENTS.md"].clone();
     assert_eq!(file.language, "instruction-markdown");
     let query = |path: &str| FactQuery {
@@ -64,7 +65,7 @@ fn instruction_markdown_retains_documents_untrusted_cues_and_safe_move_reuse() -
         root.path().join("nested/AGENTS.md"),
     )?;
     assert_eq!(kernel.index()?.indexed, 0);
-    let moved = store.catalog()?.unwrap();
+    let moved = store.current_test_catalog()?.unwrap();
     assert_eq!(
         moved.inventory.as_ref().unwrap().files["nested/AGENTS.md"]
             .state
@@ -86,7 +87,7 @@ fn instruction_markdown_retains_documents_untrusted_cues_and_safe_move_reuse() -
         kernel.index()?.indexed > 0,
         "different filename family invalidates extraction profile"
     );
-    let renamed = store.catalog()?.unwrap();
+    let renamed = store.current_test_catalog()?.unwrap();
     assert_ne!(
         renamed.inventory.as_ref().unwrap().files["nested/CLAUDE.md"]
             .state

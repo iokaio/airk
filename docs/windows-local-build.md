@@ -54,11 +54,13 @@ First setup in the default VS Code profile uses its standard AIRK storage locati
 
 Local setup waits and retries when another AIRK process holds the collection writer lock. It reports the wait every 30 seconds and uses the original step deadline (five minutes for model installation, one hour for indexing), including time spent waiting. It does not stop the existing writer or remove lock files. Other errors fail immediately with native diagnostics. Setup wall-time measurements include any writer wait; native phase timings measure the successful indexing attempt.
 
-If installation succeeds but agent setup fails, repair/retry without rebuilding:
+If installation succeeds but agent setup fails because of configuration or environment problems, repair/retry without rebuilding:
 
 ```powershell
 python scripts/setup-local-test.py --build-record artifacts/local/<build-directory>
 ```
+
+If the failure requires a native code fix, rebuild and reinstall first, then use the new build record. Retrying an older verified candidate still runs its original executable.
 
 For first setup without the wrapper, add `--data-dir` with the absolute storage directory shown by the AIRK dashboard. `--skip-index` only verifies an already current index and rejects a stale README or enabled vectors without a ready model/index. A successful run writes `local-agent-setup.json` beside `local-install.json`; look for `verification.vector_search: "passed"` (or `"opted_out"`) and `verification.default_search: "passed"`. The install receipt alone proves extension installation, not agent readiness. Python 3.11+ is required for this configuration helper.
 

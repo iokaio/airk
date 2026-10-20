@@ -10,7 +10,7 @@ Written calls have per-language profiles and fixtures for Rust, Python, JS/TS, G
 
 Bundled `airk-framework-cues/1` rules recognize selected app/router route calls, db/conn/pool database calls, JS test registrations, Python Depends, exception handlers and Rust/Java/C# route/test/injection attributes. Rules operate on parsed nodes, excluding comment/string examples. Familiar spellings are structural cues; framework identity, aliases, versions, endpoint security, database behavior and actual test coverage remain unverified.
 
-`Fact.code` records basis (`syntax`, `structural_rule`, `imported`), producer/version, identity, scope, signature and coverage. Document evidence remains separate. Response/citation metadata supplies collection, generation, source hash and original location. File info still exposes partial syntax, and error-containing nodes are suppressed.
+`Fact.code` records basis (`syntax`, `structural_rule`, `imported`), producer/version, identity, scope, signature and coverage. Document evidence remains separate. Response/citation metadata supplies collection, current sequence/token, source hash and original location. File info still exposes partial syntax, and error-containing nodes are suppressed.
 
 ## Queries
 
@@ -24,7 +24,7 @@ Use actual `code.symbol_id` values returned by facts for identity lookup. Syntax
 
 The MCP tools `airk_code_facts` and `airk_relationships` are part of the sixteen-tool read-only inventory, which also includes [airk_changes](changes.md) and bounded receipt listings through [airk_history](v2-history-controls.md). Exact facts accept names, qualified names or IDs plus kind/language/path filters. Incoming call edges find syntax caller candidates; incoming implements edges find optional producer assertions; outgoing edges inspect dependencies/containment. Exploration allows 1–3 hops, 100 visited symbols, 100 results and 65536 payload bytes. Traversal/SQLite instructions have a 250 ms deadline; instruction interruption returns an error, while traversal/result/byte bounds set truncation. Missing edges do not prove absence of impact. `airk_references` remains explicitly textual.
 
-Fact budgets count names, paths and document/code details; citation/envelope framing is additional. Relationship budgets count each serialized edge including its citation. SQL indexes support exact facts and incoming/outgoing edges directly without loading the complete source snapshot. Lexical/text operations still load retained snapshot data and use the in-memory map.
+Fact budgets count names, paths and document/code details; citation/envelope framing is additional. Relationship budgets count each serialized edge including its citation. Authenticated path postings select exact facts and incoming/outgoing edges without loading the complete corpus. Lexical search uses the head-bound Tantivy manifest; exact reads verify individual retained source objects.
 
 ## Optional SCIP import
 
@@ -46,7 +46,7 @@ Import checks exact root/collection/extractor/source inventory/build hashes/outp
 
 Raw index bytes are capped at 64 MiB for digest identity and decoded one top-level field/document at a time, capped at 8 MiB per field/document, 100000 retained facts/edges and 30 seconds. This avoids constructing an unbounded whole SCIP Index but is not an unlimited large-repository importer. Enclosing-range metadata is not yet used to derive a resolved caller graph. Selected signatures/documentation are bounded.
 
-Import transactionally publishes a new generation with source inventory, native/imported facts, edges and manifest. Reindexing conservatively drops the entire imported provider domain after any indexed source/inventory/extractor change or declared build-input change, including inputs omitted by native extraction. Unchanged indexing retains imports and avoids rewriting SQLite. Queries describe the published revision, not unsaved buffers or automatically checked live files. Declared inputs are a producer contract, not proof of complete compiler/environment capture. This initial slice retains one imported provider domain per collection.
+Import transactionally updates the current head with captured native/imported facts, edges and producer manifest. Reindexing conservatively drops the entire imported provider domain after any indexed source/inventory/extractor change or declared build-input change, including inputs omitted by native extraction. Unchanged indexing retains imports and avoids rewriting SQLite. Queries describe the published revision, not unsaved buffers or automatically checked live files. Declared inputs are a producer contract, not proof of complete compiler/environment capture. This initial slice retains one imported provider domain per collection.
 
 ## Explicit live LSP and Universal Ctags
 
@@ -78,11 +78,11 @@ Windows qualification exercised Rust Analyzer `0.3.3081-standalone` (official 20
 
 ## Storage and migration
 
-Each collection owns `index.sqlite3` with the active revision/component pointer. New generations contain compact digest-bound inventories and immutable `catalog.sqlite3` exact facts/relationships; source text and extractions live in content-addressed objects. Queries pin the published generation and read individual artifacts. Legacy whole-snapshot SQLite and `snapshot.json` remain readable and migrate on successful publication. Corrupt/unsupported state fails closed.
+Each 1.2 collection owns `current.sqlite3`, with one authenticated head, keyed catalog/postings and DiskANN records. Source text, extraction and bounded file metadata live in digest-bound objects. Queries hold a request-scoped current gate and verify individual artifacts. Legacy indexes are not read or migrated; the new namespace starts fresh. Corrupt or unsupported state fails closed.
 
 WAL transactions publish all rows and revision metadata together, with full synchronous commits and a two-second busy timeout. Existing reader transactions keep their revision during publication; later requests see the new one. The collection writer lock serializes mutations. Read tools open SQLite read-only, perform no migrations and take no writer lock; SQLite may maintain derived WAL/shared-memory sidecars. Use local storage. Network-filesystem and power-loss/process-kill qualification remain open.
 
-Legacy retained payloads retain a 512 MiB cap. New private catalogs use a reserved page cap; the small active pointer publishes after immutable components are ready. Application [logical-byte quotas](storage-quotas.md) cover participating writers, including temporary components, model copies, database growth and retained generations. They do not cap physical allocation overhead or independent external writes. Pruning protects generation leases and removes blobs only when no retained generation references them. Nothing is automatically evicted; see [collections](collections.md).
+Bounded retained objects and admitted database growth keep preparation explicit. Application [logical-byte quotas](storage-quotas.md) cover participating writers, including temporary components, model copies, database growth and durable recovery allowances. They do not cap physical allocation overhead or independent external writes. Current cleanup removes only unreferenced objects after validating complete ownership under the exclusive gate; see [collections](collections.md).
 
 ## Measurement
 

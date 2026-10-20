@@ -303,7 +303,7 @@ impl FileStore {
             directory
                 .parent()
                 .and_then(Path::file_name)
-                .is_some_and(|name| name == "collections"),
+                .is_some_and(|name| name == "collections-1.2"),
             "index reset requires managed collection storage"
         );
         let quota = crate::quota::Quota::open(data_root)?;
@@ -472,9 +472,9 @@ fn derived_targets(directory: &Path) -> Result<(Vec<PathBuf>, Vec<File>)> {
             .parent()
             .and_then(Path::parent)
             .context("index reset data root missing")?;
-        let ledger = data_root.join(".quota/reservations");
+        let ledger = data_root.join(".quota-1.2/reservations");
         ensure!(
-            plain(&data_root.join(".quota"))?.is_dir() && plain(&ledger)?.is_dir(),
+            plain(&data_root.join(".quota-1.2"))?.is_dir() && plain(&ledger)?.is_dir(),
             "invalid reset reservation ledger"
         );
         #[derive(Deserialize)]
@@ -554,7 +554,7 @@ mod tests {
             fs::create_dir(&source)?;
             fs::write(source.join("original.txt"), b"authoritative source")?;
             let owner = source.canonicalize()?.to_str().unwrap().to_owned();
-            let store = FileStore::new(root.path().join("data/collections/fixture"));
+            let store = FileStore::new(root.path().join("data/collections-1.2/fixture"));
             let writer = store.lock()?;
             let mut snapshot = Snapshot::empty(owner.clone());
             snapshot.collection = "fixture".into();
@@ -735,7 +735,7 @@ mod tests {
             abandoned.join("prepared-publication.json"),
             b"obsolete prepared format",
         )?;
-        let ledger = data.join(".quota/reservations");
+        let ledger = data.join(".quota-1.2/reservations");
         fs::write(
             ledger.join("r-resetfixture"),
             br#"{"collection":"fixture","bytes":1048576}"#,

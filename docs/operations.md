@@ -1,10 +1,10 @@
 # Operations
 
-## Upgrading through 1.1.2
+## Upgrading to 1.2
 
-The [October 17 release summary](releases-2026-10-17.md) combines workstation sizing, evidence detail, storage/recovery and agent setup changes. Preserve collection/root/storage identity and inspect saved policies before changing defaults. Existing limits, quotas and retention remain authoritative; older extraction policies keep Detailed while new collections default to Balanced. Review [ingestion limits](ingestion-limits.md) and [storage quotas](storage-quotas.md) before increasing allowances or rebuilding.
+AIRK 1.2 starts fresh collection/configuration ownership in `collections-1.2/`; it does not import the old `collections/` indexes or per-collection settings. Old state remains untouched and still consumes disk space. Review roots, extraction detail, vector selection, ingestion limits and quotas for the new collection, then index saved sources. Shared model assets require digest verification. See the [current-index contract](current-index-runtime.md).
 
-After a helper upgrade or storage change, refresh generated client configuration and reconnect agents using the intended helper, root, data directory and collection. The extension's **Connect Coding Agent** guide preserves existing settings; Codex TOML requires manual merging if already present. Verify the helper and the agent's actual tool discovery separately. New object sizes can exceed 1.0.0 reader limits; qualify rollback using isolated or backed-up state.
+Refresh generated client configuration and reconnect agents after replacing a helper or changing storage. The extension connection guide preserves existing client settings. Verify helper identity and actual tool discovery separately.
 
 ## Native state and collection selection
 
@@ -17,11 +17,11 @@ airk --root /projects/a --data-dir /fast-disk/airk --collection project-a covera
 airk --root /projects/a --data-dir /fast-disk/airk --collection project-a usage report
 ~~~
 
-Windows accepts a path such as D:/indexes/airk. State is stored under <data-dir>/collections/<id>. Each collection binds to a canonical primary root and optional [source aliases](source-roots.md). Native setup prints actual absolute paths. Source and alias changes take effect through successful indexing; old evidence retains its published locations. Unchanged runs keep their generation and reuse extracted facts/chunks; they still scan and hash eligible files.
+Windows accepts a path such as D:/indexes/airk. State is stored under <data-dir>/collections-1.2/<id>. Each collection binds to a canonical primary root and optional [source aliases](source-roots.md). Native setup prints actual absolute paths. Source and alias changes take effect through successful indexing; old evidence retains its published locations. Unchanged runs keep their current token and reuse extracted facts/chunks; they still scan and hash eligible files.
 
-Unsupported binary, empty extracted document and oversized files are reported as skipped. Arbitrary UTF-8 files remain eligible without an extension allowlist. The next successful index removes excluded entries. Ignore-excluded content is not traversed and does not generate per-file skip records. Reports retain at most 1000 detailed skip records and count further omissions. Corpus/extracted-text limits or filesystem failures retain the old snapshot.
+Unsupported binary, empty extracted document and oversized files are reported as skipped. Arbitrary UTF-8 files remain eligible without an extension allowlist. The next successful index removes excluded entries. Ignore-excluded content is not traversed and does not generate per-file skip records. Reports retain at most 1000 detailed skip records and count further omissions. Corpus/extracted-text limits or filesystem failures retain the previous current index.
 
-Inspect retention after setup or upgrade with `airk collections retention show`. New collections use automatic retention; existing collections without explicit policy remain manual. Policy origin distinguishes new-collection defaults from upgrades and operator choices. `collections retention preview` and `run` without `--apply` do not clean up. Use [retention policy and maintenance](retention.md) to preview/set policy or perform an explicit bounded pass. A successful publication remains successful if its later cleanup reports pending work or an error; inspect the maintenance receipt separately. MCP reads never perform cleanup.
+Publication attempts bounded unreferenced-object cleanup. `airk collections maintain` repeats it without publishing; inspect `removed_files`, `removed_bytes`, `pending` and indexing's `maintenance_error`. Historical retention is unsupported.
 
 ## One-container deployment
 
@@ -35,9 +35,9 @@ docker exec airk airk --root /workspaces/project-a --data-dir /data --collection
 
 Use the scoped [Docker MCP configuration](../examples/mcp/docker.json) in each workspace. It uses docker exec -i against the existing airk container. No second container starts for a workspace or agent. Sources are read-only; /data is a persistent named volume. Runtime network access and exposed ports are unnecessary. docker compose stop stops the host while retaining data; docker compose start restarts it.
 
-The host keeps scoped CLI/MCP workers in one container with separate process caches and shared immutable disk components. The native scheduler serializes submitted indexing across the data root; an explicit `schedule run --watch` process drains queued work without installing a system service. Do not mount private reference folders or a whole drive unnecessarily. The Docker build allowlist excludes temp/, Git metadata and local indexes.
+The host keeps scoped CLI/MCP workers in one container with separate process caches and shared current disk state. The native scheduler serializes submitted indexing across the data root; an explicit `schedule run --watch` process drains queued work without installing a system service. Do not mount private reference folders or a whole drive unnecessarily. The Docker build allowlist excludes temp/, Git metadata and local indexes.
 
-Several agents may use the same scoped native command or docker-exec command at once. Reuse --root, --data-dir and --collection; do not run docker run for each client or create an agent-specific index. Readers share published disk state and refresh on later calls after indexing. Collection writer locks serialize mutations; native reader leases protect immutable generations during pruning and prevent collection removal while cached readers remain connected.
+Several agents may use the same scoped native command or docker-exec command at once. Reuse --root, --data-dir and --collection; do not run docker run for each client or create an agent-specific index. Readers share published disk state and refresh on later calls after indexing. Collection writer locks serialize mutations; request-scoped read gates exclude publication/cleanup/removal while evidence is being read; idle connections retain no old generations.
 
 ## Scheduled indexing and local inspection
 
@@ -58,27 +58,22 @@ Lexical retrieval needs no model. Optional vector/hybrid modes require explicitl
 
 ## Space management
 
-~~~console
+```console
 airk --data-dir /fast-disk/airk collections list
-airk --data-dir /fast-disk/airk --collection project-a collections prune
-airk --data-dir /fast-disk/airk --collection project-a collections prune --apply
+airk --root /projects/a --data-dir /fast-disk/airk --collection project-a collections maintain
 airk --data-dir /fast-disk/airk collections remove old-project
-docker exec airk airk --data-dir /data collections list
-docker exec airk airk --data-dir /data collections remove old-project
-~~~
+```
 
-Listing reports logical file bytes, file count, generation, indexed-source count and snapshot status. Filesystem allocation/compression may differ from summed file sizes. Pruning first previews obsolete generation IDs/bytes; `--apply` removes only unpinned obsolete components. Removal validates the managed collection, obtains writer/worker/usage lifecycle locks and all generation leases, verifies containment and refuses link entries. It removes queued registration to prevent a worker recreating the deleted collection. Source files and other collections remain untouched. Disconnect active readers first; corrupt/unmanaged state needs diagnosis rather than blind deletion.
+Listing reports logical managed bytes and current indexed counts. Cleanup proves ownership before deleting bounded unreferenced current objects and lexical forks. Removal obtains writer, scheduler, usage and request exclusion and removes only the selected managed collection and its registration. Source files and other collections remain untouched. Active requests can block it; idle kernels cannot. Unknown ownership, corrupt state and links require diagnosis rather than blind deletion.
 
-Each collection stores a SQLite publication pointer, content-addressed source/extraction objects and immutable inventory, exact-fact and Tantivy/DiskANN generations. Sidecars and retained legacy recovery files count toward usage. Legacy state migrates at the next successful publication. Shared [logical-byte quotas](storage-quotas.md) reserve growth before participating writes. Explicit [storage relocation](storage-relocation.md) copies and verifies state, records recovery markers and retains the old managed payloads. [Extension controls](vscode-extension.md) additionally offer a soft automatic-indexing budget, storage selection, trim previews and removal; nothing is silently evicted.
+Quotas reserve growth before participating writes. Explicit [relocation](storage-relocation.md) copies and verifies current state, records recovery markers and preserves old managed payloads. Update client configuration explicitly after relocation. The extension provides current cleanup, storage limits and removal controls.
 
 ## Recovery
 
-A current writer uses an operating-system advisory lock and an atomic `airk-advisory-v1` marker in `writer.lock`. Process exit releases ownership, so a later writer can safely recover that versioned marker. A legacy unversioned marker still fails closed: establish that no worker uses the collection before manually removing it. A recorded PID alone is insufficient because PIDs can be reused. Never unlink active stable locks under `collections/.writer-locks/`, `collections/.reader-locks/`, or the `scheduler-worker.lock`/`usage.lock` files.
+Operating-system locks release after process exit. Never unlink active stable locks in `collections-1.2/.writer-locks/`, `.current-gates/`, `scheduler-1.2-worker.lock` or `usage.lock`. A PID alone is not proof of abandoned ownership.
 
-Corrupt/unsupported snapshots fail closed. Preserve them locally if diagnosis is needed, then choose fresh state or rebuild after deliberate cleanup. Never reassign one collection to another source root. Moving a workspace requires new state in the current scaffold. Do not publish snapshots in issues or commits.
+The current database records Prepared and Applying. Prepared keeps the base readable; Applying blocks evidence reads until captured replay completes. Kernel, CLI and MCP startup recover pending updates from retained inputs without consulting changed live source. Repeated recovery is idempotent. A runtime-bootstrap recipe covers interrupted initial setup. Database growth has an admitted durable capacity/rollback allowance before changing the owner header.
 
-SQLite WAL transactions with full synchronous commits publish catalog/revision/facts/edges and the immutable component pointer together. Preparation journals receipt-bound ownership before renaming completed components out of reservation staging. On dead-reservation recovery, committed receipts are preserved. Uncommitted data is detached only after authenticating its receipt and expected head and obtaining an exclusive reader lease. Unknown or corrupt state and live readers fail closed; do not remove an immutable directory merely because it appears orphaned.
+Unsupported versions, foreign roots and corruption fail explicitly. They are never interpreted as an empty collection. Do not manually remove an object merely because it looks unreferenced: pending work can still own it. Use a fresh collection when deliberately abandoning incompatible derived state, and preserve source identity. `index --full` rebuilds compatible current state with saved 1.2 policies.
 
-Process-death tests cover first publication and updates, pre-commit and post-commit exits, interrupted cleanup and same-revision retry, as well as scheduler/writer lock release. These checks do not establish power-loss durability, network-filesystem behavior or hostile concurrent filesystem mutation. PDF processing may allocate before post-extraction limits; source files must be trusted local inputs at this stage.
-
-SQLite busy waits are bounded at two seconds; failed publication retains the previous revision. Ordinary MCP reads open read transactions without the collection writer lock and may finish on the older revision while a writer commits. [Code facts and optional SCIP import](code-facts-and-relationships.md) explain exact lookup, source/build binding and stale-analysis invalidation.
+Process-exit qualification is separate from power-loss, full-device races, network filesystems and other-platform qualification. See [current storage](current-index-runtime.md) for work limits and availability semantics.

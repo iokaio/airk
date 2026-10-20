@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Original build/configuration fixtures; activate only with the P6 adapters.
+use super::current_inspection::InspectCurrent;
 use airk_core::{EvidenceBasis, FactQuery};
 use airk_kernel::{Kernel, extraction::ExtractionPolicy};
 use airk_store::FileStore;
@@ -106,10 +107,12 @@ fn actions_selection_uses_each_source_root_and_logical_override_precedence() -> 
     let kernel = Kernel::open(root.path(), Some(state.path().into()))?;
     kernel.add_root("vendor", external.path())?;
     kernel.index()?;
-    let store = FileStore::new(state.path().join("collections/default"));
+    let store = FileStore::new(state.path().join("collections-1.2/default"));
     let direct = "@vendor/.github/workflows/check.yml";
     let nested = "@vendor/nested/.github/workflows/check.yml";
-    let catalog = store.catalog()?.context("additional root catalog")?;
+    let catalog = store
+        .current_test_catalog()?
+        .context("additional root catalog")?;
     let files = &catalog.inventory.as_ref().unwrap().files;
     assert_eq!(files[direct].language, "github-actions");
     assert_eq!(files[nested].language, "yaml");
@@ -135,7 +138,9 @@ fn actions_selection_uses_each_source_root_and_logical_override_precedence() -> 
     )?;
     kernel.configure_extraction_policy(policy)?;
     kernel.index()?;
-    let overridden = store.catalog()?.context("overridden catalog")?;
+    let overridden = store
+        .current_test_catalog()?
+        .context("overridden catalog")?;
     let files = &overridden.inventory.as_ref().unwrap().files;
     assert_eq!(files[direct].language, "yaml");
     assert_eq!(files[nested].language, "github-actions");
@@ -164,8 +169,8 @@ fn build_profiles_publication_reuse_move_policy_locations_and_budgets() -> Resul
         let kernel = Kernel::open(root.path(), Some(state.path().into()))?;
         let first = kernel.index()?;
         assert_eq!(first.indexed, 1, "{}", fixture.adapter);
-        let store = FileStore::new(state.path().join("collections/default"));
-        let initial = store.catalog()?.context("initial catalog")?;
+        let store = FileStore::new(state.path().join("collections-1.2/default"));
+        let initial = store.current_test_catalog()?.context("initial catalog")?;
         let initial_file = initial.inventory.as_ref().unwrap().files[fixture.path].clone();
         assert_eq!(initial_file.language, fixture.adapter);
         assert!(initial_file.chunks > 0);
@@ -219,7 +224,7 @@ fn build_profiles_publication_reuse_move_policy_locations_and_budgets() -> Resul
             "An independent original fixture about quiet observatories.\n",
         )?;
         kernel.index()?;
-        let unrelated = store.catalog()?.unwrap();
+        let unrelated = store.current_test_catalog()?.unwrap();
         assert_eq!(
             unrelated.inventory.as_ref().unwrap().files[fixture.path].state,
             initial_file.state
@@ -229,7 +234,7 @@ fn build_profiles_publication_reuse_move_policy_locations_and_budgets() -> Resul
         fs::rename(&original, &moved)?;
         let move_report = kernel.index()?;
         assert_eq!(move_report.indexed, 0, "compatible move avoids extraction");
-        let moved_catalog = store.catalog()?.unwrap();
+        let moved_catalog = store.current_test_catalog()?.unwrap();
         let moved_file = &moved_catalog.inventory.as_ref().unwrap().files[fixture.moved];
         assert_eq!(
             moved_file.state.payload_digest,
@@ -268,7 +273,9 @@ fn build_profiles_publication_reuse_move_policy_locations_and_budgets() -> Resul
         for (kind, _) in fixture.expected {
             assert!(!plain.facts.iter().any(|fact| fact.kind == *kind));
         }
-        let plain_catalog = store.catalog()?.context("text profile catalog")?;
+        let plain_catalog = store
+            .current_test_catalog()?
+            .context("text profile catalog")?;
         let plain_file = &plain_catalog.inventory.as_ref().unwrap().files[fixture.moved];
         assert_eq!(plain_file.language, "text");
         assert_ne!(plain_file.state.profile_id, moved_file.state.profile_id);

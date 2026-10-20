@@ -23,34 +23,36 @@ pub(crate) use sql::{create, read_record};
 const FILE_NAME: &str = "current-graph-overlay.sqlite3";
 const MAX_OVERLAY_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 const MAX_DIRTY_RECORDS: u64 = 1_000_000;
-const MAX_OPERATIONS: u64 = 100_000_000;
-const MAX_READ_BYTES: u64 = 128 * 1024 * 1024 * 1024;
 const PAGE_ROWS: usize = 64;
 
 #[derive(Clone, Copy, Debug)]
 pub struct GraphOverlayLimits {
     pub maximum_bytes: u64,
     pub maximum_dirty_records: u64,
-    pub maximum_operations: u64,
-    pub maximum_read_bytes: u64,
 }
 impl Default for GraphOverlayLimits {
     fn default() -> Self {
         Self {
             maximum_bytes: 256 * 1024 * 1024,
-            maximum_dirty_records: 65_536,
-            maximum_operations: 10_000_000,
-            maximum_read_bytes: 16 * 1024 * 1024 * 1024,
+            maximum_dirty_records: MAX_DIRTY_RECORDS,
         }
     }
 }
 impl GraphOverlayLimits {
+    /// Leave at least three quarters of the remaining preparation allowance for
+    /// retained objects, cache packs and lexical staging. SQLite charges this
+    /// capacity before opening; it does not allocate the whole amount on disk.
+    pub fn for_indexing(reservation: &Reservation) -> Self {
+        Self {
+            maximum_bytes: (reservation.remaining() / 4).clamp(16 * 1024, MAX_OVERLAY_BYTES),
+            ..Self::default()
+        }
+    }
+
     fn validate(self) -> Result<()> {
         ensure!(
             (16 * 1024..=MAX_OVERLAY_BYTES).contains(&self.maximum_bytes)
-                && (1..=MAX_DIRTY_RECORDS).contains(&self.maximum_dirty_records)
-                && (1..=MAX_OPERATIONS).contains(&self.maximum_operations)
-                && (1..=MAX_READ_BYTES).contains(&self.maximum_read_bytes),
+                && (1..=MAX_DIRTY_RECORDS).contains(&self.maximum_dirty_records),
             "invalid graph overlay limits"
         );
         Ok(())
@@ -62,7 +64,7 @@ pub struct GraphStatistics {
     pub operations: u64,
     pub base_record_reads: u64,
     pub proof_nodes: u64,
-    /// Logical fixed-record/proof bytes admitted, not physical device I/O.
+    /// Logical fixed-record/proof bytes processed, not physical device I/O.
     pub read_bytes: u64,
     pub dirty_reads: u64,
     pub write_operations: u64,
@@ -135,36 +137,23 @@ impl GraphOverlay {
             .lock()
             .map_err(|_| anyhow::anyhow!("graph overlay lock poisoned"))?;
         ensure!(!state.failed, "graph overlay failed; discard candidate");
-        let result = (|| {
-            ensure!(
-                state.statistics.operations < self.limits.maximum_operations,
-                "graph overlay operation limit exceeded"
-            );
-            state.statistics.operations += 1;
-            operation(&mut state)
-        })();
+        // Diagnostic only: repeated DiskANN neighbor visits are legitimate
+        // work, not additional resident memory or retained storage.
+        state.statistics.operations = state.statistics.operations.saturating_add(1);
+        let result = operation(&mut state);
         if result.is_err() {
             state.failed = true;
         }
         result
     }
-    fn charge_read(&self, state: &mut State, bytes: u64) -> Result<()> {
-        ensure!(
-            bytes
-                <= self
-                    .limits
-                    .maximum_read_bytes
-                    .saturating_sub(state.statistics.read_bytes),
-            "graph overlay read-byte limit exceeded"
-        );
-        state.statistics.read_bytes += bytes;
-        Ok(())
+    fn record_read(&self, state: &mut State, bytes: u64) {
+        state.statistics.read_bytes = state.statistics.read_bytes.saturating_add(bytes);
     }
     fn base_proof(&self, state: &mut State, id: u32) -> Result<sql::Proof> {
-        self.charge_read(
+        self.record_read(
             state,
             u64::from(self.base_head.scope.record_bytes) + 32 * 32,
-        )?;
+        );
         match &state.base {
             Some(base) => {
                 state.statistics.base_record_reads += 1;
@@ -179,7 +168,7 @@ impl GraphOverlay {
             u64::from(id) < state.counts.allocated_count,
             "graph ID outside candidate allocation"
         );
-        self.charge_read(state, u64::from(self.base_head.scope.record_bytes) + 32)?;
+        self.record_read(state, u64::from(self.base_head.scope.record_bytes) + 32);
         if let Some(record) =
             sql::dirty_record(state.database.connection(), &self.base_head.scope, id)?
         {
@@ -308,6 +297,26 @@ pub struct SealedGraph {
     statistics: GraphStatistics,
 }
 impl SealedGraph {
+    /// Bind a complete independently built graph to the old head that the
+    /// current journal will replace atomically. No old row is reused.
+    pub fn replacing(mut self, base: GraphHead) -> Result<Self> {
+        ensure!(
+            self.descriptor.base.allocated_count == 0 && base.scope != self.descriptor.target.scope,
+            "replacement graph must be built from empty"
+        );
+        let mut next = self.descriptor.clone();
+        next.base = base;
+        next.validate()?;
+        let mut records = digest::Stream::new(true, &next.base, &next.target)?;
+        self.visit_records(&mut |id, record| records.record(&next.target.scope, id, record))?;
+        let mut nodes = digest::Stream::new(false, &next.base, &next.target)?;
+        self.visit_nodes(&mut |node| nodes.node(node))?;
+        next.records_digest = records.finish();
+        next.nodes_digest = nodes.finish();
+        self.descriptor = next;
+        Ok(self)
+    }
+
     pub fn statistics(&self) -> &GraphStatistics {
         &self.statistics
     }

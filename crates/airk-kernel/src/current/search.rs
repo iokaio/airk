@@ -164,12 +164,39 @@ pub fn search_current(
             incomplete = true;
             break;
         }
+        let semantic = matches!(candidate, Candidate::Vector(_));
         let mut hit = materialize(store, &read, query, candidate, &mut read_bytes)?;
+        if semantic && hit.text.len() > remaining {
+            let span = airk_retrieval::focus_span(&hit.text, &query.text, remaining);
+            if matches!(
+                hit.citation.location,
+                airk_core::DocumentLocation::Lines { .. }
+            ) {
+                let first = hit.citation.start_line
+                    + hit.text[..span.start]
+                        .bytes()
+                        .filter(|b| *b == b'\n')
+                        .count();
+                let last = first
+                    + hit.text.as_bytes()[span.start..span.end.saturating_sub(1)]
+                        .iter()
+                        .filter(|b| **b == b'\n')
+                        .count();
+                hit.citation.start_line = first;
+                hit.citation.end_line = last;
+                hit.citation.location = airk_core::DocumentLocation::Lines {
+                    start: first,
+                    end: last,
+                };
+            }
+            hit.text = hit.text[span.start..span.end].to_owned();
+            hit.truncated = true;
+        }
         let (text, cut) = truncate_utf8(&hit.text, remaining);
         remaining -= text.len();
         hit.text = text;
-        hit.truncated = cut;
-        incomplete |= cut;
+        hit.truncated |= cut;
+        incomplete |= hit.truncated;
         hits.push(hit);
     }
     Ok(CurrentSearchEvidence {

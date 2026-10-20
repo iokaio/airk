@@ -70,6 +70,13 @@ fn vector_binding_requires_exact_scope_id_key_and_bounded_sorted_occurrences() {
         .collect();
     wrong.occurrence_ids.sort();
     assert!(wrong.canonical_bytes(&head).is_err());
+    wrong.occurrence_ids.pop();
+    let bytes = wrong.canonical_bytes(&head).unwrap();
+    assert!(bytes.len() <= map::MAX_VALUE_BYTES);
+    assert_eq!(
+        VectorBinding::decode(&bytes, &head, digest(5)).unwrap(),
+        wrong
+    );
 }
 
 #[test]

@@ -43,7 +43,7 @@ impl Kernel {
             !self.root.starts_with(self.data_root.canonicalize()?),
             "data directory must not contain the workspace root"
         );
-        if self.persistent_revision()?.is_none() {
+        if self.current_scope()?.is_none() {
             self.load_optional()?;
         }
         Ok(Queue::new(&self.data_root))

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Activate only after vendor dependency/profile admission.
+use super::current_inspection::InspectCurrent;
 use airk_ingest::adapters::profile::{ExtractionPolicy, RuleMatch, SelectionRule};
 use airk_kernel::Kernel;
 use airk_store::FileStore;
@@ -33,8 +34,8 @@ fn qualify(adapter: &str, path: &str, moved: &str, source: &str, expected: &str)
         })?;
     }
     kernel.index()?;
-    let store = FileStore::new(data.path().join("collections/default"));
-    let catalog = store.catalog()?.context("catalog")?;
+    let store = FileStore::new(data.path().join("collections-1.2/default"));
+    let catalog = store.current_test_catalog()?.context("catalog")?;
     let inventory = catalog.inventory.as_ref().unwrap();
     let before = inventory.files[path].state.clone();
     let unrelated = inventory.files["unrelated.rs"].state.clone();
@@ -60,7 +61,7 @@ fn qualify(adapter: &str, path: &str, moved: &str, source: &str, expected: &str)
     fs::rename(root.path().join(path), root.path().join(moved))?;
     let report = kernel.index()?;
     assert_eq!((report.indexed, report.reused), (0, 2));
-    let moved_catalog = store.catalog()?.unwrap();
+    let moved_catalog = store.current_test_catalog()?.unwrap();
     assert_eq!(
         moved_catalog.inventory.as_ref().unwrap().files[moved]
             .state
@@ -86,7 +87,7 @@ fn qualify(adapter: &str, path: &str, moved: &str, source: &str, expected: &str)
     })?;
     let changed = kernel.index()?;
     assert_eq!((changed.indexed, changed.reused), (1, 1));
-    let after = store.catalog()?.unwrap();
+    let after = store.current_test_catalog()?.unwrap();
     assert_ne!(
         after.inventory.as_ref().unwrap().files[moved]
             .state
@@ -154,8 +155,8 @@ fn sql_dialect_is_explicit_and_visual_basic_cls_does_not_select_apex() -> Result
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
     kernel.configure_index_detail(airk_core::extraction::IndexDetail::Detailed)?;
     kernel.index()?;
-    let store = FileStore::new(data.path().join("collections/default"));
-    let catalog = store.catalog()?.unwrap();
+    let store = FileStore::new(data.path().join("collections-1.2/default"));
+    let catalog = store.current_test_catalog()?.unwrap();
     let inventory = catalog.inventory.as_ref().unwrap();
     assert_eq!(
         inventory.profiles[&inventory.files["query.sql"].state.profile_id].adapter_id,

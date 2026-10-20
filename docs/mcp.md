@@ -25,13 +25,13 @@ Multiple agents can launch independent stdio connections against the same root/d
 | airk_code_facts | exact name/qualified name/symbol ID, kind, language, path_prefix; limit, max_bytes, cursor | Enriched syntax and optional hash-bound SCIP facts with scopes/signatures/producer coverage |
 | airk_relationships | symbol; direction, kind, path_prefix, hops, limit, max_bytes | Incoming/outgoing syntax candidates or producer assertions; bounded caller/implementation/dependency/impact investigation |
 | airk_changes | since and/or selectors; path_prefix, include_symbols, include_documents, limit, max_bytes, cursor | Observed indexed changes, remembered-evidence validation, independent coverage and scheduler freshness |
-| airk_history | revision, cursor, limit, max_bytes | Bounded retained publication identities; an exact revision request verifies its retained representation |
+| airk_history | Compatibility endpoint: historical evidence is unsupported in 1.2 |
 
 Defaults are 10 results and 8192 payload bytes; bounds are 1–100 and 1–65536. Context radius defaults to 5 lines each way and cannot exceed 100. Unknown arguments are rejected. Results use one JSON text block; metadata/framing adds bytes beyond payload budgets. Errors return tool errors, not misleading empty hits.
 
 File/fact discovery and outlines accept revision/filter-bound keyset cursors. `record_bytes` counts complete serialized records; cursor and envelope framing are additional. Oversized first records report `required_record_bytes` without skipping evidence. Outlines additionally offer `compact: true`. See [resumable discovery](discovery.md) for continuation, revision expiry and historical outline behavior.
 
-`airk_history` has separate defaults and ceilings of 64 results and 65536 bytes. Its cursor binds the current head and request budget. Listing receipt identities alone does not verify every historical component or provide historical search. Policy changes, checkpoints, maintenance and purge remain CLI/extension operations, outside this read-only tool. See [local history controls](v2-history-controls.md).
+`airk_history` returns an explicit unsupported error in 1.2. Capabilities advertise historical reads/checkpoints as unsupported. Use source control for source history.
 
 `airk_search.mode` accepts `lexical` (explicit AND-term retrieval), `vector` (approximate similarity using an explicitly provisioned local word-vector or CPU ONNX model), or `hybrid` (bounded reciprocal-rank fusion of both branches from one pinned generation). Omitting `mode` selects hybrid by default, or lexical when the collection has opted out through the panel. The saved opt-out also rejects explicit vector/hybrid requests. Vector/hybrid modes fail explicitly if the matching model/index is unavailable; they do not download models or fall back to a cloud provider. `semantic: true` is a compatibility alias for vector and cannot be combined with an explicit mode. Similarity is not complete language understanding, answer generation, resolved references or a relevance guarantee.
 
@@ -83,17 +83,17 @@ Opening the console does not index or download a model. Trust is required in the
 
 Discovery fact budgets count complete serialized records, including document/code metadata and citations; response envelope and array framing remain additional. The optional exact kind filter selects categories such as requirement, date, architecture, design, feature, decision, acceptance, table_row or table_cell. See [document indexing](document-indexing.md) for candidate semantics, normalized dates, units, heading context and bounds.
 
-The sixteen-tool inventory is shared across clients. Code details count toward fact budgets. Relationship budgets count serialized edges/citations, with 1–3 hops, 100 visited symbols and a 250 ms traversal/SQLite instruction deadline. Native targets remain unresolved; imported SCIP references/implementations are producer assertions and references are not calls. [Code storage and import contracts](code-facts-and-relationships.md) describe identities, coverage, binding and conservative invalidation.
+The sixteen-tool inventory is shared across clients. Code details count toward fact budgets. Relationship budgets count serialized edges/citations, with 1–3 hops, 100 visited symbols, 256 candidate files and 256 MiB of evidence work. Native targets remain unresolved; imported SCIP references/implementations are producer assertions and references are not calls. [Code storage and import contracts](code-facts-and-relationships.md) describe identities, coverage, binding and conservative invalidation.
 
 ## Remembered evidence and conditional reads
 
-`airk_changes` and `airk changes` share one kernel service. Save the exact publication token, then request observed changes or validate remembered paths/citations/handles. Check coverage and freshness independently, and consume the required cursor pages before advancing a baseline. [Changes and conditional reads](changes.md) documents the request/result fields, CLI examples, bounds and unavailable states.
+`airk_changes` and `airk changes` validate current remembered citations/handles and report independent scheduler freshness. A noncurrent baseline is `baseline_unavailable`; no observed change history or similarity suggestions are retained. Follow returned validation pages before treating a request as consumed. See [changes](changes.md).
 
-`airk_file_info`, `airk_read_file`, `airk_outline` and `airk_context` additionally accept `if_evidence`, `follow_moves`, `known_hash` and `artifact_id`. Normal payload fields remain top-level; an additive `read` object provides publication, status, requested/resolved path, validator, basis and reason. A matching representation validator yields `read.status: "not_modified"` and omits the ordinary payload. Source hashes alone do not suppress evidence. Move following defaults to false and only follows a unique compatible exact-content candidate within retained scope.
+`airk_file_info`, `airk_read_file`, `airk_outline` and `airk_context` additionally accept `if_evidence`, `follow_moves`, `known_hash` and `artifact_id`. Normal payload fields remain top-level; an additive `read` object provides publication, status, requested/resolved path, validator, basis and reason. A matching representation validator yields `read.status: "not_modified"` and omits the ordinary payload. Source hashes alone do not suppress evidence. Move following defaults to false and requires both the current artifact handle and matching source hash; an old path alone cannot redirect.
 
-These four tools also accept an exact `revision` token for retained historical evidence. Historical reads identify both served and current publications, never fall back to live files and return `history_unavailable` when the representation is unavailable. Historical search and move following are unsupported. [Local history controls](v2-history-controls.md) describes retention and verification separately.
+These four tools accept an exact `revision` token only for the current head. Superseded tokens fail explicitly without returning current or live-source bytes. Current cursors also expire after publication. See the [1.2 contract](current-index-runtime.md).
 
-Legacy collections remain readable without these options, returning `read.publication: null` and `read.validator: null`. Changes and conditional evidence options require successful v2 migration by a writer; reads do not migrate state or invent a token.
+Old 1.1 state is isolated from fresh 1.2 collections. No production compatibility reader or automatic per-collection settings migration is provided.
 
 ## Provenance and limits
 

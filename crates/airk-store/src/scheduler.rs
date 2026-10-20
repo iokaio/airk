@@ -69,7 +69,7 @@ impl Queue {
         fs::create_dir_all(&self.directory)?;
         let lifecycle = crate::quota::lifecycle_lease(&self.directory, false)?;
         crate::quota::ensure_current_root(&self.directory)?;
-        let path = self.directory.join("scheduler.sqlite3");
+        let path = self.directory.join("scheduler-1.2.sqlite3");
         let existing = match fs::symlink_metadata(&path) {
             Ok(metadata) => {
                 ensure!(
@@ -162,7 +162,7 @@ impl Queue {
         crate::quota::ensure_current_root(&self.directory)?;
         let lifecycle = crate::quota::lifecycle_lease(&self.directory, false)?;
         crate::quota::ensure_current_root(&self.directory)?;
-        let path = self.directory.join("scheduler.sqlite3");
+        let path = self.directory.join("scheduler-1.2.sqlite3");
         let metadata = fs::symlink_metadata(&path)?;
         ensure!(
             metadata.is_file()
@@ -182,7 +182,7 @@ impl Queue {
     pub fn status(&self, collection: &str, root: &str) -> Result<Option<ScheduledJob>> {
         crate::validate_collection(collection)?;
         crate::quota::ensure_current_root(&self.directory)?;
-        if !self.directory.join("scheduler.sqlite3").exists() {
+        if !self.directory.join("scheduler-1.2.sqlite3").exists() {
             return Ok(None);
         }
         let db = self.open_read()?;
@@ -205,7 +205,7 @@ impl Queue {
     /// Read only registered bindings; never discover or register arbitrary roots.
     pub fn list(&self) -> Result<Vec<ScheduledJob>> {
         crate::quota::ensure_current_root(&self.directory)?;
-        if !self.directory.join("scheduler.sqlite3").exists() {
+        if !self.directory.join("scheduler-1.2.sqlite3").exists() {
             return Ok(Vec::new());
         }
         let db = self.open_read()?;
@@ -342,7 +342,7 @@ impl Queue {
             .write(true)
             .create(true)
             .truncate(false)
-            .open(self.directory.join("scheduler-worker.lock"))?;
+            .open(self.directory.join("scheduler-1.2-worker.lock"))?;
         match file.try_lock() {
             Ok(()) => Ok(Some(WorkerLock {
                 _file: file,

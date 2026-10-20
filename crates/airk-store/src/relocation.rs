@@ -82,9 +82,9 @@ fn canonical_source(source: &Path) -> Result<PathBuf> {
         root.to_str().is_some() && root.is_dir(),
         "invalid managed source directory"
     );
-    plain(&root.join("collections"))?;
+    plain(&root.join("collections-1.2"))?;
     ensure!(
-        root.join("collections").is_dir(),
+        root.join("collections-1.2").is_dir(),
         "relocation requires a managed collections directory"
     );
     Ok(root)
@@ -109,7 +109,7 @@ fn canonical_destination(source: &Path, destination: &Path) -> Result<PathBuf> {
 }
 fn collections(source: &Path) -> Result<Vec<String>> {
     let mut names = Vec::new();
-    for entry in fs::read_dir(source.join("collections"))? {
+    for entry in fs::read_dir(source.join("collections-1.2"))? {
         let entry = entry?;
         plain(&entry.path())?;
         let name = entry
@@ -144,7 +144,7 @@ fn freeze(source: &Path) -> Result<(Freeze, Vec<String>)> {
     // Enumerate under the root lease: a collection published between discovery
     // and freezing must not escape reader protection or boundary validation.
     let names = collections(source)?;
-    let worker_path = source.join("scheduler-worker.lock");
+    let worker_path = source.join("scheduler-1.2-worker.lock");
     if worker_path.exists() {
         plain(&worker_path)?;
     }
@@ -157,14 +157,14 @@ fn freeze(source: &Path) -> Result<(Freeze, Vec<String>)> {
     worker
         .try_lock()
         .context("scheduler worker active; stop it before relocation")?;
-    let writer_base = source.join("collections/.writer-locks");
+    let writer_base = source.join("collections-1.2/.writer-locks");
     fs::create_dir_all(&writer_base)?;
     plain(&writer_base)?;
     let mut writers = Vec::new();
     let mut usage = Vec::new();
     let mut readers = Vec::new();
     for name in &names {
-        let collection = source.join("collections").join(name);
+        let collection = source.join("collections-1.2").join(name);
         ensure!(
             !collection.join("writer.lock").exists(),
             "collection writer marker remains; finish/recover indexing before relocation"
@@ -204,7 +204,17 @@ fn validate_workspace_boundaries(
     names: &[String],
 ) -> Result<()> {
     for name in names {
-        let directory = source.join("collections").join(name);
+        let directory = source.join("collections-1.2").join(name);
+        if directory.join("current-owner.json").try_exists()? {
+            for root in crate::current::frozen_roots(&directory)?.values() {
+                let root = Path::new(root);
+                ensure!(
+                    !root.starts_with(source) && !root.starts_with(destination),
+                    "data relocation target must not contain a source workspace"
+                );
+            }
+            continue;
+        }
         let database = directory.join("index.sqlite3");
         ensure!(
             database.exists(),
@@ -268,22 +278,22 @@ fn excluded(relative: &Path) -> bool {
         RETIRED,
         MANIFEST,
         ".lifecycle.lock",
-        "scheduler-worker.lock",
+        "scheduler-1.2-worker.lock",
         ".airkignore",
     ]
     .contains(&value.as_str())
     {
         return true;
     }
-    if value == ".quota" {
+    if value == ".quota-1.2" {
         return false;
     }
-    if value.starts_with(".quota/") {
-        return value != ".quota/policy.json";
+    if value.starts_with(".quota-1.2/") {
+        return value != ".quota-1.2/policy.json";
     }
-    if value.starts_with("collections/.writer-locks")
-        || value.starts_with("collections/.reader-locks")
-        || value.starts_with("collections/.current-gates")
+    if value.starts_with("collections-1.2/.writer-locks")
+        || value.starts_with("collections-1.2/.reader-locks")
+        || value.starts_with("collections-1.2/.current-gates")
     {
         return true;
     }
@@ -380,7 +390,7 @@ fn copy_requirements(manifest: &Manifest) -> Result<(u64, u64, BTreeMap<String, 
             .context("relocation size overflow")?;
         let parts: Vec<_> = entry.path.split('/').collect();
         if parts.len() >= 3
-            && parts[0] == "collections"
+            && parts[0] == "collections-1.2"
             && crate::validate_collection(parts[1]).is_ok()
         {
             let value = collections.entry(parts[1].into()).or_default();
@@ -618,7 +628,7 @@ fn finish(marker: &Marker, manifest: &Manifest) -> Result<RelocationResult> {
     for entry in &manifest.files {
         let parts: Vec<_> = entry.path.split('/').collect();
         let retirement = if parts.len() == 5
-            && parts[0] == "collections"
+            && parts[0] == "collections-1.2"
             && parts[2] == "maintenance"
             && matches!(
                 parts[3],
@@ -633,7 +643,7 @@ fn finish(marker: &Marker, manifest: &Manifest) -> Result<RelocationResult> {
         if let Some(revision) = retirement {
             let lease = checked_target(
                 destination,
-                &format!("collections/.reader-locks/{}/{revision}", parts[1]),
+                &format!("collections-1.2/.reader-locks/{}/{revision}", parts[1]),
             )?;
             OpenOptions::new()
                 .write(true)
@@ -642,13 +652,13 @@ fn finish(marker: &Marker, manifest: &Manifest) -> Result<RelocationResult> {
                 .open(lease)?;
         }
         if parts.len() >= 5
-            && parts[0] == "collections"
+            && parts[0] == "collections-1.2"
             && matches!(parts[2], "generations" | "history")
             && crate::blobs::valid_digest(parts[3])
         {
             let lease = checked_target(
                 destination,
-                &format!("collections/.reader-locks/{}/{}", parts[1], parts[3]),
+                &format!("collections-1.2/.reader-locks/{}/{}", parts[1], parts[3]),
             )?;
             OpenOptions::new()
                 .write(true)
@@ -754,7 +764,7 @@ mod tests {
 
     fn fixture(base: &Path, workspace: &Path) -> Result<PathBuf> {
         let root = base.join("state");
-        let store = crate::FileStore::new(root.join("collections/default"));
+        let store = crate::FileStore::new(root.join("collections-1.2/default"));
         let mut snapshot =
             Snapshot::empty(workspace.canonicalize()?.to_string_lossy().into_owned());
         snapshot.generation = 7;
@@ -775,13 +785,17 @@ mod tests {
         assert!(check_root(&source).is_err());
         check_root(&destination)?;
         assert_eq!(
-            crate::FileStore::new(destination.join("collections/default"))
+            crate::FileStore::new(destination.join("collections-1.2/default"))
                 .load()?
                 .expect("copied collection")
                 .generation,
             7
         );
-        assert!(source.join("collections/default/index.sqlite3").exists());
+        assert!(
+            source
+                .join("collections-1.2/default/index.sqlite3")
+                .exists()
+        );
         assert_eq!(fs::read_to_string(source.join(".airkignore"))?, "*\n");
         assert_eq!(
             fs::read_to_string(workspace.path().join("source.txt"))?,
@@ -810,10 +824,10 @@ mod tests {
         let revision = "a".repeat(64);
         fs::create_dir_all(
             source
-                .join("collections/default/generations")
+                .join("collections-1.2/default/generations")
                 .join(&revision),
         )?;
-        let locks = source.join("collections/.reader-locks/default");
+        let locks = source.join("collections-1.2/.reader-locks/default");
         fs::create_dir_all(&locks)?;
         let lease = OpenOptions::new()
             .read(true)
@@ -844,7 +858,7 @@ mod tests {
         check_root(&source)?;
         assert!(!destination.exists());
         assert_eq!(
-            crate::FileStore::new(source.join("collections/default"))
+            crate::FileStore::new(source.join("collections-1.2/default"))
                 .load()?
                 .expect("old publication")
                 .generation,
@@ -870,11 +884,15 @@ mod tests {
             .status()?;
         assert!(status.success());
         assert!(check_root(&source).is_err());
-        assert!(source.join("collections/default/index.sqlite3").exists());
+        assert!(
+            source
+                .join("collections-1.2/default/index.sqlite3")
+                .exists()
+        );
         recover(&source)?;
         check_root(&destination)?;
         assert_eq!(
-            crate::FileStore::new(destination.join("collections/default"))
+            crate::FileStore::new(destination.join("collections-1.2/default"))
                 .load()?
                 .expect("recovered publication")
                 .generation,

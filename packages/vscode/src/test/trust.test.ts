@@ -147,7 +147,7 @@ test('untrusted workspaces expose no MCP servers and commands cannot launch a he
         await assert.rejects(commands.get('airk.index')!(), /Trust this workspace/);
         assert.equal(errors.length, 1); assert.match(errors[0], /Trust this workspace/);
         await assert.rejects(commands.get('airk.installCli')!(), /Trust this workspace/);
-        for (const name of ['airk.ingestionLimits', 'airk.configureIngestionLimits', 'airk.retention', 'airk.retentionPolicy', 'airk.retentionRun', 'airk.extractionPolicy', 'airk.configureExtractionPolicy', 'airk.history', 'airk.historyPolicy', 'airk.historyRun', 'airk.historyAvailable', 'airk.checkpoints', 'airk.createCheckpoint', 'airk.removeCheckpoint', 'airk.purgeHistory']) {
+        for (const name of ['airk.ingestionLimits', 'airk.configureIngestionLimits', 'airk.currentMaintenance', 'airk.extractionPolicy', 'airk.configureExtractionPolicy']) {
             await assert.rejects(commands.get(name)!(), /Trust this workspace/);
         }
         await assert.rejects(provider.resolveMcpServerDefinition({}), /Trust this workspace/);

@@ -407,7 +407,7 @@ mod tests {
     fn dead_owner_registry_is_reclaimed_without_touching_published_files() -> Result<()> {
         let root = tempfile::tempdir()?;
         let quota = Quota::open(root.path())?;
-        let collection = root.path().join("collections/fixture");
+        let collection = root.path().join("collections-1.2/fixture");
         fs::create_dir_all(&collection)?;
         fs::write(collection.join("published-evidence"), b"original evidence")?;
         let output = std::process::Command::new(std::env::current_exe()?)

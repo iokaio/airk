@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! P9 original integration qualification for admitted general language profiles.
+use super::current_inspection::InspectCurrent;
 use airk_core::{EvidenceBasis, FactQuery};
 use airk_ingest::adapters::profile::{ExtractionPolicy, RuleMatch, SelectionRule};
 use airk_kernel::Kernel;
@@ -19,8 +20,8 @@ fn qualify(path: &str, moved: &str, source: &str, name: &str) -> Result<()> {
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
     kernel.configure_index_detail(airk_core::extraction::IndexDetail::Detailed)?;
     assert_eq!(kernel.index()?.indexed, 2);
-    let store = FileStore::new(data.path().join("collections/default"));
-    let catalog = store.catalog()?.context("catalog")?;
+    let store = FileStore::new(data.path().join("collections-1.2/default"));
+    let catalog = store.current_test_catalog()?.context("catalog")?;
     assert_eq!(
         store.read_retained_source(&catalog.snapshot.artifacts[path])?,
         source.as_bytes()
@@ -88,7 +89,7 @@ fn qualify(path: &str, moved: &str, source: &str, name: &str) -> Result<()> {
     fs::rename(root.path().join(path), root.path().join(moved))?;
     let renamed = kernel.index()?;
     assert_eq!((renamed.indexed, renamed.reused), (0, 2));
-    let after = store.catalog()?.context("renamed")?;
+    let after = store.current_test_catalog()?.context("renamed")?;
     assert_eq!(
         after.inventory.as_ref().unwrap().files[moved]
             .state
@@ -137,7 +138,7 @@ fn qualify(path: &str, moved: &str, source: &str, name: &str) -> Result<()> {
     })?;
     let overridden = kernel.index()?;
     assert_eq!((overridden.indexed, overridden.reused), (1, 1));
-    let after = store.catalog()?.context("overridden")?;
+    let after = store.current_test_catalog()?.context("overridden")?;
     assert_ne!(
         after.inventory.as_ref().unwrap().files[moved]
             .state

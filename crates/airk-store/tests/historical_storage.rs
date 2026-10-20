@@ -441,7 +441,7 @@ mod original {
     impl Fixture {
         fn new() -> Result<Self> {
             let root = tempfile::tempdir()?;
-            let store = FileStore::new(root.path().join("collections/fixture"));
+            let store = FileStore::new(root.path().join("collections-1.2/fixture"));
             let writer = store.lock()?;
             let quota = Quota::open(root.path())?;
             let mut tokens = vec![];
@@ -820,7 +820,8 @@ mod original {
     }
 
     #[test]
-    fn historical_readers_protect_relocation_and_removal_and_moved_history_reopens() -> Result<()> {
+    fn historical_primitive_relocation_preserves_reads_but_public_removal_requires_current_owner()
+    -> Result<()> {
         let fixture = Fixture::new()?;
         let writer = fixture.store.lock()?;
         let token = fixture.tokens[0];
@@ -840,7 +841,7 @@ mod original {
         );
         drop(pinned);
         airk_store::relocation::relocate(fixture._root.path(), &destination)?;
-        let moved = FileStore::new(destination.join("collections/fixture"));
+        let moved = FileStore::new(destination.join("collections-1.2/fixture"));
         assert_eq!(moved.receipt(&token)?, Some(original));
         assert!(moved.catalog_at(&token, 64 * 1024 * 1024)?.is_none());
         let pinned = moved.history_at(&token, 64 * 1024 * 1024)?.unwrap();
@@ -850,8 +851,16 @@ mod original {
         );
         assert!(airk_store::remove_collection(&destination, "fixture").is_err());
         drop(pinned);
-        airk_store::remove_collection(&destination, "fixture")?;
-        assert!(!moved.directory().exists());
+        let error = airk_store::remove_collection(&destination, "fixture").unwrap_err();
+        assert!(error.to_string().contains("no current collection owner"));
+        assert!(moved.directory().exists());
+        assert_eq!(
+            moved
+                .history_at(&token, 64 * 1024 * 1024)?
+                .unwrap()
+                .source("note.txt")?,
+            b"Original historical publication 1.\n"
+        );
         Ok(())
     }
 

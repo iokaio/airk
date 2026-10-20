@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Activate after prose-host exclusions and composite payload publication are wired.
+use super::current_inspection::InspectCurrent;
 use airk_ingest::adapters::profile::{ExtractionPolicy, RuleMatch, SelectionRule};
 use airk_kernel::Kernel;
 use airk_store::FileStore;
@@ -24,8 +25,8 @@ fn qualify(
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
     kernel.configure_index_detail(airk_core::extraction::IndexDetail::Detailed)?;
     assert_eq!(kernel.index()?.indexed, 2);
-    let store = FileStore::new(data.path().join("collections/default"));
-    let before = store.catalog()?.context("catalog")?;
+    let store = FileStore::new(data.path().join("collections-1.2/default"));
+    let before = store.current_test_catalog()?.context("catalog")?;
     let compact = &before.snapshot.artifacts[path];
     assert_eq!(store.read_retained_source(compact)?, source.as_bytes());
     let payload = store.load_extraction_payload(compact)?;
@@ -59,7 +60,7 @@ fn qualify(
     fs::write(root.path().join(path), &edited_source)?;
     let edited = kernel.index()?;
     assert_eq!((edited.indexed, edited.reused), (1, 1));
-    let edited_catalog = store.catalog()?.context("edited catalog")?;
+    let edited_catalog = store.current_test_catalog()?.context("edited catalog")?;
     let edited_payload = store.load_extraction_payload(&edited_catalog.snapshot.artifacts[path])?;
     assert_eq!(
         payload

@@ -15,12 +15,12 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 pub use update::VectorCache;
 
-pub const MAX_CACHE_REFERENCES: usize = 65_536;
-pub const MAX_CACHE_READ_BYTES: u64 = 256 * 1024 * 1024;
-pub const MAX_CACHE_MANIFEST_BYTES: usize = 16 * 1024 * 1024;
+pub const MAX_CACHE_REFERENCES: usize = 1_000_000;
+pub const MAX_CACHE_READ_BYTES: u64 = 64 * 1024 * 1024 * 1024;
+pub const MAX_CACHE_MANIFEST_BYTES: usize = 256 * 1024 * 1024;
 pub const MAX_PACK_BYTES: u64 = 16 * 1024 * 1024;
 pub const MAX_PACK_RECORDS: u32 = 4096;
-pub const MAX_PACKS: usize = 64;
+pub const MAX_PACKS: usize = 4096;
 pub const MAX_INDEX_CACHE_BYTES: u64 = 4 * 1024 * 1024;
 /// Six retained readers leave room for the private writer and one verification reader.
 pub const MAX_OPEN_PACK_HANDLES: usize = 8;

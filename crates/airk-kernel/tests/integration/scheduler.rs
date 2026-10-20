@@ -126,7 +126,7 @@ fn crashed_worker_releases_native_locks_and_pending_revision_can_resume() -> any
     assert!(
         state
             .path()
-            .join("collections/default/writer.lock")
+            .join("collections-1.2/default/writer.lock")
             .exists()
     );
     let kernel = Kernel::open(&canonical, Some(state.path().into()))?;
@@ -141,7 +141,7 @@ fn crashed_worker_releases_native_locks_and_pending_revision_can_resume() -> any
     assert!(
         !state
             .path()
-            .join("collections/default/writer.lock")
+            .join("collections-1.2/default/writer.lock")
             .exists()
     );
     Ok(())
@@ -156,7 +156,7 @@ fn live_collection_writer_defers_scheduled_index_without_blocking_queue() -> any
     let requested = kernel.schedule_enqueue(false)?;
     // Coverage refresh, retention or another editor can briefly own this lock
     // independently of the data-root scheduler worker.
-    let writer = FileStore::new(state.path().join("collections/default")).lock()?;
+    let writer = FileStore::new(state.path().join("collections-1.2/default")).lock()?;
     // Manual enqueue is immediately due, without a timing-dependent sleep.
     Queue::new(state.path()).enqueue("default", &requested.root, false, true, true, 0)?;
     assert_eq!(kernel.run_scheduled_once()?.state, "busy");
@@ -188,7 +188,7 @@ fn scheduler_crash_child() -> anyhow::Result<()> {
     queue.enqueue("default", &root, false, true, true, 10000)?;
     let worker = queue.worker_lock()?.expect("crash worker acquired");
     queue.claim(&worker, 10000)?.expect("crash job acquired");
-    let _writer = FileStore::new(state.join("collections/default")).lock()?;
+    let _writer = FileStore::new(state.join("collections-1.2/default")).lock()?;
     // Intentionally skip Rust destructors, matching a process crash while holding
     // both advisory locks and a durable running claim.
     std::process::exit(0);

@@ -4,7 +4,9 @@
 use super::{OccurrencePointer, PathOccurrences, PreparedOccurrence, VectorBinding};
 use crate::{
     FileStore,
-    current::{CurrentHead, CurrentScope, MAX_PENDING_INPUTS, graph, journal::ArtifactChange, map},
+    current::{
+        CurrentHead, CurrentScope, MAX_PENDING_VECTOR_INPUTS, graph, journal::ArtifactChange, map,
+    },
 };
 use airk_core::{
     graph_storage::{GraphRecord, PreparedGraphDelta},
@@ -132,6 +134,32 @@ pub(crate) fn retire_changed_paths(
             &mut changes,
         )?;
     }
+    if base.graph_head.scope != target.graph_head.scope {
+        ensure!(
+            bindings
+                .values()
+                .all(|binding| binding.occurrence_ids.is_empty()),
+            "graph replacement leaves old vector occurrences"
+        );
+        ensure!(
+            base.graph_head.allocated_count <= 1_000_000,
+            "graph replacement retirement bound exceeded"
+        );
+        for id in 0..base.graph_head.allocated_count {
+            let record = graph::read_record(connection, &base.graph_head, u32::try_from(id)?)?;
+            if let Some(key) = record.embedding_key {
+                change(
+                    plan,
+                    scope,
+                    map::MapDomain::Vector,
+                    key.as_bytes(),
+                    None,
+                    &mut changes,
+                )?;
+            }
+        }
+        return Ok(changes);
+    }
     if bindings.is_empty() {
         return Ok(changes);
     }
@@ -195,7 +223,7 @@ pub(crate) fn attach_new_occurrences(
         delta,
     } = context;
     ensure!(
-        occurrences.len() <= MAX_PENDING_INPUTS,
+        occurrences.len() <= MAX_PENDING_VECTOR_INPUTS,
         "too many changed current vector occurrences"
     );
     ensure!(
@@ -296,7 +324,8 @@ pub(crate) fn attach_new_occurrences(
                     Some(bytes) => VectorBinding::decode(&bytes, target, pointer.embedding_key)?,
                     None => {
                         ensure!(
-                            u64::from(item.graph_id) >= base.graph_head.allocated_count,
+                            base.graph_head.scope != target.graph_head.scope
+                                || u64::from(item.graph_id) >= base.graph_head.allocated_count,
                             "new current vector key reuses an unmapped base graph node"
                         );
                         VectorBinding {
@@ -340,7 +369,9 @@ pub(crate) fn attach_new_occurrences(
         binding.validate(target)?;
         let record = match afterimages.remove(&binding.graph_id) {
             Some(record) => record,
-            None if u64::from(binding.graph_id) < base.graph_head.allocated_count => {
+            None if base.graph_head.scope == target.graph_head.scope
+                && u64::from(binding.graph_id) < base.graph_head.allocated_count =>
+            {
                 graph::read_record(connection, &base.graph_head, binding.graph_id)?
             }
             None => anyhow::bail!("new current vector graph record missing"),

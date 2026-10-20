@@ -126,10 +126,6 @@ fn discovery_binds_revision_filters_representation_and_reports_oversized_records
         "fn repeated() {} fn repeated() {}\n",
     )?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
-    kernel.configure_retention(airk_store::retention::RetentionPolicy {
-        mode: airk_store::retention::RetentionMode::Manual,
-        ..Default::default()
-    })?;
     kernel.index()?;
     let mut duplicates = query();
     duplicates.path_prefix = "dupes.rs".into();
@@ -281,16 +277,10 @@ fn discovery_binds_revision_filters_representation_and_reports_oversized_records
         revision: Some(token),
         ..Default::default()
     };
-    let remaining = kernel
-        .outline_conditional_page("many.rs", 1, 8192, &historical, &outline_cursor)?
-        .content
-        .context("retained page")?;
-    assert_eq!(remaining.outline[0].name, "second");
-    assert!(!remaining.truncated);
-    kernel.prune_indexes(false)?;
-    let expired =
-        kernel.outline_conditional_page("many.rs", 1, 8192, &historical, &outline_cursor)?;
-    assert_eq!(expired.read.status, EvidenceReadStatus::HistoryUnavailable);
-    assert!(expired.content.is_none());
+    assert!(
+        kernel
+            .outline_conditional_page("many.rs", 1, 8192, &historical, &outline_cursor)
+            .is_err()
+    );
     Ok(())
 }

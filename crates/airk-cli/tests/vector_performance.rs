@@ -135,11 +135,10 @@ fn serial_parallel_and_incremental_vectors_preserve_retrieval() -> Result<()> {
         "incremental neural work did not decrease"
     );
     ensure!(
-        incremental["embedding_cache_hits"]
-            .as_u64()
-            .context("hits missing")?
-            >= count.as_u64().context("count missing")?,
-        "unchanged vectors did not reuse cache"
+        incremental["current"]["changed_artifacts"] == 1
+            && incremental["current"]["lexical_documents"] == 1
+            && incremental["embedding_cache_hits"] == 0,
+        "unchanged files must do no embedding-cache work: {incremental}"
     );
     ensure!(
         incremental["embedding_inferences"]
@@ -211,8 +210,9 @@ fn exact_alias_inputs_share_one_native_forward_and_graph_node_with_explicit_sele
         );
         ensure!(
             report["vector_registry_rows"] == 1
-                && report["vector_registry_bytes"].as_u64().unwrap_or(0) > 0,
-            "private registry overhead missing: {report}"
+                && report["vector_registry_bytes"] == 0
+                && report["current"]["graph_records"] == 2,
+            "bounded in-memory registry must share one live node plus the seed: {report}"
         );
         ensure!(
             run(&root, &data, "4", &["status"])?["indexed_vectors"] == 1,
@@ -245,11 +245,11 @@ fn exact_alias_inputs_share_one_native_forward_and_graph_node_with_explicit_sele
     let warm = run(&root, &data, "4", &["index"])?;
     let elapsed = started.elapsed().as_micros();
     ensure!(
-        warm["vector_units"] == 41
-            && warm["vector_reused_inputs"] == 40
-            && warm["vector_graph_nodes"] == 1
-            && warm["embedding_inputs"] == 1
-            && warm["embedding_cache_hits"] == 1
+        warm["vector_units"] == 1
+            && warm["vector_reused_inputs"] == 1
+            && warm["vector_graph_nodes"] == 0
+            && warm["embedding_inputs"] == 0
+            && warm["embedding_cache_hits"] == 0
             && warm["embedding_actual_forwards"] == 0,
         "warm alias addition performed redundant inference: {warm}"
     );
@@ -279,8 +279,8 @@ fn exact_alias_inputs_share_one_native_forward_and_graph_node_with_explicit_sele
         selected["vector_eligible_artifacts"] == 40
             && selected["vector_excluded_artifacts"] == 1
             && selected["vector_units"] == 40
-            && selected["vector_reused_inputs"] == 39
-            && selected["vector_graph_nodes"] == 1
+            && selected["vector_reused_inputs"] == 40
+            && selected["vector_graph_nodes"] == 0
             && selected["embedding_actual_forwards"] == 0,
         "explicit selection counters differ: {selected}"
     );
@@ -405,19 +405,16 @@ fn distinct_native_inputs_use_packs_and_preserve_warm_and_full_retrieval() -> Re
     let moved = run(&root, &data, "4", &["index"])?;
     let elapsed = started.elapsed().as_micros();
     ensure!(
-        moved["embedding_cache_hits"] == 64
+        moved["embedding_cache_hits"] == 0
+            && moved["vector_reused_inputs"] == 1
             && moved["embedding_actual_forwards"] == 0
             && moved["embedding_cache_packs_written"] == 0
-            && moved["embedding_cache_packs_reused"] == 1,
-        "rename did not reuse the existing pack: {moved}"
+            && moved["current"]["changed_artifacts"] == 2,
+        "rename must reuse the exact graph node without cache/inference: {moved}"
     );
     ensure!(
-        counter(&moved, "embedding_cache_file_opens")? < 64
-            && counter(&moved, "embedding_cache_record_verification_bytes")? > 0
-            && counter(&moved, "embedding_cache_index_verification_bytes")? > 0
-            && counter(&moved, "embedding_cache_index_hits")? >= 63
-            && counter(&moved, "embedding_cache_full_pack_verification_bytes")? == 0,
-        "warm lookup must reuse an authenticated index and verify selected records: {moved}"
+        counter(&moved, "embedding_cache_record_verification_bytes")? == 0,
+        "unchanged graph vector must not require a cache-record read: {moved}"
     );
     reports.push(("warm-move", elapsed, moved));
 
@@ -427,12 +424,12 @@ fn distinct_native_inputs_use_packs_and_preserve_warm_and_full_retrieval() -> Re
     let changed = run(&root, &data, "4", &["index"])?;
     let elapsed = started.elapsed().as_micros();
     ensure!(
-        changed["embedding_cache_hits"] == 63
+        changed["embedding_cache_hits"] == 0
             && changed["embedding_inferences"] == 1
             && changed["embedding_actual_forwards"] == 1
-            && changed["vector_graph_nodes"] == 64
+            && changed["vector_graph_nodes"] == 1
             && changed["embedding_cache_packs_written"] == 1
-            && changed["embedding_cache_packs_reused"] == 1,
+            && changed["embedding_cache_packs_reused"] == 0,
         "one-file edit did not preserve unchanged packed vectors: {changed}"
     );
     reports.push(("warm-edit", elapsed, changed));
@@ -458,8 +455,8 @@ fn distinct_native_inputs_use_packs_and_preserve_warm_and_full_retrieval() -> Re
         full["embedding_cache_hits"] == 0
             && full["embedding_inferences"] == 64
             && full["vector_graph_nodes"] == 64
-            && full["embedding_cache_packs_written"] == 0
-            && full["embedding_cache_packs_reused"] == 2
+            && full["embedding_cache_packs_written"] == 1
+            && full["embedding_cache_packs_reused"] == 1
             && counter(&full, "embedding_cache_record_verification_bytes")? > 0,
         "full rebuild must recompute and verify matching packed values: {full}"
     );

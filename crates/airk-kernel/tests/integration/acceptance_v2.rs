@@ -1,38 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Independent P12 acceptance through actual publication and retained readers.
-use airk_core::{
-    changes::{ChangeCause, ChangesRequest, RememberedSelector, ValidationOutcome},
-    identity::RevisionToken,
-};
+use super::current_inspection::InspectCurrent;
+use airk_core::changes::{ChangeCause, ChangesRequest, RememberedSelector, ValidationOutcome};
 use airk_ingest::adapters::profile::{ExtractionPolicy, RuleMatch, SelectionRule};
 use airk_kernel::Kernel;
-use airk_store::{
-    FileStore,
-    history::ConversionStatus,
-    quota::Quota,
-    retention::{MaintenanceBudget, RetentionMode, RetentionPolicy},
-};
+use airk_store::FileStore;
 use anyhow::{Context, Result};
 use std::fs;
 
 const SOURCE: &str = "// Original acceptance fixture: amber bridges cedar forests granite harbors quiet rivers.\npub fn original_beacon(value: u32) -> u32 {\n    value.saturating_add(17)\n}\n";
-
-fn manual(kernel: &Kernel) -> Result<()> {
-    kernel.configure_retention(RetentionPolicy {
-        mode: RetentionMode::Manual,
-        ..Default::default()
-    })?;
-    Ok(())
-}
-fn token(store: &FileStore) -> Result<RevisionToken> {
-    Ok(store
-        .catalog()?
-        .context("catalog")?
-        .receipt
-        .as_ref()
-        .context("receipt")?
-        .token)
-}
 
 fn readmission(cause: ChangeCause) -> Result<()> {
     let root = tempfile::tempdir()?;
@@ -40,11 +16,10 @@ fn readmission(cause: ChangeCause) -> Result<()> {
     fs::write(root.path().join("original.rs"), SOURCE)?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
     kernel.configure_index_detail(airk_core::extraction::IndexDetail::Detailed)?;
-    manual(&kernel)?;
     kernel.index()?;
-    let store = FileStore::new(data.path().join("collections/default"));
-    let before = store.catalog()?.context("initial catalog")?;
-    let baseline = before.receipt.as_ref().unwrap().token;
+    let store = FileStore::new(data.path().join("collections-1.2/default"));
+    let before = store.current_test_catalog()?.context("initial catalog")?;
+    let baseline = before.token;
     let file = before.inventory.as_ref().unwrap().files["original.rs"].clone();
     let key = kernel
         .outline("original.rs", 10, 8192)?
@@ -81,7 +56,7 @@ fn readmission(cause: ChangeCause) -> Result<()> {
         _ => unreachable!(),
     }
     kernel.index()?;
-    let gap = store.catalog()?.context("gap publication")?;
+    let gap = store.current_test_catalog()?.context("gap publication")?;
     assert!(
         !gap.inventory
             .as_ref()
@@ -89,15 +64,7 @@ fn readmission(cause: ChangeCause) -> Result<()> {
             .files
             .contains_key("original.rs")
     );
-    assert!(
-        gap.lineage
-            .as_ref()
-            .unwrap()
-            .events
-            .iter()
-            .any(|event| event.cause == cause)
-    );
-    let gap_token = gap.receipt.as_ref().unwrap().token;
+    let gap_token = gap.token;
     match cause {
         ChangeCause::Ignored => fs::write(root.path().join(".airkignore"), ".airkignore\n")?,
         ChangeCause::Oversize => {
@@ -113,7 +80,9 @@ fn readmission(cause: ChangeCause) -> Result<()> {
         _ => unreachable!(),
     }
     kernel.index()?;
-    let after = store.catalog()?.context("readmitted publication")?;
+    let after = store
+        .current_test_catalog()?
+        .context("readmitted publication")?;
     let current = &after.inventory.as_ref().unwrap().files["original.rs"];
     assert_ne!(
         current.state.artifact_id, file.state.artifact_id,
@@ -159,13 +128,8 @@ fn readmission(cause: ChangeCause) -> Result<()> {
         );
         assert_ne!(validation.artifact_id, Some(current.state.artifact_id));
     }
-    assert!(
-        changes
-            .changes
-            .iter()
-            .any(|change| change.causes.contains(&cause))
-    );
-    assert!(after.receipt.as_ref().unwrap().token.generation > gap_token.generation);
+    assert!(changes.changes.is_empty());
+    assert!(after.token.generation > gap_token.generation);
     assert_eq!(fs::read_to_string(root.path().join("original.rs"))?, SOURCE);
     Ok(())
 }
@@ -191,8 +155,8 @@ fn actual_case_only_rename_preserves_exact_observed_identity() -> Result<()> {
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
     kernel.configure_index_detail(airk_core::extraction::IndexDetail::Detailed)?;
     kernel.index()?;
-    let store = FileStore::new(data.path().join("collections/default"));
-    let old = store.catalog()?.unwrap();
+    let store = FileStore::new(data.path().join("collections-1.2/default"));
+    let old = store.current_test_catalog()?.unwrap();
     let before = &old.inventory.as_ref().unwrap().files["Beacon.rs"];
     fs::rename(root.path().join("Beacon.rs"), root.path().join("beacon.rs"))?;
     let actual = fs::read_dir(root.path())?
@@ -203,7 +167,7 @@ fn actual_case_only_rename_preserves_exact_observed_identity() -> Result<()> {
         "filesystem did not retain requested case-only spelling"
     );
     kernel.index()?;
-    let after = store.catalog()?.unwrap();
+    let after = store.current_test_catalog()?.unwrap();
     let files = &after.inventory.as_ref().unwrap().files;
     assert!(!files.contains_key("Beacon.rs"));
     assert_eq!(
@@ -222,7 +186,7 @@ fn actual_case_only_rename_preserves_exact_observed_identity() -> Result<()> {
     kernel.index()?;
     fs::rename(root.path().join("Folder"), root.path().join("folder"))?;
     kernel.index()?;
-    let directory_move = store.catalog()?.unwrap();
+    let directory_move = store.current_test_catalog()?.unwrap();
     let files = &directory_move.inventory.as_ref().unwrap().files;
     assert!(!files.contains_key("Folder/beacon.rs"));
     assert_eq!(
@@ -237,79 +201,41 @@ fn actual_case_only_rename_preserves_exact_observed_identity() -> Result<()> {
 }
 
 #[test]
-fn two_reader_leases_survive_writer_then_guard_history_relocation_and_removal() -> Result<()> {
+fn active_requests_exclude_update_relocation_and_removal_but_idle_kernels_do_not() -> Result<()> {
     let root = tempfile::tempdir()?;
     let data = tempfile::tempdir()?;
     fs::write(root.path().join("original.rs"), SOURCE)?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
-    kernel.configure_index_detail(airk_core::extraction::IndexDetail::Detailed)?;
-    manual(&kernel)?;
     kernel.index()?;
-    let store = FileStore::new(data.path().join("collections/default"));
-    let old = token(&store)?;
-    let first = store.catalog_at(&old, 64 * 1024 * 1024)?.unwrap();
-    let second = store.catalog_at(&old, 64 * 1024 * 1024)?.unwrap();
-    for value in [29, 41] {
-        fs::write(
-            root.path().join("original.rs"),
-            SOURCE.replace("17", &value.to_string()),
-        )?;
-        kernel.index()?;
-    }
-    let quota = Quota::open(data.path())?;
-    let budget = MaintenanceBudget {
-        max_duration_ms: 60_000,
-        ..Default::default()
-    };
-    {
-        let writer = store.lock()?;
-        assert_eq!(
-            store.history_convert(&writer, &quota, &old, budget)?.status,
-            ConversionStatus::Protected
-        );
-        drop(first);
-        assert_eq!(
-            store.history_convert(&writer, &quota, &old, budget)?.status,
-            ConversionStatus::Protected
-        );
-        drop(second);
-        assert_eq!(
-            store.history_convert(&writer, &quota, &old, budget)?.status,
-            ConversionStatus::Complete
-        );
-    }
-    let first = store.history_at(&old, 64 * 1024 * 1024)?.unwrap();
-    let second = store.history_at(&old, 64 * 1024 * 1024)?.unwrap();
-    fs::write(root.path().join("original.rs"), SOURCE.replace("17", "53"))?;
-    kernel.index()?;
-    assert!(token(&store)?.generation > old.generation);
-    assert_eq!(first.source("original.rs")?, SOURCE.as_bytes());
-    assert_eq!(second.source("original.rs")?, SOURCE.as_bytes());
-    {
-        let writer = store.lock()?;
-        assert_eq!(
-            store.history_remove(&writer, &quota, &old, budget)?.status,
-            ConversionStatus::Protected
-        );
-    }
-    drop(kernel);
+    let store = FileStore::new(data.path().join("collections-1.2/default"));
+    let scope = store
+        .current_scope(&root.path().canonicalize()?.to_string_lossy(), "default")?
+        .unwrap();
+    let first = store.current_read(&scope)?;
+    let second = store.current_read(&scope)?;
+    let before = first.token()?;
+    fs::write(root.path().join("original.rs"), SOURCE.replace("17", "29"))?;
+    assert!(kernel.index().is_err());
+    assert_eq!(first.token()?, before);
     let destination_parent = tempfile::tempdir()?;
     let destination = destination_parent.path().join("relocated");
     assert!(airk_store::relocation::relocate(data.path(), &destination).is_err());
-    assert!(airk_store::remove_collection(data.path(), "default").is_err());
+    assert!(kernel.remove_collection("default").is_err());
     drop(first);
-    assert!(airk_store::relocation::relocate(data.path(), &destination).is_err());
-    assert_eq!(second.source("original.rs")?, SOURCE.as_bytes());
+    assert!(kernel.index().is_err());
     drop(second);
+    kernel.index()?;
+    assert_ne!(store.current_read(&scope)?.token()?, before);
     airk_store::relocation::relocate(data.path(), &destination)?;
-    let moved = FileStore::new(destination.join("collections/default"));
-    let reopened = moved
-        .history_at(&old, 64 * 1024 * 1024)?
-        .context("relocated exact history")?;
-    assert_eq!(reopened.descriptor.publication.token, old);
-    assert_eq!(reopened.source("original.rs")?, SOURCE.as_bytes());
-    assert!(airk_store::remove_collection(&destination, "default").is_err());
-    drop(reopened);
-    airk_store::remove_collection(&destination, "default")?;
+    let reopened = Kernel::open(root.path(), Some(destination))?;
+    assert!(
+        reopened
+            .read_file("original.rs", 1, 4, 8192)?
+            .hits
+            .iter()
+            .any(|h| h.text.contains("29"))
+    );
+    reopened.remove_collection("default")?;
+    assert!(root.path().join("original.rs").exists());
     Ok(())
 }

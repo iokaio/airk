@@ -254,7 +254,7 @@ fn publish(
 #[test]
 fn reference_lookup_authenticates_receipt_sidecar_and_collection() -> Result<()> {
     let root = tempfile::tempdir()?;
-    let store = FileStore::new(root.path().join("collections/original"));
+    let store = FileStore::new(root.path().join("collections-1.2/original"));
     let _writer = store.lock()?;
     let cache = object(&store, &["original vector"])?;
     let receipt = publish(&store, None, Some(&cache))?;
@@ -289,7 +289,7 @@ fn reference_lookup_authenticates_receipt_sidecar_and_collection() -> Result<()>
             .is_err()
     );
     fs::write(directory.join("manifest.json"), original_manifest)?;
-    let foreign = FileStore::new(root.path().join("collections/foreign"));
+    let foreign = FileStore::new(root.path().join("collections-1.2/foreign"));
     let _foreign_writer = foreign.lock()?;
     publish(&foreign, None, None)?;
     assert!(foreign.embedding_cache_manifest(&receipt).is_err());
@@ -300,7 +300,7 @@ fn reference_lookup_authenticates_receipt_sidecar_and_collection() -> Result<()>
 fn leased_roots_share_vectors_orphans_reclaim_once_and_other_collections_are_untouched()
 -> Result<()> {
     let root = tempfile::tempdir()?;
-    let store = FileStore::new(root.path().join("collections/original"));
+    let store = FileStore::new(root.path().join("collections-1.2/original"));
     let writer = store.lock()?;
     let quota = Quota::open(root.path())?;
     let shared = object(&store, &["shared vector", "formerly live record"])?;
@@ -311,7 +311,7 @@ fn leased_roots_share_vectors_orphans_reclaim_once_and_other_collections_are_unt
     let mut partial = shared.clone();
     partial.references.truncate(1);
     let second = publish(&store, Some(first.token), Some(&partial))?;
-    let foreign = FileStore::new(root.path().join("collections/foreign"));
+    let foreign = FileStore::new(root.path().join("collections-1.2/foreign"));
     let _foreign_writer = foreign.lock()?;
     let foreign_object = object(&foreign, &["unused vector"])?;
     let path = |cache: &VectorCacheManifest| {
@@ -355,7 +355,7 @@ fn leased_roots_share_vectors_orphans_reclaim_once_and_other_collections_are_unt
 #[test]
 fn cacheless_publication_is_none_and_corrupt_roots_block_orphan_deletion() -> Result<()> {
     let root = tempfile::tempdir()?;
-    let store = FileStore::new(root.path().join("collections/original"));
+    let store = FileStore::new(root.path().join("collections-1.2/original"));
     let writer = store.lock()?;
     let quota = Quota::open(root.path())?;
     let first = publish(&store, None, None)?;
@@ -384,7 +384,7 @@ fn cacheless_publication_is_none_and_corrupt_roots_block_orphan_deletion() -> Re
 #[test]
 fn publication_rejects_cache_pipeline_and_model_dimension_mismatches() -> Result<()> {
     let root = tempfile::tempdir()?;
-    let store = FileStore::new(root.path().join("collections/original"));
+    let store = FileStore::new(root.path().join("collections-1.2/original"));
     let _writer = store.lock()?;
     let first = publish(&store, None, None)?;
     let mut cache = object(&store, &["original vector"])?;
@@ -407,7 +407,7 @@ fn publication_rejects_cache_pipeline_and_model_dimension_mismatches() -> Result
 
     // A structurally valid three-dimensional pack cannot be attached to a
     // publication whose digest-authenticated model metadata declares two.
-    let other = FileStore::new(root.path().join("collections/dimensions"));
+    let other = FileStore::new(root.path().join("collections-1.2/dimensions"));
     let _other_writer = other.lock()?;
     let quota = Quota::open(root.path())?;
     let reservation = quota.reserve("dimensions", 64 * 1024 * 1024)?;
@@ -436,7 +436,7 @@ fn publication_rejects_cache_pipeline_and_model_dimension_mismatches() -> Result
 #[test]
 fn maintenance_authenticates_unused_records_before_reclaiming_orphans() -> Result<()> {
     let root = tempfile::tempdir()?;
-    let store = FileStore::new(root.path().join("collections/original"));
+    let store = FileStore::new(root.path().join("collections-1.2/original"));
     let writer = store.lock()?;
     let quota = Quota::open(root.path())?;
     let mut cache = object(&store, &["live record", "retired record"])?;
@@ -465,7 +465,7 @@ fn maintenance_authenticates_unused_records_before_reclaiming_orphans() -> Resul
 #[test]
 fn prepared_publication_blocks_pack_collection_until_its_commit() -> Result<()> {
     let root = tempfile::tempdir()?;
-    let store = FileStore::new(root.path().join("collections/original"));
+    let store = FileStore::new(root.path().join("collections-1.2/original"));
     let writer = store.lock()?;
     let quota = Quota::open(root.path())?;
     let first_cache = object(&store, &["first"])?;
@@ -507,7 +507,7 @@ fn pack_publication_crash_child() -> Result<()> {
         return Ok(());
     };
     let root = std::path::PathBuf::from(root);
-    let store = FileStore::new(root.join("collections/original"));
+    let store = FileStore::new(root.join("collections-1.2/original"));
     let _writer = store.lock()?;
     let ExpectedHead::V2(parent) = store.expected_head()? else {
         anyhow::bail!("fixture head missing");
@@ -543,7 +543,7 @@ fn pack_publication_crash_child() -> Result<()> {
 fn process_exit_around_publication_commit_preserves_exact_pack_ownership() -> Result<()> {
     for committed in [false, true] {
         let root = tempfile::tempdir()?;
-        let store = FileStore::new(root.path().join("collections/original"));
+        let store = FileStore::new(root.path().join("collections-1.2/original"));
         let writer = store.lock()?;
         let first_cache = object(&store, &["previous publication record"])?;
         let first = publish(&store, None, Some(&first_cache))?;

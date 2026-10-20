@@ -237,6 +237,8 @@ fn retention_failure_stops_later_callbacks_and_precedes_later_lookup_failure() -
     let previous = empty(root.path())?;
     for workers in [1, 2, 4] {
         let mut callbacks = vec![];
+        let mut first_path = None;
+        let mut lookups = 0;
         let error = scan_payloads_with_execution(
             root.path(),
             data.path(),
@@ -250,7 +252,10 @@ fn retention_failure_stops_later_callbacks_and_precedes_later_lookup_failure() -
                 ..Default::default()
             },
             |request| {
-                anyhow::ensure!(request.path != "c.rs", "later lookup failed");
+                // Directory enumeration is not alphabetic on every platform.
+                first_path.get_or_insert_with(|| request.path.to_owned());
+                lookups += 1;
+                anyhow::ensure!(lookups != 3, "later lookup failed");
                 Ok(None)
             },
             |_, artifact, _, _| {
@@ -259,7 +264,7 @@ fn retention_failure_stops_later_callbacks_and_precedes_later_lookup_failure() -
             },
         )
         .unwrap_err();
-        assert_eq!(callbacks, ["a.rs"]);
+        assert_eq!(callbacks, [first_path.context("no lookup observed")?]);
         assert!(error.to_string().contains("first retention quota failure"));
     }
     Ok(())
