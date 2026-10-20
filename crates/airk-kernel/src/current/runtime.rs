@@ -103,6 +103,7 @@ impl Kernel {
             .context("current collection configuration missing")?;
         let analysis = read.analysis(&self.store)?;
         let c = &state.configuration;
+        let semantic_readiness = super::enrichment::readiness(&read, &self.store)?;
         Ok(Status {
             retention: crate::maintenance::RetentionObservation {
                 policy: None,
@@ -112,6 +113,7 @@ impl Kernel {
                 pending_or_unknown: false,
             },
             publication: Some(envelope(&read)?),
+            semantic_readiness,
             source_roots: c
                 .roots
                 .clone()
@@ -154,6 +156,7 @@ impl Kernel {
                 self.collection.clone(),
                 revision(evidence.token),
             )),
+            semantic_readiness: Some(evidence.semantic_readiness),
             generation: evidence.token.sequence,
             collection: evidence.collection,
             hits: evidence.hits,

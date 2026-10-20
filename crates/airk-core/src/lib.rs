@@ -17,6 +17,7 @@ pub mod location;
 pub mod mapped_binding;
 pub mod model_objects;
 pub mod publication;
+pub mod readiness;
 pub mod usage;
 pub mod vector_evidence;
 pub mod vector_selection;
@@ -174,6 +175,8 @@ pub struct Hit {
 pub struct SearchResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub publication: Option<evidence::RevisionEnvelope>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub semantic_readiness: Option<readiness::SemanticReadiness>,
     pub generation: u64,
     pub collection: String,
     pub hits: Vec<Hit>,

@@ -468,6 +468,7 @@ impl PreparedLexical {
                 self.collection.clone(),
                 self.target,
             )),
+            semantic_readiness: None,
             generation: self.target.generation,
             collection: self.collection.clone(),
             hits: vec![],

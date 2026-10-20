@@ -459,6 +459,7 @@ fn changed_artifact_attaches_and_replaces_exact_vector_occurrence() -> Result<()
                 ArtifactVectorChanges {
                     configuration: None,
                     artifacts: &[ArtifactChange::Upsert(Box::new(first.clone()))],
+                    vector_inputs: None,
                     occurrences: &[foreign],
                 },
                 None,
@@ -478,6 +479,7 @@ fn changed_artifact_attaches_and_replaces_exact_vector_occurrence() -> Result<()
                 ArtifactVectorChanges {
                     configuration: None,
                     artifacts: &[ArtifactChange::Upsert(Box::new(first.clone()))],
+                    vector_inputs: None,
                     occurrences: &[invalid_span],
                 },
                 None,
@@ -493,6 +495,7 @@ fn changed_artifact_attaches_and_replaces_exact_vector_occurrence() -> Result<()
         ArtifactVectorChanges {
             configuration: None,
             artifacts: &[ArtifactChange::Upsert(Box::new(first.clone()))],
+            vector_inputs: None,
             occurrences: std::slice::from_ref(&occurrence),
         },
         None,
@@ -549,6 +552,7 @@ fn changed_artifact_attaches_and_replaces_exact_vector_occurrence() -> Result<()
         ArtifactVectorChanges {
             configuration: None,
             artifacts: &[ArtifactChange::Upsert(Box::new(second.clone()))],
+            vector_inputs: None,
             occurrences: std::slice::from_ref(&replacement),
         },
         None,
@@ -610,6 +614,7 @@ fn changed_artifact_attaches_and_replaces_exact_vector_occurrence() -> Result<()
         ArtifactVectorChanges {
             configuration: None,
             artifacts: &[ArtifactChange::Upsert(Box::new(alias))],
+            vector_inputs: None,
             occurrences: std::slice::from_ref(&additional),
         },
         None,
@@ -679,6 +684,7 @@ fn new_occurrence_cannot_adopt_unmapped_committed_graph_node() -> Result<()> {
             ArtifactVectorChanges {
                 configuration: None,
                 artifacts: &[ArtifactChange::Upsert(Box::new(input))],
+                vector_inputs: None,
                 occurrences: &[occurrence],
             },
             None,

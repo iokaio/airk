@@ -147,6 +147,12 @@ pub struct CurrentIndexWork {
 
 #[derive(Default, Debug, Serialize, Deserialize)]
 pub struct IndexReport {
+    /// Elapsed from index admission until committed lexical/fact evidence is readable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_ready_us: Option<u64>,
+    /// Elapsed until selected semantic work is fully committed in this invocation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fully_ready_us: Option<u64>,
     /// Changed-path work from the current runtime; logical counts, not physical I/O.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current: Option<CurrentIndexWork>,

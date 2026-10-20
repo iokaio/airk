@@ -24,6 +24,7 @@ pub struct VectorStatus {
     pub enabled: bool,
     pub published: bool,
     pub indexed_vectors: usize,
+    pub semantic_readiness: Option<airk_core::readiness::SemanticReadiness>,
     pub selection_digest: Sha256Digest,
     pub applied_selection_digest: Option<Sha256Digest>,
     pub selection_pending_reindex: bool,
@@ -107,11 +108,27 @@ impl Kernel {
             enabled,
             published,
             indexed_vectors: status.as_ref().map_or(0, |s| s.indexed_vectors),
+            semantic_readiness: status.as_ref().map(|s| s.semantic_readiness.clone()),
             selection_digest,
             applied_selection_digest,
             selection_pending_reindex,
             pending_reindex: enabled != published || selection_pending_reindex,
-            default_search_mode: if enabled { "hybrid" } else { "lexical" },
+            default_search_mode: if !enabled
+                || status.as_ref().is_some_and(|s| {
+                    s.semantic_readiness.state != airk_core::readiness::SemanticState::Ready
+                        && s.semantic_readiness.default_search_policy
+                            == airk_core::readiness::DefaultSearchPolicy::LexicalWhilePending
+                }) {
+                "lexical"
+            } else if status.as_ref().is_some_and(|s| {
+                s.semantic_readiness.state != airk_core::readiness::SemanticState::Ready
+                    && s.semantic_readiness.default_search_policy
+                        == airk_core::readiness::DefaultSearchPolicy::RequireComplete
+            }) {
+                "requires_complete"
+            } else {
+                "hybrid"
+            },
         })
     }
 
@@ -191,7 +208,7 @@ impl Kernel {
     /// Reads never provision assets or silently downgrade an enabled collection.
     pub fn default_search(&self, query: &SearchQuery) -> Result<SearchResponse> {
         if self.vectors_enabled()? {
-            self.hybrid_search(query)
+            self.current_search(query, crate::current::CurrentSearchMode::Default)
         } else {
             self.search(query)
         }

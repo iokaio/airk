@@ -18,6 +18,11 @@ test('vector switch reflects persisted opt-out, readiness and trust and validate
     sample.collections[0].vectors = { enabled: true, published: false, indexed_vectors: 0, pending_reindex: true, default_search_mode: 'hybrid' };
     assert.match(sidebarContent(sample), /data-vectors="true" checked>/);
     assert.match(sidebarContent(sample), /waiting for model setup/);
+    sample.collections[0].vectors.semantic_readiness = {
+        state: 'partial', selected_artifacts: 33, completed_artifacts: 32,
+        selected_units: null, completed_units: 32, failure: null
+    };
+    assert.match(sidebarContent(sample), /Semantic partial: 32 of 33 selected files complete/);
     sample.collections[0].vectors.enabled = false;
     assert.doesNotMatch(sidebarContent(sample), /data-vectors="true" checked/);
     assert.match(sidebarContent(sample), /Off: keyword search/);

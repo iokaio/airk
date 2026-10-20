@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Scan preparation and publication for the single current index.
-use super::{CurrentUpdater, SemanticUpdate};
+use super::{CurrentUpdater, SemanticUpdate, enrichment};
 use crate::Kernel;
 use airk_core::{
     graph_storage::{GraphHead, GraphScope},
@@ -205,7 +205,12 @@ impl Kernel {
         Ok(scope)
     }
 
-    pub(crate) fn index_current(&self, full: bool) -> Result<airk_ingest::IndexReport> {
+    pub(crate) fn index_current(
+        &self,
+        full: bool,
+        defer_completion: bool,
+    ) -> Result<airk_ingest::IndexReport> {
+        let index_started = std::time::Instant::now();
         self.recover_runtime_bootstrap()?;
         let execution = crate::limits::configured_extraction_execution()?;
         // Recovery takes its own writer lock, before this scan owns one.
@@ -272,11 +277,15 @@ impl Kernel {
             model: objects.clone(),
         };
         let existing = self.current_scope()?;
-        let applied = existing
-            .as_ref()
-            .map(|s| self.store.current_read(s)?.collection_state())
-            .transpose()?
-            .flatten();
+        let (applied, prior_semantic_work) = if let Some(scope) = &existing {
+            let read = self.store.current_read(scope)?;
+            (
+                read.collection_state()?,
+                enrichment::read_work(&read, &self.store)?,
+            )
+        } else {
+            (None, None)
+        };
         let configuration_changed = applied
             .as_ref()
             .map(|s| serde_json::to_vec(&s.configuration))
@@ -396,6 +405,19 @@ impl Kernel {
         {
             changes.insert(path.clone(), ArtifactChange::Delete(path.clone()));
         }
+        let semantic_work = objects
+            .as_ref()
+            .map(|objects| {
+                enrichment::prepare_work(
+                    &snapshot,
+                    &changes,
+                    prior_semantic_work.as_ref(),
+                    &selection,
+                    objects.pipeline_digest,
+                    full,
+                )
+            })
+            .transpose()?;
         let moves = compatible_moves(&self.store, &previous, &snapshot, &observation)?;
         let scope = match existing {
             Some(scope) => scope,
@@ -415,7 +437,15 @@ impl Kernel {
         let analysis_expired = previous.analysis.as_ref().is_some_and(|manifest| {
             airk_ingest::semantic::validate_build_inputs(&self.root, manifest).is_err()
         });
-        if !changes.is_empty() || configuration_changed || analysis_expired {
+        let retry_failed_semantic = prior_semantic_work
+            .as_ref()
+            .is_some_and(|work| work.failure.is_some());
+        if !changes.is_empty() || configuration_changed || analysis_expired || retry_failed_semantic
+        {
+            let semantic_resource = semantic_work
+                .as_ref()
+                .map(|work| work.resource_change(&self.store, &reservation))
+                .transpose()?;
             let semantic = model
                 .as_ref()
                 .zip(objects)
@@ -424,6 +454,7 @@ impl Kernel {
                         model,
                         objects,
                         selection: &selection,
+                        defer: true,
                         cache: EmbeddingCacheContext {
                             cache: None,
                             bypass: full,
@@ -452,10 +483,16 @@ impl Kernel {
             .apply_scanned(
                 &changes.into_values().collect::<Vec<_>>(),
                 semantic,
-                &[airk_store::current::resources::ResourceChange {
-                    key: "analysis".into(),
-                    reference: None,
-                }],
+                &[
+                    airk_store::current::resources::ResourceChange {
+                        key: "analysis".into(),
+                        reference: None,
+                    },
+                    semantic_resource.unwrap_or(airk_store::current::resources::ResourceChange {
+                        key: "semantic-work".into(),
+                        reference: None,
+                    }),
+                ],
                 &moves,
             )?;
             report.generation = result.commit.token.sequence;
@@ -472,6 +509,30 @@ impl Kernel {
             super::open_selected_lexical(&self.store, &read, Arc::new(|_| Ok(())))?;
             report.generation = read.head().sequence;
             report.current = Some(Default::default());
+        }
+        report.first_ready_us =
+            Some(u64::try_from(index_started.elapsed().as_micros()).unwrap_or(u64::MAX));
+        drop(writer);
+        drop(reservation);
+        if !defer_completion
+            && let Some(model) = &model
+            && let Some(generation) = self.drain_with_failure_record(
+                model,
+                &selection,
+                &mut stats,
+                usize::MAX,
+                report.current.as_mut(),
+            )?
+        {
+            report.generation = generation;
+        }
+        if semantic_work
+            .as_ref()
+            .is_none_or(|work| work.pending.is_empty())
+            || !defer_completion
+        {
+            report.fully_ready_us =
+                Some(u64::try_from(index_started.elapsed().as_micros()).unwrap_or(u64::MAX));
         }
         report.publish_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
         report.vector_eligible_artifacts = stats.vector_eligible_artifacts;
