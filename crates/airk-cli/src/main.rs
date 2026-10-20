@@ -207,6 +207,9 @@ enum Command {
     Init,
     /// Incrementally index eligible UTF-8 files; report exclusions.
     Index {
+        /// Emit JSON progress observations to stderr; final JSON stays on stdout.
+        #[arg(long)]
+        progress: bool,
         path: Option<PathBuf>,
         /// Persist and join the shared local indexing queue.
         #[arg(long)]
@@ -220,6 +223,18 @@ enum Command {
     },
     /// Show the active snapshot and counts.
     Status,
+    /// Inspect or resume durable semantic enrichment and select default search behavior.
+    Semantic {
+        #[command(subcommand)]
+        action: SemanticCommand,
+    },
+    /// Inspect CPU/memory worker admission. AIRK_EXECUTION_MODE selects automatic, interactive or throughput.
+    Execution,
+    /// Configure retained-object encoding or repack one bounded current batch.
+    Compression {
+        #[command(subcommand)]
+        action: CompressionCommand,
+    },
     /// Retrieve bounded evidence using the collection default (hybrid unless opted out).
     Search {
         query: String,
@@ -362,6 +377,31 @@ enum ScheduleCommand {
 }
 
 #[derive(Subcommand)]
+enum SemanticCommand {
+    Status,
+    Run,
+    Policy {
+        #[arg(value_parser = ["partial_hybrid", "lexical_while_pending", "require_complete"])]
+        mode: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum CompressionCommand {
+    Show,
+    Set {
+        #[arg(value_parser = ["off", "automatic", "space"])]
+        mode: String,
+    },
+    Repack {
+        #[arg(long)]
+        after: Option<String>,
+        #[arg(long, default_value_t = 32, value_parser = clap::value_parser!(u32).range(1..=32))]
+        max_files: u32,
+    },
+}
+
+#[derive(Subcommand)]
 enum ServiceCommand {
     Plan,
     Install,
@@ -468,7 +508,17 @@ impl Command {
             }
             Self::Setup { .. } | Self::Index { full: false, .. } => UsageOperation::Index,
             Self::Index { full: true, .. } => UsageOperation::Reindex,
-            Self::Status => UsageOperation::Status,
+            Self::Status | Self::Execution => UsageOperation::Status,
+            Self::Compression { .. } => UsageOperation::CollectionMaintenance,
+            Self::Semantic {
+                action: SemanticCommand::Status,
+            } => UsageOperation::Status,
+            Self::Semantic {
+                action: SemanticCommand::Run,
+            } => UsageOperation::Index,
+            Self::Semantic {
+                action: SemanticCommand::Policy { .. },
+            } => UsageOperation::CollectionMaintenance,
             Self::Search { .. } => UsageOperation::Search,
             Self::Files { .. } => UsageOperation::ListFiles,
             Self::Read { .. } => UsageOperation::ReadFile,
@@ -564,6 +614,11 @@ enum AnalysisCommand {
 #[derive(Subcommand)]
 enum VectorCommand {
     Show,
+    /// Inspect or save explicit vector-only exclusions; lexical evidence is retained.
+    Selection {
+        #[command(subcommand)]
+        action: VectorSelectionCommand,
+    },
     /// Verify and install local model inputs under native storage quotas.
     Install {
         source: PathBuf,
@@ -575,7 +630,55 @@ enum VectorCommand {
 }
 
 #[derive(Subcommand)]
+enum VectorSelectionCommand {
+    Show,
+    /// Validate a proposed policy without saving or indexing it.
+    Validate {
+        #[arg(long, required_unless_present = "json", conflicts_with = "json")]
+        file: Option<PathBuf>,
+        #[arg(long, conflicts_with = "file")]
+        json: Option<String>,
+    },
+    /// Save a policy for the next index; preserves the vector enabled setting.
+    Set {
+        #[arg(long, required_unless_present = "json", conflicts_with = "json")]
+        file: Option<PathBuf>,
+        #[arg(long, conflicts_with = "file")]
+        json: Option<String>,
+    },
+}
+
+fn vector_selection_input(
+    file: Option<PathBuf>,
+    json: Option<String>,
+) -> anyhow::Result<airk_core::vector_selection::VectorSelectionPolicy> {
+    use std::io::Read;
+    const MAXIMUM: u64 = 131_072;
+    let bytes = match (file, json) {
+        (Some(file), None) => {
+            let input = std::fs::File::open(file)?;
+            anyhow::ensure!(
+                input.metadata()?.len() <= MAXIMUM,
+                "vector selection exceeds 128 KiB"
+            );
+            let mut bytes = Vec::new();
+            input.take(MAXIMUM + 1).read_to_end(&mut bytes)?;
+            bytes
+        }
+        (None, Some(json)) => json.into_bytes(),
+        _ => anyhow::bail!("provide exactly one vector selection --file or --json"),
+    };
+    anyhow::ensure!(
+        bytes.len() <= MAXIMUM as usize,
+        "vector selection exceeds 128 KiB"
+    );
+    Ok(serde_json::from_slice(&bytes)?)
+}
+
+#[derive(Subcommand)]
 enum CollectionCommand {
+    /// Reclaim unreferenced current-index objects after a complete ownership check.
+    Maintain,
     /// Inspect or save the collection vector setting used by the panel.
     Vectors {
         #[command(subcommand)]
@@ -715,7 +818,7 @@ enum ExtractionCommand {
     Show,
     /// Select optional evidence for the next successful index; preserves adapter rules.
     Detail {
-        #[arg(value_parser = ["essential", "balanced", "detailed"])]
+        #[arg(value_parser = ["agent_lean", "essential", "balanced", "detailed"])]
         level: String,
     },
     Validate {
@@ -924,7 +1027,14 @@ fn main() -> anyhow::Result<()> {
     if airk_kernel::dispatch_pdf_worker()? {
         return Ok(());
     }
-    main_async()
+    // The command dispatcher's async state exceeds the Windows main-thread
+    // stack in debug builds. Keep PDF workers on the original entry path.
+    std::thread::Builder::new()
+        .name("airk-cli".into())
+        .stack_size(8 << 20)
+        .spawn(main_async)?
+        .join()
+        .map_err(|_| anyhow::anyhow!("AIRK CLI thread panicked"))?
 }
 
 #[tokio::main]
@@ -1133,6 +1243,11 @@ async fn main_async() -> anyhow::Result<()> {
                 VectorCommand::Show => recorder.print(&kernel.vector_status()?),
                 VectorCommand::Install { source } => recorder.print(&kernel.install_vector_model(&source)?),
                 VectorCommand::Set { enabled } => recorder.print(&kernel.configure_vectors(enabled)?),
+                VectorCommand::Selection { action } => match action {
+                    VectorSelectionCommand::Show => recorder.print(&kernel.vector_selection_status()?),
+                    VectorSelectionCommand::Validate { file, json } => recorder.print(&kernel.validate_vector_selection(&vector_selection_input(file, json)?)?),
+                    VectorSelectionCommand::Set { file, json } => recorder.print(&kernel.configure_vector_selection(vector_selection_input(file, json)?)?),
+                },
             },
             CollectionCommand::Extraction { action } => match action {
                 ExtractionCommand::Show => recorder.print(&kernel.extraction_policy()?),
@@ -1180,6 +1295,7 @@ async fn main_async() -> anyhow::Result<()> {
                 RootsCommand::Remove { alias } => recorder.print(&kernel.remove_root(&alias)?),
                 RootsCommand::Locate { path } => recorder.print(&kernel.source_location(&path)?),
             },
+            CollectionCommand::Maintain => recorder.print(&kernel.maintain_current()?),
             CollectionCommand::List => recorder.print(&kernel.collections()?),
             CollectionCommand::Remove { id } => recorder.print(&kernel.remove_collection(&id)?),
             CollectionCommand::Retention { action } => match action {
@@ -1260,14 +1376,40 @@ async fn main_async() -> anyhow::Result<()> {
             Ok(())
         }
         Command::Init => recorder.print(&kernel.initialize()?),
-        Command::Index { full, scheduled, automatic, .. } => recorder.print(&if scheduled {
+        Command::Index { full, scheduled, automatic, progress, .. } => {
+            let kernel = if progress { kernel.clone().with_index_progress(|event| {
+                if let Ok(json) = serde_json::to_string(event) { eprintln!("{json}"); }
+            }) } else { kernel.clone() };
+            recorder.print(&if scheduled {
             kernel.scheduled_index(full, automatic)?
         } else if full {
             kernel.reindex()?
         } else {
             kernel.index()?
-        }),
+        }) },
         Command::Status => recorder.print(&kernel.status()?),
+        Command::Execution => recorder.print(&kernel.execution_status()?),
+        Command::Compression { action } => match action {
+            CompressionCommand::Show => recorder.print(&kernel.compression_status()?),
+            CompressionCommand::Set { mode } => recorder.print(&kernel.configure_compression(serde_json::from_value(serde_json::Value::String(mode))?)?),
+            CompressionCommand::Repack { after, max_files } => recorder.print(&kernel.repack_current(after.as_deref(), max_files as usize)?),
+        },
+        Command::Semantic { action } => match action {
+            SemanticCommand::Status => recorder.print(&kernel.status()?.semantic_readiness),
+            SemanticCommand::Run => {
+                kernel.resume_current_enrichment()?;
+                recorder.print(&kernel.status()?.semantic_readiness)
+            }
+            SemanticCommand::Policy { mode } => {
+                let policy = match mode.as_str() {
+                    "partial_hybrid" => airk_core::readiness::DefaultSearchPolicy::PartialHybrid,
+                    "lexical_while_pending" => airk_core::readiness::DefaultSearchPolicy::LexicalWhilePending,
+                    "require_complete" => airk_core::readiness::DefaultSearchPolicy::RequireComplete,
+                    _ => unreachable!("validated by clap"),
+                };
+                recorder.print(&kernel.set_default_semantic_search_policy(policy)?)
+            }
+        },
         Command::Search {
             query,
             mode,

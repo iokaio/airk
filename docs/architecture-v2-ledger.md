@@ -1,5 +1,8 @@
 # Architecture v2 execution ledger
 
+> Historical 1.1 implementation record. AIRK 1.2 production uses the [single-current-index contract](current-index-runtime.md). Retained historical reads, checkpoint/retention administration and receipt-backed generations below are not current capabilities. Old primitive storage tests remain separate from production routing.
+
+
 Plan: [architecture-v2.md](architecture-v2.md). Baseline revision: `4cbe157468e47990280f296836d4e0982b9fa16b`; branch: `feat/architecturev2`. Started 14 October 2026. This ledger records implementation separately from qualification; pending rows make no support claim.
 
 Status vocabulary: `pending`, `in_progress`, `implemented`, `qualified`, `blocked`. Every row inherits the baseline prerequisite until its numbered gate supplies a frozen interface revision. Qualification applies only to explicitly recorded environments. Phases 0–5 passed the foundation gate and P6 passed its focused adapter gate on Windows and Linux container, using the recorded runs plus focused corrections. P7–P11, H1/H2, O1b and F passed their focused gates. O2a/O2b completed measured experiments retaining full production builds. P12 local packaging and a bounded real Codex trial passed; paired-client, held-out relevance and independent native macOS/Linux qualification remain outstanding. See the [final local qualification record](v2-final-qualification.md) for current receipts and limitations; chronological entries below preserve earlier pending states.

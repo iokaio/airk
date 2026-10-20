@@ -28,6 +28,9 @@ const MAX_VECTOR_READS: usize = 65_536;
 pub(crate) const MAX_SCOPED_VECTOR_READS: usize = 4096;
 const MAGIC: &[u8; 8] = b"AIRKANN1";
 
+/// Authenticated mutable-storage foundation; normal indexing still uses `DiskIndex`.
+pub mod mutable;
+
 /// A deliberately provisioned local word-vector model. No network or hashed fallback.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

@@ -8,7 +8,10 @@ export interface ControlGroup { label: string; commands: [string, string, string
 export interface McpVerification {
     phase: 'preparing' | 'checking' | 'verified' | 'failed'; checkedAt?: number; tools?: string[]; error?: string;
 }
-export type IndexDetail = 'essential' | 'balanced' | 'detailed';
+export type IndexDetail = 'agent_lean' | 'essential' | 'balanced' | 'detailed';
+export function detailLabel(level: IndexDetail): string {
+    return { agent_lean: 'Agent Lean', essential: 'Search Only', balanced: 'Rich Structure', detailed: 'Detailed (advanced)' }[level];
+}
 export interface DetailStatus {
     configured_detail: IndexDetail; published_detail: IndexDetail | null; pending_reindex: boolean;
 }
@@ -27,7 +30,7 @@ export interface SidebarState {
 export type SidebarAction = { type: 'vectors'; collection: string; dataDir: string; enabled: boolean } | { type: 'detail'; collection: string; dataDir: string; level: IndexDetail } | { type: 'ready' } | { type: 'mode'; value: IndexMode }
     | { type: 'registration'; enabled: boolean }
     | { type: 'command'; command: string }
-    | { type: 'collection'; action: 'index' | 'reindex' | 'status' | 'usage' | 'verify' | 'mcpDetails' | 'tools'; collection: string; dataDir: string };
+    | { type: 'collection'; action: 'index' | 'reindex' | 'status' | 'usage' | 'verify' | 'mcpDetails' | 'tools' | 'compression'; collection: string; dataDir: string };
 
 export function sidebarAction(value: unknown, allowed: Set<string>): SidebarAction | undefined {
     if (!value || typeof value !== 'object') { return; }
@@ -36,7 +39,7 @@ export function sidebarAction(value: unknown, allowed: Set<string>): SidebarActi
         return { type: 'vectors', collection: item.collection, dataDir: item.dataDir, enabled: item.enabled };
     }
     if (item.type === 'detail' && typeof item.collection === 'string' && typeof item.dataDir === 'string'
-        && typeof item.level === 'string' && ['essential', 'balanced', 'detailed'].includes(item.level)) {
+        && typeof item.level === 'string' && ['agent_lean', 'essential', 'balanced', 'detailed'].includes(item.level)) {
         return { type: 'detail', collection: item.collection, dataDir: item.dataDir, level: item.level as IndexDetail };
     }
     if (item.type === 'ready') { return { type: 'ready' }; }
@@ -47,7 +50,7 @@ export function sidebarAction(value: unknown, allowed: Set<string>): SidebarActi
     if (item.type === 'command' && typeof item.command === 'string' && allowed.has(item.command)) {
         return { type: 'command', command: item.command };
     }
-    if (item.type === 'collection' && typeof item.action === 'string' && ['index', 'reindex', 'status', 'usage', 'verify', 'mcpDetails', 'tools'].includes(item.action)
+    if (item.type === 'collection' && typeof item.action === 'string' && ['index', 'reindex', 'status', 'usage', 'verify', 'mcpDetails', 'tools', 'compression'].includes(item.action)
         && typeof item.collection === 'string' && typeof item.dataDir === 'string') {
         return { type: 'collection', action: item.action as Extract<SidebarAction, { type: 'collection' }>['action'], collection: item.collection, dataDir: item.dataDir };
     }
@@ -80,18 +83,31 @@ export function sidebarContent(state: SidebarState): string {
             'capacity-limited': 'Storage budget reached', paused: 'Auto-indexing paused'
         } as Record<string, string>)[item.state] ?? 'Ready to index';
         const attributes = `data-collection="${escape(item.collection)}" data-storage="${escape(item.dataDir)}"`;
-        const actions = `<div class="actions">${(['index', 'reindex', 'status', 'usage'] as const).map(action =>
-            `<button id="${escape(item.collection)}-${action}" ${attributes} data-action="${action}" class="${action === 'index' ? 'primary' : 'secondary'}"${disabled || (!['status', 'usage'].includes(action) && (indexing || state.changingStorage)) ? ' disabled' : ''}>${action === 'index' ? 'Index now' : action === 'reindex' ? 'Reindex' : action === 'usage' ? 'Usage &amp; Savings' : 'Details'}</button>`).join('')}</div>`;
+        const actions = `<div class="actions">${(['index', 'reindex', 'status', 'usage', 'compression'] as const).map(action =>
+            `<button id="${escape(item.collection)}-${action}" ${attributes} data-action="${action}" class="${action === 'index' ? 'primary' : 'secondary'}"${disabled || (!['status', 'usage'].includes(action) && (indexing || state.changingStorage)) ? ' disabled' : ''}>${action === 'index' ? 'Index now' : action === 'reindex' ? 'Reindex' : action === 'usage' ? 'Usage &amp; Savings' : action === 'compression' ? 'Compression' : 'Details'}</button>`).join('')}</div>`;
         const detail = `<div class="mcp"><h3>Index detail</h3><label for="${escape(item.collection)}-detail">Evidence to retain</label>
             <select id="${escape(item.collection)}-detail" ${attributes} data-detail="true"${disabled || !item.detail || indexing || state.changingStorage ? ' disabled' : ''}>
-            ${!item.detail ? '<option>Loading current setting…</option>' : (['essential', 'balanced', 'detailed'] as const).map(level => `<option value="${level}"${item.detail?.configured_detail === level ? ' selected' : ''}>${level === 'balanced' ? 'Balanced (recommended)' : level[0].toUpperCase() + level.slice(1)}</option>`).join('')}</select>
-            <p class="muted">Essential: text and citations. Balanced: adds declarations, imports and document facts. Detailed: adds call occurrences and document change tracking.</p>
-            ${item.detail ? `<p role="status">Published: <strong>${escape(item.detail.published_detail ?? 'Not indexed')}</strong>${item.detail.pending_reindex ? ' · Change pending indexing' : ''}</p>` : '<p class="muted">Current detail is not available yet.</p>'}
-            <p class="muted">Changing detail rebuilds evidence. The published index remains available until success. History retention and vector search are separate.</p></div>`;
+            ${!item.detail ? '<option>Loading current setting…</option>' : (['agent_lean', 'balanced', 'essential', 'detailed'] as const).map(level => `<option value="${level}"${item.detail?.configured_detail === level ? ' selected' : ''}>${detailLabel(level)}</option>`).join('')}</select>
+            <p class="muted">Agent Lean: selected coding and document evidence. Rich Structure: broader facts and declaration tracking. Search Only: text and citations. Vectors are configured separately. Detailed adds call occurrences and document tracking.</p>
+            ${item.detail ? `<p role="status">Published: <strong>${escape(item.detail.published_detail ? detailLabel(item.detail.published_detail) : 'Not indexed')}</strong>${item.detail.pending_reindex ? ' · Change pending indexing' : ''}</p>` : '<p class="muted">Current detail is not available yet.</p>'}
+            <p class="muted">Changing detail rebuilds evidence. The published index remains available until success. Vector selection is configured separately.</p></div>`;
+        const semantic = item.vectors?.semantic_readiness;
+        const discovery = item.vectors?.discovery_readiness;
+        const discoveryLabel = discovery?.state === 'pending' || discovery?.state === 'partial'
+            ? `Discovery ${discovery.state}: ${discovery.committed_artifacts} files committed; total still unknown`
+            : discovery?.state === 'failed' ? `Discovery stopped after ${discovery.committed_artifacts} committed files` : '';
+        const semanticLabel = semantic?.state === 'pending' || semantic?.state === 'partial'
+            ? `Semantic ${semantic.state}: ${semantic.completed_artifacts} of ${semantic.selected_artifacts} selected files complete`
+            : semantic?.state === 'failed' ? `Semantic enrichment failed: ${semantic.completed_artifacts} of ${semantic.selected_artifacts} selected files complete`
+            : semantic?.state === 'ready' ? 'Semantic evidence ready' : '';
         const vectors = `<div class="mcp"><h3>Vector search</h3>
             <label class="toggle"><input id="${escape(item.collection)}-vectors" type="checkbox" role="switch" ${attributes} data-vectors="true"${item.vectors?.enabled !== false ? ' checked' : ''}${disabled || !item.vectors || indexing || state.changingStorage ? ' disabled' : ''}> Include meaning-based matches</label>
             <p class="muted">On by default. Combines local vector search with keyword results. First setup downloads about 91 MB of model files; your source files stay on this machine. Uses CPU and additional index storage.</p>
             <p role="status">${escape(item.vectorProgress ?? (!item.vectors ? 'Loading vector setting...' : !item.vectors.enabled ? 'Off: keyword search' : item.vectors.pending_reindex ? 'On: waiting for model setup and indexing' : `On: ${item.vectors.indexed_vectors} indexed vectors`))}</p>
+            ${semanticLabel ? `<p class="muted" role="status">${escape(semanticLabel)}</p>` : ''}
+            ${discoveryLabel ? `<p class="muted" role="status">${escape(discoveryLabel)}</p>` : ''}
+            ${discovery?.failure ? `<p class="error">${escape(discovery.failure.slice(0, 300))}</p>` : ''}
+            ${semantic?.failure ? `<p class="error">${escape(semantic.failure.slice(0, 300))}</p>` : ''}
             ${item.vectors?.pending_reindex ? '<p class="muted">Index now to apply the setting. Previous index data remains until a successful rebuild and normal cleanup.</p>' : ''}</div>`;
         const percentage = /^\d+%$/.test(label) ? Number(label.slice(0, -1)) : undefined;
         const progress = percentage === undefined ? '' : `<progress max="100" value="${percentage}" aria-label="Measured index coverage">${percentage}%</progress>`;
@@ -118,7 +134,7 @@ export function sidebarContent(state: SidebarState): string {
             <p class="muted">${item.usage ? `Last 30 days: ${escape(item.usage.calls)} recorded calls · ${escape(item.usage.reduction ?? 'Not measured')} estimated tokens avoided versus complete cited files (${escape(item.usage.compared)} comparisons). ${item.usage.disabled ? 'Recording is off. ' : ''}Updated ${escape(new Date(item.usage.checkedAt).toLocaleTimeString())}.` : 'Open Usage &amp; Savings to see activity and estimated savings.'}</p>${vectors}${detail}
             <details id="location-${escape(item.collection)}"><summary>Storage and last index</summary><dl><dt>Index size</dt><dd>${bytes(item.diskBytes)}</dd><dt>Eligible source size</dt><dd>${bytes(report?.eligible_source_bytes)}</dd><dt>Last indexed</dt><dd>${escape(last)}</dd><dt>Index folder</dt><dd class="path">${escape(item.dataDir)}</dd></dl></details>${connection}</section>`;
     }).join('');
-    const primaryCommands = new Set(['airk.index', 'airk.reindex', 'airk.indexMode', 'airk.pause', 'airk.resume', 'airk.chooseStorage', 'airk.status', 'airk.verifyMcp', 'airk.setupAgent', 'airk.manageMcp', 'airk.manageVscodeMcp', 'airk.storageLimits', 'airk.retentionPolicy', 'airk.retentionRun']);
+    const primaryCommands = new Set(['airk.index', 'airk.reindex', 'airk.indexMode', 'airk.pause', 'airk.resume', 'airk.chooseStorage', 'airk.status', 'airk.verifyMcp', 'airk.setupAgent', 'airk.manageMcp', 'airk.manageVscodeMcp', 'airk.storageLimits', 'airk.currentMaintenance']);
     const groups = state.groups.filter(group => group.label !== 'Indexing').map(group => {
         const rows = group.commands.filter(([, command]) => !primaryCommands.has(command) && command !== 'airk.installCli').map(([label, command, help]) =>
             `<div class="control">${button(label, command, disabled && command !== 'airk.logs')}<p class="muted">${escape(help)}</p></div>`).join('');
@@ -138,7 +154,7 @@ export function sidebarContent(state: SidebarState): string {
         ${button('Connect coding agent…', 'airk.manageMcp', disabled, false)}
         ${button('VS Code / Copilot MCP controls', 'airk.manageVscodeMcp', disabled)}
         <p class="muted">Choose Codex, Claude Code or another agent to configure it. VS Code / Copilot controls only manage VS Code connections.</p></section>
-        <section><h2>Index storage</h2><p class="muted">Choose a drive for new indexes. Existing indexes stay where they are.</p>${button('Choose storage folder…', 'airk.chooseStorage', disabled || state.changingStorage)}<div class="actions">${button('Storage limits…', 'airk.storageLimits', disabled)}${button('Generations and cleanup…', 'airk.retentionPolicy', disabled)}</div><div class="actions">${button('Reclaim eligible space…', 'airk.retentionRun', disabled)}</div><p class="muted">Defaults: 100 GiB per collection, 500 GiB total; target the active generation only. Readers, protected history and pending cleanup can temporarily retain more.</p></section>${groups}`;
+        <section><h2>Index storage</h2><p class="muted">Choose a drive for new indexes. Existing indexes stay where they are.</p>${button('Choose storage folder…', 'airk.chooseStorage', disabled || state.changingStorage)}<div class="actions">${button('Storage limits…', 'airk.storageLimits', disabled)}</div><div class="actions">${button('Reclaim unreferenced objects…', 'airk.currentMaintenance', disabled)}</div><p class="muted">Defaults: 100 GiB per collection, 500 GiB total; one current index per collection. Pending updates and cleanup can temporarily use additional space.</p></section>${groups}`;
 }
 
 export function renderSidebar(state: SidebarState): string {
@@ -188,19 +204,7 @@ export function sidebarControlGroups(): ControlGroup[] {
             ['Configure Storage Limits…', 'airk.storageLimits', 'Collection and shared quotas in GiB'],
             ['Manage Collections and Disk Space', 'airk.collections', 'Sizes, roots and free space'],
             ['Remove Unneeded Collection…', 'airk.removeCollection', 'Delete a derived index; source files stay'],
-            ['Trim Obsolete Index Generations…', 'airk.prune', 'Preview, then reclaim superseded builds']] },
-        { label: 'Retention and history', commands: [
-            ['Show Retention Status', 'airk.retention', 'Policy, protected bytes and pending work'],
-            ['Choose Retention Policy…', 'airk.retentionPolicy', 'Generations to keep; manual or automatic cleanup'],
-            ['Run Retention Maintenance…', 'airk.retentionRun', 'Preview, then one bounded cleanup pass'],
-            ['Show History Status', 'airk.history', 'Retained history policy and plan'],
-            ['Choose History Policy…', 'airk.historyPolicy', 'Enable or disable bounded history'],
-            ['Run History Maintenance…', 'airk.historyRun', 'Preview, then one bounded pass'],
-            ['List Retained Publication Identities', 'airk.historyAvailable', 'Committed revisions you can pin'],
-            ['Show Checkpoints', 'airk.checkpoints', 'Pinned committed revisions'],
-            ['Create Checkpoint…', 'airk.createCheckpoint', 'Pin a committed revision under a label'],
-            ['Remove Checkpoint…', 'airk.removeCheckpoint', 'Release one pin'],
-            ['Preview Logical History Purge…', 'airk.purgeHistory', 'Plan, then confirm; not secure erasure']] },
+            ['Reclaim Unreferenced Index Objects', 'airk.currentMaintenance', 'One bounded cleanup pass; current evidence stays']] },
         { label: 'Extraction', commands: [
             ['Show Ingestion Limits', 'airk.ingestionLimits', 'Machine sizing, measured source sizes, quotas and storage path'],
             ['Configure Ingestion Limits…', 'airk.configureIngestionLimits', 'Restore automatic sizing or import explicit limits'],

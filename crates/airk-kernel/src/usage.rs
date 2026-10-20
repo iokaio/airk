@@ -343,6 +343,14 @@ impl crate::Kernel {
                     ),
                     scan_extract_us: value["scan_extract_us"].as_u64(),
                     publish_us: value["publish_us"].as_u64(),
+                    metrics: IndexMetric::ALL
+                        .into_iter()
+                        .filter_map(|metric| {
+                            value[metric.report_field()]
+                                .as_u64()
+                                .map(|value| (metric, value))
+                        })
+                        .collect(),
                 });
             }
             // Count only explicit cited sources. Bound optional comparison work to small
@@ -420,99 +428,38 @@ impl crate::Kernel {
         if token.is_some_and(|token| token.generation != generation) {
             return Err(Missing::RevisionMismatch);
         }
-        let mut measurements = None;
-        if let Some(token) = token {
-            match self
-                .store
-                .usage_source_sizes(&self.root_id(), &self.collection, &token, &sources)
-                .map_err(|_| Missing::MeasurementError)?
-            {
-                airk_store::UsageSourceSizes::Available(sizes) => measurements = Some(sizes),
-                airk_store::UsageSourceSizes::Unavailable(reason) => return Err(reason),
-                airk_store::UsageSourceSizes::Legacy => {}
-            }
+        let token = token.ok_or(Missing::MissingRevision)?;
+        let read = self
+            .current_reader()
+            .map_err(|_| Missing::RevisionUnavailable)?;
+        if crate::current::runtime::revision(read.token().map_err(|_| Missing::MeasurementError)?)
+            != token
+        {
+            return Err(Missing::RevisionMismatch);
         }
-        let sizes = if let Some(sizes) = measurements {
-            sizes
-        } else {
-            // Older publications have no precomputed counters. Reuse an already
-            // leased matching query catalog; otherwise keep the old bounded path.
-            let cached = self
-                .catalog_cache
-                .lock()
+        let mut sizes = Vec::new();
+        for (path, hash) in &sources {
+            let entry = read
+                .artifact(path)
                 .map_err(|_| Missing::MeasurementError)?
-                .clone();
-            let cached = cached.filter(|catalog| {
-                token
-                    .is_some_and(|token| catalog.receipt.as_ref().is_some_and(|r| r.token == token))
-            });
-            let catalog = if let Some(cached) = cached {
-                cached
-            } else {
-                let opened = match token {
-                    Some(token) => self.store.catalog_at(&token, 8_388_608),
-                    None => self.store.catalog_bounded(8_388_608),
-                }
-                .map_err(|error| {
-                    if error
-                        .to_string()
-                        .contains("catalog exceeds request byte limit")
-                    {
-                        Missing::InventoryLimit
-                    } else {
-                        Missing::MeasurementError
-                    }
-                })?;
-                std::sync::Arc::new(opened.ok_or(Missing::RevisionUnavailable)?)
-            };
-            if catalog.snapshot.generation != generation
-                || catalog.snapshot.root != self.root_id()
-                || catalog.snapshot.collection != self.collection
-            {
-                return Err(Missing::RevisionMismatch);
+                .ok_or(Missing::SourceUnavailable)?;
+            if entry.content_hash != *hash {
+                return Err(Missing::SourceMismatch);
             }
-            let mut sizes = Vec::new();
-            let mut normalized_bytes = 0usize;
-            let mut payload_remaining = 8_388_608usize;
-            for (path, hash) in &sources {
-                let entry = catalog
-                    .snapshot
-                    .artifacts
-                    .get(*path)
-                    .ok_or(Missing::SourceUnavailable)?;
-                if entry.content_hash != *hash {
-                    return Err(Missing::SourceMismatch);
-                }
-                if entry.extracted_bytes() > 1_048_576usize.saturating_sub(normalized_bytes) {
-                    return Err(Missing::SourceTextLimit);
-                }
-                if entry
-                    .retained
-                    .as_ref()
-                    .is_some_and(|r| r.object_bytes > payload_remaining)
-                {
-                    return Err(Missing::SourcePayloadLimit);
-                }
-                let artifact = catalog
-                    .load_artifact_bounded(path, payload_remaining as u64)
-                    .map_err(|_| Missing::MeasurementError)?;
-                let payload = serde_json::to_vec(&artifact)
-                    .map_err(|_| Missing::MeasurementError)?
-                    .len();
-                if payload > payload_remaining {
-                    return Err(Missing::SourcePayloadLimit);
-                }
-                payload_remaining -= payload;
-                normalized_bytes += artifact.extracted_bytes();
-                if normalized_bytes > 1_048_576 {
-                    return Err(Missing::SourceTextLimit);
-                }
-                sizes.push(
-                    SourceContextSize::measure(&artifact).map_err(|_| Missing::MeasurementError)?,
-                );
+            let bytes = read
+                .map_get(
+                    airk_store::current::map::MapDomain::SourceMeasurement,
+                    path.as_bytes(),
+                )
+                .map_err(|_| Missing::MeasurementError)?
+                .ok_or(Missing::SourceUnavailable)?;
+            let size: SourceContextSize =
+                serde_json::from_slice(&bytes).map_err(|_| Missing::MeasurementError)?;
+            if size.source_hash != *hash {
+                return Err(Missing::SourceMismatch);
             }
-            sizes
-        };
+            sizes.push(size);
+        }
         let kinds: BTreeSet<_> = sizes.iter().map(|s| s.content_kind).collect();
         let bytes = full_source_context_bytes(&sizes, &self.collection, generation, representation)
             .map_err(|_| Missing::MeasurementError)?;
@@ -991,7 +938,6 @@ impl LocalByteBpe {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use airk_core::ArtifactSource;
 
     fn strict_span(
         kernel: &crate::Kernel,
@@ -1020,8 +966,8 @@ mod tests {
         )?;
         let kernel = crate::Kernel::open(root.path(), None)?;
         kernel.index()?;
-        let catalog = kernel.catalog()?;
-        let artifact = catalog.load_artifact("memo.md")?;
+        let read = kernel.current_reader()?;
+        let artifact = kernel.current_artifact(&read, "memo.md", false)?;
         let mut hits: Vec<_> = artifact
             .chunks
             .iter()
@@ -1039,8 +985,10 @@ mod tests {
             .collect();
         let baseline = airk_core::SearchResponse {
             publication: None,
-            generation: catalog.snapshot.generation,
-            collection: catalog.snapshot.collection.clone(),
+            semantic_readiness: None,
+            discovery_readiness: None,
+            generation: read.head().sequence,
+            collection: read.head().scope.collection.clone(),
             hits: hits.clone(),
             truncated: false,
         };
@@ -1053,7 +1001,7 @@ mod tests {
             ResponseRepresentation::McpToolResultJson,
         ] {
             let (measured, kind) = kernel
-                .usage_baseline(&value, Some(catalog.snapshot.generation), representation)
+                .usage_baseline(&value, Some(read.head().sequence), representation)
                 .map_err(|reason| anyhow::anyhow!("{reason:?}"))?;
             let expected = match representation {
                 ResponseRepresentation::LogicalResultJson => text.len(),
@@ -1083,8 +1031,8 @@ mod tests {
             assert_eq!(
                 full_source_context_bytes(
                     &[SourceContextSize::measure(&document)?],
-                    &catalog.snapshot.collection,
-                    catalog.snapshot.generation,
+                    &read.head().scope.collection,
+                    read.head().sequence,
                     representation
                 )?,
                 expected as u64
@@ -1094,7 +1042,7 @@ mod tests {
     }
 
     #[test]
-    fn comparison_uses_response_revision_after_reindex_and_reports_missing_reasons() -> Result<()> {
+    fn comparison_expires_after_current_publication() -> Result<()> {
         let root = tempfile::tempdir()?;
         std::fs::write(
             root.path().join("memo.txt"),
@@ -1102,64 +1050,40 @@ mod tests {
         )?;
         let kernel = crate::Kernel::open(root.path(), None)?;
         kernel.index()?;
-        let pin = kernel.catalog()?; // Keep the response generation leased across publication.
         let old = kernel.read_file("memo.txt", 1, 1, 100)?;
-        let old_value = serde_json::to_value(&old)?;
-        let expected = kernel
-            .usage_baseline(
-                &old_value,
-                Some(old.generation),
-                ResponseRepresentation::LogicalResultJson,
-            )
-            .map_err(|r| anyhow::anyhow!("{r:?}"))?
-            .0
-            .utf8_bytes;
-        std::fs::write(
-            root.path().join("memo.txt"),
-            "changed content\n".repeat(150),
-        )?;
-        kernel.index()?;
-        let span = strict_span(&kernel, UsageOperation::ReadFile, ClientFamily::Codex)?;
-        kernel.finish_usage(
-            span,
-            Some(&old_value),
-            400,
-            false,
-            ResponseRepresentation::LogicalResultJson,
+        let value = serde_json::to_value(&old)?;
+        assert!(
+            kernel
+                .usage_baseline(
+                    &value,
+                    Some(old.generation),
+                    ResponseRepresentation::LogicalResultJson
+                )
+                .is_ok()
         );
-        let report = kernel.usage_report(30)?.report;
-        let summary = &report.comparisons[&BaselineKind::FullReturnedSources];
-        assert_eq!(summary.compared_calls, 1);
-        assert_eq!(summary.baseline_utf8_bytes, u128::from(expected));
-        assert_eq!(report.missing_baseline_calls, 0);
-        let mut bad = old_value.clone();
-        bad["hits"][0]["citation"]["content_hash"] = "0".repeat(64).into();
+        std::fs::write(root.path().join("memo.txt"), "changed content\n")?;
+        kernel.index()?;
         assert!(matches!(
             kernel.usage_baseline(
-                &bad,
+                &value,
                 Some(old.generation),
                 ResponseRepresentation::LogicalResultJson
             ),
-            Err(BaselineUnavailable::SourceMismatch)
+            Err(BaselineUnavailable::RevisionMismatch)
         ));
         let span = strict_span(&kernel, UsageOperation::ReadFile, ClientFamily::Codex)?;
         kernel.finish_usage(
             span,
-            Some(&bad),
+            Some(&value),
             400,
             false,
             ResponseRepresentation::LogicalResultJson,
         );
-        let report = kernel.usage_report(30)?.report;
         assert_eq!(
-            report.baseline_unavailable[&BaselineUnavailable::SourceMismatch],
+            kernel.usage_report(30)?.report.baseline_unavailable
+                [&BaselineUnavailable::RevisionMismatch],
             1
         );
-        assert_eq!(
-            report.comparisons[&BaselineKind::FullReturnedSources].compared_calls,
-            1
-        );
-        drop(pin);
         Ok(())
     }
 
@@ -1198,16 +1122,14 @@ mod tests {
         }
         let kernel = crate::Kernel::open(root.path(), None)?;
         kernel.index()?;
-        let token = kernel.store.persistent_revision()?.unwrap().token.unwrap();
-        let inventory = kernel
-            .store
-            .directory()
-            .join("generations")
-            .join(token.revision.to_string())
-            .join("inventory.json");
+        let metadata_bytes = std::fs::read_dir(kernel.store.directory().join("current-metadata"))?
+            .map(|entry| entry?.metadata().map(|m| m.len()))
+            .collect::<std::io::Result<Vec<_>>>()?
+            .into_iter()
+            .sum::<u64>();
         assert!(
-            std::fs::metadata(inventory)?.len() > 8_388_608,
-            "Fixture must exceed the former inventory comparison limit"
+            metadata_bytes > 8_388_608,
+            "fixture must exceed the former inventory comparison limit"
         );
         let response = kernel.read_file("fixture_0.rs", 1, 2, 250)?;
         let value = serde_json::to_value(&response)?;
@@ -1320,7 +1242,10 @@ mod tests {
             1,
             "reports must not count themselves"
         );
-        let ledger = std::fs::read(root.path().join(".airk/collections/default/usage.sqlite3"))?;
+        let ledger = std::fs::read(
+            root.path()
+                .join(".airk/collections-1.2/default/usage.sqlite3"),
+        )?;
         assert!(!String::from_utf8_lossy(&ledger).contains("confidential_zircon_word"));
         assert!(!String::from_utf8_lossy(&ledger).contains("memo.md"));
         kernel.usage_feedback(&request_id, Usefulness::Useful)?;

@@ -112,11 +112,55 @@ export function renderUsage(value: unknown): string {
         ${price.scenario ? `<p>Model: ${esc(scenario.model)} · ${esc(scenario.currency)} · rates dated ${esc(scenario.rate_date)}. Input: ${esc(scenario.input_price_per_million)} / million tokens; output: ${esc(scenario.output_price_per_million)} / million tokens. Cached input: ${esc(scenario.cached_input_treatment)} (${esc(scenario.cached_input_price_per_million)} / million). Context estimate assumes uncached input: ${esc(scenario.context_assumes_uncached)}.</p>${table(['Comparison', 'Requests', 'Estimated input-cost reduction', 'Lower assumption', 'Upper assumption'], costRows)}<h3>Supplied session cost equivalents</h3>${table(['Session type', 'Sessions', 'Uncached input cost', 'Cached input cost', 'Output cost', 'Input tokens with unknown cache split'], sessionCosts)}<h3>Matched-task cost differences</h3><p>Positive amounts mean lower cost with AIRK at these rates; negative amounts mean higher cost. Missing measurements are not priced. Review the task quality counts above before interpreting a reduction.</p>${table(['Pairs', 'Less uncached-input cost', 'Less cached-input cost', 'Less output cost', 'Quality counts'], pairedCosts)}` : '<p>No cost assumptions selected.</p>'}`;
     const operations = Object.entries(obj(report.operations)).slice(0, 64).map(([name, raw]) => { const s = obj(raw); return [name, s.calls, s.successful, s.empty, s.failed, s.truncated, s.returned_utf8_bytes, s.total_elapsed_us]; });
     const index = Object.entries(obj(report.operations)).filter(([name]) => ['index', 'reindex'].includes(name)).map(([name, raw]) => { const s = obj(obj(raw).index_work); return [name, s.indexed, s.reused, s.removed, s.processed_source_bytes, s.scan_extract_us, s.publish_us, s.disk_growth_bytes]; });
+    const embeddingLabels: Record<string, string> = {
+        extraction_workers_requested: 'Requested extraction workers',
+        extraction_worker_limit: 'Admitted extraction worker limit',
+        extraction_workers_spawned: 'Extraction workers started',
+        extraction_parallel_jobs: 'Parallel extraction jobs',
+        extraction_serial_jobs: 'Serial extraction jobs',
+        extraction_work_us: 'Summed extraction job time µs',
+        extraction_wait_us: 'Extraction result wait µs',
+        extraction_source_peak_bytes: 'Peak admitted source bytes per job',
+        extraction_coordinator_source_peak_bytes: 'Peak coordinator source bytes per job',
+        extraction_result_bound_bytes: 'Declared result limit bytes per job',
+
+        embedding_inputs: 'Embedding inputs', embedding_blank_inputs: 'Blank inputs skipped',
+        embedding_duplicate_inputs: 'Duplicate inputs reused', embedding_actual_forwards: 'Neural model executions',
+        embedding_tokenized_inputs: 'Tokenized cache miss inputs', embedding_input_tokens: 'Tokens before truncation',
+        embedding_embedded_tokens: 'Embedded tokens', embedding_padding_tokens: 'Padding slots',
+        embedding_truncated_inputs: 'Truncated inputs', embedding_plan_compilations: 'Compiled inference plans',
+        embedding_plan_compile_us: 'Plan compilation µs', embedding_cache_hits: 'Cached inputs',
+        vector_eligible_artifacts: 'Vector eligible files', vector_excluded_artifacts: 'Vector excluded files',
+        vector_reused_inputs: 'Exact inputs reused across units', vector_graph_nodes: 'Distinct graph nodes',
+        vector_registry_rows: 'Distinct inputs registered', vector_registry_bytes: 'Registry allocated bytes',
+        embedding_cache_file_opens: 'Cache file opens',
+        embedding_cache_read_bytes: 'Cache application read bytes',
+        embedding_cache_written_bytes: 'Cache application write bytes',
+        embedding_cache_record_verification_bytes: 'Cache record verification bytes',
+        embedding_cache_index_verification_bytes: 'Cache index verification bytes',
+        embedding_cache_full_pack_verification_bytes: 'Cache whole pack verification bytes',
+        embedding_cache_syncs: 'Cache sync calls',
+        embedding_cache_index_hits: 'Cache index reuse',
+        embedding_cache_index_peak_bytes: 'Cache peak index bytes',
+        embedding_cache_packs_written: 'Cache packs written',
+        embedding_cache_packs_reused: 'Cache packs reused',
+        embedding_cache_compacted_records: 'Cache records compacted',
+        embedding_cache_finalize_us: 'Cache finalization µs',
+        vector_units: 'Semantic inputs', vector_body_bytes: 'Semantic body bytes', vector_planning_us: 'Semantic input planning µs',
+        embedding_cache_misses: 'Cache miss inputs', embedding_model_load_us: 'Model loading µs',
+        embedding_cache_lookup_us: 'Cache lookup µs', embedding_cache_store_us: 'Cache persistence µs',
+        embedding_inference_us: 'Inference µs', vector_graph_insert_us: 'Graph insertion µs'
+    };
+    const embedding = Object.entries(obj(report.operations)).filter(([name]) => ['index', 'reindex'].includes(name)).flatMap(([name, raw]) => {
+        const metrics = obj(obj(obj(raw).index_work).metrics);
+        return Object.entries(embeddingLabels).map(([key, label]) => { const metric = obj(metrics[key]); return [name, label, measured(metric, 'value', 'samples'), metric.samples]; });
+    });
     const resources = obj(v.resources);
     const technical = `<details><summary>Measurement details for developers</summary>
         <p>Compared full-source bytes: ${esc(c.baseline_utf8_bytes)}. Returned bytes for those same requests: ${esc(c.returned_utf8_bytes)}. Missing baselines: ${esc(report.missing_baseline_calls)}; mismatched: ${esc(report.mismatched_baseline_calls)}; excluded calls: ${esc(report.excluded_from_estimation_calls)}. Estimates use four bytes per nominal token and two-to-six-byte sensitivity assumptions.</p>
         ${table(['Operation', 'Calls', 'Successful', 'Empty', 'Failed', 'Truncated', 'Response bytes', 'Total microseconds'], operations)}
         <h3>Indexing cost</h3>${table(['Operation', 'Changed files', 'Reused files', 'Removed files', 'Source bytes', 'Scan/extract µs', 'Publish µs', 'Disk growth bytes'], index)}<p>Reuse avoids extraction work; it does not prove avoided disk reads. Zero stage totals without samples are not measured durations; inspect JSON for sample counts.</p>
+        <h3>Extraction and embedding work</h3>${table(['Operation', 'Measurement', 'Total', 'Measured jobs'], embedding)}<p>Blank and duplicate inputs do not each require a neural model execution. Token counts cover executed cache misses and include special tokens. Semantic input planning includes boundary selection and token checks, excluding embedding, cache and graph work. Inference time includes worker scheduling and any plan compilation. Embedding phase timings are inside publication time; do not add them to publication time. Extraction job durations are summed across workers and overlap scan time and result waits; they are neither CPU time nor total elapsed time. Extraction byte peaks and declared result limits are per-job values summed here, not process memory measurements.</p>
         <h3>Process resources</h3>${table(['Counter', 'Total', 'Measured intervals'], Object.entries(obj(resources.counters)).map(([key, raw]) => [key, obj(raw).value, obj(raw).samples]))}<p>Peak process memory: ${esc(resources.peak_rss_bytes)} bytes. Overlapping intervals excluded: ${esc(resources.overlapped_intervals)}. Process counters may include background work; transfer bytes are not physical disk I/O.</p>
         <h3>Recording health</h3><p>History completeness: not certified. Missing observations across processes: ${esc(report.dropped_observations)}. Drops in this report process: ${esc(v.process_dropped_observations)}. Ledger size: ${esc(health.database_bytes)} bytes. Duplicate requests ignored: ${esc(health.duplicate_observations)}.</p>
         ${table(['Client', 'Recorded calls'], Object.entries(obj(report.clients)))}${table(['Content type', 'Recorded calls'], Object.entries(obj(report.content_kinds)))}

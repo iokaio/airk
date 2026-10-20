@@ -1,5 +1,8 @@
 # Historical storage revision 1
 
+> Historical 1.1 implementation record. AIRK 1.2 production uses the [single-current-index contract](current-index-runtime.md). Retained historical reads, checkpoint/retention administration and receipt-backed generations below are not current capabilities. Old primitive storage tests remain separate from production routing.
+
+
 D10 adds authenticated lightweight representations of exact committed revisions. History descriptor, binding, conversion intent and removal intent versions are 1. Root pointer/schema version 4 adds history bindings; readers explicitly accept versions 3 and 4. Reading version 3 does not migrate it. The first writer requiring the new table installs it atomically. Original publication receipts, revision tokens, inventory, lineage and manifest bytes are preserved.
 
 History packages retain original metadata and the explicit union of source/payload dependencies. They do not retain full-text/vector indexes or models. Exact `history_at` access pins the canonical generation lease before selection and verifies metadata and object binding. A missing full representation is treated as history only when a valid committed binding and package prove it; missing or corrupt dependencies fail closed.

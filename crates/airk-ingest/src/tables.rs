@@ -460,6 +460,7 @@ mod tests {
         Extracted {
             chunks: Vec::new(),
             facts: Vec::new(),
+            semantic_seeds: None,
             language: "docx".into(),
             method: "fixture".into(),
             parse_status: "fixture".into(),

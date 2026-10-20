@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Original deterministic O2b fixtures; no active publication chooses this writer.
+mod support;
 use airk_core::{
     Artifact, ArtifactSource, Chunk, DocumentLocation, SearchQuery, Snapshot,
     changes::{
@@ -169,7 +170,8 @@ fn inventory(
         embedding_pipeline_digest: None,
         index_detail: None,
         extraction_policy_digest: None,
-        version: 2,
+        version: 4,
+        vector_selection: Default::default(),
         incarnation,
         generation: source.generation,
         collection: source.collection.clone(),
@@ -178,9 +180,7 @@ fn inventory(
         lineage_digest: raw(&serde_json::to_vec(&lineage)?),
         profiles: BTreeMap::from([(id, profile)]),
         files,
-        retrieval_specification: String::from_utf8(
-            persistent::retrieval_specification_v2().to_vec(),
-        )?,
+        retrieval_specification: String::from_utf8(persistent::retrieval_specification().to_vec())?,
         embedding_model: None,
         extractor_version: source.extractor_version.clone(),
         analysis: None,
@@ -206,7 +206,7 @@ fn full(
 ) -> Result<PublicationReceipt> {
     let bytes = inventory.canonical_bytes()?;
     let projection = inventory.projection()?;
-    persistent::prepare_streaming_v2(
+    persistent::prepare_streaming(
         base,
         &V2Preparation {
             snapshot: &projection,
@@ -214,7 +214,9 @@ fn full(
             token,
         },
         None,
-        source,
+        &support::FixtureSource::new(source)?,
+        None,
+        None,
         None,
         None,
         |directory| {
@@ -225,6 +227,7 @@ fn full(
             fs::write(directory.join("lineage.json"), serde_json::to_vec(lineage)?)?;
             Ok(())
         },
+        |_| Ok(()),
     )
 }
 struct Counted<'a> {

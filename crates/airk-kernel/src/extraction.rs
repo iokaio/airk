@@ -29,39 +29,27 @@ pub(crate) fn policy_digest(policy: &ExtractionPolicy) -> Result<Sha256Digest> {
     ))
 }
 impl Kernel {
-    pub fn extraction_adapters() -> Vec<AdapterDescriptor> {
-        airk_ingest::adapters::registry::AdapterRegistry::baseline()
-            .descriptors()
-            .cloned()
-            .collect()
+    pub fn applied_index_detail(&self) -> Result<Option<airk_core::extraction::IndexDetail>> {
+        let Some(scope) = self.current_scope()? else {
+            return Ok(None);
+        };
+        Ok(self
+            .store
+            .current_read(&scope)?
+            .collection_state()?
+            .map(|state| state.configuration.index_detail))
     }
-    pub fn extraction_policy(&self) -> Result<ExtractionPolicyStatus> {
+    /// Rebuild reads saved policy without consulting obsolete derived catalogs.
+    pub(crate) fn rebuild_extraction_policy(&self) -> Result<ExtractionPolicyStatus> {
         let bytes = self.store.extraction_policy_bytes(&self.root_id())?;
         let registry = airk_ingest::adapters::registry::AdapterRegistry::baseline();
-        let catalog = self.store.catalog()?;
         let policy = match &bytes {
             Some(bytes) => ExtractionPolicy::parse(bytes, &registry)?,
-            None => {
-                let detail = catalog
-                    .as_ref()
-                    .map(|c| {
-                        c.inventory
-                            .as_ref()
-                            .and_then(|i| i.index_detail)
-                            .unwrap_or_default()
-                    })
-                    .unwrap_or(airk_core::extraction::IndexDetail::Balanced);
-                ExtractionPolicy {
-                    detail: (detail != airk_core::extraction::IndexDetail::Detailed)
-                        .then_some(detail),
-                    version: if detail == airk_core::extraction::IndexDetail::Detailed {
-                        1
-                    } else {
-                        3
-                    },
-                    rules: vec![],
-                }
-            }
+            None => ExtractionPolicy {
+                version: 3,
+                detail: Some(airk_core::extraction::IndexDetail::Balanced),
+                rules: vec![],
+            },
         };
         self.extraction_policy_status_with_catalog(
             policy,
@@ -70,15 +58,25 @@ impl Kernel {
             } else {
                 "default"
             },
-            catalog,
+            None,
         )
+    }
+
+    pub fn extraction_adapters() -> Vec<AdapterDescriptor> {
+        airk_ingest::adapters::registry::AdapterRegistry::baseline()
+            .descriptors()
+            .cloned()
+            .collect()
+    }
+    pub fn extraction_policy(&self) -> Result<ExtractionPolicyStatus> {
+        self.rebuild_extraction_policy()
     }
     fn extraction_policy_status(
         &self,
         policy: ExtractionPolicy,
         origin: &str,
     ) -> Result<ExtractionPolicyStatus> {
-        self.extraction_policy_status_with_catalog(policy, origin, self.store.catalog()?)
+        self.extraction_policy_status_with_catalog(policy, origin, None)
     }
     fn extraction_policy_status_with_catalog(
         &self,
@@ -88,30 +86,27 @@ impl Kernel {
     ) -> Result<ExtractionPolicyStatus> {
         let registry = airk_ingest::adapters::registry::AdapterRegistry::baseline();
         policy.validate(&registry)?;
-        if let Some(catalog) = &catalog {
-            anyhow::ensure!(
-                catalog.snapshot.root == self.root_id()
-                    && catalog.snapshot.collection == self.collection,
-                "foreign extraction policy collection"
-            );
-        }
-        let applied_digest = catalog
+        let _ = catalog;
+        let current = self
+            .current_scope()?
+            .map(|scope| self.store.current_read(&scope))
+            .transpose()?;
+        let state = current
             .as_ref()
-            .and_then(|catalog| catalog.inventory.as_ref())
-            .and_then(|inventory| inventory.extraction_policy_digest);
+            .map(|read| read.collection_state())
+            .transpose()?
+            .flatten();
+        let applied_digest = state
+            .as_ref()
+            .map(|s| s.configuration.extraction_policy_digest);
         let digest = policy_digest(&policy)?;
-        let publication = catalog
+        let publication = current
             .as_ref()
-            .and_then(|catalog| catalog.receipt.as_ref())
-            .map(|receipt| receipt.token);
+            .map(|r| r.token().map(crate::current::runtime::revision))
+            .transpose()?;
         Ok(ExtractionPolicyStatus {
             configured_detail: policy.detail.unwrap_or_default(),
-            published_detail: catalog.as_ref().map(|c| {
-                c.inventory
-                    .as_ref()
-                    .and_then(|i| i.index_detail)
-                    .unwrap_or_default()
-            }),
+            published_detail: state.as_ref().map(|s| s.configuration.index_detail),
             policy,
             digest,
             origin: origin.into(),

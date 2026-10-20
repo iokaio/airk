@@ -27,6 +27,7 @@ fn profile() -> ExtractionProfile {
 fn payload(text: &str) -> ExtractionPayload {
     ExtractionPayload {
         continuity_coverage: BTreeMap::new(),
+        semantic_projection: Default::default(),
         contract_version: 2,
         extraction_method: "utf8".into(),
         parse_status: "fixture".into(),
@@ -72,6 +73,67 @@ fn verbatim(id: u32, parent: Option<u32>, local: &str, start: usize) -> LocalReg
 }
 fn budget() -> HostBudget {
     HostBudget::new(500_000, 10_000, 16_777_216).unwrap()
+}
+
+#[test]
+fn semantic_members_render_nested_original_coordinates() -> Result<()> {
+    use airk_core::{
+        RetrievalArtifact,
+        extraction::LocalChunk,
+        vector_evidence::{VectorMemberSpan, materialize},
+    };
+    let mut value = payload("before\n([αβ])\nafter");
+    value.regions.push(verbatim(1, None, "[αβ]", 8));
+    value.regions.push(verbatim(2, Some(1), "αβ", 1));
+    let location = DocumentLocation::Mapped {
+        region: value.regions[1].location.clone(),
+    };
+    value.chunks.push(LocalChunk {
+        span: LocalSpan { start: 0, end: 4 },
+        start_line: 1,
+        end_line: 1,
+        location,
+        region: Some(2),
+    });
+    let artifact = bind_payload(
+        &value,
+        &profile(),
+        ArtifactBinding {
+            path: "example.md",
+            source_hash: Sha256Digest::from_bytes([8; 32]),
+            source_bytes: value.text.len(),
+        },
+        &mut budget(),
+    )?;
+    let retained = RetrievalArtifact {
+        artifact,
+        profile: profile(),
+        payload: value,
+        payload_digest: Sha256Digest::from_bytes([9; 32]),
+    };
+    let hit = materialize(
+        &retained,
+        &[VectorMemberSpan {
+            chunk_index: 0,
+            span: LocalSpan { start: 2, end: 4 },
+        }],
+    )?;
+    assert_eq!(hit.text, "β");
+    assert_eq!((hit.citation.start_line, hit.citation.end_line), (2, 2));
+    let DocumentLocation::Mapped {
+        region:
+            RegionLocation::Embedded {
+                original_spans,
+                local_span,
+                ..
+            },
+    } = hit.citation.location
+    else {
+        panic!("mapped citation required")
+    };
+    assert_eq!(local_span, ByteSpan { start: 2, end: 4 });
+    assert_eq!(original_spans, vec![ByteSpan { start: 11, end: 13 }]);
+    Ok(())
 }
 
 #[test]

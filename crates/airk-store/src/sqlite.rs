@@ -298,6 +298,7 @@ fn read_transaction(directory: &Path) -> Result<PinnedConnection> {
 }
 
 fn read_transaction_once(directory: &Path) -> Result<PinnedConnection> {
+    crate::reset::ensure_ready(directory)?;
     for _ in 0..3 {
         let conn = connect_root_once(directory, false)?;
         conn.execute_batch("BEGIN DEFERRED")?;
@@ -1380,7 +1381,7 @@ mod tests {
     #[test]
     fn catalog_quota_accounts_for_repeated_long_citations_without_json_multiplier() -> Result<()> {
         let root = tempfile::tempdir()?;
-        let directory = root.path().join("collections/default");
+        let directory = root.path().join("collections-1.2/default");
         let store = FileStore::new(&directory);
         let _writer = store.lock()?;
         let previous = Snapshot::empty("fixture".into());
@@ -1535,7 +1536,7 @@ mod tests {
     #[test]
     fn pointer_quota_reserves_checkpoint_growth_of_wal_only_legacy_pages() -> Result<()> {
         let root = tempfile::tempdir()?;
-        let directory = root.path().join("collections/default");
+        let directory = root.path().join("collections-1.2/default");
         let store = FileStore::new(&directory);
         let mut snapshot = Snapshot::empty("fixture".into());
         store.save(&snapshot)?;

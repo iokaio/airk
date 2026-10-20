@@ -581,7 +581,7 @@ impl AdapterRegistry {
                         "native-facts/7"
                     }
                     .to_owned()
-                        + "/sizing-1",
+                        + "/sizing-1/detail-2",
                     language: id.into(),
                     dialect: match id {
                         "sql-postgresql" => Some("postgresql".into()),
@@ -590,7 +590,7 @@ impl AdapterRegistry {
                     },
                     grammar_identity: grammar.map(|g| format!("tree-sitter/0.25.10:{g}")),
                     mapping_version: 1,
-                    chunk_version: 2,
+                    chunk_version: 3,
                     options: BTreeMap::new(),
                     configuration_inputs: BTreeMap::new(),
                 },

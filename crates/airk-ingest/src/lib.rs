@@ -19,6 +19,9 @@ mod compose;
 mod composite;
 pub mod continuity;
 mod detail;
+mod extraction_jobs;
+mod extraction_pool;
+pub use extraction_pool::ExtractionExecution;
 pub mod header_context;
 mod host_components;
 mod host_html;
@@ -37,6 +40,7 @@ mod razor;
 mod repository_binding;
 mod repository_syntax;
 mod scss;
+mod semantic_projection;
 mod source_read;
 mod specialist_business;
 mod specialist_gpu;
@@ -132,8 +136,38 @@ mod spreadsheets;
 pub mod syntax;
 mod tables;
 
+#[derive(Clone, Default, Debug, Serialize, Deserialize)]
+pub struct CurrentIndexWork {
+    pub changed_artifacts: usize,
+    pub lexical_documents: u64,
+    pub graph_records: u64,
+    pub graph_read_bytes: u64,
+    /// Verified base-record fetches; repeated visits may be served by an
+    /// update-local authenticated proof cache.
+    pub graph_base_record_reads: u64,
+    pub graph_proof_cache_hits: u64,
+    pub graph_proof_cache_evictions: u64,
+    pub linked_lexical_bytes: u64,
+}
+
 #[derive(Default, Debug, Serialize, Deserialize)]
 pub struct IndexReport {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_vector_us: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution: Option<airk_core::execution::ExecutionPlan>,
+    /// Elapsed from index admission until committed lexical/fact evidence is readable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_ready_us: Option<u64>,
+    /// Elapsed until selected semantic work is fully committed in this invocation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fully_ready_us: Option<u64>,
+    /// Changed-path work from the current runtime; logical counts, not physical I/O.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current: Option<CurrentIndexWork>,
+    /// Cleanup failure after a successful publication does not undo that publication.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub maintenance_error: Option<String>,
     /// Selection warnings do not imply that an eligible file was skipped.
     #[serde(default)]
     pub selection_diagnostics: Vec<SkippedFile>,
@@ -142,11 +176,85 @@ pub struct IndexReport {
     #[serde(default)]
     pub embedding_cache_hits: u64,
     #[serde(default)]
+    pub embedding_cache_finalize_us: u64,
+    #[serde(default)]
+    pub embedding_cache_file_opens: u64,
+    #[serde(default)]
+    pub embedding_cache_read_bytes: u64,
+    #[serde(default)]
+    pub embedding_cache_written_bytes: u64,
+    #[serde(default)]
+    pub embedding_cache_record_verification_bytes: u64,
+    #[serde(default)]
+    pub embedding_cache_index_verification_bytes: u64,
+    #[serde(default)]
+    pub embedding_cache_full_pack_verification_bytes: u64,
+    #[serde(default)]
+    pub embedding_cache_syncs: u64,
+    #[serde(default)]
+    pub embedding_cache_index_hits: u64,
+    #[serde(default)]
+    pub embedding_cache_index_peak_bytes: u64,
+    #[serde(default)]
+    pub embedding_cache_packs_written: u64,
+    #[serde(default)]
+    pub embedding_cache_packs_reused: u64,
+    #[serde(default)]
+    pub embedding_cache_compacted_records: u64,
+
+    #[serde(default)]
     pub embedding_cache_misses: u64,
     #[serde(default)]
     pub embedding_inferences: u64,
     #[serde(default)]
     pub embedding_no_vector: u64,
+    /// Inputs presented to the embedding adapter, including cache hits and blanks.
+    #[serde(default)]
+    pub embedding_inputs: u64,
+    #[serde(default)]
+    pub embedding_blank_inputs: u64,
+    #[serde(default)]
+    pub embedding_duplicate_inputs: u64,
+    /// Actual neural plan executions; static word-vector lookups do not count.
+    #[serde(default)]
+    pub embedding_actual_forwards: u64,
+    #[serde(default)]
+    pub embedding_tokenized_inputs: u64,
+    /// Tokens include processor specials and apply only to executed cache misses.
+    #[serde(default)]
+    pub embedding_input_tokens: u64,
+    #[serde(default)]
+    pub embedding_embedded_tokens: u64,
+    #[serde(default)]
+    pub embedding_padding_tokens: u64,
+    #[serde(default)]
+    pub embedding_truncated_inputs: u64,
+    #[serde(default)]
+    pub embedding_plan_compilations: u64,
+    #[serde(default)]
+    pub embedding_plan_compile_us: u64,
+    /// Peak declared allocation charged to the bounded plan cache, not process RSS.
+    #[serde(default)]
+    pub embedding_plan_cache_peak_bytes: u64,
+    #[serde(default)]
+    pub vector_eligible_artifacts: u64,
+    #[serde(default)]
+    pub vector_excluded_artifacts: u64,
+    #[serde(default)]
+    pub vector_reused_inputs: u64,
+    #[serde(default)]
+    pub vector_graph_nodes: u64,
+    #[serde(default)]
+    pub vector_registry_rows: u64,
+    #[serde(default)]
+    pub vector_registry_bytes: u64,
+    #[serde(default)]
+    pub vector_units: u64,
+    #[serde(default)]
+    pub vector_body_bytes: u64,
+    /// Semantic planning only; excludes embedding/cache/graph visitor time.
+    #[serde(default)]
+    pub vector_planning_us: u64,
     #[serde(default)]
     pub embedding_model_load_us: u64,
     #[serde(default)]
@@ -161,6 +269,30 @@ pub struct IndexReport {
     pub embedding_workers: usize,
     #[serde(default)]
     pub embedding_batches: u64,
+    #[serde(default)]
+    pub extraction_workers_requested: usize,
+    #[serde(default)]
+    pub extraction_worker_limit: usize,
+    #[serde(default)]
+    pub extraction_workers_spawned: usize,
+    #[serde(default)]
+    pub extraction_parallel_jobs: u64,
+    #[serde(default)]
+    pub extraction_serial_jobs: u64,
+    /// Summed extraction job wall time, including overlapping jobs; not CPU time.
+    #[serde(default)]
+    pub extraction_work_us: u64,
+    #[serde(default)]
+    pub extraction_wait_us: u64,
+    /// Source bytes retained by admitted unfinished/completed jobs.
+    #[serde(default)]
+    pub extraction_source_peak_bytes: u64,
+    /// One captured source held outside job admission while the batch drains.
+    #[serde(default)]
+    pub extraction_coordinator_source_peak_bytes: u64,
+    /// Declared completed serialized payload capacity; not an object/RSS bound.
+    #[serde(default)]
+    pub extraction_result_bound_bytes: u64,
     #[serde(default)]
     pub scan_extract_us: u64,
     #[serde(default)]
@@ -360,6 +492,7 @@ fn scan_streaming_profiled(
         limits,
         policy,
         full_reindex,
+        ExtractionExecution::default(),
         |request| {
             Ok(
                 lookup(request.path, request.source_hash, request.profile)?.map(|artifact| {
@@ -403,6 +536,7 @@ pub fn scan_observed_v2_with_budgets(
         limits,
         policy,
         full_reindex,
+        ExtractionExecution::default(),
         lookup,
         |profile, artifact, bytes, _| emit(profile, artifact, bytes),
     )
@@ -436,6 +570,42 @@ pub fn scan_payloads_with_budgets(
         limits,
         policy,
         full_reindex,
+        ExtractionExecution::default(),
+        lookup,
+        emit,
+    )
+}
+
+/// Parallelize only bounded pure cache misses; reads, reuse and retention stay ordered.
+#[allow(clippy::too_many_arguments)]
+pub fn scan_payloads_with_execution(
+    root: &Path,
+    data_dir: &Path,
+    previous: &Snapshot,
+    roots: &BTreeMap<String, String>,
+    limits: ScanLimits,
+    policy: &adapters::profile::ExtractionPolicy,
+    full_reindex: bool,
+    execution: ExtractionExecution,
+    lookup: impl FnMut(observations::ReuseRequest<'_>) -> Result<Option<observations::VerifiedReuse>>,
+    emit: impl FnMut(
+        &airk_core::extraction::ExtractionProfile,
+        &Artifact,
+        &[u8],
+        Option<&airk_core::extraction::ExtractionPayload>,
+    ) -> Result<Artifact>,
+) -> Result<(Snapshot, IndexReport, observations::ScanObservation)> {
+    limits.validate()?;
+    execution.validate()?;
+    scan_observed_profiled(
+        root,
+        data_dir,
+        previous,
+        roots,
+        limits,
+        policy,
+        full_reindex,
+        execution,
         lookup,
         emit,
     )
@@ -450,10 +620,11 @@ fn scan_observed_profiled(
     limits: ScanLimits,
     policy: &adapters::profile::ExtractionPolicy,
     full_reindex: bool,
+    execution: ExtractionExecution,
     mut lookup: impl FnMut(
         observations::ReuseRequest<'_>,
     ) -> Result<Option<observations::VerifiedReuse>>,
-    mut emit: impl FnMut(
+    emit: impl FnMut(
         &airk_core::extraction::ExtractionProfile,
         &Artifact,
         &[u8],
@@ -474,9 +645,12 @@ fn scan_observed_profiled(
         collection: previous.collection.clone(),
         ..Default::default()
     };
-    let mut artifacts = BTreeMap::new();
-    let mut total_bytes = 0usize;
-    let mut extracted_bytes = 0usize;
+    let mut sink = extraction_jobs::ScanSink::new(previous, limits, emit);
+    let mut pool = extraction_pool::OrderedPool::new(execution, extraction_jobs::extract)?;
+    report.extraction_workers_requested = execution.workers;
+    report.extraction_worker_limit = execution.workers;
+    report.extraction_result_bound_bytes =
+        (execution.workers * airk_core::extraction::MAX_PAYLOAD_BYTES) as u64;
     let mut read_bytes = 0usize;
     let mut sources = vec![(String::new(), root.clone())];
     for (alias, value) in roots {
@@ -505,168 +679,181 @@ fn scan_observed_profiled(
     let walker = sources.iter().flat_map(|(prefix, source)| {
         discovery(source, &data_dir).map(move |entry| (prefix, source, entry))
     });
-    for (prefix, source, entry) in walker {
-        ensure!(
-            observation.usage.charged_entries() < limits.discovery_entries,
-            "workspace discovery entry budget exhausted; previous generation retained"
-        );
-        observation.usage.discovery_entries += 1;
-        let entry = entry.context("workspace discovery failed; previous generation retained")?;
-        let Some(kind) = entry.file_type() else {
-            continue;
-        };
-        if !kind.is_file() {
-            continue;
-        }
-        let path = entry
-            .path()
-            .strip_prefix(source)?
-            .to_str()
-            .context("non-UTF-8 source path is unsupported")?
-            .replace('\\', "/");
-        let path = format!("{prefix}{path}");
-        if path.len() > 4096 {
-            report.skip(SkippedFile {
-                path,
-                reason: "path exceeds 4096 bytes".into(),
-            });
-            continue;
-        }
-        // Exclusions still consume discovery budget, but known oversized files
-        // need no source read. Recheck identity/size inside the bounded reader.
-        let source_size = entry.path().symlink_metadata()?.len();
-        if source_size > limits.file_bytes as u64 {
-            if previous.artifacts.contains_key(&path) {
-                observation
-                    .disappeared
-                    .insert(path.clone(), DisappearanceCause::Oversized);
-            }
-            report.skip(SkippedFile {
-                path,
-                reason: format!("file exceeds {} byte configured limit", limits.file_bytes),
-            });
-            continue;
-        }
-        let remaining = limits.read_bytes.saturating_sub(read_bytes);
-        ensure!(
-            captured_sources.contains_key(&path) || source_size <= remaining as u64,
-            "workspace raw source read budget exhausted; previous generation retained"
-        );
-        let bytes = if let Some(bytes) = captured_sources.get(&path) {
-            bytes.clone()
-        } else {
-            let bytes = read_source_with_budget(source, entry.path(), remaining)?;
-            read_bytes += bytes.len();
-            bytes
-        };
-        observation.usage.source_read_bytes = read_bytes;
-        if bytes.len() > limits.file_bytes {
-            if previous.artifacts.contains_key(&path) {
-                observation
-                    .disappeared
-                    .insert(path.clone(), DisappearanceCause::Oversized);
-            }
-            report.skip(SkippedFile {
-                path,
-                reason: format!("file exceeds {} byte configured limit", limits.file_bytes),
-            });
-            continue;
-        }
-        let content_hash = format!("{:x}", Sha256::digest(&bytes));
-        let hash = content_hash.parse::<airk_core::identity::Sha256Digest>()?;
-        let selection = policy.select_in_root_captured(
-            &registry,
-            &path,
-            path.strip_prefix(prefix.as_str()).unwrap_or(&path),
-            &bytes,
-            &captured_context,
-        )?;
-        let mut profile = selection.profile;
-        // A deliberate OCR operation is retained for unchanged source bytes.
-        // Explicit policy overrides and full rebuilds select native extraction.
-        if !full_reindex
-            && !matches!(
-                selection.basis.as_str(),
-                "exact_override" | "scoped_override"
-            )
-            && let Some(old) = previous
-                .artifacts
-                .get(&path)
-                .filter(|old| old.content_hash == content_hash && old.language == "ocr")
-        {
-            profile = match old
-                .retained
-                .as_ref()
-                .and_then(|reference| reference.profile.as_ref())
-            {
-                Some(profile) => profile.clone(),
-                None => adapters::legacy::legacy_profile(old)?,
-            };
-        }
-        match policy.detail.unwrap_or_default() {
-            airk_core::extraction::IndexDetail::Detailed => {
-                profile.options.remove("index_detail");
-            }
-            detail => {
-                profile
-                    .options
-                    .insert("index_detail".into(), detail.as_str().into());
-            }
-        }
-        profile.identity()?;
-        if !selection.ambiguity.is_empty() {
-            let mut reason = format!(
-                "Ambiguous selection; selected adapter {}: {}",
-                profile.adapter_id,
-                selection
-                    .ambiguity
-                    .iter()
-                    .take(8)
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join("; ")
+    let scanned = (|| -> Result<()> {
+        for (prefix, source, entry) in walker {
+            ensure!(
+                observation.usage.charged_entries() < limits.discovery_entries,
+                "workspace discovery entry budget exhausted; previous generation retained"
             );
-            let mut end = reason.len().min(4096);
-            while !reason.is_char_boundary(end) {
-                end -= 1;
+            observation.usage.discovery_entries += 1;
+            let entry =
+                entry.context("workspace discovery failed; previous generation retained")?;
+            let Some(kind) = entry.file_type() else {
+                continue;
+            };
+            if !kind.is_file() {
+                continue;
             }
-            reason.truncate(end);
-            if report.selection_diagnostics.len() < 1000 {
-                report.selection_diagnostics.push(SkippedFile {
-                    path: path.clone(),
-                    reason,
+            let path = entry
+                .path()
+                .strip_prefix(source)?
+                .to_str()
+                .context("non-UTF-8 source path is unsupported")?
+                .replace('\\', "/");
+            let path = format!("{prefix}{path}");
+            if path.len() > 4096 {
+                sink.drain(&mut pool, &mut report, &mut observation)?;
+                report.skip(SkippedFile {
+                    path,
+                    reason: "path exceeds 4096 bytes".into(),
                 });
-            } else {
-                report.selection_diagnostics_truncated += 1;
+                continue;
             }
-        }
-        let cached = if full_reindex {
-            None
-        } else {
-            lookup(observations::ReuseRequest {
-                path: &path,
-                canonical_root: source.to_str().context("non-UTF-8 source root")?,
-                source_hash: &hash,
-                source_bytes: bytes.len(),
-                profile: &profile,
-            })?
-        };
-        let mut fresh_payload = None;
-        let artifact = match cached {
-            Some(reused) => {
+            // Exclusions still consume discovery budget, but known oversized files
+            // need no source read. Recheck identity/size inside the bounded reader.
+            let source_size = entry.path().symlink_metadata()?.len();
+            if source_size > limits.file_bytes as u64 {
+                if previous.artifacts.contains_key(&path) {
+                    observation
+                        .disappeared
+                        .insert(path.clone(), DisappearanceCause::Oversized);
+                }
+                sink.drain(&mut pool, &mut report, &mut observation)?;
+                report.skip(SkippedFile {
+                    path,
+                    reason: format!("file exceeds {} byte configured limit", limits.file_bytes),
+                });
+                continue;
+            }
+            let remaining = limits.read_bytes.saturating_sub(read_bytes);
+            ensure!(
+                captured_sources.contains_key(&path) || source_size <= remaining as u64,
+                "workspace raw source read budget exhausted; previous generation retained"
+            );
+            let bytes = if let Some(bytes) = captured_sources.get(&path) {
+                bytes.clone()
+            } else {
+                let bytes = read_source_with_budget(source, entry.path(), remaining)?;
+                read_bytes += bytes.len();
+                bytes
+            };
+            observation.usage.source_read_bytes = read_bytes;
+            report.extraction_coordinator_source_peak_bytes = report
+                .extraction_coordinator_source_peak_bytes
+                .max(bytes.len() as u64);
+            if bytes.len() > limits.file_bytes {
+                if previous.artifacts.contains_key(&path) {
+                    observation
+                        .disappeared
+                        .insert(path.clone(), DisappearanceCause::Oversized);
+                }
+                sink.drain(&mut pool, &mut report, &mut observation)?;
+                report.skip(SkippedFile {
+                    path,
+                    reason: format!("file exceeds {} byte configured limit", limits.file_bytes),
+                });
+                continue;
+            }
+            let content_hash = format!("{:x}", Sha256::digest(&bytes));
+            let hash = content_hash.parse::<airk_core::identity::Sha256Digest>()?;
+            let selection = policy.select_in_root_captured(
+                &registry,
+                &path,
+                path.strip_prefix(prefix.as_str()).unwrap_or(&path),
+                &bytes,
+                &captured_context,
+            )?;
+            let mut profile = selection.profile;
+            // A deliberate OCR operation is retained for unchanged source bytes.
+            // Explicit policy overrides and full rebuilds select native extraction.
+            if !full_reindex
+                && !matches!(
+                    selection.basis.as_str(),
+                    "exact_override" | "scoped_override"
+                )
+                && let Some(old) = previous
+                    .artifacts
+                    .get(&path)
+                    .filter(|old| old.content_hash == content_hash && old.language == "ocr")
+            {
+                profile = match old
+                    .retained
+                    .as_ref()
+                    .and_then(|reference| reference.profile.as_ref())
+                {
+                    Some(profile) => profile.clone(),
+                    None => adapters::legacy::legacy_profile(old)?,
+                };
+            }
+            match policy.detail.unwrap_or_default() {
+                airk_core::extraction::IndexDetail::Detailed => {
+                    profile.options.remove("index_detail");
+                }
+                detail => {
+                    profile
+                        .options
+                        .insert("index_detail".into(), detail.as_str().into());
+                }
+            }
+            profile.identity()?;
+            if !selection.ambiguity.is_empty() {
+                let mut reason = format!(
+                    "Ambiguous selection; selected adapter {}: {}",
+                    profile.adapter_id,
+                    selection
+                        .ambiguity
+                        .iter()
+                        .take(8)
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                );
+                let mut end = reason.len().min(4096);
+                while !reason.is_char_boundary(end) {
+                    end -= 1;
+                }
+                reason.truncate(end);
+                if report.selection_diagnostics.len() < 1000 {
+                    report.selection_diagnostics.push(SkippedFile {
+                        path: path.clone(),
+                        reason,
+                    });
+                } else {
+                    report.selection_diagnostics_truncated += 1;
+                }
+            }
+            let cached = if full_reindex {
+                None
+            } else {
+                lookup(observations::ReuseRequest {
+                    path: &path,
+                    canonical_root: source.to_str().context("non-UTF-8 source root")?,
+                    source_hash: &hash,
+                    source_bytes: bytes.len(),
+                    profile: &profile,
+                })?
+            };
+            let captured = extraction_jobs::CapturedExtraction {
+                path,
+                hash,
+                bytes,
+                profile,
+            };
+            if let Some(reused) = cached {
+                sink.drain(&mut pool, &mut report, &mut observation)?;
                 let old = reused.artifact;
                 ensure!(
-                    old.path == path
+                    old.path == captured.path
                         && old.content_hash == content_hash
-                        && old.bytes == bytes.len()
-                        && old.language == profile.language,
+                        && old.bytes == captured.bytes.len()
+                        && old.language == captured.profile.language,
                     "cache returned incompatible artifact binding"
                 );
                 ensure!(
                     old.retained
                         .as_ref()
                         .and_then(|reference| reference.profile.as_ref())
-                        .is_none_or(|cached_profile| cached_profile == &profile),
+                        .is_none_or(|cached_profile| cached_profile == &captured.profile),
                     "cache returned incompatible extraction profile"
                 );
                 report.reused += 1;
@@ -674,109 +861,46 @@ fn scan_observed_profiled(
                     ReuseBasis::SamePath => observation.usage.same_path_hits += 1,
                     ReuseBasis::PriorContent => observation.usage.prior_content_hits += 1,
                 }
-                old
-            }
-            _ => {
+                sink.retain(&captured, &old, None)?;
+            } else {
                 ensure!(
-                    profile.language != "ocr",
+                    captured.profile.language != "ocr",
                     "retained OCR payload unavailable at the selected detail; run a full reindex to apply native extraction, then explicitly rerun OCR for affected files"
                 );
                 observation.usage.parser_calls += 1;
-                let extracted = match (|| -> Result<documents::Extracted> {
-                    if let Some(extracted) = documents::large_text(&bytes, &profile)? {
-                        return Ok(extracted);
-                    }
-                    if composite::is_host(&profile.adapter_id) {
-                        let payload = composite::extract(&path, &bytes, &profile)?;
-                        let bound = airk_core::binding::bind_payload(
-                            &payload,
-                            &profile,
-                            airk_core::binding::ArtifactBinding {
-                                path: &path,
-                                source_hash: hash,
-                                source_bytes: bytes.len(),
-                            },
-                        )?;
-                        fresh_payload = Some(payload);
-                        return Ok(documents::Extracted {
-                            chunks: bound.chunks,
-                            facts: bound.facts,
-                            language: bound.language,
-                            method: bound.extraction_method,
-                            parse_status: bound.parse_status,
-                        });
-                    }
-                    documents::extract_selected(&path, &bytes, &profile)
-                })() {
-                    Ok(extracted) => extracted,
-                    Err(error) => {
-                        if error.is::<pdf_worker::CapacityFailure>() {
-                            return Err(error);
-                        }
-                        if previous.artifacts.contains_key(&path) {
-                            let unsupported = !matches!(
-                                profile.adapter_id.as_str(),
-                                "pdf" | "docx" | "xlsx" | "pptx"
-                            ) && (std::str::from_utf8(&bytes).is_err()
-                                || bytes.contains(&0));
-                            observation.disappeared.insert(
-                                path.clone(),
-                                if unsupported {
-                                    DisappearanceCause::Unsupported
-                                } else {
-                                    DisappearanceCause::ExtractionFailed
-                                },
-                            );
-                        }
-                        report.skip(SkippedFile {
-                            path,
-                            reason: error.to_string(),
-                        });
-                        continue;
-                    }
-                };
-                report.indexed += 1;
-                Artifact {
-                    path: path.clone(),
-                    content_hash: content_hash.clone(),
-                    bytes: bytes.len(),
-                    chunks: extracted.chunks,
-                    language: extracted.language,
-                    extraction_method: extracted.method,
-                    parse_status: extracted.parse_status,
-                    facts: extracted.facts,
-                    retained: None,
+                let parallel = execution.workers > 1
+                    && captured.parallel_eligible()
+                    && captured.bytes.len() <= execution.max_in_flight_source_bytes;
+                if !parallel || !pool.can_admit(captured.bytes.len()) {
+                    sink.drain(&mut pool, &mut report, &mut observation)?;
+                }
+                if parallel {
+                    let bytes = captured.bytes.len();
+                    pool.push(captured, bytes)?;
+                    report.extraction_parallel_jobs += 1;
+                } else {
+                    report.extraction_serial_jobs += 1;
+                    sink.finish(
+                        extraction_pool::execute(captured, extraction_jobs::extract),
+                        &mut report,
+                        &mut observation,
+                    )?;
                 }
             }
-        };
-        // Unsupported binary sources do not consume eligible corpus capacity.
-        total_bytes += bytes.len();
-        extracted_bytes = extracted_bytes
-            .checked_add(artifact.extracted_bytes())
-            .context("extracted corpus byte count overflow")?;
-        ensure!(
-            extracted_bytes <= limits.extracted_bytes,
-            "extracted corpus exceeds configured byte limit: {extracted_bytes} > {} bytes at {path}; previous generation retained. Inspect AIRK ingestion limits or run `airk collections limits describe`",
-            limits.extracted_bytes
-        );
-        ensure!(
-            total_bytes <= limits.corpus_bytes,
-            "corpus exceeds configured byte limit: {total_bytes} > {} eligible source bytes at {path}; previous generation retained. Inspect AIRK ingestion limits or run `airk collections limits describe`",
-            limits.corpus_bytes
-        );
-        ensure!(
-            artifacts.len() < limits.files,
-            "corpus exceeds configured file count: {} > {} at {path}; previous generation retained",
-            artifacts.len() + 1,
-            limits.files
-        );
-        let artifact = emit(&profile, &artifact, &bytes, fresh_payload.as_ref())?;
-        ensure!(
-            artifact.path == path && artifact.content_hash == content_hash,
-            "retention changed artifact identity"
-        );
-        artifacts.insert(path, artifact);
+        }
+        Ok(())
+    })();
+    // Earlier source-order failures take precedence over a later discovery/read
+    // error. Drop closes channels and joins all workers on either failure path.
+    if !sink.failed {
+        sink.drain(&mut pool, &mut report, &mut observation)?;
     }
+    scanned?;
+    report.extraction_workers_spawned = pool.workers_spawned();
+    report.extraction_source_peak_bytes = pool.source_peak_bytes as u64;
+    report.extraction_wait_us = pool.wait_us;
+    let total_bytes = sink.source_bytes;
+    let artifacts = sink.artifacts;
     report.removed = previous
         .artifacts
         .keys()

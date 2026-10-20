@@ -44,10 +44,11 @@ fn inventory(generation: u64, files: &[(&str, &str)]) -> Result<InventoryV2> {
         .clone();
     let profile_id = profile.identity()?;
     let mut inventory = InventoryV2 {
+        vector_selection: Default::default(),
         embedding_pipeline_digest: None,
         index_detail: None,
         extraction_policy_digest: None,
-        version: 2,
+        version: airk_core::publication::INVENTORY_VERSION,
         incarnation: Incarnation::from_bytes([1; 16]),
         generation,
         collection: "default".into(),

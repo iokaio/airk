@@ -3,7 +3,7 @@
 use crate::Kernel;
 use airk_core::usage::{ClientFamily, ResponseRepresentation, UsageOperation};
 use airk_ingest::IndexReport;
-use airk_store::scheduler::{Queue, ScheduledJob};
+use airk_store::scheduler::{Queue, ScheduledJob, WorkerLock};
 use anyhow::{Context, Result, bail, ensure};
 use serde::Serialize;
 use std::{
@@ -36,14 +36,83 @@ fn now() -> Result<u64> {
     )?)
 }
 
+#[derive(Debug)]
+pub(crate) struct ScanPaused;
+impl std::fmt::Display for ScanPaused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("scan paused; committed batches remain available")
+    }
+}
+impl std::error::Error for ScanPaused {}
+
 impl Kernel {
+    fn continue_semantic(
+        &self,
+        queue: &Queue,
+        worker: &WorkerLock,
+        jobs: &[ScheduledJob],
+    ) -> Result<Option<RunOutcome>> {
+        use airk_core::readiness::SemanticState;
+        for job in jobs.iter().filter(|job| !job.paused && !job.blocked) {
+            let kernel =
+                Kernel::open_collection(&job.root, Some(self.data_root.clone()), &job.collection)?;
+            let Ok(status) = kernel.status() else {
+                continue;
+            };
+            if !matches!(
+                status.semantic_readiness.state,
+                SemanticState::Pending | SemanticState::Partial | SemanticState::Failed
+            ) {
+                continue;
+            }
+            return Ok(Some(match kernel.resume_current_enrichment_batches(1) {
+                Ok(generation) => RunOutcome {
+                    state: "enriched",
+                    collection: Some(job.collection.clone()),
+                    revision: generation,
+                    report: None,
+                    error: None,
+                    maintenance: None,
+                },
+                Err(error)
+                    if matches!(
+                        error.downcast_ref::<std::fs::TryLockError>(),
+                        Some(std::fs::TryLockError::WouldBlock)
+                    ) =>
+                {
+                    RunOutcome {
+                        state: "busy",
+                        collection: Some(job.collection.clone()),
+                        revision: None,
+                        report: None,
+                        error: None,
+                        maintenance: None,
+                    }
+                }
+                Err(error) => {
+                    let message: String = format!("{error:#}").chars().take(4096).collect();
+                    queue.block_semantic(worker, job, &message)?;
+                    RunOutcome {
+                        state: "semantic_failed",
+                        collection: Some(job.collection.clone()),
+                        revision: None,
+                        report: None,
+                        error: Some(message),
+                        maintenance: None,
+                    }
+                }
+            }));
+        }
+        Ok(None)
+    }
+
     fn queue(&self) -> Result<Queue> {
         std::fs::create_dir_all(&self.data_root)?;
         ensure!(
             !self.root.starts_with(self.data_root.canonicalize()?),
             "data directory must not contain the workspace root"
         );
-        if self.persistent_revision()?.is_none() {
+        if self.current_scope()?.is_none() {
             self.load_optional()?;
         }
         Ok(Queue::new(&self.data_root))
@@ -165,6 +234,9 @@ impl Kernel {
             });
         };
         let Some(job) = queue.claim(&worker, now()?)? else {
+            if let Some(outcome) = self.continue_semantic(&queue, &worker, &queue.list()?)? {
+                return Ok(outcome);
+            }
             match self.continue_retention(&queue.list()?) {
                 Ok(Some((collection, maintenance))) => {
                     return Ok(RunOutcome {
@@ -199,7 +271,8 @@ impl Kernel {
         };
         let result =
             Kernel::open_collection(&job.root, Some(queue.data_dir().into()), &job.collection)
-                .and_then(|kernel| {
+                .and_then(|mut kernel| {
+                    kernel.progress = self.progress.clone();
                     ensure!(
                         kernel.root_id() == job.root,
                         "registered workspace root identity changed"
@@ -212,11 +285,7 @@ impl Kernel {
                         },
                         ClientFamily::NativeScheduler,
                     );
-                    let result = if job.full {
-                        kernel.reindex()
-                    } else {
-                        kernel.index()
-                    };
+                    let result = kernel.index_current(job.full, true);
                     if result.as_ref().is_err_and(|error| {
                         matches!(
                             error.downcast_ref::<std::fs::TryLockError>(),
@@ -254,6 +323,17 @@ impl Kernel {
                     collection: Some(job.collection),
                     revision: Some(job.requested_revision),
                     report: Some(report),
+                    error: None,
+                    maintenance: None,
+                }
+            }
+            Err(error) if error.is::<ScanPaused>() => {
+                queue.defer(&worker, &job)?;
+                RunOutcome {
+                    state: "paused",
+                    collection: Some(job.collection),
+                    revision: Some(job.requested_revision),
+                    report: None,
                     error: None,
                     maintenance: None,
                 }
@@ -324,6 +404,9 @@ impl Kernel {
                     "scheduled indexing failed: {}",
                     job.error.as_deref().unwrap_or("unknown failure")
                 );
+            }
+            if job.paused && !job.manual {
+                return Err(ScanPaused.into());
             }
             let outcome = self.run_scheduled_once()?;
             if outcome.collection.as_deref() == Some(&self.collection)

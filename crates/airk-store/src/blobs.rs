@@ -91,6 +91,10 @@ struct ManifestV2 {
     collection: String,
     chunks: usize,
     vectors: usize,
+    vector_occurrences: usize,
+    vector_selection_digest: airk_core::identity::Sha256Digest,
+    vector_eligible_artifacts: usize,
+    vector_excluded_artifacts: usize,
     model_sha256: Option<String>,
     embedding: String,
     inventory_digest: airk_core::identity::Sha256Digest,
@@ -99,26 +103,64 @@ struct ManifestV2 {
 
 impl ManifestV2 {
     fn supported_format(&self) -> bool {
-        match self.schema {
-            2 => {
-                self.engine == "tantivy-0.26.2/diskann-0.59.0/airk-file-1/generation-4/inventory-2"
-                    && !self.components.contains_key("model-objects.json")
-            }
-            3 => {
-                matches!(
-                    self.engine.as_str(),
-                    "tantivy-0.26.2/diskann-0.59.0/airk-file-1/generation-5/inventory-2/model-objects-1"
-                        | "tantivy-0.26.2/diskann-0.59.0/airk-file-1/generation-5/inventory-2/model-objects-1/source-context-1"
-                ) && !self
-                    .components
-                    .keys()
-                    .any(|path| path.starts_with("model/"))
-                    && self.components.contains_key("model-objects.json")
-                        == self.model_sha256.is_some()
-            }
-            _ => false,
-        }
+        self.schema == 4
+            && self.engine == crate::reset::CURRENT_RETRIEVAL_ENGINE
+            && !self
+                .components
+                .keys()
+                .any(|path| path.starts_with("model/"))
+            && self.components.contains_key("model-objects.json") == self.model_sha256.is_some()
+            && self.components.contains_key("vector-map/meta.json")
+            && self.vectors <= self.vector_occurrences
+            && (self.vectors == 0) == (self.vector_occurrences == 0)
+            && (self.model_sha256.is_some() || self.vectors == 0)
+            && self
+                .vector_eligible_artifacts
+                .checked_add(self.vector_excluded_artifacts)
+                .is_some_and(|count| count <= 1_000_000)
+            && (self.vectors == 0 || self.vector_eligible_artifacts > 0)
     }
+
+    fn verify_selection(&self, inventory: &airk_core::publication::InventoryV2) -> Result<()> {
+        verify_vector_selection(
+            inventory,
+            self.vector_selection_digest,
+            self.vector_eligible_artifacts,
+            self.vector_excluded_artifacts,
+        )
+    }
+}
+
+pub(crate) fn verify_vector_selection(
+    inventory: &airk_core::publication::InventoryV2,
+    digest: airk_core::identity::Sha256Digest,
+    eligible_artifacts: usize,
+    excluded_artifacts: usize,
+) -> Result<()> {
+    let selection = inventory.vector_selection.validated()?;
+    let mut eligible = 0usize;
+    for (path, file) in &inventory.files {
+        let profile = inventory
+            .profiles
+            .get(&file.state.profile_id)
+            .context("vector selection profile missing from inventory")?;
+        eligible += usize::from(selection.decision(path, profile, &file.language)?.eligible);
+    }
+    ensure!(
+        digest == inventory.vector_selection.digest()?
+            && eligible_artifacts == eligible
+            && excluded_artifacts == inventory.files.len() - eligible,
+        "vector selection manifest differs from authoritative inventory"
+    );
+    Ok(())
+}
+
+fn parse_manifest(bytes: &[u8]) -> Result<ManifestV2> {
+    ensure!(
+        crate::reset::current_manifest(bytes)?,
+        "obsolete index format; run airk index --full"
+    );
+    Ok(serde_json::from_slice(bytes)?)
 }
 
 fn model_set(
@@ -130,7 +172,7 @@ fn model_set(
         return Ok(None);
     };
     ensure!(
-        manifest.schema == 3
+        manifest.schema == 4
             && component.bytes <= airk_core::model_objects::MAX_MODEL_OBJECT_SET_BYTES as u64,
         "invalid model object sidecar format or bound"
     );
@@ -171,6 +213,81 @@ fn verify_model_objects(
             .context("model verification length overflow")
     })?;
     crate::model_objects::ModelObjects::new(base).verify(&set, maximum)
+}
+
+/// Authenticate reusable pack ownership without reading the embedding payloads.
+/// Lookup verifies the selected records; maintenance verifies complete packs.
+fn embedding_manifest(
+    base: &Path,
+    directory: &Path,
+    manifest: &ManifestV2,
+    inventory: &airk_core::publication::InventoryV2,
+) -> Result<Option<crate::vector_cache::VectorCacheManifest>> {
+    let path = directory.join("embedding-cache.json");
+    let Some(component) = manifest.components.get("embedding-cache.json") else {
+        match path.symlink_metadata() {
+            Ok(_) => anyhow::bail!("unanchored embedding sidecar"),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        return Ok(None);
+    };
+    ensure!(
+        component.bytes <= crate::vector_cache::MAX_CACHE_MANIFEST_BYTES as u64,
+        "embedding sidecar exceeds byte bound"
+    );
+    let metadata = path.symlink_metadata()?;
+    ensure!(
+        metadata.is_file()
+            && !metadata.file_type().is_symlink()
+            && metadata.len() == component.bytes,
+        "embedding sidecar type or length mismatch"
+    );
+    let bytes = read_verified(&path, &component.sha256.to_string(), component.bytes)?;
+    ensure!(
+        bytes.len() as u64 == component.bytes,
+        "embedding sidecar length changed"
+    );
+    let cache = crate::vector_cache::VectorCacheManifest::from_bytes(&bytes)?;
+    let model = model_set(directory, manifest, inventory)?
+        .context("embedding sidecar requires authenticated model objects")?;
+    ensure!(
+        inventory.embedding_pipeline_digest == Some(cache.pipeline_digest)
+            && model.pipeline_digest == cache.pipeline_digest,
+        "embedding pack pipeline differs from publication"
+    );
+    let asset = model
+        .assets
+        .get(&airk_core::model_objects::ModelAssetName::ModelJson)
+        .context("model metadata asset missing")?;
+    let model_path = object_path(base, "models", &asset.sha256.to_string())?;
+    let metadata = model_path.symlink_metadata()?;
+    ensure!(
+        metadata.is_file() && metadata.len() == asset.bytes,
+        "model metadata length mismatch"
+    );
+    let metadata: serde_json::Value = serde_json::from_slice(&read_verified(
+        &model_path,
+        &asset.sha256.to_string(),
+        asset.bytes,
+    )?)?;
+    let schema = if model
+        .assets
+        .contains_key(&airk_core::model_objects::ModelAssetName::VocabularyJson)
+    {
+        1
+    } else {
+        2
+    };
+    ensure!(
+        metadata.get("schema").and_then(serde_json::Value::as_u64) == Some(schema)
+            && metadata
+                .get("dimensions")
+                .and_then(serde_json::Value::as_u64)
+                == Some(u64::from(cache.dimensions)),
+        "embedding pack schema or dimensions differ from model metadata"
+    );
+    Ok(Some(cache))
 }
 
 /// Verify against a committed receipt (or a newly prepared receipt before commit),
@@ -241,7 +358,7 @@ impl FileStore {
                 "linked model publication metadata"
             );
         }
-        let manifest: ManifestV2 = serde_json::from_slice(&read_verified(
+        let manifest = parse_manifest(&read_verified(
             &directory.join("manifest.json"),
             &receipt.manifest_digest.to_string(),
             131072,
@@ -265,6 +382,7 @@ impl FileStore {
         );
         let inventory: airk_core::publication::InventoryV2 = serde_json::from_slice(&bytes)?;
         inventory.validate()?;
+        manifest.verify_selection(&inventory)?;
         ensure!(
             inventory.incarnation == receipt.token.incarnation
                 && inventory.generation == receipt.token.generation
@@ -285,68 +403,12 @@ impl FileStore {
         Ok(Some(set))
     }
 
-    pub fn legacy_model_components(
-        &self,
-        receipt: &airk_core::identity::PublicationReceipt,
-    ) -> Result<
-        std::collections::BTreeMap<
-            airk_core::model_objects::ModelAssetName,
-            airk_core::model_objects::ModelObjectRef,
-        >,
-    > {
-        use airk_core::model_objects::{ModelAssetName, ModelObjectRef};
-        ensure!(
-            self.receipt(&receipt.token)?.as_ref() == Some(receipt),
-            "legacy model requires committed receipt"
-        );
-        verify_v2_generation(self.directory(), receipt)?;
-        let path = self
-            .directory()
-            .join("generations")
-            .join(receipt.token.revision.to_string())
-            .join("manifest.json");
-        let manifest: ManifestV2 = serde_json::from_slice(&read_verified(
-            &path,
-            &receipt.manifest_digest.to_string(),
-            131072,
-        )?)?;
-        let mut result = std::collections::BTreeMap::new();
-        if manifest.schema != 2 {
-            return Ok(result);
-        }
-        for (name, component) in manifest.components {
-            let Some(name) = name.strip_prefix("model/") else {
-                continue;
-            };
-            let asset = match name {
-                "model.json" => ModelAssetName::ModelJson,
-                "vocabulary.json" => ModelAssetName::VocabularyJson,
-                "model.onnx" => ModelAssetName::ModelOnnx,
-                "tokenizer.json" => ModelAssetName::TokenizerJson,
-                "LICENSE" => ModelAssetName::License,
-                _ => anyhow::bail!("unknown legacy model component"),
-            };
-            ensure!(
-                component.bytes <= asset.maximum_bytes(),
-                "legacy model asset exceeds bound"
-            );
-            result.insert(
-                asset,
-                ModelObjectRef {
-                    sha256: component.sha256,
-                    bytes: component.bytes,
-                },
-            );
-        }
-        Ok(result)
-    }
-
-    /// Authenticate reusable embedding references against a committed receipt.
+    /// Authenticate reusable embedding-pack ownership against a committed receipt.
     /// The caller keeps its catalog reader lease alive while using the result.
-    pub fn embedding_cache_references(
+    pub fn embedding_cache_manifest(
         &self,
         receipt: &airk_core::identity::PublicationReceipt,
-    ) -> Result<Vec<crate::vector_cache::VectorCacheReference>> {
+    ) -> Result<Option<crate::vector_cache::VectorCacheManifest>> {
         ensure!(
             self.receipt(&receipt.token)?.as_ref() == Some(receipt),
             "embedding references require this collection's committed receipt"
@@ -360,13 +422,14 @@ impl FileStore {
             self.directory().join("generations"),
             directory.clone(),
             manifest_path.clone(),
+            directory.join("inventory.json"),
         ] {
             ensure!(
                 !fs::symlink_metadata(path)?.file_type().is_symlink(),
                 "linked embedding manifest"
             );
         }
-        let manifest: ManifestV2 = serde_json::from_slice(&read_verified(
+        let manifest = parse_manifest(&read_verified(
             &manifest_path,
             &receipt.manifest_digest.to_string(),
             131_072,
@@ -380,32 +443,28 @@ impl FileStore {
                     == Some(manifest.collection.as_str()),
             "embedding manifest receipt or collection mismatch"
         );
-        let path = directory.join("embedding-cache.json");
-        let Some(component) = manifest.components.get("embedding-cache.json") else {
-            match path.symlink_metadata() {
-                Ok(_) => anyhow::bail!("unanchored embedding sidecar"),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => return Err(error.into()),
-            }
-            return Ok(vec![]);
-        };
+        let bytes = read_verified(
+            &directory.join("inventory.json"),
+            &receipt.inventory_digest.to_string(),
+            MAX_CATALOG_BYTES,
+        )?;
         ensure!(
-            component.bytes <= crate::vector_cache::MAX_CACHE_MANIFEST_BYTES as u64,
-            "embedding sidecar exceeds byte bound"
+            airk_core::identity::revision_digest(manifest.engine.as_bytes(), &bytes)
+                == receipt.token.revision,
+            "embedding publication revision mismatch"
         );
-        let metadata = fs::symlink_metadata(&path)?;
+        let inventory: airk_core::publication::InventoryV2 = serde_json::from_slice(&bytes)?;
+        inventory.validate()?;
+        manifest.verify_selection(&inventory)?;
         ensure!(
-            metadata.is_file()
-                && !metadata.file_type().is_symlink()
-                && metadata.len() == component.bytes,
-            "embedding sidecar type or length mismatch"
+            inventory.incarnation == receipt.token.incarnation
+                && inventory.generation == receipt.token.generation
+                && inventory.collection == manifest.collection
+                && inventory.retrieval_specification == manifest.engine
+                && inventory.embedding_model == manifest.model_sha256,
+            "embedding publication scope mismatch"
         );
-        let bytes = read_verified(&path, &component.sha256.to_string(), component.bytes)?;
-        ensure!(
-            bytes.len() as u64 == component.bytes,
-            "embedding sidecar length changed"
-        );
-        Ok(crate::vector_cache::VectorCacheManifest::from_bytes(&bytes)?.references)
+        embedding_manifest(self.directory(), &directory, &manifest, &inventory)
     }
 }
 
@@ -459,7 +518,7 @@ fn verify_selected_components(
         &receipt.manifest_digest.to_string(),
         131_072,
     )?;
-    let manifest: ManifestV2 = serde_json::from_slice(&bytes)?;
+    let manifest = parse_manifest(&bytes)?;
     let mut verified_bytes = bytes.len() as u64;
     ensure!(
         manifest.supported_format()
@@ -632,6 +691,7 @@ pub(crate) fn verify_v2_directory(
     );
     let inventory: airk_core::publication::InventoryV2 = serde_json::from_slice(&bytes)?;
     inventory.validate()?;
+    manifest.verify_selection(&inventory)?;
     ensure!(
         inventory.incarnation == receipt.token.incarnation
             && inventory.generation == receipt.token.generation
@@ -643,11 +703,12 @@ pub(crate) fn verify_v2_directory(
                 .values()
                 .try_fold(0usize, |sum, file| sum.checked_add(file.chunks))
                 == Some(manifest.chunks)
-            && manifest.vectors <= manifest.chunks
+            && manifest.vectors <= manifest.vector_occurrences
             && inventory.lineage_digest == manifest.components["lineage.json"].sha256,
         "v2 inventory manifest binding mismatch"
     );
     verify_model_objects(base, directory, &manifest, &inventory)?;
+    embedding_manifest(base, directory, &manifest, &inventory)?;
     crate::sqlite::verify_prepared_catalog(directory, receipt)?;
     if manifest.model_sha256.is_none() {
         crate::verified_cache::remember(
@@ -685,14 +746,54 @@ fn put(
     // Canonicalize the existing parent for both sides of the atomic rename.
     let parent = parent.canonicalize()?;
     let destination = parent.join(digest);
+    let staging = reservation
+        .map(crate::quota::Reservation::staging_directory)
+        .transpose()?;
+    let temporary_parent = staging.as_deref().unwrap_or(&parent).canonicalize()?;
     let mut file = tempfile::Builder::new()
         .prefix("building-")
-        .tempfile_in(&parent)?;
+        .tempfile_in(&temporary_parent)?;
     file.write_all(bytes)?;
     file.as_file().sync_all()?;
     file.persist_noclobber(destination)
         .context("publish retained object")?;
     Ok(())
+}
+
+fn put_encoded(
+    base: &Path,
+    kind: &str,
+    bytes: &[u8],
+    digest: &str,
+    reservation: Option<&crate::quota::Reservation>,
+    mode: airk_core::compression::CompressionMode,
+) -> Result<Option<airk_core::compression::EncodedObject>> {
+    if let Some((encoded, reference)) = crate::compression::encode(bytes, mode)? {
+        put(base, kind, &encoded, &reference.stored_digest, reservation)?;
+        Ok(Some(reference))
+    } else {
+        put(base, kind, bytes, digest, reservation)?;
+        Ok(None)
+    }
+}
+
+fn read_object(
+    base: &Path,
+    kind: &str,
+    digest: &str,
+    encoding: Option<&airk_core::compression::EncodedObject>,
+    maximum: u64,
+) -> Result<Vec<u8>> {
+    if let Some(encoding) = encoding {
+        crate::compression::read_all(
+            &object_path(base, kind, &encoding.stored_digest)?,
+            encoding,
+            digest,
+            maximum,
+        )
+    } else {
+        read_verified(&object_path(base, kind, digest)?, digest, maximum)
+    }
 }
 
 impl FileStore {
@@ -736,6 +837,8 @@ impl FileStore {
         put(self.directory(), "artifacts", &bytes, &object, reservation)?;
         let mut compact = artifact.clone();
         compact.retained = Some(ArtifactRef {
+            source_encoding: None,
+            payload_encoding: None,
             profile: None,
             object,
             object_bytes: bytes.len(),
@@ -757,6 +860,25 @@ impl FileStore {
         source: Option<&[u8]>,
         reservation: Option<&crate::quota::Reservation>,
     ) -> Result<Artifact> {
+        self.retain_payload_encoded(
+            artifact,
+            payload,
+            profile,
+            source,
+            reservation,
+            airk_core::compression::CompressionMode::Off,
+        )
+    }
+
+    pub fn retain_payload_encoded(
+        &self,
+        artifact: &Artifact,
+        payload: &airk_core::extraction::ExtractionPayload,
+        profile: &airk_core::extraction::ExtractionProfile,
+        source: Option<&[u8]>,
+        reservation: Option<&crate::quota::Reservation>,
+        mode: airk_core::compression::CompressionMode,
+    ) -> Result<Artifact> {
         payload.validate()?;
         profile.identity()?;
         let bound = airk_core::binding::bind_payload(
@@ -774,28 +896,43 @@ impl FileStore {
             serde_json::to_vec(&bound)? == serde_json::to_vec(&expected)?,
             "path-free conversion changed artifact evidence"
         );
-        if let Some(source) = source {
+        let source_encoding = if let Some(source) = source {
             ensure!(
                 source.len() == artifact.bytes,
                 "source byte count changed before retention"
             );
-            put(
+            put_encoded(
                 self.directory(),
                 "sources",
                 source,
                 &artifact.content_hash,
                 reservation,
-            )?;
-        }
+                mode,
+            )?
+        } else {
+            artifact
+                .retained
+                .as_ref()
+                .and_then(|r| r.source_encoding.clone())
+        };
         let bytes = serde_json::to_vec(payload)?;
         ensure!(
             bytes.len() as u64 <= MAX_ARTIFACT_BYTES,
             "path-free payload exceeds byte limit"
         );
         let object = format!("{:x}", Sha256::digest(&bytes));
-        put(self.directory(), "artifacts", &bytes, &object, reservation)?;
+        let payload_encoding = put_encoded(
+            self.directory(),
+            "artifacts",
+            &bytes,
+            &object,
+            reservation,
+            mode,
+        )?;
         let mut compact = artifact.clone();
         compact.retained = Some(ArtifactRef {
+            source_encoding,
+            payload_encoding,
             object,
             object_bytes: bytes.len(),
             raw_source: source.is_some()
@@ -815,6 +952,33 @@ impl FileStore {
 
     pub fn load_retained(&self, entry: &Artifact) -> Result<Artifact> {
         self.load_retained_bounded(entry, MAX_ARTIFACT_BYTES)
+    }
+    /// One authenticated decode supplies both the evidence projection and the
+    /// extraction coordinates needed by semantic-unit planning.
+    pub fn load_retrieval_artifact(
+        &self,
+        entry: &Artifact,
+    ) -> Result<airk_core::RetrievalArtifact> {
+        let reference = entry
+            .retained
+            .as_ref()
+            .context("semantic extraction metadata missing; run airk index --full")?;
+        let profile = reference
+            .profile
+            .as_ref()
+            .context("obsolete extraction format; run airk index --full")?;
+        ensure!(
+            profile.chunk_version == 3,
+            "obsolete semantic extraction format; run airk index --full"
+        );
+        let (artifact, payload) = self.decode_retained(entry, MAX_ARTIFACT_BYTES)?;
+        Ok(airk_core::RetrievalArtifact {
+            artifact,
+            profile: profile.clone(),
+            payload: payload
+                .context("semantic extraction payload missing; run airk index --full")?,
+            payload_digest: reference.object.parse()?,
+        })
     }
     /// Read a verified path-free payload using only immutable retained objects.
     /// Legacy path-bound objects require explicit migration, never reinterpretation.
@@ -866,9 +1030,11 @@ impl FileStore {
             .retained
             .as_ref()
             .context("retained reference missing")?;
-        let bytes = read_verified(
-            &object_path(self.directory(), "artifacts", &reference.object)?,
+        let bytes = read_object(
+            self.directory(),
+            "artifacts",
             &reference.object,
+            reference.payload_encoding.as_ref(),
             MAX_ARTIFACT_BYTES.min(maximum),
         )?;
         ensure!(
@@ -910,6 +1076,95 @@ impl FileStore {
         self.read_retained_source_bounded(entry, airk_core::extraction::MAX_SOURCE_BYTES as u64)
     }
 
+    /// Authenticate retained source identity without allocating/decoding a copy
+    /// when evidence materialization uses the independently verified payload.
+    pub fn verify_retained_source(&self, entry: &Artifact) -> Result<()> {
+        ensure!(
+            entry.bytes <= airk_core::extraction::MAX_SOURCE_BYTES
+                && entry.retained.as_ref().is_some_and(|r| r.raw_source),
+            "retained source unavailable or oversized"
+        );
+        if let Some(encoding) = entry
+            .retained
+            .as_ref()
+            .and_then(|r| r.source_encoding.as_ref())
+        {
+            ensure!(
+                crate::compression::verify(
+                    &object_path(self.directory(), "sources", &encoding.stored_digest)?,
+                    encoding,
+                    &entry.content_hash,
+                    entry.bytes as u64
+                )? == entry.bytes,
+                "encoded source length mismatch"
+            );
+        } else {
+            let path = object_path(self.directory(), "sources", &entry.content_hash)?;
+            let mut file = File::open(&path)?;
+            ensure!(
+                file.metadata()?.is_file() && file.metadata()?.len() == entry.bytes as u64,
+                "retained source length mismatch"
+            );
+            let mut hash = Sha256::new();
+            let mut buffer = [0u8; 65536];
+            let mut total = 0usize;
+            loop {
+                let count = file.read(&mut buffer)?;
+                if count == 0 {
+                    break;
+                }
+                total = total
+                    .checked_add(count)
+                    .context("source verification overflow")?;
+                ensure!(
+                    total <= entry.bytes,
+                    "retained source grew during verification"
+                );
+                hash.update(&buffer[..count]);
+            }
+            ensure!(
+                total == entry.bytes && format!("{:x}", hash.finalize()) == entry.content_hash,
+                "retained source digest mismatch"
+            );
+        }
+        Ok(())
+    }
+
+    pub fn read_retained_source_range(
+        &self,
+        entry: &Artifact,
+        range: std::ops::Range<usize>,
+        max_decoded_bytes: usize,
+    ) -> Result<Vec<u8>> {
+        ensure!(
+            range.start <= range.end
+                && range.end <= entry.bytes
+                && entry.bytes <= airk_core::extraction::MAX_SOURCE_BYTES
+                && entry.retained.as_ref().is_some_and(|r| r.raw_source),
+            "source range outside admitted object"
+        );
+        if let Some(encoding) = entry
+            .retained
+            .as_ref()
+            .and_then(|r| r.source_encoding.as_ref())
+        {
+            crate::compression::read_range(
+                &object_path(self.directory(), "sources", &encoding.stored_digest)?,
+                encoding,
+                &entry.content_hash,
+                entry.bytes as u64,
+                range,
+                max_decoded_bytes,
+            )
+        } else {
+            ensure!(
+                entry.bytes <= max_decoded_bytes,
+                "raw source verification exceeds decoded-work allowance"
+            );
+            Ok(self.read_retained_source(entry)?[range].to_vec())
+        }
+    }
+
     pub fn read_retained_source_bounded(&self, entry: &Artifact, maximum: u64) -> Result<Vec<u8>> {
         let maximum = maximum.min(airk_core::extraction::MAX_SOURCE_BYTES as u64);
         ensure!(
@@ -920,12 +1175,16 @@ impl FileStore {
             entry.retained.as_ref().is_some_and(|r| r.raw_source),
             "original source bytes unavailable in legacy retained state; reindex from source"
         );
-        let path = object_path(self.directory(), "sources", &entry.content_hash)?;
-        ensure!(
-            path.symlink_metadata()?.is_file(),
-            "retained source is not a regular file"
-        );
-        let bytes = read_verified(&path, &entry.content_hash, maximum)?;
+        let bytes = read_object(
+            self.directory(),
+            "sources",
+            &entry.content_hash,
+            entry
+                .retained
+                .as_ref()
+                .and_then(|r| r.source_encoding.as_ref()),
+            maximum,
+        )?;
         ensure!(
             bytes.len() == entry.bytes,
             "retained source byte count mismatch"
@@ -939,6 +1198,7 @@ impl FileStore {
     }
     pub fn catalog_bounded(&self, maximum: u64) -> Result<Option<Catalog>> {
         let lifecycle = self.lifecycle(false)?;
+        self.ensure_index_ready()?;
         for _ in 0..3 {
             let Some(header) = self.persistent_revision()? else {
                 self.check_legacy_catalog_size(maximum)?;
@@ -1466,6 +1726,17 @@ impl ArtifactSource for Catalog {
     }
 }
 
+impl airk_core::RetrievalSource for Catalog {
+    fn load_retrieval_artifact(&self, path: &str) -> Result<airk_core::RetrievalArtifact> {
+        self.store.load_retrieval_artifact(
+            self.snapshot
+                .artifacts
+                .get(path)
+                .context("artifact is not in indexed inventory")?,
+        )
+    }
+}
+
 pub struct RetainedSource<'a> {
     pub store: &'a FileStore,
     pub snapshot: &'a Snapshot,
@@ -1481,8 +1752,55 @@ impl ArtifactSource for RetainedSource<'_> {
     }
 }
 
+impl airk_core::RetrievalSource for RetainedSource<'_> {
+    fn load_retrieval_artifact(&self, path: &str) -> Result<airk_core::RetrievalArtifact> {
+        self.store.load_retrieval_artifact(
+            self.snapshot
+                .artifacts
+                .get(path)
+                .context("artifact is not in indexed inventory")?,
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn current_manifest_requires_mapping_and_independent_vector_counts() -> anyhow::Result<()> {
+        use serde_json::json;
+        let digest = "a".repeat(64);
+        let mut value = json!({
+            "schema":4,"engine":crate::reset::CURRENT_RETRIEVAL_ENGINE,
+            "token":format!("airk-r1:11111111111111111111111111111111:1:{digest}"),
+            "collection":"fixture","chunks":1,"vectors":3,"vector_occurrences":4,
+            "vector_selection_digest":digest,"vector_eligible_artifacts":1,"vector_excluded_artifacts":0,
+            "model_sha256":digest,"embedding":"fixture","inventory_digest":digest,
+            "components":{"vector-map/meta.json":{"bytes":2,"sha256":digest},"model-objects.json":{"bytes":2,"sha256":digest}}
+        });
+        let valid = |value: &serde_json::Value| -> anyhow::Result<bool> {
+            Ok(super::parse_manifest(&serde_json::to_vec(value)?)?.supported_format())
+        };
+        assert!(
+            valid(&value)?,
+            "long semantic windows may outnumber lexical chunks"
+        );
+        value["vectors"] = json!(5);
+        assert!(!valid(&value)?);
+        value["vectors"] = json!(0);
+        assert!(!valid(&value)?);
+        value["vectors"] = json!(3);
+        value["components"]
+            .as_object_mut()
+            .unwrap()
+            .remove("vector-map/meta.json");
+        assert!(!valid(&value)?);
+        value["schema"] = json!(3);
+        let error = super::parse_manifest(&serde_json::to_vec(&value)?)
+            .err()
+            .unwrap();
+        assert!(error.to_string().contains("airk index --full"));
+        Ok(())
+    }
     use super::*;
 
     #[cfg(windows)]
@@ -1592,11 +1910,12 @@ mod tests {
             dialect: None,
             grammar_identity: None,
             mapping_version: 1,
-            chunk_version: 1,
+            chunk_version: 3,
             options: BTreeMap::new(),
             configuration_inputs: BTreeMap::new(),
         };
         let payload = ExtractionPayload {
+            semantic_projection: Default::default(),
             continuity_coverage: Default::default(),
             contract_version: 1,
             extraction_method: "utf8".into(),
@@ -1640,12 +1959,24 @@ mod tests {
             serde_json::to_value(&payload)?
         );
         assert_eq!(store.load_retained(&compact)?.chunks, artifact.chunks);
+        let retrieved = store.load_retrieval_artifact(&compact)?;
+        assert_eq!(retrieved.artifact.chunks, artifact.chunks);
+        assert_eq!(retrieved.profile, profile);
+        assert_eq!(
+            retrieved.payload_digest.to_string(),
+            compact.retained.as_ref().unwrap().object
+        );
+        assert_eq!(
+            serde_json::to_value(retrieved.payload)?,
+            serde_json::to_value(&payload)?
+        );
         let mut changed = compact.clone();
         changed.language = "foreign".into();
         assert!(store.load_extraction_payload(&changed).is_err());
         changed = compact.clone();
         changed.retained.as_mut().unwrap().object_bytes += 1;
         assert!(store.load_extraction_payload(&changed).is_err());
+        assert!(store.load_retrieval_artifact(&changed).is_err());
         changed = compact.clone();
         changed
             .retained

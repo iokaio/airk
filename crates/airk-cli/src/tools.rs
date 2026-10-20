@@ -107,7 +107,7 @@ pub fn inspect(action: &ToolsCommand) -> Result<bool> {
                 );
                 if name == "airk_search" {
                     println!(
-                        "\nExplicit vector search (requires a ready model/index):\n  call airk_search {{\"query\":\"how is a forgotten password recovered\",\"mode\":\"vector\",\"limit\":5}}\nOmit mode for the collection default: hybrid unless opted out."
+                        "\nExplicit vector search (requires a published model/index and discloses partial coverage):\n  call airk_search {{\"query\":\"how is a forgotten password recovered\",\"mode\":\"vector\",\"limit\":5}}\nOmit mode for the saved collection search policy."
                     );
                 }
             }

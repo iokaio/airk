@@ -819,6 +819,7 @@ mod tests {
     }
     fn payload(text: &str) -> ExtractionPayload {
         ExtractionPayload {
+            semantic_projection: Default::default(),
             contract_version: 1,
             extraction_method: "original-document-fixture".into(),
             parse_status: "text".into(),

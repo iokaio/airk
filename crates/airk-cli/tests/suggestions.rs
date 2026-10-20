@@ -29,17 +29,6 @@ fn opt_in_similarity_flag_pages_with_shared_budgets_without_forwarding_reads() -
         .collect();
     fs::write(root.path().join("old.txt"), &original)?;
     call(root.path(), data.path(), &["index"])?;
-    call(
-        root.path(),
-        data.path(),
-        &[
-            "collections",
-            "retention",
-            "set",
-            "--json",
-            r#"{"version":1,"mode":"manual","searchable_predecessors":1}"#,
-        ],
-    )?;
     let info = call(root.path(), data.path(), &["info", "old.txt"])?;
     let token = info["read"]["publication"]["token"]
         .as_str()
@@ -86,10 +75,14 @@ fn opt_in_similarity_flag_pages_with_shared_budgets_without_forwarding_reads() -
             break;
         }
     }
-    assert_eq!(suggestions.len(), 1);
-    assert_eq!(suggestions[0]["kind"], "file");
-    assert_eq!(suggestions[0]["before"]["path"], "old.txt");
-    assert_eq!(suggestions[0]["after"]["path"], "new.txt");
+    assert!(suggestions.is_empty());
+    let unavailable = call(
+        root.path(),
+        data.path(),
+        &["changes", "--since", token, "--include-suggestions"],
+    )?;
+    assert_eq!(unavailable["suggestion_coverage"]["status"], "unavailable");
+    assert_eq!(unavailable["baseline_status"], "baseline_unavailable");
     let read = call(
         root.path(),
         data.path(),

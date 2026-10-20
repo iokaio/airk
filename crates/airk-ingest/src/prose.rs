@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Bounded English document cues. Classification never proves an obligation or design.
+use airk_core::extraction::{IndexDetail, LocalSpan};
 use airk_core::{DocumentDate, DocumentEvidence, DocumentLocation, DocumentQuantity, Fact};
 use anyhow::{Result, ensure};
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
@@ -31,7 +32,7 @@ fn patterns() -> &'static Patterns {
     })
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Unit {
     pub(crate) span: Range<usize>,
     pub(crate) visible: String,
@@ -39,26 +40,95 @@ pub(crate) struct Unit {
     pub(crate) level: Option<u8>,
 }
 
+#[derive(Clone, Copy)]
+enum AnalysisMode {
+    Facts,
+    Units,
+    Selected(IndexDetail),
+    #[cfg(test)]
+    FactsAndUnits,
+}
+impl AnalysisMode {
+    fn facts(self) -> bool {
+        !matches!(self, Self::Units | Self::Selected(IndexDetail::Essential))
+    }
+    fn units(self) -> bool {
+        match self {
+            Self::Units => true,
+            #[cfg(test)]
+            Self::FactsAndUnits => true,
+            _ => false,
+        }
+    }
+    fn headings_only(self) -> bool {
+        matches!(self, Self::Selected(IndexDetail::Essential))
+    }
+}
+
+pub(crate) struct HeadingSeed {
+    pub span: LocalSpan,
+    pub depth: usize,
+}
+
+pub(crate) struct SelectedProse {
+    pub facts: Vec<Fact>,
+    pub headings: HeadingPath,
+    pub seeds: Vec<HeadingSeed>,
+}
+
+impl SelectedProse {
+    pub fn semantic_seeds(
+        &self,
+        offset: usize,
+    ) -> Result<crate::semantic_projection::SemanticSeeds> {
+        let mut seeds = crate::semantic_projection::SemanticSeeds::default();
+        for heading in &self.seeds {
+            seeds.heading(
+                None,
+                LocalSpan {
+                    start: heading
+                        .span
+                        .start
+                        .checked_add(offset)
+                        .ok_or_else(|| anyhow::anyhow!("heading offset overflow"))?,
+                    end: heading
+                        .span
+                        .end
+                        .checked_add(offset)
+                        .ok_or_else(|| anyhow::anyhow!("heading offset overflow"))?,
+                },
+                heading.depth,
+            )?;
+        }
+        Ok(seeds)
+    }
+}
+
 struct Analyzer<'a> {
     text: &'a str,
     line_starts: Vec<usize>,
     headings: HeadingPath,
     facts: Vec<Fact>,
-    collect_units: bool,
+    mode: AnalysisMode,
     units: Vec<Unit>,
+    seeds: Vec<HeadingSeed>,
 }
 
 impl<'a> Analyzer<'a> {
-    fn new(text: &'a str) -> Self {
-        let mut line_starts = vec![0];
-        line_starts.extend(text.match_indices('\n').map(|(offset, _)| offset + 1));
+    fn new(text: &'a str, mode: AnalysisMode) -> Self {
+        let mut line_starts = Vec::new();
+        if !matches!(mode, AnalysisMode::Units) {
+            line_starts.push(0);
+            line_starts.extend(text.match_indices('\n').map(|(offset, _)| offset + 1));
+        }
         Self {
             text,
             line_starts,
             headings: Vec::new(),
             facts: Vec::new(),
-            collect_units: false,
+            mode,
             units: Vec::new(),
+            seeds: Vec::new(),
         }
     }
 
@@ -69,6 +139,11 @@ impl<'a> Analyzer<'a> {
         kind: &str,
         mut details: DocumentEvidence,
     ) -> Result<()> {
+        if !self.mode.facts()
+            || matches!(self.mode, AnalysisMode::Selected(detail) if !detail.retains_fact(kind))
+        {
+            return Ok(());
+        }
         ensure!(self.facts.len() < MAX_FACTS, "document exceeds 10000 facts");
         let start = self
             .line_starts
@@ -96,12 +171,19 @@ impl<'a> Analyzer<'a> {
     }
 
     fn analyze(&mut self, unit: Unit) -> Result<()> {
-        if self.collect_units {
+        if self.mode.units() {
             ensure!(
                 self.units.len() < airk_core::continuity::MAX_CONTINUITY_UNITS,
                 "document structural unit limit exceeded"
             );
+            if !self.mode.facts() {
+                self.units.push(unit);
+                return Ok(());
+            }
             self.units.push(unit.clone());
+        }
+        if self.mode.headings_only() && unit.level.is_none() {
+            return Ok(());
         }
         let text = unit
             .visible
@@ -117,6 +199,32 @@ impl<'a> Analyzer<'a> {
         if let Some(level) = unit.level {
             self.headings.retain(|(old, _)| *old < level);
             self.headings.push((level, bounded(&text, 160)));
+            if matches!(self.mode, AnalysisMode::Selected(_)) {
+                ensure!(
+                    self.seeds.len() < airk_core::extraction::MAX_SEMANTIC_BOUNDARIES,
+                    "document semantic heading limit exceeded"
+                );
+                let start = self
+                    .line_starts
+                    .partition_point(|offset| *offset <= unit.span.start);
+                let end = self
+                    .line_starts
+                    .partition_point(|offset| *offset <= unit.span.end.saturating_sub(1));
+                self.seeds.push(HeadingSeed {
+                    span: LocalSpan {
+                        start: self.line_starts[start.saturating_sub(1)],
+                        end: self
+                            .line_starts
+                            .get(end)
+                            .copied()
+                            .unwrap_or(self.text.len()),
+                    },
+                    depth: self.headings.len(),
+                });
+            }
+            if !self.mode.facts() {
+                return Ok(());
+            }
             let mut dates = patterns()
                 .date
                 .find_iter(&text)
@@ -402,13 +510,22 @@ impl<'a> Analyzer<'a> {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn markdown(text: &str) -> Result<Vec<Fact>> {
-    Ok(markdown_analysis(text, false)?.facts)
+    Ok(markdown_analysis(text, AnalysisMode::Facts)?.facts)
 }
 
-fn markdown_analysis(text: &str, collect_units: bool) -> Result<Analyzer<'_>> {
-    let mut analyzer = Analyzer::new(text);
-    analyzer.collect_units = collect_units;
+pub(crate) fn markdown_selected(text: &str, detail: IndexDetail) -> Result<SelectedProse> {
+    let analyzer = markdown_analysis(text, AnalysisMode::Selected(detail))?;
+    Ok(SelectedProse {
+        facts: analyzer.facts,
+        headings: analyzer.headings,
+        seeds: analyzer.seeds,
+    })
+}
+
+fn markdown_analysis(text: &str, mode: AnalysisMode) -> Result<Analyzer<'_>> {
+    let mut analyzer = Analyzer::new(text, mode);
     let mut unit: Option<Unit> = None;
     let mut in_code = false;
     for (ordinal, (event, span)) in Parser::new_ext(text, Options::ENABLE_TABLES)
@@ -446,7 +563,7 @@ fn markdown_analysis(text: &str, collect_units: bool) -> Result<Analyzer<'_>> {
                     level: None,
                 });
             }
-            Event::Start(Tag::Table(_)) => {
+            Event::Start(Tag::Table(_)) if mode.facts() => {
                 let table = Unit {
                     span,
                     visible: String::new(),
@@ -480,12 +597,16 @@ fn markdown_analysis(text: &str, collect_units: bool) -> Result<Analyzer<'_>> {
                 })
             }
             Event::Text(value) if !in_code => {
-                if let Some(unit) = &mut unit {
+                if let Some(unit) = &mut unit
+                    && (!mode.headings_only() || unit.level.is_some())
+                {
                     unit.visible.push_str(&value);
                 }
             }
             Event::Code(value) => {
-                if let Some(unit) = &mut unit {
+                if let Some(unit) = &mut unit
+                    && (!mode.headings_only() || unit.level.is_some())
+                {
                     if unit.level.is_some() {
                         unit.visible.push_str(&value);
                     } else {
@@ -494,7 +615,9 @@ fn markdown_analysis(text: &str, collect_units: bool) -> Result<Analyzer<'_>> {
                 }
             }
             Event::SoftBreak | Event::HardBreak | Event::End(TagEnd::TableCell) => {
-                if let Some(unit) = &mut unit {
+                if let Some(unit) = &mut unit
+                    && (!mode.headings_only() || unit.level.is_some())
+                {
                     unit.visible.push(' ');
                 }
             }
@@ -522,6 +645,7 @@ fn markdown_analysis(text: &str, collect_units: bool) -> Result<Analyzer<'_>> {
     Ok(analyzer)
 }
 
+#[cfg(test)]
 pub(crate) fn plain(text: &str) -> Result<Vec<Fact>> {
     Ok(plain_with_context(text, &[], None)?.0)
 }
@@ -531,18 +655,31 @@ pub(crate) fn plain_with_context(
     context: &[(u8, String)],
     native_level: Option<u8>,
 ) -> Result<(Vec<Fact>, HeadingPath)> {
-    let analyzer = plain_analysis(text, context, native_level, false)?;
+    let analyzer = plain_analysis(text, context, native_level, AnalysisMode::Facts)?;
     Ok((analyzer.facts, analyzer.headings))
+}
+
+pub(crate) fn plain_selected(
+    text: &str,
+    context: &[(u8, String)],
+    native_level: Option<u8>,
+    detail: IndexDetail,
+) -> Result<SelectedProse> {
+    let analyzer = plain_analysis(text, context, native_level, AnalysisMode::Selected(detail))?;
+    Ok(SelectedProse {
+        facts: analyzer.facts,
+        headings: analyzer.headings,
+        seeds: analyzer.seeds,
+    })
 }
 
 fn plain_analysis<'a>(
     text: &'a str,
     context: &[(u8, String)],
     native_level: Option<u8>,
-    collect_units: bool,
+    mode: AnalysisMode,
 ) -> Result<Analyzer<'a>> {
-    let mut analyzer = Analyzer::new(text);
-    analyzer.collect_units = collect_units;
+    let mut analyzer = Analyzer::new(text, mode);
     analyzer.headings = context.to_vec();
     if let Some(level) = native_level {
         analyzer.analyze(Unit {
@@ -603,7 +740,7 @@ fn plain_analysis<'a>(
                 origin: "text-heading-candidate",
                 level: Some(1),
             })?;
-        } else if !trimmed.is_empty() {
+        } else if !trimmed.is_empty() && !mode.headings_only() {
             if let Some(unit) = &mut paragraph {
                 unit.span.end = offset + line.len();
                 unit.visible.push(' ');
@@ -628,9 +765,9 @@ fn plain_analysis<'a>(
 /// Reuse the existing bounded prose parser; unit ordinals are local locators.
 pub(crate) fn continuity_units(text: &str, markdown: bool) -> Result<Vec<Unit>> {
     Ok(if markdown {
-        markdown_analysis(text, true)?
+        markdown_analysis(text, AnalysisMode::Units)?
     } else {
-        plain_analysis(text, &[], None, true)?
+        plain_analysis(text, &[], None, AnalysisMode::Units)?
     }
     .units)
 }
@@ -660,6 +797,141 @@ fn is_section_title(title: &str) -> bool {
             | "non-goals"
             | "status"
     )
+}
+
+#[cfg(test)]
+mod selected_tests {
+    use super::*;
+
+    #[test]
+    fn units_only_match_combined_parser_without_fact_classification() -> Result<()> {
+        let text = "  # Café `API`\r\n\r\nRequirements\r\n------------\r\n\r\n- REQ-1 must use 20 ms by 2026-10-13.\r\n  - Nested **界** text.\r\n\r\n| A | B |\r\n|---|---|\r\n| 1 | shall use 10 MiB |\r\n\r\n```text\r\n# Hidden\r\n```\r\n\r\nAn inline `must` literal.\r\n";
+        for markdown in [false, true] {
+            let reference = if markdown {
+                markdown_analysis(text, AnalysisMode::FactsAndUnits)?
+            } else {
+                plain_analysis(text, &[], None, AnalysisMode::FactsAndUnits)?
+            };
+            assert!(!reference.facts.is_empty());
+            assert_eq!(continuity_units(text, markdown)?, reference.units);
+            let units_only = if markdown {
+                markdown_analysis(text, AnalysisMode::Units)?
+            } else {
+                plain_analysis(text, &[], None, AnalysisMode::Units)?
+            };
+            assert!(units_only.facts.is_empty());
+            assert!(units_only.line_starts.is_empty());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn selected_heading_seeds_match_full_fact_line_spans_and_depth() -> Result<()> {
+        let text = "  # Café `API`\r\n\r\n### Deep 2026-10-13\r\n\r\nThe system must use 200 ms.\r\n\r\n## Sibling\r\n\r\nTail\r\n";
+        for markdown in [false, true] {
+            let full = if markdown {
+                markdown_selected(text, IndexDetail::Detailed)?
+            } else {
+                plain_selected(text, &[], None, IndexDetail::Detailed)?
+            };
+            let essential = if markdown {
+                markdown_selected(text, IndexDetail::Essential)?
+            } else {
+                plain_selected(text, &[], None, IndexDetail::Essential)?
+            };
+            assert!(essential.facts.is_empty());
+            assert_eq!(essential.headings, full.headings);
+            assert_eq!(essential.seeds.len(), full.seeds.len());
+            let starts: Vec<_> = std::iter::once(0)
+                .chain(text.match_indices('\n').map(|(i, _)| i + 1))
+                .collect();
+            let headings: Vec<_> = full.facts.iter().filter(|f| f.kind == "section").collect();
+            assert_eq!(headings.len(), essential.seeds.len());
+            for (seed, fact) in essential.seeds.iter().zip(headings) {
+                assert_eq!(seed.span.start, starts[fact.start_line - 1]);
+                assert_eq!(
+                    seed.span.end,
+                    starts.get(fact.end_line).copied().unwrap_or(text.len())
+                );
+                assert_eq!(
+                    seed.depth,
+                    fact.document.as_ref().unwrap().heading_path.len()
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn unit_only_has_its_own_bound_and_does_not_pay_discarded_fact_limit() -> Result<()> {
+        let text = "The system must use 200 ms by 2026-10-13.\n\n".repeat(6000);
+        assert!(markdown(&text).is_err());
+        assert_eq!(continuity_units(&text, true)?.len(), 6000);
+        assert!(
+            markdown_selected(&text, IndexDetail::Essential)?
+                .facts
+                .is_empty()
+        );
+        let too_many = "Paragraph.\n\n".repeat(airk_core::continuity::MAX_CONTINUITY_UNITS + 1);
+        assert!(
+            continuity_units(&too_many, true)
+                .unwrap_err()
+                .to_string()
+                .contains("structural unit limit")
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "release-only prose timing qualification"]
+    fn qualify_selected_prose_work() -> Result<()> {
+        let text = format!(
+            "# Requirements\n\n{}",
+            "REQ-1: The system must serve at least 200 users in 20 ms by 2026-10-13.\n\n"
+                .repeat(1800)
+        );
+        for markdown in [true, false] {
+            for mode in [
+                AnalysisMode::Facts,
+                AnalysisMode::FactsAndUnits,
+                AnalysisMode::Units,
+                AnalysisMode::Selected(IndexDetail::Essential),
+            ] {
+                let label = match mode {
+                    AnalysisMode::Facts => "full-facts",
+                    AnalysisMode::FactsAndUnits => "full-facts-and-units",
+                    AnalysisMode::Units => "units-only",
+                    AnalysisMode::Selected(_) => "essential-headings",
+                };
+                std::hint::black_box(if markdown {
+                    markdown_analysis(&text, mode)?
+                } else {
+                    plain_analysis(&text, &[], None, mode)?
+                });
+                let started = std::time::Instant::now();
+                let mut units = 0;
+                let mut facts = 0;
+                let mut seeds = 0;
+                for _ in 0..10 {
+                    let result = if markdown {
+                        markdown_analysis(&text, mode)?
+                    } else {
+                        plain_analysis(&text, &[], None, mode)?
+                    };
+                    units = result.units.len();
+                    facts = result.facts.len();
+                    seeds = result.seeds.len();
+                    std::hint::black_box(result);
+                }
+                eprintln!(
+                    "prose mode={label} markdown={markdown} units={units} facts={facts} seeds={seeds} bytes={} iterations=10 elapsed_us={}",
+                    text.len(),
+                    started.elapsed().as_micros()
+                );
+            }
+        }
+        Ok(())
+    }
 }
 
 fn source_statement(text: &str, span: &Range<usize>) -> String {

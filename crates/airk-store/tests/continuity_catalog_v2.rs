@@ -64,7 +64,7 @@ fn record(ordinal: usize, profile: Sha256Digest, length: usize) -> ContinuityRec
 #[test]
 fn indexed_lookup_projects_large_file_records_and_decorates_only_native_facts() -> Result<()> {
     let root = tempfile::tempdir()?;
-    let store = FileStore::new(root.path().join("collections/fixture"));
+    let store = FileStore::new(root.path().join("collections-1.2/fixture"));
     let _writer = store.lock()?;
     let (inventory, receipt, reservation) =
         prepare(&store, "Original heading.\n", 1, None, 1000, Some(1))?;
@@ -140,7 +140,7 @@ fn indexed_lookup_projects_large_file_records_and_decorates_only_native_facts() 
 #[test]
 fn older_catalog_without_extension_remains_readable() -> Result<()> {
     let root = tempfile::tempdir()?;
-    let store = FileStore::new(root.path().join("collections/fixture"));
+    let store = FileStore::new(root.path().join("collections-1.2/fixture"));
     let _writer = store.lock()?;
     let (inventory, receipt, reservation) =
         prepare(&store, "Original legacy heading.\n", 1, None, 0, None)?;
@@ -157,7 +157,7 @@ fn older_catalog_without_extension_remains_readable() -> Result<()> {
 #[test]
 fn future_continuity_extension_is_rejected_before_publication() -> Result<()> {
     let root = tempfile::tempdir()?;
-    let store = FileStore::new(root.path().join("collections/fixture"));
+    let store = FileStore::new(root.path().join("collections-1.2/fixture"));
     let _writer = store.lock()?;
     let (inventory, receipt, reservation) =
         prepare(&store, "Original future heading.\n", 1, None, 1, Some(2))?;
@@ -190,11 +190,12 @@ fn prepare(
         dialect: None,
         grammar_identity: None,
         mapping_version: 1,
-        chunk_version: 1,
+        chunk_version: 3,
         options: BTreeMap::new(),
         configuration_inputs: BTreeMap::new(),
     };
     let payload = ExtractionPayload {
+        semantic_projection: Default::default(),
         continuity_coverage: BTreeMap::new(),
         contract_version: 1,
         extraction_method: "utf8".into(),
@@ -280,10 +281,11 @@ fn prepare(
         resolvers: vec![],
     };
     let inventory = InventoryV2 {
+        vector_selection: Default::default(),
         embedding_pipeline_digest: None,
         index_detail: None,
         extraction_policy_digest: None,
-        version: if count > 0 { 3 } else { 2 },
+        version: airk_core::publication::INVENTORY_VERSION,
         incarnation,
         generation,
         collection: "fixture".into(),
@@ -325,8 +327,7 @@ fn prepare(
                 parse_status: "plain".into(),
             },
         )]),
-        retrieval_specification:
-            "tantivy-0.26.2/diskann-0.59.0/airk-file-1/generation-4/inventory-2".into(),
+        retrieval_specification: airk_store::reset::CURRENT_RETRIEVAL_ENGINE.into(),
         embedding_model: None,
         extractor_version: "native-facts/7".into(),
         analysis: Some(airk_core::AnalysisManifest {
@@ -394,13 +395,20 @@ fn prepare(
     }
     reservation.charge(bytes.len() as u64)?;
     fs::write(staging.join("inventory.json"), &bytes)?;
+    fs::create_dir_all(staging.join("vector-map"))?;
+    fs::write(staging.join("vector-map/meta.json"), b"{}")?;
     let mut components = BTreeMap::new();
-    for name in ["inventory.json", "lineage.json", "catalog.sqlite"] {
+    for name in [
+        "inventory.json",
+        "lineage.json",
+        "catalog.sqlite",
+        "vector-map/meta.json",
+    ] {
         let bytes = fs::read(staging.join(name))?;
         components.insert(name, json!({"bytes":bytes.len(),"sha256":digest(&bytes)}));
     }
     let manifest = serde_json::to_vec(
-        &json!({"schema":2,"engine":inventory.retrieval_specification,"token":token,"collection":"fixture","chunks":1,"vectors":0,"model_sha256":null,"embedding":"none","inventory_digest":digest(&bytes),"components":components}),
+        &json!({"schema":4,"engine":inventory.retrieval_specification,"token":token,"collection":"fixture","chunks":1,"vectors":0,"vector_occurrences":0,"vector_selection_digest":inventory.vector_selection.digest()?,"vector_eligible_artifacts":inventory.files.len(),"vector_excluded_artifacts":0,"model_sha256":null,"embedding":"none","inventory_digest":digest(&bytes),"components":components}),
     )?;
     reservation.charge(manifest.len() as u64)?;
     fs::write(staging.join("manifest.json"), &manifest)?;

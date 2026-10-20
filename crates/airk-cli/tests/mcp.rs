@@ -395,7 +395,7 @@ fn concurrent_mcp_agents_share_one_index_and_refresh_after_publication() -> anyh
         )?)
     };
     // Queries do not acquire or wait for the collection's exclusive writer lock.
-    let lock_path = state.path().join("collections/project-a/writer.lock");
+    let lock_path = state.path().join("collections-1.2/project-a/writer.lock");
     let writer_lock = fs::File::create_new(&lock_path)?;
     let barrier = std::sync::Barrier::new(2);
     std::thread::scope(|scope| -> anyhow::Result<()> {
@@ -433,11 +433,20 @@ fn concurrent_mcp_agents_share_one_index_and_refresh_after_publication() -> anyh
                 scope.spawn(|| -> anyhow::Result<()> {
                     barrier.wait();
                     for id in 10..42 {
-                        let payload = evidence(agent.call(
+                        let result = agent.call(
                             id,
                             "airk_search",
                             json!({"query":"authenticate", "mode":"lexical"}),
-                        )?)?;
+                        )?;
+                        if result["result"]["isError"] == true {
+                            assert!(
+                                result.to_string().contains("busy")
+                                    || result.to_string().contains("active readers"),
+                                "{result}"
+                            );
+                            continue;
+                        }
+                        let payload = evidence(result)?;
                         let generation = payload["generation"].as_u64().expect("generation");
                         assert!(generation == old_generation || generation == old_generation + 1);
                         assert_eq!(payload["collection"], "project-a");
@@ -456,7 +465,17 @@ fn concurrent_mcp_agents_share_one_index_and_refresh_after_publication() -> anyh
             })
             .collect();
         barrier.wait();
-        let published = index()?;
+        let started = std::time::Instant::now();
+        let published = loop {
+            match index() {
+                Ok(result) => break result,
+                Err(error) => {
+                    assert!(format!("{error:#}").contains("active readers"), "{error:#}");
+                    assert!(started.elapsed().as_secs() < 30);
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+            }
+        };
         for reader in readers {
             reader.join().expect("reader panicked")?;
         }
@@ -649,7 +668,6 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
             "airk_changes",
             json!({"selectors":[{"kind":"path","path":"auth.py"}]}),
         ),
-        (18, "airk_history", json!({"limit": 2, "max_bytes": 4096})),
     ] {
         let result = session.call(i, name, args.clone())?;
         assert!(result.get("error").is_none(), "{name}: {result}");
@@ -727,6 +745,9 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
             );
         }
     }
+    let unsupported = session.call(18, "airk_history", json!({"limit":2,"max_bytes":4096}))?;
+    assert_eq!(unsupported["result"]["isError"], true);
+    assert!(unsupported.to_string().contains("unsupported"));
     let budget = session.call(
         20,
         "airk_search",
@@ -769,3 +790,6 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
     assert_eq!(payload["facts"][0]["citation"]["start_line"], 5);
     Ok(())
 }
+
+#[path = "support/current_recovery.rs"]
+mod current_recovery;

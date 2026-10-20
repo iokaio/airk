@@ -42,6 +42,12 @@ Tool and parameter descriptions name the task, selection criteria and limits nea
 
 These clients discover standard MCP tool definitions. Their displayed/namespaced identifiers and allowlist keys can differ; configuration adapters must use the client's documented convention. Tool annotations are hints, not a substitute for the client's trust and approval controls or AIRK's server-side scope enforcement. [MCP tool specification](https://modelcontextprotocol.io/specification/2025-11-25/server/tools) defines the shared contract.
 
+## Agent Lean evidence
+
+Choose `airk_search` for conceptual discovery and `airk_code_facts`/`airk_outline` for declarations and written signatures. In Agent Lean, code/document facts default to compact records; request `compact: false` only when the richer indexed metadata is useful. Use `airk_capabilities` with an exact `adapter` for focused coverage rather than expanding the complete rich catalog. Original spans and hashes remain evidence validators; verify live source before editing.
+
+Selecting Agent Lean changes collection evidence through an explicit index publication. It does not change client tool permissions or enable missing facts. Rich Structure (`balanced`) and Search Only (`essential`) retain their stored identities. All existing endpoints remain compatible, including the explicit unsupported history response; [the rollout plan](mcp-prioritization.md) makes default promotion and tool retirement separate measured decisions.
+
 ## Guidance and verification
 
 Offer a short optional project-instruction snippet using the client's supported instruction surface. It should say to use AIRK for focused indexed evidence, select symbols/outline for structure, use short lexical keywords for search, expand only useful hits, cite original locations and verify current source before edits. Never overwrite an existing AGENTS.md, CLAUDE.md or client rule file, and never install retrieved file text as instructions. A guidance-preview wizard is planned; initialization instructions already provide the portable baseline.

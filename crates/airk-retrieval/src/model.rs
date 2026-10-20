@@ -75,7 +75,7 @@ pub(crate) fn verified_source_asset(
     Ok(bytes)
 }
 
-pub const ONNX_RUNTIME: &str = "tract-cpu-onnx/0.23.8/airk-1";
+pub const ONNX_RUNTIME: &str = "tract-cpu-onnx/0.23.8/airk-buckets-2";
 pub const MAX_MODEL_BYTES: u64 = 268_435_456;
 pub const MAX_TOKENIZER_BYTES: u64 = 4_194_304;
 pub const MAX_INPUT_BYTES: usize = 16_384;
@@ -116,10 +116,84 @@ pub enum EmbeddingModel {
     Onnx(Box<OnnxModel>),
 }
 
+/// Untruncated token offsets for one bounded planning slice. Special tokens have
+/// no source span and are accounted for separately by the model adapter.
+pub(crate) struct PlanningTokens {
+    pub offsets: Vec<(usize, usize)>,
+    pub special_tokens: usize,
+}
+
+impl PlanningTokens {
+    pub fn len(&self) -> usize {
+        self.offsets.len() + self.special_tokens
+    }
+}
+
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct EmbeddingCacheStats {
+    /// Artifacts admitted by the applied vector policy, independent of model enablement.
+    pub vector_eligible_artifacts: u64,
+    /// Artifacts deliberately retained without vectors by the applied policy.
+    pub vector_excluded_artifacts: u64,
+    /// Inputs resolved from another exact input in this build, including no-vector outcomes.
+    pub vector_reused_inputs: u64,
+    /// Distinct positive inputs inserted into the graph in this build.
+    pub vector_graph_nodes: u64,
+    /// Distinct outcomes in the private per-build exact-input registry.
+    pub vector_registry_rows: u64,
+    /// Allocated registry SQLite pages in bytes, not physical disk I/O.
+    pub vector_registry_bytes: u64,
+    /// Application cache file opens, including verification and compaction.
+    pub cache_file_opens: u64,
+    /// Bytes read through the cache adapter, not physical device I/O.
+    pub cache_read_bytes: u64,
+    /// Bytes written through the cache adapter, including staged replacements.
+    pub cache_written_bytes: u64,
+    pub cache_record_verification_bytes: u64,
+    pub cache_index_verification_bytes: u64,
+    pub cache_full_pack_verification_bytes: u64,
+    pub cache_syncs: u64,
+    /// Reuses of an already authenticated pack index within this update.
+    pub cache_index_hits: u64,
+    pub cache_index_peak_bytes: u64,
+    pub cache_packs_written: u64,
+    pub cache_packs_reused: u64,
+    pub cache_compacted_records: u64,
+    /// Final pack sealing, verification and compaction outside per-input stores.
+    pub cache_finalize_us: u64,
+    /// Semantic units emitted before embedding cache lookup.
+    pub vector_units: u64,
+    /// Exact covered source-body bytes, excluding repeated written context.
+    pub vector_body_bytes: u64,
+    /// Planning wall time excluding synchronous embedding/publication callbacks.
+    pub vector_planning_us: u64,
+    /// Logical inputs presented, including cache hits and blank inputs.
+    pub inputs: u64,
+    /// Inputs whose effective model text is whitespace-only.
+    pub blank_inputs: u64,
+    /// Repeated nonblank exact inputs within bounded ONNX batches.
+    pub duplicate_inputs: u64,
+    /// Successful ONNX plan executions, excluding cache hits and blank inputs.
+    pub actual_forwards: u64,
+    /// Distinct executed inputs; cache hits and blanks are not tokenized again.
+    pub tokenized_inputs: u64,
+    /// Tokens including specials, before token truncation, within the byte prefix.
+    pub input_tokens: u64,
+    /// Unmasked tokens in executed inputs, including specials.
+    pub embedded_tokens: u64,
+    /// Masked slots in executed tensors, including any unused batch rows.
+    pub padding_tokens: u64,
+    /// Executed inputs clipped by the byte or model token bound.
+    pub truncated_inputs: u64,
+    pub plan_compilations: u64,
+    /// Compilation is nested within inference wall time.
+    pub plan_compile_us: u64,
+    /// Peak declared template/plan allocation, not measured process RSS.
+    pub plan_cache_peak_bytes: u64,
     pub hits: u64,
     pub misses: u64,
+    /// Legacy logical uncached evaluations, including blanks and duplicate misses.
+    /// This is not a count of neural model executions; use actual_forwards.
     pub inferences: u64,
     pub no_vector: u64,
     /// Wall time for each disjoint phase; inference includes worker scheduling.
@@ -132,6 +206,22 @@ pub struct EmbeddingCacheStats {
     pub batches: u64,
 }
 
+impl EmbeddingCacheStats {
+    pub(crate) fn add_execution(&mut self, execution: &Self) {
+        self.actual_forwards += execution.actual_forwards;
+        self.tokenized_inputs += execution.tokenized_inputs;
+        self.input_tokens += execution.input_tokens;
+        self.embedded_tokens += execution.embedded_tokens;
+        self.padding_tokens += execution.padding_tokens;
+        self.truncated_inputs += execution.truncated_inputs;
+        self.plan_compilations += execution.plan_compilations;
+        self.plan_compile_us += execution.plan_compile_us;
+        self.plan_cache_peak_bytes = self
+            .plan_cache_peak_bytes
+            .max(execution.plan_cache_peak_bytes);
+    }
+}
+
 pub struct EmbeddingCacheContext<'a> {
     pub cache: Option<&'a dyn EmbeddingCache>,
     /// Full rebuild skips lookup, but verifies/stores recomputed entries.
@@ -139,6 +229,19 @@ pub struct EmbeddingCacheContext<'a> {
     pub stats: &'a mut EmbeddingCacheStats,
     pub max_workers: usize,
     pub working_memory_bytes: usize,
+}
+
+/// Match the ONNX adapter's bounded UTF-8 prefix before its early blank return.
+pub(crate) fn onnx_input_is_blank(text: &str) -> bool {
+    onnx_input_prefix(text).trim().is_empty()
+}
+
+pub(crate) fn onnx_input_prefix(text: &str) -> &str {
+    let mut end = text.len().min(MAX_INPUT_BYTES);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
 }
 
 pub(crate) fn read_asset(directory: &Path, name: &str, maximum: u64) -> Result<Vec<u8>> {
@@ -388,12 +491,112 @@ pub fn inspect_objects_cache_descriptor(
     };
     ensure!(
         descriptor.identity()? == set.pipeline_digest && identity == set.legacy_identity,
-        "model objects disagree with authenticated pipeline"
+        "model objects disagree with authenticated pipeline; rebuild the index with airk index --full"
     );
     Ok(descriptor)
 }
 
+/// Derive the cache descriptor from authenticated, bounded model metadata only.
+///
+/// The caller supplies receipt-bound (or newly verified) object references. This
+/// checks model.json against its object digest and binds every declared asset
+/// digest to that set. It deliberately does not read the weights, tokenizer or
+/// vocabulary: opening the model still verifies those bytes before cache use.
+pub fn descriptor_from_objects_metadata(
+    collection: &Path,
+    set: &ModelObjectSet,
+) -> Result<EmbeddingDescriptor> {
+    set.validate()?;
+    let source = ObjectAssets { collection, set };
+    let bytes = source.read_asset(ModelAssetName::ModelJson, 16_384)?;
+    let schema = serde_json::from_slice::<serde_json::Value>(&bytes)?["schema"].as_u64();
+    let check_asset = |name: ModelAssetName, declared: &str| -> Result<()> {
+        let reference = set
+            .assets
+            .get(&name)
+            .context("model metadata asset missing")?;
+        ensure!(
+            reference.sha256.to_string() == declared,
+            "model metadata disagrees with authenticated asset: {}",
+            name.filename()
+        );
+        Ok(())
+    };
+    let (descriptor, identity) = match schema {
+        Some(1) => {
+            ensure!(set.assets.len() == 2, "model metadata asset set mismatch");
+            let manifest: crate::vector::ModelManifest = serde_json::from_slice(&bytes)?;
+            ensure!(
+                (1..=airk_core::embedding::MAX_EMBEDDING_DIMENSIONS).contains(&manifest.dimensions)
+                    && !manifest.name.trim().is_empty()
+                    && !manifest.license.trim().is_empty(),
+                "unsupported local embedding metadata"
+            );
+            check_asset(ModelAssetName::VocabularyJson, &manifest.sha256)?;
+            (
+                descriptor_from_manifest(DescriptorManifest::Word(&manifest))?,
+                manifest.sha256,
+            )
+        }
+        Some(2) => {
+            ensure!(set.assets.len() == 4, "model metadata asset set mismatch");
+            let (manifest, identity) = onnx_manifest(&bytes)?;
+            check_asset(ModelAssetName::ModelOnnx, &manifest.model_sha256)?;
+            check_asset(ModelAssetName::TokenizerJson, &manifest.tokenizer_sha256)?;
+            check_asset(ModelAssetName::License, &manifest.license_sha256)?;
+            (
+                descriptor_from_manifest(DescriptorManifest::Onnx(&manifest))?,
+                identity,
+            )
+        }
+        _ => anyhow::bail!("unsupported model metadata schema"),
+    };
+    ensure!(
+        descriptor.identity()? == set.pipeline_digest && identity == set.legacy_identity,
+        "model metadata disagrees with authenticated pipeline; rebuild the index with airk index --full"
+    );
+    Ok(descriptor)
+}
+
+#[cfg(test)]
+mod object_metadata_tests;
+
 impl EmbeddingModel {
+    pub(crate) fn planning_context_tokens(&self) -> Option<usize> {
+        match self {
+            Self::WordVectors(_) => None,
+            Self::Onnx(model) => Some(model.manifest.max_tokens),
+        }
+    }
+
+    pub(crate) fn planning_tokens(&self, text: &str) -> Result<PlanningTokens> {
+        ensure!(
+            text.len() <= MAX_INPUT_BYTES,
+            "vector planning input exceeds byte bound"
+        );
+        match self {
+            Self::Onnx(model) => model.planning_tokens(text),
+            Self::WordVectors(_) => {
+                let mut offsets = Vec::new();
+                let mut start = None;
+                for (index, character) in text.char_indices() {
+                    if character.is_alphanumeric() || character == '_' {
+                        start.get_or_insert(index);
+                    } else if let Some(start) = start.take() {
+                        offsets.push((start, index));
+                    }
+                }
+                if let Some(start) = start {
+                    offsets.push((start, text.len()));
+                }
+                Ok(PlanningTokens {
+                    offsets,
+                    special_tokens: 0,
+                })
+            }
+        }
+    }
+
     pub fn open_objects(collection: &Path, set: &ModelObjectSet) -> Result<Self> {
         set.validate()?;
         let source = ObjectAssets { collection, set };
@@ -407,7 +610,7 @@ impl EmbeddingModel {
         ensure!(
             model.identity() == set.legacy_identity
                 && model.cache_descriptor()?.identity()? == set.pipeline_digest,
-            "model objects disagree with authenticated pipeline"
+            "model objects disagree with authenticated pipeline; rebuild the index with airk index --full"
         );
         Ok(model)
     }
@@ -451,12 +654,38 @@ impl EmbeddingModel {
         }
     }
 
+    /// Execute the same bounded, cache-aware batches for incremental current
+    /// updates as for a fresh build. Scheduling does not change input identity.
+    pub fn embed_batch(
+        &self,
+        texts: &[&str],
+        context: &mut EmbeddingCacheContext<'_>,
+    ) -> Result<Vec<Option<Vec<f32>>>> {
+        crate::embedding_batch::embed(
+            self,
+            texts,
+            &self.cache_descriptor()?,
+            context.cache,
+            context.bypass,
+            context.stats,
+            context.max_workers,
+            context.working_memory_bytes,
+        )
+    }
+
     /// Complete pipeline identity, separate from the legacy model display identity.
     pub fn cache_descriptor(&self) -> Result<EmbeddingDescriptor> {
         descriptor_from_manifest(match self {
             Self::WordVectors(model) => DescriptorManifest::Word(&model.manifest),
             Self::Onnx(model) => DescriptorManifest::Onnx(&model.manifest),
         })
+    }
+
+    pub(crate) fn plan_cache_peak_bytes(&self) -> Result<u64> {
+        match self {
+            Self::WordVectors(_) => Ok(0),
+            Self::Onnx(model) => model.plan_cache_peak_bytes(),
+        }
     }
 
     pub fn embed_cached(
@@ -469,6 +698,22 @@ impl EmbeddingModel {
     ) -> Result<Option<Vec<f32>>> {
         let started = std::time::Instant::now();
         airk_core::embedding::embedding_key(descriptor, text.as_bytes())?;
+        stats.plan_cache_peak_bytes = stats
+            .plan_cache_peak_bytes
+            .max(self.plan_cache_peak_bytes()?);
+        stats.inputs += 1;
+        let is_onnx = matches!(self, Self::Onnx(_));
+        let blank = if is_onnx {
+            onnx_input_is_blank(text)
+        } else {
+            text.trim().is_empty()
+        };
+        stats.blank_inputs += u64::from(blank);
+        if is_onnx && blank {
+            stats.inferences += 1;
+            stats.no_vector += 1;
+            return Ok(None);
+        }
         if let Some(cache) = cache.filter(|_| !bypass) {
             if let Some(vector) = lookup_embedding(cache, descriptor, text.as_bytes())? {
                 stats.hits += 1;
@@ -480,7 +725,14 @@ impl EmbeddingModel {
         stats.cache_lookup_us += crate::embedding_batch::elapsed_us(started);
         stats.inferences += 1;
         let started = std::time::Instant::now();
-        let vector = self.embed_text(text)?;
+        let vector = match self {
+            Self::WordVectors(model) => model.embed_text(text)?,
+            Self::Onnx(model) => {
+                let (vector, execution) = model.embed_text_measured(text, 1 << 30)?;
+                stats.add_execution(&execution);
+                vector
+            }
+        };
         stats.inference_us += crate::embedding_batch::elapsed_us(started);
         let started = std::time::Instant::now();
         if let Some(vector) = &vector {
@@ -520,7 +772,7 @@ fn descriptor_from_manifest(source: DescriptorManifest<'_>) -> Result<EmbeddingD
             serde_json::to_vec(&(
                 MAX_INPUT_BYTES,
                 manifest.max_tokens,
-                "tokenizers-0.23.2/fancy-regex/utf8-boundary-prefix/trim-empty-none/add-special-tokens/right-longest-first-truncation-stride0/right-fixed-padding-PAD-type0/1",
+                "tokenizers-0.23.2/fancy-regex/utf8-boundary-prefix/trim-empty-none/raw-single-encoding/right-truncation-reserve-specials-stride0/right-PAD-type0/smallest-32-64-128-256-512-or-context/qualified-minilm-windows-x64-32-full4-otherwise1/2",
             ))?,
             manifest.pooling.as_bytes().to_vec(),
             ONNX_RUNTIME.as_bytes().to_vec(),
@@ -727,6 +979,13 @@ mod tests {
             stats.inferences, 5,
             "no-vector outcome is not fabricated or cached as a vector"
         );
+        assert_eq!(stats.inputs, 6);
+        assert_eq!(
+            stats.actual_forwards, 0,
+            "word vectors execute no ONNX plan"
+        );
+        assert_eq!(stats.blank_inputs, 0);
+        assert_eq!(stats.duplicate_inputs, 0);
         manifest.name = "different manifest".into();
         fs::write(
             directory.path().join("model.json"),

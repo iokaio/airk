@@ -259,6 +259,7 @@ pub fn convert_native_legacy(
     };
     let payload = ExtractionPayload {
         continuity_coverage: BTreeMap::new(),
+        semantic_projection: Default::default(),
         contract_version: 1,
         extraction_method: artifact.extraction_method.clone(),
         parse_status: artifact.parse_status.clone(),

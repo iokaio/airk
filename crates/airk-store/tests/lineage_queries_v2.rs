@@ -26,7 +26,7 @@ fn digest(bytes: &[u8]) -> Sha256Digest {
 #[test]
 fn exact_catalog_queries_pin_old_revision_and_verify_indexed_identity() -> Result<()> {
     let root = tempfile::tempdir()?;
-    let store = FileStore::new(root.path().join("collections/fixture"));
+    let store = FileStore::new(root.path().join("collections-1.2/fixture"));
     let _writer = store.lock()?;
     let (first, first_receipt, reservation) = prepare(&store, "First evidence.\n", 1, None)?;
     store.publish_catalog_v2(&first, &first_receipt, &ExpectedHead::Empty, &reservation)?;
@@ -93,7 +93,7 @@ fn exact_catalog_queries_pin_old_revision_and_verify_indexed_identity() -> Resul
 #[test]
 fn exact_catalog_rejects_forks_and_corruption_but_reports_retired_absence() -> Result<()> {
     let root = tempfile::tempdir()?;
-    let store = FileStore::new(root.path().join("collections/fixture"));
+    let store = FileStore::new(root.path().join("collections-1.2/fixture"));
     let _writer = store.lock()?;
     let (first, first_receipt, reservation) = prepare(&store, "First evidence.\n", 1, None)?;
     store.publish_catalog_v2(&first, &first_receipt, &ExpectedHead::Empty, &reservation)?;
@@ -158,11 +158,12 @@ fn prepare(
         dialect: None,
         grammar_identity: None,
         mapping_version: 1,
-        chunk_version: 1,
+        chunk_version: 3,
         options: BTreeMap::new(),
         configuration_inputs: BTreeMap::new(),
     };
     let payload = ExtractionPayload {
+        semantic_projection: Default::default(),
         continuity_coverage: BTreeMap::new(),
         contract_version: 1,
         extraction_method: "utf8".into(),
@@ -265,10 +266,11 @@ fn prepare(
         }],
     };
     let inventory = InventoryV2 {
+        vector_selection: Default::default(),
         embedding_pipeline_digest: None,
         index_detail: None,
         extraction_policy_digest: None,
-        version: 2,
+        version: airk_core::publication::INVENTORY_VERSION,
         incarnation,
         generation,
         collection: "fixture".into(),
@@ -308,8 +310,7 @@ fn prepare(
                 parse_status: "plain".into(),
             },
         )]),
-        retrieval_specification:
-            "tantivy-0.26.2/diskann-0.59.0/airk-file-1/generation-4/inventory-2".into(),
+        retrieval_specification: airk_store::reset::CURRENT_RETRIEVAL_ENGINE.into(),
         embedding_model: None,
         extractor_version: "native-facts/7".into(),
         analysis: None,
@@ -342,13 +343,20 @@ fn prepare(
     )?;
     reservation.charge(bytes.len() as u64)?;
     fs::write(staging.join("inventory.json"), &bytes)?;
+    fs::create_dir_all(staging.join("vector-map"))?;
+    fs::write(staging.join("vector-map/meta.json"), b"{}")?;
     let mut components = BTreeMap::new();
-    for name in ["inventory.json", "lineage.json", "catalog.sqlite"] {
+    for name in [
+        "inventory.json",
+        "lineage.json",
+        "catalog.sqlite",
+        "vector-map/meta.json",
+    ] {
         let bytes = fs::read(staging.join(name))?;
         components.insert(name, json!({"bytes":bytes.len(),"sha256":digest(&bytes)}));
     }
     let manifest = serde_json::to_vec(
-        &json!({"schema":2,"engine":inventory.retrieval_specification,"token":token,"collection":"fixture","chunks":1,"vectors":0,"model_sha256":null,"embedding":"none","inventory_digest":digest(&bytes),"components":components}),
+        &json!({"schema":4,"engine":inventory.retrieval_specification,"token":token,"collection":"fixture","chunks":1,"vectors":0,"vector_occurrences":0,"vector_selection_digest":inventory.vector_selection.digest()?,"vector_eligible_artifacts":inventory.files.len(),"vector_excluded_artifacts":0,"model_sha256":null,"embedding":"none","inventory_digest":digest(&bytes),"components":components}),
     )?;
     reservation.charge(manifest.len() as u64)?;
     fs::write(staging.join("manifest.json"), &manifest)?;

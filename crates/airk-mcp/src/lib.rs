@@ -15,9 +15,19 @@ use serde::{Deserialize, Serialize};
 mod execution;
 pub mod local;
 
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CapabilitiesArgs {
+    /// One exact adapter ID; omit for supported-format summary.
+    pub adapter: Option<String>,
+    /// Include full adapter profiles and limitations instead of the compact summary.
+    #[serde(default)]
+    pub rich: bool,
+}
+
 #[derive(Default, Deserialize, Serialize, schemars::JsonSchema)]
 pub struct EvidenceArgs {
-    /// Exact retained revision token; unavailable history never falls back to current bytes.
+    /// Exact current token; a superseded token expires without historical fallback.
     pub revision: Option<String>,
     /// Representation validator returned by this same read and options.
     pub if_evidence: Option<String>,
@@ -97,7 +107,7 @@ impl ChangesArgs {
 pub struct SearchArgs {
     /// Default hybrid retrieval; explicit lexical uses AND terms.
     pub query: String,
-    /// Omit for the collection default: hybrid unless vectors are disabled in the panel.
+    /// Omit for the saved collection policy; pending vectors are disclosed in the response.
     pub mode: Option<SearchMode>,
     /// Compatibility alias for vector-only retrieval.
     #[serde(default)]
@@ -218,6 +228,8 @@ impl FactArgs {
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DocumentFactArgs {
+    /// Compact statement/location evidence; defaults on for Agent Lean. False requests rich details.
+    pub compact: Option<bool>,
     /// Continuation returned by this tool; repeat the same filters and representation.
     pub cursor: Option<String>,
     /// Durable document key from indexed evidence; exclusive of name/kind/language/path filters.
@@ -273,6 +285,8 @@ fn default_radius() -> usize {
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CodeFactArgs {
+    /// Compact signatures, locations and provenance; defaults on for Agent Lean. False requests rich details.
+    pub compact: Option<bool>,
     /// Continuation returned by this tool; repeat the same filters and representation.
     pub cursor: Option<String>,
     /// Durable symbol key from indexed evidence; exclusive of name/kind/language/path filters.
@@ -366,6 +380,10 @@ impl AirkServer {
     )]
     async fn code_facts(&self, Parameters(args): Parameters<CodeFactArgs>) -> CallToolResult {
         self.execute(UsageOperation::CodeFacts, move |kernel| {
+            let compact = args.compact.unwrap_or(
+                kernel.applied_index_detail()?
+                    == Some(airk_core::extraction::IndexDetail::AgentLean),
+            );
             if let Some(key) = continuity_selector(
                 args.symbol_key.as_deref(),
                 true,
@@ -391,7 +409,7 @@ impl AirkServer {
                 },
                 &airk_core::discovery::DiscoveryOptions {
                     cursor: args.cursor,
-                    compact: false,
+                    compact,
                 },
             )
         })
@@ -612,6 +630,10 @@ impl AirkServer {
         Parameters(args): Parameters<DocumentFactArgs>,
     ) -> CallToolResult {
         self.execute(UsageOperation::DocumentFacts, move |kernel| {
+            let compact = args.compact.unwrap_or(
+                kernel.applied_index_detail()?
+                    == Some(airk_core::extraction::IndexDetail::AgentLean),
+            );
             if let Some(key) = continuity_selector(
                 args.document_key.as_deref(),
                 false,
@@ -637,7 +659,7 @@ impl AirkServer {
                 },
                 &airk_core::discovery::DiscoveryOptions {
                     cursor: args.cursor,
-                    compact: false,
+                    compact,
                 },
             )
         })
@@ -701,7 +723,7 @@ impl AirkServer {
 
     #[tool(
         name = "airk_history",
-        description = "List bounded retained publication receipts or verify availability of one exact revision. Listing verifies receipt identity; exact file/context/outline/info reads verify retained bytes. Historical graph/full-text/vector search is unsupported. No live or current byte fallback.",
+        description = "Unsupported in AIRK 1.2. Only the current index is retained; historical availability and reads have been removed.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -729,32 +751,42 @@ impl AirkServer {
             open_world_hint = false
         )
     )]
-    async fn capabilities(&self) -> CallToolResult {
+    async fn capabilities(&self, Parameters(args): Parameters<CapabilitiesArgs>) -> CallToolResult {
         let admission = self.admission.status();
-        self.execute(UsageOperation::Capabilities, move |_| Ok(serde_json::json!({
+        self.execute(UsageOperation::Capabilities, move |_| {
+            anyhow::ensure!(args.adapter.as_ref().is_none_or(|id| id.len() <= 128), "adapter ID too long");
+            let adapters = Kernel::extraction_adapters().into_iter()
+                .filter(|item| args.adapter.as_ref().is_none_or(|id| &item.profile.adapter_id == id))
+                .map(|item| if args.rich { serde_json::to_value(item) } else if args.adapter.is_some() {
+                    Ok(serde_json::json!({"id":item.profile.adapter_id,"capabilities":item.capabilities}))
+                } else {
+                    Ok(serde_json::json!({"id":item.profile.adapter_id}))
+                }).collect::<Result<Vec<_>, _>>()?;
+            anyhow::ensure!(args.adapter.is_none() || !adapters.is_empty(), "unknown adapter ID");
+            Ok(serde_json::json!({
             "request_admission": admission,
             "discovery": {"cursor_tools":["airk_list_files","airk_outline","airk_symbols","airk_imports","airk_code_facts","airk_document_facts"], "binding":"exact publication, filters and representation", "compact_outline":true, "budget":"complete serialized records; framing is additional", "expired_cursor":"restart discovery"},
-            "adapters": Kernel::extraction_adapters(),
-            "index_detail": {"new_collection_default":"balanced", "levels":["essential","balanced","detailed"], "coverage":"Fact and relationship responses report their published indexing level and deliberate omissions. Configured changes apply only after a successful index. Optional provider imports and history retention are separate."},
-            "history": {"exact_reads":["airk_file_info","airk_read_file","airk_outline","airk_context"],"availability":"airk_history","optional_retention":true,"search":false,"live_fallback":false,"mutations":"CLI/extension only"},
-            "changes": {"observed_indexed_changes":true,"selectors":64,"selector_bytes":32768,"max_payload_bytes":65536,"exact_revision_tokens":true,"live_source_verified":false,"symbol_continuity":"adapter-specific conservative coverage","document_continuity":"adapter-specific conservative coverage"},
+            "adapters": adapters,
+            "index_detail": {"new_collection_default":"balanced", "levels":["agent_lean","essential","balanced","detailed"], "labels":{"agent_lean":"Agent Lean","balanced":"Rich Structure","essential":"Search Only","detailed":"Detailed"}, "coverage":"Fact and relationship responses report their published indexing level and deliberate omissions. Configured changes apply only after a successful index. Optional provider imports preserve their source and producer binding."},
+            "history": {"supported":false,"exact_reads":[],"optional_retention":false,"search":false,"live_fallback":false,"checkpoints":false,"reason":"AIRK 1.2 retains one current index"},
+            "changes": {"observed_indexed_changes":false,"remembered_evidence_validation":true,"expired_baseline":"baseline_unavailable","selectors":64,"selector_bytes":32768,"max_payload_bytes":65536,"exact_revision_tokens":true,"live_source_verified":false,"symbol_continuity":"adapter-specific conservative coverage","document_continuity":"adapter-specific conservative coverage"},
             "conditional_reads": {"tools":["airk_file_info","airk_read_file","airk_outline","airk_context"],"validator":"representation-specific if_evidence","follow_moves_default":false,"move_basis":"unique compatible exact content; not filesystem intent"},
             "code": ["rust","python","javascript/jsx","typescript/tsx","go","java","c","cpp","csharp","ruby","php","bash","powershell","lua","swift","kotlin","sql"],
             "structured": ["markdown","json","yaml","toml","html","css","xml","svg","csv","tsv","ini","dockerfile"],
             "documents": ["UTF-8 text","text-layer PDF","DOCX main-body paragraphs/tables with original row locations","XLSX worksheet cells and row facts","PPTX slide text in presentation order"],
             "fallback": "UTF-8 lexical retrieval for all other extensions",
             "document_cues": ["English requirement/modality and design/architecture/feature/decision candidates", "heading context", "ISO and English calendar dates; numeric slash dates retain unknown locale", "written numeric bounds/ranges/units; no unit conversion"],
-            "exact_fact_backend": "embedded SQLite; legacy JSON migrates at next successful index",
+            "exact_fact_backend": "authenticated current SQLite; 1.1 indexes require a fresh 1.2 rebuild",
             "code_evidence": ["syntax scopes/signatures/written parameters and return types", "syntax call, inheritance, containment and import candidates", "versioned structural framework cues"],
             "optional_analysis": "Explicit source/build/digest-bound SCIP imports and local LSP/Ctags execution through the CLI. LSP queries advertised document symbols, references, definitions, types, implementations and call hierarchy against private source copies. Ctags supplies syntax declarations only. Provider assertions are not AIRK compiler certification or complete resolution; source/build changes invalidate the imported domain.",
             "optional_ocr": "Explicit CLI-only Tesseract OCR with local traineddata and optional Poppler pdftoppm for selected PDF pages; PNG/JPEG/BMP also supported. Bounded local processes preserve original source hashes/page locations and executable/model provenance. Recognition may be wrong; no automatic OCR or model download.",
             "relationship_limits": {"hops":3,"results":100,"payload_bytes":65536,"traversal_ms":250,"visited_symbols":100},
             "local_usage": "Content-free local aggregates are enabled by default; AIRK_USAGE_MODE=disabled opts out. CLI reports include measured stages, logical disk growth and process CPU where the host supports it; physical I/O remains unknown. Optional client/session imports, local tokenizer calibration and user-supplied price scenarios stay labeled; estimates are counterfactual context, never provider bills.",
             "search_modes": ["lexical", "vector", "hybrid"],
-            "default_search": "Hybrid unless the collection has opted out in the panel. Missing model/index readiness fails explicitly. The trusted extension prepares pinned local MiniLM assets; MCP reads never download.",
+            "default_search": "Saved policy selects partial hybrid, lexical while pending, or requires complete vectors; vector opt-out selects lexical. Search and status disclose committed semantic readiness. MCP reads never start enrichment or download models.",
             "semantic_search": "Vector/hybrid modes support explicitly provisioned local static word vectors or schema-2 CPU ONNX transformer models with a local BERT WordPiece tokenizer. Assets/specification bind the indexed generation. DiskANN retrieval remains approximate; MCP reads never download or use network inference. Small real-model tests do not establish production corpus quality. semantic=true aliases vector.",
             "limitations": ["No universal native type/name resolution or complete caller graph","Optional providers require provisioning; embedding models require corpus qualification","LSP evidence queries selected symbol positions; external/unindexed locations are rejected","OCR covers selected pages and may misrecognize layout/text","No legacy binary Office formats","No SVG rendering","Composite child evidence has explicit mapping, grammar and resource limits"]
-        }))).await
+        })) }).await
     }
 }
 
@@ -767,6 +799,39 @@ fn render<T: Serialize>(
         .as_ref()
         .ok()
         .and_then(|value| serde_json::to_value(value).ok());
+    if let Some(object) = logical.as_mut().and_then(serde_json::Value::as_object_mut)
+        && object
+            .get("indexing")
+            .and_then(|v| v.get("level"))
+            .and_then(serde_json::Value::as_str)
+            == Some("agent_lean")
+        && let Some(publication) = object.get("publication").and_then(|value| {
+            serde_json::from_value::<airk_core::evidence::RevisionEnvelope>(value.clone()).ok()
+        })
+    {
+        if !object.contains_key("freshness") {
+            object.insert(
+                "freshness".into(),
+                serde_json::to_value(kernel.changes_freshness()).unwrap_or(serde_json::Value::Null),
+            );
+        }
+        if !object.contains_key("discovery_readiness") {
+            match kernel.discovery_observation(publication.token) {
+                Ok(Some(discovery)) => {
+                    object.insert(
+                        "discovery_readiness".into(),
+                        serde_json::to_value(discovery).unwrap_or(serde_json::Value::Null),
+                    );
+                }
+                _ => {
+                    object.insert(
+                        "discovery_observation".into(),
+                        "unavailable_after_read".into(),
+                    );
+                }
+            }
+        }
+    }
     if let Some(object) = logical.as_mut().and_then(serde_json::Value::as_object_mut)
         && let Some(id) = span.request_id()
     {
@@ -815,6 +880,48 @@ pub async fn serve(kernel: Kernel) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn agent_lean_defaults_to_useful_compact_facts_and_allows_rich_reads()
+    -> anyhow::Result<()> {
+        let root = tempfile::tempdir()?;
+        let data = tempfile::tempdir()?;
+        std::fs::write(
+            root.path().join("auth.rs"),
+            "fn authenticate(name: &str) -> bool { !name.is_empty() }\n",
+        )?;
+        let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+        kernel.configure_vectors(false)?;
+        kernel.configure_index_detail(airk_core::extraction::IndexDetail::AgentLean)?;
+        kernel.index()?;
+        let generation = kernel.status()?.generation;
+        let server = AirkServer::new(kernel.clone());
+        for compact in [None, Some(false)] {
+            let args: CodeFactArgs = serde_json::from_value(
+                serde_json::json!({"name":"authenticate","compact":compact}),
+            )?;
+            let result = server.code_facts(Parameters(args)).await;
+            assert!(!result.is_error.unwrap_or(false));
+            let outer = serde_json::to_value(result)?;
+            let body: serde_json::Value =
+                serde_json::from_str(outer["content"][0]["text"].as_str().unwrap())?;
+            if compact.is_none() {
+                assert_eq!(body["outline"][0]["qualified_name"], "authenticate");
+                assert!(
+                    body["outline"][0]["signature"]
+                        .as_str()
+                        .unwrap()
+                        .contains("-> bool")
+                );
+                assert_eq!(body["outline"][0]["basis"], "syntax");
+            } else {
+                assert_eq!(body["facts"][0]["name"], "authenticate");
+            }
+            assert_eq!(body["freshness"]["live_source_verified"], false);
+        }
+        assert_eq!(kernel.status()?.generation, generation);
+        Ok(())
+    }
 
     #[test]
     fn continuity_selectors_are_exact_typed_and_exclusive() {

@@ -212,11 +212,12 @@ mod original {
             dialect: None,
             grammar_identity: None,
             mapping_version: 1,
-            chunk_version: 1,
+            chunk_version: 3,
             options: BTreeMap::new(),
             configuration_inputs: BTreeMap::new(),
         };
         let payload = ExtractionPayload {
+            semantic_projection: Default::default(),
             continuity_coverage: BTreeMap::new(),
             contract_version: 1,
             extraction_method: "utf8".into(),
@@ -286,10 +287,11 @@ mod original {
             resolvers: vec![],
         };
         let inventory = InventoryV2 {
+            vector_selection: Default::default(),
             embedding_pipeline_digest: None,
             index_detail: None,
             extraction_policy_digest: None,
-            version: 2,
+            version: airk_core::publication::INVENTORY_VERSION,
             incarnation,
             generation,
             collection: "fixture".into(),
@@ -329,8 +331,7 @@ mod original {
                     parse_status: "plain".into(),
                 },
             )]),
-            retrieval_specification:
-                "tantivy-0.26.2/diskann-0.59.0/airk-file-1/generation-4/inventory-2".into(),
+            retrieval_specification: airk_store::reset::CURRENT_RETRIEVAL_ENGINE.into(),
             embedding_model: None,
             extractor_version: "native-facts/7".into(),
             analysis: Some(airk_core::AnalysisManifest {
@@ -388,13 +389,20 @@ mod original {
         )?;
         reservation.charge(bytes.len() as u64)?;
         fs::write(staging.join("inventory.json"), &bytes)?;
+        fs::create_dir_all(staging.join("vector-map"))?;
+        fs::write(staging.join("vector-map/meta.json"), b"{}")?;
         let mut components = BTreeMap::new();
-        for name in ["inventory.json", "lineage.json", "catalog.sqlite"] {
+        for name in [
+            "inventory.json",
+            "lineage.json",
+            "catalog.sqlite",
+            "vector-map/meta.json",
+        ] {
             let bytes = fs::read(staging.join(name))?;
             components.insert(name, json!({"bytes":bytes.len(),"sha256":digest(&bytes)}));
         }
         let manifest = serde_json::to_vec(
-            &json!({"schema":2,"engine":inventory.retrieval_specification,"token":token,"collection":"fixture","chunks":1,"vectors":0,"model_sha256":null,"embedding":"none","inventory_digest":digest(&bytes),"components":components}),
+            &json!({"schema":4,"engine":inventory.retrieval_specification,"token":token,"collection":"fixture","chunks":1,"vectors":0,"vector_occurrences":0,"vector_selection_digest":inventory.vector_selection.digest()?,"vector_eligible_artifacts":inventory.files.len(),"vector_excluded_artifacts":0,"model_sha256":null,"embedding":"none","inventory_digest":digest(&bytes),"components":components}),
         )?;
         reservation.charge(manifest.len() as u64)?;
         fs::write(staging.join("manifest.json"), &manifest)?;
@@ -433,7 +441,7 @@ mod original {
     impl Fixture {
         fn new() -> Result<Self> {
             let root = tempfile::tempdir()?;
-            let store = FileStore::new(root.path().join("collections/fixture"));
+            let store = FileStore::new(root.path().join("collections-1.2/fixture"));
             let writer = store.lock()?;
             let quota = Quota::open(root.path())?;
             let mut tokens = vec![];
@@ -812,7 +820,8 @@ mod original {
     }
 
     #[test]
-    fn historical_readers_protect_relocation_and_removal_and_moved_history_reopens() -> Result<()> {
+    fn historical_primitive_relocation_preserves_reads_but_public_removal_requires_current_owner()
+    -> Result<()> {
         let fixture = Fixture::new()?;
         let writer = fixture.store.lock()?;
         let token = fixture.tokens[0];
@@ -832,7 +841,7 @@ mod original {
         );
         drop(pinned);
         airk_store::relocation::relocate(fixture._root.path(), &destination)?;
-        let moved = FileStore::new(destination.join("collections/fixture"));
+        let moved = FileStore::new(destination.join("collections-1.2/fixture"));
         assert_eq!(moved.receipt(&token)?, Some(original));
         assert!(moved.catalog_at(&token, 64 * 1024 * 1024)?.is_none());
         let pinned = moved.history_at(&token, 64 * 1024 * 1024)?.unwrap();
@@ -842,8 +851,16 @@ mod original {
         );
         assert!(airk_store::remove_collection(&destination, "fixture").is_err());
         drop(pinned);
-        airk_store::remove_collection(&destination, "fixture")?;
-        assert!(!moved.directory().exists());
+        let error = airk_store::remove_collection(&destination, "fixture").unwrap_err();
+        assert!(error.to_string().contains("no current collection owner"));
+        assert!(moved.directory().exists());
+        assert_eq!(
+            moved
+                .history_at(&token, 64 * 1024 * 1024)?
+                .unwrap()
+                .source("note.txt")?,
+            b"Original historical publication 1.\n"
+        );
         Ok(())
     }
 

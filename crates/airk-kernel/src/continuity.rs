@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Durable keys are assigned only inside independently established file identity.
 use airk_core::{
-    ArtifactSource,
     changes::{
         ChangeCause, ChangeDetail, ChangeDimension, ChangeEndpoint, ChangeEvent, ChangeSubject,
         ContinuityBasis,
@@ -24,32 +23,30 @@ impl crate::Kernel {
         max_bytes: usize,
     ) -> Result<airk_core::FactsResponse> {
         crate::validate_budget(limit, max_bytes)?;
-        let catalog = self.catalog()?;
+        let read = self.current_reader()?;
+        let state = read
+            .collection_state()?
+            .ok_or_else(|| anyhow::anyhow!("current configuration missing"))?;
         let mut response = airk_core::FactsResponse {
             page: Default::default(),
             outline: Vec::new(),
-            indexing: catalog
-                .inventory
-                .as_ref()
-                .and_then(|i| i.index_detail)
-                .unwrap_or_default()
-                .into(),
-            publication: Self::catalog_envelope(&catalog),
-            generation: catalog.snapshot.generation,
-            collection: catalog.snapshot.collection.clone(),
+            indexing: state.configuration.index_detail.into(),
+            publication: Some(crate::current::runtime::envelope(&read)?),
+            generation: read.head().sequence,
+            collection: self.collection.clone(),
             facts: vec![],
             truncated: false,
         };
-        let Some((path, record)) = catalog.continuity_by_key(key)? else {
+        let Some((path, file)) = read.unit_owner(&self.store, key)? else {
             return Ok(response);
         };
-        let artifact = catalog.load_artifact(&path)?;
-        let records = catalog
-            .inventory
-            .as_ref()
-            .and_then(|inventory| inventory.files.get(&path))
-            .map_or(&[][..], |file| file.continuity.as_slice());
-        let index = airk_core::continuity::FactKeyIndex::new(records);
+        let record = file
+            .continuity
+            .iter()
+            .find(|r| r.key == key)
+            .ok_or_else(|| anyhow::anyhow!("current unit missing"))?;
+        let artifact = self.current_artifact(&read, &path, false)?;
+        let index = airk_core::continuity::FactKeyIndex::new(&file.continuity);
         let mut remaining = max_bytes;
         for (ordinal, fact) in artifact.facts.iter().enumerate() {
             if index.key(ordinal, fact) != Some(key) {
@@ -80,15 +77,17 @@ impl crate::Kernel {
             response.facts.push(hit);
         }
         if response.facts.is_empty() && !response.truncated {
-            let entry = &catalog.snapshot.artifacts[&path];
-            let payload = self.store.load_extraction_payload(entry)?;
+            let entry = read
+                .artifact(&path)?
+                .ok_or_else(|| anyhow::anyhow!("current unit artifact missing"))?;
+            let payload = self.store.load_extraction_payload(&entry)?;
             // Existing native descriptors are host-local. Future composite
             // units require an original-coordinate binding before this read.
             anyhow::ensure!(
                 record.descriptor.region.is_none(),
                 "region content requires qualified original mapping"
             );
-            let span = record.descriptor.span;
+            let span = &record.descriptor.span;
             let text = payload
                 .text
                 .get(span.start..span.end)
@@ -107,7 +106,7 @@ impl crate::Kernel {
             let hit = airk_core::FactHit {
                 continuity_key: Some(key),
                 name: text.into(),
-                kind: record.descriptor.category,
+                kind: record.descriptor.category.clone(),
                 syntax_kind: "continuity_unit".into(),
                 language: artifact.language,
                 code: None,
@@ -117,7 +116,7 @@ impl crate::Kernel {
                     content_hash: artifact.content_hash,
                     start_line,
                     end_line,
-                    location: record.descriptor.location,
+                    location: record.descriptor.location.clone(),
                 },
             };
             if serde_json::to_vec(&hit)?.len() <= remaining {
@@ -157,38 +156,6 @@ fn detail(item: &ContinuityDescriptor) -> ChangeDetail {
         region_location_digest: None,
         provenance_digest: item.provenance,
     }
-}
-
-pub(crate) fn removed(
-    path: &str,
-    file: &InventoryFile,
-    generation: u64,
-    cause: ChangeCause,
-) -> Vec<ChangeEvent> {
-    file.continuity
-        .iter()
-        .map(|record| ChangeEvent {
-            generation,
-            event_id: 0,
-            subject: match record.key {
-                ContinuityKey::Symbol(symbol_key) => ChangeSubject::Symbol {
-                    artifact_id: file.state.artifact_id,
-                    symbol_key,
-                },
-                ContinuityKey::Document(document_key) => ChangeSubject::Document {
-                    artifact_id: file.state.artifact_id,
-                    document_key,
-                },
-            },
-            before: Some(endpoint(path, file)),
-            after: None,
-            before_detail: Some(detail(&record.descriptor)),
-            after_detail: None,
-            dimensions: vec![],
-            cause,
-            basis: ContinuityBasis::Unknown,
-        })
-        .collect()
 }
 
 /// Returns bounded observations; the lineage assembler applies its aggregate cap.

@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Local persistent candidate engines and bounded evidence responses.
 pub mod bounded;
+pub mod current_lexical;
 pub mod embedding_batch;
 pub mod lexical_experiment;
 pub mod model;
 mod onnx;
 pub mod persistent;
 pub mod vector;
+pub mod vector_units;
 use airk_core::{Citation, Hit, SearchQuery, SearchResponse, Snapshot};
 use anyhow::{Result, ensure};
 use std::collections::{BTreeMap, BTreeSet};
@@ -51,6 +53,8 @@ impl LexicalIndex {
         }
         let mut response = SearchResponse {
             publication: None,
+            semantic_readiness: None,
+            discovery_readiness: None,
             generation: snapshot.generation,
             collection: snapshot.collection.clone(),
             hits: Vec::new(),
@@ -124,4 +128,60 @@ pub fn truncate_utf8(text: &str, max_bytes: usize) -> (String, bool) {
         end -= 1;
     }
     (text[..end].to_owned(), end < text.len())
+}
+
+/// Select an original UTF-8 span around query terms under the result allowance.
+pub fn focus_span(text: &str, query: &str, allowance: usize) -> airk_core::location::ByteSpan {
+    use airk_core::location::ByteSpan;
+    if text.len() <= allowance {
+        return ByteSpan {
+            start: 0,
+            end: text.len(),
+        };
+    }
+    let query = terms(query);
+    let mut selected = None;
+    let mut offset = 0;
+    for line in text.split_inclusive('\n') {
+        let start = offset + line.len() - line.trim_start().len();
+        if start < offset + line.len() {
+            let score = terms(line).intersection(&query).count();
+            if selected.is_none_or(|(_, _, best)| score > best) {
+                selected = Some((start, offset + line.len(), score));
+            }
+        }
+        offset += line.len();
+    }
+    let (mut start, end, score) = selected.unwrap_or((0, text.len(), 0));
+    if score > 0 {
+        let mut word = None;
+        for (index, character) in text[start..end]
+            .char_indices()
+            .chain(std::iter::once((end - start, ' ')))
+        {
+            if character.is_alphanumeric() || character == '_' {
+                word.get_or_insert(index);
+            } else if let Some(begin) = word.take()
+                && !terms(&text[start + begin..start + index]).is_disjoint(&query)
+            {
+                if begin >= allowance {
+                    start += begin.saturating_sub(allowance / 4);
+                }
+                break;
+            }
+        }
+    }
+    while !text.is_char_boundary(start) {
+        start -= 1;
+    }
+    let mut end = text.len().min(start.saturating_add(allowance));
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    // A one-byte allowance may not fit a complete scalar; its full source span
+    // remains valid while the final UTF8 byte-budget truncation returns no text.
+    if end == start {
+        end = start + text[start..].chars().next().map_or(0, char::len_utf8);
+    }
+    ByteSpan { start, end }
 }

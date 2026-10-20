@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Original local protocol fixtures qualify publication, not real provider quality.
-use airk_core::{ArtifactSource, DocumentLocation, changes::PublicationReason};
+use super::current_inspection::InspectCurrent;
+use airk_core::{ArtifactSource, DocumentLocation};
 use airk_ingest::{
     ocr::OcrRequest,
     providers::{LiveRequest, ProviderCommand},
@@ -48,14 +49,11 @@ fn actual_ctags_lsp_and_ocr_writers_publish_reopenable_receipts() -> Result<()> 
     )?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
     kernel.index()?;
-    let store = FileStore::new(data.path().join("collections/default"));
-    let baseline = store.catalog()?.unwrap();
+    let store = FileStore::new(data.path().join("collections-1.2/default"));
+    let baseline = store.current_test_catalog()?.unwrap();
     let native = baseline.load_artifact("src/lib.rs")?.facts;
-    let mut parent = baseline.receipt.as_ref().unwrap().token;
-    for (adapter, reason) in [
-        ("ctags", PublicationReason::Ctags),
-        ("lsp", PublicationReason::Lsp),
-    ] {
+    let mut parent = baseline.token;
+    for adapter in ["ctags", "lsp"] {
         let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
         kernel.run_provider(
             adapter,
@@ -67,17 +65,15 @@ fn actual_ctags_lsp_and_ocr_writers_publish_reopenable_receipts() -> Result<()> 
                 paths: vec!["src/lib.rs".into()],
             },
         )?;
-        let catalog = store.catalog()?.unwrap();
-        let observation = &catalog.lineage.as_ref().unwrap().observation;
-        assert_eq!(observation.reason, reason);
-        assert_eq!(observation.parent, Some(parent));
+        let catalog = store.current_test_catalog()?.unwrap();
+        assert!(catalog.token.generation > parent.generation);
         assert_eq!(catalog.snapshot.imported_facts.len(), 1);
         assert_eq!(catalog.snapshot.imported_facts[0].name, "one");
         assert_eq!(
             serde_json::to_value(catalog.load_artifact("src/lib.rs")?.facts)?,
             serde_json::to_value(&native)?
         );
-        parent = catalog.receipt.as_ref().unwrap().token;
+        parent = catalog.token;
         let reopened = Kernel::open(root.path(), Some(data.path().into()))?;
         assert_eq!(
             reopened.file_info("src/lib.rs")?.generation,
@@ -108,10 +104,8 @@ fn actual_ctags_lsp_and_ocr_writers_publish_reopenable_receipts() -> Result<()> 
             dpi: 150,
         },
     )?;
-    let catalog = store.catalog()?.unwrap();
-    let observation = &catalog.lineage.as_ref().unwrap().observation;
-    assert_eq!(observation.reason, PublicationReason::Ocr);
-    assert_eq!(observation.parent, Some(parent));
+    let catalog = store.current_test_catalog()?.unwrap();
+    assert!(catalog.token.generation > parent.generation);
     let artifact = catalog.load_artifact("scan.png")?;
     assert_eq!(
         artifact.chunks[0].location,

@@ -6,21 +6,27 @@ use std::collections::BTreeMap;
 pub mod binding;
 pub mod changes;
 pub mod code;
+pub mod compression;
 pub mod continuity;
 pub mod discovery;
 pub mod embedding;
 pub mod evidence;
+pub mod execution;
 pub mod extraction;
+pub mod graph_storage;
 pub mod identity;
 pub mod location;
 pub mod mapped_binding;
 pub mod model_objects;
 pub mod publication;
+pub mod readiness;
 pub mod usage;
+pub mod vector_evidence;
+pub mod vector_selection;
 pub use code::*;
 
 pub const SCHEMA_VERSION: u32 = 3;
-pub const EXTRACTOR_VERSION: &str = "native-facts/8";
+pub const EXTRACTOR_VERSION: &str = "native-facts/9";
 pub const MAX_RESPONSE_BYTES: usize = 65_536;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -49,6 +55,10 @@ pub struct Artifact {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ArtifactRef {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_encoding: Option<compression::EncodedObject>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payload_encoding: Option<compression::EncodedObject>,
     pub object: String,
     #[serde(default)]
     pub object_bytes: usize,
@@ -79,6 +89,19 @@ impl Artifact {
 /// Load one retained artifact; implementations must preserve inventory binding.
 pub trait ArtifactSource {
     fn load_artifact(&self, path: &str) -> anyhow::Result<Artifact>;
+}
+
+/// Authenticated neutral extraction and its bound display evidence, loaded together.
+/// Retrieval units are planned from the payload, independently of display chunks.
+pub struct RetrievalArtifact {
+    pub artifact: Artifact,
+    pub profile: extraction::ExtractionProfile,
+    pub payload: extraction::ExtractionPayload,
+    pub payload_digest: identity::Sha256Digest,
+}
+
+pub trait RetrievalSource {
+    fn load_retrieval_artifact(&self, path: &str) -> anyhow::Result<RetrievalArtifact>;
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -158,6 +181,10 @@ pub struct Hit {
 pub struct SearchResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub publication: Option<evidence::RevisionEnvelope>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub semantic_readiness: Option<readiness::SemanticReadiness>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discovery_readiness: Option<readiness::DiscoveryReadiness>,
     pub generation: u64,
     pub collection: String,
     pub hits: Vec<Hit>,

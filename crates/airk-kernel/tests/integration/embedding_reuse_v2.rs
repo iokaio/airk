@@ -1,11 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Original local word-vector fixtures; no ONNX or pretrained-model qualification.
-use airk_core::{SearchQuery, embedding::CachedEmbedding};
+use super::current_inspection::read_current;
+use airk_core::SearchQuery;
 use airk_kernel::Kernel;
-use airk_store::{
-    FileStore,
-    retention::{RetentionMode, RetentionPolicy},
-};
+use airk_store::FileStore;
 use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
 use std::{fs, path::Path};
@@ -38,27 +36,14 @@ fn query() -> SearchQuery {
         max_bytes: 8192,
     }
 }
-fn manual(kernel: &Kernel) -> Result<()> {
-    kernel.configure_retention(RetentionPolicy {
-        mode: RetentionMode::Manual,
-        ..Default::default()
-    })?;
-    Ok(())
-}
-fn references(store: &FileStore) -> Result<Vec<airk_store::vector_cache::VectorCacheReference>> {
-    let catalog = store.catalog()?.context("catalog missing")?;
-    store.embedding_cache_references(catalog.receipt.as_ref().context("receipt missing")?)
-}
-
 #[test]
-fn exact_chunks_reuse_vectors_across_publications_moves_and_line_insertions() -> Result<()> {
+fn exact_units_reuse_across_publications_and_moves_but_group_edits_recompute() -> Result<()> {
     let root = tempfile::tempdir()?;
     let data = unlinked_tempdir()?;
     model(data.path(), "original embedding fixture")?;
     let original = "pub fn authenticate() -> u32 {\n    let original = 7;\n    original + 3\n}\n";
     fs::write(root.path().join("auth.rs"), original)?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
-    manual(&kernel)?;
     let cold = kernel.index()?;
     assert!(cold.embedding_inferences > 0);
     assert_eq!(cold.embedding_cache_hits, 0);
@@ -69,19 +54,26 @@ fn exact_chunks_reuse_vectors_across_publications_moves_and_line_insertions() ->
         "invoice original evidence\n",
     )?;
     let unrelated = kernel.index()?;
-    assert!(unrelated.embedding_cache_hits >= cold_vectors);
+    assert_eq!(
+        unrelated.embedding_cache_hits, 0,
+        "unchanged artifacts do no embedding-cache work"
+    );
     assert_eq!(
         unrelated.embedding_inferences - unrelated.embedding_no_vector,
         1,
-        "only the new vector-producing text chunk requires inference; no-vector outcomes are retried truthfully"
+        "only the new vector-producing semantic input requires inference; no-vector outcomes are retried truthfully"
     );
     fs::rename(root.path().join("auth.rs"), root.path().join("moved.rs"))?;
     let moved = kernel.index()?;
     assert_eq!(
         moved.embedding_inferences, moved.embedding_no_vector,
-        "unchanged supported chunks have zero inference calls; unsupported chunks are not cached"
+        "unchanged supported inputs have zero inference calls; unsupported inputs are not cached"
     );
-    assert!(moved.embedding_cache_hits >= 2);
+    assert_eq!(
+        moved.embedding_cache_hits, 0,
+        "exact graph reuse needs no persistent cache lookup"
+    );
+    assert!(moved.vector_reused_inputs > 0);
     let before = kernel.semantic_search(&query())?;
     assert_eq!(before.hits[0].citation.path, "moved.rs");
     fs::write(
@@ -89,17 +81,35 @@ fn exact_chunks_reuse_vectors_across_publications_moves_and_line_insertions() ->
         format!("// inserted original comment\n\n{original}"),
     )?;
     let shifted = kernel.index()?;
-    assert!(
-        shifted.embedding_cache_hits >= 2,
-        "unchanged declaration and unrelated text reuse exact vectors"
+    assert_eq!(
+        shifted.embedding_cache_hits, 0,
+        "unchanged files do no cache work; edited groups require new exact inputs"
+    );
+    assert_eq!(
+        shifted.embedding_inferences - shifted.embedding_no_vector,
+        1
     );
     let optimized = kernel.semantic_search(&query())?;
     let moved_hit = optimized
         .hits
         .iter()
-        .find(|hit| hit.citation.path == "moved.rs")
+        .find(|hit| hit.citation.path == "moved.rs" && hit.text.contains("pub fn authenticate"))
         .context("moved hit missing")?;
-    assert!(moved_hit.citation.start_line > before.hits[0].citation.start_line);
+    let declaration_line = |hit: &airk_core::Hit| -> Result<usize> {
+        let offset = hit
+            .text
+            .find("pub fn authenticate")
+            .context("declaration missing")?;
+        Ok(hit.citation.start_line
+            + hit.text[..offset]
+                .bytes()
+                .filter(|byte| *byte == b'\n')
+                .count())
+    };
+    assert_eq!(
+        declaration_line(moved_hit)?,
+        declaration_line(&before.hits[0])? + 2
+    );
     let full = kernel.reindex()?;
     assert_eq!(full.embedding_cache_hits, 0);
     assert!(full.embedding_inferences > cold.embedding_inferences);
@@ -141,111 +151,89 @@ fn exact_chunks_reuse_vectors_across_publications_moves_and_line_insertions() ->
 }
 
 #[test]
-fn forged_self_consistent_cache_entry_cannot_advance_publication() -> Result<()> {
+fn current_cache_manifest_is_authenticated_and_foreign_packs_are_not_adopted() -> Result<()> {
     let root = tempfile::tempdir()?;
     let data = unlinked_tempdir()?;
-    model(data.path(), "original corruption fixture")?;
+    model(data.path(), "original cache ownership")?;
     fs::write(
         root.path().join("auth.txt"),
-        "authenticate original evidence\n",
+        "authenticate original evidence",
     )?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
-    manual(&kernel)?;
-    kernel.index()?;
-    let store = FileStore::new(data.path().join("collections/default"));
-    let before = store
-        .persistent_revision()?
-        .context("publication missing")?;
-    let reference = references(&store)?
-        .into_iter()
-        .next()
-        .context("cache reference missing")?;
+    assert_eq!(kernel.index()?.embedding_inferences, 1);
+    let store = FileStore::new(data.path().join("collections-1.2/default"));
+    let read = read_current(&store)?;
+    let before = read.token()?;
+    let reference = read
+        .resource_reference("embedding-cache")?
+        .context("current cache")?;
+    let manifest = airk_store::vector_cache::VectorCacheManifest::from_bytes(
+        &read.resource(&store, "embedding-cache")?.unwrap(),
+    )?;
+    drop(read);
     let path = store
         .directory()
-        .join("objects/embeddings")
-        .join(reference.key.to_string());
-    let original = fs::read(&path)?;
-    let forged = CachedEmbedding::new(reference.key, vec![0.0, 1.0], 2)?;
-    fs::write(&path, serde_json::to_vec(&forged)?)?;
-    fs::write(root.path().join("extra.txt"), "invoice extra evidence\n")?;
+        .join("current-resources")
+        .join(format!("{}.json", reference.digest));
+    let saved = fs::read(&path)?;
+    fs::write(&path, vec![b'x'; saved.len()])?;
+    fs::write(root.path().join("invoice.txt"), "invoice extra evidence")?;
     assert!(kernel.index().is_err());
-    assert_eq!(
-        store
-            .persistent_revision()?
-            .context("publication missing")?
-            .token,
-        before.token
-    );
-    fs::write(path, original)?;
+    assert_eq!(read_current(&store)?.token()?, before);
     assert_eq!(
         kernel.semantic_search(&query())?.hits[0].citation.path,
         "auth.txt"
     );
+    fs::write(path, saved)?;
+    let other = Kernel::open_collection(root.path(), Some(data.path().into()), "other")?;
+    let foreign = data
+        .path()
+        .join("collections-1.2/other/objects/embedding-packs");
+    fs::create_dir_all(&foreign)?;
+    for pack in manifest.packs {
+        fs::copy(
+            airk_store::vector_cache::pack_path(store.directory(), &pack.sha256)?,
+            foreign.join(pack.sha256.to_string()),
+        )?;
+    }
+    let isolated = other.index()?;
+    assert_eq!(isolated.embedding_cache_hits, 0);
+    assert_eq!(isolated.embedding_inferences, 2);
+    kernel.index()?;
     Ok(())
 }
 
 #[test]
-fn manual_history_retains_vector_objects_and_automatic_gc_preserves_live_references() -> Result<()>
-{
+fn relocation_keeps_exact_graph_reuse_and_reclaims_unreferenced_cache_packs() -> Result<()> {
     let root = tempfile::tempdir()?;
-    let data = unlinked_tempdir()?;
-    model(data.path(), "original GC fixture")?;
-    let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
-    manual(&kernel)?;
+    let parent = unlinked_tempdir()?;
+    let data = parent.path().join("original");
+    model(&data, "original relocation fixture")?;
     fs::write(
-        root.path().join("evidence.txt"),
-        "authenticate original first\n",
+        root.path().join("auth.txt"),
+        "authenticate original retained evidence",
     )?;
+    let kernel = Kernel::open(root.path(), Some(data.clone()))?;
     kernel.index()?;
-    let store = FileStore::new(data.path().join("collections/default"));
-    let first = references(&store)?
-        .into_iter()
-        .next()
-        .context("first vector missing")?;
-    let first_path = store
-        .directory()
-        .join("objects/embeddings")
-        .join(first.key.to_string());
-    for text in ["invoice original second\n", "invoice original third\n"] {
-        fs::write(root.path().join("evidence.txt"), text)?;
-        kernel.index()?;
-    }
-    assert!(
-        first_path.exists(),
-        "manual history owns its retained vectors"
-    );
-    kernel.configure_retention(RetentionPolicy {
-        mode: RetentionMode::Automatic,
-        ..Default::default()
-    })?;
-    fs::write(
-        root.path().join("evidence.txt"),
-        "invoice original fourth\n",
-    )?;
-    kernel.index()?;
-    for _ in 0..32 {
-        let outcome = kernel.maintain_retention()?;
-        if !outcome.receipt.pending {
-            break;
-        }
-    }
-    assert!(
-        !first_path.exists(),
-        "unreferenced vector is collected after obsolete owner retirement"
-    );
-    for reference in references(&store)? {
-        assert!(
-            store
-                .directory()
-                .join("objects/embeddings")
-                .join(reference.key.to_string())
-                .exists()
-        );
-    }
-    assert!(!kernel.semantic_search(&query())?.hits.is_empty());
+    let before = serde_json::to_value(kernel.semantic_search(&query())?.hits)?;
+    let destination = parent.path().join("relocated");
+    airk_kernel::storage::relocate(&data, &destination)?;
+    let reopened = Kernel::open(root.path(), Some(destination.clone()))?;
     assert_eq!(
-        fs::read_to_string(root.path().join("evidence.txt"))?,
-        "invoice original fourth\n"
+        serde_json::to_value(reopened.semantic_search(&query())?.hits)?,
+        before
+    );
+    fs::rename(root.path().join("auth.txt"), root.path().join("moved.txt"))?;
+    let report = reopened.index()?;
+    assert_eq!(report.embedding_inferences, 0);
+    assert_eq!(report.vector_reused_inputs, 1);
+    assert_eq!(
+        reopened.semantic_search(&query())?.hits[0].citation.path,
+        "moved.txt"
+    );
+    assert_eq!(
+        fs::read_dir(destination.join("collections-1.2/default/objects/embedding-packs"))?.count(),
+        0
     );
     Ok(())
 }

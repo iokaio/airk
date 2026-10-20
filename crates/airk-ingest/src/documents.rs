@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Native document adapters share extraction limits and original location labels.
-use airk_core::{Chunk, DocumentLocation, Fact};
+use airk_core::{
+    Chunk, DocumentLocation, Fact,
+    extraction::{IndexDetail, LocalSpan},
+};
 use anyhow::{Context, Result, ensure};
 use quick_xml::{Reader, events::Event};
 use std::{
@@ -35,6 +38,7 @@ pub(crate) fn large_text(
         method: "utf8".into(),
         parse_status: "partial-text-only: source exceeds 4 MiB structured parsing budget; symbols, relationships and document facts unavailable".into(),
         facts: vec![],
+        semantic_seeds: Some(crate::semantic_projection::SemanticSeeds::default()),
     }))
 }
 pub struct Extracted {
@@ -43,6 +47,7 @@ pub struct Extracted {
     pub method: String,
     pub parse_status: String,
     pub facts: Vec<Fact>,
+    pub(crate) semantic_seeds: Option<crate::semantic_projection::SemanticSeeds>,
 }
 
 pub fn extract(path: &str, bytes: &[u8]) -> Result<Extracted> {
@@ -67,10 +72,11 @@ pub(crate) fn extract_selected(
         return Ok(extracted);
     }
     let adapter = profile.adapter_id.as_str();
+    let detail = IndexDetail::from_profile(profile)?;
     match adapter {
         "pdf" => {
             let pages = crate::pdf_worker::extract(bytes)?;
-            from_blocks(
+            from_blocks_selected(
                 "pdf",
                 "pdf-text-layer",
                 pages
@@ -81,6 +87,7 @@ pub(crate) fn extract_selected(
                 BTreeMap::new(),
                 BTreeMap::new(),
                 BTreeSet::new(),
+                detail,
             )
         }
         "docx" => {
@@ -106,6 +113,9 @@ pub(crate) fn extract_selected(
                 crate::tables::docx_table_paragraphs(&xml)?,
             )?;
             crate::tables::append_docx_tables(&xml, &mut extracted)?;
+            // Table rows append both original-location text and prose facts. Until
+            // that producer has its own seed sink, derive all hints from its facts.
+            extracted.semantic_seeds = None;
             Ok(extracted)
         }
         "xlsx" => crate::spreadsheets::extract(bytes),
@@ -156,13 +166,14 @@ pub(crate) fn extract_selected(
                     _ => {}
                 }
             }
-            from_blocks(
+            from_blocks_selected(
                 "pptx",
                 "pptx-slide-text",
                 slides,
                 BTreeMap::new(),
                 titles,
                 BTreeSet::new(),
+                detail,
             )
         }
         _ => {
@@ -173,29 +184,39 @@ pub(crate) fn extract_selected(
                 text.len() <= MAX_EXTRACTED,
                 "text exceeds 32 MiB extraction limit"
             );
-            let mut analysis = crate::syntax::analyze_selected(path, text, adapter)?;
+            let selected =
+                crate::syntax::analyze_selected_with_detail(path, text, adapter, detail)?;
+            let mut analysis = selected.analysis;
+            let mut semantic_seeds = selected.seeds;
             if matches!(adapter, "markdown" | "instruction-markdown") {
                 analysis.language = adapter.into();
                 analysis.status = "structured-markdown".into();
-                analysis.facts = crate::prose::markdown(text)?;
-                if adapter == "instruction-markdown" {
+                let prose = crate::prose::markdown_selected(text, detail)?;
+                semantic_seeds = Some(prose.semantic_seeds(0)?);
+                analysis.facts = prose.facts;
+                if adapter == "instruction-markdown" && detail != IndexDetail::Essential {
                     crate::instruction_documents::enrich(path, text, &mut analysis.facts)?;
                 }
             } else if matches!(adapter, "csv" | "tsv") {
                 analysis.language = adapter.into();
                 analysis.status = "structured-delimited".into();
                 analysis.facts = delimited_facts(text, adapter == "tsv")?;
+                semantic_seeds = None;
             } else if matches!(adapter, "xml" | "svg") {
                 analysis.language = adapter.into();
                 analysis.status = "structured-xml".into();
                 analysis.facts = xml_facts(text)?;
+                semantic_seeds = None;
             } else if adapter == "ini" {
                 analysis.language = adapter.into();
                 analysis.status = "line-structured".into();
                 analysis.facts = line_facts(text, &analysis.language)?;
+                semantic_seeds = None;
             }
             if analysis.language == "text" {
-                analysis.facts = crate::prose::plain(text)?;
+                let prose = crate::prose::plain_selected(text, &[], None, detail)?;
+                semantic_seeds = Some(prose.semantic_seeds(0)?);
+                analysis.facts = prose.facts;
                 analysis.status = "prose-candidates".into();
             }
             Ok(Extracted {
@@ -204,6 +225,7 @@ pub(crate) fn extract_selected(
                 method: "utf8".into(),
                 parse_status: analysis.status,
                 facts: analysis.facts,
+                semantic_seeds,
             })
         }
     }
@@ -217,16 +239,38 @@ pub(crate) fn from_blocks(
     titles: BTreeMap<usize, String>,
     excluded_prose: BTreeSet<usize>,
 ) -> Result<Extracted> {
+    from_blocks_selected(
+        language,
+        method,
+        blocks,
+        heading_levels,
+        titles,
+        excluded_prose,
+        IndexDetail::Detailed,
+    )
+}
+
+fn from_blocks_selected(
+    language: &str,
+    method: &str,
+    blocks: Vec<(String, DocumentLocation)>,
+    heading_levels: BTreeMap<usize, u8>,
+    titles: BTreeMap<usize, String>,
+    excluded_prose: BTreeSet<usize>,
+    detail: IndexDetail,
+) -> Result<Extracted> {
     let mut chunks = Vec::new();
     let mut facts = Vec::new();
     let mut line = 1;
     let mut total = 0;
     let mut heading_context = Vec::new();
+    let mut semantic_seeds = crate::semantic_projection::SemanticSeeds::default();
     for (ordinal, (text, location)) in blocks.into_iter().enumerate() {
         if text.trim().is_empty() {
             continue;
         }
         let text = format!("{}\n", text.trim_end());
+        let block_offset = total;
         total += text.len();
         ensure!(
             total <= MAX_EXTRACTED,
@@ -249,46 +293,65 @@ pub(crate) fn from_blocks(
             heading_context = vec![(1, title.clone())];
             let start = text[..offset].bytes().filter(|b| *b == b'\n').count() + block_start;
             let end = start + title.bytes().filter(|b| *b == b'\n').count();
-            facts.push(Fact {
-                code: None,
-                name: title.clone(),
-                kind: "section".into(),
-                syntax_kind: "pptx-title-placeholder".into(),
-                start_line: start,
-                end_line: end,
-                location: location.clone(),
-                document: Some(airk_core::DocumentEvidence {
-                    parser_version: "document-cues/1".into(),
-                    basis: "explicit-heading".into(),
-                    heading_path: vec![title.clone()],
-                    ..Default::default()
-                }),
-            });
+            let local_start = text[..offset].rfind('\n').map_or(0, |index| index + 1);
+            let title_end = offset + title.len();
+            let local_end = text[title_end..]
+                .find('\n')
+                .map_or(text.len(), |index| title_end + index + 1);
+            semantic_seeds.heading(
+                None,
+                LocalSpan {
+                    start: block_offset + local_start,
+                    end: block_offset + local_end,
+                },
+                1,
+            )?;
+            if detail != IndexDetail::Essential {
+                facts.push(Fact {
+                    code: None,
+                    name: title.clone(),
+                    kind: "section".into(),
+                    syntax_kind: "pptx-title-placeholder".into(),
+                    start_line: start,
+                    end_line: end,
+                    location: location.clone(),
+                    document: Some(airk_core::DocumentEvidence {
+                        parser_version: "document-cues/1".into(),
+                        basis: "explicit-heading".into(),
+                        heading_path: vec![title.clone()],
+                        ..Default::default()
+                    }),
+                });
+            }
         }
         if !excluded_prose.contains(&(ordinal + 1)) {
-            let (prose_facts, next_context) = crate::prose::plain_with_context(
+            let prose = crate::prose::plain_selected(
                 &text,
                 &heading_context,
                 heading_levels.get(&(ordinal + 1)).copied(),
+                detail,
             )?;
-            heading_context = next_context;
-            for mut fact in prose_facts {
+            semantic_seeds.extend(prose.semantic_seeds(block_offset)?)?;
+            heading_context = prose.headings;
+            for mut fact in prose.facts {
                 fact.start_line += block_start - 1;
                 fact.end_line += block_start - 1;
                 fact.location = location.clone();
                 facts.push(fact);
             }
         }
-        facts.push(Fact {
-            code: None,
-            name: text.chars().take(120).collect::<String>().trim().into(),
-            kind: "section".into(),
-            syntax_kind: method.into(),
-            start_line: block_start,
-            end_line: line - 1,
-            location,
-            document: None,
-        });
+        if detail != IndexDetail::Essential {
+            facts.push(Fact {
+                code: None,
+                name: text.chars().take(120).collect::<String>().trim().into(),
+                kind: "section".into(),
+                syntax_kind: method.into(),
+                start_line: block_start,
+                end_line: line - 1,
+                location,
+                document: None,
+            });
+        }
         ensure!(facts.len() <= 10_000, "document exceeds 10000 facts");
     }
     ensure!(
@@ -301,6 +364,7 @@ pub(crate) fn from_blocks(
         language: language.into(),
         method: method.into(),
         parse_status: "extracted-document".into(),
+        semantic_seeds: Some(semantic_seeds),
     })
 }
 
@@ -368,6 +432,213 @@ pub(crate) fn read_part(
         "incomplete or multiple OOXML document roots"
     );
     Ok(xml)
+}
+
+#[cfg(test)]
+mod selected_tests {
+    use super::*;
+    use airk_core::{
+        Artifact,
+        extraction::{ExtractionPayload, ExtractionProfile},
+    };
+    use sha2::{Digest, Sha256};
+
+    fn prepare(
+        path: &str,
+        bytes: &[u8],
+        profile: &ExtractionProfile,
+        extracted: Extracted,
+        explicit: bool,
+    ) -> Result<ExtractionPayload> {
+        let seeds = extracted.semantic_seeds;
+        let artifact = Artifact {
+            path: path.into(),
+            content_hash: format!("{:x}", Sha256::digest(bytes)),
+            bytes: bytes.len(),
+            chunks: extracted.chunks,
+            language: extracted.language,
+            extraction_method: extracted.method,
+            parse_status: extracted.parse_status,
+            facts: extracted.facts,
+            retained: None,
+        };
+        crate::continuity::prepare_native_with_seeds(
+            &artifact,
+            bytes,
+            profile,
+            if explicit { seeds.as_ref() } else { None },
+        )
+    }
+
+    #[test]
+    fn selected_prose_payloads_match_full_fact_reference_at_every_detail() -> Result<()> {
+        let registry = crate::adapters::registry::AdapterRegistry::baseline();
+        let text = "  # Café `API`\r\n\r\n### Requirements 2026-10-13\r\n\r\nREQ-1: The system must use 200 ms.\r\n\r\n## Sibling\r\n\r\n| ID | Value |\r\n|---|---|\r\n| X | 10 MiB |\r\n\r\n```text\r\n# Hidden\r\n```\r\n\r\nTail 界.\r\n";
+        for path in ["a.md", "a.txt", "AGENTS.md"] {
+            let base = crate::adapters::profile::ExtractionPolicy {
+                version: 3,
+                detail: None,
+                rules: vec![],
+            }
+            .select_with_prefix(&registry, path, text.as_bytes())?
+            .profile;
+            for detail in [
+                IndexDetail::Essential,
+                IndexDetail::Balanced,
+                IndexDetail::Detailed,
+            ] {
+                let mut profile = base.clone();
+                profile
+                    .options
+                    .insert("index_detail".into(), detail.as_str().into());
+                let reference = prepare(
+                    path,
+                    text.as_bytes(),
+                    &profile,
+                    extract_selected(path, text.as_bytes(), &base)?,
+                    false,
+                )?;
+                let selected = extract_selected(path, text.as_bytes(), &profile)?;
+                assert!(selected.semantic_seeds.is_some());
+                if detail == IndexDetail::Essential {
+                    assert!(selected.facts.is_empty());
+                }
+                let selected = prepare(path, text.as_bytes(), &profile, selected, true)?;
+                assert_eq!(
+                    serde_json::to_value(&selected)?,
+                    serde_json::to_value(&reference)?,
+                    "{path} {detail:?}"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn native_seed_offsets_titles_and_hard_locations_match_reference() -> Result<()> {
+        let registry = crate::adapters::registry::AdapterRegistry::baseline();
+        for language in ["pdf", "pptx"] {
+            let blocks = vec![
+                (
+                    "  Café\r\nRequirements\r\nThe service must use 20 ms.\r\n".into(),
+                    if language == "pdf" {
+                        DocumentLocation::Page { number: 2 }
+                    } else {
+                        DocumentLocation::Slide { number: 2 }
+                    },
+                ),
+                (
+                    "Second\n## Deep\nTail 界.\n".into(),
+                    if language == "pdf" {
+                        DocumentLocation::Page { number: 4 }
+                    } else {
+                        DocumentLocation::Slide { number: 4 }
+                    },
+                ),
+            ];
+            let titles = if language == "pptx" {
+                BTreeMap::from([(1, "Café".into()), (2, "Second".into())])
+            } else {
+                BTreeMap::new()
+            };
+            let base = registry.get(language).unwrap().profile.clone();
+            for detail in [
+                IndexDetail::Essential,
+                IndexDetail::Balanced,
+                IndexDetail::Detailed,
+            ] {
+                let mut profile = base.clone();
+                profile
+                    .options
+                    .insert("index_detail".into(), detail.as_str().into());
+                let full = from_blocks(
+                    language,
+                    "fixture",
+                    blocks.clone(),
+                    BTreeMap::new(),
+                    titles.clone(),
+                    BTreeSet::new(),
+                )?;
+                let selected = from_blocks_selected(
+                    language,
+                    "fixture",
+                    blocks.clone(),
+                    BTreeMap::new(),
+                    titles.clone(),
+                    BTreeSet::new(),
+                    detail,
+                )?;
+                let reference = prepare(
+                    &format!("a.{language}"),
+                    b"native fixture",
+                    &profile,
+                    full,
+                    false,
+                )?;
+                let selected = prepare(
+                    &format!("a.{language}"),
+                    b"native fixture",
+                    &profile,
+                    selected,
+                    true,
+                )?;
+                assert_eq!(
+                    serde_json::to_value(&selected)?,
+                    serde_json::to_value(&reference)?,
+                    "{language} {detail:?}"
+                );
+                assert!(
+                    selected
+                        .chunks
+                        .iter()
+                        .all(|chunk| !matches!(chunk.location, DocumentLocation::Lines { .. }))
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn essential_docx_fallback_keeps_table_text_and_native_locations() -> Result<()> {
+        use std::io::Write;
+        let xml = r#"<w:document xmlns:w="word"><w:body><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Requirements</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Identifier</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Requirement</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>REQ-2</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>The API must use 20 ms.</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>"#;
+        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        writer.start_file(
+            "word/document.xml",
+            zip::write::SimpleFileOptions::default(),
+        )?;
+        writer.write_all(xml.as_bytes())?;
+        let bytes = writer.finish()?.into_inner();
+        let registry = crate::adapters::registry::AdapterRegistry::baseline();
+        let base = registry.get("docx").unwrap().profile.clone();
+        let mut profile = base.clone();
+        profile
+            .options
+            .insert("index_detail".into(), "essential".into());
+        let selected = extract_selected("a.docx", &bytes, &profile)?;
+        assert!(selected.semantic_seeds.is_none());
+        let reference = prepare(
+            "a.docx",
+            &bytes,
+            &profile,
+            extract_selected("a.docx", &bytes, &base)?,
+            false,
+        )?;
+        let selected = prepare("a.docx", &bytes, &profile, selected, true)?;
+        assert_eq!(
+            serde_json::to_value(&selected)?,
+            serde_json::to_value(&reference)?
+        );
+        assert!(selected.text.contains("REQ-2"));
+        assert!(selected.text.contains("The API must use 20 ms."));
+        assert!(
+            selected
+                .chunks
+                .iter()
+                .any(|chunk| matches!(chunk.location, DocumentLocation::TableRow { .. }))
+        );
+        Ok(())
+    }
 }
 
 pub(crate) fn require_root(xml: &str, expected: &[u8]) -> Result<()> {

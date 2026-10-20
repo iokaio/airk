@@ -139,7 +139,7 @@ fn coverage_cache_is_bound_to_root_collection_and_tolerates_torn_data() -> anyho
     let other = Kernel::open(second.path(), Some(state.path().into()))?;
     assert_eq!(other.coverage(false)?.inventory_revision, 0);
     fs::write(
-        state.path().join("collections/default/coverage.json"),
+        state.path().join("collections-1.2/default/coverage.json"),
         "{torn",
     )?;
     assert_eq!(kernel.coverage(false)?.percent, None);

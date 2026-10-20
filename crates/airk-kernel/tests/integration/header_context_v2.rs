@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Captured local compiler arguments select headers without build execution.
+use super::current_inspection::InspectCurrent;
 use airk_kernel::Kernel;
 use airk_store::FileStore;
 use anyhow::Result;
@@ -22,8 +23,8 @@ fn captured_header_configuration_invalidation_is_scoped_and_override_wins() -> R
     )?;
     kernel.configure_extraction_policy(policy)?;
     kernel.index()?;
-    let store = FileStore::new(state.path().join("collections/default"));
-    let first = store.catalog()?.unwrap();
+    let store = FileStore::new(state.path().join("collections-1.2/default"));
+    let first = store.current_test_catalog()?.unwrap();
     let first_files = &first.inventory.as_ref().unwrap().files;
     assert_eq!(first_files["build/include/beacon.h"].language, "cpp");
     assert_eq!(first_files["unrelated.h"].language, "c");
@@ -32,7 +33,7 @@ fn captured_header_configuration_invalidation_is_scoped_and_override_wins() -> R
     let second=br#"[{"directory":".","file":"include/beacon.h","arguments":["unexecuted-compiler","-DORIGINAL=1","-x","c++","include/beacon.h"]}]"#;
     fs::write(&configuration, second)?;
     kernel.index()?;
-    let changed = store.catalog()?.unwrap();
+    let changed = store.current_test_catalog()?.unwrap();
     let files = &changed.inventory.as_ref().unwrap().files;
     assert_ne!(
         files["build/include/beacon.h"].state.profile_id,
@@ -50,7 +51,13 @@ fn captured_header_configuration_invalidation_is_scoped_and_override_wins() -> R
     kernel.configure_extraction_policy(explicit)?;
     kernel.index()?;
     assert_eq!(
-        store.catalog()?.unwrap().inventory.as_ref().unwrap().files["build/include/beacon.h"]
+        store
+            .current_test_catalog()?
+            .unwrap()
+            .inventory
+            .as_ref()
+            .unwrap()
+            .files["build/include/beacon.h"]
             .language,
         "c"
     );

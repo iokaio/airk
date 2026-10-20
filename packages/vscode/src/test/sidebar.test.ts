@@ -18,6 +18,11 @@ test('vector switch reflects persisted opt-out, readiness and trust and validate
     sample.collections[0].vectors = { enabled: true, published: false, indexed_vectors: 0, pending_reindex: true, default_search_mode: 'hybrid' };
     assert.match(sidebarContent(sample), /data-vectors="true" checked>/);
     assert.match(sidebarContent(sample), /waiting for model setup/);
+    sample.collections[0].vectors.semantic_readiness = {
+        state: 'partial', selected_artifacts: 33, completed_artifacts: 32,
+        selected_units: null, completed_units: 32, failure: null
+    };
+    assert.match(sidebarContent(sample), /Semantic partial: 32 of 33 selected files complete/);
     sample.collections[0].vectors.enabled = false;
     assert.doesNotMatch(sidebarContent(sample), /data-vectors="true" checked/);
     assert.match(sidebarContent(sample), /Off: keyword search/);
@@ -128,8 +133,8 @@ test('capacity-blocked collections expose Resume and storage recovery controls',
         collections: [{ collection: 'fixture', name: 'Fixture', root: '/fixture', dataDir: '/state', state: 'capacity-limited' }] });
     assert.match(html, /data-command="airk.resume"/);
     assert.match(html, /data-command="airk.storageLimits"/);
-    assert.match(html, /data-command="airk.retentionPolicy"/);
-    assert.match(html, /data-command="airk.retentionRun"/);
+    assert.match(html, /data-command="airk.currentMaintenance"/);
+    assert.doesNotMatch(html, /airk\.(retention|history|checkpoints|pruneIndexes)/);
 });
 
 
@@ -139,7 +144,10 @@ test('detail selection shows configured and published levels and validates messa
     sample.collections[0].detail = { configured_detail: 'balanced', published_detail: 'detailed', pending_reindex: true };
     const html = sidebarContent(sample);
     assert.match(html, /value="balanced" selected/);
-    assert.match(html, /Published: <strong>detailed/);
+    assert.match(html, /Published: <strong>Detailed \(advanced\)/);
+    assert.match(html, /Agent Lean/);
+    assert.match(html, /Rich Structure/);
+    assert.match(html, /Search Only/);
     assert.match(html, /Change pending indexing/);
     assert.match(html, /Detail change pending/);
     assert.doesNotMatch(html, /Index current/);
@@ -147,6 +155,10 @@ test('detail selection shows configured and published levels and validates messa
     assert.deepEqual(sidebarAction({ type: 'detail', collection: 'a', dataDir: '/data', level: 'essential' }, new Set()),
         { type: 'detail', collection: 'a', dataDir: '/data', level: 'essential' });
     assert.equal(sidebarAction({ type: 'detail', collection: 'a', dataDir: '/data', level: 'unbounded' }, new Set()), undefined);
+    assert.deepEqual(sidebarAction({ type: 'detail', collection: 'a', dataDir: '/data', level: 'agent_lean' }, new Set()),
+        { type: 'detail', collection: 'a', dataDir: '/data', level: 'agent_lean' });
+    assert.deepEqual(sidebarAction({ type: 'collection', action: 'compression', collection: 'a', dataDir: '/data' }, new Set()),
+        { type: 'collection', action: 'compression', collection: 'a', dataDir: '/data' });
 });
 
 test('successful indexing does not claim current coverage after new changes or an incomplete scan', () => {

@@ -282,6 +282,8 @@ pub fn full_source_context_bytes(
 ) -> Result<u64> {
     let empty = serde_json::to_string(&crate::SearchResponse {
         publication: None,
+        semantic_readiness: None,
+        discovery_readiness: None,
         generation,
         collection: collection.into(),
         hits: vec![],
@@ -332,6 +334,181 @@ pub fn content_kind(language: &str, extraction: &str) -> ContentKind {
     }
 }
 
+/// Content-free indexing counters. Extraction and publication timings overlap
+/// their parent phases; summed parallel job durations are not wall or CPU time.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum IndexMetric {
+    ExtractionWorkersRequested,
+    ExtractionWorkerLimit,
+    ExtractionWorkersSpawned,
+    ExtractionParallelJobs,
+    ExtractionSerialJobs,
+    ExtractionWorkUs,
+    ExtractionWaitUs,
+    ExtractionSourcePeakBytes,
+    ExtractionCoordinatorSourcePeakBytes,
+    ExtractionResultBoundBytes,
+    EmbeddingInputs,
+    EmbeddingBlankInputs,
+    EmbeddingDuplicateInputs,
+    EmbeddingActualForwards,
+    EmbeddingTokenizedInputs,
+    EmbeddingInputTokens,
+    EmbeddingEmbeddedTokens,
+    EmbeddingPaddingTokens,
+    EmbeddingTruncatedInputs,
+    EmbeddingPlanCompilations,
+    EmbeddingPlanCompileUs,
+    VectorEligibleArtifacts,
+    VectorExcludedArtifacts,
+    VectorReusedInputs,
+    VectorGraphNodes,
+    VectorRegistryRows,
+    VectorRegistryBytes,
+    VectorUnits,
+    VectorBodyBytes,
+    VectorPlanningUs,
+    EmbeddingCacheFileOpens,
+    EmbeddingCacheReadBytes,
+    EmbeddingCacheWrittenBytes,
+    EmbeddingCacheRecordVerificationBytes,
+    EmbeddingCacheIndexVerificationBytes,
+    EmbeddingCacheFullPackVerificationBytes,
+    EmbeddingCacheSyncs,
+    EmbeddingCacheIndexHits,
+    EmbeddingCacheIndexPeakBytes,
+    EmbeddingCachePacksWritten,
+    EmbeddingCachePacksReused,
+    EmbeddingCacheCompactedRecords,
+    EmbeddingCacheFinalizeUs,
+    EmbeddingCacheHits,
+    EmbeddingCacheMisses,
+    EmbeddingModelLoadUs,
+    EmbeddingCacheLookupUs,
+    EmbeddingCacheStoreUs,
+    EmbeddingInferenceUs,
+    VectorGraphInsertUs,
+}
+
+impl IndexMetric {
+    pub const ALL: [Self; 50] = [
+        Self::ExtractionWorkersRequested,
+        Self::ExtractionWorkerLimit,
+        Self::ExtractionWorkersSpawned,
+        Self::ExtractionParallelJobs,
+        Self::ExtractionSerialJobs,
+        Self::ExtractionWorkUs,
+        Self::ExtractionWaitUs,
+        Self::ExtractionSourcePeakBytes,
+        Self::ExtractionCoordinatorSourcePeakBytes,
+        Self::ExtractionResultBoundBytes,
+        Self::EmbeddingInputs,
+        Self::EmbeddingBlankInputs,
+        Self::EmbeddingDuplicateInputs,
+        Self::EmbeddingActualForwards,
+        Self::EmbeddingTokenizedInputs,
+        Self::EmbeddingInputTokens,
+        Self::EmbeddingEmbeddedTokens,
+        Self::EmbeddingPaddingTokens,
+        Self::EmbeddingTruncatedInputs,
+        Self::EmbeddingPlanCompilations,
+        Self::EmbeddingPlanCompileUs,
+        Self::VectorEligibleArtifacts,
+        Self::VectorExcludedArtifacts,
+        Self::VectorReusedInputs,
+        Self::VectorGraphNodes,
+        Self::VectorRegistryRows,
+        Self::VectorRegistryBytes,
+        Self::VectorUnits,
+        Self::VectorBodyBytes,
+        Self::VectorPlanningUs,
+        Self::EmbeddingCacheFileOpens,
+        Self::EmbeddingCacheReadBytes,
+        Self::EmbeddingCacheWrittenBytes,
+        Self::EmbeddingCacheRecordVerificationBytes,
+        Self::EmbeddingCacheIndexVerificationBytes,
+        Self::EmbeddingCacheFullPackVerificationBytes,
+        Self::EmbeddingCacheSyncs,
+        Self::EmbeddingCacheIndexHits,
+        Self::EmbeddingCacheIndexPeakBytes,
+        Self::EmbeddingCachePacksWritten,
+        Self::EmbeddingCachePacksReused,
+        Self::EmbeddingCacheCompactedRecords,
+        Self::EmbeddingCacheFinalizeUs,
+        Self::EmbeddingCacheHits,
+        Self::EmbeddingCacheMisses,
+        Self::EmbeddingModelLoadUs,
+        Self::EmbeddingCacheLookupUs,
+        Self::EmbeddingCacheStoreUs,
+        Self::EmbeddingInferenceUs,
+        Self::VectorGraphInsertUs,
+    ];
+
+    pub fn report_field(self) -> &'static str {
+        match self {
+            Self::ExtractionWorkersRequested => "extraction_workers_requested",
+            Self::ExtractionWorkerLimit => "extraction_worker_limit",
+            Self::ExtractionWorkersSpawned => "extraction_workers_spawned",
+            Self::ExtractionParallelJobs => "extraction_parallel_jobs",
+            Self::ExtractionSerialJobs => "extraction_serial_jobs",
+            Self::ExtractionWorkUs => "extraction_work_us",
+            Self::ExtractionWaitUs => "extraction_wait_us",
+            Self::ExtractionSourcePeakBytes => "extraction_source_peak_bytes",
+            Self::ExtractionCoordinatorSourcePeakBytes => {
+                "extraction_coordinator_source_peak_bytes"
+            }
+            Self::ExtractionResultBoundBytes => "extraction_result_bound_bytes",
+            Self::EmbeddingInputs => "embedding_inputs",
+            Self::EmbeddingBlankInputs => "embedding_blank_inputs",
+            Self::EmbeddingDuplicateInputs => "embedding_duplicate_inputs",
+            Self::EmbeddingActualForwards => "embedding_actual_forwards",
+            Self::EmbeddingTokenizedInputs => "embedding_tokenized_inputs",
+            Self::EmbeddingInputTokens => "embedding_input_tokens",
+            Self::EmbeddingEmbeddedTokens => "embedding_embedded_tokens",
+            Self::EmbeddingPaddingTokens => "embedding_padding_tokens",
+            Self::EmbeddingTruncatedInputs => "embedding_truncated_inputs",
+            Self::EmbeddingPlanCompilations => "embedding_plan_compilations",
+            Self::EmbeddingPlanCompileUs => "embedding_plan_compile_us",
+            Self::VectorEligibleArtifacts => "vector_eligible_artifacts",
+            Self::VectorExcludedArtifacts => "vector_excluded_artifacts",
+            Self::VectorReusedInputs => "vector_reused_inputs",
+            Self::VectorGraphNodes => "vector_graph_nodes",
+            Self::VectorRegistryRows => "vector_registry_rows",
+            Self::VectorRegistryBytes => "vector_registry_bytes",
+            Self::VectorUnits => "vector_units",
+            Self::VectorBodyBytes => "vector_body_bytes",
+            Self::VectorPlanningUs => "vector_planning_us",
+            Self::EmbeddingCacheFileOpens => "embedding_cache_file_opens",
+            Self::EmbeddingCacheReadBytes => "embedding_cache_read_bytes",
+            Self::EmbeddingCacheWrittenBytes => "embedding_cache_written_bytes",
+            Self::EmbeddingCacheRecordVerificationBytes => {
+                "embedding_cache_record_verification_bytes"
+            }
+            Self::EmbeddingCacheIndexVerificationBytes => {
+                "embedding_cache_index_verification_bytes"
+            }
+            Self::EmbeddingCacheFullPackVerificationBytes => {
+                "embedding_cache_full_pack_verification_bytes"
+            }
+            Self::EmbeddingCacheSyncs => "embedding_cache_syncs",
+            Self::EmbeddingCacheIndexHits => "embedding_cache_index_hits",
+            Self::EmbeddingCacheIndexPeakBytes => "embedding_cache_index_peak_bytes",
+            Self::EmbeddingCachePacksWritten => "embedding_cache_packs_written",
+            Self::EmbeddingCachePacksReused => "embedding_cache_packs_reused",
+            Self::EmbeddingCacheCompactedRecords => "embedding_cache_compacted_records",
+            Self::EmbeddingCacheFinalizeUs => "embedding_cache_finalize_us",
+            Self::EmbeddingCacheHits => "embedding_cache_hits",
+            Self::EmbeddingCacheMisses => "embedding_cache_misses",
+            Self::EmbeddingModelLoadUs => "embedding_model_load_us",
+            Self::EmbeddingCacheLookupUs => "embedding_cache_lookup_us",
+            Self::EmbeddingCacheStoreUs => "embedding_cache_store_us",
+            Self::EmbeddingInferenceUs => "embedding_inference_us",
+            Self::VectorGraphInsertUs => "vector_graph_insert_us",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct IndexWork {
     pub indexed: u64,
@@ -346,6 +523,9 @@ pub struct IndexWork {
     pub scan_extract_us: Option<u64>,
     #[serde(default)]
     pub publish_us: Option<u64>,
+    /// Missing values remain unmeasured; the enum bounds keys and forbids source text.
+    #[serde(default)]
+    pub metrics: BTreeMap<IndexMetric, u64>,
 }
 
 /// OS counter semantics are deliberately distinct: transfer bytes are not disk I/O.
@@ -479,6 +659,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct IndexSummary {
+    #[serde(default)]
+    pub metrics: BTreeMap<IndexMetric, ResourceTotal>,
     #[serde(with = "wide_u128")]
     pub indexed: u128,
     #[serde(with = "wide_u128")]
@@ -608,6 +790,17 @@ impl UsageReport {
         for (key, source) in &other.operations {
             let target = self.operations.entry(*key).or_default();
             target.resources.merge(&source.resources)?;
+            for (metric, value) in &source.index_work.metrics {
+                let total = target.index_work.metrics.entry(*metric).or_default();
+                total.samples = total
+                    .samples
+                    .checked_add(value.samples)
+                    .context("index metric sample overflow")?;
+                total.value = total
+                    .value
+                    .checked_add(value.value)
+                    .context("index metric value overflow")?;
+            }
             add!(
                 target,
                 source,
@@ -747,6 +940,11 @@ impl OperationSummary {
             self.returned_utf8_bytes += u128::from(bytes);
         }
         if let Some(index) = &event.index_work {
+            for (metric, value) in &index.metrics {
+                let total = self.index_work.metrics.entry(*metric).or_default();
+                total.samples += 1;
+                total.value += u128::from(*value);
+            }
             self.index_work.indexed += u128::from(index.indexed);
             self.index_work.reused += u128::from(index.reused);
             self.index_work.removed += u128::from(index.removed);

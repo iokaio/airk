@@ -304,9 +304,9 @@ def local_model_workload(root, state, run):
     edited = run("model-edit", "index")
     if (edited["indexed"] != 1 or edited["reused"] != 1
             or edited["generation"] <= cold["generation"]
-            or edited["embedding_inferences"] != 1 or edited["embedding_cache_hits"] != 1
+            or edited["embedding_inferences"] != 1 or edited["embedding_cache_hits"] != 0
             or edited["embedding_no_vector"] != 0):
-        raise AssertionError("local model edit failed exact unchanged-vector reuse")
+        raise AssertionError("local model edit recomputed unchanged vectors")
     query = run("model-query", "search", "login", "--semantic", "--limit", "2", "--max-bytes", "8192")
     hits = query.get("hits", [])
     if query.get("generation") != edited["generation"] or not hits or query.get("truncated"):

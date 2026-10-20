@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Machine-aware defaults and explicit persisted ingestion policy.
+mod execution;
 pub(crate) mod machine;
 use crate::Kernel;
 pub use airk_ingest::ScanLimits;
 use anyhow::{Context, Result, ensure};
+pub(crate) use execution::configured_extraction_execution;
 use serde::{Deserialize, Serialize};
 use std::{
     fs,

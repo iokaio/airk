@@ -12,7 +12,7 @@ fn full_quota_rejects_queue_writes_but_preserves_readable_pending_work() -> anyh
     let mut policy = quota.policy()?;
     policy.root_bytes = quota.status()?.used_bytes;
     quota.configure(policy)?;
-    let before = fs::read(directory.path().join("scheduler.sqlite3"))?;
+    let before = fs::read(directory.path().join("scheduler-1.2.sqlite3"))?;
     assert!(
         queue
             .enqueue("fixture", "workspace", true, true, false, 2)
@@ -22,7 +22,7 @@ fn full_quota_rejects_queue_writes_but_preserves_readable_pending_work() -> anyh
     assert_eq!(pending.requested_revision, 1);
     assert!(!pending.full);
     assert_eq!(
-        fs::read(directory.path().join("scheduler.sqlite3"))?,
+        fs::read(directory.path().join("scheduler-1.2.sqlite3"))?,
         before
     );
     assert_eq!(quota.status()?.active_reservations, 0);
@@ -32,7 +32,7 @@ fn full_quota_rejects_queue_writes_but_preserves_readable_pending_work() -> anyh
 #[test]
 fn legacy_status_is_read_only_and_corrupt_negative_revisions_are_rejected() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
-    let path = directory.path().join("scheduler.sqlite3");
+    let path = directory.path().join("scheduler-1.2.sqlite3");
     let database = Connection::open(&path)?;
     database.execute_batch("CREATE TABLE jobs(collection TEXT PRIMARY KEY, root TEXT, revision INTEGER, completed INTEGER, running INTEGER, paused INTEGER, blocked INTEGER, full_revision INTEGER, manual_revision INTEGER, first_pending INTEGER, last_event INTEGER, last_completed INTEGER, error TEXT, report TEXT);
         INSERT INTO jobs VALUES('fixture','workspace',3,1,0,0,0,0,3,10,20,0,NULL,NULL);")?;
@@ -43,7 +43,7 @@ fn legacy_status_is_read_only_and_corrupt_negative_revisions_are_rejected() -> a
     assert_eq!(status.requested_revision, 3);
     assert_eq!(status.scan_started_unix_ms, 0);
     assert_eq!(fs::read(&path)?, before);
-    assert!(!directory.path().join(".quota").exists());
+    assert!(!directory.path().join(".quota-1.2").exists());
     Connection::open(path)?.execute("UPDATE jobs SET revision=-1", [])?;
     assert!(queue.status("fixture", "workspace").is_err());
     Ok(())

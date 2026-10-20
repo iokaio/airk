@@ -10,7 +10,7 @@ use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const INVENTORY_VERSION: u32 = 3;
+pub const INVENTORY_VERSION: u32 = 4;
 pub const SNAPSHOT_PROJECTION_VERSION: u32 = 4;
 /// Includes durable continuity descriptors across the collection. A code-heavy
 /// workspace can exceed 128 MiB of metadata while its source is under 100 MiB.
@@ -40,6 +40,7 @@ pub struct InventoryFile {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InventoryV2 {
+    pub vector_selection: crate::vector_selection::VectorSelectionPolicy,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub index_detail: Option<crate::extraction::IndexDetail>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -67,9 +68,10 @@ pub struct InventoryV2 {
 impl InventoryV2 {
     pub fn validate(&self) -> Result<()> {
         ensure!(
-            (2..=INVENTORY_VERSION).contains(&self.version),
-            "unsupported inventory format"
+            self.version == INVENTORY_VERSION,
+            "unsupported inventory format; rebuild with airk index --full"
         );
+        self.vector_selection.validate()?;
         ensure!(
             !self.root.is_empty() && self.root.len() <= 32_768,
             "invalid owner root"
@@ -271,6 +273,8 @@ impl InventoryV2 {
                         parse_status: file.parse_status.clone(),
                         facts: vec![],
                         retained: Some(ArtifactRef {
+                            source_encoding: None,
+                            payload_encoding: None,
                             object: file.state.payload_digest.to_string(),
                             object_bytes: file.payload_bytes,
                             raw_source: file.raw_source,
@@ -323,10 +327,11 @@ mod tests {
         let profile_id = profile.identity().unwrap();
         let digest = Sha256Digest::from_bytes([1; 32]);
         InventoryV2 {
+            vector_selection: Default::default(),
             embedding_pipeline_digest: None,
             index_detail: None,
             extraction_policy_digest: None,
-            version: 2,
+            version: INVENTORY_VERSION,
             incarnation: Incarnation::from_bytes([2; 16]),
             generation: 4,
             collection: "fixture".into(),

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Original P6 acceptance fixtures for admitted repository grammars.
+use super::current_inspection::InspectCurrent;
 use airk_core::{EvidenceBasis, FactQuery};
 use airk_ingest::adapters::profile::{ExtractionPolicy, RuleMatch, SelectionRule};
 use airk_kernel::Kernel;
@@ -43,8 +44,8 @@ fn qualify(path: &str, moved: &str, fixture: &str, expected: &[(&str, &str)]) ->
     kernel.configure_index_detail(airk_core::extraction::IndexDetail::Detailed)?;
     let cold = kernel.index()?;
     assert_eq!(cold.indexed, 2);
-    let store = FileStore::new(data.path().join("collections/default"));
-    let original = store.catalog()?.context("catalog")?;
+    let store = FileStore::new(data.path().join("collections-1.2/default"));
+    let original = store.current_test_catalog()?.context("catalog")?;
     let entry = original
         .snapshot
         .artifacts
@@ -141,7 +142,7 @@ fn qualify(path: &str, moved: &str, fixture: &str, expected: &[(&str, &str)]) ->
     })?;
     let overridden = kernel.index()?;
     assert_eq!((overridden.indexed, overridden.reused), (1, 1));
-    let changed = store.catalog()?.context("changed catalog")?;
+    let changed = store.current_test_catalog()?.context("changed catalog")?;
     let changed_files = &changed
         .inventory
         .as_ref()
@@ -163,7 +164,7 @@ fn qualify(path: &str, moved: &str, fixture: &str, expected: &[(&str, &str)]) ->
         (0, 2),
         "compatible rename must avoid parsing"
     );
-    let after = store.catalog()?.context("renamed catalog")?;
+    let after = store.current_test_catalog()?.context("renamed catalog")?;
     let moved_state = &after.inventory.as_ref().context("renamed inventory")?.files[moved].state;
     assert_eq!(moved_state.payload_digest, before.payload_digest);
     assert_eq!(moved_state.source_hash, before.source_hash);

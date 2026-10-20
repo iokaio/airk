@@ -242,7 +242,7 @@ fn prune_objects(directory: &Path, report: &mut PruneReport) -> Result<()> {
             "oversized generation manifest"
         );
         let manifest: serde_json::Value = serde_json::from_slice(&manifest_bytes)?;
-        if matches!(manifest["schema"].as_u64(), Some(2 | 3)) {
+        if manifest["schema"].as_u64() == Some(4) {
             let token: airk_core::identity::RevisionToken =
                 serde_json::from_value(manifest["token"].clone())?;
             ensure!(
@@ -338,8 +338,10 @@ mod tests {
     #[test]
     fn pruning_protects_active_and_pinned_generations() -> Result<()> {
         let directory = tempfile::tempdir()?;
-        let collection = directory.path().join("collections/default");
-        let leases = directory.path().join("collections/.reader-locks/default");
+        let collection = directory.path().join("collections-1.2/default");
+        let leases = directory
+            .path()
+            .join("collections-1.2/.reader-locks/default");
         fs::create_dir_all(&leases)?;
         let active = "a".repeat(64);
         let stale = "b".repeat(64);

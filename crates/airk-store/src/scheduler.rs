@@ -69,7 +69,7 @@ impl Queue {
         fs::create_dir_all(&self.directory)?;
         let lifecycle = crate::quota::lifecycle_lease(&self.directory, false)?;
         crate::quota::ensure_current_root(&self.directory)?;
-        let path = self.directory.join("scheduler.sqlite3");
+        let path = self.directory.join("scheduler-1.2.sqlite3");
         let existing = match fs::symlink_metadata(&path) {
             Ok(metadata) => {
                 ensure!(
@@ -162,7 +162,7 @@ impl Queue {
         crate::quota::ensure_current_root(&self.directory)?;
         let lifecycle = crate::quota::lifecycle_lease(&self.directory, false)?;
         crate::quota::ensure_current_root(&self.directory)?;
-        let path = self.directory.join("scheduler.sqlite3");
+        let path = self.directory.join("scheduler-1.2.sqlite3");
         let metadata = fs::symlink_metadata(&path)?;
         ensure!(
             metadata.is_file()
@@ -182,7 +182,7 @@ impl Queue {
     pub fn status(&self, collection: &str, root: &str) -> Result<Option<ScheduledJob>> {
         crate::validate_collection(collection)?;
         crate::quota::ensure_current_root(&self.directory)?;
-        if !self.directory.join("scheduler.sqlite3").exists() {
+        if !self.directory.join("scheduler-1.2.sqlite3").exists() {
             return Ok(None);
         }
         let db = self.open_read()?;
@@ -205,7 +205,7 @@ impl Queue {
     /// Read only registered bindings; never discover or register arbitrary roots.
     pub fn list(&self) -> Result<Vec<ScheduledJob>> {
         crate::quota::ensure_current_root(&self.directory)?;
-        if !self.directory.join("scheduler.sqlite3").exists() {
+        if !self.directory.join("scheduler-1.2.sqlite3").exists() {
             return Ok(Vec::new());
         }
         let db = self.open_read()?;
@@ -325,7 +325,10 @@ impl Queue {
             existing == root,
             "scheduled collection belongs to another root"
         );
-        tx.execute("UPDATE jobs SET paused=?2, blocked=CASE WHEN ?2 THEN blocked ELSE 0 END, error=CASE WHEN ?2 THEN error ELSE NULL END WHERE collection=?1 AND root=?3", params![collection, paused, root])?;
+        // A new Pause action revokes pending manual admission too. A later
+        // explicit manual request can override the persisted automatic pause.
+        // Keep its revision queued so Resume rediscovers unfinished source work.
+        tx.execute("UPDATE jobs SET paused=?2, manual_revision=CASE WHEN ?2 THEN completed ELSE manual_revision END, blocked=CASE WHEN ?2 THEN blocked ELSE 0 END, error=CASE WHEN ?2 THEN error ELSE NULL END WHERE collection=?1 AND root=?3", params![collection, paused, root])?;
         tx.commit()?;
         self.status(collection, root)
     }
@@ -342,7 +345,7 @@ impl Queue {
             .write(true)
             .create(true)
             .truncate(false)
-            .open(self.directory.join("scheduler-worker.lock"))?;
+            .open(self.directory.join("scheduler-1.2-worker.lock"))?;
         match file.try_lock() {
             Ok(()) => Ok(Some(WorkerLock {
                 _file: file,
@@ -444,6 +447,28 @@ impl Queue {
             ],
         )?;
         ensure!(changed == 1, "scheduler claim changed before deferral");
+        Ok(())
+    }
+
+    /// Stop automatic semantic retries after a failed attempt. A new explicit
+    /// request or Resume clears this block without losing committed evidence.
+    pub fn block_semantic(&self, lock: &WorkerLock, job: &ScheduledJob, error: &str) -> Result<()> {
+        ensure!(
+            lock.directory == self.directory,
+            "scheduler worker belongs to another data root"
+        );
+        let mut end = error.len().min(4096);
+        while !error.is_char_boundary(end) {
+            end -= 1;
+        }
+        let changed = self.open()?.execute(
+            "UPDATE jobs SET blocked=1,error=?3 WHERE collection=?1 AND root=?2 AND running=0 AND revision=completed",
+            params![job.collection, job.root, &error[..end]],
+        )?;
+        ensure!(
+            changed == 1,
+            "semantic scheduler binding changed before failure"
+        );
         Ok(())
     }
 

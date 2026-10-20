@@ -249,7 +249,9 @@ fn supplemental_client_import_is_separate_bounded_deduplicated_and_disabled_safe
         report.price_scenario.unwrap()["session_input_equivalents"][0]["unpriced_input_tokens_unknown_cache_split"],
         "120"
     );
-    let ledger = root.path().join(".airk/collections/default/usage.sqlite3");
+    let ledger = root
+        .path()
+        .join(".airk/collections-1.2/default/usage.sqlite3");
     assert!(
         !String::from_utf8_lossy(&std::fs::read(&ledger)?).contains("private_supplement_fixture")
     );
@@ -299,7 +301,7 @@ fn offline_bpe_calibration_counts_exact_definition_without_retaining_samples() -
     assert!(
         !root
             .path()
-            .join(".airk/collections/default/usage.sqlite3")
+            .join(".airk/collections-1.2/default/usage.sqlite3")
             .exists()
     );
     kernel.usage_calibrate(request(true))?;
@@ -309,7 +311,10 @@ fn offline_bpe_calibration_counts_exact_definition_without_retaining_samples() -
         stored.supplemental[0].summaries[0].stratum.provenance,
         MeasurementProvenance::LocalTokenizer
     );
-    let ledger = std::fs::read(root.path().join(".airk/collections/default/usage.sqlite3"))?;
+    let ledger = std::fs::read(
+        root.path()
+            .join(".airk/collections-1.2/default/usage.sqlite3"),
+    )?;
     assert!(!String::from_utf8_lossy(&ledger).contains("hellohello"));
     // Byte fallback remains exact for multilingual text and has no hidden normalizer.
     std::fs::write(&returned, "\"é中🙂\"")?;
@@ -481,11 +486,18 @@ fn index_reuse_and_latency_are_measured_separately_from_token_estimates() -> any
         index_disk_growth_bytes: Some(-10),
         scan_extract_us: Some(4),
         publish_us: Some(2),
+        metrics: [
+            (IndexMetric::EmbeddingActualForwards, 0),
+            (IndexMetric::EmbeddingInputs, 12),
+        ]
+        .into_iter()
+        .collect(),
         ..IndexWork::default()
     });
     let mut second = first.clone();
     second.event_id = [2; 16];
     second.elapsed_us = 16_000_000;
+    second.index_work.as_mut().unwrap().metrics.clear();
     let report = summarize(
         &first.scope,
         0,
@@ -506,6 +518,23 @@ fn index_reuse_and_latency_are_measured_separately_from_token_estimates() -> any
     assert_eq!(index.index_work.scan_extract_samples, 2);
     assert_eq!(index.index_work.scan_extract_us, 8);
     assert_eq!(index.index_work.publish_us, 4);
+    let forwards = &index.index_work.metrics[&IndexMetric::EmbeddingActualForwards];
+    assert_eq!((forwards.samples, forwards.value), (1, 0));
+    assert_eq!(
+        index.index_work.metrics[&IndexMetric::EmbeddingInputs].value,
+        12
+    );
+    assert!(
+        !index
+            .index_work
+            .metrics
+            .contains_key(&IndexMetric::EmbeddingInferenceUs)
+    );
+    let mut merged = report.clone();
+    merged.merge(&report)?;
+    let inputs = &merged.operations[&UsageOperation::Index].index_work.metrics
+        [&IndexMetric::EmbeddingInputs];
+    assert_eq!((inputs.samples, inputs.value), (2, 24));
     assert_eq!(index.latency_buckets[1], 1);
     assert_eq!(index.latency_buckets[7], 1);
     assert_eq!(UsagePolicy::default().mode, RecordingMode::AggregatesOnly);
@@ -521,7 +550,7 @@ fn disabled_hooks_leave_usage_history_untouched() -> anyhow::Result<()> {
     kernel.configure_usage(RecordingMode::Disabled)?;
     let policy = root
         .path()
-        .join(".airk/collections/default/usage-policy.json");
+        .join(".airk/collections-1.2/default/usage-policy.json");
     let before = std::fs::read(&policy)?;
     let span = kernel.usage_span(UsageOperation::Status, ClientFamily::Cli);
     assert!(span.request_id().is_none());
@@ -537,7 +566,7 @@ fn disabled_hooks_leave_usage_history_untouched() -> anyhow::Result<()> {
     assert!(
         !root
             .path()
-            .join(".airk/collections/default/usage.sqlite3")
+            .join(".airk/collections-1.2/default/usage.sqlite3")
             .exists()
     );
     assert_eq!(kernel.usage_report(30)?.status, "disabled");
@@ -577,7 +606,8 @@ fn busy_recorder_cannot_change_successful_retrieval() -> anyhow::Result<()> {
     std::fs::write(root.path().join("fixture.txt"), "original budget fixture")?;
     let kernel = airk_kernel::Kernel::open(root.path(), None)?;
     kernel.index()?;
-    let guard = airk_store::usage::deletion_guard(&root.path().join(".airk/collections/default"))?;
+    let guard =
+        airk_store::usage::deletion_guard(&root.path().join(".airk/collections-1.2/default"))?;
     let span = kernel.usage_span(UsageOperation::Search, ClientFamily::Cli);
     let response = kernel.search(&airk_core::SearchQuery {
         text: "budget".into(),
@@ -654,7 +684,7 @@ fn native_jobs_record_actual_work_once_in_the_jobs_collection() -> anyhow::Resul
         false,
         airk_store::usage::unix_ms(),
     )?;
-    let directory = state.path().join("collections/target");
+    let directory = state.path().join("collections-1.2/target");
     let usage_guard = (mode == "reused_busy")
         .then(|| airk_store::usage::deletion_guard(&directory))
         .transpose()?;
@@ -677,7 +707,7 @@ fn native_jobs_record_actual_work_once_in_the_jobs_collection() -> anyhow::Resul
         after_idle.process_dropped_observations, after_reused.process_dropped_observations,
         "an idle worker must not attempt to record another job"
     );
-    let writer = airk_store::FileStore::new(state.path().join("collections/target")).lock()?;
+    let writer = airk_store::FileStore::new(state.path().join("collections-1.2/target")).lock()?;
     queue.enqueue(
         "target",
         &root_id,
@@ -732,7 +762,7 @@ fn native_jobs_record_actual_work_once_in_the_jobs_collection() -> anyhow::Resul
     )?
     .expect("recording is enabled");
     target.configure_usage(RecordingMode::Disabled)?;
-    let ledger = state.path().join("collections/target/usage.sqlite3");
+    let ledger = state.path().join("collections-1.2/target/usage.sqlite3");
     let before = std::fs::read(&ledger)?;
     target.scheduled_index(false, false)?;
     assert_eq!(

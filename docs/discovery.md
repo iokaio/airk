@@ -14,7 +14,7 @@ Call `airk_list_files` again with the returned `cursor` and unchanged `prefix`. 
 
 ## Compact outlines
 
-`airk_outline` accepts `compact: true`. Compact records appear in `outline`, while the default rich records remain in `facts`. Each compact record contains its name, kind, syntax kind, original citation, available byte span and durable continuity key. It omits signatures, documentation, producer detail and document metadata. Use the durable key with `airk_code_facts` or `airk_document_facts` for rich details; imported facts without a durable key remain queryable using their exact name and path.
+`airk_outline` accepts `compact: true`. Compact records appear in `outline`, while the default rich records remain in `facts`. Each compact record contains its name, kind, syntax kind, original citation, available byte span and durable continuity key. Available code details include qualified name, written signature, producer and partial-coverage basis. Document records retain heading context, parser/basis, truncation flags and table cell interpretation (including formulas and cached-value flags). Fingerprints and broad rich metadata are omitted. Code/document facts also accept `compact`, defaulting to compact only for applied Agent Lean; `compact: false` expands details. Use the durable key with `airk_code_facts` or `airk_document_facts` for rich details; imported facts without a durable key remain queryable using their exact name and path.
 
 ```json
 {"path":"crates/example/src/lib.rs","compact":true,"limit":100,"max_bytes":32768}
@@ -26,12 +26,12 @@ Conditional outline validators bind the representation, selection, page and resp
 
 Current file/fact discovery selects one verified publication per request. A new publication expires its earlier current cursor; restart discovery to enumerate the new revision. This deliberately prevents combining pages from different revisions, including concurrent publications.
 
-Outlines also support existing exact historical `revision` reads. Pass the saved revision token and outline cursor to continue against retained evidence after publication changes. Pruned or expired historical evidence returns `history_unavailable`, with no fallback to current or live files. Retained history does not enable historical file-list or fact-search APIs. Legacy collections remain readable but need a successful reindex before resumable discovery is available.
+Exact `revision` options also require the current head. Superseded tokens fail; no historical cursor continuation or fallback to live source is provided. Old 1.1 collections are isolated in their previous namespace.
 
 Direct CLI discovery commands accept `--cursor`; `airk outline` also accepts `--compact`. The same options are available through `airk tools call` and the interactive tools console. Durable-key fact lookup is exclusive of cursor/textual filters; it is a lookup, not an inventory traversal.
 
 ## Implementation boundaries
 
-Pure cursor and compact-record contracts live in `airk-core::discovery`. Kernel discovery lives in its private `discovery` module. SQLite responsibilities are separated into private `sqlite::queries`, `sqlite::publication` and `sqlite::usage_sizes` modules. Normalized query projections expose a generation-local row ID without changing persisted catalogs. Row IDs only break ties within an exact publication; durable public evidence identities remain unchanged.
+Pure cursor/compact-record contracts live in `airk-core::discovery`. Kernel request routing holds the current gate while `airk-store::current` authenticates postings, artifact/continuity metadata and retained evidence. Each fact page limits candidates and read bytes independently of response bytes. Empty pages may still carry a progress cursor. Imported assertions require source/build/provenance binding.
 
-The regression fixtures enumerate 129 indexed paths including an alias, 137 definitions and their compact outline without duplicates or omissions. Additional checks cover record budgets, bounded cursors for large names, same-name/same-line ties, tampering, filter and representation mismatches, publication expiry, retained historical continuation, expired history and conditional validators. These tests establish bounded response behavior, not constant-cost corpus scans or a new scale qualification.
+Tests cover alias paths, complete keyset enumeration, compact outlines, record budgets, same-name/same-line ties, tampering, filter changes, current-token expiry and conditional validators. These establish bounded response behavior, not constant-cost corpus scans. See [current runtime bounds](current-index-runtime.md).

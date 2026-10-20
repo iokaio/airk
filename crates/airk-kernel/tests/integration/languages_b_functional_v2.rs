@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Activate only after the final P10 profile batch is admitted.
+use super::current_inspection::InspectCurrent;
 use airk_ingest::adapters::profile::{ExtractionPolicy, RuleMatch, SelectionRule};
 use airk_kernel::Kernel;
 use airk_store::FileStore;
@@ -19,8 +20,8 @@ fn qualify(path: &str, moved: &str, source: &str, expected: &str) -> Result<()> 
     kernel.configure_index_detail(airk_core::extraction::IndexDetail::Detailed)?;
     let report = kernel.index()?;
     assert_eq!(report.indexed, 2, "{report:?}");
-    let store = FileStore::new(data.path().join("collections/default"));
-    let catalog = store.catalog()?.context("catalog")?;
+    let store = FileStore::new(data.path().join("collections-1.2/default"));
+    let catalog = store.current_test_catalog()?.context("catalog")?;
     let artifact = &catalog.snapshot.artifacts[path];
     assert_eq!(store.read_retained_source(artifact)?, source.as_bytes());
     let before = catalog.inventory.as_ref().unwrap().files[path]
@@ -47,7 +48,7 @@ fn qualify(path: &str, moved: &str, source: &str, expected: &str) -> Result<()> 
     fs::rename(root.path().join(path), root.path().join(moved))?;
     let moved_report = kernel.index()?;
     assert_eq!((moved_report.indexed, moved_report.reused), (0, 2));
-    let after = store.catalog()?.context("moved catalog")?;
+    let after = store.current_test_catalog()?.context("moved catalog")?;
     assert_eq!(
         after.inventory.as_ref().unwrap().files[moved]
             .state
@@ -65,7 +66,7 @@ fn qualify(path: &str, moved: &str, source: &str, expected: &str) -> Result<()> 
     })?;
     let changed = kernel.index()?;
     assert_eq!((changed.indexed, changed.reused), (1, 1));
-    let after = store.catalog()?.context("changed catalog")?;
+    let after = store.current_test_catalog()?.context("changed catalog")?;
     assert_ne!(
         after.inventory.as_ref().unwrap().files[moved]
             .state

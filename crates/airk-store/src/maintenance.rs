@@ -251,7 +251,7 @@ pub(crate) fn check_writer(store: &FileStore, writer: &WriterLock, quota: &Quota
         store.directory().canonicalize()?
             == quota
                 .root()
-                .join("collections")
+                .join("collections-1.2")
                 .join(collection(store)?)
                 .canonicalize()?,
         "maintenance quota root mismatch"
@@ -667,7 +667,8 @@ fn gc(
     );
     let mut sources = BTreeSet::new();
     let mut artifacts = BTreeSet::new();
-    let mut embeddings = BTreeSet::new();
+    let mut embedding_packs = BTreeSet::new();
+    let mut verified_packs = std::collections::BTreeMap::new();
     let mut models = BTreeSet::new();
     for checkpoint in crate::sqlite::history_admin(store.directory())?
         .checkpoints
@@ -750,7 +751,7 @@ fn gc(
             Err(error) => return Err(error.into()),
         }
         let model_references =
-            if manifest["schema"].as_u64() == Some(3) && !manifest["model_sha256"].is_null() {
+            if manifest["schema"].as_u64() == Some(4) && !manifest["model_sha256"].is_null() {
                 let sidecar = entry.path().join("model-objects.json");
                 let size = sidecar.symlink_metadata()?.len();
                 work.metadata(size)?;
@@ -781,15 +782,24 @@ fn gc(
             )?;
         }
         let inventory = crate::blobs::verify_v2_generation(store.directory(), &receipt)?;
-        let embedding_references = store.embedding_cache_references(&receipt)?;
+        let embedding_manifest = store.embedding_cache_manifest(&receipt)?;
         if excluded.contains(&name) {
             continue;
         }
-        embeddings.extend(
-            embedding_references
-                .into_iter()
-                .map(|reference| reference.key.to_string()),
-        );
+        if let Some(cache) = &embedding_manifest {
+            for pack in &cache.packs {
+                if let Some(previous) = verified_packs.get(&pack.sha256) {
+                    ensure!(previous == pack, "conflicting embedding pack ownership");
+                } else {
+                    work.verify(crate::vector_cache::verification_read_bound(pack)?)?;
+                    crate::vector_cache::verify_pack(store.directory(), pack)?;
+                    verified_packs.insert(pack.sha256, pack.clone());
+                }
+            }
+        }
+        if let Some(cache) = embedding_manifest {
+            embedding_packs.extend(cache.packs.into_iter().map(|pack| pack.sha256.to_string()));
+        }
         models.extend(
             model_references
                 .into_iter()
@@ -805,7 +815,7 @@ fn gc(
     for (kind, retained) in [
         ("sources", sources),
         ("artifacts", artifacts),
-        ("embeddings", embeddings),
+        ("embedding-packs", embedding_packs),
         ("models", models),
     ] {
         let path = store.directory().join("objects").join(kind);
