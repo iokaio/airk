@@ -34,7 +34,7 @@ pub(crate) fn prepare_with_seeds(
         None => crate::semantic_projection::capture(payload)?,
     };
     crate::detail::select(payload, detail)?;
-    if detail == IndexDetail::Essential {
+    if !detail.tracks_continuity() {
         for family in [ContinuityFamily::Code, ContinuityFamily::Documents] {
             payload.continuity_coverage.insert(
                 family,

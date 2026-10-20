@@ -106,6 +106,9 @@ impl Kernel {
         let semantic_readiness = super::enrichment::readiness(&read, &self.store)?;
         let discovery_readiness = super::progress::readiness(&read, &self.store)?;
         Ok(Status {
+            execution: self.execution_status()?,
+            indexing: c.index_detail.into(),
+            freshness: self.changes_freshness(),
             retention: crate::maintenance::RetentionObservation {
                 policy: None,
                 last_maintenance: None,

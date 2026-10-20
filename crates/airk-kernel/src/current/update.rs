@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! One changed-path publication across retained evidence, Tantivy and DiskANN.
 use airk_core::{
-    RetrievalArtifact,
     embedding::{EmbeddingDescriptor, embedding_key},
     graph_storage::{GraphRecordOverlay, PreparedGraphDelta},
     identity::Sha256Digest,
@@ -86,6 +85,19 @@ struct VectorPlan<'a> {
     registry: BTreeMap<Sha256Digest, Option<u32>>,
     memberships: BTreeMap<Sha256Digest, VectorMembership>,
     occurrences: Vec<PreparedOccurrence>,
+    ordinals: BTreeMap<String, u32>,
+}
+
+struct PendingVectorUnit {
+    path: String,
+    source_hash: Sha256Digest,
+    payload_digest: Sha256Digest,
+    unit: PreparedVectorUnit,
+}
+
+enum Planned {
+    Unit(PendingVectorUnit),
+    Stats(bool, airk_retrieval::vector_units::VectorUnitStats),
 }
 
 impl VectorPlan<'_> {
@@ -163,9 +175,7 @@ impl VectorPlan<'_> {
 
     fn batch(
         &mut self,
-        retained: &RetrievalArtifact,
-        units: &mut Vec<PreparedVectorUnit>,
-        ordinal: &mut u32,
+        units: &mut Vec<PendingVectorUnit>,
         descriptor: &EmbeddingDescriptor,
         semantic: &mut SemanticUpdate<'_>,
         graph: &mut MutableDiskIndex,
@@ -176,7 +186,7 @@ impl VectorPlan<'_> {
         let mut keys = Vec::new();
         let mut missing = BTreeMap::new();
         for (index, unit) in units.iter().enumerate() {
-            let key = embedding_key(descriptor, unit.input.as_bytes())?;
+            let key = embedding_key(descriptor, unit.unit.input.as_bytes())?;
             keys.push(key);
             if self.registry.contains_key(&key) {
                 continue;
@@ -191,9 +201,14 @@ impl VectorPlan<'_> {
                 missing.entry(key).or_insert(index);
             }
         }
+        // Keep graph insertion in captured-unit order across file boundaries.
+        // Hash ordering is useful for deduplication, but changing insertion order
+        // changes approximate-search tie behavior for repeated passages.
+        let mut missing: Vec<_> = missing.into_iter().collect();
+        missing.sort_by_key(|(_, index)| *index);
         let texts = missing
-            .values()
-            .map(|index| units[*index].input.as_str())
+            .iter()
+            .map(|(_, index)| units[*index].unit.input.as_str())
             .collect::<Vec<_>>();
         let vectors = if texts.is_empty() {
             Vec::new()
@@ -228,7 +243,7 @@ impl VectorPlan<'_> {
             };
             self.registry.insert(key, id);
         }
-        for (unit, key) in units.drain(..).zip(keys) {
+        for (pending, key) in units.drain(..).zip(keys) {
             let Some(id) = self.registry[&key] else {
                 continue;
             };
@@ -250,11 +265,16 @@ impl VectorPlan<'_> {
             );
             let index = PathOccurrences {
                 version: 1,
-                path: retained.artifact.path.clone(),
-                source_hash: retained.artifact.content_hash.parse()?,
+                path: pending.path.clone(),
+                source_hash: pending.source_hash,
+                count: 0,
+            };
+            let ordinal = self.ordinals.entry(pending.path).or_default();
+            let index = PathOccurrences {
                 count: ordinal
                     .checked_add(1)
                     .context("current occurrence ordinal overflow")?,
+                ..index
             };
             self.occurrences.push(PreparedOccurrence {
                 graph_id: id,
@@ -265,9 +285,9 @@ impl VectorPlan<'_> {
                     path: index.path,
                     path_ordinal: *ordinal,
                     source_hash: index.source_hash,
-                    payload_digest: retained.payload_digest,
-                    object: retained.payload_digest,
-                    members: unit.members,
+                    payload_digest: pending.payload_digest,
+                    object: pending.payload_digest,
+                    members: pending.unit.members,
                 },
             });
             *ordinal += 1;
@@ -296,7 +316,7 @@ impl CurrentUpdater<'_> {
         semantic: Option<SemanticUpdate<'_>>,
         observer: &mut dyn FnMut(CurrentUpdateStage),
     ) -> Result<CurrentUpdateResult> {
-        self.apply_resources_observed(changes, semantic, &[], None, None, observer)
+        self.apply_resources_observed(changes, semantic, &[], None, None, None, observer)
     }
 
     pub fn apply_with_resources(
@@ -305,7 +325,7 @@ impl CurrentUpdater<'_> {
         semantic: Option<SemanticUpdate<'_>>,
         resources: &[airk_store::current::resources::ResourceChange],
     ) -> Result<CurrentUpdateResult> {
-        self.apply_resources_observed(changes, semantic, resources, None, None, &mut |_| {})
+        self.apply_resources_observed(changes, semantic, resources, None, None, None, &mut |_| {})
     }
 
     pub(crate) fn apply_scanned(
@@ -315,28 +335,38 @@ impl CurrentUpdater<'_> {
         resources: &[airk_store::current::resources::ResourceChange],
         moves: &BTreeMap<String, String>,
     ) -> Result<CurrentUpdateResult> {
-        self.apply_resources_observed(changes, semantic, resources, Some(moves), None, &mut |_| {})
+        self.apply_resources_observed(
+            changes,
+            semantic,
+            resources,
+            Some(moves),
+            None,
+            None,
+            &mut |_| {},
+        )
     }
 
     /// Attach vectors to already committed exact artifacts. The captured inputs
     /// are validated against the current map and journaled without rewriting
     /// their source, fact, posting or lexical rows.
-    pub(crate) fn apply_enrichment(
+    pub(super) fn apply_enrichment(
         &self,
         inputs: &[CapturedInput],
         semantic: SemanticUpdate<'_>,
-        resources: &[airk_store::current::resources::ResourceChange],
+        work: &mut super::enrichment::SemanticWork,
     ) -> Result<CurrentUpdateResult> {
         self.apply_resources_observed(
             &[],
             Some(semantic),
-            resources,
+            &[],
             None,
             Some(inputs),
+            Some(work),
             &mut |_| {},
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn apply_resources_observed(
         &self,
         changes: &[ArtifactChange],
@@ -344,10 +374,14 @@ impl CurrentUpdater<'_> {
         resources: &[airk_store::current::resources::ResourceChange],
         moves: Option<&BTreeMap<String, String>>,
         semantic_inputs: Option<&[CapturedInput]>,
+        semantic_work: Option<&mut super::enrichment::SemanticWork>,
         observer: &mut dyn FnMut(CurrentUpdateStage),
     ) -> Result<CurrentUpdateResult> {
         ensure!(
-            (!changes.is_empty() || self.configuration.is_some() || !resources.is_empty())
+            (!changes.is_empty()
+                || self.configuration.is_some()
+                || !resources.is_empty()
+                || semantic_work.is_some())
                 && changes.len() <= MAX_PENDING_INPUTS
                 && changes
                     .windows(2)
@@ -496,6 +530,7 @@ impl CurrentUpdater<'_> {
             registry: BTreeMap::new(),
             memberships: BTreeMap::new(),
             occurrences: Vec::new(),
+            ordinals: BTreeMap::new(),
         };
         if !replacing {
             plan.retire(changes)?;
@@ -536,7 +571,6 @@ impl CurrentUpdater<'_> {
                 }
             })
             .transpose()?;
-        let mut captured_bytes = 0usize;
         let inputs = semantic_inputs
             .map(|inputs| inputs.iter().collect::<Vec<_>>())
             .unwrap_or_else(|| {
@@ -548,65 +582,121 @@ impl CurrentUpdater<'_> {
                     })
                     .collect()
             });
-        for input in inputs {
-            let reference = input
-                .artifact
-                .retained
-                .as_ref()
-                .context("current changed extraction missing")?;
-            captured_bytes = captured_bytes
-                .checked_add(input.artifact.bytes)
-                .and_then(|n| n.checked_add(reference.object_bytes))
-                .context("current changed-byte overflow")?;
-            ensure!(
-                captured_bytes <= MAX_CAPTURED_BYTES,
-                "current changed batch exceeds evidence byte budget"
-            );
-            let retained = self.store.load_retrieval_artifact(&input.artifact)?;
-            self.store.read_retained_source(&input.artifact)?;
-            if let Some(semantic) = semantic.as_mut() {
-                if semantic
-                    .selection
-                    .decision(
-                        &input.artifact.path,
-                        &retained.profile,
-                        &input.artifact.language,
-                    )?
-                    .eligible
-                {
-                    if semantic.defer {
-                        continue;
+        // One persistent planning producer overlaps source verification and
+        // tokenization with inference/graph work. Bounded semantic units contain
+        // at most 16 KiB input and 64 members; two batches fit in this channel.
+        // Full extraction payloads stay on the producer, one file at a time.
+        let before_units = semantic.as_ref().map_or(0, |s| s.cache.stats.vector_units);
+        let planning = semantic.as_ref().map(|s| (s.model, s.selection, s.defer));
+        let store = self.store;
+        std::thread::scope(|scope| -> Result<()> {
+            let (sender, receiver) =
+                std::sync::mpsc::sync_channel::<Result<Planned>>(MAX_BATCH_CHUNKS * 2);
+            let producer = scope.spawn(move || {
+                let result = (|| -> Result<()> {
+                    let mut captured_bytes = 0usize;
+                    for input in inputs {
+                        let reference = input
+                            .artifact
+                            .retained
+                            .as_ref()
+                            .context("current changed extraction missing")?;
+                        captured_bytes = captured_bytes
+                            .checked_add(input.artifact.bytes)
+                            .and_then(|n| n.checked_add(reference.object_bytes))
+                            .context("current changed-byte overflow")?;
+                        ensure!(
+                            captured_bytes <= MAX_CAPTURED_BYTES,
+                            "current changed batch exceeds evidence byte budget"
+                        );
+                        let retained = store.load_retrieval_artifact(&input.artifact)?;
+                        store.verify_retained_source(&input.artifact)?;
+                        let Some((model, selection, defer)) = planning else {
+                            continue;
+                        };
+                        let eligible = selection
+                            .decision(
+                                &input.artifact.path,
+                                &retained.profile,
+                                &input.artifact.language,
+                            )?
+                            .eligible;
+                        if !eligible {
+                            if sender
+                                .send(Ok(Planned::Stats(false, Default::default())))
+                                .is_err()
+                            {
+                                return Ok(());
+                            }
+                            continue;
+                        }
+                        if defer {
+                            continue;
+                        }
+                        let source_hash = input.artifact.content_hash.parse()?;
+                        let stats = visit_vector_units(&retained.payload, model, |unit| {
+                            sender
+                                .send(Ok(Planned::Unit(PendingVectorUnit {
+                                    path: input.artifact.path.clone(),
+                                    source_hash,
+                                    payload_digest: retained.payload_digest,
+                                    unit,
+                                })))
+                                .map_err(|_| anyhow::anyhow!("vector planning consumer stopped"))
+                        })?;
+                        if sender.send(Ok(Planned::Stats(true, stats))).is_err() {
+                            return Ok(());
+                        }
                     }
-                    semantic.cache.stats.vector_eligible_artifacts += 1;
-                    let mut units = Vec::with_capacity(MAX_BATCH_CHUNKS);
-                    let mut ordinal = 0;
-                    let model = semantic.model;
-                    let mut flush = |units: &mut Vec<PreparedVectorUnit>| {
+                    Ok(())
+                })();
+                if let Err(error) = result {
+                    let _ = sender.send(Err(error));
+                }
+            });
+            let result = (|| -> Result<()> {
+                let mut units = Vec::with_capacity(MAX_BATCH_CHUNKS);
+                for message in receiver.iter() {
+                    let message = message?;
+                    let semantic = semantic
+                        .as_mut()
+                        .context("semantic planner without a model")?;
+                    match message {
+                        Planned::Stats(eligible, stats) => {
+                            semantic.cache.stats.vector_eligible_artifacts += u64::from(eligible);
+                            semantic.cache.stats.vector_excluded_artifacts += u64::from(!eligible);
+                            semantic.cache.stats.vector_units += stats.units;
+                            semantic.cache.stats.vector_body_bytes += stats.body_bytes;
+                            semantic.cache.stats.vector_planning_us += stats.planning_us;
+                        }
+                        Planned::Unit(unit) => units.push(unit),
+                    }
+                    if units.len() == MAX_BATCH_CHUNKS {
                         plan.batch(
-                            &retained,
-                            units,
-                            &mut ordinal,
+                            &mut units,
                             descriptor.as_ref().expect("semantic descriptor"),
                             semantic,
                             graph.as_mut().expect("semantic graph"),
-                        )
-                    };
-                    let stats = visit_vector_units(&retained.payload, model, |unit| {
-                        units.push(unit);
-                        if units.len() == MAX_BATCH_CHUNKS {
-                            flush(&mut units)?;
-                        }
-                        Ok(())
-                    })?;
-                    flush(&mut units)?;
-                    semantic.cache.stats.vector_units += stats.units;
-                    semantic.cache.stats.vector_body_bytes += stats.body_bytes;
-                    semantic.cache.stats.vector_planning_us += stats.planning_us;
-                } else {
-                    semantic.cache.stats.vector_excluded_artifacts += 1;
+                        )?;
+                    }
                 }
-            }
-        }
+                if !units.is_empty() {
+                    plan.batch(
+                        &mut units,
+                        descriptor.as_ref().expect("semantic descriptor"),
+                        semantic.as_mut().expect("semantic model"),
+                        graph.as_mut().expect("semantic graph"),
+                    )?;
+                }
+                Ok(())
+            })();
+            // Release backpressure before joining after any consumer failure.
+            drop(receiver);
+            producer
+                .join()
+                .map_err(|_| anyhow::anyhow!("vector planning worker panicked"))?;
+            result
+        })?;
         for membership in plan.memberships.values() {
             overlay.set_live(membership.id, membership.remaining != 0)?;
         }
@@ -621,6 +711,27 @@ impl CurrentUpdater<'_> {
         let occurrences = std::mem::take(&mut plan.occurrences);
         drop(plan);
         let mut resources = resources.to_vec();
+        if let Some(work) = semantic_work {
+            let units = semantic
+                .as_ref()
+                .context("semantic progress without model")?
+                .cache
+                .stats
+                .vector_units
+                .checked_sub(before_units)
+                .context("semantic unit count underflow")?;
+            work.completed_units = work
+                .completed_units
+                .checked_add(units)
+                .context("semantic unit count overflow")?;
+            if work.pending.is_empty() {
+                if work.all_units_countable {
+                    work.selected_units = Some(work.completed_units);
+                }
+                work.fully_ready_unix_ms = Some(super::enrichment::now_unix_ms()?);
+            }
+            resources.push(work.resource_change(self.store, self.reservation)?);
+        }
         if let Some(cache) = &owned_cache {
             let started = std::time::Instant::now();
             let manifest = cache.finalize()?;

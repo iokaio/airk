@@ -10,10 +10,12 @@ pub use airk_ingest::pdf_worker::dispatch as dispatch_pdf_worker;
 
 pub mod analysis;
 pub mod changes;
+pub mod compression;
 mod continuity;
 pub mod coverage;
 pub mod current;
 mod discovery;
+mod execution;
 pub mod extraction;
 mod historical;
 pub use historical::{HistoryAvailability, HistoryAvailabilityRequest};
@@ -35,14 +37,18 @@ use airk_store::{CollectionUsage, FileStore};
 use anyhow::{Context, Result, ensure};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct Kernel {
+    progress: Option<ProgressObserver>,
     root: PathBuf,
     collection: String,
     data_root: PathBuf,
     store: FileStore,
 }
+
+type ProgressObserver = Arc<dyn Fn(&airk_core::readiness::IndexProgress) + Send + Sync>;
 
 #[cfg(windows)]
 fn managed_data_path(path: PathBuf) -> Result<PathBuf> {
@@ -80,6 +86,9 @@ fn managed_data_path(path: PathBuf) -> Result<PathBuf> {
 
 #[derive(Serialize)]
 pub struct Status {
+    pub execution: airk_core::execution::ExecutionPlan,
+    pub indexing: airk_core::extraction::IndexCoverage,
+    pub freshness: airk_core::changes::FreshnessObservation,
     pub retention: maintenance::RetentionObservation,
     pub publication: Option<airk_core::evidence::RevisionEnvelope>,
     pub semantic_readiness: airk_core::readiness::SemanticReadiness,
@@ -177,6 +186,7 @@ impl Kernel {
             );
         }
         let kernel = Self {
+            progress: None,
             root,
             collection: collection.into(),
             data_root: directory.clone(),
@@ -205,6 +215,19 @@ impl Kernel {
 
     pub fn root(&self) -> &Path {
         &self.root
+    }
+    /// Observers receive committed boundaries and must not reenter the writer.
+    pub fn with_index_progress(
+        mut self,
+        observer: impl Fn(&airk_core::readiness::IndexProgress) + Send + Sync + 'static,
+    ) -> Self {
+        self.progress = Some(Arc::new(observer));
+        self
+    }
+    pub(crate) fn emit_progress(&self, progress: airk_core::readiness::IndexProgress) {
+        if let Some(observer) = &self.progress {
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| observer(&progress)));
+        }
     }
     pub fn data_dir(&self) -> &Path {
         &self.data_root

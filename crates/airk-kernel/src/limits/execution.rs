@@ -15,7 +15,11 @@ pub(crate) fn configured_extraction_execution() -> Result<ExtractionAdmission> {
         Err(std::env::VarError::NotPresent) => None,
         Err(error) => return Err(error).context("invalid AIRK_EXTRACT_WORKERS"),
     };
-    admit(requested.as_deref(), super::machine::memory_bytes())
+    let automatic = crate::execution::plan(1)?.extraction_workers.to_string();
+    admit(
+        requested.as_deref().or(Some(&automatic)),
+        super::machine::memory_bytes(),
+    )
 }
 
 fn admit(requested: Option<&str>, memory: Option<u64>) -> Result<ExtractionAdmission> {

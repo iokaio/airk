@@ -156,7 +156,7 @@ impl CurrentRead {
                     work += bytes;
                     let artifact =
                         store.load_retained_bounded(&compact, retained.object_bytes as u64)?;
-                    store.read_retained_source(&compact)?;
+                    store.verify_retained_source(&compact)?;
                     let mut candidates = edges(&artifact);
                     if let Some(imported) = &imported {
                         self.verify_analysis_path(imported, &path)?;

@@ -32,6 +32,7 @@ pub(super) fn prepare(
     let mut references = Vec::new();
     let mut prior_bytes = 0usize;
     let mut captured_bytes = 0usize;
+    let compression = store.compression_mode(&read.head().scope.root)?;
     for change in changes {
         let ArtifactChange::Upsert(input) = change else {
             continue;
@@ -154,7 +155,12 @@ pub(super) fn prepare(
             captured_bytes <= airk_store::current::MAX_CURRENT_METADATA_READ_BYTES,
             "current captured metadata admission exceeded"
         );
-        references.push(store.retain_current_metadata(path, &file, reservation)?);
+        references.push(store.retain_current_metadata_encoded(
+            path,
+            &file,
+            reservation,
+            compression,
+        )?);
     }
     Ok(references)
 }

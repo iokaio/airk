@@ -59,7 +59,7 @@ impl CurrentRead {
             retained.payload_digest == pointer.payload_digest,
             "current occurrence payload mismatch"
         );
-        store.read_retained_source(&compact)?;
+        store.verify_retained_source(&compact)?;
         airk_core::vector_evidence::materialize(&retained, &pointer.members)
     }
 

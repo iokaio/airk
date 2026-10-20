@@ -15,7 +15,7 @@ import { VectorStatus, prepareVectorModel } from './vectorModel';
 import { aboveNormal, authorizeLimitIncrease, indexWithLimitApproval, largerLimitsExplanation, LimitsDescription, ScanLimits } from './ingestionLimits';
 import { renderReport, ReportKind } from './report';
 import { openUsagePanel } from './usagePanel';
-import { ControlGroup, DetailStatus, IndexDetail, McpVerification, SidebarCollection, SidebarState, sidebarAction, sidebarControlGroups } from './sidebar';
+import { ControlGroup, DetailStatus, IndexDetail, McpVerification, SidebarCollection, SidebarState, sidebarAction, sidebarControlGroups, detailLabel } from './sidebar';
 
 interface KnownCollection { name: string; root: string; lastIndexed?: string }
 
@@ -332,6 +332,7 @@ class Controller implements vscode.Disposable {
         if (!spec || spec.dataDir !== action.dataDir) { throw new Error('Collection storage changed. Use the refreshed AIRK dashboard.'); }
         if (action.type === 'vectors') { await this.setVectors(spec, action.enabled); return; }
         if (action.type === 'detail') { await this.indexDetail(spec, action.level); return; }
+        if (action.action === 'compression') { await this.compression(spec); return; }
         if (action.action === 'verify') { await this.verify(spec); return; }
         if (action.action === 'tools') { await this.openTools(spec); return; }
         if (action.action === 'mcpDetails') {
@@ -585,8 +586,8 @@ class Controller implements vscode.Disposable {
     private async refreshDetail(spec: LaunchSpec): Promise<void> {
         try {
             const result = await runJson<DetailStatus>(spec, 'collections', ['extraction', 'show']);
-            if (!['essential', 'balanced', 'detailed'].includes(result.configured_detail)
-                || (result.published_detail !== null && !['essential', 'balanced', 'detailed'].includes(result.published_detail))) {
+            if (!['agent_lean', 'essential', 'balanced', 'detailed'].includes(result.configured_detail)
+                || (result.published_detail !== null && !['agent_lean', 'essential', 'balanced', 'detailed'].includes(result.published_detail))) {
                 throw new Error('Index detail requires the updated AIRK helper.');
             }
             if (vscode.workspace.isTrusted && this.specs.get(spec.collection)?.dataDir === spec.dataDir) {
@@ -594,10 +595,44 @@ class Controller implements vscode.Disposable {
             }
         } catch (error) { this.output.appendLine(`Index detail unavailable: ${String(error)}`); }
     }
+    async compression(spec: LaunchSpec): Promise<void> {
+        this.trusted();
+        const current = await runJson<{mode: string; unique_encoded_bytes: number; logical_reference_bytes: number}>(spec, 'compression', ['show']);
+        const modes = [
+            { label: 'Off', mode: 'off', description: 'Store new retained objects without compression' },
+            { label: 'Automatic', mode: 'automatic', description: 'Use lossless blocks when encoded storage saves at least 10%' },
+            { label: 'Space', mode: 'space', description: 'Keep smaller compressed objects, including modest savings' }
+        ];
+        const selected = await vscode.window.showQuickPick(modes, { title: `Compression for ${spec.name} (current: ${current.mode})` });
+        if (!selected) { return; }
+        await this.scheduler.holdWhile(async idle => {
+            await idle;
+            if (this.specs.get(spec.collection)?.dataDir !== spec.dataDir) { throw new Error('Collection storage changed.'); }
+            await this.writeNative(spec, 'compression', ['set', selected.mode]);
+        });
+        const repack = await vscode.window.showInformationMessage('Compression policy saved for new retained objects. Repack current objects in bounded batches?', 'Repack', 'Later');
+        if (repack !== 'Repack') { return; }
+        await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Repacking ${spec.name}`, cancellable: true }, async (progress, cancellation) => {
+            await this.scheduler.holdWhile(async idle => {
+                await idle;
+                let after: string | undefined, examined = 0;
+                do {
+                    const report = await this.writeNative<{examined: number; next_after: string | null}>(spec, 'compression', ['repack', '--max-files', '32', ...(after ? ['--after', after] : [])]);
+                    if (!Number.isSafeInteger(report.examined) || report.examined < 0 || report.examined > 32
+                        || (report.next_after !== null && (typeof report.next_after !== 'string' || (after && report.next_after <= after)))) { throw new Error('Invalid repack progress.'); }
+                    examined += report.examined;
+                    if (examined > 100000) { throw new Error('Repack inventory bound exceeded.'); }
+                    progress.report({message: `${examined} files examined`});
+                    after = report.next_after ?? undefined;
+                } while (after && !cancellation.isCancellationRequested);
+            });
+        });
+        await this.showJson('Retained object storage', await runJson(spec, 'compression', ['show']));
+    }
     async indexDetail(spec: LaunchSpec, level: IndexDetail): Promise<void> {
         this.trusted();
         const confirm = await vscode.window.showWarningMessage(
-            `Use ${level} detail for ${spec.name}? Essential keeps text and citations; Balanced adds declarations, imports and document facts; Detailed also keeps call occurrences and document change tracking. Rebuilding takes time and temporary disk space. The current index stays available until success.`,
+            `Use ${detailLabel(level)} for ${spec.name}? Agent Lean keeps selected declarations and document facts. Rich Structure adds broader facts and declaration tracking; Search Only keeps text and citations. Detailed also keeps call occurrences and document tracking. Applying a changed mode requires indexing and temporary disk space.`,
             { modal: true }, 'Save and index', 'Save for next index');
         if (!confirm) { this.sidebar.refresh(); return; }
         await this.scheduler.holdWhile(async idle => {

@@ -41,23 +41,40 @@ struct ProgressiveBase<'a> {
     objects: Option<&'a ModelObjectSet>,
     selection: &'a airk_core::vector_selection::VectorSelectionPolicy,
     stats: &'a mut EmbeddingCacheStats,
+    execution: &'a airk_core::execution::ExecutionPlan,
     previous: &'a airk_core::Snapshot,
     snapshot: airk_core::Snapshot,
     semantic_work: Option<enrichment::SemanticWork>,
+    semantic_failed: bool,
     scan_work: progress::ScanWork,
     batch: std::collections::BTreeMap<String, ArtifactChange>,
     batch_bytes: usize,
     last_flush: std::time::Instant,
+    last_pause_check: std::time::Instant,
     next_batch: usize,
     processed: u64,
     committed: u64,
     current: airk_ingest::CurrentIndexWork,
     first_ready_us: Option<u64>,
+    first_vector_us: Option<u64>,
     started: std::time::Instant,
 }
 
 impl ProgressiveBase<'_> {
+    fn check_pause(&mut self) -> Result<()> {
+        self.last_pause_check = std::time::Instant::now();
+        if airk_store::scheduler::Queue::new(&self.kernel.data_root)
+            .status(&self.kernel.collection, &self.kernel.root_id())?
+            .is_some_and(|job| job.paused && !job.manual)
+        {
+            return Err(crate::scheduler::ScanPaused.into());
+        }
+        Ok(())
+    }
     fn observe(&mut self, artifact: &Artifact) -> Result<()> {
+        if self.last_pause_check.elapsed() >= std::time::Duration::from_millis(250) {
+            self.check_pause()?;
+        }
         self.processed += 1;
         if !self.batch.is_empty() && self.last_flush.elapsed() >= std::time::Duration::from_secs(2)
         {
@@ -91,6 +108,8 @@ impl ProgressiveBase<'_> {
                 self.flush()?;
                 self.next_batch = (self.next_batch * 2).min(4096);
             }
+        } else {
+            self.committed += 1;
         }
         Ok(())
     }
@@ -99,7 +118,8 @@ impl ProgressiveBase<'_> {
         if self.batch.is_empty() {
             return Ok(());
         }
-        let selected = self
+        self.check_pause()?;
+        let mut selected = self
             .objects
             .map(|objects| {
                 enrichment::prepare_work(
@@ -112,6 +132,11 @@ impl ProgressiveBase<'_> {
                 )
             })
             .transpose()?;
+        if self.semantic_failed
+            && let (Some(selected), Some(prior)) = (&mut selected, &self.semantic_work)
+        {
+            selected.failure = prior.failure.clone();
+        }
         let mut next_scan_work = self.scan_work.clone();
         next_scan_work.advanced(self.processed, self.committed + self.batch.len() as u64)?;
         let mut resources = vec![
@@ -200,6 +225,141 @@ impl ProgressiveBase<'_> {
         self.first_ready_us.get_or_insert_with(|| {
             u64::try_from(self.started.elapsed().as_micros()).unwrap_or(u64::MAX)
         });
+        self.kernel
+            .emit_progress(airk_core::readiness::IndexProgress {
+                phase: "base_committed",
+                revision: Some(super::runtime::revision(result.commit.token).to_string()),
+                processed_artifacts: self.processed,
+                committed_artifacts: self.committed,
+                total_artifacts: None,
+                selected_artifacts: self.semantic_work.as_ref().map(|w| w.selected_artifacts),
+                completed_artifacts: self.semantic_work.as_ref().map(|w| w.completed_artifacts),
+                completed_units: self.semantic_work.as_ref().map(|w| w.completed_units),
+            });
+        self.enrich_batch()?;
+        Ok(())
+    }
+
+    fn enrich_batch(&mut self) -> Result<()> {
+        let Some((model, objects)) = self.model.zip(self.objects) else {
+            return Ok(());
+        };
+        let Some(mut work) = self.semantic_work.clone() else {
+            return Ok(());
+        };
+        if self.semantic_failed || work.pending.is_empty() || work.failure.is_some() {
+            return Ok(());
+        }
+        self.check_pause()?;
+        let read = self.kernel.store.current_read(self.scope)?;
+        let count = work.pending.len().min(8);
+        let mut inputs = Vec::with_capacity(count);
+        for pending in work.pending.iter().take(count) {
+            let artifact = read
+                .artifact(&pending.path)?
+                .context("progressive semantic source missing")?;
+            ensure!(
+                artifact
+                    .content_hash
+                    .parse::<airk_core::identity::Sha256Digest>()?
+                    == pending.source_hash
+                    && artifact
+                        .retained
+                        .as_ref()
+                        .context("progressive semantic extraction missing")?
+                        .object
+                        .parse::<airk_core::identity::Sha256Digest>()?
+                        == pending.extraction_object,
+                "progressive semantic binding expired"
+            );
+            inputs.push(CapturedInput { artifact });
+        }
+        drop(read);
+        work.pending.drain(..count);
+        work.completed_artifacts += count as u64;
+        let updater = CurrentUpdater {
+            store: &self.kernel.store,
+            quota: self.quota,
+            scope: self.scope,
+            writer: self.writer,
+            reservation: self.reservation,
+            configuration: None,
+        };
+        match updater.apply_enrichment(
+            &inputs,
+            SemanticUpdate {
+                model,
+                objects: objects.clone(),
+                selection: self.selection,
+                defer: false,
+                cache: EmbeddingCacheContext {
+                    cache: None,
+                    bypass: work.force_recompute,
+                    stats: self.stats,
+                    max_workers: self.execution.inference_workers,
+                    working_memory_bytes: self.execution.working_memory_bytes,
+                },
+            },
+            &mut work,
+        ) {
+            Ok(result) => {
+                self.kernel
+                    .emit_progress(airk_core::readiness::IndexProgress {
+                        phase: "enrichment_committed",
+                        revision: Some(super::runtime::revision(result.commit.token).to_string()),
+                        processed_artifacts: self.processed,
+                        committed_artifacts: self.committed,
+                        total_artifacts: None,
+                        selected_artifacts: Some(work.selected_artifacts),
+                        completed_artifacts: Some(work.completed_artifacts),
+                        completed_units: Some(work.completed_units),
+                    });
+                if result.occurrences > 0 {
+                    self.first_vector_us.get_or_insert_with(|| {
+                        self.started
+                            .elapsed()
+                            .as_micros()
+                            .try_into()
+                            .unwrap_or(u64::MAX)
+                    });
+                }
+                self.current.graph_records = self
+                    .current
+                    .graph_records
+                    .saturating_add(result.graph.sealed_records);
+                self.current.graph_read_bytes = self
+                    .current
+                    .graph_read_bytes
+                    .saturating_add(result.graph.read_bytes);
+                self.current.graph_base_record_reads = self
+                    .current
+                    .graph_base_record_reads
+                    .saturating_add(result.graph.base_record_reads);
+                self.current.graph_proof_cache_hits = self
+                    .current
+                    .graph_proof_cache_hits
+                    .saturating_add(result.graph.base_proof_cache_hits);
+                self.current.graph_proof_cache_evictions = self
+                    .current
+                    .graph_proof_cache_evictions
+                    .saturating_add(result.graph.base_proof_cache_evictions);
+                self.semantic_work = Some(work);
+            }
+            Err(error) => {
+                self.semantic_failed = true;
+                let mut failed = self
+                    .semantic_work
+                    .clone()
+                    .context("semantic work disappeared")?;
+                failed.failure = Some(format!("{error:#}").chars().take(1024).collect());
+                updater.apply_with_resources(
+                    &[],
+                    None,
+                    &[failed.resource_change(&self.kernel.store, self.reservation)?],
+                )?;
+                self.semantic_work = Some(failed);
+            }
+        }
         Ok(())
     }
 
@@ -408,8 +568,18 @@ impl Kernel {
         defer_completion: bool,
     ) -> Result<airk_ingest::IndexReport> {
         let index_started = std::time::Instant::now();
+        let execution_lease = crate::execution::acquire(&self.data_root)?;
+        self.emit_progress(airk_core::readiness::IndexProgress {
+            phase: "scan_started",
+            ..Default::default()
+        });
         self.recover_runtime_bootstrap()?;
-        let execution = crate::limits::configured_extraction_execution()?;
+        let mut execution = crate::limits::configured_extraction_execution()?;
+        execution.requested = execution_lease.plan.requested_extraction_workers;
+        execution.execution.workers = execution_lease.plan.extraction_workers;
+        execution.execution.max_in_flight_source_bytes = execution.execution.workers
+            * airk_ingest::ExtractionExecution::MAX_PARALLEL_SOURCE_BYTES;
+        execution.execution.validate()?;
         // Recovery takes its own writer lock, before this scan owns one.
         if let Some(scope) = self.current_scope()? {
             super::recover_current(&self.store, &Quota::open(&self.data_root)?, &scope)?;
@@ -425,6 +595,7 @@ impl Kernel {
             .unwrap_or_else(|| self.empty_snapshot());
         let configured = self.rebuild_extraction_policy()?;
         let policy = configured.policy;
+        let compression = self.store.compression_mode(&self.root_id())?;
         let roots = self.configured_roots()?;
         let selection = self.vector_selection()?;
         // Do not reserve all remaining capacity: durable SQL growth/replay owns
@@ -494,12 +665,12 @@ impl Kernel {
         }
         let progressive_enabled = defer_completion
             && !full
-            && previous.artifacts.is_empty()
             && (existing.is_none()
                 || (!configuration_changed
-                    && prior_scan_work
-                        .as_ref()
-                        .is_some_and(|work| !work.complete())));
+                    && (!previous.artifacts.is_empty()
+                        || prior_scan_work
+                            .as_ref()
+                            .is_some_and(|work| !work.complete()))));
         let mut stats = EmbeddingCacheStats {
             model_load_us,
             ..Default::default()
@@ -522,20 +693,22 @@ impl Kernel {
         };
         let mut progressive = if let Some(scope) = &progressive_scope {
             let scan_work = progress::ScanWork::start()?;
-            CurrentUpdater {
-                store: &self.store,
-                quota: &quota,
-                scope,
-                writer: &writer,
-                reservation: &reservation,
-                configuration: None,
+            if previous.artifacts.is_empty() {
+                CurrentUpdater {
+                    store: &self.store,
+                    quota: &quota,
+                    scope,
+                    writer: &writer,
+                    reservation: &reservation,
+                    configuration: None,
+                }
+                .apply_with_resources(
+                    &[],
+                    None,
+                    &[scan_work.resource_change(&self.store, &reservation)?],
+                )
+                .context("publish progressive scan start")?;
             }
-            .apply_with_resources(
-                &[],
-                None,
-                &[scan_work.resource_change(&self.store, &reservation)?],
-            )
-            .context("publish progressive scan start")?;
             Some(ProgressiveBase {
                 kernel: self,
                 quota: &quota,
@@ -547,18 +720,22 @@ impl Kernel {
                 objects: objects.as_ref(),
                 selection: &selection,
                 stats: &mut stats,
+                execution: &execution_lease.plan,
                 previous: &previous,
                 snapshot: previous.clone(),
                 semantic_work: prior_semantic_work.clone(),
+                semantic_failed: false,
                 scan_work,
                 batch: Default::default(),
                 batch_bytes: 0,
                 last_flush: std::time::Instant::now(),
+                last_pause_check: std::time::Instant::now(),
                 next_batch: 32,
                 processed: 0,
                 committed: 0,
                 current: Default::default(),
                 first_ready_us: None,
+                first_vector_us: None,
                 started: index_started,
             })
         } else {
@@ -619,7 +796,7 @@ impl Kernel {
                     return Ok(None);
                 };
                 self.store.load_retained(old)?;
-                self.store.read_retained_source(old)?;
+                self.store.verify_retained_source(old)?;
                 let mut artifact = old.clone();
                 artifact.path = request.path.to_owned();
                 Ok(Some(airk_ingest::observations::VerifiedReuse {
@@ -639,12 +816,13 @@ impl Kernel {
                 {
                     artifact.clone()
                 } else {
-                    self.store.retain_payload_with_budget(
+                    self.store.retain_payload_encoded(
                         artifact,
                         payload.context("fresh extraction payload missing")?,
                         profile,
                         Some(bytes),
                         Some(&reservation),
+                        compression,
                     )?
                 };
                 if let Some(progressive) = progressive.as_mut() {
@@ -659,7 +837,14 @@ impl Kernel {
             let _ = progressive.fail(error);
         }
         let (snapshot, mut report, observation) = scan_result?;
+        if let Some(progressive) = progressive.as_mut()
+            && let Err(error) = progressive.check_pause()
+        {
+            progressive.fail(&error)?;
+            return Err(error);
+        }
         let progressive_first_ready_us = progressive.as_ref().and_then(|p| p.first_ready_us);
+        let progressive_first_vector_us = progressive.as_ref().and_then(|p| p.first_vector_us);
         let progressive_current = progressive.as_ref().map(|p| p.current.clone());
         let progressive_work = progressive.as_ref().and_then(|p| p.semantic_work.clone());
         let mut final_scan_work = progressive.as_ref().map(|p| p.scan_work.clone());
@@ -668,6 +853,8 @@ impl Kernel {
             work.finish(snapshot.artifacts.len() as u64)?;
         }
         report.extraction_workers_requested = execution.requested;
+        report.execution = Some(execution_lease.plan.clone());
+        report.first_vector_us = progressive_first_vector_us;
         report.scan_extract_us =
             u64::try_from(scan_started.elapsed().as_micros()).unwrap_or(u64::MAX);
         let committed_previous = if progressive_enabled {
@@ -699,6 +886,15 @@ impl Kernel {
             .filter(|p| !snapshot.artifacts.contains_key(*p))
         {
             changes.insert(path.clone(), ArtifactChange::Delete(path.clone()));
+        }
+        if changes.is_empty()
+            && progressive_current
+                .as_ref()
+                .is_none_or(|work| work.changed_artifacts == 0)
+            && existing.is_some()
+            && prior_scan_work.as_ref().is_none_or(|work| work.complete())
+        {
+            final_scan_work = None;
         }
         if final_scan_work.is_none()
             && (!changes.is_empty()
@@ -747,7 +943,9 @@ impl Kernel {
             || configuration_changed
             || analysis_expired
             || retry_failed_semantic
-            || progressive_enabled
+            || progressive_current
+                .as_ref()
+                .is_some_and(|work| work.changed_artifacts > 0)
             || final_scan_work.is_some()
         {
             let semantic_resource = semantic_work
@@ -836,6 +1034,16 @@ impl Kernel {
                 .linked_lexical_bytes
                 .saturating_add(result.lexical.hardlinked_bytes);
             report.current = Some(work);
+            self.emit_progress(airk_core::readiness::IndexProgress {
+                phase: "base_coverage_complete",
+                revision: Some(super::runtime::revision(result.commit.token).to_string()),
+                processed_artifacts: snapshot.artifacts.len() as u64,
+                committed_artifacts: snapshot.artifacts.len() as u64,
+                total_artifacts: Some(snapshot.artifacts.len() as u64),
+                selected_artifacts: semantic_work.as_ref().map(|w| w.selected_artifacts),
+                completed_artifacts: semantic_work.as_ref().map(|w| w.completed_artifacts),
+                completed_units: semantic_work.as_ref().map(|w| w.completed_units),
+            });
         } else {
             let read = self.store.current_read(&scope)?;
             super::open_selected_lexical(&self.store, &read, Arc::new(|_| Ok(())))?;
@@ -847,6 +1055,7 @@ impl Kernel {
         });
         drop(writer);
         drop(reservation);
+        drop(execution_lease);
         if !defer_completion
             && let Some(model) = &model
             && let Some(generation) = self.drain_with_failure_record(

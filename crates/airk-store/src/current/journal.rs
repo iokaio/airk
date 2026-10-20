@@ -1629,6 +1629,104 @@ impl CurrentWriter<'_> {
         )
     }
 
+    /// Change only physical retained-object representations. Logical evidence,
+    /// postings, model, vector occurrence mappings and lexical selection survive.
+    pub fn prepare_repack(
+        &mut self,
+        expected: &CurrentToken,
+        graph_delta: &dyn PreparedGraphDelta,
+        inputs: &[CapturedInput],
+        model: Option<ModelObjectSet>,
+    ) -> Result<PendingTransaction> {
+        ensure!(
+            !inputs.is_empty()
+                && inputs.len() <= 32
+                && inputs
+                    .windows(2)
+                    .all(|p| p[0].artifact.path < p[1].artifact.path),
+            "invalid repack batch"
+        );
+        let (_, base) = state(self.connection()?, &self.scope)?;
+        ensure!(base.token()? == *expected, "repack base expired");
+        let mut plan = map::MapPlan::new(self.connection()?, &self.scope, base.artifact_root)?;
+        let mut changes = Vec::new();
+        for input in inputs {
+            let key = map::key(
+                &self.scope,
+                map::MapDomain::Artifact,
+                input.artifact.path.as_bytes(),
+            )?;
+            let old: CapturedInput =
+                serde_json::from_slice(&plan.get(key)?.context("repack source missing")?)?;
+            let old = old.artifact;
+            let mut comparison = input.artifact.clone();
+            let prior = old
+                .retained
+                .as_ref()
+                .context("repack prior reference missing")?;
+            let next = comparison
+                .retained
+                .as_mut()
+                .context("repack next reference missing")?;
+            next.source_encoding = prior.source_encoding.clone();
+            next.payload_encoding = prior.payload_encoding.clone();
+            ensure!(
+                serde_json::to_vec(&comparison)? == serde_json::to_vec(&old)?,
+                "repack changed logical evidence"
+            );
+            input.verify(&self.store)?;
+            let change = map::MapChange::new(
+                &self.scope,
+                map::MapDomain::Artifact,
+                input.artifact.path.as_bytes(),
+                Some(input.bytes()?),
+            )?;
+            plan.put(change.key(), change.value())?;
+            changes.push(change);
+        }
+        let mut target = base.clone();
+        target.sequence = target
+            .sequence
+            .checked_add(1)
+            .context("repack sequence overflow")?;
+        target.artifact_root = plan.root()?;
+        drop(plan);
+        ensure!(
+            graph_delta.descriptor().base == base.graph_head
+                && graph_delta.descriptor().target == base.graph_head,
+            "repack changed graph"
+        );
+        changes.sort_by_key(map::MapChange::key);
+        let additional: u64 = changes
+            .iter()
+            .map(|c| c.value().map_or(0, |v| v.len()) as u64 + 128)
+            .sum();
+        let needed = fs::metadata(self.store.directory().join("current.sqlite3"))?
+            .len()
+            .checked_add(
+                additional
+                    .checked_mul(8)
+                    .context("repack growth overflow")?,
+            )
+            .and_then(|n| n.checked_add(1 << 20))
+            .context("repack capacity overflow")?;
+        if needed > self.capacity {
+            self.grow_capacity(
+                needed
+                    .checked_next_power_of_two()
+                    .context("repack capacity overflow")?,
+            )?;
+        }
+        self.prepare_mapped(
+            expected,
+            target,
+            graph_delta,
+            &inputs.to_vec(),
+            model,
+            &changes,
+        )
+    }
+
     pub(crate) fn prepare_mapped(
         &mut self,
         expected: &CurrentToken,

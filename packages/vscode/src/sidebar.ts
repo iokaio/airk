@@ -8,7 +8,10 @@ export interface ControlGroup { label: string; commands: [string, string, string
 export interface McpVerification {
     phase: 'preparing' | 'checking' | 'verified' | 'failed'; checkedAt?: number; tools?: string[]; error?: string;
 }
-export type IndexDetail = 'essential' | 'balanced' | 'detailed';
+export type IndexDetail = 'agent_lean' | 'essential' | 'balanced' | 'detailed';
+export function detailLabel(level: IndexDetail): string {
+    return { agent_lean: 'Agent Lean', essential: 'Search Only', balanced: 'Rich Structure', detailed: 'Detailed (advanced)' }[level];
+}
 export interface DetailStatus {
     configured_detail: IndexDetail; published_detail: IndexDetail | null; pending_reindex: boolean;
 }
@@ -27,7 +30,7 @@ export interface SidebarState {
 export type SidebarAction = { type: 'vectors'; collection: string; dataDir: string; enabled: boolean } | { type: 'detail'; collection: string; dataDir: string; level: IndexDetail } | { type: 'ready' } | { type: 'mode'; value: IndexMode }
     | { type: 'registration'; enabled: boolean }
     | { type: 'command'; command: string }
-    | { type: 'collection'; action: 'index' | 'reindex' | 'status' | 'usage' | 'verify' | 'mcpDetails' | 'tools'; collection: string; dataDir: string };
+    | { type: 'collection'; action: 'index' | 'reindex' | 'status' | 'usage' | 'verify' | 'mcpDetails' | 'tools' | 'compression'; collection: string; dataDir: string };
 
 export function sidebarAction(value: unknown, allowed: Set<string>): SidebarAction | undefined {
     if (!value || typeof value !== 'object') { return; }
@@ -36,7 +39,7 @@ export function sidebarAction(value: unknown, allowed: Set<string>): SidebarActi
         return { type: 'vectors', collection: item.collection, dataDir: item.dataDir, enabled: item.enabled };
     }
     if (item.type === 'detail' && typeof item.collection === 'string' && typeof item.dataDir === 'string'
-        && typeof item.level === 'string' && ['essential', 'balanced', 'detailed'].includes(item.level)) {
+        && typeof item.level === 'string' && ['agent_lean', 'essential', 'balanced', 'detailed'].includes(item.level)) {
         return { type: 'detail', collection: item.collection, dataDir: item.dataDir, level: item.level as IndexDetail };
     }
     if (item.type === 'ready') { return { type: 'ready' }; }
@@ -47,7 +50,7 @@ export function sidebarAction(value: unknown, allowed: Set<string>): SidebarActi
     if (item.type === 'command' && typeof item.command === 'string' && allowed.has(item.command)) {
         return { type: 'command', command: item.command };
     }
-    if (item.type === 'collection' && typeof item.action === 'string' && ['index', 'reindex', 'status', 'usage', 'verify', 'mcpDetails', 'tools'].includes(item.action)
+    if (item.type === 'collection' && typeof item.action === 'string' && ['index', 'reindex', 'status', 'usage', 'verify', 'mcpDetails', 'tools', 'compression'].includes(item.action)
         && typeof item.collection === 'string' && typeof item.dataDir === 'string') {
         return { type: 'collection', action: item.action as Extract<SidebarAction, { type: 'collection' }>['action'], collection: item.collection, dataDir: item.dataDir };
     }
@@ -80,13 +83,13 @@ export function sidebarContent(state: SidebarState): string {
             'capacity-limited': 'Storage budget reached', paused: 'Auto-indexing paused'
         } as Record<string, string>)[item.state] ?? 'Ready to index';
         const attributes = `data-collection="${escape(item.collection)}" data-storage="${escape(item.dataDir)}"`;
-        const actions = `<div class="actions">${(['index', 'reindex', 'status', 'usage'] as const).map(action =>
-            `<button id="${escape(item.collection)}-${action}" ${attributes} data-action="${action}" class="${action === 'index' ? 'primary' : 'secondary'}"${disabled || (!['status', 'usage'].includes(action) && (indexing || state.changingStorage)) ? ' disabled' : ''}>${action === 'index' ? 'Index now' : action === 'reindex' ? 'Reindex' : action === 'usage' ? 'Usage &amp; Savings' : 'Details'}</button>`).join('')}</div>`;
+        const actions = `<div class="actions">${(['index', 'reindex', 'status', 'usage', 'compression'] as const).map(action =>
+            `<button id="${escape(item.collection)}-${action}" ${attributes} data-action="${action}" class="${action === 'index' ? 'primary' : 'secondary'}"${disabled || (!['status', 'usage'].includes(action) && (indexing || state.changingStorage)) ? ' disabled' : ''}>${action === 'index' ? 'Index now' : action === 'reindex' ? 'Reindex' : action === 'usage' ? 'Usage &amp; Savings' : action === 'compression' ? 'Compression' : 'Details'}</button>`).join('')}</div>`;
         const detail = `<div class="mcp"><h3>Index detail</h3><label for="${escape(item.collection)}-detail">Evidence to retain</label>
             <select id="${escape(item.collection)}-detail" ${attributes} data-detail="true"${disabled || !item.detail || indexing || state.changingStorage ? ' disabled' : ''}>
-            ${!item.detail ? '<option>Loading current setting…</option>' : (['essential', 'balanced', 'detailed'] as const).map(level => `<option value="${level}"${item.detail?.configured_detail === level ? ' selected' : ''}>${level === 'balanced' ? 'Balanced (recommended)' : level[0].toUpperCase() + level.slice(1)}</option>`).join('')}</select>
-            <p class="muted">Essential: text and citations. Balanced: adds declarations, imports and document facts. Detailed: adds call occurrences and document change tracking.</p>
-            ${item.detail ? `<p role="status">Published: <strong>${escape(item.detail.published_detail ?? 'Not indexed')}</strong>${item.detail.pending_reindex ? ' · Change pending indexing' : ''}</p>` : '<p class="muted">Current detail is not available yet.</p>'}
+            ${!item.detail ? '<option>Loading current setting…</option>' : (['agent_lean', 'balanced', 'essential', 'detailed'] as const).map(level => `<option value="${level}"${item.detail?.configured_detail === level ? ' selected' : ''}>${detailLabel(level)}</option>`).join('')}</select>
+            <p class="muted">Agent Lean: selected coding and document evidence. Rich Structure: broader facts and declaration tracking. Search Only: text and citations. Vectors are configured separately. Detailed adds call occurrences and document tracking.</p>
+            ${item.detail ? `<p role="status">Published: <strong>${escape(item.detail.published_detail ? detailLabel(item.detail.published_detail) : 'Not indexed')}</strong>${item.detail.pending_reindex ? ' · Change pending indexing' : ''}</p>` : '<p class="muted">Current detail is not available yet.</p>'}
             <p class="muted">Changing detail rebuilds evidence. The published index remains available until success. Vector selection is configured separately.</p></div>`;
         const semantic = item.vectors?.semantic_readiness;
         const discovery = item.vectors?.discovery_readiness;

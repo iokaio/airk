@@ -29,6 +29,16 @@ pub(crate) fn policy_digest(policy: &ExtractionPolicy) -> Result<Sha256Digest> {
     ))
 }
 impl Kernel {
+    pub fn applied_index_detail(&self) -> Result<Option<airk_core::extraction::IndexDetail>> {
+        let Some(scope) = self.current_scope()? else {
+            return Ok(None);
+        };
+        Ok(self
+            .store
+            .current_read(&scope)?
+            .collection_state()?
+            .map(|state| state.configuration.index_detail))
+    }
     /// Rebuild reads saved policy without consulting obsolete derived catalogs.
     pub(crate) fn rebuild_extraction_policy(&self) -> Result<ExtractionPolicyStatus> {
         let bytes = self.store.extraction_policy_bytes(&self.root_id())?;

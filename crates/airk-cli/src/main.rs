@@ -207,6 +207,9 @@ enum Command {
     Init,
     /// Incrementally index eligible UTF-8 files; report exclusions.
     Index {
+        /// Emit JSON progress observations to stderr; final JSON stays on stdout.
+        #[arg(long)]
+        progress: bool,
         path: Option<PathBuf>,
         /// Persist and join the shared local indexing queue.
         #[arg(long)]
@@ -224,6 +227,13 @@ enum Command {
     Semantic {
         #[command(subcommand)]
         action: SemanticCommand,
+    },
+    /// Inspect CPU/memory worker admission. AIRK_EXECUTION_MODE selects automatic, interactive or throughput.
+    Execution,
+    /// Configure retained-object encoding or repack one bounded current batch.
+    Compression {
+        #[command(subcommand)]
+        action: CompressionCommand,
     },
     /// Retrieve bounded evidence using the collection default (hybrid unless opted out).
     Search {
@@ -377,6 +387,21 @@ enum SemanticCommand {
 }
 
 #[derive(Subcommand)]
+enum CompressionCommand {
+    Show,
+    Set {
+        #[arg(value_parser = ["off", "automatic", "space"])]
+        mode: String,
+    },
+    Repack {
+        #[arg(long)]
+        after: Option<String>,
+        #[arg(long, default_value_t = 32, value_parser = clap::value_parser!(u32).range(1..=32))]
+        max_files: u32,
+    },
+}
+
+#[derive(Subcommand)]
 enum ServiceCommand {
     Plan,
     Install,
@@ -483,7 +508,8 @@ impl Command {
             }
             Self::Setup { .. } | Self::Index { full: false, .. } => UsageOperation::Index,
             Self::Index { full: true, .. } => UsageOperation::Reindex,
-            Self::Status => UsageOperation::Status,
+            Self::Status | Self::Execution => UsageOperation::Status,
+            Self::Compression { .. } => UsageOperation::CollectionMaintenance,
             Self::Semantic {
                 action: SemanticCommand::Status,
             } => UsageOperation::Status,
@@ -792,7 +818,7 @@ enum ExtractionCommand {
     Show,
     /// Select optional evidence for the next successful index; preserves adapter rules.
     Detail {
-        #[arg(value_parser = ["essential", "balanced", "detailed"])]
+        #[arg(value_parser = ["agent_lean", "essential", "balanced", "detailed"])]
         level: String,
     },
     Validate {
@@ -1350,14 +1376,24 @@ async fn main_async() -> anyhow::Result<()> {
             Ok(())
         }
         Command::Init => recorder.print(&kernel.initialize()?),
-        Command::Index { full, scheduled, automatic, .. } => recorder.print(&if scheduled {
+        Command::Index { full, scheduled, automatic, progress, .. } => {
+            let kernel = if progress { kernel.clone().with_index_progress(|event| {
+                if let Ok(json) = serde_json::to_string(event) { eprintln!("{json}"); }
+            }) } else { kernel.clone() };
+            recorder.print(&if scheduled {
             kernel.scheduled_index(full, automatic)?
         } else if full {
             kernel.reindex()?
         } else {
             kernel.index()?
-        }),
+        }) },
         Command::Status => recorder.print(&kernel.status()?),
+        Command::Execution => recorder.print(&kernel.execution_status()?),
+        Command::Compression { action } => match action {
+            CompressionCommand::Show => recorder.print(&kernel.compression_status()?),
+            CompressionCommand::Set { mode } => recorder.print(&kernel.configure_compression(serde_json::from_value(serde_json::Value::String(mode))?)?),
+            CompressionCommand::Repack { after, max_files } => recorder.print(&kernel.repack_current(after.as_deref(), max_files as usize)?),
+        },
         Command::Semantic { action } => match action {
             SemanticCommand::Status => recorder.print(&kernel.status()?.semantic_readiness),
             SemanticCommand::Run => {

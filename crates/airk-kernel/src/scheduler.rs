@@ -36,6 +36,15 @@ fn now() -> Result<u64> {
     )?)
 }
 
+#[derive(Debug)]
+pub(crate) struct ScanPaused;
+impl std::fmt::Display for ScanPaused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("scan paused; committed batches remain available")
+    }
+}
+impl std::error::Error for ScanPaused {}
+
 impl Kernel {
     fn continue_semantic(
         &self,
@@ -262,7 +271,8 @@ impl Kernel {
         };
         let result =
             Kernel::open_collection(&job.root, Some(queue.data_dir().into()), &job.collection)
-                .and_then(|kernel| {
+                .and_then(|mut kernel| {
+                    kernel.progress = self.progress.clone();
                     ensure!(
                         kernel.root_id() == job.root,
                         "registered workspace root identity changed"
@@ -313,6 +323,17 @@ impl Kernel {
                     collection: Some(job.collection),
                     revision: Some(job.requested_revision),
                     report: Some(report),
+                    error: None,
+                    maintenance: None,
+                }
+            }
+            Err(error) if error.is::<ScanPaused>() => {
+                queue.defer(&worker, &job)?;
+                RunOutcome {
+                    state: "paused",
+                    collection: Some(job.collection),
+                    revision: Some(job.requested_revision),
+                    report: None,
                     error: None,
                     maintenance: None,
                 }
@@ -383,6 +404,9 @@ impl Kernel {
                     "scheduled indexing failed: {}",
                     job.error.as_deref().unwrap_or("unknown failure")
                 );
+            }
+            if job.paused && !job.manual {
+                return Err(ScanPaused.into());
             }
             let outcome = self.run_scheduled_once()?;
             if outcome.collection.as_deref() == Some(&self.collection)

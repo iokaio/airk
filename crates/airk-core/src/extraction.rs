@@ -72,6 +72,7 @@ pub trait NativeAdapter {
 #[serde(rename_all = "snake_case")]
 pub enum IndexDetail {
     Essential,
+    AgentLean,
     Balanced,
     #[default]
     Detailed,
@@ -98,6 +99,7 @@ impl IndexDetail {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Essential => "essential",
+            Self::AgentLean => "agent_lean",
             Self::Balanced => "balanced",
             Self::Detailed => "detailed",
         }
@@ -106,12 +108,16 @@ impl IndexDetail {
         match profile.options.get("index_detail").map(String::as_str) {
             None | Some("detailed") => Ok(Self::Detailed),
             Some("essential") => Ok(Self::Essential),
+            Some("agent_lean") => Ok(Self::AgentLean),
             Some("balanced") => Ok(Self::Balanced),
             _ => anyhow::bail!("unsupported index detail"),
         }
     }
     pub fn coverage(self) -> &'static str {
         match self {
+            Self::AgentLean => {
+                "Selected declarations, imports, local structure, entry points and document facts. Call occurrences, broad framework facts, standalone dates and fine-grained continuity are deliberately omitted. Syntax is not resolved; exact text and semantic inputs remain independently available."
+            }
             Self::Essential => {
                 "Native structured facts, relationships and fine-grained continuity are not indexed at Essential detail. Text and exact citations remain available. Explicit imported analysis is separate."
             }
@@ -121,6 +127,46 @@ impl IndexDetail {
             Self::Detailed => {
                 "Selected adapter-supported facts, relationships and continuity; not complete language understanding or resolved references."
             }
+        }
+    }
+
+    pub fn retains_fact(self, kind: &str) -> bool {
+        match self {
+            Self::Essential => false,
+            Self::AgentLean => matches!(
+                kind,
+                "definition"
+                    | "import"
+                    | "inherits"
+                    | "key"
+                    | "section"
+                    | "requirement"
+                    | "decision"
+                    | "acceptance"
+                    | "architecture"
+                    | "design"
+                    | "route_registration"
+                    | "route_annotation"
+                    | "test_registration"
+                    | "test_declaration"
+                    | "table"
+                    | "table_row"
+            ),
+            Self::Balanced => kind != "call",
+            Self::Detailed => true,
+        }
+    }
+
+    pub fn tracks_continuity(self) -> bool {
+        matches!(self, Self::Balanced | Self::Detailed)
+    }
+
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Self::Essential => "Search Only",
+            Self::AgentLean => "Agent Lean",
+            Self::Balanced => "Rich Structure",
+            Self::Detailed => "Detailed",
         }
     }
 }

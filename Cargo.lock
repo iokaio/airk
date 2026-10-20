@@ -221,6 +221,7 @@ dependencies = [
  "airk-core",
  "anyhow",
  "libc",
+ "lz4_flex",
  "rusqlite",
  "serde",
  "serde_json",
