@@ -76,6 +76,7 @@ fn missing_model_never_silently_disables_default_vectors_and_foreign_policy_is_r
     kernel.index()?;
     assert!(kernel.vector_status()?.enabled);
     assert!(kernel.vector_status()?.pending_reindex);
+    assert_eq!(kernel.vector_status()?.default_search_mode, "unavailable");
     let query = SearchQuery {
         text: "fixture".into(),
         path_prefix: None,

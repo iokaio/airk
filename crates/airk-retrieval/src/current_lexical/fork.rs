@@ -144,8 +144,25 @@ impl CurrentLexical {
         });
         let manifest = private.capture_manifest(Some((&base.manifest, base.digest)))?;
         drop(private);
-        fs::rename(staging.path(), target)
-            .with_context(|| format!("publish lexical fork {}", target.display()))?;
+        // Windows may briefly retain a handle after Tantivy closes the fork.
+        // The private staging directory remains ours throughout these retries.
+        for attempt in 0..6 {
+            match fs::rename(staging.path(), target) {
+                Ok(()) => break,
+                Err(error)
+                    if cfg!(windows)
+                        && error.kind() == io::ErrorKind::PermissionDenied
+                        && attempt < 5
+                        && !target.exists() =>
+                {
+                    std::thread::sleep(std::time::Duration::from_millis(25 << attempt));
+                }
+                Err(error) => {
+                    return Err(error)
+                        .with_context(|| format!("publish lexical fork {}", target.display()));
+                }
+            }
+        }
         let _ = staging.keep();
         Directory::sync_directory(&tantivy::directory::MmapDirectory::open(parent)?)?;
         let result = CurrentLexical::open(target, charge)?;

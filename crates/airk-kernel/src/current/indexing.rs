@@ -46,6 +46,8 @@ struct ProgressiveBase<'a> {
     semantic_work: Option<enrichment::SemanticWork>,
     scan_work: progress::ScanWork,
     batch: std::collections::BTreeMap<String, ArtifactChange>,
+    batch_bytes: usize,
+    last_flush: std::time::Instant,
     next_batch: usize,
     processed: u64,
     committed: u64,
@@ -57,6 +59,10 @@ struct ProgressiveBase<'a> {
 impl ProgressiveBase<'_> {
     fn observe(&mut self, artifact: &Artifact) -> Result<()> {
         self.processed += 1;
+        if !self.batch.is_empty() && self.last_flush.elapsed() >= std::time::Duration::from_secs(2)
+        {
+            self.flush()?;
+        }
         let same = self
             .previous
             .artifacts
@@ -65,6 +71,12 @@ impl ProgressiveBase<'_> {
             .transpose()?
             == Some(serde_json::to_vec(artifact)?);
         if !same {
+            // A large captured input must not make a pending publication grow
+            // without bound. Charge its logical source size conservatively.
+            if !self.batch.is_empty() && self.batch_bytes.saturating_add(artifact.bytes) > 64 << 20
+            {
+                self.flush()?;
+            }
             self.snapshot
                 .artifacts
                 .insert(artifact.path.clone(), artifact.clone());
@@ -74,7 +86,8 @@ impl ProgressiveBase<'_> {
                     artifact: artifact.clone(),
                 })),
             );
-            if self.batch.len() >= self.next_batch {
+            self.batch_bytes = self.batch_bytes.saturating_add(artifact.bytes);
+            if self.batch.len() >= self.next_batch || self.batch_bytes >= 64 << 20 {
                 self.flush()?;
                 self.next_batch = (self.next_batch * 2).min(4096);
             }
@@ -148,6 +161,8 @@ impl ProgressiveBase<'_> {
         .apply_scanned(&changes, semantic, &resources, &Default::default())
         .context("publish progressive base batch")?;
         self.committed += changes.len() as u64;
+        self.batch_bytes = 0;
+        self.last_flush = std::time::Instant::now();
         self.scan_work = next_scan_work;
         self.semantic_work = selected;
         self.current.changed_artifacts = self
@@ -537,6 +552,8 @@ impl Kernel {
                 semantic_work: prior_semantic_work.clone(),
                 scan_work,
                 batch: Default::default(),
+                batch_bytes: 0,
+                last_flush: std::time::Instant::now(),
                 next_batch: 32,
                 processed: 0,
                 committed: 0,
