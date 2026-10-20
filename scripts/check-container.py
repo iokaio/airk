@@ -14,6 +14,12 @@ def docker(*args, check=True):
                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
 
 
+def remove_owned_container(name):
+    result = docker("rm", "--force", name, check=False)
+    if result.returncode and not result.stderr.strip().endswith(f"No such container: {name}"):
+        result.check_returncode()
+
+
 def check_stdio(name):
     process = subprocess.Popen(["docker", "exec", "-i", name, "airk", "--root",
                                 "/workspaces/project-a", "--data-dir", "/data",
@@ -65,10 +71,9 @@ def main():
     volume = name + "-data"
     fixtures = Path(__file__).resolve().parent.parent / "examples/workspaces"
     volume_created = False
-    running = False
 
     def start():
-        docker("run", "--rm", "--detach", "--name", name, "--network", "none",
+        docker("run", "--detach", "--name", name, "--network", "none",
                "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
                "--tmpfs", "/tmp", "--mount", f"type=bind,source={fixtures},target=/workspaces,readonly",
                "--mount", f"type=volume,source={volume},target=/data", args.image)
@@ -81,7 +86,6 @@ def main():
         docker("volume", "create", volume)
         volume_created = True
         start()
-        running = True
         for collection in ("project-a", "project-b"):
             indexed = json.loads(command(collection, "index").stdout)
             assert indexed["collection"] == collection
@@ -95,21 +99,21 @@ def main():
         docker("exec", name, "test", "-f", "/usr/share/licenses/airk/dependencies/inventory.json")
         assert docker("inspect", "--format", "{{.HostConfig.NetworkMode}}", name).stdout.strip() == "none"
         docker("stop", name)
-        running = False
+        remove_owned_container(name)
         start()
-        running = True
         assert json.loads(command("project-a", "status").stdout)["files"] == 2
         removed = json.loads(command("project-a", "collections", "remove", "project-b").stdout)
         assert removed["status"] == "removed-derived-index"
         assert (fixtures / "project-b/README.md").is_file()
         assert command("project-b", "status", check=False).returncode != 0
         assert json.loads(command("project-a", "status").stdout)["files"] == 2
-        print("Container smoke passed: stdio MCP, two isolated collections, offline/read-only runtime, persistent restart, notices, usage and safe removal.")
     finally:
-        if running:
-            docker("stop", name, check=False)
         if volume_created:
+            # Explicit removal waits for this container to release its mounts.
+            # --rm can acknowledge stop before asynchronous removal completes.
+            remove_owned_container(name)
             docker("volume", "rm", volume)
+    print("Container smoke passed: stdio MCP, two isolated collections, offline/read-only runtime, persistent restart, notices, usage and safe removal.")
 
 
 if __name__ == "__main__":
