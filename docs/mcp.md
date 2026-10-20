@@ -18,18 +18,20 @@ Multiple agents can launch independent stdio connections against the same root/d
 | airk_outline | path; limit, max_bytes, cursor, compact | Exact-file rich facts or compact names/kinds/spans/keys |
 | airk_symbols | name, language, path_prefix; limit, max_bytes, cursor | Exact native definition names; omit name to list |
 | airk_imports | name substring, language, path_prefix; limit, max_bytes, cursor | Selected native import/use/include declarations |
-| airk_document_facts | kind, name substring, language, path_prefix; limit, max_bytes, cursor | Requirements, dates, design/architecture/features/decisions, sections, keys and asset facts with document metadata and original locations |
+| airk_document_facts | compact; kind, name substring, language, path_prefix; limit, max_bytes, cursor | Requirements, dates, design/architecture/features/decisions, sections, keys and asset facts with document metadata and original locations |
 | airk_references | identifier name, path_prefix; limit, max_bytes | Exact-case textual occurrences with explicit no-resolution label |
 | airk_context | path, indexed line; before, after, max_bytes | Neighboring indexed lines |
-| airk_capabilities | none | Format coverage and limitations, even before indexing |
-| airk_code_facts | exact name/qualified name/symbol ID, kind, language, path_prefix; limit, max_bytes, cursor | Enriched syntax and optional hash-bound SCIP facts with scopes/signatures/producer coverage |
+| airk_capabilities | adapter, rich | Compact adapter catalog; exact adapter capabilities or rich profiles on request, even before indexing |
+| airk_code_facts | compact; exact name/qualified name/symbol ID, kind, language, path_prefix; limit, max_bytes, cursor | Enriched syntax and optional hash-bound SCIP facts with scopes/signatures/producer coverage |
 | airk_relationships | symbol; direction, kind, path_prefix, hops, limit, max_bytes | Incoming/outgoing syntax candidates or producer assertions; bounded caller/implementation/dependency/impact investigation |
 | airk_changes | since and/or selectors; path_prefix, include_symbols, include_documents, limit, max_bytes, cursor | Observed indexed changes, remembered-evidence validation, independent coverage and scheduler freshness |
 | airk_history | Compatibility endpoint: historical evidence is unsupported in 1.2 |
 
 Defaults are 10 results and 8192 payload bytes; bounds are 1–100 and 1–65536. Context radius defaults to 5 lines each way and cannot exceed 100. Unknown arguments are rejected. Results use one JSON text block; metadata/framing adds bytes beyond payload budgets. Errors return tool errors, not misleading empty hits.
 
-File/fact discovery and outlines accept revision/filter-bound keyset cursors. `record_bytes` counts complete serialized records; cursor and envelope framing are additional. Oversized first records report `required_record_bytes` without skipping evidence. Outlines additionally offer `compact: true`. See [resumable discovery](discovery.md) for continuation, revision expiry and historical outline behavior.
+File/fact discovery and outlines accept revision/filter-bound keyset cursors. `record_bytes` counts complete serialized records; cursor and envelope framing are additional. Oversized first records report `required_record_bytes` without skipping evidence. Outlines additionally offer `compact: true`. Code/document facts default to compact when the applied mode is Agent Lean; `compact: false` requests rich details. Compact code records retain qualified names, written signatures, original spans, citations and producer/coverage basis. Document compact records preserve heading context, truncation flags, parser/basis and table cells with formula/cache qualifiers. Durable-key lookup retains its established rich result. See [resumable discovery](discovery.md) for continuation, revision expiry and historical outline behavior.
+
+Agent Lean fact replies include bounded discovery and independent scheduler-freshness observations when the reply publication can still be matched. Observation time does not establish live-source equality. Existing Rich Structure/Search Only evidence reply shapes remain compatible. Status exposes applied indexing mode, execution admission and freshness independently of readiness. These reads do not scan live files or start work.
 
 `airk_history` returns an explicit unsupported error in 1.2. Capabilities advertise historical reads/checkpoints as unsupported. Use source control for source history.
 

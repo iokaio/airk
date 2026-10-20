@@ -152,6 +152,10 @@ pub struct CurrentIndexWork {
 
 #[derive(Default, Debug, Serialize, Deserialize)]
 pub struct IndexReport {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_vector_us: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution: Option<airk_core::execution::ExecutionPlan>,
     /// Elapsed from index admission until committed lexical/fact evidence is readable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub first_ready_us: Option<u64>,

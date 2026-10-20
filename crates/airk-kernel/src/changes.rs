@@ -4,7 +4,7 @@ use crate::Kernel;
 use airk_core::changes::*;
 use std::time::{SystemTime, UNIX_EPOCH};
 impl Kernel {
-    pub(crate) fn changes_freshness(&self) -> FreshnessObservation {
+    pub fn changes_freshness(&self) -> FreshnessObservation {
         let mut observation = FreshnessObservation {
             observed_unix_ms: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -53,5 +53,19 @@ impl Kernel {
             }
         }
         observation
+    }
+
+    pub fn discovery_observation(
+        &self,
+        expected: airk_core::identity::RevisionToken,
+    ) -> anyhow::Result<Option<airk_core::readiness::DiscoveryReadiness>> {
+        let read = self.current_reader()?;
+        if crate::current::runtime::revision(read.token()?) != expected {
+            return Ok(None);
+        }
+        Ok(Some(crate::current::progress::readiness(
+            &read,
+            &self.store,
+        )?))
     }
 }

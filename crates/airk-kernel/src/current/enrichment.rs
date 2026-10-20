@@ -4,10 +4,7 @@ use super::{CurrentUpdater, SemanticUpdate};
 use crate::Kernel;
 use airk_core::readiness::{DefaultSearchPolicy, SemanticReadiness, SemanticState};
 use airk_core::{Snapshot, identity::Sha256Digest, vector_selection::VectorSelectionPolicy};
-use airk_retrieval::{
-    embedding_batch::worker_limit,
-    model::{EmbeddingCacheContext, EmbeddingCacheStats, EmbeddingModel},
-};
+use airk_retrieval::model::{EmbeddingCacheContext, EmbeddingCacheStats, EmbeddingModel};
 use airk_store::{
     FileStore,
     current::{
@@ -22,7 +19,7 @@ use std::collections::BTreeMap;
 const KEY: &str = "semantic-work";
 const POLICY_KEY: &str = "semantic-policy";
 
-fn now_unix_ms() -> Result<u64> {
+pub(super) fn now_unix_ms() -> Result<u64> {
     Ok(u64::try_from(
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
@@ -500,6 +497,7 @@ impl Kernel {
         mut current_work: Option<&mut airk_ingest::CurrentIndexWork>,
     ) -> Result<Option<u64>> {
         let scope = self.current_scope()?.context("workspace is not indexed")?;
+        let execution = crate::execution::acquire(&self.data_root)?;
         let writer = self.store.lock()?;
         let quota = Quota::open(&self.data_root)?;
         let mut generation = None;
@@ -527,7 +525,6 @@ impl Kernel {
             );
             let batch_len = work.pending.len().min(32);
             let mut changes = Vec::with_capacity(batch_len);
-            let mut planned_units = 0u64;
             for pending in work.pending.iter().take(batch_len) {
                 let artifact = read
                     .artifact(&pending.path)?
@@ -543,35 +540,13 @@ impl Kernel {
                             == pending.extraction_object,
                     "pending semantic input binding expired"
                 );
-                let retained = self.store.load_retrieval_artifact(&artifact)?;
-                planned_units = planned_units
-                    .checked_add(
-                        airk_retrieval::vector_units::visit_vector_units(
-                            &retained.payload,
-                            model,
-                            |_| Ok(()),
-                        )?
-                        .units,
-                    )
-                    .context("semantic unit count overflow")?;
                 changes.push(CapturedInput { artifact });
             }
             drop(read);
             let reservation = self.publication_reservation()?;
             work.pending.drain(..batch_len);
             work.completed_artifacts += batch_len as u64;
-            work.completed_units = work
-                .completed_units
-                .checked_add(planned_units)
-                .context("semantic completed-unit overflow")?;
-            if work.pending.is_empty() && work.all_units_countable {
-                work.selected_units = Some(work.completed_units);
-            }
-            if work.pending.is_empty() {
-                work.fully_ready_unix_ms = Some(now_unix_ms()?);
-            }
             work.failure = None;
-            let before_units = stats.vector_units;
             let result = CurrentUpdater {
                 store: &self.store,
                 quota: &quota,
@@ -591,23 +566,12 @@ impl Kernel {
                         cache: None,
                         bypass: work.force_recompute,
                         stats,
-                        max_workers: worker_limit(
-                            std::env::var("AIRK_INDEX_WORKERS").ok().as_deref(),
-                            std::thread::available_parallelism().map_or(1, usize::from),
-                        )?,
-                        working_memory_bytes: (crate::limits::machine::memory_bytes()
-                            .unwrap_or(2 << 30)
-                            / 8)
-                        .clamp(128 << 20, 1 << 30)
-                            as usize,
+                        max_workers: execution.plan.inference_workers,
+                        working_memory_bytes: execution.plan.working_memory_bytes,
                     },
                 },
-                &[work.resource_change(&self.store, &reservation)?],
+                &mut work,
             )?;
-            ensure!(
-                stats.vector_units - before_units == planned_units,
-                "semantic unit planning changed during publication"
-            );
             if let Some(work) = current_work.as_deref_mut() {
                 work.lexical_documents = work
                     .lexical_documents
@@ -632,6 +596,16 @@ impl Kernel {
                     .saturating_add(result.lexical.hardlinked_bytes);
             }
             generation = Some(result.commit.token.sequence);
+            self.emit_progress(airk_core::readiness::IndexProgress {
+                phase: "enrichment_committed",
+                revision: Some(super::runtime::revision(result.commit.token).to_string()),
+                processed_artifacts: 0,
+                committed_artifacts: 0,
+                selected_artifacts: Some(work.selected_artifacts),
+                total_artifacts: None,
+                completed_artifacts: Some(work.completed_artifacts),
+                completed_units: Some(work.completed_units),
+            });
         }
         Ok(generation)
     }

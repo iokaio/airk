@@ -162,7 +162,7 @@ def stats(records):
             "mrr_at_5": statistics.mean(record["reciprocal_rank_at_5"] for record in records)}
 
 
-def fixture(binary, base, count, trials, metrics_module):
+def fixture(binary, base, count, trials, metrics_module, detail="balanced"):
     root, state, alias = (base / name for name in ("root", "state", "alias"))
     root.mkdir(parents=True)
     alias.mkdir()
@@ -200,6 +200,7 @@ def fixture(binary, base, count, trials, metrics_module):
             raise RuntimeError(result.stderr.decode(errors="replace")[:4000])
         return json.loads(result.stdout)
     cli("collections", "roots", "add", "specs", str(alias))
+    cli("collections", "extraction", "detail", detail)
     cli("index")
     cases = [dict(case, source_sha256=digest(
         alias / case["expected"].removeprefix("@specs/")
@@ -239,6 +240,8 @@ def main():
     parser.add_argument("--binary", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--trials", type=int, default=3)
+    parser.add_argument("--detail", choices=("balanced", "agent_lean", "essential", "detailed"),
+                        default="balanced", help="Explicit evidence mode under test")
     args = parser.parse_args()
     if not 2 <= args.trials <= 30:
         parser.error("trials must be 2..30")
@@ -246,7 +249,7 @@ def main():
     spec = importlib.util.spec_from_file_location("scale_metrics", Path(__file__).with_name("benchmark-scale.py"))
     metrics = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(metrics)
-    report = {"schema": "airk-retrieval-qualification/1", "source": source_identity(),
+    report = {"schema": "airk-retrieval-qualification/1", "source": source_identity(), "index_detail": args.detail,
         "binary_sha256": digest(binary), "binary_version": subprocess.check_output([str(binary), "--version"], text=True, timeout=15).strip(),
         "platform": platform.platform(), "architecture": platform.machine(),
         "judgments_sha256": hashlib.sha256(json.dumps(CASES, sort_keys=True).encode()).hexdigest(),
@@ -259,7 +262,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="airk-retrieval-qualification-") as temporary:
         base = Path(temporary).resolve()
         for count in (32, 256):
-            report["workloads"].append(fixture(binary, base / str(count), count, args.trials, metrics))
+            report["workloads"].append(fixture(binary, base / str(count), count, args.trials, metrics, args.detail))
     report["source_after"] = source_identity()
     report["binary_sha256_after"] = digest(binary)
     report["passed"] = (report["source"] == report["source_after"]

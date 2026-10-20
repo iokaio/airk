@@ -1,6 +1,6 @@
 # Explicit vector selection
 
-AIRK indexes lexical passages, facts and original file evidence independently of vector selection. A collection can exclude selected files from semantic planning, embedding inference and DiskANN while retaining that other evidence. No generated-file, vendor-directory or filename classifier runs automatically: the default policy has no exclusions.
+AIRK indexes lexical passages, facts and original file evidence independently of vector selection. A collection can exclude selected files from semantic planning, embedding inference and DiskANN while retaining that other evidence. Rich Structure/Search Only retain the version-1 default with no exclusions. Agent Lean derives version-2 defaults when no explicit vector policy is saved: reviewed lockfile basenames and `.min.js`/`.min.css` stay lexical-only. No broad generated-file, vendor or test-directory classifier runs automatically.
 
 The selection policy is separate from the collection's vector enabled setting. Saving exclusions preserves an existing opt-out, and toggling vectors preserves exclusions. Policies are bound to the collection's owner root.
 
@@ -47,11 +47,23 @@ airk info generated/example.js
 
 To remove all exclusions, save `{"version":1,"exclusions":[]}`. The existing `airk collections vectors set --enabled false` command disables vectors for the whole collection; `--enabled true` re-enables them with the saved exclusions.
 
+## Agent Lean defaults and overrides
+
+Version 2 adds optional `agent_defaults` and `inclusions`. Explicit inclusions override built-in exclusions; explicit exclusions apply regardless of defaults. Conflicting explicit inclusion/exclusion selectors fail validation conservatively instead of depending on rule order. Inclusion cannot bypass source ignores or resource limits. Version-1 policy serialization/digests and saved semantics remain unchanged.
+
+```json
+{"version":2,"agent_defaults":true,"exclusions":[],"inclusions":[{"id":"include-cargo","basename":"Cargo.lock"}]}
+```
+
+The built-in lockfile set is `Cargo.lock`, `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `poetry.lock`, `uv.lock`, `Gemfile.lock` and `composer.lock`. Matching remains case-sensitive. A saved explicit policy takes precedence over the mode-derived default.
+
+Selection status/validation previews at most 4,096 current files and 32 affected paths, with matched reasons, completeness and unknown unit counts. It does not extract or embed files to estimate work. A truncated preview is not a complete collection estimate.
+
 ## Interpret the result
 
 Selection status reports the configured policy and digest, the applied digest, the publication token and `pending_reindex`. A policy change remains pending until a successful index publishes it, including when vectors are globally disabled. The broader vector status also reports model readiness; an enabled collection without a model remains pending independently of selection.
 
-File information reports `vector_selection.eligible`, `vector_selection.excluded_by` and `vector_selection_digest` from that file's committed revision. An exclusion saved after that revision does not change its file information. Eligibility describes selection, not whether the file produced a vector: global opt-out, missing models or unrecognized model tokens can still result in no vector. Historical file information uses its requested revision's policy.
+File information reports `vector_selection.eligible`, `vector_selection.excluded_by` and `vector_selection_digest` from that file's committed revision. An exclusion saved after that revision does not change its file information. Eligibility describes selection, not whether the file produced a vector: global opt-out, missing models or unrecognized model tokens can still result in no vector. Expired exact revision requests fail; historical file information is unsupported in 1.2.
 
 An excluded file remains available to lexical search, exact file reads and structural/document fact retrieval. Hybrid search can still return it through the lexical branch. Its semantic-only search contribution is removed on the next successful index.
 

@@ -33,6 +33,8 @@ Start with the [1.1.4 release notes](release-1.1.4.md) and the [combined October
 - [Coding-agent setup compatibility research](agent-integration.md)
 - [Google Antigravity manual MCP setup](antigravity-mcp.md)
 - [Coding-agent tool alignment and online documentation review](agent-tool-alignment.md)
+- [Agent Lean index modes and MCP efficiency plan](mcp-prioritization.md)
+- [1.2.0 current-index, Agent Lean and compression behavior](release-1.2.0.md)
 - [Workspace indexing coverage and clickable footer](index-coverage.md)
 - [Native VS Code extension and limits](vscode-extension.md)
 - [Extension listing content, agent integration copy and illustrations](extension-content.md)

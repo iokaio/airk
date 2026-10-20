@@ -17,6 +17,10 @@ pub const MAX_EXCLUSIONS: usize = 128;
 pub struct VectorSelectionPolicy {
     pub version: u32,
     pub exclusions: Vec<VectorExclusionRule>,
+    #[serde(default)]
+    pub inclusions: Vec<VectorExclusionRule>,
+    #[serde(default)]
+    pub agent_defaults: bool,
 }
 
 // Rule order has no meaning. Serialize borrowed rules in ID order without
@@ -30,12 +34,20 @@ impl Serialize for VectorSelectionPolicy {
         struct CanonicalPolicy<'a> {
             version: u32,
             exclusions: Vec<&'a VectorExclusionRule>,
+            #[serde(skip_serializing_if = "Vec::is_empty")]
+            inclusions: Vec<&'a VectorExclusionRule>,
+            #[serde(skip_serializing_if = "is_false")]
+            agent_defaults: bool,
         }
         let mut exclusions: Vec<_> = self.exclusions.iter().collect();
         exclusions.sort_by(|a, b| a.id.cmp(&b.id));
+        let mut inclusions: Vec<_> = self.inclusions.iter().collect();
+        inclusions.sort_by(|a, b| a.id.cmp(&b.id));
         CanonicalPolicy {
             version: self.version,
             exclusions,
+            inclusions,
+            agent_defaults: self.agent_defaults,
         }
         .serialize(serializer)
     }
@@ -69,8 +81,39 @@ impl Default for VectorSelectionPolicy {
         Self {
             version: VECTOR_SELECTION_VERSION,
             exclusions: Vec::new(),
+            inclusions: Vec::new(),
+            agent_defaults: false,
         }
     }
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
+}
+
+fn overlaps(a: &VectorExclusionRule, b: &VectorExclusionRule) -> bool {
+    let equal = |a: &Option<String>, b: &Option<String>| {
+        a.as_ref().zip(b.as_ref()).is_none_or(|(a, b)| a == b)
+    };
+    equal(&a.basename, &b.basename)
+        && equal(&a.adapter, &b.adapter)
+        && equal(&a.language, &b.language)
+        && a.path_prefix
+            .as_ref()
+            .zip(b.path_prefix.as_ref())
+            .is_none_or(|(a, b)| a.starts_with(b) || b.starts_with(a))
+        && a.suffix
+            .as_ref()
+            .zip(b.suffix.as_ref())
+            .is_none_or(|(a, b)| a.ends_with(b) || b.ends_with(a))
+        && a.basename
+            .as_ref()
+            .zip(b.suffix.as_ref())
+            .is_none_or(|(a, b)| a.ends_with(b))
+        && b.basename
+            .as_ref()
+            .zip(a.suffix.as_ref())
+            .is_none_or(|(a, b)| a.ends_with(b))
 }
 
 fn relative_path(value: &str) -> bool {
@@ -85,6 +128,13 @@ fn relative_path(value: &str) -> bool {
 }
 
 impl VectorSelectionPolicy {
+    pub fn agent_lean() -> Self {
+        Self {
+            version: 2,
+            agent_defaults: true,
+            ..Self::default()
+        }
+    }
     pub fn parse(bytes: &[u8]) -> Result<Self> {
         ensure!(
             bytes.len() <= MAX_POLICY_BYTES,
@@ -97,15 +147,18 @@ impl VectorSelectionPolicy {
 
     pub fn validate(&self) -> Result<()> {
         ensure!(
-            self.version == VECTOR_SELECTION_VERSION,
+            (self.version == VECTOR_SELECTION_VERSION
+                && self.inclusions.is_empty()
+                && !self.agent_defaults)
+                || self.version == 2,
             "unsupported vector selection policy version"
         );
         ensure!(
-            self.exclusions.len() <= MAX_EXCLUSIONS,
+            self.exclusions.len().saturating_add(self.inclusions.len()) <= MAX_EXCLUSIONS,
             "too many vector exclusion rules"
         );
         let mut ids = BTreeSet::new();
-        for rule in &self.exclusions {
+        for rule in self.exclusions.iter().chain(&self.inclusions) {
             ensure!(
                 !rule.id.is_empty()
                     && rule.id.len() <= 64
@@ -166,6 +219,16 @@ impl VectorSelectionPolicy {
             serde_json::to_vec(self)?.len() <= MAX_POLICY_BYTES,
             "vector selection policy exceeds byte bound"
         );
+        for include in &self.inclusions {
+            for exclude in &self.exclusions {
+                ensure!(
+                    !overlaps(include, exclude),
+                    "potentially conflicting vector inclusion {} and exclusion {}; use disjoint explicit rules",
+                    include.id,
+                    exclude.id
+                );
+            }
+        }
         Ok(())
     }
 
@@ -213,25 +276,53 @@ impl ValidatedVectorSelection<'_> {
             "invalid vector selection artifact path"
         );
         let basename = path.rsplit('/').next().unwrap_or(path);
+        let matches = |rule: &&VectorExclusionRule| {
+            rule.path_prefix
+                .as_ref()
+                .is_none_or(|v| path.starts_with(v))
+                && rule.basename.as_ref().is_none_or(|v| basename == v)
+                && rule.suffix.as_ref().is_none_or(|v| basename.ends_with(v))
+                && rule
+                    .adapter
+                    .as_ref()
+                    .is_none_or(|v| &profile.adapter_id == v)
+                && rule.language.as_ref().is_none_or(|v| language == v)
+        };
+        let included = self.0.inclusions.iter().any(|rule| matches(&rule));
         let excluded_by = self
             .0
             .exclusions
             .iter()
-            .filter(|rule| {
-                rule.path_prefix
-                    .as_ref()
-                    .is_none_or(|v| path.starts_with(v))
-                    && rule.basename.as_ref().is_none_or(|v| basename == v)
-                    && rule.suffix.as_ref().is_none_or(|v| basename.ends_with(v))
-                    && rule
-                        .adapter
-                        .as_ref()
-                        .is_none_or(|v| &profile.adapter_id == v)
-                    && rule.language.as_ref().is_none_or(|v| language == v)
-            })
+            .filter(matches)
             .map(|rule| &rule.id)
             .min()
             .cloned();
+        ensure!(
+            !included || excluded_by.is_none(),
+            "conflicting explicit vector selection rules for {path}"
+        );
+        let excluded_by = excluded_by.or_else(|| {
+            if !self.0.agent_defaults || included {
+                return None;
+            }
+            if matches!(
+                basename,
+                "Cargo.lock"
+                    | "package-lock.json"
+                    | "yarn.lock"
+                    | "pnpm-lock.yaml"
+                    | "poetry.lock"
+                    | "uv.lock"
+                    | "Gemfile.lock"
+                    | "composer.lock"
+            ) {
+                Some("agent.lockfile".into())
+            } else if basename.ends_with(".min.js") || basename.ends_with(".min.css") {
+                Some("agent.minified".into())
+            } else {
+                None
+            }
+        });
         Ok(VectorSelectionDecision {
             eligible: excluded_by.is_none(),
             excluded_by,
@@ -297,7 +388,7 @@ mod tests {
     #[test]
     fn invalid_configuration_is_rejected_before_use() {
         for json in [
-            r#"{"version":2,"exclusions":[]}"#,
+            r#"{"version":3,"exclusions":[]}"#,
             r#"{"version":1,"exclusions":[{"id":"a"}]}"#,
             r#"{"version":1,"exclusions":[{"id":"a","basename":"x"},{"id":"a","basename":"y"}]}"#,
             r#"{"version":1,"exclusions":[{"id":"a","path_prefix":"../"}]}"#,
@@ -309,5 +400,52 @@ mod tests {
             );
         }
         assert!(VectorSelectionPolicy::parse(&vec![b' '; MAX_POLICY_BYTES + 1]).is_err());
+    }
+
+    #[test]
+    fn agent_defaults_preserve_text_eligibility_and_explicit_inclusion() {
+        let mut policy = VectorSelectionPolicy::agent_lean();
+        assert_eq!(
+            policy
+                .decision("Cargo.lock", &profile(), "text")
+                .unwrap()
+                .excluded_by
+                .as_deref(),
+            Some("agent.lockfile")
+        );
+        assert!(
+            policy
+                .decision("tests/configuration.rs", &profile(), "rust")
+                .unwrap()
+                .eligible
+        );
+        assert!(
+            policy
+                .decision("vendor/generated.rs", &profile(), "rust")
+                .unwrap()
+                .eligible
+        );
+        policy.inclusions.push(VectorExclusionRule {
+            id: "needed".into(),
+            basename: Some("Cargo.lock".into()),
+            ..Default::default()
+        });
+        assert!(
+            policy
+                .decision("Cargo.lock", &profile(), "text")
+                .unwrap()
+                .eligible
+        );
+        policy.exclusions.push(VectorExclusionRule {
+            id: "excluded".into(),
+            basename: Some("Cargo.lock".into()),
+            ..Default::default()
+        });
+        assert!(policy.decision("Cargo.lock", &profile(), "text").is_err());
+        let old = VectorSelectionPolicy::default();
+        assert_eq!(
+            old.canonical_bytes().unwrap(),
+            br#"{"version":1,"exclusions":[]}"#
+        );
     }
 }

@@ -155,6 +155,11 @@ pub(crate) fn lifecycle_lease(root: &Path, exclusive: bool) -> Result<File> {
     acquire_lifecycle(root, exclusive, false)
 }
 
+/// Keep a storage root stable while execution slots are owned by a kernel.
+pub fn indexing_lifecycle_lease(root: &Path) -> Result<File> {
+    lifecycle_lease(root, false)
+}
+
 /// Only the initial relocation root lock may wait; callers hold no other locks.
 pub(crate) fn relocation_lifecycle_lease(root: &Path) -> Result<RelocationLease> {
     acquire_lifecycle(root, true, true).map(RelocationLease)

@@ -354,11 +354,7 @@ fn analyze_profile_with_detail(
                     let framework = (kind == "call")
                         .then(|| framework_call(profile.language, name.trim()))
                         .flatten();
-                    if detail != IndexDetail::Essential
-                        && (detail == IndexDetail::Detailed
-                            || kind != "call"
-                            || framework.is_some())
-                    {
+                    if detail.retains_fact(framework.unwrap_or(kind)) {
                         let start = node.start_position().row + 1;
                         let end =
                             node.end_position().row + usize::from(node.end_position().column > 0);
@@ -377,6 +373,7 @@ fn analyze_profile_with_detail(
                                     EvidenceBudget {
                                         fingerprint_bytes: &mut fingerprint_bytes,
                                         host: shared.then_some(&mut *budget),
+                                        fingerprints: detail.tracks_continuity(),
                                     },
                                 )?)
                             },
@@ -414,6 +411,9 @@ fn analyze_profile_with_detail(
                                     .as_ref()
                                     .map_or(&[], |c| c.modifiers.as_slice()),
                             ) {
+                                if !detail.retains_fact(rule) {
+                                    continue;
+                                }
                                 let mut cue = definition.clone();
                                 cue.kind = rule.into();
                                 let evidence = cue.code.as_mut().expect("definition evidence");
@@ -551,6 +551,7 @@ fn symbol_id(path: &str, node: Node<'_>) -> String {
 struct EvidenceBudget<'a> {
     fingerprint_bytes: &'a mut usize,
     host: Option<&'a mut HostBudget>,
+    fingerprints: bool,
 }
 
 fn code_evidence(
@@ -563,10 +564,11 @@ fn code_evidence(
     work: EvidenceBudget<'_>,
 ) -> anyhow::Result<CodeEvidence> {
     #[cfg(test)]
-    detail_tests::record_evidence(kind);
+    detail_tests::record_evidence(kind, work.fingerprints);
     let EvidenceBudget {
         fingerprint_bytes,
         host: mut budget,
+        fingerprints: retain_fingerprints,
     } = work;
     let mut omitted = name.len() > 1024;
     let mut scopes = Vec::new();
@@ -729,7 +731,7 @@ fn code_evidence(
     let qualified_name = bounded_name(&qualified_display);
     // Hash complete original bytes before any display truncation. Literal and
     // whitespace changes remain observable; no token-erasing normalization.
-    let fingerprints = (kind == "definition")
+    let fingerprints = (kind == "definition" && retain_fingerprints)
         .then(|| -> anyhow::Result<CodeFingerprints> {
             let signature_bytes = body.map(|body| &text[node.start_byte()..body.start_byte()]);
             let body_bytes = body.and_then(|body| body.utf8_text(text.as_bytes()).ok());

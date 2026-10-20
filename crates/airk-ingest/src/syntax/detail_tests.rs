@@ -11,12 +11,12 @@ thread_local! {
     static WORK: Cell<(usize, usize)> = const { Cell::new((0, 0)) };
 }
 
-pub(super) fn record_evidence(kind: &str) {
+pub(super) fn record_evidence(kind: &str, retain_fingerprints: bool) {
     WORK.with(|work| {
         let (evidence, fingerprints) = work.get();
         work.set((
             evidence + 1,
-            fingerprints + usize::from(kind == "definition"),
+            fingerprints + usize::from(kind == "definition" && retain_fingerprints),
         ));
     });
 }
@@ -62,6 +62,7 @@ fn payload(
 
 fn assert_selected_parity(path: &str, text: &str, adapter: &str) -> anyhow::Result<()> {
     for detail in [
+        IndexDetail::AgentLean,
         IndexDetail::Essential,
         IndexDetail::Balanced,
         IndexDetail::Detailed,
@@ -92,6 +93,34 @@ fn assert_selected_parity(path: &str, text: &str, adapter: &str) -> anyhow::Resu
             "{path}: {detail:?}"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn agent_lean_skips_fingerprint_work_but_keeps_private_signatures() -> anyhow::Result<()> {
+    let text =
+        "fn authenticate(secret: &str) -> bool { println!(\"login\"); !secret.is_empty() }\n";
+    let (selected, work) =
+        measured(|| analyze_selected_with_detail("auth.rs", text, "rust", IndexDetail::AgentLean))?;
+    assert_eq!(work.1, 0);
+    let definition = selected
+        .analysis
+        .facts
+        .iter()
+        .find(|f| f.name == "authenticate")
+        .unwrap();
+    assert!(
+        definition
+            .code
+            .as_ref()
+            .unwrap()
+            .signature
+            .as_ref()
+            .unwrap()
+            .contains("secret: &str")
+    );
+    assert!(definition.code.as_ref().unwrap().fingerprints.is_none());
+    assert!(!selected.analysis.facts.iter().any(|f| f.kind == "call"));
     Ok(())
 }
 

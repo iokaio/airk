@@ -1,0 +1,160 @@
+# Agent Lean: MCP usefulness and indexing efficiency
+
+**Status: the 1.2 core is implemented as an opt-in; default promotion and complete task qualification remain gated.** Preserve baseline and correctness/recovery first, implement Agent Lean's core evidence/MCP changes, then complete S12 admission, pipeline and storage work. Final testing, review and qualification follow the assembled implementation. The goal is to make AIRK the coding agent's shortest reliable route from a question to useful source evidence. Agent Lean should find concepts, locate declarations, explain local structure and retrieve document requirements while avoiding work that seldom helps those tasks. Optimize completed tasks and total resource use, not the number of exposed tools or the size of one reply.
+
+This is the final stage of [indexing enhancements](indexingenhancements.md). It builds on the current index, independent semantic units, incremental publication, S11 relevance evaluations and S12 storage/throughput measurements. Exact current citations, original locations, source hashes, collection isolation, bounded work and captured recovery remain required in every mode. No agent orchestration, cloud inference or automatic model download belongs in this stage.
+
+## Three understandable modes
+
+Present these three choices in the collection UI, CLI help and MCP capability summary. Display names have no more than two words. A mode chooses indexed evidence; vector enablement, model provisioning, search readiness policy and client tool permissions remain separately inspectable settings.
+
+| Mode | Meaning and intended use | Policy identity |
+|---|---|---|
+| **Agent Lean** | Recommended target for everyday coding: lexical and eligible semantic retrieval, compact declarations and signatures, useful imports/structure, selected document facts and exact reads. Omits broad occurrence graphs, continuity fingerprints and low-value document expansion. | `agent_lean` in version-3 extraction policy; opt-in until new-collection default qualification passes. |
+| **Rich Structure** | The current **Balanced** behavior: broader native code/document facts, supported structural relationships and declaration continuity. Useful for exploration and repeated structural analysis. Generic call occurrences and document-unit continuity remain excluded. | Preserve `balanced` as the stored/API value and accepted CLI spelling; change the display label. |
+| **Search Only** | The current **Essential** behavior: searchable source/extracted text and exact citations, without native structured facts or continuity. Useful when the agent needs retrieval with the least structural indexing. Semantic search remains available when vectors are enabled. | Preserve `essential` as the stored/API value and accepted CLI spelling; change the display label. |
+
+Keep the existing `detailed` setting as an advanced, explicit option for supported call occurrences and document continuity. Do not silently redefine Rich Structure to mean Detailed. Preserve existing saved policies and client configurations; renaming a label requires no rebuild. A change in actual indexed evidence requires an explicit policy application/rebuild through the existing publication path. Expose configured mode, applied mode and pending work separately.
+
+Start with these presets and the existing advanced controls. Avoid a new matrix of independently selectable fact families until measured user tasks justify it. Users can choose Rich Structure or advanced Detailed when Agent Lean omits useful evidence. A future path-scoped override must be justified by collection-level cost measurements before implementation.
+
+## What the evidence establishes
+
+The earlier [three-detail-level experiment](indexingenhancements.md#a-this-repository-three-detail-levels-vectors-deliberately-off) measured 642 files with vectors off on the pre-1.2 runtime: Detailed used 252 MB with 101,867 relationships, Balanced used 103 MB with 5,443 relationships, and Essential used 20 MB with no native facts. The roughly 150 MB difference identifies broad enrichment as a candidate cost; it does not isolate call-edge cost. The earlier estimate of roughly 20 MB for vectors was a record-format calculation, not a current physical-storage measurement. Neither figure establishes Agent Lean's savings.
+
+Observed use during this optimization work provides narrower evidence:
+
+| Observation | Implication for the plan |
+|---|---|
+| During S12 edits, the agent checked AIRK and then used live search/reads for changed implementation files. | Avoid repeatedly retrieving stale indexed code. A known editable path often needs only a bounded live read. |
+| A conceptual hybrid query found the progressive batch method first; exact code facts located `ProgressiveBase`. | Keep conceptual discovery and direct declaration lookup. Both can shorten navigation. |
+| The declaration reply included fingerprints and metadata beyond the immediate question. | Separate the concise declaration view from optional rich evidence without discarding signatures or provenance. |
+| An indexed draft hash matched a live SHA-256 check. | Preserve source hashes and validators; the comparison, not the indexed hash alone, established equality. |
+| Capabilities enumerates the complete adapter catalog; the current status response reports publication information rather than live-source verification. | Make capability discovery compact and scoped, and distinguish index readiness from freshness. |
+
+This is not a tool-frequency study or a measured token-saving claim. In particular, `airk_status` alone does **not** establish freshness. Scheduler observations currently come from `airk_changes`; an idle scheduler still does not prove that live bytes match indexed bytes. The [current runtime](current-index-runtime.md) retains one publication and rejects expired exact tokens rather than supplying historical evidence.
+
+## Spend indexing work on useful evidence
+
+Agent Lean is a positive evidence allowlist. Apply it in each owning adapter before optional hashing, fact construction, edge expansion, posting generation and serialization. Dropping fields at response time saves context bytes but not ingestion cost. Dropping completed descriptors late may save disk while leaving expensive fingerprint work intact.
+
+| Evidence family | Agent Lean policy | Why / richer alternative |
+|---|---|---|
+| File inventory and exact evidence | Keep admitted paths, language/profile, source and extraction identities, original locations, current revision, retained bytes and explicit extraction diagnostics. | These support navigation, citations, validation and recovery in every mode. |
+| Lexical retrieval | Keep admitted source and extracted text, including comments, literals, configuration and lockfiles. Normal ignore/security/admission rules still apply. | Exact identifiers, errors, versions and requirement IDs remain findable even when vectors are excluded. |
+| Code declarations | Keep names, qualified names, written signatures/types, owner scopes and source spans. Include private declarations as well as public APIs. | The agent must navigate implementations and tests, not only exported interfaces. |
+| Local structure | Keep imports and compact containment/inheritance information that is already available from selected syntax; share declaration records instead of duplicating them in every view. | Imports and local structure help explain code even when their dedicated tool is seldom called. No recursive dependency closure or resolved target claim. |
+| Entry-point cues | Keep bounded, adapter-qualified route and test declarations where they identify useful entry points. | Broad call/framework occurrence harvesting is off. Additional framework, database and injection cues remain in Rich Structure where supported. |
+| Documentation and configuration | Keep headings, explicit requirement/decision/acceptance/design candidates, relevant configuration keys, and enough heading/context text to understand each fact. | Treat prose labels as syntax/text candidates, not inferred obligations. Standalone date/quantity enumeration, generic element inventories and repeated prose classifications are omitted; retain dates or bounds when part of selected evidence. |
+| Office/PDF/table evidence | Keep extracted text, row/column labels needed for meaning, and original page/slide/block/row/cell mappings. Use bounded row/section facts for discovery. | Avoid a separate searchable fact for every cell/element by default. Rich Structure keeps its existing broader facts; omission of a fact must not remove exact cell text or its location from reads. |
+| Occurrences and continuity | Omit generic call occurrences, broad native reference/caller graphs, declaration fingerprints and document-unit move descriptors. | Rich Structure retains existing declaration continuity; advanced Detailed adds its supported call/document detail. No loss of current path/hash validation. |
+| Semantic units and graph | Keep useful code, tests, configuration, prose and documents under the independent semantic projection and saved eligibility policy. Retain exact-input reuse and occurrence-to-source mapping. | A smaller fact allowlist must not silently shrink semantic coverage, merge incompatible locations or remove duplicate aliases from results. |
+
+The important implementation constraint is early omission: [syntax extraction](../crates/airk-ingest/src/syntax.rs) currently constructs declaration fingerprints, while [detail selection](../crates/airk-ingest/src/detail.rs) also filters already-created evidence. Agent Lean must avoid optional construction in qualified adapters while preserving semantic seeds, owner identity and source mapping. Measure parser cost separately; some parsing remains necessary for declarations and semantic boundaries even when optional facts disappear.
+
+Explicitly imported SCIP/LSP/Ctags evidence and OCR stay opt-in with their existing source/build/model bindings. Changing the mode must never make a query launch a provider, OCR, indexing or embedding job.
+
+## Make semantic indexing selective and predictable
+
+Keep vectors as a central Agent Lean capability, with explicit local-model readiness and the existing saved partial-search policy. Do not silently downgrade an enabled collection with an unavailable model. Users may disable vectors in any mode, including Search Only; the mode name must not imply that Essential currently disables them.
+
+Start with reviewed exact lockfile basenames and unambiguous minified suffixes as candidates for default vector exclusion. Keep their lexical evidence. Use explicitly configured prefixes for generated/bulk data; avoid guessing from file size or a directory named `generated`, `vendor` or `tests`. Generated API declarations, schemas, fixtures and vendored implementations can be valuable coding context. Large files should first receive bounded semantic splitting, not automatic wholesale exclusion. Do not introduce per-unit relevance scoring or a learned classifier in this stage.
+
+The [version-1 vector policy](../crates/airk-core/src/vector_selection.rs) retains its exclusion-only semantics and no-exclusion default. Version 2 implements the effective-policy contract: explicit user inclusion overrides built-in exclusions, explicit user exclusion overrides built-in inclusion, and a path matching conflicting explicit user rules reports a policy error instead of depending on rule order. Vector inclusion never overrides source ignore/security rules or admission limits. Preview affected paths, available input/token counts, matched rule and estimated work before applying; report the committed rule and policy digest afterward. Reuse bounded existing inventory for preview, label estimates and unknown counts, and do not run a full extraction/inference pass merely to estimate cost. Preserve existing exclusion-only policies unchanged.
+
+Invalidate only affected derived state when effective evidence or semantic inputs change. UI labels, MCP tool visibility and reply verbosity must not change extraction or embedding-cache identity. Reuse validated unchanged source/extraction/vector objects; reclaim excluded postings/vectors only after their replacement publication commits. Preserve S12's bounded queues, recovery and source-edit supersession rules.
+
+## A useful MCP interface with less overhead
+
+Optimize four costs independently: ingestion/storage, server request work, tool-discovery context and returned evidence bytes. Hiding an endpoint does not save index storage. A tool that needs no extra stored evidence may still be worth exposing, and a rarely called tool can prevent an expensive wrong edit. Support both agents with live filesystem tools and agents whose only repository access is MCP.
+
+| Tools | Proposed treatment | Required behavior |
+|---|---|---|
+| `airk_search`, `airk_code_facts`, `airk_outline`, `airk_document_facts` | Primary discovery tools | Concept retrieval, exact declaration lookup/listing, compact structure and selected document facts. Scope by path/name/kind before expanding. |
+| `airk_read_file`, `airk_context` | Keep | Bounded exact expansion, especially for binary documents and MCP-only clients. Live source verification is still required before edits when the agent can access it. |
+| `airk_list_files`, `airk_file_info` | Keep | Cheap bounded indexed-path navigation and extraction diagnostics. File info cannot replace prefix discovery when the path is unknown. |
+| `airk_status`, `airk_changes` | Keep compact diagnostics/validation | Readiness and independent scheduler observation; current path/hash validation does not require fine-grained continuity. Expired baselines remain `baseline_unavailable`, and a missing record never proves historical deletion. |
+| `airk_references` | Keep task-specific access without extra occurrence indexing | Exact identifier matches help MCP-only agents. Current retained-text scans cost request work; evaluate a lexical candidate filter followed by exact verification, preserving bounds and honest incomplete coverage. |
+| `airk_capabilities` | Keep a compact summary with scoped expansion | Show applied/configured mode, supported query families and model/provider availability. Static capabilities must work before indexing; applied/readiness fields may report not indexed or unavailable. Request one adapter or the full registry explicitly. Avoid repeating every adapter description during ordinary orientation. |
+| `airk_symbols`, `airk_imports` | Compatibility/convenience tools; candidates to omit from a lean client catalog | First prove that code-fact lookup/listing and import filtering provide equivalent navigation without more calls or bytes. Retain underlying useful import evidence. |
+| `airk_relationships` | Available when the selected evidence supports the task | Agent Lean may expose compact local structural links; call impact requires richer indexed evidence. Return deliberate-omission/partial coverage rather than a misleading empty caller set. |
+| `airk_history` | Retire through MCP contract review | The current index does not support history. Remove advertising of a useful history operation; preserve an explicit compatibility error until endpoint retirement is agreed. |
+
+There is no arbitrary eight-tool gate. Measure a lean catalog against the standard catalog in actual clients, including deferred discovery. Preserve existing allowlists, tool names and endpoint behavior during compatibility rollout. Tool exposure and evidence mode must be independent: changing a client filter cannot silently enable indexing, and selecting Search Only cannot advertise absent structured evidence as available. Update initialization guidance together with tool descriptions; put common invariants once in server instructions where clients preserve them, with only the essential selection/limit rules in each tool description.
+
+### Make the first response sufficient to choose the next action
+
+Add an explicit compact representation rather than reusing today's compact outline shape unchanged. A compact code fact needs name, qualified name, concise written signature, owner context, source path/hash and original span, plus syntax/producer basis and partial coverage. The earlier compact record omitted signatures and qualified names. The implemented [compact record](../crates/airk-core/src/discovery.rs) now retains these, producer/coverage basis, document parser/basis, truncation flags and table cell/formula/cache qualifiers. Document facts need statement, heading context and original coordinates. Search hits need a useful excerpt and enough surrounding heading/declaration context to identify the result.
+
+Carry publication and shared coverage once per response, retain per-hit source identity and original locations, and leave fingerprints or full producer metadata behind explicit rich expansion when that evidence was indexed. Rich output cannot create facts omitted by Agent Lean. Provide a deterministic locator for expansion that works without continuity descriptors: exact current revision, path, hash, span and fact selector. Do not create a durable cross-revision handle or another state store to support this. Reject expired or ambiguous expansion explicitly.
+
+Budget the complete serialized MCP response, including envelopes, nested text/JSON framing and continuation metadata. Preserve existing `max_bytes` meanings until a versioned response-budget contract is introduced. Return complete records and a precise truncation/continuation reason. If one record cannot fit, preserve the existing `required_record_bytes` behavior and define the additional envelope allowance explicitly; never skip the record or return a nonprogressing continuation. Account for response bytes across the **whole task**, including follow-up reads and repeated metadata; omitting useful context can increase total cost.
+
+Attach concise available evidence, discovery/semantic readiness and independent freshness observations to ordinary evidence responses so an agent need not call status, changes and file info before every search. Read bounded existing status metadata; do not scan source files or the full inventory for each query. Any reused scheduler observation needs a bounded lifetime and an explicit observation time, and must not substitute for exact evidence validation. Report `unknown` when freshness has not been observed. Distinguish omitted by policy, unsupported extraction, failed extraction, pending indexing, missing model, query truncation and a genuine zero-match result. Idle scheduling is not live verification. No implicit reindex, hidden lexical fallback or automatic repeated polling is allowed.
+
+### Prefer focused navigation over repeated broad reads
+
+Use conceptual search when the identifier is unknown, exact code facts for a known declaration, and outline for unfamiliar large files. Follow with one bounded expansion. Use literal/path filters for exact errors, configuration keys and requirement IDs. Preserve tested lexical/vector/hybrid selection; do not silently reinterpret AND terms or claim semantic resolution.
+
+Avoid flooding top results with overlapping chunks from one file or identical aliases when another relevant source would help. Qualify bounded result grouping/diversity and optional short snippets against the judged retrieval suite; preserve original occurrences and explicit path-scoped results. Keep complete exact lookup behavior. These are retrieval improvements to test, not a reason to replace DiskANN or add an inference reranker.
+
+## Storage and request work to remove
+
+Measure retained sources, extraction payloads, catalog facts/postings, continuity, Tantivy terms/stored text, DiskANN records, embedding-cache packs, shared model assets, journals and replacements separately. Record decoded logical bytes, encoded bytes, physical allocation and peak staging space; deduplication, compression and removal of obsolete objects are different savings. Include parse/fingerprint time, selected/embedded inputs, cached reuse, queue wait and verification/maintenance work.
+
+Prioritize early optional-work removal, reuse and compact replies before introducing more formats. Evaluate source-span references for byte-identical plain-text extraction and retained-span snippets instead of duplicate Tantivy text only where the inventory shows a worthwhile cost. Test original coordinates, small-read latency, decode budgets and replay parity. Keep retained current evidence after live edits; no live-backed read contract is introduced. Reuse S12's qualified lossless frames instead of adding a second compression system, and keep active SQLite/Tantivy/DiskANN storage under its owning adapter.
+
+The cache is a speed optimization with bounded admission and reclamation, not required evidence. Measure branch-switch/edit reuse before changing its retention policy. Keep content-free counters inexpensive and optional detail sampling bounded; do not spend more on savings accounting than the work it describes. Cache authenticated proofs or decoded blocks only under the existing exact identity and memory bounds; never skip ownership/integrity checks to improve timings.
+
+## 1.2 delivery and measured decisions
+
+The core contracts, common-adapter early filtering, vector-policy version 2, bounded previews, compact facts, scoped capabilities and named user controls are implemented. Legacy wire values and tool names remain available. Recovery, scope/budget checks and mode-specific retrieval qualification remain mandatory. Secondary adapters can still build evidence before selection; the mode does not imply universal early filtering.
+
+A frozen copy of 759 tracked public AIRK files produced 735 indexed text files (24 images were unsupported), with vectors off. These are single Windows observations on a 64-logical-CPU host with about 128 GiB RAM; logical storage is the sum of file lengths, not allocated filesystem blocks.
+
+| Mode | Cold index | Unchanged scan | Logical state | Peak working set |
+|---|---:|---:|---:|---:|
+| Rich Structure | 47.44 s | 1.26 s | 87.43 MB | 127.3 MB |
+| Agent Lean | 39.00 s | 1.11 s | 58.10 MB | 113.6 MB |
+| Search Only | 17.81 s | 0.95 s | 27.41 MB | 61.9 MB |
+
+Agent Lean reduced total logical state by 33.5% and cold time by 17.8% in that observation. Source copies were identical across modes. Payload, continuity metadata, catalog and lexical partitioning all contributed; this is not an isolated fingerprint or call-edge measurement. Citation chunks were 10,631 in Rich Structure and 1,640 in the other modes; exact text/locations and independent semantic projections remain required, and each mode must pass the judged retrieval set.
+
+For one `Kernel` declaration, complete MCP tool-result envelopes were 2,632/1,857 bytes for Rich Structure rich/compact, and 2,573/2,272 bytes for Agent Lean rich/compact. Agent Lean includes independent freshness/discovery observations in these replies. This four-way comparison separates stored evidence from response representation and shows that a smaller index does not guarantee a smaller compact reply. It does not measure completed agent tasks or establish the proposed 20% task-byte target.
+
+Five clean alternating runs on 54 original code/prose files with an explicitly provisioned MiniLM model produced median cold/no-op/edit times of 4.57/0.82/1.48 s for the pre-S12 baseline, 4.58/0.82/1.50 s for final Rich Structure, and 4.49/0.83/1.48 s for Agent Lean at one inference worker. Agent Lean at four workers took 3.93 s cold. Peak working sets stayed near 341 MB. Neural forwards were 53 in the baseline and 50 after cross-file batching. The shared model assets dominate this fixture's roughly 183 MB logical state; no general throughput claim follows from it.
+
+Automatic compression reduced the fixture's unique retained source/payload bytes from 388,283 to 107,744 across two compressed objects. Total logical state changed from about 183.07 to 182.79 MB, with median cold time 4.52 s. Compression remains off by default; this repetitive fixture does not qualify a uniform storage ratio, CPU tradeoff or foreground p95 latency.
+
+All four modes passed the same nine fixed stdio MCP judgments at 32 and 256 distractors over five trials. Warm usage-disabled p95 for final Rich Structure/Agent Lean was 64.93/51.39 ms at 32 distractors and 235.29/222.61 ms at 256; these synthetic cases do not qualify production neural relevance. Default capability envelopes were 7,783 bytes versus 81,355 in the baseline; explicit rich expansion was 81,501 bytes. The 100k lexical lifecycle completed, while its 56-minute cold build exposed remaining small-file persistence cost.
+
+**Decision:** keep Agent Lean selectable, keep Rich Structure as the new-collection default, and keep compression off. Paired real-agent tasks, representative neural relevance, representative query-latency comparisons, larger-than-memory behavior, physical I/O/allocation, broad adapter early filtering and unsupported-history catalog retirement remain explicit follow-up gates. The [optimization ledger](indexingenhancements.md#final-12-qualification) records binary/corpus identities, full checks, capacity results and remaining bottlenecks.
+
+## Implementation sequence
+
+| Step | Deliverable and owner | Exit check |
+|---|---|---|
+| **S13.1 Baseline** | Extend S11/S12 measurements with per-family extraction CPU, physical component bytes, catalog/discovery bytes, complete MCP reply bytes and whole-task calls/timing. Owners: existing measurement scripts, kernel/retrieval/store counters. | Reproducible current-runtime baselines for Balanced, Essential and Detailed, plus direct-tool and MCP-only navigation where available. No savings inferred from pre-1.2 sizes. |
+| **S13.2 Contracts** | Specify the three names, positive Agent Lean allowlist, configured/applied coverage, vector-policy precedence, compact response/locator and compatibility rules. Owners: core contracts, ingest policy, kernel, MCP. | Profile/identity table reviewed; wire values preserved; contract changes discussed per [CONTRIBUTING](../CONTRIBUTING.md) before changing public schemas. |
+| **S13.3 Lean extraction** | Skip optional fingerprints, occurrence facts, edge expansion and postings before construction in supported adapters. Preserve imports, declarations, exact text and semantic projections. Owners: ingest adapters, kernel metadata, store postings. | Required facts/citations match the richer reference on fixtures; excluded work counters fall; semantic unit and vector/citation parity hold where eligibility is unchanged. Partial adapter coverage is explicit. |
+| **S13.4 Vector selection** | Implement versioned default rules, preview and explicit overrides; retain current policies. Owners: core selection, kernel publication, CLI/extension controls. | Lockfile/minified savings measured; generated declarations/tests/configuration remain discoverable; no-op/edit/delete/alias/cache and policy-change tests pass. |
+| **S13.5 MCP responses** | Compact useful facts, scoped capabilities, whole-response accounting, coherent coverage/freshness, precise unavailable/truncation reasons and bounded expansion. Qualify optional alias hiding and reference prefiltering. Owners: core response contracts, kernel retrieval, MCP and client adapters. | MCP-only tasks remain possible; fewer total bytes/calls on the target tasks; budgets, exact-token expiry, cursor continuation and provider provenance pass. |
+| **S13.6 User controls** | Three named choices, cost/coverage preview and explicit application; advanced Detailed remains available. Owners: CLI, extension, capabilities and docs. | Changing a label causes no rebuild; changed policy takes effect atomically; existing collections, vector opt-outs and client permissions remain intact. |
+| **S13.7 Qualification** | Paired task and workload results, default decision and final documentation. Owners: existing benchmark/evaluation harnesses outside the runtime. | All gates below pass; then recommend Agent Lean for new collections. Existing collections switch only by user selection. |
+
+Keep the owning crate boundaries in [architecture](architecture.md). Reuse S12 resource admission and publication machinery; do not add another scheduler, database, workflow engine or family of new crates. Under the authorized delivery order, assemble the implementation before final testing, then review and improve it before committing and opening the PR. The implemented controls, frame format and current limits are described in the [1.2.0 notes](release-1.2.0.md); final qualification and the new-collection default decision remain separate gates.
+
+## Qualification and rollout gates
+
+Separate the benefit of a smaller index from a smaller response: compare current Balanced/current replies, Agent Lean/current replies, Balanced/compact replies, and Agent Lean/compact replies. Include Search Only as the low-cost reference. Hold corpus, model, binary, query set and agent configuration constant; use at least five alternating-order runs for timed workloads and paired tasks. Treat agent variability separately from deterministic retrieval parity.
+
+| Gate | Required evidence |
+|---|---|
+| **Correctness** | Zero source-location/hash mismatches, cross-collection leaks, stale-vector/current-citation pairings, false completeness claims or recovery failures. Validate omitted/unsupported/pending/failed states and missing models. Required exact declarations and citation-bearing document passages remain retrievable. |
+| **Useful tasks** | Concept discovery, exact symbol lookup, bug fix, signature impact, tests/configuration lookup, code review, requirement lookup in Office/PDF, branch switch, edited files and interrupted indexing. Include an MCP-only client; unavailable client qualification is reported rather than assumed. Judge completion and relevant evidence, not call frequency. |
+| **Retrieval** | Preserve S11's judged set including rare literals, tail evidence, tests, scoped aliases and tables. No lost mandatory golden cases; investigate every material recall/ranking regression. Optional enrichment may improve a task without making Agent Lean claim that missing evidence is absent. |
+| **Cost** | Measure cold/no-op/edit/branch-switch indexing, memory, source/derived storage, inference, first useful evidence, MCP schema/context bytes and total task response bytes. Include 10k/100k S12 fixtures when qualified, representative real workloads and mixed documents. Report bottlenecks and skipped runs. |
+| **Proposed performance targets** | Before rollout, freeze numeric targets from S13.1. Starting targets: at least 20% fewer total MCP evidence bytes on discovery-heavy tasks and a meaningful measured indexing or derived-storage reduction; no greater than 10% p95 query-latency regression, no higher peak admitted memory and no task-correctness regression. These are targets to test, not achieved results or uniform corpus promises. |
+| **Lifecycle and compatibility** | Policy changes in both directions, interrupted rebuild/publication, full replay, cleanup after exclusions, corruption and quota pressure; unchanged `balanced`/`essential` behavior; compact/rich validators and cursor expiry; existing tool allowlists and optional providers. No index work triggered by reads. |
+
+Reject a proposed cut if common tasks require more total work, a compact reply forces repeated expansion, vector exclusions lose valuable matches, or correctness/availability guarantees weaken. Keep Agent Lean selectable while fixing failed gates. Retain Rich Structure and Search Only regardless of which new-collection default qualifies. Update [MCP contracts](mcp.md), [tool guidance](agent-tool-alignment.md), [extraction policy](extraction-policy.md), setup help and extension explanations together; retire unsupported history advertising through the explicit contract process.

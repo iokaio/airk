@@ -325,7 +325,10 @@ impl Queue {
             existing == root,
             "scheduled collection belongs to another root"
         );
-        tx.execute("UPDATE jobs SET paused=?2, blocked=CASE WHEN ?2 THEN blocked ELSE 0 END, error=CASE WHEN ?2 THEN error ELSE NULL END WHERE collection=?1 AND root=?3", params![collection, paused, root])?;
+        // A new Pause action revokes pending manual admission too. A later
+        // explicit manual request can override the persisted automatic pause.
+        // Keep its revision queued so Resume rediscovers unfinished source work.
+        tx.execute("UPDATE jobs SET paused=?2, manual_revision=CASE WHEN ?2 THEN completed ELSE manual_revision END, blocked=CASE WHEN ?2 THEN blocked ELSE 0 END, error=CASE WHEN ?2 THEN error ELSE NULL END WHERE collection=?1 AND root=?3", params![collection, paused, root])?;
         tx.commit()?;
         self.status(collection, root)
     }

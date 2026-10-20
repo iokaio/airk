@@ -201,6 +201,7 @@ fn maximum_valid_selection_policy_survives_its_saved_configuration_wrapper() -> 
                 ..Default::default()
             })
             .collect(),
+        ..Default::default()
     };
     let remaining = MAX_POLICY_BYTES - serde_json::to_vec(&policy)?.len();
     assert!(remaining < 4096);

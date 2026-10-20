@@ -293,31 +293,81 @@ fn superseding_base_discards_old_pending_vector_binding() -> Result<()> {
 
 #[test]
 fn semantic_batches_disclose_partial_coverage() -> Result<()> {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
     let root = tempfile::tempdir()?;
     let data = tempfile::tempdir()?;
     model(&data.path().join("models/local"), 2)?;
-    for file in 0..33 {
+    for file in 0..65 {
         std::fs::write(
             root.path().join(format!("file_{file:02}.txt")),
             "authenticate\n",
         )?;
     }
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
-    kernel.scheduled_index(false, false)?;
-    assert_eq!(
-        kernel.status()?.semantic_readiness.state,
-        SemanticState::Pending
+    let exact_early = Arc::new(AtomicBool::new(false));
+    let semantic_early = Arc::new(AtomicBool::new(false));
+    let exact_signal = exact_early.clone();
+    let semantic_signal = semantic_early.clone();
+    let reader = kernel.clone();
+    let observed = kernel.clone().with_index_progress(move |event| {
+        if !matches!(event.phase, "base_committed" | "enrichment_committed") {
+            return;
+        }
+        let query = SearchQuery {
+            text: if event.phase == "base_committed" {
+                "authenticate"
+            } else {
+                "login"
+            }
+            .into(),
+            path_prefix: None,
+            limit: 1,
+            max_bytes: 4096,
+        };
+        let incomplete = reader
+            .status()
+            .is_ok_and(|status| status.discovery_readiness.total_artifacts.is_none());
+        if event.phase == "base_committed" {
+            if incomplete
+                && reader
+                    .search(&query)
+                    .is_ok_and(|result| !result.hits.is_empty())
+            {
+                exact_signal.store(true, Ordering::Release);
+            }
+        } else if incomplete
+            && reader
+                .semantic_search(&query)
+                .is_ok_and(|result| !result.hits.is_empty())
+        {
+            semantic_signal.store(true, Ordering::Release);
+        }
+    });
+    observed.scheduled_index(false, false)?;
+    assert!(
+        exact_early.load(Ordering::Acquire),
+        "exact evidence must answer before discovery completes"
     );
+    assert!(
+        semantic_early.load(Ordering::Acquire),
+        "committed vectors must answer before discovery completes"
+    );
+    let base = kernel.status()?.semantic_readiness;
+    assert_eq!(base.state, SemanticState::Partial);
+    assert!(base.completed_artifacts > 0 && base.completed_artifacts < 33);
     assert_eq!(kernel.run_scheduled_once()?.state, "enriched");
     let partial = kernel.status()?.semantic_readiness;
     assert_eq!(partial.state, SemanticState::Partial);
     assert_eq!(
         (partial.selected_artifacts, partial.completed_artifacts),
-        (33, 32)
+        (65, base.completed_artifacts + 32)
     );
     let pending_path = SearchQuery {
         text: "login".into(),
-        path_prefix: Some("file_32.txt".into()),
+        path_prefix: Some("file_64.txt".into()),
         limit: 10,
         max_bytes: 4096,
     };
@@ -332,10 +382,10 @@ fn semantic_batches_disclose_partial_coverage() -> Result<()> {
     assert_eq!(ready.state, SemanticState::Ready);
     assert_eq!(
         (ready.selected_artifacts, ready.completed_artifacts),
-        (33, 33)
+        (65, 65)
     );
     let full = kernel.reindex()?;
-    assert_eq!(full.vector_eligible_artifacts, 33);
+    assert_eq!(full.vector_eligible_artifacts, 65);
     assert_eq!(
         kernel.status()?.semantic_readiness.state,
         SemanticState::Ready

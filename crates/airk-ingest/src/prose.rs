@@ -139,7 +139,9 @@ impl<'a> Analyzer<'a> {
         kind: &str,
         mut details: DocumentEvidence,
     ) -> Result<()> {
-        if !self.mode.facts() {
+        if !self.mode.facts()
+            || matches!(self.mode, AnalysisMode::Selected(detail) if !detail.retains_fact(kind))
+        {
             return Ok(());
         }
         ensure!(self.facts.len() < MAX_FACTS, "document exceeds 10000 facts");

@@ -401,7 +401,7 @@ fn materialize(
                 "current lexical document identity mismatch"
             );
             let full = store.load_retrieval_artifact(&compact)?.artifact;
-            store.read_retained_source(&compact)?;
+            store.verify_retained_source(&compact)?;
             let chunk = full
                 .chunks
                 .get(usize::try_from(candidate.local)?)
