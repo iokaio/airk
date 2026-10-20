@@ -115,12 +115,18 @@ impl Kernel {
             applied_selection_digest,
             selection_pending_reindex,
             pending_reindex: enabled != published || selection_pending_reindex,
-            default_search_mode: if !enabled
+            default_search_mode: if enabled
+                && status.as_ref().is_some_and(|s| {
+                    s.semantic_readiness.state == airk_core::readiness::SemanticState::Disabled
+                }) {
+                "unavailable"
+            } else if !enabled
                 || status.as_ref().is_some_and(|s| {
                     s.semantic_readiness.state != airk_core::readiness::SemanticState::Ready
                         && s.semantic_readiness.default_search_policy
                             == airk_core::readiness::DefaultSearchPolicy::LexicalWhilePending
-                }) {
+                })
+            {
                 "lexical"
             } else if status.as_ref().is_some_and(|s| {
                 s.semantic_readiness.state != airk_core::readiness::SemanticState::Ready
