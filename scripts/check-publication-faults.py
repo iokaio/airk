@@ -64,23 +64,7 @@ def run_campaign(binary, base, attempts, full_disk):
             if killed:
                 child.kill()
             child.wait(timeout=30)
-        recovery_required = False
-        try:
-            status = call("status")
-        except RuntimeError as error:
-            # Applying is intentionally unavailable until a writer replays the
-            # captured journal. Read-only commands must not launch recovery.
-            recovery_error = "current index requires writer recovery before reads"
-            if recovery_error not in str(error):
-                raise
-            recovery_required = True
-            for request in (("info", "requirement.md"),
-                            ("read", "requirement.md", "--start-line", "1", "--end-line", "1"),
-                            ("search", "--mode", "lexical", marker)):
-                assert recovery_error in call(*request, success=False)
-            # Maintenance replays retained inputs without scanning live source.
-            call("collections", "maintain")
-            status = call("status")
+        status = call("status")
         info = call("info", "requirement.md")
         assert (status["generation"], info["content_hash"]) in (
             (old_generation, old_hash), (old_generation + 1, expected_hash)), (status, info)
@@ -99,7 +83,6 @@ def run_campaign(binary, base, attempts, full_disk):
         cases.append({"kind": "process_kill", "delay_ms": delay * 1000,
                       "killed_before_exit": killed, "elapsed_ms": round((time.monotonic()-started)*1000),
                       "new_managed_files_observed": len(seen-before),
-                      "writer_recovery_required": recovery_required,
                       "retained_old_generation": status["generation"] == old_generation,
                       "atomic_revision_and_recovery": True})
         current = call("status")["publication"]["token"]

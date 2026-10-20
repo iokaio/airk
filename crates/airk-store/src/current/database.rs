@@ -260,6 +260,20 @@ fn open_writer_mode(
         u64::try_from(actual)? == pages,
         "current SQLite database exceeds admitted page capacity"
     );
+    let journal = path.with_file_name("current.sqlite3-journal");
+    if !create && journal.try_exists()? {
+        // SQLite leaves cold (including zero-header) journals untouched when
+        // opening a writer. Readers deliberately reject every journal. Write
+        // the unchanged format version through SQLite's normal commit path to
+        // retire it under the caller's exclusive gate and recovery allowance.
+        // Bootstrap's zero version stays zero; no head or generation advances.
+        let version: u32 = connection.pragma_query_value(None, "user_version", |r| r.get(0))?;
+        connection.pragma_update(None, "user_version", version)?;
+        ensure!(
+            !journal.try_exists()?,
+            "SQLite did not retire the cold current rollback journal"
+        );
+    }
     Ok(connection)
 }
 

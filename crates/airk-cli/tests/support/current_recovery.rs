@@ -17,7 +17,7 @@ fn crash_child() -> Result<()> {
     let Ok(encoded) = std::env::var("AIRK_RUNTIME_CRASH_CASE") else {
         return Ok(());
     };
-    let (data, applying): (std::path::PathBuf, bool) = serde_json::from_str(&encoded)?;
+    let (data, boundary): (std::path::PathBuf, String) = serde_json::from_str(&encoded)?;
     let store = FileStore::new(data.join("collections-1.2/project-a"));
     let owner: Value =
         serde_json::from_slice(&fs::read(store.directory().join("current-owner.json"))?)?;
@@ -29,6 +29,22 @@ fn crash_child() -> Result<()> {
     let quota = Quota::open(data)?;
     let reservation = quota.reserve("project-a", 512 << 20)?;
     let writer = store.lock()?;
+    if boundary.starts_with("cold-") {
+        let _grant = quota.reserve_current(
+            &writer,
+            airk_store::quota::CurrentGrantScope {
+                collection: scope.collection.clone(),
+                incarnation: scope.incarnation,
+                transaction: airk_core::identity::Sha256Digest::from_bytes([117; 32]),
+            },
+            1 << 20,
+        )?;
+        fs::write(
+            store.directory().join("current.sqlite3-journal"),
+            vec![0u8; if boundary == "cold-empty" { 0 } else { 512 }],
+        )?;
+        std::process::exit(73);
+    }
     CurrentUpdater {
         store: &store,
         quota: &quota,
@@ -42,7 +58,7 @@ fn crash_child() -> Result<()> {
         None,
         &mut |stage| {
             if stage
-                == if applying {
+                == if boundary == "applying" {
                     CurrentUpdateStage::Applying
                 } else {
                     CurrentUpdateStage::Prepared
@@ -57,7 +73,7 @@ fn crash_child() -> Result<()> {
 
 #[test]
 fn cli_and_mcp_recover_captured_updates_after_process_exit_and_expire_old_tokens() -> Result<()> {
-    for applying in [false, true] {
+    for boundary in ["prepared", "applying", "cold-empty", "cold-zero"] {
         for mcp in [false, true] {
             let root = tempfile::tempdir()?;
             let data = tempfile::tempdir()?;
@@ -74,7 +90,7 @@ fn cli_and_mcp_recover_captured_updates_after_process_exit_and_expire_old_tokens
                 .args(["--exact", "current_recovery::crash_child", "--nocapture"])
                 .env(
                     "AIRK_RUNTIME_CRASH_CASE",
-                    serde_json::to_string(&(data.path(), applying))?,
+                    serde_json::to_string(&(data.path(), boundary))?,
                 )
                 .output()?;
             ensure!(
@@ -127,18 +143,16 @@ fn cli_and_mcp_recover_captured_updates_after_process_exit_and_expire_old_tokens
             let reopened =
                 Kernel::open_collection(root.path(), Some(data.path().into()), "project-a")?;
             let current = reopened.status()?.publication.unwrap().token;
-            assert_eq!(current.generation, old.generation + 1);
-            assert!(
-                reopened
-                    .file_info_conditional(
-                        "captured.txt",
-                        &airk_core::evidence::EvidenceReadOptions {
-                            revision: Some(old),
-                            ..Default::default()
-                        }
-                    )
-                    .is_err()
+            let published = !boundary.starts_with("cold-");
+            assert_eq!(current.generation, old.generation + u64::from(published));
+            let previous = reopened.file_info_conditional(
+                "captured.txt",
+                &airk_core::evidence::EvidenceReadOptions {
+                    revision: Some(old),
+                    ..Default::default()
+                },
             );
+            assert_eq!(previous.is_err(), published);
             let second =
                 Kernel::open_collection(root.path(), Some(data.path().into()), "project-a")?;
             assert_eq!(second.status()?.publication.unwrap().token, current);
