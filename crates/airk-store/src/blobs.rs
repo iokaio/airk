@@ -746,9 +746,13 @@ fn put(
     // Canonicalize the existing parent for both sides of the atomic rename.
     let parent = parent.canonicalize()?;
     let destination = parent.join(digest);
+    let staging = reservation
+        .map(crate::quota::Reservation::staging_directory)
+        .transpose()?;
+    let temporary_parent = staging.as_deref().unwrap_or(&parent).canonicalize()?;
     let mut file = tempfile::Builder::new()
         .prefix("building-")
-        .tempfile_in(&parent)?;
+        .tempfile_in(&temporary_parent)?;
     file.write_all(bytes)?;
     file.as_file().sync_all()?;
     file.persist_noclobber(destination)

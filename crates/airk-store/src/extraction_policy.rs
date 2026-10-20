@@ -73,7 +73,7 @@ impl FileStore {
         ensure!(
             quota
                 .root()
-                .join("collections")
+                .join("collections-1.2")
                 .join(collection)
                 .canonicalize()?
                 == directory,

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Receipt-verified candidate selection, fusion, and final payload materialization.
 use super::*;
-use crate::{terms, truncate_utf8};
+use crate::{focus_span, terms, truncate_utf8};
 use airk_core::{SearchQuery, SearchResponse};
 use std::{collections::BTreeSet, sync::Arc};
 use tantivy::{
@@ -517,61 +517,6 @@ impl PersistentIndex {
 
 /// Focus only when the response allowance cannot carry the complete original body.
 /// Word/line matching selects an original byte span; repeated input context is absent.
-fn focus_span(text: &str, query: &str, allowance: usize) -> airk_core::location::ByteSpan {
-    use airk_core::location::ByteSpan;
-    if text.len() <= allowance {
-        return ByteSpan {
-            start: 0,
-            end: text.len(),
-        };
-    }
-    let query = terms(query);
-    let mut selected = None;
-    let mut offset = 0;
-    for line in text.split_inclusive('\n') {
-        let start = offset + line.len() - line.trim_start().len();
-        if start < offset + line.len() {
-            let score = terms(line).intersection(&query).count();
-            if selected.is_none_or(|(_, _, best)| score > best) {
-                selected = Some((start, offset + line.len(), score));
-            }
-        }
-        offset += line.len();
-    }
-    let (mut start, end, score) = selected.unwrap_or((0, text.len(), 0));
-    if score > 0 {
-        let mut word = None;
-        for (index, character) in text[start..end]
-            .char_indices()
-            .chain(std::iter::once((end - start, ' ')))
-        {
-            if character.is_alphanumeric() || character == '_' {
-                word.get_or_insert(index);
-            } else if let Some(begin) = word.take()
-                && !terms(&text[start + begin..start + index]).is_disjoint(&query)
-            {
-                if begin >= allowance {
-                    start += begin.saturating_sub(allowance / 4);
-                }
-                break;
-            }
-        }
-    }
-    while !text.is_char_boundary(start) {
-        start -= 1;
-    }
-    let mut end = text.len().min(start.saturating_add(allowance));
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    // A one-byte allowance may not fit a complete scalar; its full source span
-    // remains valid while the final UTF8 byte-budget truncation returns no text.
-    if end == start {
-        end = start + text[start..].chars().next().map_or(0, char::len_utf8);
-    }
-    ByteSpan { start, end }
-}
-
 fn focused_body(
     occurrence: &vector_map::Occurrence,
     text: &str,

@@ -83,19 +83,20 @@ impl CurrentRead {
                 && query.kind.as_ref().is_none_or(|kind| kind.len() <= 128),
             "invalid current relationship query"
         );
+        let imported = self.analysis(store)?;
         let mut response = CurrentRelationships {
             revision: self.token()?,
             collection: self.head().scope.collection.clone(),
             relationships: Vec::new(),
             truncated: false,
-            coverage: "Native syntax candidates only; targets are written identifiers. Imported producer assertions are not included. Impact is incomplete.",
+            coverage: "Native syntax candidates and source-bound producer assertions. Written targets and imported resolutions are not compiler-certified. Impact is incomplete.",
         };
         let incoming = query.direction == "incoming";
         let mut pending = BTreeSet::from([query.symbol.clone()]);
         let mut visited = BTreeSet::new();
         let mut returned = BTreeSet::new();
         let mut files = 0;
-        let mut work = 0;
+        let mut work = self.resource_reference("analysis")?.map_or(0, |r| r.bytes);
         let mut remaining = query.max_bytes;
         for _ in 0..query.hops {
             let mut next = BTreeSet::new();
@@ -116,7 +117,26 @@ impl CurrentRead {
                 let page =
                     self.lookup_paths(lookup, &query.path_prefix, None, MAX_FILES - files)?;
                 response.truncated |= page.next_after.is_some();
-                for path in page.paths {
+                let mut paths = page.paths;
+                if let Some(imported) = &imported {
+                    paths.extend(
+                        imported
+                            .relationships
+                            .iter()
+                            .filter(|e| {
+                                e.citation.path.starts_with(&query.path_prefix)
+                                    && (if incoming { &e.target } else { &e.source }) == &symbol
+                            })
+                            .map(|e| e.citation.path.clone()),
+                    );
+                }
+                paths.sort();
+                paths.dedup();
+                if paths.len() > MAX_FILES - files {
+                    paths.truncate(MAX_FILES - files);
+                    response.truncated = true;
+                }
+                for path in paths {
                     let compact = self
                         .artifact(&path)?
                         .context("current relationship artifact missing")?;
@@ -137,7 +157,18 @@ impl CurrentRead {
                     let artifact =
                         store.load_retained_bounded(&compact, retained.object_bytes as u64)?;
                     store.read_retained_source(&compact)?;
-                    for edge in edges(&artifact) {
+                    let mut candidates = edges(&artifact);
+                    if let Some(imported) = &imported {
+                        self.verify_analysis_path(imported, &path)?;
+                        candidates.extend(
+                            imported
+                                .relationships
+                                .iter()
+                                .filter(|e| e.citation.path == path)
+                                .cloned(),
+                        );
+                    }
+                    for edge in candidates {
                         if (if incoming { &edge.target } else { &edge.source }) != &symbol
                             || query.kind.as_ref().is_some_and(|kind| kind != &edge.kind)
                         {

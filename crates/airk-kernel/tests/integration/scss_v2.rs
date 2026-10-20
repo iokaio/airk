@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Activate only after SCSS grammar admission and profile wiring.
+use super::current_inspection::InspectCurrent;
 use airk_core::{EvidenceBasis, FactQuery};
 use airk_ingest::adapters::profile::{ExtractionPolicy, RuleMatch, SelectionRule};
 use airk_kernel::Kernel;
@@ -25,8 +26,8 @@ fn scss_original_locations_profile_invalidation_and_rename_reuse() -> Result<()>
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
     kernel.configure_index_detail(airk_core::extraction::IndexDetail::Detailed)?;
     assert_eq!(kernel.index()?.indexed, 2);
-    let store = FileStore::new(data.path().join("collections/default"));
-    let before = store.catalog()?.context("catalog")?;
+    let store = FileStore::new(data.path().join("collections-1.2/default"));
+    let before = store.current_test_catalog()?.context("catalog")?;
     assert_eq!(
         store.read_retained_source(&before.snapshot.artifacts["original.scss"])?,
         source.as_bytes()
@@ -84,7 +85,7 @@ fn scss_original_locations_profile_invalidation_and_rename_reuse() -> Result<()>
     })?;
     let changed = kernel.index()?;
     assert_eq!((changed.indexed, changed.reused), (1, 1));
-    let changed_catalog = store.catalog()?.context("changed catalog")?;
+    let changed_catalog = store.current_test_catalog()?.context("changed catalog")?;
     assert_ne!(
         before.inventory.as_ref().unwrap().files["original.scss"]
             .state
@@ -110,7 +111,7 @@ fn scss_original_locations_profile_invalidation_and_rename_reuse() -> Result<()>
     )?;
     let moved = kernel.index()?;
     assert_eq!((moved.indexed, moved.reused), (0, 2));
-    let after = store.catalog()?.context("moved catalog")?;
+    let after = store.current_test_catalog()?.context("moved catalog")?;
     assert_eq!(
         before.inventory.as_ref().unwrap().files["original.scss"]
             .state

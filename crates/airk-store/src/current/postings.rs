@@ -13,8 +13,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 const MAX_PATHS_PER_SHARD: usize = 4096;
 const MAX_SELECTORS_PER_ARTIFACT: usize = 65_536;
-const MAX_CHANGED_BYTES: usize = 64 * 1024 * 1024;
-const MAX_CHANGED_KEYS: usize = 65_536;
+const MAX_CHANGED_BYTES: usize = super::MAX_PENDING_MAP_BYTES;
+const MAX_CHANGED_KEYS: usize = super::MAX_PENDING_MAP_CHANGES;
 
 /// Exact names include written names, qualified names and bound symbol IDs.
 /// Substring queries use another selective filter or the complete file roster.

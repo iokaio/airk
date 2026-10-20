@@ -27,7 +27,9 @@ pub use manifest::{LexicalFile, LexicalManifest, VerifiedLexicalManifest};
 mod fork;
 pub use fork::LexicalForkWork;
 
-pub const MAX_CHANGED_ARTIFACTS: usize = 65_536;
+// Match the default scan and current-store changed-file admission. Chunk and
+// keyed-map fan-out have separate, larger limits in their owning components.
+pub const MAX_CHANGED_ARTIFACTS: usize = 100_000;
 pub const MAX_PATH_DOCUMENTS: usize = 8_192;
 
 struct Fields {
@@ -303,49 +305,54 @@ impl CurrentLexical {
     /// reserved quota, and excluded readers. A failed external commit requires
     /// the owner's journal recovery before reads resume.
     pub fn apply_changes(&self, changes: &[LexicalChange<'_>]) -> Result<Option<LexicalWork>> {
+        let paths = changes.iter().map(|c| c.path).collect::<Vec<_>>();
+        let mut next = changes.iter();
+        self.apply_loaded(&paths, &mut |_| {
+            Ok(next.next().expect("validated paths").artifact.cloned())
+        })
+    }
+
+    /// Load one retained artifact at a time while building a private candidate.
+    pub fn apply_loaded(
+        &self,
+        paths: &[&str],
+        load: &mut dyn FnMut(&str) -> Result<Option<airk_core::Artifact>>,
+    ) -> Result<Option<LexicalWork>> {
         ensure!(
-            changes.len() <= MAX_CHANGED_ARTIFACTS,
-            "too many current lexical changes"
+            paths.len() <= MAX_CHANGED_ARTIFACTS && paths.windows(2).all(|p| p[0] < p[1]),
+            "invalid current lexical paths"
         );
-        let mut previous = None;
-        for change in changes {
-            validate_path(change.path)?;
-            ensure!(
-                previous.is_none_or(|path| path < change.path),
-                "current lexical changes are not sorted and unique"
-            );
-            previous = Some(change.path);
-            if let Some(artifact) = change.artifact {
-                ensure!(
-                    artifact.path == change.path && artifact.chunks.len() <= MAX_PATH_DOCUMENTS,
-                    "current lexical artifact binding or document bound failed"
-                );
-                artifact.content_hash.parse::<Sha256Digest>()?;
-                ensure!(
-                    artifact.chunks.iter().all(|chunk| chunk.start_line > 0
-                        && chunk.start_line <= chunk.end_line
-                        && chunk.text.len() <= airk_core::extraction::MAX_TEXT_BYTES),
-                    "invalid current lexical chunk"
-                );
-            }
+        for path in paths {
+            validate_path(path)?;
         }
-        if changes.is_empty() {
+        if paths.is_empty() {
             return Ok(None);
         }
         let mut writer = self
             .index
             .writer_with_num_threads::<TantivyDocument>(1, 20_000_000)?;
         let mut added_documents = 0u64;
-        for change in changes {
-            writer.delete_term(Term::from_field_text(self.fields.path, change.path));
-            if let Some(artifact) = change.artifact {
+        for path in paths {
+            writer.delete_term(Term::from_field_text(self.fields.path, path));
+            if let Some(artifact) = load(path)? {
+                ensure!(
+                    artifact.path == *path && artifact.chunks.len() <= MAX_PATH_DOCUMENTS,
+                    "current lexical artifact binding or document bound failed"
+                );
+                artifact.content_hash.parse::<Sha256Digest>()?;
+                ensure!(
+                    artifact.chunks.iter().all(|c| c.start_line > 0
+                        && c.start_line <= c.end_line
+                        && c.text.len() <= airk_core::extraction::MAX_TEXT_BYTES),
+                    "invalid current lexical chunk"
+                );
                 for (local, chunk) in artifact.chunks.iter().enumerate() {
                     let mut document = TantivyDocument::default();
-                    for term in terms(&format!("{} {}", change.path, chunk.text)) {
+                    for term in terms(&format!("{} {}", path, chunk.text)) {
                         document.add_text(self.fields.terms, term);
                     }
-                    document.add_text(self.fields.path, change.path);
-                    let id = stable_id(change.path, local as u64)?;
+                    document.add_text(self.fields.path, path);
+                    let id = stable_id(path, local as u64)?;
                     document.add_text(self.fields.stable_id, id.to_string());
                     document.add_u64(
                         self.fields.sort_key,
@@ -356,7 +363,7 @@ impl CurrentLexical {
                         self.fields.payload,
                         serde_json::to_string(&Hit {
                             citation: Citation {
-                                path: change.path.to_owned(),
+                                path: (*path).to_owned(),
                                 content_hash: artifact.content_hash.clone(),
                                 start_line: chunk.start_line,
                                 end_line: chunk.end_line,
@@ -377,7 +384,7 @@ impl CurrentLexical {
             &self.directory,
         )?)?;
         Ok(Some(LexicalWork {
-            changed_artifacts: changes.len(),
+            changed_artifacts: paths.len(),
             added_documents,
             commit_opstamp: opstamp,
         }))

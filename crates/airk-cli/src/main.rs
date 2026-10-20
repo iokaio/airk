@@ -627,6 +627,8 @@ fn vector_selection_input(
 
 #[derive(Subcommand)]
 enum CollectionCommand {
+    /// Reclaim unreferenced current-index objects after a complete ownership check.
+    Maintain,
     /// Inspect or save the collection vector setting used by the panel.
     Vectors {
         #[command(subcommand)]
@@ -1236,6 +1238,7 @@ async fn main_async() -> anyhow::Result<()> {
                 RootsCommand::Remove { alias } => recorder.print(&kernel.remove_root(&alias)?),
                 RootsCommand::Locate { path } => recorder.print(&kernel.source_location(&path)?),
             },
+            CollectionCommand::Maintain => recorder.print(&kernel.maintain_current()?),
             CollectionCommand::List => recorder.print(&kernel.collections()?),
             CollectionCommand::Remove { id } => recorder.print(&kernel.remove_collection(&id)?),
             CollectionCommand::Retention { action } => match action {

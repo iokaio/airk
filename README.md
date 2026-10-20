@@ -6,7 +6,7 @@
 
 [Document indexing](docs/document-indexing.md) specializes headings, dates, requirements, numeric bounds/units, qualitative cues and design/architecture/feature/decision language for Markdown, text and extracted documents. DOCX tables and XLSX worksheets retain row/cell evidence and original locations. These are cited evidence candidates, with category-filtered retrieval through MCP and the CLI.
 
-This is an independent, runnable open-source project. Munarium, VCP and local reference files inform the design; their implementations are not dependencies. Persistent Tantivy lexical indexes, SQLite exact facts and an independent disk file provider for Microsoft DiskANN publish coherent revisions. Vector indexing and hybrid retrieval are enabled by default. The trusted panel prepares the pinned [local CPU embedding model](docs/onnx-models.md) on first use (about 91 MB); turn **Vector search** off per collection to opt out. Inference and source data stay local. Model quality must be evaluated for the intended corpus.
+This is an independent, runnable open-source project. Munarium, VCP and local reference files inform the design; their implementations are not dependencies. Tantivy lexical indexes, authenticated SQLite records and mutable Microsoft DiskANN publish one coherent current revision. Vector indexing and hybrid retrieval are enabled by default. The trusted panel prepares the pinned [local CPU embedding model](docs/onnx-models.md) on first use (about 91 MB); turn **Vector search** off per collection to opt out. Inference and source data stay local. Model quality must be evaluated for the intended corpus.
 
 [Code facts and relationships](docs/code-facts-and-relationships.md) add scopes, signatures, written types, call/framework candidates and optional source/build-bound SCIP imports. Sixteen read-only MCP tools expose bounded evidence with explicit syntax versus producer provenance. Native indexing needs no external compiler/indexer installation.
 
@@ -14,7 +14,7 @@ This is an independent, runnable open-source project. Munarium, VCP and local re
 
 Warm retrieval validates publication integrity, hybrid search ranks distinct chunks before applying text budgets, and scoped vector searches use bounded matching candidates. Discovery tools support revision-bound continuation cursors and compact outlines. PDF parsing runs in a local resource-limited worker, source traversal uses protected handles, and CLI shell setup rejects redirected or hard-linked profiles. [Request execution](docs/request-execution.md) keeps optional accounting off the MCP protocol thread.
 
-Usage comparisons use compact full-source byte measurements from the response's exact indexed revision. New generations can compare small excerpts from large repositories without the former 8 MiB inventory/retained-payload and 1 MiB text comparison limits. The report distinguishes evidence requests from background activity and explains unavailable comparisons. Index once with the new helper and restart agent MCP sessions; older missing comparisons remain unmeasured. See [upgrade and local validation](docs/release-1.1.4.md).
+Usage comparisons use compact full-source byte measurements from the response's exact indexed revision. Current source-size measurements can compare small excerpts from large repositories without the former 8 MiB inventory/retained-payload and 1 MiB text comparison limits. The report distinguishes evidence requests from background activity and explains unavailable comparisons. Index once with the new helper and restart agent MCP sessions; older missing comparisons remain unmeasured. See [the 1.2 runtime and rebuild boundary](docs/current-index-runtime.md).
 
 ## What's new in 1.1.3
 
@@ -24,7 +24,7 @@ Open **Usage & Savings** on any collection to see how much smaller AIRK results 
 
 - **Workstation indexing:** automatic source allowances scale with machine memory, up to 2 GiB per collection. Coverage reports measured bytes and large files; reviewed limit increases preserve existing policies and retry once. [Ingestion limits](docs/ingestion-limits.md) distinguish raw-file admission from extracted-text and parser limits.
 - **Collection dashboard:** inspect coverage and MCP helper health, index or reindex a collection, pause automatic work, choose storage and select Essential, Balanced or Detailed evidence. New collections default to Balanced; existing collections retain their previous detail until changed.
-- **Storage and recovery:** new quota defaults are 100 GiB per collection and 500 GiB per storage root. Configurable retention targets 1–9 searchable generations, with active-only retention for new collections. Smaller fact catalogs, unchanged-row reuse and bounded verification reuse reduce storage and repeated-query work. Publication recovery handles interrupted builds while preserving committed evidence and live readers.
+- **Storage and recovery:** one current index per collection, incremental Tantivy/DiskANN updates, quota-admitted database growth and captured transaction replay. Defaults are 100 GiB per collection and 500 GiB per storage root. Historical generations/checkpoints are unsupported in 1.2.
 - **Coding-agent connections:** a persistent setup guide creates missing Codex project configuration, installs Claude Code/Gemini CLI/Antigravity project entries while preserving other settings, or opens Copilot's explicit registration controls. Helper health and actual agent discovery are checked separately.
 
 See the [combined release notes](docs/releases-2026-10-17.md) for release provenance, measured Windows results and changes that require an explicit upgrade action.
@@ -77,7 +77,7 @@ Select **Open AIRK Tools** on a dashboard collection to open an interactive tool
 
 The extension installs its bundled CLI during the first trusted startup and updates it with the extension. Open a new terminal and run `airk --help`; restart external terminal applications to pick up PATH changes. No Cargo installation is needed. The dashboard includes a CLI getting-started note and **Install or repair CLI** button. See [CLI installation and PATH](docs/vscode-extension.md#cli-installation-and-path) for platform behavior and troubleshooting.
 
-State defaults to .airk/collections/<id> under the workspace. Choose a shared user-controlled disk with --data-dir. Each MCP launch fixes its root and collection; retrieval tools cannot switch collections.
+State defaults to .airk/collections-1.2/<id> under the workspace. Choose a shared user-controlled disk with --data-dir. Each MCP launch fixes its root and collection; retrieval tools cannot switch collections.
 
 ## One container per user and machine
 
@@ -105,7 +105,7 @@ See the [format matrix](docs/formats.md) for the broader language, build-file an
 
 The AIRK sidebar offers **Essential**, **Balanced** (the default for new collections), and **Detailed** for each collection. Essential keeps searchable text and exact citations. Balanced adds declarations, imports, useful structural/document facts and declaration change tracking. Detailed also retains individual calls and document-unit change tracking. Existing collections keep their previous Detailed behavior until changed.
 
-The panel shows configured and published levels separately. Changing a level rebuilds evidence; the previous index stays available until the rebuild succeeds. Native fact and relationship responses explicitly report omitted detail. Storage quotas, retained generations and vector search are separate controls. See [index detail](docs/ingestion-limits.md#index-detail) for CLI equivalents and costs.
+The panel shows configured and published levels separately. Changing a level rebuilds evidence; preparation keeps the current head readable, and Applying requires completion or recovery before reads resume. Native fact and relationship responses explicitly report omitted detail. Storage quotas, current-object cleanup and vector search are separate controls. See [index detail](docs/ingestion-limits.md#index-detail) for CLI equivalents and costs.
 
 ## Storage and maintenance
 
@@ -120,9 +120,9 @@ airk --data-dir /path/to/airk-state collections remove obsolete-project
 
 On Windows use a path such as D:/indexes/airk. Pruning previews obsolete immutable generations and protects active or leased evidence. Removal deletes only a named, validated managed collection, preserving its source workspace; active native readers prevent removal. Disconnect workers for that collection first. See [collections](docs/collections.md) and [operations](docs/operations.md).
 
-Default [storage quotas](docs/storage-quotas.md) are **100 GiB per collection** within **500 GiB per data root**; these are ceilings, not preallocated space. Existing saved quotas remain authoritative. New collections use automatic [retention](docs/retention.md) targeting the active generation only; existing saved policies are preserved, and legacy collections without a policy remain manual. Readers and protected history may retain additional data. Storage failures stop automatic retry loops until the cause is addressed.
+Default [storage quotas](docs/storage-quotas.md) are **100 GiB per collection** within **500 GiB per data root**. These are ceilings, not preallocated space. AIRK 1.2 starts fresh collection/settings ownership and leaves 1.1 state untouched. Current cleanup proves ownership before removing unreferenced objects. See the [current-index contract](docs/current-index-runtime.md) for token expiry, busy states and recovery.
 
-Indexing streams one artifact at a time into content-addressed source/extraction storage. Compact inventories, immutable exact-fact catalogs and retrieval generations preserve revision identity without loading all source text for each request. [Source aliases](docs/source-roots.md) add independent folders to one collection; their original locations are pinned with each revision. Shared logical-byte quotas cover participating writers, including temporary builds and retained generations. Explicit relocation copies and verifies a data root before activating it, retaining the old managed state.
+Indexing streams one artifact at a time into content-addressed source/extraction storage. Authenticated current catalog/postings, a head-bound Tantivy manifest and mutable DiskANN records preserve exact revision identity without loading all source text for each request. [Source aliases](docs/source-roots.md) add independent folders to one collection; their original locations are pinned with each revision. Shared logical-byte quotas cover participating writers, including temporary builds and durable recovery allowances. Explicit relocation copies and verifies a data root before activating it, retaining the old managed state.
 
 Automatic [ingestion limits](docs/ingestion-limits.md) allow up to 256 MiB per source file, 32 MiB extracted text per file and 100,000 files. Eligible source is sized to one eighth of detected machine memory, capped at 2 GiB, with twice that allowance for extracted text. Unknown memory uses a 512 MiB source allowance; saved policies remain unchanged. Collection policies explicitly permit larger workloads within validated ceilings and storage quotas; [scale qualification](docs/scale-qualification.md) records measured profiles. Ignore rules and common secret/build exclusions apply; indexes themselves contain source text. Read [SECURITY.md](SECURITY.md).
 
@@ -132,7 +132,7 @@ Automatic [ingestion limits](docs/ingestion-limits.md) allow up to 256 MiB per s
 crates/
   airk-core/       Artifact, fact, query, citation and provider contracts
   airk-ingest/     Discovery, hashing, native grammars and document adapters
-  airk-store/      SQLite state, durable queues/usage, locks and collection retention
+  airk-store/      SQLite state, durable queues/usage, locks and current-object cleanup
   airk-retrieval/  Persistent Tantivy, disk-backed DiskANN, local vectors and budgets
   airk-kernel/     Shared collection-scoped application services
   airk-mcp/        Read-only schemas and official SDK stdio transport

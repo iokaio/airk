@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Activate after composite payload retention and mapped citation binding are wired.
+use super::current_inspection::InspectCurrent;
 use airk_ingest::adapters::profile::{ExtractionPolicy, RuleMatch, SelectionRule};
 use airk_kernel::Kernel;
 use airk_store::FileStore;
@@ -18,8 +19,8 @@ fn qualify(path: &str, moved: &str, source: &str, expected_marker: &str) -> Resu
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
     kernel.configure_index_detail(airk_core::extraction::IndexDetail::Detailed)?;
     assert_eq!(kernel.index()?.indexed, 2);
-    let store = FileStore::new(data.path().join("collections/default"));
-    let before = store.catalog()?.context("catalog")?;
+    let store = FileStore::new(data.path().join("collections-1.2/default"));
+    let before = store.current_test_catalog()?.context("catalog")?;
     let artifact = &before.snapshot.artifacts[path];
     assert_eq!(store.read_retained_source(artifact)?, source.as_bytes());
     let payload = store.load_extraction_payload(artifact)?;
@@ -52,7 +53,7 @@ fn qualify(path: &str, moved: &str, source: &str, expected_marker: &str) -> Resu
     fs::write(root.path().join(path), &changed_source)?;
     let edited = kernel.index()?;
     assert_eq!((edited.indexed, edited.reused), (1, 1));
-    let changed = store.catalog()?.context("changed catalog")?;
+    let changed = store.current_test_catalog()?.context("changed catalog")?;
     let after_payload = store.load_extraction_payload(&changed.snapshot.artifacts[path])?;
     assert_eq!(after_payload.regions.len(), payload.regions.len());
     assert_eq!(
@@ -73,7 +74,7 @@ fn qualify(path: &str, moved: &str, source: &str, expected_marker: &str) -> Resu
     fs::rename(root.path().join(path), root.path().join(moved))?;
     let moved_report = kernel.index()?;
     assert_eq!((moved_report.indexed, moved_report.reused), (0, 2));
-    let mapped = store.catalog()?.context("moved catalog")?;
+    let mapped = store.current_test_catalog()?.context("moved catalog")?;
     assert_eq!(
         store.read_retained_source(&mapped.snapshot.artifacts[moved])?,
         changed_source.as_bytes()

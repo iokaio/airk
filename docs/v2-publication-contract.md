@@ -1,5 +1,8 @@
 # V2 publication and migration
 
+> Historical 1.1 implementation record. AIRK 1.2 production uses the [single-current-index contract](current-index-runtime.md). Retained historical reads, checkpoint/retention administration and receipt-backed generations below are not current capabilities. Old primitive storage tests remain separate from production routing.
+
+
 The authoritative inventory is `InventoryV2`, version 3, with version 2 read compatibility. It binds canonical source roots, effective extraction profiles, path-free payload digests, artifact handles, file and continuity stamps, producer assertions and the lineage digest. Version 3 also binds the applied extraction policy and complete embedding pipeline descriptor. The schema-4 `Snapshot` is a compatibility projection for existing bounded consumers; its serialization does not define the v2 revision. The storage engine format remains 2; inventory and engine versions are independent.
 
 The root SQLite pointer and immutable exact-fact catalog use independently checked version 3. Legacy root versions 1–2 and compact inventory version 1 remain readable. Legacy digest verification uses the original encoded bytes and original engine framing. A successful v2 root transaction raises the root version, causing older writers to fail closed. Merely reading a collection does not migrate it.

@@ -655,7 +655,7 @@ pub(crate) fn effective_collection_limit(store: &crate::FileStore) -> Result<u64
         .file_name()
         .and_then(|name| name.to_str())
         .context("invalid collection name")?;
-    let path = root.join(".quota/policy.json");
+    let path = root.join(".quota-1.2/policy.json");
     let policy = match path.symlink_metadata() {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             crate::quota::QuotaPolicy::default()

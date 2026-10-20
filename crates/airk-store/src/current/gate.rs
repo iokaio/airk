@@ -19,7 +19,9 @@ fn open(store: &FileStore) -> Result<File> {
         .parent()
         .context("current collection parent missing")?;
     ensure!(
-        parent.file_name().is_some_and(|name| name == "collections"),
+        parent
+            .file_name()
+            .is_some_and(|name| name == "collections-1.2"),
         "current store requires a managed collection"
     );
     let name = directory

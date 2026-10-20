@@ -128,8 +128,8 @@ test('capacity-blocked collections expose Resume and storage recovery controls',
         collections: [{ collection: 'fixture', name: 'Fixture', root: '/fixture', dataDir: '/state', state: 'capacity-limited' }] });
     assert.match(html, /data-command="airk.resume"/);
     assert.match(html, /data-command="airk.storageLimits"/);
-    assert.match(html, /data-command="airk.retentionPolicy"/);
-    assert.match(html, /data-command="airk.retentionRun"/);
+    assert.match(html, /data-command="airk.currentMaintenance"/);
+    assert.doesNotMatch(html, /airk\.(retention|history|checkpoints|pruneIndexes)/);
 });
 
 

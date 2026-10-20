@@ -338,8 +338,10 @@ mod tests {
     #[test]
     fn pruning_protects_active_and_pinned_generations() -> Result<()> {
         let directory = tempfile::tempdir()?;
-        let collection = directory.path().join("collections/default");
-        let leases = directory.path().join("collections/.reader-locks/default");
+        let collection = directory.path().join("collections-1.2/default");
+        let leases = directory
+            .path()
+            .join("collections-1.2/.reader-locks/default");
         fs::create_dir_all(&leases)?;
         let active = "a".repeat(64);
         let stale = "b".repeat(64);

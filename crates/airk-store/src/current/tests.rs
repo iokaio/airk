@@ -46,7 +46,7 @@ impl Fixture {
         let directory = tempfile::tempdir()?;
         fs::create_dir(directory.path().join("source"))?;
         let quota = Quota::open(directory.path().join("data"))?;
-        let store = FileStore::new(quota.root().join("collections/project-current"));
+        let store = FileStore::new(quota.root().join("collections-1.2/project-current"));
         let scope = CurrentScope {
             root: directory
                 .path()
@@ -928,7 +928,8 @@ fn prepared_map_and_graph_replay_commit_one_authenticated_head() -> Result<()> {
         None,
         br#"{"engine":"test","version":2}"#,
     )?;
-    assert_eq!(deletion.map_count, 6);
+    // Includes file metadata and source-size measurement retirement.
+    assert_eq!(deletion.map_count, 8);
     current.mark_applying(&deletion)?;
     drop(current);
     drop(writer);
@@ -1098,7 +1099,7 @@ fn changed_path_retires_only_its_share_of_a_live_vector() -> Result<()> {
         None,
         br#"{"engine":"test","version":2}"#,
     )?;
-    assert_eq!(pending.map_count, 6);
+    assert_eq!(pending.map_count, 8);
     current.mark_applying(&pending)?;
     current.commit(&pending, pending.target.lexical_commit)?;
     drop(current);
@@ -1361,7 +1362,8 @@ fn changed_artifact_and_lexical_manifest_share_one_replayed_head() -> Result<()>
         None,
         &next,
     )?;
-    assert_eq!(pending.map_count, 3);
+    // Includes metadata retirement and the source-size measurement.
+    assert_eq!(pending.map_count, 5);
     assert_eq!(pending.inputs_count, 1);
     assert_eq!(pending.lexical_manifest_bytes, next.len() as u64);
     drop(current);
@@ -1840,7 +1842,7 @@ fn current_child_process() -> Result<()> {
     };
     let quota = Quota::open(root)?;
     let scope: CurrentScope = serde_json::from_str(&std::env::var("AIRK_CURRENT_CHILD_SCOPE")?)?;
-    let store = FileStore::new(quota.root().join("collections").join(&scope.collection));
+    let store = FileStore::new(quota.root().join("collections-1.2").join(&scope.collection));
     let ready = std::env::var_os("AIRK_CURRENT_CHILD_READY").context("ready path missing")?;
     let mode = std::env::var("AIRK_CURRENT_CHILD_MODE")?;
     if mode == "read" {

@@ -30,6 +30,57 @@ fn artifact(path: &str, marker: u8, lines: &[&str]) -> Artifact {
 }
 
 #[test]
+fn hundred_thousand_changed_paths_commit_and_reopen_with_bounded_admission() -> Result<()> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("lexical");
+    let charge: Charge = Arc::new(|_| Ok(()));
+    let lexical = CurrentLexical::create(&path, charge.clone())?;
+    let names: Vec<_> = (0..100_000).map(|n| format!("file-{n:06}.txt")).collect();
+    let paths: Vec<_> = names.iter().map(String::as_str).collect();
+    let last = artifact(paths[99_999], 1, &["last retained document"]);
+    lexical.apply_changes(&[LexicalChange {
+        path: &last.path,
+        artifact: Some(&last),
+    }])?;
+    let mut loaded = 0;
+    let work = lexical
+        .apply_loaded(&paths, &mut |_| {
+            loaded += 1;
+            Ok(None)
+        })?
+        .unwrap();
+    assert_eq!(loaded, 100_000);
+    assert_eq!(work.changed_artifacts, 100_000);
+    assert_eq!(work.added_documents, 0);
+    let mut oversized = paths.clone();
+    oversized.push("zzzz.txt");
+    assert!(
+        lexical
+            .apply_loaded(&oversized, &mut |_| panic!(
+                "oversized batch reached loader"
+            ))
+            .is_err()
+    );
+    let manifest = lexical.capture_manifest(None)?;
+    let bytes = manifest.canonical_bytes()?;
+    let digest = manifest.digest()?;
+    drop(lexical);
+    let reader = VerifiedCurrentLexical::open(&path, charge, &bytes, digest)?;
+    assert!(
+        reader
+            .search(&SearchQuery {
+                text: "retained".into(),
+                path_prefix: None,
+                limit: 10,
+                max_bytes: 4096,
+            })?
+            .values
+            .is_empty()
+    );
+    Ok(())
+}
+
+#[test]
 fn verified_reader_scopes_bounded_candidates_and_rejects_changed_files() -> Result<()> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("lexical");

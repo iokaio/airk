@@ -10,17 +10,14 @@ import { NativeWriteQueue, prepareHelper, probeMcp, runJson } from './native';
 import { installCli } from './cliInstall';
 import { CapacityError, Options, PausedError, Scheduler } from './scheduler';
 import { Coverage, CoverageQueue, coverageDetails, coverageLabel } from './coverage';
-import { RetentionStatus, RetentionPreview, retentionSummary, retentionPolicyForMode } from './retention';
 import { withPolicySnapshot } from './extractionPolicy';
 import { VectorStatus, prepareVectorModel } from './vectorModel';
 import { aboveNormal, authorizeLimitIncrease, indexWithLimitApproval, largerLimitsExplanation, LimitsDescription, ScanLimits } from './ingestionLimits';
-import { historyControl, HistoryAction } from './history';
 import { renderReport, ReportKind } from './report';
 import { openUsagePanel } from './usagePanel';
 import { ControlGroup, DetailStatus, IndexDetail, McpVerification, SidebarCollection, SidebarState, sidebarAction, sidebarControlGroups } from './sidebar';
 
 interface KnownCollection { name: string; root: string; lastIndexed?: string }
-interface PruneReport { dry_run: boolean; reclaimable_bytes: number; removed_bytes: number; candidates: string[]; pinned: string[]; unreferenced_objects?: number; receipt_cleanup_pending?: boolean }
 
 class Controller implements vscode.Disposable {
     readonly output = vscode.window.createOutputChannel('AIRK');
@@ -31,11 +28,7 @@ class Controller implements vscode.Disposable {
     readonly scheduler: Scheduler;
     private readonly coverage: CoverageQueue;
     private readonly nativeWrites = new NativeWriteQueue();
-    private readonly retentionViews = new Map<string, RetentionStatus>();
     private readonly rescan: NodeJS.Timeout;
-    private readonly maintenanceTimer: NodeJS.Timeout;
-    private maintenanceBusy = false;
-    private maintenanceCursor = 0;
     private specs = new Map<string, LaunchSpec>();
     private rootBindings: { opened: string; canonical: string }[] = [];
     private helper?: Promise<string>;
@@ -68,29 +61,6 @@ class Controller implements vscode.Disposable {
         this.rescan = setInterval(() => {
             if (vscode.workspace.isTrusted) { for (const spec of this.specs.values()) { this.coverage.request(spec); } }
         }, 300000);
-        this.maintenanceTimer = setInterval(() => { void this.continueMaintenance(); }, 30000);
-    }
-    private async continueMaintenance(): Promise<void> {
-        if (this.disposed || !vscode.workspace.isTrusted || this.refreshing || this.storageChoice || this.maintenanceBusy || !this.scheduler.canRunMaintenance) { return; }
-        const specs = [...this.specs.values()];
-        if (!specs.length) { return; }
-        const spec = specs[this.maintenanceCursor++ % specs.length];
-        this.maintenanceBusy = true;
-        try {
-            await this.scheduler.holdWhile(async idle => {
-                await idle;
-                await this.nativeWrites.run(spec, async () => {
-                    if (this.disposed || !vscode.workspace.isTrusted || this.storageChoice
-                        || this.specs.get(spec.collection)?.dataDir !== spec.dataDir) { return; }
-                    // Native code rechecks policy/pending state under the collection
-                    // writer lock, including changes made by another VS Code window.
-                    const result = await runJson<unknown>(spec, 'collections', ['retention', 'continue']);
-                    if (result) { await this.refreshRetention(spec); this.invalidateCollectionTree(); }
-                });
-            });
-        } catch (error) {
-            if (!this.disposed) { this.output.appendLine(`${spec.name}: automatic cleanup continuation failed: ${String(error)}`); }
-        } finally { this.maintenanceBusy = false; }
     }
     private trusted(): void {
         if (!vscode.workspace.isTrusted) { throw new Error('Trust this workspace before starting AIRK or indexing files.'); }
@@ -188,7 +158,7 @@ class Controller implements vscode.Disposable {
             for (const key of this.usageSummaries.keys()) { if (!mcpBindings.has(key)) { this.usageSummaries.delete(key); } }
             for (const key of this.mcpChecks.keys()) { if (!mcpBindings.has(key)) { this.mcpChecks.delete(key); } }
             this.rootBindings = bindings.sort((a, b) => b.opened.length - a.opened.length);
-            const known = this.context.globalState.get<Record<string, KnownCollection>>('collections', {});
+            const known = this.context.globalState.get<Record<string, KnownCollection>>('collections-1.2', {});
             for (const spec of next.values()) {
                 known[spec.collection] = { ...known[spec.collection], name: spec.name, root: spec.root };
                 if (!prior.has(spec.collection) || prior.get(spec.collection)?.dataDir !== spec.dataDir) {
@@ -196,7 +166,7 @@ class Controller implements vscode.Disposable {
                     if (this.options().mode !== 'manual') { void this.scheduler.request(spec); }
                 }
             }
-            await this.context.globalState.update('collections', known);
+            await this.context.globalState.update('collections-1.2', known);
             await this.rememberStorage(dataDir);
             if (JSON.stringify([...prior.values()]) !== JSON.stringify([...next.values()])) { this.definitions.fire(); }
         } finally { this.refreshing = false; this.updateStatus(); }
@@ -220,7 +190,6 @@ class Controller implements vscode.Disposable {
         this.sidebar.refresh();
         const unsaved = spec ? (vscode.workspace.textDocuments ?? []).filter(document => document.isDirty && eligibleEvent(this.sourcePath(document.uri.fsPath), spec.root, spec.dataDir)).length : 0;
         this.status.tooltip = spec ? coverageDetails(spec.name, view || undefined, unsaved)
-            + `\n${retentionSummary(this.retentionViews.get(JSON.stringify([spec.dataDir, spec.collection])))}`
             + `\nAuto-indexing: ${this.scheduler?.isPaused ? 'paused' : this.options().mode}${state?.pending ? '; indexing pending' : ''}\nClick to open AIRK controls.`
             : 'Select a workspace folder to index. Click to open AIRK controls.';
     }
@@ -310,7 +279,7 @@ class Controller implements vscode.Disposable {
         }
         catch (error) {
             if (error instanceof Error && /storage quota exhausted|quota_blocked|database or disk is full|private catalog cannot grow|physical.*(capacity|space|headroom)|insufficient.*space/i.test(error.message)) {
-                throw new CapacityError(`${error.message} Automatic indexing is stopped for this collection. Review Storage limits and retention, reclaim eligible old generations or increase the quota, then Resume or Index now.`);
+                throw new CapacityError(`${error.message} Automatic indexing is stopped for this collection. Review Storage limits, run current index cleanup or increase the quota, then Resume or Index now.`);
             }
             if (error instanceof Error && error.message.includes('native automatic scheduling is paused')) { throw new PausedError(error.message); }
             throw error;
@@ -318,10 +287,9 @@ class Controller implements vscode.Disposable {
         finally { this.vectorProgress.delete(this.mcpKey(spec)); await this.refreshVectors(spec); if (this.specs.get(spec.collection)?.dataDir === spec.dataDir) { this.coverage.request(spec, true); } this.sidebar.refresh(); }
         this.output.appendLine(`${spec.name}: generation ${report.generation}; indexed ${report.indexed}, reused ${report.reused}, removed ${report.removed}, skipped ${report.skipped.length + (report.skipped_truncated ?? 0)}`);
         for (const skipped of report.skipped.slice(0, 20)) { this.output.appendLine(`Skipped ${skipped.path}: ${skipped.reason}`); }
-        const known = this.context.globalState.get<Record<string, KnownCollection>>('collections', {});
+        const known = this.context.globalState.get<Record<string, KnownCollection>>('collections-1.2', {});
         known[spec.collection] = { name: spec.name, root: spec.root, lastIndexed: new Date().toISOString() };
-        await this.context.globalState.update('collections', known);
-        await this.refreshRetention(spec);
+        await this.context.globalState.update('collections-1.2', known);
         await this.refreshDetail(spec);
         this.invalidateCollectionTree();
         return report;
@@ -332,7 +300,7 @@ class Controller implements vscode.Disposable {
     }
     sidebarState(): SidebarState {
         const states = this.scheduler.states();
-        const known = vscode.workspace.isTrusted ? this.context.globalState.get<Record<string, KnownCollection>>('collections', {}) : {};
+        const known = vscode.workspace.isTrusted ? this.context.globalState.get<Record<string, KnownCollection>>('collections-1.2', {}) : {};
         return { trusted: vscode.workspace.isTrusted, paused: this.scheduler.isPaused || states.some(state => state.state === 'paused'),
             registrationEnabled: this.registrationEnabled(),
             cliStatus: this.cliStatus,
@@ -400,7 +368,7 @@ class Controller implements vscode.Disposable {
         await Promise.all([...this.specs.values()].filter(spec => refreshDetail || !this.detailViews.has(this.mcpKey(spec)))
             .map(async spec => { await this.refreshDetail(spec); await this.refreshVectors(spec); await this.refreshUsageSummary(spec); }));
         const byId = new Map(usage.map(item => [item.collection, item]));
-        const known = this.context.globalState.get<Record<string, KnownCollection>>('collections', {});
+        const known = this.context.globalState.get<Record<string, KnownCollection>>('collections-1.2', {});
         const states = new Map(this.scheduler.states().map(item => [item.collection, item]));
         const ids = new Set([...this.specs.keys(), ...byId.keys()]);
         return [...ids].map(id => {
@@ -534,7 +502,7 @@ class Controller implements vscode.Disposable {
         if (!spec) { return; }
         const usage = await runJson<Usage[]>(spec, 'collections', ['list']);
         const free = await fs.statfs(spec.dataDir).then(stat => stat.bavail * stat.bsize).catch(() => null);
-        const known = this.context.globalState.get<Record<string, KnownCollection>>('collections', {});
+        const known = this.context.globalState.get<Record<string, KnownCollection>>('collections-1.2', {});
         const total = usage.reduce((bytes, item) => bytes + item.disk_bytes, 0);
         if (!remove) {
             await this.showJson('AIRK collection storage', { dataDir: spec.dataDir, freeBytes: free, collectionBytes: total,
@@ -560,50 +528,10 @@ class Controller implements vscode.Disposable {
         this.output.appendLine(`Removed derived collection ${selected.item.collection} from ${spec.dataDir}`);
         if (!this.scheduler.isPaused) { this.scheduler.resume(); }
     }
-    async prune(): Promise<void> {
+    async currentMaintenance(): Promise<void> {
         const spec = await this.chooseSpec(); if (!spec) { return; }
-        if (this.scheduler.isBusy) { throw new Error('Wait for indexing to finish before trimming old generations.'); }
-        const preview = await this.writeNative<PruneReport>(spec, 'collections', ['prune']);
-        await this.showJson('AIRK generation trim preview', preview);
-        if (!preview.candidates.length && !preview.unreferenced_objects && !preview.receipt_cleanup_pending) { void vscode.window.showInformationMessage('No unpinned obsolete generations or unreferenced objects can be reclaimed.'); return; }
-        const objects = preview.unreferenced_objects ? ` and ${preview.unreferenced_objects} unreferenced objects` : '';
-        const pending = preview.receipt_cleanup_pending ? ' Receipt cleanup or further bounded inspection remains pending.' : '';
-        const confirm = await vscode.window.showWarningMessage(`Reclaim ${(preview.reclaimable_bytes / 1048576).toFixed(2)} MiB by trimming ${preview.candidates.length} superseded index generations${objects} from ${spec.name}?${pending} The current index and any generation an agent is still reading are kept.`, { modal: true }, 'Trim old generations');
-        if (confirm !== 'Trim old generations') { return; }
-        await this.showJson('AIRK generation trim result', await this.writeNative<PruneReport>(spec, 'collections', ['prune', '--apply']));
-        if (!this.scheduler.isPaused) { this.scheduler.resume(); }
-    }
-    private async refreshRetention(spec: LaunchSpec): Promise<RetentionStatus | undefined> {
-        const key = JSON.stringify([spec.dataDir, spec.collection]);
-        try {
-            this.trusted();
-            const status = await runJson<RetentionStatus>(spec, 'collections', ['retention', 'show']);
-            this.retentionViews.set(key, status); this.updateStatus(); return status;
-        } catch (error) {
-            this.retentionViews.delete(key); this.updateStatus();
-            this.output.appendLine(`${spec.name}: retention status unavailable: ${String(error)}`);
-            return undefined;
-        }
-    }
-    async retention(): Promise<void> {
-        const spec = await this.chooseSpec(); if (!spec) { return; }
-        const status = await this.refreshRetention(spec);
-        this.showReport('retention', 'AIRK retention status', { collection: spec.collection, root: spec.root, dataDir: spec.dataDir,
-            retention: status ?? null, statusUnavailable: !status,
-            explanation: 'Retention concerns searchable index revisions. History and checkpoint controls manage retained committed evidence separately. Reader leases and the active revision remain protected. Indexing mode is separate from retention mode.' });
-    }
-    async history(action: HistoryAction): Promise<void> {
-        const spec = await this.chooseSpec(); if (!spec) { return; }
-        this.trusted();
-        await historyControl({
-            collection: `${spec.name} (${spec.collection})`,
-            read: <T>(args: string[]) => { this.trusted(); return runJson<T>(spec, 'collections', args); },
-            write: <T>(args: string[]) => this.writeNative<T>(spec, 'collections', args),
-            show: (title, value) => this.showJson(title, { collection: spec.collection, root: spec.root, dataDir: spec.dataDir, result: value }),
-            confirm: async (message, action) => await vscode.window.showWarningMessage(message, { modal: true }, action) === action,
-            pick: async (choices, title) => (await vscode.window.showQuickPick(choices, { title }))?.value,
-            input: (prompt, value) => Promise.resolve(vscode.window.showInputBox({ prompt, value, ignoreFocusOut: true }))
-        }, action);
+        await this.showJson('AIRK current index cleanup', await this.writeNative(spec, 'collections', ['maintain']));
+        this.invalidateCollectionTree();
     }
     async ingestionLimits(configure = false): Promise<void> {
         const spec = await this.chooseSpec(); if (!spec) { return; }
@@ -712,14 +640,14 @@ class Controller implements vscode.Disposable {
             const bytes = Number(text) * gib;
             return text.trim() && Number.isSafeInteger(bytes) && bytes >= 1048576 ? undefined : 'Enter a positive GiB value (at least 1 MiB) that converts to a whole, safe byte count.';
         };
-        const collectionInput = await vscode.window.showInputBox({ title: `Storage quota for ${spec.name}`, prompt: 'Collection limit in GiB, including retained generations and temporary builds. Default: 100 GiB.', value: String((current.collections[spec.collection] ?? current.default_collection_bytes) / gib), validateInput, ignoreFocusOut: true });
+        const collectionInput = await vscode.window.showInputBox({ title: `Storage quota for ${spec.name}`, prompt: 'Collection limit in GiB, including the current index and temporary updates. Default: 100 GiB.', value: String((current.collections[spec.collection] ?? current.default_collection_bytes) / gib), validateInput, ignoreFocusOut: true });
         if (collectionInput === undefined) { return; }
         const rootInput = await vscode.window.showInputBox({ title: 'Shared AIRK storage quota', prompt: 'Total limit in GiB for all collections in this storage folder. Default: 500 GiB.', value: String(current.root_bytes / gib), validateInput, ignoreFocusOut: true });
         if (rootInput === undefined) { return; }
         if (validateInput(collectionInput) || validateInput(rootInput)) { throw new Error('Invalid storage quota.'); }
         const proposed = { ...current, root_bytes: Number(rootInput) * gib, collections: { ...current.collections, [spec.collection]: Number(collectionInput) * gib } };
         if (proposed.collections[spec.collection] > proposed.root_bytes) { throw new Error('The collection quota cannot exceed the shared storage quota.'); }
-        const message = `Save ${collectionInput} GiB for ${spec.name} and ${rootInput} GiB total? Automatic retention may trim eligible old generations before a build or after storage pressure. Active indexes, readers and protected history remain safe. If lowering a limit, an automatic-retention cleanup pass may run before saving; protected allocations can prevent the reduction. No disk space is preallocated.`;
+        const message = `Save ${collectionInput} GiB for ${spec.name} and ${rootInput} GiB total? Unreferenced objects may be reclaimed before lowering a limit. Current objects and pending updates remain protected; their allocation can prevent the reduction. No disk space is preallocated.`;
         if (await vscode.window.showWarningMessage(message, { modal: true }, 'Save storage limits') !== 'Save storage limits') { return; }
         this.trusted();
         if (this.specs.get(spec.collection)?.dataDir !== spec.dataDir) { throw new Error('Collection storage changed; review its current limits.'); }
@@ -731,46 +659,12 @@ class Controller implements vscode.Disposable {
                 const status = await runJson<{ used_bytes: number; reserved_bytes: number; collections: Record<string, { used_bytes: number; reserved_bytes: number }> }>(spec, 'collections', ['quota', 'status']);
                 const used = status.collections[spec.collection];
                 if ((used && used.used_bytes + used.reserved_bytes > proposed.collections[spec.collection]) || status.used_bytes + status.reserved_bytes > proposed.root_bytes) {
-                    const retention = await this.refreshRetention(spec);
-                    if (retention?.policy.policy.mode === 'automatic') { await this.writeNative(spec, 'collections', ['retention', 'run', '--apply']); }
+                                await this.writeNative(spec, 'collections', ['maintain']);
                 }
                 await this.showJson('AIRK saved storage quotas', await this.writeNative(spec, 'collections', ['quota', 'set', '--json', JSON.stringify(proposed), '--expected-json', JSON.stringify(current)]));
             });
         });
         this.invalidateCollectionTree();
-    }
-    async retentionPolicy(): Promise<void> {
-        const spec = await this.chooseSpec(); if (!spec) { return; }
-        const status = await this.refreshRetention(spec); if (!status) { throw new Error('Cannot configure retention without current policy status.'); }
-        const choice = await vscode.window.showQuickPick([
-            { label: 'Manual retention', description: 'Keep generations until explicit maintenance; no quota-triggered cleanup.', mode: 'manual' as const },
-            { label: 'Automatic retention', description: 'Bounded cleanup after publications; protected readers may delay convergence.', mode: 'automatic' as const }
-        ], { title: `Retention policy for ${spec.name} (${spec.collection}) · current ${status.policy.policy.mode}` });
-        if (!choice) { return; }
-        const generations = await vscode.window.showQuickPick(Array.from({ length: 9 }, (_, predecessors) => ({
-            label: predecessors === 0 ? '1 generation: active only (default)' : `${predecessors + 1} generations: active + ${predecessors} previous`,
-            description: predecessors === status.policy.policy.searchable_predecessors ? 'Current setting' : undefined,
-            predecessors
-        })), { title: 'Completed generations to keep; live readers and protected history may retain more' });
-        if (!generations) { return; }
-        const json = JSON.stringify({ ...retentionPolicyForMode(status, choice.mode), searchable_predecessors: generations.predecessors });
-        const preview = await runJson<RetentionPreview>(spec, 'collections', ['retention', 'preview', '--json', json]);
-        await this.showJson('AIRK proposed retention policy', { collection: spec.collection, root: spec.root, dataDir: spec.dataDir, preview });
-        const confirm = await vscode.window.showWarningMessage(`Set ${choice.mode} retention and keep ${generations.predecessors + 1} completed generation(s) for ${spec.name} (${spec.collection})? This persists the previewed policy without immediately deleting generations.`, { modal: true }, 'Save retention policy');
-        if (confirm !== 'Save retention policy') { return; }
-        await this.writeNative(spec, 'collections', ['retention', 'set', '--json', json]);
-        await this.refreshRetention(spec);
-    }
-    async retentionRun(): Promise<void> {
-        const spec = await this.chooseSpec(); if (!spec) { return; }
-        const preview = await runJson<RetentionPreview>(spec, 'collections', ['retention', 'preview']);
-        await this.showJson('AIRK retention maintenance preview', { collection: spec.collection, root: spec.root, dataDir: spec.dataDir, preview });
-        const estimate = preview.estimated_reclaimable_bytes == null ? 'unknown reclaimable bytes' : `${preview.estimated_reclaimable_bytes} estimated reclaimable bytes`;
-        const legacy = preview.legacy_candidates?.length ? ` Includes ${preview.legacy_candidates.length} legacy revision candidates identified by their original digests.` : '';
-        const confirm = await vscode.window.showWarningMessage(`Run one bounded retention pass for ${spec.name} (${spec.collection}), ${estimate}?${legacy} Protected readers may leave pending work. Source files are retained.`, { modal: true }, 'Run retention maintenance');
-        if (confirm !== 'Run retention maintenance') { return; }
-        await this.showJson('AIRK retention maintenance result', await this.writeNative(spec, 'collections', ['retention', 'run', '--apply']));
-        await this.refreshRetention(spec);
     }
     async showJson(title: string, value: unknown): Promise<void> {
         const document = await vscode.workspace.openTextDocument({ language: 'json', content: JSON.stringify({ title, ...value as object }, null, 2) });
@@ -794,8 +688,7 @@ class Controller implements vscode.Disposable {
     async collectionStatus(selected?: LaunchSpec): Promise<void> {
         const spec = selected ?? await this.chooseSpec(); if (!spec) { return; }
         const coverage = await this.writeNative<Coverage>(spec, 'coverage', ['--refresh']);
-        const retention = await this.refreshRetention(spec);
-        this.showReport('coverage', 'AIRK workspace coverage', { coverage, retention: retention ?? null, scheduling: this.scheduler.states(), dataDir: spec.dataDir,
+        this.showReport('coverage', 'AIRK workspace coverage', { coverage, scheduling: this.scheduler.states(), dataDir: spec.dataDir,
             explanation: 'Coverage compares saved eligible files with indexed hashes at the inventory time. Ignored and unsupported files are excluded; extraction failures remain eligible. A partial scan cannot establish a percentage.' });
     }
     private async refreshUsageSummary(spec: LaunchSpec): Promise<void> {
@@ -914,7 +807,7 @@ class Controller implements vscode.Disposable {
         if (choice?.command) { await vscode.commands.executeCommand(choice.command); }
     }
     configure(): void { const options = this.options(); this.scheduler.configure(options); this.coverage?.configure(options.quietMs, options.mode === 'idle' ? options.idleMs : 0); }
-    dispose(): void { this.disposed = true; this.closeToolsTerminals(); this.toolsClosed?.dispose(); clearInterval(this.rescan); clearInterval(this.maintenanceTimer); this.sidebar.dispose(); this.coverage.dispose(); this.scheduler.dispose(); this.definitions.dispose(); this.collectionTree.dispose(); this.status.dispose(); this.output.dispose(); }
+    dispose(): void { this.disposed = true; this.closeToolsTerminals(); this.toolsClosed?.dispose(); clearInterval(this.rescan); this.sidebar.dispose(); this.coverage.dispose(); this.scheduler.dispose(); this.definitions.dispose(); this.collectionTree.dispose(); this.status.dispose(); this.output.dispose(); }
 }
 
 export async function activate(context: vscode.ExtensionContext): Promise<{ getServerDefinitions(): Promise<vscode.McpStdioServerDefinition[]> }> {
@@ -934,10 +827,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<{ getS
         menu: () => controller.menu(), index: () => controller.manualIndex(), reindex: () => controller.manualIndex(true),
         indexMode: () => controller.chooseMode(), pause: () => controller.pauseAuto(true),
         resume: async () => { await controller.refresh(); await controller.pauseAuto(false); },
-        chooseStorage: () => controller.chooseStorage(), storageLimits: () => controller.storageLimits(), collections: () => controller.collections(), removeCollection: () => controller.collections(true), prune: () => controller.prune(),
-        retention: () => controller.retention(), retentionPolicy: () => controller.retentionPolicy(), retentionRun: () => controller.retentionRun(),
-        history: () => controller.history('show'), historyPolicy: () => controller.history('policy'), historyRun: () => controller.history('run'),
-        historyAvailable: () => controller.history('available'), checkpoints: () => controller.history('checkpoints'), createCheckpoint: () => controller.history('create'), removeCheckpoint: () => controller.history('remove'), purgeHistory: () => controller.history('purge'),
+        chooseStorage: () => controller.chooseStorage(), storageLimits: () => controller.storageLimits(), collections: () => controller.collections(), removeCollection: () => controller.collections(true), currentMaintenance: () => controller.currentMaintenance(),
         extractionPolicy: () => controller.extractionPolicy(), configureExtractionPolicy: () => controller.extractionPolicy(true),
         ingestionLimits: () => controller.ingestionLimits(), configureIngestionLimits: () => controller.ingestionLimits(true),
         status: () => controller.collectionStatus(), usage: () => controller.usage(), setupAgent: () => controller.setupAgent(), verifyMcp: () => controller.verify(), manageMcp: () => controller.manageMcp(), manageVscodeMcp: () => controller.manageVscodeMcp(), logs: () => controller.output.show()

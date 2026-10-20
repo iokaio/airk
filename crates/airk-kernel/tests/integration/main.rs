@@ -48,3 +48,5 @@ mod syntax_repairs_v2;
 mod usage;
 mod vectors;
 mod workspace;
+
+mod current_inspection;

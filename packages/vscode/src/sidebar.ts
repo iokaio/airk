@@ -87,7 +87,7 @@ export function sidebarContent(state: SidebarState): string {
             ${!item.detail ? '<option>Loading current setting…</option>' : (['essential', 'balanced', 'detailed'] as const).map(level => `<option value="${level}"${item.detail?.configured_detail === level ? ' selected' : ''}>${level === 'balanced' ? 'Balanced (recommended)' : level[0].toUpperCase() + level.slice(1)}</option>`).join('')}</select>
             <p class="muted">Essential: text and citations. Balanced: adds declarations, imports and document facts. Detailed: adds call occurrences and document change tracking.</p>
             ${item.detail ? `<p role="status">Published: <strong>${escape(item.detail.published_detail ?? 'Not indexed')}</strong>${item.detail.pending_reindex ? ' · Change pending indexing' : ''}</p>` : '<p class="muted">Current detail is not available yet.</p>'}
-            <p class="muted">Changing detail rebuilds evidence. The published index remains available until success. History retention and vector search are separate.</p></div>`;
+            <p class="muted">Changing detail rebuilds evidence. The published index remains available until success. Vector selection is configured separately.</p></div>`;
         const vectors = `<div class="mcp"><h3>Vector search</h3>
             <label class="toggle"><input id="${escape(item.collection)}-vectors" type="checkbox" role="switch" ${attributes} data-vectors="true"${item.vectors?.enabled !== false ? ' checked' : ''}${disabled || !item.vectors || indexing || state.changingStorage ? ' disabled' : ''}> Include meaning-based matches</label>
             <p class="muted">On by default. Combines local vector search with keyword results. First setup downloads about 91 MB of model files; your source files stay on this machine. Uses CPU and additional index storage.</p>
@@ -118,7 +118,7 @@ export function sidebarContent(state: SidebarState): string {
             <p class="muted">${item.usage ? `Last 30 days: ${escape(item.usage.calls)} recorded calls · ${escape(item.usage.reduction ?? 'Not measured')} estimated tokens avoided versus complete cited files (${escape(item.usage.compared)} comparisons). ${item.usage.disabled ? 'Recording is off. ' : ''}Updated ${escape(new Date(item.usage.checkedAt).toLocaleTimeString())}.` : 'Open Usage &amp; Savings to see activity and estimated savings.'}</p>${vectors}${detail}
             <details id="location-${escape(item.collection)}"><summary>Storage and last index</summary><dl><dt>Index size</dt><dd>${bytes(item.diskBytes)}</dd><dt>Eligible source size</dt><dd>${bytes(report?.eligible_source_bytes)}</dd><dt>Last indexed</dt><dd>${escape(last)}</dd><dt>Index folder</dt><dd class="path">${escape(item.dataDir)}</dd></dl></details>${connection}</section>`;
     }).join('');
-    const primaryCommands = new Set(['airk.index', 'airk.reindex', 'airk.indexMode', 'airk.pause', 'airk.resume', 'airk.chooseStorage', 'airk.status', 'airk.verifyMcp', 'airk.setupAgent', 'airk.manageMcp', 'airk.manageVscodeMcp', 'airk.storageLimits', 'airk.retentionPolicy', 'airk.retentionRun']);
+    const primaryCommands = new Set(['airk.index', 'airk.reindex', 'airk.indexMode', 'airk.pause', 'airk.resume', 'airk.chooseStorage', 'airk.status', 'airk.verifyMcp', 'airk.setupAgent', 'airk.manageMcp', 'airk.manageVscodeMcp', 'airk.storageLimits', 'airk.currentMaintenance']);
     const groups = state.groups.filter(group => group.label !== 'Indexing').map(group => {
         const rows = group.commands.filter(([, command]) => !primaryCommands.has(command) && command !== 'airk.installCli').map(([label, command, help]) =>
             `<div class="control">${button(label, command, disabled && command !== 'airk.logs')}<p class="muted">${escape(help)}</p></div>`).join('');
@@ -138,7 +138,7 @@ export function sidebarContent(state: SidebarState): string {
         ${button('Connect coding agent…', 'airk.manageMcp', disabled, false)}
         ${button('VS Code / Copilot MCP controls', 'airk.manageVscodeMcp', disabled)}
         <p class="muted">Choose Codex, Claude Code or another agent to configure it. VS Code / Copilot controls only manage VS Code connections.</p></section>
-        <section><h2>Index storage</h2><p class="muted">Choose a drive for new indexes. Existing indexes stay where they are.</p>${button('Choose storage folder…', 'airk.chooseStorage', disabled || state.changingStorage)}<div class="actions">${button('Storage limits…', 'airk.storageLimits', disabled)}${button('Generations and cleanup…', 'airk.retentionPolicy', disabled)}</div><div class="actions">${button('Reclaim eligible space…', 'airk.retentionRun', disabled)}</div><p class="muted">Defaults: 100 GiB per collection, 500 GiB total; target the active generation only. Readers, protected history and pending cleanup can temporarily retain more.</p></section>${groups}`;
+        <section><h2>Index storage</h2><p class="muted">Choose a drive for new indexes. Existing indexes stay where they are.</p>${button('Choose storage folder…', 'airk.chooseStorage', disabled || state.changingStorage)}<div class="actions">${button('Storage limits…', 'airk.storageLimits', disabled)}</div><div class="actions">${button('Reclaim unreferenced objects…', 'airk.currentMaintenance', disabled)}</div><p class="muted">Defaults: 100 GiB per collection, 500 GiB total; one current index per collection. Pending updates and cleanup can temporarily use additional space.</p></section>${groups}`;
 }
 
 export function renderSidebar(state: SidebarState): string {
@@ -188,19 +188,7 @@ export function sidebarControlGroups(): ControlGroup[] {
             ['Configure Storage Limits…', 'airk.storageLimits', 'Collection and shared quotas in GiB'],
             ['Manage Collections and Disk Space', 'airk.collections', 'Sizes, roots and free space'],
             ['Remove Unneeded Collection…', 'airk.removeCollection', 'Delete a derived index; source files stay'],
-            ['Trim Obsolete Index Generations…', 'airk.prune', 'Preview, then reclaim superseded builds']] },
-        { label: 'Retention and history', commands: [
-            ['Show Retention Status', 'airk.retention', 'Policy, protected bytes and pending work'],
-            ['Choose Retention Policy…', 'airk.retentionPolicy', 'Generations to keep; manual or automatic cleanup'],
-            ['Run Retention Maintenance…', 'airk.retentionRun', 'Preview, then one bounded cleanup pass'],
-            ['Show History Status', 'airk.history', 'Retained history policy and plan'],
-            ['Choose History Policy…', 'airk.historyPolicy', 'Enable or disable bounded history'],
-            ['Run History Maintenance…', 'airk.historyRun', 'Preview, then one bounded pass'],
-            ['List Retained Publication Identities', 'airk.historyAvailable', 'Committed revisions you can pin'],
-            ['Show Checkpoints', 'airk.checkpoints', 'Pinned committed revisions'],
-            ['Create Checkpoint…', 'airk.createCheckpoint', 'Pin a committed revision under a label'],
-            ['Remove Checkpoint…', 'airk.removeCheckpoint', 'Release one pin'],
-            ['Preview Logical History Purge…', 'airk.purgeHistory', 'Plan, then confirm; not secure erasure']] },
+            ['Reclaim Unreferenced Index Objects', 'airk.currentMaintenance', 'One bounded cleanup pass; current evidence stays']] },
         { label: 'Extraction', commands: [
             ['Show Ingestion Limits', 'airk.ingestionLimits', 'Machine sizing, measured source sizes, quotas and storage path'],
             ['Configure Ingestion Limits…', 'airk.configureIngestionLimits', 'Restore automatic sizing or import explicit limits'],

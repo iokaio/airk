@@ -300,7 +300,7 @@ impl Quota {
             self.root.canonicalize()? == self.root,
             "quota root identity changed"
         );
-        let control = self.root.join(".quota");
+        let control = self.root.join(".quota-1.2");
         fs::create_dir_all(&control)?;
         unlinked(&control)?;
         let records = control.join("reservations");
@@ -338,7 +338,7 @@ impl Quota {
                 Err(error) => return Err(error.into()),
             }
         }
-        for entry in fs::read_dir(self.root.join(".quota"))? {
+        for entry in fs::read_dir(self.root.join(".quota-1.2"))? {
             within_deadline(deadline)?;
             let entry = entry?;
             let name = entry.file_name();
@@ -371,7 +371,7 @@ impl Quota {
         })
     }
     fn read_policy(&self) -> Result<QuotaPolicy> {
-        let path = self.root.join(".quota/policy.json");
+        let path = self.root.join(".quota-1.2/policy.json");
         let policy: QuotaPolicy = if fs::symlink_metadata(&path).is_ok() {
             json_read(&path, POLICY_MAX)?
         } else {
@@ -412,10 +412,10 @@ impl Quota {
         }
         let mut temporary = tempfile::Builder::new()
             .prefix("policy-")
-            .tempfile_in(self.root.join(".quota"))?;
+            .tempfile_in(self.root.join(".quota-1.2"))?;
         serde_json::to_writer(temporary.as_file_mut(), &policy)?;
         temporary.as_file().sync_all()?;
-        temporary.persist(self.root.join(".quota/policy.json"))?;
+        temporary.persist(self.root.join(".quota-1.2/policy.json"))?;
         Ok(report)
     }
     pub fn status(&self) -> Result<QuotaStatus> {
@@ -551,7 +551,7 @@ impl Quota {
         }
         within_deadline(deadline)?;
         if !collection.is_empty() {
-            let target = self.root.join("collections").join(collection);
+            let target = self.root.join("collections-1.2").join(collection);
             if target.is_dir() {
                 crate::capacity::ensure_same_filesystem(&self.root, &target)?;
             }
@@ -561,7 +561,7 @@ impl Quota {
         crate::capacity::require_growth(&self.root, RECORD_MAX)?;
         let mut record_file = tempfile::Builder::new()
             .prefix("r-")
-            .tempfile_in(self.root.join(".quota/reservations"))?;
+            .tempfile_in(self.root.join(".quota-1.2/reservations"))?;
         let record_path = record_file.path().to_path_buf();
         let lease_path = record_path.with_extension("lease");
         let lease = OpenOptions::new()
@@ -593,7 +593,8 @@ impl Quota {
     }
     fn records_without_recovery(&self, deadline: Option<Instant>) -> Result<Vec<LiveRecord>> {
         let mut records = Vec::new();
-        for (visited, entry) in fs::read_dir(self.root.join(".quota/reservations"))?.enumerate() {
+        for (visited, entry) in fs::read_dir(self.root.join(".quota-1.2/reservations"))?.enumerate()
+        {
             within_deadline(deadline)?;
             ensure!(
                 visited < MAX_RESERVATIONS * 2 + 2,
@@ -626,7 +627,7 @@ impl Quota {
     }
     fn live_records(&self) -> Result<Vec<LiveRecord>> {
         let mut live = Vec::new();
-        let base = self.root.join(".quota/reservations");
+        let base = self.root.join(".quota-1.2/reservations");
         let entries = fs::read_dir(&base)?.collect::<std::io::Result<Vec<_>>>()?;
         ensure!(
             entries.len() <= MAX_RESERVATIONS * 2 + 2,
@@ -750,7 +751,7 @@ impl Quota {
                     "quota inventory entry limit exhausted; refusing allocation"
                 );
                 let path = entry.path();
-                if path == self.root.join(".quota") {
+                if path == self.root.join(".quota-1.2") {
                     continue;
                 }
                 let Some(kind) = inventory_read(deadline, || entry.file_type())
@@ -788,7 +789,7 @@ impl Quota {
                 };
                 let bytes = metadata.len();
                 result.used_bytes = checked_add(result.used_bytes, bytes)?;
-                if let Ok(relative) = path.strip_prefix(self.root.join("collections"))
+                if let Ok(relative) = path.strip_prefix(self.root.join("collections-1.2"))
                     && let Some(Component::Normal(collection)) = relative.components().next()
                     && let Some(collection) = collection
                         .to_str()
@@ -875,7 +876,7 @@ impl Reservation {
             .0
             .quota
             .root
-            .join("collections")
+            .join("collections-1.2")
             .join(&self.0.collection);
         let relative = path
             .strip_prefix(&base)
@@ -1150,7 +1151,7 @@ fn staging_path(quota: &Quota, collection: &str, record: &Path) -> Result<PathBu
     );
     Ok(quota
         .root
-        .join("collections")
+        .join("collections-1.2")
         .join(collection)
         .join(format!(".quota-stage-{name}")))
 }
@@ -1163,8 +1164,8 @@ fn cleanup_staging(quota: &Quota, collection: &str, record: &Path) -> Result<()>
         return Ok(());
     }
     for path in [
-        quota.root.join("collections"),
-        quota.root.join("collections").join(collection),
+        quota.root.join("collections-1.2"),
+        quota.root.join("collections-1.2").join(collection),
         stage.clone(),
     ] {
         unlinked(&path)?;
@@ -1313,8 +1314,11 @@ mod tests {
         quota.configure(policy(100, 80))?;
         let before = quota.status()?;
         let other = quota.reserve("fixture", 20)?;
-        fs::create_dir_all(root.path().join("collections/fixture"))?;
-        fs::write(root.path().join("collections/fixture/existing"), [0; 10])?;
+        fs::create_dir_all(root.path().join("collections-1.2/fixture"))?;
+        fs::write(
+            root.path().join("collections-1.2/fixture/existing"),
+            [0; 10],
+        )?;
         assert_eq!(before.reserved_bytes, 0);
         let remaining = quota.reserve_available("fixture", 100)?;
         assert_eq!(remaining.0.limit, 50);
@@ -1400,7 +1404,7 @@ mod tests {
         assert!(service.staging_directory().is_err());
         assert!(
             service
-                .create_file(root.path().join("scheduler.sqlite3"))
+                .create_file(root.path().join("scheduler-1.2.sqlite3"))
                 .is_err()
         );
         let collection = quota.reserve("fixture", 10)?;
@@ -1421,7 +1425,7 @@ mod tests {
         let root = tempfile::tempdir()?;
         let quota = Quota::open(root.path())?;
         quota.configure(policy(100, 80))?;
-        let old = root.path().join("collections/one/generations/old");
+        let old = root.path().join("collections-1.2/one/generations/old");
         fs::create_dir_all(&old)?;
         fs::write(old.join("retained"), [0; 20])?;
         fs::write(root.path().join("other-managed-state"), [0; 10])?;
@@ -1464,7 +1468,7 @@ mod tests {
         let quota = Quota::open(root.path())?;
         let reservation = quota.reserve("fixture", 65536)?;
         let stage = reservation.staging_directory()?;
-        let retained = root.path().join("collections/fixture/retained");
+        let retained = root.path().join("collections-1.2/fixture/retained");
         fs::write(&retained, [7; 7])?;
         let barrier = Arc::new(std::sync::Barrier::new(2));
         let ready = barrier.clone();
@@ -1636,7 +1640,7 @@ mod tests {
         let root = tempfile::tempdir()?;
         let published = root
             .path()
-            .join("collections/fixture/generations/published");
+            .join("collections-1.2/fixture/generations/published");
         fs::create_dir_all(&published)?;
         fs::write(published.join("evidence"), b"retained")?;
         let result = std::process::Command::new(std::env::current_exe()?)
@@ -1681,7 +1685,7 @@ mod tests {
         )?;
         std::os::unix::fs::symlink(
             outside.path().join("policy"),
-            root.path().join(".quota/policy.json"),
+            root.path().join(".quota-1.2/policy.json"),
         )?;
         assert!(quota.policy().is_err());
         fs::remove_file(outside.path().join("policy"))?;
@@ -1689,10 +1693,10 @@ mod tests {
             quota.policy().is_err(),
             "dangling policy links must not select default quotas"
         );
-        fs::remove_file(root.path().join(".quota/policy.json"))?;
-        fs::remove_file(root.path().join(".quota/ledger.lock"))?;
+        fs::remove_file(root.path().join(".quota-1.2/policy.json"))?;
+        fs::remove_file(root.path().join(".quota-1.2/ledger.lock"))?;
         let external_lock = outside.path().join("uncreated-lock");
-        std::os::unix::fs::symlink(&external_lock, root.path().join(".quota/ledger.lock"))?;
+        std::os::unix::fs::symlink(&external_lock, root.path().join(".quota-1.2/ledger.lock"))?;
         assert!(quota.status().is_err());
         assert!(
             !external_lock.exists(),

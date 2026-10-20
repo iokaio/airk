@@ -201,6 +201,15 @@ impl CurrentRead {
             Ok(entries)
         })
     }
+    pub fn has_prepared_update(&self) -> Result<bool> {
+        self.with_connection(|connection| {
+            Ok(
+                connection.query_row("SELECT phase FROM current_state WHERE id=1", [], |row| {
+                    row.get::<_, String>(0)
+                })? == "prepared",
+            )
+        })
+    }
     pub fn head(&self) -> &CurrentHead {
         &self.head
     }

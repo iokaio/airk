@@ -79,7 +79,7 @@ impl FileStore {
         ensure!(
             quota
                 .root()
-                .join("collections")
+                .join("collections-1.2")
                 .join(collection)
                 .canonicalize()?
                 == directory,
@@ -116,7 +116,7 @@ mod tests {
     #[test]
     fn bounded_configuration_round_trips_with_maximum_escaped_owner_binding() -> Result<()> {
         let root = tempfile::tempdir()?;
-        let store = FileStore::new(root.path().join("collections/fixture"));
+        let store = FileStore::new(root.path().join("collections-1.2/fixture"));
         let writer = store.lock()?;
         let quota = Quota::open(root.path())?;
         // The store treats owner identity as opaque; test its worst-case JSON

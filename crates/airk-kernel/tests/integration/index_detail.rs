@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+use super::current_inspection::InspectCurrent;
 use airk_core::{FactQuery, extraction::IndexDetail};
 use airk_kernel::{Kernel, extraction::ExtractionPolicy, limits::ScanLimits};
 use airk_store::FileStore;
@@ -44,8 +45,8 @@ fn levels_rebuild_cache_preserve_citations_and_report_published_coverage() -> Re
     assert!(before.facts.iter().any(|f| f.kind == "definition"));
     assert!(!before.facts.iter().any(|f| f.kind == "call"));
     assert_eq!(kernel.index()?.reused, 3);
-    let store = FileStore::new(data.path().join("collections/default"));
-    let balanced = store.catalog()?.unwrap();
+    let store = FileStore::new(data.path().join("collections-1.2/default"));
+    let balanced = store.current_test_catalog()?.unwrap();
     let first_profile = balanced.inventory.as_ref().unwrap().files["sample.rs"]
         .state
         .profile_id;
@@ -62,7 +63,7 @@ fn levels_rebuild_cache_preserve_citations_and_report_published_coverage() -> Re
     let detailed = kernel.facts(&facts())?;
     assert_eq!(detailed.indexing.level, IndexDetail::Detailed);
     assert!(detailed.facts.iter().any(|f| f.kind == "call"));
-    let catalog = store.catalog()?.unwrap();
+    let catalog = store.current_test_catalog()?.unwrap();
     assert_ne!(
         catalog.inventory.as_ref().unwrap().files["sample.rs"]
             .state
@@ -86,7 +87,7 @@ fn levels_rebuild_cache_preserve_citations_and_report_published_coverage() -> Re
     assert!(essential.facts.is_empty());
     assert_eq!(essential.indexing.level, IndexDetail::Essential);
     assert!(essential.indexing.note.contains("not indexed"));
-    let catalog = store.catalog()?.unwrap();
+    let catalog = store.current_test_catalog()?.unwrap();
     use airk_core::ArtifactSource;
     let artifact = catalog.load_artifact("sample.rs")?;
     assert_eq!(
@@ -148,70 +149,35 @@ fn legacy_policy_stays_detailed_and_detail_selection_keeps_adapter_rules() -> Re
 }
 
 #[test]
-fn warmed_exact_reads_remain_coherent_during_publication_and_cleanup() -> Result<()> {
-    use sha2::{Digest, Sha256};
-    use std::sync::{Arc, Barrier};
+fn current_fact_reads_hold_publication_gate_until_request_release() -> Result<()> {
+    use super::current_inspection::read_current;
     let root = tempfile::tempdir()?;
     let data = tempfile::tempdir()?;
+    fs::write(
+        root.path().join("sample.rs"),
+        "pub fn before_publication() {}\n",
+    )?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
-    let texts: Vec<_> = (0..4)
-        .map(|n| format!("pub fn publication_{n}() {{}}\n"))
-        .collect();
-    fs::write(root.path().join("sample.rs"), &texts[0])?;
     kernel.index()?;
-    kernel.configure_retention(airk_store::retention::RetentionPolicy {
-        mode: airk_store::retention::RetentionMode::Automatic,
-        searchable_predecessors: 0,
-        ..Default::default()
-    })?;
-    let store = FileStore::new(data.path().join("collections/default"));
-    let identity = store.catalog()?.unwrap().snapshot.root;
-    // Populate semantic-validation cache before the publication/maintenance race.
+    let store = FileStore::new(data.path().join("collections-1.2/default"));
+    let request = read_current(&store)?;
+    let response = request.native_facts_page(&store, &facts(), false, &Default::default())?;
+    assert_eq!(response.facts.len(), 1);
+    fs::write(
+        root.path().join("sample.rs"),
+        "pub fn after_publication() {}\n",
+    )?;
+    assert!(kernel.index().is_err());
     assert_eq!(
-        store
-            .facts(&identity, "default", &facts(), false)?
-            .unwrap()
-            .facts
-            .len(),
-        1
+        request
+            .native_facts_page(&store, &facts(), false, &Default::default())?
+            .facts[0]
+            .name,
+        "before_publication"
     );
-    let barrier = Arc::new(Barrier::new(2));
-    let reader_barrier = barrier.clone();
-    let reader_store = store.clone();
-    let reader_texts = texts.clone();
-    let reader = std::thread::spawn(move || -> Result<()> {
-        reader_barrier.wait();
-        for _ in 0..80 {
-            let response = reader_store
-                .facts(&identity, "default", &facts(), false)?
-                .unwrap();
-            assert_eq!(
-                response.publication.as_ref().unwrap().token.generation,
-                response.generation
-            );
-            assert_eq!(response.facts.len(), 1);
-            let fact = &response.facts[0];
-            let index: usize = fact.name.strip_prefix("publication_").unwrap().parse()?;
-            assert_eq!(fact.citation.path, "sample.rs");
-            assert_eq!(
-                fact.citation.content_hash,
-                format!("{:x}", Sha256::digest(reader_texts[index].as_bytes()))
-            );
-        }
-        Ok(())
-    });
-    barrier.wait();
-    for text in texts.iter().skip(1) {
-        fs::write(root.path().join("sample.rs"), text)?;
-        kernel.index()?;
-        kernel.maintain_retention()?;
-    }
-    reader.join().expect("reader panicked")?;
-    kernel.maintain_retention()?;
-    let retained = fs::read_dir(store.directory().join("generations"))?.count();
-    assert_eq!(
-        retained, 1,
-        "verification cache must not pin obsolete generations"
-    );
+    drop(request);
+    kernel.index()?;
+    assert_eq!(kernel.facts(&facts())?.facts[0].name, "after_publication");
+    assert_eq!(kernel.maintain_current()?.removed_files, 0);
     Ok(())
 }

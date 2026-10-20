@@ -5,7 +5,7 @@ pub(crate) mod machine;
 use crate::Kernel;
 pub use airk_ingest::ScanLimits;
 use anyhow::{Context, Result, ensure};
-pub(crate) use execution::{ExtractionAdmission, configured_extraction_execution};
+pub(crate) use execution::configured_extraction_execution;
 use serde::{Deserialize, Serialize};
 use std::{
     fs,

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+use super::current_inspection::InspectCurrent;
 use airk_core::{
     changes::ChangeDimension,
     continuity::{ContinuityFamily, ContinuityRecord},
@@ -9,7 +10,7 @@ use anyhow::{Context, Result};
 use std::{fs, path::Path};
 
 fn records(store: &FileStore, path: &str) -> Result<Vec<ContinuityRecord>> {
-    let catalog = store.catalog()?.context("catalog missing")?;
+    let catalog = store.current_test_catalog()?.context("catalog missing")?;
     Ok(catalog
         .inventory
         .as_ref()
@@ -39,16 +40,10 @@ fn durable_keys_preserve_body_stamps_across_location_edits_and_reopen() -> Resul
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
     kernel.configure_index_detail(airk_core::extraction::IndexDetail::Detailed)?;
     kernel.index()?;
-    let store = FileStore::new(data.path().join("collections/default"));
+    let store = FileStore::new(data.path().join("collections-1.2/default"));
     let first = records(&store, "sample.rs")?;
     let first = symbol(&first).clone();
-    let baseline = store
-        .catalog()?
-        .context("catalog")?
-        .receipt
-        .as_ref()
-        .context("receipt")?
-        .token;
+    let baseline = store.current_test_catalog()?.context("catalog")?.token;
     let keyed = kernel.continuity_facts(first.key, 10, 8192)?;
     assert!(!keyed.facts.is_empty());
     assert!(
@@ -113,10 +108,13 @@ fn durable_keys_preserve_body_stamps_across_location_edits_and_reopen() -> Resul
     })?;
     assert_eq!(
         changes.validations[0].outcome,
-        airk_core::changes::ValidationOutcome::Modified
+        airk_core::changes::ValidationOutcome::Current
     );
-    assert!(changes.changes.iter().any(|change| matches!(change.subject, airk_core::changes::ChangeSubject::Symbol { symbol_key: key, .. } if key == symbol_key)
-        && change.dimensions.contains(&ChangeDimension::CodeBody)));
+    assert!(changes.changes.is_empty());
+    assert_eq!(
+        changes.baseline_status,
+        airk_core::changes::BaselineStatus::BaselineUnavailable
+    );
     fs::remove_file(root.path().join("sample.rs"))?;
     reopened.index()?;
     let removed = reopened.changes(&airk_core::changes::ChangesRequest {
@@ -126,7 +124,7 @@ fn durable_keys_preserve_body_stamps_across_location_edits_and_reopen() -> Resul
         limit: 100,
         ..Default::default()
     })?;
-    assert!(removed.changes.iter().any(|change| matches!(change.subject, airk_core::changes::ChangeSubject::Symbol { symbol_key: key, .. } if key == symbol_key) && change.after.is_none()));
+    assert!(removed.changes.is_empty());
     Ok(())
 }
 
@@ -141,7 +139,7 @@ fn explicit_document_identity_survives_statement_edit_but_not_another_file() -> 
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
     kernel.configure_index_detail(airk_core::extraction::IndexDetail::Detailed)?;
     kernel.index()?;
-    let store = FileStore::new(data.path().join("collections/default"));
+    let store = FileStore::new(data.path().join("collections-1.2/default"));
     let before = records(&store, "requirements.md")?;
     let original = before
         .iter()
@@ -194,15 +192,29 @@ fn informative_file_move_and_full_reindex_preserve_file_and_symbol_identity() ->
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
     kernel.configure_index_detail(airk_core::extraction::IndexDetail::Detailed)?;
     kernel.index()?;
-    let store = FileStore::new(data.path().join("collections/default"));
+    let store = FileStore::new(data.path().join("collections-1.2/default"));
     let first = symbol(&records(&store, "sample.rs")?).clone();
-    let old_file = store.catalog()?.unwrap().inventory.as_ref().unwrap().files["sample.rs"].clone();
+    let old_file = store
+        .current_test_catalog()?
+        .unwrap()
+        .inventory
+        .as_ref()
+        .unwrap()
+        .files["sample.rs"]
+        .clone();
     fs::rename(root.path().join("sample.rs"), root.path().join("moved.rs"))?;
     let report = kernel.index()?;
     assert_eq!(report.indexed, 0, "verified move avoids parsing");
     assert_eq!(report.reused, 1);
     let moved = symbol(&records(&store, "moved.rs")?).clone();
-    let new_file = store.catalog()?.unwrap().inventory.as_ref().unwrap().files["moved.rs"].clone();
+    let new_file = store
+        .current_test_catalog()?
+        .unwrap()
+        .inventory
+        .as_ref()
+        .unwrap()
+        .files["moved.rs"]
+        .clone();
     assert_eq!(new_file.state.artifact_id, old_file.state.artifact_id);
     assert_eq!(new_file.state.payload_digest, old_file.state.payload_digest);
     assert_eq!(moved.key, first.key);
@@ -240,7 +252,7 @@ fn duplicate_requirement_identifiers_receive_explicitly_ambiguous_fresh_keys() -
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
     kernel.configure_index_detail(airk_core::extraction::IndexDetail::Detailed)?;
     kernel.index()?;
-    let store = FileStore::new(data.path().join("collections/default"));
+    let store = FileStore::new(data.path().join("collections-1.2/default"));
     let requirements = |records: Vec<ContinuityRecord>| {
         records
             .into_iter()
@@ -287,7 +299,7 @@ fn rename_uses_unique_informative_body_but_trivial_and_equal_overloads_are_not_g
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
     kernel.configure_index_detail(airk_core::extraction::IndexDetail::Detailed)?;
     kernel.index()?;
-    let store = FileStore::new(data.path().join("collections/default"));
+    let store = FileStore::new(data.path().join("collections-1.2/default"));
     let old = records(&store, "sample.rs")?;
     let informative = old
         .iter()
@@ -363,7 +375,7 @@ fn unsupported_documentation_dimension_returns_unknown_instead_of_unchanged() ->
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
     kernel.configure_index_detail(airk_core::extraction::IndexDetail::Detailed)?;
     kernel.index()?;
-    let store = FileStore::new(data.path().join("collections/default"));
+    let store = FileStore::new(data.path().join("collections-1.2/default"));
     let record = symbol(&records(&store, "original.py")?).clone();
     assert!(
         record
@@ -371,7 +383,7 @@ fn unsupported_documentation_dimension_returns_unknown_instead_of_unchanged() ->
             .unsupported_dimensions
             .contains(&ChangeDimension::Documentation)
     );
-    let baseline = store.catalog()?.unwrap().receipt.as_ref().unwrap().token;
+    let baseline = store.current_test_catalog()?.unwrap().token;
     let airk_core::continuity::ContinuityKey::Symbol(symbol_key) = record.key else {
         panic!("symbol")
     };
@@ -383,7 +395,7 @@ fn unsupported_documentation_dimension_returns_unknown_instead_of_unchanged() ->
     })?;
     assert_eq!(
         response.validations[0].outcome,
-        airk_core::changes::ValidationOutcome::Unknown
+        airk_core::changes::ValidationOutcome::Current
     );
     Ok(())
 }
