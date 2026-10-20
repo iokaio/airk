@@ -110,7 +110,7 @@ fn query(prefix: Option<&str>, bytes: usize) -> SearchQuery {
 
 #[test]
 fn long_chunk_tail_is_returned_by_semantic_and_hybrid_with_precise_lines() -> Result<()> {
-    let temp = tempfile::tempdir()?;
+    let temp = support::unlinked_tempdir()?;
     let model = model(temp.path())?;
     let base = temp.path().join("collection");
     let text = format!("{}{}", "distant\n".repeat(512), "needle\n".repeat(256));
@@ -137,7 +137,7 @@ fn long_chunk_tail_is_returned_by_semantic_and_hybrid_with_precise_lines() -> Re
 
 #[test]
 fn coalesced_whitespace_member_does_not_consume_small_response_budget() -> Result<()> {
-    let temp = tempfile::tempdir()?;
+    let temp = support::unlinked_tempdir()?;
     let model = model(temp.path())?;
     let base = temp.path().join("collection");
     let snapshot = snapshot(
@@ -174,7 +174,7 @@ fn coalesced_whitespace_member_does_not_consume_small_response_budget() -> Resul
 
 #[test]
 fn coalesced_late_sibling_remains_retrievable_and_limit_counts_bodies() -> Result<()> {
-    let temp = tempfile::tempdir()?;
+    let temp = support::unlinked_tempdir()?;
     let model = model(temp.path())?;
     let base = temp.path().join("collection");
     let mut functions: Vec<_> = (0..9)
@@ -232,7 +232,7 @@ fn coalesced_late_sibling_remains_retrievable_and_limit_counts_bodies() -> Resul
 
 #[test]
 fn evidence_and_occurrence_ids_survive_unrelated_earlier_path_insertion() -> Result<()> {
-    let temp = tempfile::tempdir()?;
+    let temp = support::unlinked_tempdir()?;
     let model = model(temp.path())?;
     let mut original = snapshot("z.txt", &["needle\n"]);
     let first = temp.path().join("first");
@@ -271,7 +271,7 @@ fn evidence_and_occurrence_ids_survive_unrelated_earlier_path_insertion() -> Res
 
 #[test]
 fn same_line_native_document_locations_remain_distinct() -> Result<()> {
-    let temp = tempfile::tempdir()?;
+    let temp = support::unlinked_tempdir()?;
     let model = model(temp.path())?;
     let base = temp.path().join("collection");
     let locations = [
@@ -327,7 +327,7 @@ fn same_line_native_document_locations_remain_distinct() -> Result<()> {
 
 #[test]
 fn receipt_bound_manifest_counts_and_map_schema_are_checked() -> Result<()> {
-    let temp = tempfile::tempdir()?;
+    let temp = support::unlinked_tempdir()?;
     let model = model(temp.path())?;
     let base = temp.path().join("collection");
     let snapshot = snapshot("counts.txt", &["needle\n"]);
@@ -389,7 +389,7 @@ fn mapped_body_fixture(whitespace: bool) -> Result<()> {
         extraction::{LocalChunk, LocalRegion},
         location::{ByteSpan, MapSegment, Mapping, RegionLocation, SourceMap},
     };
-    let temp = tempfile::tempdir()?;
+    let temp = support::unlinked_tempdir()?;
     let model = model(temp.path())?;
     let base = temp.path().join("collection");
     let first = if whitespace {
@@ -660,7 +660,7 @@ fn rebind(directory: &Path, receipt: &mut PublicationReceipt, vectors: usize) ->
 
 #[test]
 fn shared_graph_occurrence_fanout_is_bounded_and_scope_filters_before_expansion() -> Result<()> {
-    let temp = tempfile::tempdir()?;
+    let temp = support::unlinked_tempdir()?;
     let model = model(temp.path())?;
     let base = temp.path().join("collection");
     let mut snapshot = snapshot("a-outside.txt", &vec!["needle\n"; 129]);
@@ -715,7 +715,7 @@ impl airk_core::embedding::EmbeddingCache for FixtureCache {
 fn exact_inputs_reuse_across_batches_artifacts_and_full_rebuild_without_persisting_negative_cache()
 -> Result<()> {
     use airk_retrieval::model::{EmbeddingCacheContext, EmbeddingCacheStats};
-    let temp = tempfile::tempdir()?;
+    let temp = support::unlinked_tempdir()?;
     let model = model(temp.path())?;
     let mut snapshot = snapshot("positive.txt", &vec!["needle\n"; 65]);
     snapshot
@@ -778,7 +778,7 @@ fn exact_inputs_reuse_across_batches_artifacts_and_full_rebuild_without_persisti
 
 #[test]
 fn shared_node_survives_canonical_alias_delete_and_move() -> Result<()> {
-    let temp = tempfile::tempdir()?;
+    let temp = support::unlinked_tempdir()?;
     let model = model(temp.path())?;
     let mut snapshot = snapshot("a-first.txt", &["needle\n"]);
     snapshot
@@ -839,7 +839,7 @@ fn shared_node_survives_canonical_alias_delete_and_move() -> Result<()> {
 
 #[test]
 fn exact_bytes_written_context_and_pipeline_remain_separate_graph_inputs() -> Result<()> {
-    let temp = tempfile::tempdir()?;
+    let temp = support::unlinked_tempdir()?;
     let model = model(temp.path())?;
     let snapshot = snapshot(
         "contexts.txt",
@@ -889,7 +889,7 @@ fn exact_bytes_written_context_and_pipeline_remain_separate_graph_inputs() -> Re
 fn vector_selection_preserves_lockfile_lexical_evidence_and_skips_its_planner() -> Result<()> {
     use airk_core::vector_selection::VectorSelectionPolicy;
     use airk_retrieval::model::{EmbeddingCacheContext, EmbeddingCacheStats};
-    let temp = tempfile::tempdir()?;
+    let temp = support::unlinked_tempdir()?;
     let model = model(temp.path())?;
     let mut snapshot = snapshot("Cargo.lock", &["needle dependency_version 42\n"]);
     snapshot
@@ -1004,7 +1004,7 @@ fn registry_corruption_or_write_failure_never_publishes_a_partial_graph() -> Res
             anyhow::bail!("original fixture registry reservation denied")
         }
     }
-    let temp = tempfile::tempdir()?;
+    let temp = support::unlinked_tempdir()?;
     let model = model(temp.path())?;
     let snapshot = snapshot("original.txt", &["needle\n"]);
     let source = support::FixtureSource::new(&snapshot)?;

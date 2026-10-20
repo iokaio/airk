@@ -119,7 +119,7 @@ fn coordinator_publishes_only_changed_paths_and_reclaims_old_lexical_files() -> 
 
 #[test]
 fn coordinator_reuses_shared_vectors_tombstones_and_resurrects_exact_ids() -> Result<()> {
-    let model_dir = tempfile::tempdir()?;
+    let model_dir = unlinked_tempdir()?;
     let vocabulary = serde_json::to_vec(&serde_json::json!({
         "alpha": [1.,0.,0.,0.,0.,0.,0.,0.],
         "beta": [0.,1.,0.,0.,0.,0.,0.,0.],

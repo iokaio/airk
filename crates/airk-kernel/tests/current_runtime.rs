@@ -6,11 +6,16 @@ use airk_core::{
 use airk_kernel::Kernel;
 use anyhow::Result;
 
+fn unlinked_tempdir() -> Result<tempfile::TempDir> {
+    // Model guards require real ancestors; macOS exposes temporary paths through /var.
+    Ok(tempfile::Builder::new().tempdir_in(std::env::temp_dir().canonicalize()?)?)
+}
+
 #[test]
 #[ignore = "large repository capacity qualification; run explicitly in release mode"]
 fn twelve_thousand_files_publish_reopen_update_and_reclaim() -> Result<()> {
-    let root = tempfile::tempdir()?;
-    let data = tempfile::tempdir()?;
+    let root = unlinked_tempdir()?;
+    let data = unlinked_tempdir()?;
     for file in 0..12_000 {
         std::fs::write(
             root.path().join(format!("fixture_{file:05}.rs")),
@@ -52,8 +57,8 @@ fn twelve_thousand_files_publish_reopen_update_and_reclaim() -> Result<()> {
 
 #[test]
 fn shared_embedding_survives_more_than_128_file_occurrences() -> Result<()> {
-    let root = tempfile::tempdir()?;
-    let data = tempfile::tempdir()?;
+    let root = unlinked_tempdir()?;
+    let data = unlinked_tempdir()?;
     model(&data.path().join("models/local"), 2)?;
     for file in 0..256 {
         std::fs::write(
@@ -87,7 +92,7 @@ fn shared_embedding_survives_more_than_128_file_occurrences() -> Result<()> {
 
 #[test]
 fn public_runtime_indexes_updates_and_reads_current_evidence() -> Result<()> {
-    let directory = tempfile::tempdir()?;
+    let directory = unlinked_tempdir()?;
     let root = directory.path().join("source");
     std::fs::create_dir(&root)?;
     std::fs::write(root.join("a.txt"), "alpha original\n")?;
@@ -152,8 +157,8 @@ fn model(directory: &std::path::Path, dimensions: usize) -> Result<()> {
 
 #[test]
 fn scheduled_base_is_readable_before_restart_resumes_semantic_work() -> Result<()> {
-    let root = tempfile::tempdir()?;
-    let data = tempfile::tempdir()?;
+    let root = unlinked_tempdir()?;
+    let data = unlinked_tempdir()?;
     model(&data.path().join("models/local"), 2)?;
     std::fs::write(root.path().join("a.txt"), "authenticate\n")?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
@@ -201,8 +206,8 @@ fn scheduled_base_is_readable_before_restart_resumes_semantic_work() -> Result<(
 
 #[test]
 fn scheduled_cold_scan_commits_bounded_batches_and_closes_discovery() -> Result<()> {
-    let root = tempfile::tempdir()?;
-    let data = tempfile::tempdir()?;
+    let root = unlinked_tempdir()?;
+    let data = unlinked_tempdir()?;
     for file in 0..40 {
         std::fs::write(
             root.path().join(format!("fixture_{file:02}.txt")),
@@ -242,8 +247,8 @@ fn scheduled_cold_scan_commits_bounded_batches_and_closes_discovery() -> Result<
 
 #[test]
 fn direct_index_reports_one_lexical_write_for_one_semantic_file() -> Result<()> {
-    let root = tempfile::tempdir()?;
-    let data = tempfile::tempdir()?;
+    let root = unlinked_tempdir()?;
+    let data = unlinked_tempdir()?;
     model(&data.path().join("models/local"), 2)?;
     std::fs::write(root.path().join("a.txt"), "authenticate\n")?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
@@ -260,8 +265,8 @@ fn direct_index_reports_one_lexical_write_for_one_semantic_file() -> Result<()> 
 
 #[test]
 fn superseding_base_discards_old_pending_vector_binding() -> Result<()> {
-    let root = tempfile::tempdir()?;
-    let data = tempfile::tempdir()?;
+    let root = unlinked_tempdir()?;
+    let data = unlinked_tempdir()?;
     model(&data.path().join("models/local"), 2)?;
     std::fs::write(root.path().join("a.txt"), "authenticate\n")?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
@@ -297,8 +302,8 @@ fn semantic_batches_disclose_partial_coverage() -> Result<()> {
         Arc,
         atomic::{AtomicBool, Ordering},
     };
-    let root = tempfile::tempdir()?;
-    let data = tempfile::tempdir()?;
+    let root = unlinked_tempdir()?;
+    let data = unlinked_tempdir()?;
     model(&data.path().join("models/local"), 2)?;
     for file in 0..65 {
         std::fs::write(
@@ -395,8 +400,8 @@ fn semantic_batches_disclose_partial_coverage() -> Result<()> {
 
 #[test]
 fn corrupt_model_blocks_enrichment_without_losing_base_evidence() -> Result<()> {
-    let root = tempfile::tempdir()?;
-    let data = tempfile::tempdir()?;
+    let root = unlinked_tempdir()?;
+    let data = unlinked_tempdir()?;
     model(&data.path().join("models/local"), 2)?;
     std::fs::write(root.path().join("a.txt"), "authenticate\n")?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
@@ -442,8 +447,8 @@ fn semantic_failure_child() -> Result<()> {
 
 #[test]
 fn failed_semantic_batch_is_persisted_and_does_not_hide_exact_evidence() -> Result<()> {
-    let root = tempfile::tempdir()?;
-    let data = tempfile::tempdir()?;
+    let root = unlinked_tempdir()?;
+    let data = unlinked_tempdir()?;
     model(&data.path().join("models/local"), 2)?;
     std::fs::write(root.path().join("a.txt"), "authenticate\n")?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
@@ -475,8 +480,8 @@ fn failed_semantic_batch_is_persisted_and_does_not_hide_exact_evidence() -> Resu
 
 #[test]
 fn model_replacement_full_rebuild_and_empty_policy_commit_are_current() -> Result<()> {
-    let root = tempfile::tempdir()?;
-    let data = tempfile::tempdir()?;
+    let root = unlinked_tempdir()?;
+    let data = unlinked_tempdir()?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
     kernel.configure_vectors(false)?;
     kernel.index()?;
@@ -518,8 +523,8 @@ fn model_replacement_full_rebuild_and_empty_policy_commit_are_current() -> Resul
 #[test]
 fn old_namespace_is_untouched_and_exact_tokens_and_cursors_expire() -> Result<()> {
     use airk_core::{discovery::DiscoveryOptions, evidence::EvidenceReadOptions};
-    let root = tempfile::tempdir()?;
-    let data = tempfile::tempdir()?;
+    let root = unlinked_tempdir()?;
+    let data = unlinked_tempdir()?;
     let old = data.path().join("collections/default");
     std::fs::create_dir_all(&old)?;
     std::fs::write(old.join("index.sqlite3"), "old index sentinel")?;
@@ -599,8 +604,8 @@ fn old_namespace_is_untouched_and_exact_tokens_and_cursors_expire() -> Result<()
 #[test]
 fn one_file_publication_work_does_not_expand_with_unchanged_corpus() -> Result<()> {
     for count in [8, 64] {
-        let root = tempfile::tempdir()?;
-        let data = tempfile::tempdir()?;
+        let root = unlinked_tempdir()?;
+        let data = unlinked_tempdir()?;
         for file in 0..count {
             std::fs::write(
                 root.path().join(format!("original-{file:03}.txt")),
@@ -652,8 +657,8 @@ fn interrupted_runtime_bootstrap_completes_before_any_source_scan() -> Result<()
         manifest: airk_retrieval::current_lexical::LexicalManifest,
         configuration: airk_store::current::collection::CollectionConfiguration,
     }
-    let root = tempfile::tempdir()?;
-    let data = tempfile::tempdir()?;
+    let root = unlinked_tempdir()?;
+    let data = unlinked_tempdir()?;
     std::fs::write(
         root.path().join("unscanned.txt"),
         "source must remain unscanned",
