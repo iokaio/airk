@@ -177,6 +177,8 @@ pub struct SearchResponse {
     pub publication: Option<evidence::RevisionEnvelope>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub semantic_readiness: Option<readiness::SemanticReadiness>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discovery_readiness: Option<readiness::DiscoveryReadiness>,
     pub generation: u64,
     pub collection: String,
     pub hits: Vec<Hit>,

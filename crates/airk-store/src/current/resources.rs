@@ -11,11 +11,12 @@ use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
 
 pub const MAX_RESOURCE_BYTES: usize = 256 << 20;
-pub const KEYS: [&str; 4] = [
+pub const KEYS: [&str; 5] = [
     "analysis",
     "embedding-cache",
     "semantic-work",
     "semantic-policy",
+    "scan-work",
 ];
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

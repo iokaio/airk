@@ -89,6 +89,10 @@ export function sidebarContent(state: SidebarState): string {
             ${item.detail ? `<p role="status">Published: <strong>${escape(item.detail.published_detail ?? 'Not indexed')}</strong>${item.detail.pending_reindex ? ' · Change pending indexing' : ''}</p>` : '<p class="muted">Current detail is not available yet.</p>'}
             <p class="muted">Changing detail rebuilds evidence. The published index remains available until success. Vector selection is configured separately.</p></div>`;
         const semantic = item.vectors?.semantic_readiness;
+        const discovery = item.vectors?.discovery_readiness;
+        const discoveryLabel = discovery?.state === 'pending' || discovery?.state === 'partial'
+            ? `Discovery ${discovery.state}: ${discovery.committed_artifacts} files committed; total still unknown`
+            : discovery?.state === 'failed' ? `Discovery stopped after ${discovery.committed_artifacts} committed files` : '';
         const semanticLabel = semantic?.state === 'pending' || semantic?.state === 'partial'
             ? `Semantic ${semantic.state}: ${semantic.completed_artifacts} of ${semantic.selected_artifacts} selected files complete`
             : semantic?.state === 'failed' ? `Semantic enrichment failed: ${semantic.completed_artifacts} of ${semantic.selected_artifacts} selected files complete`
@@ -98,6 +102,8 @@ export function sidebarContent(state: SidebarState): string {
             <p class="muted">On by default. Combines local vector search with keyword results. First setup downloads about 91 MB of model files; your source files stay on this machine. Uses CPU and additional index storage.</p>
             <p role="status">${escape(item.vectorProgress ?? (!item.vectors ? 'Loading vector setting...' : !item.vectors.enabled ? 'Off: keyword search' : item.vectors.pending_reindex ? 'On: waiting for model setup and indexing' : `On: ${item.vectors.indexed_vectors} indexed vectors`))}</p>
             ${semanticLabel ? `<p class="muted" role="status">${escape(semanticLabel)}</p>` : ''}
+            ${discoveryLabel ? `<p class="muted" role="status">${escape(discoveryLabel)}</p>` : ''}
+            ${discovery?.failure ? `<p class="error">${escape(discovery.failure.slice(0, 300))}</p>` : ''}
             ${semantic?.failure ? `<p class="error">${escape(semantic.failure.slice(0, 300))}</p>` : ''}
             ${item.vectors?.pending_reindex ? '<p class="muted">Index now to apply the setting. Previous index data remains until a successful rebuild and normal cleanup.</p>' : ''}</div>`;
         const percentage = /^\d+%$/.test(label) ? Number(label.slice(0, -1)) : undefined;

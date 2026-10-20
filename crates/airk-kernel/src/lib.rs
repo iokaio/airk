@@ -83,6 +83,7 @@ pub struct Status {
     pub retention: maintenance::RetentionObservation,
     pub publication: Option<airk_core::evidence::RevisionEnvelope>,
     pub semantic_readiness: airk_core::readiness::SemanticReadiness,
+    pub discovery_readiness: airk_core::readiness::DiscoveryReadiness,
     pub source_roots: std::collections::BTreeMap<String, String>,
     pub generation: u64,
     pub collection: String,
@@ -406,6 +407,7 @@ impl Kernel {
         Ok(SearchResponse {
             publication,
             semantic_readiness: None,
+            discovery_readiness: None,
             generation: snapshot.generation,
             collection: snapshot.collection.clone(),
             truncated,
@@ -625,6 +627,7 @@ impl Kernel {
         let mut evidence = SearchResponse {
             publication: Some(current::runtime::envelope(&read)?),
             semantic_readiness: Some(current::enrichment::readiness(&read, &self.store)?),
+            discovery_readiness: Some(current::progress::readiness(&read, &self.store)?),
             generation: snapshot.generation,
             collection: snapshot.collection.clone(),
             hits: Vec::new(),

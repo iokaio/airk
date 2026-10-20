@@ -25,6 +25,7 @@ mod conditional;
 pub(crate) mod enrichment;
 mod indexing;
 mod metadata;
+pub(crate) mod progress;
 mod publication;
 pub(crate) mod runtime;
 mod search;

@@ -54,6 +54,7 @@ impl LexicalIndex {
         let mut response = SearchResponse {
             publication: None,
             semantic_readiness: None,
+            discovery_readiness: None,
             generation: snapshot.generation,
             collection: snapshot.collection.clone(),
             hits: Vec::new(),
