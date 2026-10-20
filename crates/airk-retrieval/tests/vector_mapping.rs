@@ -81,7 +81,12 @@ fn directory(base: &Path, receipt: &PublicationReceipt) -> PathBuf {
 
 fn records(base: &Path, receipt: &PublicationReceipt) -> Result<Vec<serde_json::Value>> {
     let index = Index::open_in_dir(directory(base, receipt).join("vector-map"))?;
-    let reader: IndexReader = index.reader()?;
+    // This fixture rebinds immutable maps explicitly; a reload watcher could
+    // still acquire metadata locks while the next fixture mutation starts.
+    let reader: IndexReader = index
+        .reader_builder()
+        .reload_policy(tantivy::ReloadPolicy::Manual)
+        .try_into()?;
     let field = index.schema().get_field("record")?;
     reader
         .searcher()
@@ -602,11 +607,10 @@ fn mapped_body_fixture(whitespace: bool) -> Result<()> {
 }
 
 fn write_map_records(directory: &Path, records: &[serde_json::Value]) -> Result<()> {
-    let schema = Index::open_in_dir(directory.join("vector-map"))?.schema();
-    fs::remove_dir_all(directory.join("vector-map"))?;
-    fs::create_dir(directory.join("vector-map"))?;
-    let map = Index::create_in_dir(directory.join("vector-map"), schema.clone())?;
+    let map = Index::open_in_dir(directory.join("vector-map"))?;
+    let schema = map.schema();
     let mut writer = map.writer_with_num_threads::<TantivyDocument>(1, 20_000_000)?;
+    writer.delete_all_documents()?;
     for (ordinal, record) in records.iter().enumerate() {
         let mut document = TantivyDocument::default();
         document.add_u64(schema.get_field("graph_id")?, 1);
