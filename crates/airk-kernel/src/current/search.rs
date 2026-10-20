@@ -113,7 +113,7 @@ pub fn search_current(
             );
         }
         if semantic_readiness.state == SemanticState::Disabled {
-            CurrentSearchMode::Lexical
+            anyhow::bail!("semantic search is unavailable for this current index")
         } else if semantic_readiness.state != SemanticState::Ready {
             match semantic_readiness.default_search_policy {
                 DefaultSearchPolicy::PartialHybrid => CurrentSearchMode::Hybrid,
