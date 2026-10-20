@@ -148,7 +148,7 @@ fn nonempty_base_changes_remain_proven_and_seal_releases_the_reader() -> Result<
     };
     let directory = tempfile::tempdir()?;
     let quota = Quota::open(directory.path())?;
-    let store = FileStore::new(quota.root().join("collections/graph-fixture"));
+    let store = FileStore::new(quota.root().join("collections-1.2/graph-fixture"));
     let graph_scope = scope();
     let scope = CurrentScope {
         root: graph_scope.root.clone(),
@@ -252,29 +252,6 @@ fn invalid_mutation_quota_limits_and_explicit_poison_prevent_sealing() -> Result
     overlay.append(0, record(0))?;
     assert!(overlay.append(1, record(1)).is_err());
     assert!(overlay.seal().is_err());
-    let reservation = quota.reserve("graph-fixture", 2 * 1024 * 1024)?;
-    let overlay = GraphOverlay::empty(
-        &reservation,
-        scope(),
-        GraphOverlayLimits {
-            maximum_operations: 1,
-            ..limits()
-        },
-    )?;
-    overlay.append(0, record(0))?;
-    assert!(overlay.counts().is_err());
-    assert!(overlay.seal().is_err());
-    let reservation = quota.reserve("graph-fixture", 2 * 1024 * 1024)?;
-    let overlay = GraphOverlay::empty(
-        &reservation,
-        scope(),
-        GraphOverlayLimits {
-            maximum_read_bytes: 1,
-            ..limits()
-        },
-    )?;
-    overlay.append(0, record(0))?;
-    assert!(overlay.seal().is_err());
     let reservation = quota.reserve("graph-fixture", 16 * 1024)?;
     assert!(GraphOverlay::empty(&reservation, scope(), limits()).is_err());
     let reservation = quota.reserve("graph-fixture", 32 * 1024)?;
@@ -289,6 +266,52 @@ fn invalid_mutation_quota_limits_and_explicit_poison_prevent_sealing() -> Result
     let exhausted = (0..512).any(|id| overlay.append(id, record(id)).is_err());
     assert!(exhausted, "private SQLite page limit was not enforced");
     assert!(overlay.seal().is_err());
+    Ok(())
+}
+
+#[test]
+fn operation_statistics_never_reject_or_poison_valid_graph_work() -> Result<()> {
+    let directory = tempfile::tempdir()?;
+    let quota = Quota::open(directory.path())?;
+    for prior in [9_999_999, 99_999_999, u64::MAX - 1] {
+        let reservation = quota.reserve("graph-fixture", 2 * 1024 * 1024)?;
+        let overlay = candidate(&reservation, 2)?;
+        // Exercise both former ceilings and counter saturation without spending
+        // millions of redundant reads merely to advance a diagnostic counter.
+        overlay.state.lock().unwrap().statistics.operations = prior;
+        overlay.state.lock().unwrap().statistics.read_bytes = u64::MAX - 1;
+        assert_eq!(overlay.read(1)?, record(1));
+        overlay.set_live(1, false)?;
+        assert_eq!(overlay.counts()?.live_nodes, 0);
+        assert!(!overlay.read(1)?.live);
+        let sealed = overlay.seal()?;
+        assert_eq!(sealed.statistics().operations, prior.saturating_add(4));
+        assert_eq!(sealed.statistics().read_bytes, u64::MAX);
+        assert_eq!(sealed.descriptor().target.live_nodes, 0);
+    }
+    Ok(())
+}
+
+#[test]
+fn indexing_overlay_capacity_tracks_remaining_quota_and_keeps_other_staging_room() -> Result<()> {
+    let directory = tempfile::tempdir()?;
+    let quota = Quota::open(directory.path())?;
+    for (allowance, charged, expected) in [
+        (512 << 20, 256 << 20, 64 << 20),
+        (4 << 30, 0, 1 << 30),
+        (32 << 30, 0, 4 << 30),
+    ] {
+        let reservation = quota.reserve("graph-fixture", allowance)?;
+        reservation.charge(charged)?;
+        let limits = GraphOverlayLimits::for_indexing(&reservation);
+        assert_eq!(limits.maximum_bytes, expected);
+        assert_eq!(limits.maximum_dirty_records, 1_000_000);
+        let overlay = GraphOverlay::empty(&reservation, scope(), limits)?;
+        overlay.append(0, record(0))?;
+        assert!(reservation.remaining() >= (allowance - charged) * 3 / 4);
+        let sealed = overlay.seal()?;
+        assert!(sealed.statistics().private_page_bytes < 1 << 20);
+    }
     Ok(())
 }
 

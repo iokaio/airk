@@ -29,6 +29,6 @@ airk collections roots remove requirements
 airk index
 ```
 
-Removing an alias retains the source folder and its files. The next successful index removes its evidence from the active revision; retained older generations follow ordinary reader leases and pruning. Rebinding requires an explicit remove followed by add. If a registered folder disappears or resolves to a different canonical directory, indexing fails while preserving the last published revision.
+Removing an alias retains the source folder and its files. The next successful index removes its evidence from the active revision; prior exact tokens expire and unreferenced objects become eligible for bounded cleanup. Rebinding requires an explicit remove followed by add. If a registered folder disappears or resolves to a different canonical directory, indexing fails while preserving the last published revision.
 
 Coverage includes all configured sources and does not display a completed percentage while source mappings await publication. A running native reconciliation worker checks registered aliases during its bounded scans. The extension's filesystem notifications cover its editor workspace; use the native watch worker or explicit indexing for edits in additional folders outside that workspace.

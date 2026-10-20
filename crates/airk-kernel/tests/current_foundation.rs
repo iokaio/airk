@@ -78,7 +78,7 @@ impl Fixture {
     fn with_pipeline(embedding_pipeline: Sha256Digest) -> Result<Self> {
         let directory = tempfile::tempdir()?;
         let quota = Quota::open(directory.path().join("state"))?;
-        let store = FileStore::new(quota.root().join("collections/foundation"));
+        let store = FileStore::new(quota.root().join("collections-1.2/foundation"));
         std::fs::create_dir_all(store.directory())?;
         let scope = CurrentScope {
             collection: "foundation".into(),

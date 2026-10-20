@@ -7,7 +7,7 @@ use airk_store::{
 
 fn setup() -> anyhow::Result<(tempfile::TempDir, std::path::PathBuf, UsageScope)> {
     let root = tempfile::tempdir()?;
-    let directory = root.path().join("collections/project");
+    let directory = root.path().join("collections-1.2/project");
     let mut snapshot = Snapshot::empty("fixture-root".into());
     snapshot.collection = "project".into();
     FileStore::new(&directory).save(&snapshot)?;
@@ -354,7 +354,7 @@ fn brief_lifecycle_and_shared_quota_contention_waits_but_stuck_writer_is_bounded
     let lock = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
-        .open(root.path().join(".quota/ledger.lock"))?;
+        .open(root.path().join(".quota-1.2/ledger.lock"))?;
     lock.lock()?;
     std::thread::scope(|threads| -> anyhow::Result<()> {
         threads.spawn(move || {
@@ -423,15 +423,70 @@ fn clearing_rejects_late_writers_and_preserves_index() -> anyhow::Result<()> {
 
 #[test]
 fn deletion_and_recreation_cannot_receive_an_old_workers_history() -> anyhow::Result<()> {
-    let (root, directory, scope) = setup()?;
+    use airk_core::{
+        graph_storage::{GraphHead, GraphScope},
+        identity::{Incarnation, Sha256Digest, framed_digest},
+    };
+    use airk_store::current::{
+        CurrentHead, CurrentScope, collection::CollectionConfiguration, map,
+    };
+    let root = tempfile::tempdir()?;
+    let directory = root.path().join("collections-1.2/project");
+    let scope = UsageScope {
+        collection: "project".into(),
+        root_binding: [7; 32],
+    };
+    let initialize = |incarnation: u8| -> anyhow::Result<()> {
+        let current_scope = CurrentScope {
+            root: "fixture-root".into(),
+            collection: "project".into(),
+            incarnation: Incarnation::from_bytes([incarnation; 16]),
+        };
+        let graph_scope = GraphScope {
+            root: current_scope.root.clone(),
+            collection: current_scope.collection.clone(),
+            incarnation: current_scope.incarnation,
+            graph_instance: Incarnation::from_bytes([incarnation; 16]),
+            specification: Sha256Digest::from_bytes([3; 32]),
+            record_bytes: 16,
+        };
+        let manifest = br#"{"fixture":"empty"}"#;
+        let head = CurrentHead {
+            version: 2,
+            scope: current_scope.clone(),
+            sequence: 0,
+            artifact_root: map::empty_root(&current_scope)?,
+            lexical_sequence: 0,
+            lexical_commit: framed_digest(b"current-lexical-manifest/1", &[manifest]),
+            graph_head: GraphHead::empty(graph_scope)?,
+        };
+        let file = FileStore::new(&directory);
+        let writer = file.lock()?;
+        let quota = airk_store::quota::Quota::open(root.path())?;
+        let mut current = file.current_write(&writer, &quota, &current_scope, 8 << 20)?;
+        let token = head.token()?;
+        current.initialize(head)?;
+        current.install_initial_lexical_manifest(&token, manifest)?;
+        current.initialize_collection(
+            &token,
+            &CollectionConfiguration {
+                roots: Default::default(),
+                extractor_version: "fixture".into(),
+                extraction_policy_digest: Sha256Digest::from_bytes([4; 32]),
+                index_detail: Default::default(),
+                vector_selection: Default::default(),
+                model: None,
+            },
+        )?;
+        Ok(())
+    };
+    initialize(1)?;
     let store = UsageStore::open(&directory, &scope, &UsagePolicy::default())?.unwrap();
     airk_store::remove_collection(root.path(), "project")?;
     assert!(!directory.exists());
     assert!(store.record(&observation(&scope, 1)).is_err());
     assert!(!directory.exists());
-    let mut snapshot = Snapshot::empty("fixture-root".into());
-    snapshot.collection = "project".into();
-    FileStore::new(&directory).save(&snapshot)?;
+    initialize(2)?;
     let replacement = UsageStore::open(&directory, &scope, &UsagePolicy::default())?.unwrap();
     assert!(store.record(&observation(&scope, 2)).is_err());
     replacement.record(&observation(&scope, 3))?;
@@ -518,7 +573,7 @@ fn page_and_root_quotas_fail_closed_without_partial_commits() -> anyhow::Result<
     );
     assert!(report.health.database_bytes <= limited.max_collection_bytes / 2);
     assert!(FileStore::new(&directory).load()?.is_some());
-    let other_dir = root.path().join("collections/other");
+    let other_dir = root.path().join("collections-1.2/other");
     let mut snapshot = Snapshot::empty("other-fixture".into());
     snapshot.collection = "other".into();
     FileStore::new(&other_dir).save(&snapshot)?;

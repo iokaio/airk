@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+use super::current_inspection::InspectCurrent;
 use airk_core::{DocumentLocation, SearchQuery};
 use airk_kernel::Kernel;
 use airk_store::FileStore;
@@ -15,8 +16,8 @@ fn notebook_regions_keep_original_citations_and_exclude_outputs_across_moves() -
     fs::write(root.path().join("original.ipynb"), &original)?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
     kernel.index()?;
-    let store = FileStore::new(data.path().join("collections/default"));
-    let first = store.catalog()?.unwrap();
+    let store = FileStore::new(data.path().join("collections-1.2/default"));
+    let first = store.current_test_catalog()?.unwrap();
     let state = first.inventory.as_ref().unwrap().files["original.ipynb"]
         .state
         .clone();
@@ -41,7 +42,7 @@ fn notebook_regions_keep_original_citations_and_exclude_outputs_across_moves() -
         root.path().join("moved.ipynb"),
     )?;
     assert_eq!(kernel.index()?.indexed, 0);
-    let moved = store.catalog()?.unwrap();
+    let moved = store.current_test_catalog()?.unwrap();
     assert_eq!(
         moved.inventory.as_ref().unwrap().files["moved.ipynb"]
             .state

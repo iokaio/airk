@@ -22,7 +22,7 @@ struct Fixture {
 impl Fixture {
     fn new() -> Result<Self> {
         let root = tempfile::tempdir()?;
-        let collection = root.path().join("collections/fixture");
+        let collection = root.path().join("collections-1.2/fixture");
         fs::create_dir_all(&collection)?;
         let quota = Quota::open(root.path())?;
         let digest = Sha256Digest::from_bytes([1; 32]);
@@ -513,7 +513,7 @@ fn collection_reservation_isolation_and_unfinished_staging_cleanup() -> Result<(
     let fixture = Fixture::new()?;
     let reservation = fixture.reserve()?;
     let stage = reservation.staging_directory()?;
-    let other = fixture._root.path().join("collections/other");
+    let other = fixture._root.path().join("collections-1.2/other");
     fs::create_dir_all(&other)?;
     assert!(VectorCache::new(&other, &reservation, &fixture.descriptor, None).is_err());
     let cache = VectorCache::new(&fixture.collection, &reservation, &fixture.descriptor, None)?;
@@ -532,7 +532,7 @@ fn crash_child() -> Result<()> {
         return Ok(());
     };
     let root = PathBuf::from(root);
-    let collection = root.join("collections/fixture");
+    let collection = root.join("collections-1.2/fixture");
     let quota = Quota::open(&root)?;
     let reservation = quota.reserve("fixture", 1024 * 1024)?;
     let digest = Sha256Digest::from_bytes([1; 32]);

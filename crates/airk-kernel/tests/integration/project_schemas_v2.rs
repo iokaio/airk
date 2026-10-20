@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Activate after P7 registry admission; source fixtures are independent originals.
+use super::current_inspection::InspectCurrent;
 use airk_core::FactQuery;
 use airk_kernel::Kernel;
 use airk_store::FileStore;
@@ -56,8 +57,8 @@ fn project_schemas_public_reads_reuse_moves_and_profile_invalidation() -> Result
         fs::write(root.path().join(path), &original)?;
         let kernel = Kernel::open(root.path(), Some(state.path().into()))?;
         let first = kernel.index()?;
-        let store = FileStore::new(state.path().join("collections/default"));
-        let initial = store.catalog()?.unwrap();
+        let store = FileStore::new(state.path().join("collections-1.2/default"));
+        let initial = store.current_test_catalog()?.unwrap();
         let initial_file = initial.inventory.as_ref().unwrap().files[path].clone();
         assert_eq!(initial_file.language, adapter);
         let query = |path: &str, limit, max_bytes| FactQuery {
@@ -84,7 +85,7 @@ fn project_schemas_public_reads_reuse_moves_and_profile_invalidation() -> Result
         let moved = format!("moved/{path}");
         fs::rename(root.path().join(path), root.path().join(&moved))?;
         assert_eq!(kernel.index()?.indexed, 0);
-        let current = store.catalog()?.unwrap();
+        let current = store.current_test_catalog()?.unwrap();
         let file = &current.inventory.as_ref().unwrap().files[&moved];
         assert_eq!(file.state.payload_digest, initial_file.state.payload_digest);
         assert_eq!(
@@ -96,7 +97,7 @@ fn project_schemas_public_reads_reuse_moves_and_profile_invalidation() -> Result
         )?;
         kernel.configure_extraction_policy(policy)?;
         kernel.index()?;
-        let plain = store.catalog()?.unwrap();
+        let plain = store.current_test_catalog()?.unwrap();
         assert_eq!(
             plain.inventory.as_ref().unwrap().files[&moved].language,
             "text"

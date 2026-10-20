@@ -29,6 +29,15 @@ pub fn unix_ms() -> u64 {
 
 /// Validate ownership using indexed metadata, without loading source payloads.
 pub fn validate_binding(directory: &Path, root: &str, collection: &str) -> Result<()> {
+    let store = crate::FileStore::new(directory);
+    if let Some(scope) = store.current_owned_scope()? {
+        ensure!(
+            scope.root == root && scope.collection == collection,
+            "usage collection/root binding mismatch"
+        );
+        store.current_read(&scope)?;
+        return Ok(());
+    }
     let db = Connection::open_with_flags(
         directory.join("index.sqlite3"),
         OpenFlags::SQLITE_OPEN_READ_ONLY,
@@ -192,7 +201,9 @@ fn managed(directory: &Path) -> Result<()> {
         "linked collection usage state"
     );
     ensure!(
-        directory.join("index.sqlite3").is_file() || directory.join("snapshot.json").is_file(),
+        directory.join("current.sqlite3").is_file()
+            || directory.join("index.sqlite3").is_file()
+            || directory.join("snapshot.json").is_file(),
         "collection no longer exists"
     );
     for name in ["usage.sqlite3", "usage-policy.json"] {
@@ -409,7 +420,7 @@ impl UsageStore {
         // New collections cannot race each other to overcommit the data-root cap.
         if !directory.join("usage.sqlite3").exists() {
             let mut reservations = 1u64;
-            for (count, entry) in fs::read_dir(root.join("collections"))?.enumerate() {
+            for (count, entry) in fs::read_dir(root.join("collections-1.2"))?.enumerate() {
                 ensure!(count < 4096, "usage collection inventory exceeds bound");
                 let entry = entry?;
                 if entry.file_type()?.is_dir() && entry.path().join("usage.sqlite3").exists() {

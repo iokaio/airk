@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+use super::current_inspection::InspectCurrent;
 use airk_kernel::{Kernel, limits::ScanLimits};
 use anyhow::Result;
 
@@ -26,7 +27,7 @@ fn limits_are_persisted_isolated_and_failure_preserves_revision() -> Result<()> 
     let reopened = Kernel::open_collection(&root, Some(data.clone()), "first")?;
     assert_eq!(reopened.describe_scan_limits()?.mode, "configured");
     assert_eq!(reopened.scan_limits()?, limited);
-    let before_approval = std::fs::read(data.join("collections/first/scan-limits.json"))?;
+    let before_approval = std::fs::read(data.join("collections-1.2/first/scan-limits.json"))?;
     assert!(
         reopened
             .configure_scan_limits_if_current(initial, Some(initial))
@@ -35,7 +36,7 @@ fn limits_are_persisted_isolated_and_failure_preserves_revision() -> Result<()> 
             .contains("approval was pending")
     );
     assert_eq!(
-        std::fs::read(data.join("collections/first/scan-limits.json"))?,
+        std::fs::read(data.join("collections-1.2/first/scan-limits.json"))?,
         before_approval
     );
     assert_eq!(
@@ -52,7 +53,7 @@ fn limits_are_persisted_isolated_and_failure_preserves_revision() -> Result<()> 
     assert_ne!(reopened.coverage(false)?.percent, Some(100));
     reopened.index()?;
     assert_eq!(reopened.status()?.files, 2);
-    let before = std::fs::read(data.join("collections/first/scan-limits.json"))?;
+    let before = std::fs::read(data.join("collections-1.2/first/scan-limits.json"))?;
     assert!(
         reopened
             .configure_scan_limits(ScanLimits {
@@ -62,7 +63,7 @@ fn limits_are_persisted_isolated_and_failure_preserves_revision() -> Result<()> 
             .is_err()
     );
     assert_eq!(
-        std::fs::read(data.join("collections/first/scan-limits.json"))?,
+        std::fs::read(data.join("collections-1.2/first/scan-limits.json"))?,
         before
     );
     // Explicit OCR cannot bypass ignored/source-internal files.
@@ -88,8 +89,8 @@ fn large_text_retains_exact_source_reports_partial_and_preserves_revision_on_cap
     let report = kernel.index()?;
     assert_eq!(report.indexed, 1);
     assert!(report.skipped.is_empty());
-    let store = airk_store::FileStore::new(data.path().join("collections/default"));
-    let catalog = store.catalog()?.unwrap();
+    let store = airk_store::FileStore::new(data.path().join("collections-1.2/default"));
+    let catalog = store.current_test_catalog()?.unwrap();
     assert_eq!(
         store.read_retained_source(&catalog.snapshot.artifacts["large.ts"])?,
         text.as_bytes()

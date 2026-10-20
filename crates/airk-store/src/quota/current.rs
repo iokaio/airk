@@ -77,7 +77,7 @@ impl CurrentGrant {
         validate_writer(&self.quota, writer, &self.record.scope.collection)?;
         let _lock = self.quota.lock()?;
         self.require_current()?;
-        let directory = self.quota.root.join(".quota/current-grants");
+        let directory = self.quota.root.join(".quota-1.2/current-grants");
         fs::remove_file(directory.join(self.record.scope.filename()))?;
         crate::maintenance::sync_parent(&directory)?;
         Ok(())
@@ -87,7 +87,7 @@ impl CurrentGrant {
         let path = self
             .quota
             .root
-            .join(".quota/current-grants")
+            .join(".quota-1.2/current-grants")
             .join(self.record.scope.filename());
         let current = read_record(&path)?;
         ensure!(
@@ -112,7 +112,7 @@ impl Quota {
         let _lock = self.lock()?;
         let path = self
             .root
-            .join(".quota/current-grants")
+            .join(".quota-1.2/current-grants")
             .join(scope.filename());
         ensure!(
             !path.try_exists()?,
@@ -140,7 +140,7 @@ impl Quota {
         let _lock = self.lock()?;
         let path = self
             .root
-            .join(".quota/current-grants")
+            .join(".quota-1.2/current-grants")
             .join(scope.filename());
         if !path.try_exists()? {
             return Ok(None);
@@ -177,7 +177,7 @@ impl Quota {
 
 fn validate_writer(quota: &Quota, writer: &crate::WriterLock, collection: &str) -> Result<()> {
     crate::validate_collection(collection)?;
-    let expected = quota.root.join("collections").join(collection);
+    let expected = quota.root.join("collections-1.2").join(collection);
     unlinked(&expected)?;
     ensure!(
         writer.path.parent().context("writer has no directory")? == expected.canonicalize()?,
@@ -245,7 +245,7 @@ fn read_records(
     cleanup: bool,
     deadline: Option<Instant>,
 ) -> Result<Vec<DurableRecord>> {
-    let directory = quota.root.join(".quota/current-grants");
+    let directory = quota.root.join(".quota-1.2/current-grants");
     let entries = match fs::read_dir(&directory) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(vec![]),
@@ -306,10 +306,10 @@ pub(super) fn records(
 }
 
 fn persist(quota: &Quota, record: &DurableRecord, create: bool) -> Result<()> {
-    let directory = quota.root.join(".quota/current-grants");
+    let directory = quota.root.join(".quota-1.2/current-grants");
     fs::create_dir_all(&directory)?;
     unlinked(&directory)?;
-    crate::maintenance::sync_parent(&quota.root.join(".quota"))?;
+    crate::maintenance::sync_parent(&quota.root.join(".quota-1.2"))?;
     let path = directory.join(record.scope.filename());
     if create {
         ensure!(!path.try_exists()?, "current quota grant already exists");
@@ -348,7 +348,7 @@ mod tests {
     fn dropped_grants_survive_accounting_and_resize_without_accumulating_scratch() -> Result<()> {
         let root = tempfile::tempdir()?;
         let quota = Quota::open(root.path())?;
-        let store = FileStore::new(quota.root.join("collections/fixture"));
+        let store = FileStore::new(quota.root.join("collections-1.2/fixture"));
         let writer = store.lock()?;
         let grant = quota.reserve_current(&writer, scope(), 64 * 1024)?;
         assert_eq!(grant.capacity(), 64 * 1024);
@@ -375,9 +375,9 @@ mod tests {
     fn grant_quota_and_writer_isolation_fail_without_retiring_recovery_capacity() -> Result<()> {
         let root = tempfile::tempdir()?;
         let quota = Quota::open(root.path())?;
-        let store = FileStore::new(quota.root.join("collections/fixture"));
+        let store = FileStore::new(quota.root.join("collections-1.2/fixture"));
         let writer = store.lock()?;
-        let other_store = FileStore::new(quota.root.join("collections/other"));
+        let other_store = FileStore::new(quota.root.join("collections-1.2/other"));
         let other = other_store.lock()?;
         let mut grant = quota.reserve_current(&writer, scope(), 64 * 1024)?;
         assert!(grant.resize(&other, 128 * 1024).is_err());
@@ -411,12 +411,12 @@ mod tests {
     fn malformed_or_rebound_durable_metadata_fails_closed() -> Result<()> {
         let root = tempfile::tempdir()?;
         let quota = Quota::open(root.path())?;
-        let store = FileStore::new(quota.root.join("collections/fixture"));
+        let store = FileStore::new(quota.root.join("collections-1.2/fixture"));
         let writer = store.lock()?;
         let grant = quota.reserve_current(&writer, scope(), 64 * 1024)?;
         let path = quota
             .root
-            .join(".quota/current-grants")
+            .join(".quota-1.2/current-grants")
             .join(scope().filename());
         let mut record = grant.record.clone();
         record.scope.incarnation = Incarnation::from_bytes([9; 16]);
@@ -440,7 +440,7 @@ mod tests {
         ensure!(status.success(), "grant child failed");
         let quota = Quota::open(root.path())?;
         assert_eq!(quota.status()?.reserved_bytes, 64 * 1024);
-        let store = FileStore::new(quota.root.join("collections/fixture"));
+        let store = FileStore::new(quota.root.join("collections-1.2/fixture"));
         let writer = store.lock()?;
         quota
             .current_grant(&writer, &scope())?
@@ -456,7 +456,7 @@ mod tests {
             return Ok(());
         };
         let quota = Quota::open(Path::new(&root))?;
-        let store = FileStore::new(quota.root.join("collections/fixture"));
+        let store = FileStore::new(quota.root.join("collections-1.2/fixture"));
         let writer = store.lock()?;
         let _grant = quota.reserve_current(&writer, scope(), 64 * 1024)?;
         std::process::exit(0);

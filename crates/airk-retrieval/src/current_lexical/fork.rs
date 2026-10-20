@@ -31,7 +31,29 @@ impl CurrentLexical {
         charge: Charge,
         changes: &[LexicalChange<'_>],
     ) -> Result<(Self, VerifiedLexicalManifest, LexicalForkWork)> {
-        ensure!(!changes.is_empty(), "empty lexical fork has no update");
+        Self::fork_update(base, target, charge, |private| {
+            private.apply_changes(changes)
+        })
+    }
+
+    pub fn fork_loaded(
+        base: &VerifiedLexicalManifest,
+        target: &Path,
+        charge: Charge,
+        paths: &[&str],
+        load: &mut dyn FnMut(&str) -> Result<Option<airk_core::Artifact>>,
+    ) -> Result<(Self, VerifiedLexicalManifest, LexicalForkWork)> {
+        Self::fork_update(base, target, charge, |private| {
+            private.apply_loaded(paths, load)
+        })
+    }
+
+    fn fork_update(
+        base: &VerifiedLexicalManifest,
+        target: &Path,
+        charge: Charge,
+        update: impl FnOnce(&Self) -> Result<Option<LexicalWork>>,
+    ) -> Result<(Self, VerifiedLexicalManifest, LexicalForkWork)> {
         ensure!(
             base.manifest.digest()? == base.digest,
             "untrusted lexical fork base"
@@ -114,9 +136,11 @@ impl CurrentLexical {
             .sync_all()?;
         Directory::sync_directory(&tantivy::directory::MmapDirectory::open(staging.path())?)?;
         let private = CurrentLexical::open(staging.path(), charge.clone())?;
-        let changed = private
-            .apply_changes(changes)?
-            .context("empty lexical fork update")?;
+        let changed = update(&private)?.unwrap_or(LexicalWork {
+            changed_artifacts: 0,
+            added_documents: 0,
+            commit_opstamp: 0,
+        });
         let manifest = private.capture_manifest(Some((&base.manifest, base.digest)))?;
         drop(private);
         fs::rename(staging.path(), target)?;

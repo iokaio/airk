@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+use super::current_inspection::InspectCurrent;
 use airk_core::changes::*;
 use airk_kernel::Kernel;
 use airk_store::FileStore;
@@ -10,7 +11,7 @@ fn obsolete_conditional_reads_require_rebuild_without_evidence_fallback() -> Res
     use airk_core::{Artifact, Chunk, DocumentLocation, Snapshot};
     let root = tempfile::tempdir()?;
     let data = tempfile::tempdir()?;
-    let store = FileStore::new(data.path().join("collections/default"));
+    let store = FileStore::new(data.path().join("collections-1.2/default"));
     let _writer = store.lock()?;
     let mut snapshot = Snapshot::empty(root.path().canonicalize()?.to_string_lossy().into_owned());
     snapshot.artifacts.insert(
@@ -46,44 +47,8 @@ fn obsolete_conditional_reads_require_rebuild_without_evidence_fallback() -> Res
         }))?,
     )?;
     drop(_writer);
-    let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
-    assert!(
-        kernel
-            .read_file_conditional("old.md", 1, 1, 8192, &Default::default())
-            .is_err()
-    );
-    assert!(
-        kernel
-            .file_info_conditional("missing.md", &Default::default())
-            .is_err()
-    );
-    assert!(kernel.read_file("old.md", 1, 1, 8192).is_err());
-    let facts = airk_core::FactQuery {
-        path_prefix: String::new(),
-        name: None,
-        kind: None,
-        language: None,
-        exact_name: false,
-        limit: 10,
-        max_bytes: 8192,
-        path_exact: false,
-        document_only: false,
-    };
-    assert!(kernel.facts(&facts).is_err());
-    assert!(kernel.code_facts(&facts).is_err());
-    assert!(
-        kernel
-            .relationships(&airk_core::RelationshipQuery {
-                symbol: "fixture".into(),
-                direction: "outgoing".into(),
-                kind: None,
-                path_prefix: String::new(),
-                hops: 1,
-                limit: 10,
-                max_bytes: 8192,
-            })
-            .is_err()
-    );
+    assert!(Kernel::open(root.path(), Some(data.path().into())).is_err());
+    assert!(store.directory().join("index.sqlite3").is_file());
     Ok(())
 }
 
@@ -105,9 +70,9 @@ fn historical_alias_paths_keep_prefix_and_remembered_identity_after_rebinding() 
     kernel.initialize()?;
     kernel.add_root("docs", original.path())?;
     kernel.index()?;
-    let store = FileStore::new(data.path().join("collections/default"));
-    let old = store.catalog()?.unwrap();
-    let since = old.receipt.as_ref().unwrap().token;
+    let store = FileStore::new(data.path().join("collections-1.2/default"));
+    let old = store.current_test_catalog()?.unwrap();
+    let since = old.token;
     let hash = old.inventory.as_ref().unwrap().files["@docs/note.md"]
         .state
         .source_hash;
@@ -125,17 +90,9 @@ fn historical_alias_paths_keep_prefix_and_remembered_identity_after_rebinding() 
         ..Default::default()
     };
     let removed = kernel.changes(&request)?;
-    assert!(removed.changes.iter().any(|change| {
-        change
-            .before
-            .as_ref()
-            .and_then(|endpoint| endpoint.citation_path.as_deref())
-            == Some("@docs/note.md")
-    }));
-    assert_eq!(
-        removed.validations[0].outcome,
-        ValidationOutcome::RemovedFromIndex
-    );
+    assert!(removed.changes.is_empty());
+    assert_eq!(removed.baseline_status, BaselineStatus::BaselineUnavailable);
+    assert_eq!(removed.validations[0].outcome, ValidationOutcome::Unknown);
     let read = kernel.file_info_conditional(
         "@docs/note.md",
         &airk_core::evidence::EvidenceReadOptions {
@@ -146,15 +103,12 @@ fn historical_alias_paths_keep_prefix_and_remembered_identity_after_rebinding() 
     )?;
     assert_eq!(
         read.read.status,
-        airk_core::evidence::EvidenceReadStatus::RemovedFromIndex
+        airk_core::evidence::EvidenceReadStatus::Unknown
     );
     kernel.add_root("docs", replacement.path())?;
     kernel.index()?;
     let rebound = kernel.changes(&request)?;
-    assert_eq!(
-        rebound.validations[0].outcome,
-        ValidationOutcome::PathReused
-    );
+    assert_eq!(rebound.validations[0].outcome, ValidationOutcome::Modified);
     assert!(rebound.validations[0].candidates.is_empty());
     assert_eq!(
         fs::read_to_string(original.path().join("note.md"))?,
@@ -221,16 +175,12 @@ fn equivalent_copy_candidates_are_bounded_scoped_and_never_redirected() -> Resul
         ..Default::default()
     };
     let response = kernel.changes(&request)?;
-    assert_eq!(
-        response.validations[0].outcome,
-        ValidationOutcome::Ambiguous
-    );
-    assert_eq!(response.validations[0].candidates.len(), 8);
-    assert!(response.validations[0].candidates_truncated);
+    assert_eq!(response.validations[0].outcome, ValidationOutcome::Unknown);
+    assert!(response.validations[0].candidates.is_empty());
+    assert!(!response.validations[0].candidates_truncated);
     request.path_prefix = "copy-0".into();
     let scoped = kernel.changes(&request)?;
-    assert_eq!(scoped.validations[0].candidates.len(), 1);
-    assert_eq!(scoped.validations[0].candidates[0].path, "copy-0.md");
+    assert!(scoped.validations[0].candidates.is_empty());
     let read = kernel.file_info_conditional(
         "original.md",
         &airk_core::evidence::EvidenceReadOptions {
@@ -240,7 +190,7 @@ fn equivalent_copy_candidates_are_bounded_scoped_and_never_redirected() -> Resul
     )?;
     assert_eq!(
         read.read.status,
-        airk_core::evidence::EvidenceReadStatus::Ambiguous
+        airk_core::evidence::EvidenceReadStatus::Unknown
     );
     assert!(read.content.is_none());
     request.selectors = vec![RememberedSelector::Path {
@@ -254,62 +204,34 @@ fn equivalent_copy_candidates_are_bounded_scoped_and_never_redirected() -> Resul
 }
 
 #[test]
-fn observed_edit_revert_and_transient_file_survive_coalescing() -> Result<()> {
+fn expired_baseline_cannot_claim_complete_edit_history() -> Result<()> {
     let root = tempfile::tempdir()?;
     let data = tempfile::tempdir()?;
-    let original = "# First\nOriginal evidence with stable content.\n";
-    fs::write(root.path().join("note.md"), original)?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    fs::write(root.path().join("note.txt"), "original source")?;
     kernel.index()?;
-    let store = FileStore::new(data.path().join("collections/default"));
-    let baseline = store.catalog()?.unwrap().receipt.unwrap().token;
-    fs::write(root.path().join("note.md"), "# Edited\nChanged evidence.\n")?;
-    fs::write(
-        root.path().join("transient.md"),
-        "# Temporary\nObserved briefly.\n",
-    )?;
-    kernel.index()?;
-    fs::write(root.path().join("note.md"), original)?;
-    fs::remove_file(root.path().join("transient.md"))?;
-    kernel.index()?;
-    let request = ChangesRequest {
+    let baseline = kernel.status()?.publication.unwrap().token;
+    for text in ["edited source", "original source"] {
+        fs::write(root.path().join("note.txt"), text)?;
+        kernel.index()?;
+    }
+    let response = kernel.changes(&ChangesRequest {
         since: Some(baseline),
-        max_bytes: 65_536,
-        limit: 100,
+        selectors: vec![RememberedSelector::Path {
+            path: "note.txt".into(),
+        }],
         ..Default::default()
-    };
-    let response = kernel.changes(&request)?;
-    assert_eq!(response.baseline_status, BaselineStatus::Verified);
-    let edited = response
-        .changes
-        .iter()
-        .find(|change| {
-            change
-                .after
-                .as_ref()
-                .is_some_and(|endpoint| endpoint.path == "note.md")
-        })
-        .unwrap();
-    assert_eq!(edited.observations, 2);
+    })?;
     assert_eq!(
-        edited.before.as_ref().unwrap().source_hash,
-        edited.after.as_ref().unwrap().source_hash
+        response.baseline_status,
+        BaselineStatus::BaselineUnavailable
     );
-    assert!(edited.dimensions.contains(&ChangeDimension::Content));
-    let transient = response
-        .changes
-        .iter()
-        .find(|change| change.causes.contains(&ChangeCause::Added) && change.after.is_none())
-        .unwrap();
-    assert_eq!(transient.observations, 2);
-    assert!(transient.before.is_none());
-    let expected_bytes: usize = response
-        .changes
-        .iter()
-        .chain(&response.invalidations)
-        .map(|record| serde_json::to_vec(record).unwrap().len())
-        .sum();
-    assert_eq!(response.record_bytes, expected_bytes);
+    assert!(response.changes.is_empty());
+    assert_eq!(
+        response.coverage.unwrap().files.reason,
+        Some(CoverageReason::Unsupported)
+    );
+    assert_eq!(response.validations[0].outcome, ValidationOutcome::Current);
     Ok(())
 }
 
@@ -323,7 +245,6 @@ fn remembered_validations_page_on_exact_target_and_expire_without_fallback() -> 
     )?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
     kernel.index()?;
-    let store = FileStore::new(data.path().join("collections/default"));
     let mut request = ChangesRequest {
         selectors: vec![
             RememberedSelector::Path {
@@ -348,24 +269,18 @@ fn remembered_validations_page_on_exact_target_and_expire_without_fallback() -> 
     assert!(!second.truncated);
     let mut changed = request.clone();
     changed.path_prefix = "note".into();
-    assert!(kernel.changes(&changed).is_err());
+    assert_eq!(
+        kernel.changes(&changed)?.status,
+        ChangesStatus::CursorExpired
+    );
     fs::write(
         root.path().join("note.md"),
         "# New\nReplacement evidence.\n",
     )?;
     kernel.index()?;
-    assert_eq!(kernel.changes(&request)?.to, first.to);
-    // A separate kernel drops the original worker's cached target lease when it
-    // goes out of scope; only the cursor remains and cannot pin indefinitely.
-    drop(kernel);
-    let current = store.persistent_revision()?.unwrap();
-    let _writer = store.lock()?;
-    airk_store::retention::prune(store.directory(), &current.revision, false)?;
-    drop(_writer);
-    let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
     let expired = kernel.changes(&request)?;
     assert_eq!(expired.status, ChangesStatus::CursorExpired);
-    assert_eq!(expired.to, first.to);
+    assert_ne!(expired.to, first.to);
     assert_ne!(expired.current, first.to);
     assert!(expired.validations.is_empty());
     Ok(())
@@ -426,9 +341,9 @@ fn unavailable_baseline_and_scheduler_do_not_hide_independent_validation() -> Re
     )?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
     kernel.index()?;
-    let store = FileStore::new(data.path().join("collections/default"));
-    let catalog = store.catalog()?.unwrap();
-    let current = catalog.receipt.as_ref().unwrap().token;
+    let store = FileStore::new(data.path().join("collections-1.2/default"));
+    let catalog = store.current_test_catalog()?.unwrap();
+    let current = catalog.token;
     let hash = catalog.inventory.as_ref().unwrap().files["note.md"]
         .state
         .source_hash;
@@ -436,7 +351,7 @@ fn unavailable_baseline_and_scheduler_do_not_hide_independent_validation() -> Re
     missing.generation = 0;
     missing.revision = airk_core::identity::Sha256Digest::from_bytes([55; 32]);
     fs::write(
-        data.path().join("scheduler.sqlite3"),
+        data.path().join("scheduler-1.2.sqlite3"),
         b"corrupt scheduler fixture",
     )?;
     let response = kernel.changes(&ChangesRequest {
@@ -463,13 +378,14 @@ fn unavailable_baseline_and_scheduler_do_not_hide_independent_validation() -> Re
     assert!(!response.freshness.live_source_verified);
     let mut fork = current;
     fork.revision = missing.revision;
-    assert!(
+    assert_eq!(
         kernel
             .changes(&ChangesRequest {
                 since: Some(fork),
                 ..Default::default()
-            })
-            .is_err()
+            })?
+            .baseline_status,
+        BaselineStatus::BaselineUnavailable
     );
     Ok(())
 }

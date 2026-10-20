@@ -347,10 +347,9 @@ fn coordinator_admission_and_captured_source_failures_leave_the_head_unchanged()
     let fixture = Fixture::new()?;
     let changes = [upsert(&fixture, "a.txt", "alpha")?];
     let before = fixture.store.current_read(&fixture.scope)?.token()?;
-    // The overlay consumes this entire admission; no lexical fork can grow.
-    let reservation = fixture
-        .quota
-        .reserve(&fixture.scope.collection, 256 << 20)?;
+    // Metadata plus even the minimum private graph cannot fit this admission,
+    // independently of how the overlay adapts to a larger reservation.
+    let reservation = fixture.quota.reserve(&fixture.scope.collection, 16 << 10)?;
     let lock = fixture.store.lock()?;
     assert!(
         updater(&fixture, &lock, &reservation)
@@ -403,7 +402,11 @@ fn coordinator_process_child() -> Result<()> {
     };
     let case: CrashCase = serde_json::from_str(&encoded)?;
     let quota = Quota::open(&case.data)?;
-    let store = FileStore::new(case.data.join("collections").join(&case.scope.collection));
+    let store = FileStore::new(
+        case.data
+            .join("collections-1.2")
+            .join(&case.scope.collection),
+    );
     let reservation = quota.reserve(&case.scope.collection, 512 << 20)?;
     let lock = store.lock()?;
     let applied = configuration();

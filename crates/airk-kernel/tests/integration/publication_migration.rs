@@ -79,17 +79,11 @@ fn obsolete_json_ocr_is_rejected_without_migrating_derived_evidence() -> Result<
     let data = tempfile::tempdir()?;
     let source = b"\x89PNG\r\n\x1a\noriginal binary fixture\0";
     fs::write(root.path().join("scan.png"), source)?;
-    let store = FileStore::new(data.path().join("collections/default"));
+    let store = FileStore::new(data.path().join("collections-1.2/default"));
     let artifact = ocr_artifact("scan.png", source)?;
     let original_legacy_bytes = save_legacy(root.path(), &store, &artifact, source)?;
     let original_head = store.expected_head()?;
-    let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
-    assert!(kernel.index().is_err());
-    assert!(
-        kernel.reindex().is_err(),
-        "unbound JSON-only state requires explicit derived-state removal"
-    );
-    assert!(kernel.read_file("scan.png", 1, 1, 4096).is_err());
+    assert!(Kernel::open(root.path(), Some(data.path().into())).is_err());
     assert_eq!(store.expected_head()?, original_head);
     assert_eq!(
         fs::read(store.directory().join("snapshot.json"))?,
@@ -106,7 +100,7 @@ fn malformed_legacy_ocr_and_corrupt_retained_output_never_advance_pointer() -> R
         let data = tempfile::tempdir()?;
         let source = b"\x89PNG\r\n\0original fixture";
         fs::write(root.path().join("scan.png"), source)?;
-        let store = FileStore::new(data.path().join("collections/default"));
+        let store = FileStore::new(data.path().join("collections-1.2/default"));
         let mut artifact = ocr_artifact("scan.png", source)?;
         if !corrupt_object {
             artifact.extraction_method.push_str("invalid");
@@ -125,8 +119,7 @@ fn malformed_legacy_ocr_and_corrupt_retained_output_never_advance_pointer() -> R
                 b"corrupt derived fixture",
             )?;
         }
-        let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
-        assert!(kernel.index().is_err());
+        assert!(Kernel::open(root.path(), Some(data.path().into())).is_err());
         assert_eq!(store.expected_head()?, head);
         assert_eq!(
             fs::read(store.directory().join("snapshot.json"))?,
@@ -147,7 +140,7 @@ fn obsolete_ocr_rejection_preserves_alias_configuration_and_original_source() ->
     fs::write(alias.path().join("scan.png"), source)?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
     kernel.add_root("docs", alias.path())?;
-    let store = FileStore::new(data.path().join("collections/default"));
+    let store = FileStore::new(data.path().join("collections-1.2/default"));
     let artifact = ocr_artifact("@docs/scan.png", source)?;
     let encoded = save_legacy(root.path(), &store, &artifact, source)?;
     let mut snapshot: Snapshot = serde_json::from_slice(&encoded)?;

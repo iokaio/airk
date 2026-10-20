@@ -297,7 +297,7 @@ struct Fixture {
 impl Fixture {
     fn new() -> Result<Self> {
         let root = tempfile::tempdir()?;
-        let store = FileStore::new(root.path().join("collections/fixture"));
+        let store = FileStore::new(root.path().join("collections-1.2/fixture"));
         let writer = store.lock()?;
         let quota = Quota::open(root.path())?;
         let mut tokens = vec![];
@@ -878,7 +878,7 @@ fn manual_backlog_larger_than_one_page_advances_without_unprotected_deletion() -
 #[test]
 fn hourly_winners_are_deduplicated_and_oldest_unpinned_targets_thin_first() -> Result<()> {
     let root = tempfile::tempdir()?;
-    let store = FileStore::new(root.path().join("collections/fixture"));
+    let store = FileStore::new(root.path().join("collections-1.2/fixture"));
     let writer = store.lock()?;
     let quota = Quota::open(root.path())?;
     let mut tokens = vec![];
@@ -966,7 +966,7 @@ fn shared_model_assets_follow_full_reader_roots_but_not_historical_packages() ->
     use airk_core::model_objects::{ModelAssetName, ModelObjectRef, ModelObjectSet};
     use airk_store::history::ConversionStatus;
     let root = tempfile::Builder::new().tempdir_in(std::env::temp_dir().canonicalize()?)?;
-    let store = FileStore::new(root.path().join("collections/fixture"));
+    let store = FileStore::new(root.path().join("collections-1.2/fixture"));
     let writer = store.lock()?;
     let quota = Quota::open(root.path())?;
     // This fixture specifically exercises model assets retained by a predecessor.

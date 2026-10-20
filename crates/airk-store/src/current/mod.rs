@@ -1,15 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Qualified single-current-index storage foundation. Runtime adoption is separate.
+pub mod analysis;
 pub mod collection;
 mod database;
 pub mod discovery;
 mod gate;
 pub mod graph;
 mod journal;
+pub mod maintenance;
 pub mod map;
+pub mod metadata;
 pub mod postings;
 mod read;
 pub mod relationships;
+pub mod resources;
 pub mod vector_map;
 
 pub use database::{DATABASE_VERSION, PAGE_BYTES, journal_bound};
@@ -27,9 +31,16 @@ use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 
 pub const MAX_HEAD_BYTES: usize = 65_536;
-pub const MAX_PENDING_INPUTS: usize = 65_536;
+// A scan admits 100,000 files by default. Files, vector occurrences and keyed
+// map updates have different fan-out and must not share one small row ceiling.
+pub const MAX_PENDING_INPUTS: usize = 100_000;
+pub const MAX_PENDING_VECTOR_INPUTS: usize = 1_000_000;
+pub const MAX_PENDING_MAP_CHANGES: usize = 4_000_000;
+pub const MAX_PENDING_MAP_BYTES: usize = 1024 * 1024 * 1024;
+/// Cumulative streamed metadata, not simultaneously resident payloads.
+pub const MAX_CURRENT_METADATA_READ_BYTES: usize = 8 * 1024 * 1024 * 1024;
 pub const MAX_INPUT_METADATA_BYTES: usize = 262_144;
-pub const MAX_PENDING_METADATA_BYTES: u64 = 64 * 1024 * 1024;
+pub const MAX_PENDING_METADATA_BYTES: u64 = 256 * 1024 * 1024;
 pub const MAX_LEXICAL_MANIFEST_BYTES: usize = 1024 * 1024;
 
 pub(crate) fn verify_lexical_manifest(bytes: &[u8], expected: Sha256Digest) -> Result<()> {
@@ -136,6 +147,63 @@ pub struct CurrentToken {
 }
 
 impl crate::FileStore {
+    pub fn runtime_bootstrap(&self) -> Result<Option<Vec<u8>>> {
+        use std::io::Read;
+        let path = self.directory().join("current-runtime-bootstrap.json");
+        let metadata = match std::fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
+        ensure!(
+            metadata.is_file() && !metadata.file_type().is_symlink() && metadata.len() <= 2 << 20,
+            "invalid runtime bootstrap ownership or size"
+        );
+        let mut bytes = Vec::new();
+        std::fs::File::open(path)?
+            .take((2 << 20) + 1)
+            .read_to_end(&mut bytes)?;
+        ensure!(
+            bytes.len() <= 2 << 20,
+            "runtime bootstrap exceeded byte bound"
+        );
+        Ok(Some(bytes))
+    }
+    pub fn write_runtime_bootstrap(&self, writer: &crate::WriterLock, bytes: &[u8]) -> Result<()> {
+        use std::io::Write;
+        gate::check_writer(self, writer)?;
+        ensure!(
+            bytes.len() <= 2 << 20 && self.runtime_bootstrap()?.is_none(),
+            "invalid or existing runtime bootstrap"
+        );
+        let mut file = tempfile::NamedTempFile::new_in(self.directory())?;
+        file.write_all(bytes)?;
+        crate::durability::persist_synced(
+            file,
+            &self.directory().join("current-runtime-bootstrap.json"),
+        )
+    }
+    pub fn finish_runtime_bootstrap(&self, writer: &crate::WriterLock) -> Result<()> {
+        gate::check_writer(self, writer)?;
+        std::fs::remove_file(self.directory().join("current-runtime-bootstrap.json"))?;
+        crate::maintenance::sync_parent(self.directory())
+    }
+    pub(crate) fn current_owned_scope(&self) -> Result<Option<CurrentScope>> {
+        if !self.directory().join(database::OWNER_FILE).try_exists()? {
+            return Ok(None);
+        }
+        let _gate = gate::Gate::shared(self)?;
+        let scope = database::owned_scope(self.directory())?;
+        ensure!(
+            self.directory().file_name().and_then(|n| n.to_str()) == Some(&scope.collection),
+            "foreign current owner"
+        );
+        Ok(Some(scope))
+    }
+    pub(crate) fn current_deletion_gate(&self, writer: &crate::WriterLock) -> Result<gate::Gate> {
+        gate::Gate::exclusive(self, writer)
+    }
+
     /// Discover the persisted incarnation without consulting any old catalog.
     /// A missing owner is empty only if no current database/bootstrap exists;
     /// malformed or interrupted ownership is never silently reset.
@@ -187,6 +255,46 @@ pub(crate) fn decode_head(bytes: &[u8], scope: &CurrentScope) -> Result<CurrentH
         "foreign or noncanonical current head"
     );
     Ok(head)
+}
+
+/// Relocation owns the exclusive root lifecycle lock, so it must not acquire a
+/// second shared lifecycle lease. Pending transactions must recover first.
+pub(crate) fn frozen_roots(
+    directory: &std::path::Path,
+) -> Result<std::collections::BTreeMap<String, String>> {
+    use anyhow::Context;
+    let scope = database::owned_scope(directory)?;
+    let capacity = database::check_owner(directory, &scope)?;
+    ensure!(
+        std::fs::metadata(directory.join("current.sqlite3"))?.len() <= capacity,
+        "current relocation capacity mismatch"
+    );
+    let connection = database::open_reader(&directory.join("current.sqlite3"))?;
+    let (phase, bytes): (String, Vec<u8>) = connection.query_row(
+        "SELECT phase,head FROM current_state WHERE id=1 AND length(head)<=65536",
+        [],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    ensure!(
+        phase == "ready",
+        "recover the current index before relocation"
+    );
+    let head = decode_head(&bytes, &scope)?;
+    journal::committed_lexical_manifest(&connection, &head)?;
+    let bytes = map::get(
+        &connection,
+        &scope,
+        head.artifact_root,
+        map::key(&scope, map::MapDomain::Metadata, b"collection")?,
+    )?
+    .context("current relocation configuration missing")?;
+    let state = collection::CollectionState::decode(&bytes)?;
+    let mut roots = crate::roots::RootConfig::load(directory, &scope.root)?.roots;
+    roots.insert(String::new(), scope.root);
+    for (alias, path) in state.configuration.roots {
+        roots.insert(format!("published:{alias}"), path);
+    }
+    Ok(roots)
 }
 
 #[cfg(test)]

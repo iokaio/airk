@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Activate after PHP/Ruby repairs and explicit SQL profiles are wired.
+use super::current_inspection::InspectCurrent;
 use airk_core::{EvidenceBasis, FactQuery};
 use airk_ingest::adapters::profile::{ExtractionPolicy, RuleMatch, SelectionRule};
 use airk_kernel::Kernel;
@@ -41,8 +42,8 @@ fn qualify(
     }
     let cold = kernel.index()?;
     assert_eq!(cold.indexed, 2);
-    let store = FileStore::new(data.path().join("collections/default"));
-    let before = store.catalog()?.context("catalog")?;
+    let store = FileStore::new(data.path().join("collections-1.2/default"));
+    let before = store.current_test_catalog()?.context("catalog")?;
     assert_eq!(
         store.read_retained_source(&before.snapshot.artifacts[path])?,
         text.as_bytes()
@@ -104,7 +105,13 @@ fn qualify(
         before.inventory.as_ref().unwrap().files[path]
             .state
             .payload_digest,
-        store.catalog()?.unwrap().inventory.as_ref().unwrap().files[moved]
+        store
+            .current_test_catalog()?
+            .unwrap()
+            .inventory
+            .as_ref()
+            .unwrap()
+            .files[moved]
             .state
             .payload_digest
     );

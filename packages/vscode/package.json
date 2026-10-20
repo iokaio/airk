@@ -300,66 +300,6 @@
         "title": "Remove Unneeded Collection…"
       },
       {
-        "command": "airk.prune",
-        "category": "AIRK",
-        "title": "Trim Obsolete Index Generations…"
-      },
-      {
-        "command": "airk.retention",
-        "category": "AIRK",
-        "title": "Show Retention Status"
-      },
-      {
-        "command": "airk.retentionPolicy",
-        "category": "AIRK",
-        "title": "Choose Retention Policy…"
-      },
-      {
-        "command": "airk.retentionRun",
-        "category": "AIRK",
-        "title": "Run Retention Maintenance…"
-      },
-      {
-        "command": "airk.history",
-        "category": "AIRK",
-        "title": "Show History Status"
-      },
-      {
-        "command": "airk.historyPolicy",
-        "category": "AIRK",
-        "title": "Choose History Policy…"
-      },
-      {
-        "command": "airk.historyRun",
-        "category": "AIRK",
-        "title": "Run History Maintenance…"
-      },
-      {
-        "command": "airk.historyAvailable",
-        "category": "AIRK",
-        "title": "List Retained Publication Identities"
-      },
-      {
-        "command": "airk.checkpoints",
-        "category": "AIRK",
-        "title": "Show Checkpoints"
-      },
-      {
-        "command": "airk.createCheckpoint",
-        "category": "AIRK",
-        "title": "Create Checkpoint…"
-      },
-      {
-        "command": "airk.removeCheckpoint",
-        "category": "AIRK",
-        "title": "Remove Checkpoint…"
-      },
-      {
-        "command": "airk.purgeHistory",
-        "category": "AIRK",
-        "title": "Preview Logical History Purge…"
-      },
-      {
         "command": "airk.extractionPolicy",
         "category": "AIRK",
         "title": "Show Extraction Policy"
@@ -418,6 +358,11 @@
         "command": "airk.manageVscodeMcp",
         "category": "AIRK",
         "title": "VS Code / Copilot MCP Controls"
+      },
+      {
+        "command": "airk.currentMaintenance",
+        "title": "Reclaim Unreferenced Index Objects",
+        "category": "AIRK"
       }
     ],
     "configuration": [

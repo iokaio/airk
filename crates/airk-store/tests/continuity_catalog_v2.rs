@@ -64,7 +64,7 @@ fn record(ordinal: usize, profile: Sha256Digest, length: usize) -> ContinuityRec
 #[test]
 fn indexed_lookup_projects_large_file_records_and_decorates_only_native_facts() -> Result<()> {
     let root = tempfile::tempdir()?;
-    let store = FileStore::new(root.path().join("collections/fixture"));
+    let store = FileStore::new(root.path().join("collections-1.2/fixture"));
     let _writer = store.lock()?;
     let (inventory, receipt, reservation) =
         prepare(&store, "Original heading.\n", 1, None, 1000, Some(1))?;
@@ -140,7 +140,7 @@ fn indexed_lookup_projects_large_file_records_and_decorates_only_native_facts() 
 #[test]
 fn older_catalog_without_extension_remains_readable() -> Result<()> {
     let root = tempfile::tempdir()?;
-    let store = FileStore::new(root.path().join("collections/fixture"));
+    let store = FileStore::new(root.path().join("collections-1.2/fixture"));
     let _writer = store.lock()?;
     let (inventory, receipt, reservation) =
         prepare(&store, "Original legacy heading.\n", 1, None, 0, None)?;
@@ -157,7 +157,7 @@ fn older_catalog_without_extension_remains_readable() -> Result<()> {
 #[test]
 fn future_continuity_extension_is_rejected_before_publication() -> Result<()> {
     let root = tempfile::tempdir()?;
-    let store = FileStore::new(root.path().join("collections/fixture"));
+    let store = FileStore::new(root.path().join("collections-1.2/fixture"));
     let _writer = store.lock()?;
     let (inventory, receipt, reservation) =
         prepare(&store, "Original future heading.\n", 1, None, 1, Some(2))?;

@@ -137,7 +137,22 @@ pub mod syntax;
 mod tables;
 
 #[derive(Default, Debug, Serialize, Deserialize)]
+pub struct CurrentIndexWork {
+    pub changed_artifacts: usize,
+    pub lexical_documents: u64,
+    pub graph_records: u64,
+    pub graph_read_bytes: u64,
+    pub linked_lexical_bytes: u64,
+}
+
+#[derive(Default, Debug, Serialize, Deserialize)]
 pub struct IndexReport {
+    /// Changed-path work from the current runtime; logical counts, not physical I/O.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current: Option<CurrentIndexWork>,
+    /// Cleanup failure after a successful publication does not undo that publication.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub maintenance_error: Option<String>,
     /// Selection warnings do not imply that an eligible file was skipped.
     #[serde(default)]
     pub selection_diagnostics: Vec<SkippedFile>,

@@ -460,7 +460,7 @@ mod tests {
     #[test]
     fn original_legacy_inventory_and_component_hashes_are_verified() -> Result<()> {
         let root = tempfile::tempdir()?;
-        let store = FileStore::new(root.path().join("collections/fixture"));
+        let store = FileStore::new(root.path().join("collections-1.2/fixture"));
         let mut original = airk_core::Snapshot::empty("original-source-root".into());
         original.collection = "fixture".into();
         let bytes = serde_json::to_vec(&original)?;

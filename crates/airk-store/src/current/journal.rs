@@ -32,8 +32,8 @@ use std::{
 
 const MAX_DESCRIPTOR_BYTES: usize = 196_608;
 const MAX_CAPTURED_OBJECT_BYTES: u64 = 64 * 1024 * 1024 * 1024;
-const MAX_PENDING_MAP_CHANGES: u64 = 65_536;
-const MAX_PENDING_MAP_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_PENDING_MAP_CHANGES: u64 = super::MAX_PENDING_MAP_CHANGES as u64;
+const MAX_PENDING_MAP_BYTES: u64 = super::MAX_PENDING_MAP_BYTES as u64;
 const BOOTSTRAP_FILE: &str = "current-bootstrap.json";
 const MAX_LEXICAL_GC_ROOT_ENTRIES: usize = 16_384;
 const MAX_LEXICAL_GC_DIRECTORIES: usize = 4_096;
@@ -833,6 +833,10 @@ impl CurrentWriter<'_> {
             .current_grant(self.writer, &self.grant_scope(transaction.id))?
             .context("pending current transaction has no durable capacity grant")
     }
+    pub(super) fn collection_directory(&self) -> &Path {
+        self.store.directory()
+    }
+
     pub fn phase(&self) -> Result<TransactionPhase> {
         Ok(state(self.connection()?, &self.scope)?.0)
     }
@@ -1353,16 +1357,63 @@ impl CurrentWriter<'_> {
     pub fn prepare_artifacts_with_occurrences(
         &mut self,
         expected: &CurrentToken,
-        mut target: CurrentHead,
+        target: CurrentHead,
         graph_delta: &dyn PreparedGraphDelta,
         update: ArtifactVectorChanges<'_>,
         model: Option<ModelObjectSet>,
         lexical_manifest: &[u8],
     ) -> Result<PendingTransaction> {
+        self.prepare_artifacts_with_metadata(
+            expected,
+            target,
+            graph_delta,
+            update,
+            model,
+            lexical_manifest,
+            &[],
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_artifacts_with_metadata(
+        &mut self,
+        expected: &CurrentToken,
+        target: CurrentHead,
+        graph_delta: &dyn PreparedGraphDelta,
+        update: ArtifactVectorChanges<'_>,
+        model: Option<ModelObjectSet>,
+        lexical_manifest: &[u8],
+        metadata: &[super::metadata::FileMetadataRef],
+    ) -> Result<PendingTransaction> {
+        self.prepare_artifacts_with_resources(
+            expected,
+            target,
+            graph_delta,
+            update,
+            model,
+            lexical_manifest,
+            metadata,
+            &[],
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_artifacts_with_resources(
+        &mut self,
+        expected: &CurrentToken,
+        mut target: CurrentHead,
+        graph_delta: &dyn PreparedGraphDelta,
+        update: ArtifactVectorChanges<'_>,
+        model: Option<ModelObjectSet>,
+        lexical_manifest: &[u8],
+        metadata: &[super::metadata::FileMetadataRef],
+        resources: &[super::resources::ResourceChange],
+    ) -> Result<PendingTransaction> {
         let changes = update.artifacts;
         let occurrences = update.occurrences;
         ensure!(
-            !changes.is_empty() && changes.len() <= MAX_PENDING_INPUTS,
+            changes.len() <= MAX_PENDING_INPUTS
+                && (!changes.is_empty() || update.configuration.is_some() || !resources.is_empty()),
             "invalid changed-artifact count"
         );
         let mut previous = None;
@@ -1408,6 +1459,9 @@ impl CurrentWriter<'_> {
         let mut plan = map::MapPlan::new(self.connection()?, &self.scope, base.artifact_root)?;
         let mut collection =
             super::collection::CollectionPlan::load(&plan, &self.scope, update.configuration)?;
+        if base.graph_head.scope != target.graph_head.scope {
+            collection.require_all_previous()?;
+        }
         collection.verify_model(&model)?;
         let mut postings = super::postings::PostingChanges::default();
         for change in changes {
@@ -1458,6 +1512,20 @@ impl CurrentWriter<'_> {
         }
         map_changes.extend(postings.into_changes());
         map_changes.extend(collection.finish(&mut plan, &self.scope)?);
+        map_changes.extend(super::metadata::prepare(
+            &self.store,
+            &self.scope,
+            &mut plan,
+            changes,
+            metadata,
+            target.sequence,
+        )?);
+        map_changes.extend(super::resources::prepare(
+            &self.store,
+            &self.scope,
+            &mut plan,
+            resources,
+        )?);
         let reattached = occurrences
             .iter()
             .map(|item| item.pointer.embedding_key)
@@ -1496,9 +1564,39 @@ impl CurrentWriter<'_> {
                 .all(|pair| pair[0].key() < pair[1].key()),
             "duplicate current component map identity"
         );
-        target.artifact_root = plan.root()?;
+        let artifact_root = plan.root()?;
+        drop(plan);
+        target.artifact_root = artifact_root;
         target.lexical_sequence = target.sequence;
         target.lexical_commit = framed_digest(b"current-lexical-manifest/1", &[lexical_manifest]);
+        // Admit staged rows plus their final map/proof pages before any durable
+        // intent is written. The multiplier bounds SQLite row/page overhead.
+        let map_bytes = map_changes.iter().try_fold(0u64, |total, change| {
+            total
+                .checked_add(change.value().map_or(0, |v| v.len()) as u64 + 128)
+                .context("current growth estimate overflow")
+        })?;
+        let graph = graph_delta.descriptor();
+        let pending = map_bytes
+            .checked_add(graph.record_bytes)
+            .and_then(|n| n.checked_add(graph.node_count.checked_mul(96)?))
+            .context("current growth estimate overflow")?;
+        let used = fs::metadata(self.store.directory().join("current.sqlite3"))?.len();
+        let needed = used
+            .checked_add(
+                pending
+                    .checked_mul(8)
+                    .context("current growth estimate overflow")?,
+            )
+            .and_then(|n| n.checked_add(1 << 20))
+            .context("current growth estimate overflow")?;
+        if needed > self.capacity {
+            self.grow_capacity(
+                needed
+                    .checked_next_power_of_two()
+                    .context("current capacity overflow")?,
+            )?;
+        }
         self.prepare_components(
             expected,
             target,
@@ -1690,6 +1788,16 @@ impl CurrentWriter<'_> {
             digest.add(&input, &bytes)?;
             input.verify(&self.store)?;
             visitor(&input)?;
+            let key = map::key(&self.scope, map::MapDomain::FileMetadata, path.as_bytes())?;
+            let reference: Option<Vec<u8>> = connection.query_row(
+                "SELECT value FROM current_pending_map WHERE key=?1 AND value IS NOT NULL AND length(value)<=262144",
+                [key.as_bytes().as_slice()], |row| row.get(0)).optional()?;
+            if let Some(bytes) = reference {
+                let reference: super::metadata::FileMetadataRef = serde_json::from_slice(&bytes)?;
+                ensure!(reference.path == path, "pending metadata path mismatch");
+                let file = self.store.read_current_metadata(&reference)?;
+                super::metadata::verify(&input.artifact, &file, transaction.target.sequence)?;
+            }
             after = path;
         }
         ensure!(
@@ -1699,6 +1807,16 @@ impl CurrentWriter<'_> {
                 && digest.finish() == transaction.inputs_digest,
             "captured inputs digest or count mismatch"
         );
+        for name in super::resources::KEYS {
+            let key = map::key(&self.scope, map::MapDomain::Metadata, name.as_bytes())?;
+            let bytes: Option<Option<Vec<u8>>> = self.connection()?.query_row(
+                "SELECT CASE WHEN value IS NULL THEN NULL WHEN length(value)<=262144 THEN value ELSE zeroblob(0) END FROM current_pending_map WHERE key=?1", [key.as_bytes().as_slice()], |row| row.get(0)
+            ).optional()?;
+            if let Some(Some(bytes)) = bytes {
+                self.store
+                    .read_current_resource(&super::resources::decode(&bytes)?)?;
+            }
+        }
         verify_model(&self.store, &transaction.model)
     }
 

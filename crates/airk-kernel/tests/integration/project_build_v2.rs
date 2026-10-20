@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Move into tests/ after project build profiles are admitted.
+use super::current_inspection::InspectCurrent;
 use airk_core::{EvidenceBasis, FactQuery};
 use airk_ingest::adapters::profile::{ExtractionPolicy, RuleMatch, SelectionRule};
 use airk_kernel::Kernel;
@@ -19,8 +20,8 @@ fn qualify(path: &str, moved: &str, text: &str, kind: &str) -> Result<()> {
     let kernel = Kernel::open(workspace.path(), Some(data.path().into()))?;
     kernel.configure_index_detail(airk_core::extraction::IndexDetail::Detailed)?;
     assert_eq!(kernel.index()?.indexed, 2);
-    let store = FileStore::new(data.path().join("collections/default"));
-    let original = store.catalog()?.context("catalog")?;
+    let store = FileStore::new(data.path().join("collections-1.2/default"));
+    let original = store.current_test_catalog()?.context("catalog")?;
     assert_eq!(
         store.read_retained_source(&original.snapshot.artifacts[path])?,
         source.as_bytes()
@@ -79,7 +80,14 @@ fn qualify(path: &str, moved: &str, text: &str, kind: &str) -> Result<()> {
     let changed = kernel.index()?;
     assert_eq!((changed.indexed, changed.reused), (1, 1));
     assert_eq!(
-        store.catalog()?.unwrap().inventory.as_ref().unwrap().files["unchanged.rs"].state,
+        store
+            .current_test_catalog()?
+            .unwrap()
+            .inventory
+            .as_ref()
+            .unwrap()
+            .files["unchanged.rs"]
+            .state,
         unchanged
     );
     kernel.configure_extraction_policy(ExtractionPolicy {
@@ -91,7 +99,7 @@ fn qualify(path: &str, moved: &str, text: &str, kind: &str) -> Result<()> {
     fs::rename(workspace.path().join(path), workspace.path().join(moved))?;
     let report = kernel.index()?;
     assert_eq!((report.indexed, report.reused), (0, 2));
-    let final_catalog = store.catalog()?.context("final catalog")?;
+    let final_catalog = store.current_test_catalog()?.context("final catalog")?;
     let after = &final_catalog
         .inventory
         .as_ref()

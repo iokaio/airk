@@ -26,7 +26,7 @@ fn digest(bytes: &[u8]) -> Sha256Digest {
 #[test]
 fn exact_catalog_queries_pin_old_revision_and_verify_indexed_identity() -> Result<()> {
     let root = tempfile::tempdir()?;
-    let store = FileStore::new(root.path().join("collections/fixture"));
+    let store = FileStore::new(root.path().join("collections-1.2/fixture"));
     let _writer = store.lock()?;
     let (first, first_receipt, reservation) = prepare(&store, "First evidence.\n", 1, None)?;
     store.publish_catalog_v2(&first, &first_receipt, &ExpectedHead::Empty, &reservation)?;
@@ -93,7 +93,7 @@ fn exact_catalog_queries_pin_old_revision_and_verify_indexed_identity() -> Resul
 #[test]
 fn exact_catalog_rejects_forks_and_corruption_but_reports_retired_absence() -> Result<()> {
     let root = tempfile::tempdir()?;
-    let store = FileStore::new(root.path().join("collections/fixture"));
+    let store = FileStore::new(root.path().join("collections-1.2/fixture"));
     let _writer = store.lock()?;
     let (first, first_receipt, reservation) = prepare(&store, "First evidence.\n", 1, None)?;
     store.publish_catalog_v2(&first, &first_receipt, &ExpectedHead::Empty, &reservation)?;

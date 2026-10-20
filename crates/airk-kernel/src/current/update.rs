@@ -10,7 +10,7 @@ use airk_core::{
 };
 use airk_retrieval::{
     bounded::Charge,
-    current_lexical::{CurrentLexical, LexicalChange, LexicalForkWork, LexicalManifest},
+    current_lexical::{CurrentLexical, LexicalForkWork, LexicalManifest},
     embedding_batch::MAX_BATCH_CHUNKS,
     model::{EmbeddingCacheContext, EmbeddingModel},
     vector::mutable::MutableDiskIndex,
@@ -20,7 +20,7 @@ use airk_store::{
     FileStore, WriterLock,
     current::{
         ArtifactChange, ArtifactVectorChanges, CurrentCommit, CurrentRead, CurrentScope,
-        MAX_PENDING_INPUTS, TransactionPhase,
+        MAX_PENDING_INPUTS, MAX_PENDING_VECTOR_INPUTS, TransactionPhase,
         graph::{GraphOverlay, GraphOverlayLimits, GraphStatistics},
         map::MapDomain,
         vector_map::{OccurrencePointer, PathOccurrences, PreparedOccurrence},
@@ -30,7 +30,7 @@ use airk_store::{
 use anyhow::{Context, Result, ensure};
 use std::{collections::BTreeMap, sync::Arc};
 
-const MAX_CAPTURED_BYTES: usize = 256 * 1024 * 1024;
+const MAX_CAPTURED_BYTES: usize = 8 * 1024 * 1024 * 1024;
 
 pub struct SemanticUpdate<'a> {
     pub model: &'a EmbeddingModel,
@@ -80,6 +80,7 @@ struct VectorMembership {
 
 struct VectorPlan<'a> {
     read: &'a CurrentRead,
+    replacing: bool,
     registry: BTreeMap<Sha256Digest, Option<u32>>,
     memberships: BTreeMap<Sha256Digest, VectorMembership>,
     occurrences: Vec<PreparedOccurrence>,
@@ -90,11 +91,14 @@ impl VectorPlan<'_> {
         if let Some(binding) = self.memberships.get(&key) {
             return Ok(Some(binding.id));
         }
+        if self.replacing {
+            return Ok(None);
+        }
         let Some(binding) = self.read.vector_binding(key)? else {
             return Ok(None);
         };
         ensure!(
-            self.memberships.len() < MAX_PENDING_INPUTS,
+            self.memberships.len() < MAX_PENDING_VECTOR_INPUTS,
             "current vector membership work limit exceeded"
         );
         let id = binding.graph_id;
@@ -117,7 +121,7 @@ impl VectorPlan<'_> {
             for ordinal in 0..index.count {
                 work += 1;
                 ensure!(
-                    work <= MAX_PENDING_INPUTS,
+                    work <= MAX_PENDING_VECTOR_INPUTS,
                     "current vector retirement work limit exceeded"
                 );
                 let id = index.occurrence_id(&self.read.head().scope, ordinal)?;
@@ -176,7 +180,7 @@ impl VectorPlan<'_> {
                 continue;
             }
             ensure!(
-                self.registry.len() < MAX_PENDING_INPUTS,
+                self.registry.len() < MAX_PENDING_VECTOR_INPUTS,
                 "current vector registry work limit exceeded"
             );
             if let Some(id) = self.existing(key)? {
@@ -201,12 +205,12 @@ impl VectorPlan<'_> {
         semantic.cache.stats.vector_reused_inputs += (units.len() - missing.len()) as u64;
         for ((key, _), vector) in missing.into_iter().zip(vectors) {
             ensure!(
-                self.registry.len() < MAX_PENDING_INPUTS,
+                self.registry.len() < MAX_PENDING_VECTOR_INPUTS,
                 "current vector registry work limit exceeded"
             );
             let id = if let Some(vector) = vector {
                 ensure!(
-                    self.memberships.len() < MAX_PENDING_INPUTS,
+                    self.memberships.len() < MAX_PENDING_VECTOR_INPUTS,
                     "current vector membership work limit exceeded"
                 );
                 let started = std::time::Instant::now();
@@ -227,7 +231,7 @@ impl VectorPlan<'_> {
                 continue;
             };
             ensure!(
-                self.occurrences.len() < MAX_PENDING_INPUTS,
+                self.occurrences.len() < MAX_PENDING_VECTOR_INPUTS,
                 "current vector occurrence work limit exceeded"
             );
             let member = self
@@ -287,11 +291,41 @@ impl CurrentUpdater<'_> {
     pub fn apply_observed(
         &self,
         changes: &[ArtifactChange],
-        mut semantic: Option<SemanticUpdate<'_>>,
+        semantic: Option<SemanticUpdate<'_>>,
+        observer: &mut dyn FnMut(CurrentUpdateStage),
+    ) -> Result<CurrentUpdateResult> {
+        self.apply_resources_observed(changes, semantic, &[], None, observer)
+    }
+
+    pub fn apply_with_resources(
+        &self,
+        changes: &[ArtifactChange],
+        semantic: Option<SemanticUpdate<'_>>,
+        resources: &[airk_store::current::resources::ResourceChange],
+    ) -> Result<CurrentUpdateResult> {
+        self.apply_resources_observed(changes, semantic, resources, None, &mut |_| {})
+    }
+
+    pub(crate) fn apply_scanned(
+        &self,
+        changes: &[ArtifactChange],
+        semantic: Option<SemanticUpdate<'_>>,
+        resources: &[airk_store::current::resources::ResourceChange],
+        moves: &BTreeMap<String, String>,
+    ) -> Result<CurrentUpdateResult> {
+        self.apply_resources_observed(changes, semantic, resources, Some(moves), &mut |_| {})
+    }
+
+    fn apply_resources_observed(
+        &self,
+        changes: &[ArtifactChange],
+        semantic: Option<SemanticUpdate<'_>>,
+        resources: &[airk_store::current::resources::ResourceChange],
+        moves: Option<&BTreeMap<String, String>>,
         observer: &mut dyn FnMut(CurrentUpdateStage),
     ) -> Result<CurrentUpdateResult> {
         ensure!(
-            !changes.is_empty()
+            (!changes.is_empty() || self.configuration.is_some() || !resources.is_empty())
                 && changes.len() <= MAX_PENDING_INPUTS
                 && changes
                     .windows(2)
@@ -310,11 +344,50 @@ impl CurrentUpdater<'_> {
             writer.reclaim_lexical_candidates()?;
         }
         let read = self.store.current_read(self.scope)?;
+        let trusted_cache = read
+            .resource(self.store, "embedding-cache")?
+            .as_deref()
+            .map(airk_store::vector_cache::VectorCacheManifest::from_bytes)
+            .transpose()?;
+        let owned_cache = semantic
+            .as_ref()
+            .filter(|s| s.cache.cache.is_none())
+            .map(|s| {
+                airk_store::vector_cache::VectorCache::new(
+                    self.store.directory(),
+                    self.reservation,
+                    &s.model.cache_descriptor()?,
+                    trusted_cache.as_ref(),
+                )
+            })
+            .transpose()?;
+        let mut semantic = semantic.map(|s| SemanticUpdate {
+            model: s.model,
+            objects: s.objects,
+            selection: s.selection,
+            cache: EmbeddingCacheContext {
+                cache: s.cache.cache.or(owned_cache
+                    .as_ref()
+                    .map(|c| c as &dyn airk_core::embedding::EmbeddingCache)),
+                bypass: s.cache.bypass,
+                stats: s.cache.stats,
+                max_workers: s.cache.max_workers,
+                working_memory_bytes: s.cache.working_memory_bytes,
+            },
+        });
         let base = read.head().clone();
         let applied = read.collection_state()?;
         let configuration = self
             .configuration
             .or(applied.as_ref().map(|state| &state.configuration));
+        let metadata = super::metadata::prepare(
+            self.store,
+            &read,
+            changes,
+            configuration,
+            self.reservation,
+            moves,
+        )?;
         if let (Some(configuration), Some(semantic)) = (configuration, semantic.as_ref()) {
             ensure!(
                 configuration.vector_selection.digest()? == semantic.selection.digest()?,
@@ -343,18 +416,46 @@ impl CurrentUpdater<'_> {
             &self.store.directory().join(base.lexical_directory_name()?),
             base.lexical_commit,
         )?;
-        let overlay = Arc::new(GraphOverlay::new(
-            self.reservation,
-            read.clone(),
-            GraphOverlayLimits::default(),
-        )?);
+        let replacing = semantic
+            .as_ref()
+            .map(|s| -> Result<bool> {
+                Ok(s.cache.bypass
+                    || base.graph_head.scope.specification
+                        != airk_retrieval::vector::mutable::specification(
+                            s.model.dimensions(),
+                            s.objects.pipeline_digest,
+                        )?)
+            })
+            .transpose()?
+            .unwrap_or(false);
+        let graph_limits = GraphOverlayLimits::for_indexing(self.reservation);
+        let overlay = Arc::new(if replacing {
+            let semantic = semantic.as_ref().expect("replacement model");
+            let mut instance = [0; 16];
+            getrandom::fill(&mut instance)
+                .map_err(|e| anyhow::anyhow!("allocate graph identity: {e}"))?;
+            let mut scope = base.graph_head.scope.clone();
+            scope.graph_instance = airk_core::identity::Incarnation::from_bytes(instance);
+            scope.specification = airk_retrieval::vector::mutable::specification(
+                semantic.model.dimensions(),
+                semantic.objects.pipeline_digest,
+            )?;
+            scope.record_bytes =
+                airk_retrieval::vector::mutable::record_bytes(semantic.model.dimensions())?;
+            GraphOverlay::empty(self.reservation, scope, graph_limits)?
+        } else {
+            GraphOverlay::new(self.reservation, read.clone(), graph_limits)?
+        });
         let mut plan = VectorPlan {
             read: &read,
+            replacing,
             registry: BTreeMap::new(),
             memberships: BTreeMap::new(),
             occurrences: Vec::new(),
         };
-        plan.retire(changes)?;
+        if !replacing {
+            plan.retire(changes)?;
+        }
         let descriptor = semantic
             .as_ref()
             .map(|semantic| -> Result<_> {
@@ -376,7 +477,7 @@ impl CurrentUpdater<'_> {
         let mut graph = semantic
             .as_ref()
             .map(|semantic| {
-                if base.graph_head.allocated_count == 0 {
+                if replacing || base.graph_head.allocated_count == 0 {
                     MutableDiskIndex::create(
                         overlay.clone(),
                         semantic.model.dimensions(),
@@ -391,11 +492,9 @@ impl CurrentUpdater<'_> {
                 }
             })
             .transpose()?;
-        let mut artifacts = Vec::with_capacity(changes.len());
         let mut captured_bytes = 0usize;
         for change in changes {
             let ArtifactChange::Upsert(input) = change else {
-                artifacts.push(None);
                 continue;
             };
             let reference = input
@@ -452,18 +551,63 @@ impl CurrentUpdater<'_> {
                     semantic.cache.stats.vector_excluded_artifacts += 1;
                 }
             }
-            artifacts.push(Some(retained.artifact));
         }
         for membership in plan.memberships.values() {
             overlay.set_live(membership.id, membership.remaining != 0)?;
         }
         drop(graph);
+        if let Some(semantic) = semantic.as_mut() {
+            semantic.cache.stats.vector_registry_rows = plan.registry.len() as u64;
+        }
         let occurrences = std::mem::take(&mut plan.occurrences);
         drop(plan);
+        let mut resources = resources.to_vec();
+        if let Some(cache) = &owned_cache {
+            let started = std::time::Instant::now();
+            let manifest = cache.finalize()?;
+            if let Some(semantic) = semantic.as_mut() {
+                let statistics = cache.statistics()?;
+                semantic.cache.stats.cache_finalize_us =
+                    u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
+                semantic.cache.stats.cache_file_opens = statistics.file_opens;
+                semantic.cache.stats.cache_read_bytes = statistics.read_bytes;
+                semantic.cache.stats.cache_written_bytes = statistics.written_bytes;
+                semantic.cache.stats.cache_record_verification_bytes =
+                    statistics.record_verification_bytes;
+                semantic.cache.stats.cache_index_verification_bytes =
+                    statistics.index_verification_bytes;
+                semantic.cache.stats.cache_full_pack_verification_bytes =
+                    statistics.full_pack_verification_bytes;
+                semantic.cache.stats.cache_syncs = statistics.syncs;
+                semantic.cache.stats.cache_index_hits = statistics.index_cache_hits;
+                semantic.cache.stats.cache_index_peak_bytes = statistics.index_cache_peak_bytes;
+                semantic.cache.stats.cache_packs_written = statistics.packs_written;
+                semantic.cache.stats.cache_packs_reused = statistics.packs_reused;
+                semantic.cache.stats.cache_compacted_records = statistics.compacted_records;
+            }
+            let reference = self
+                .store
+                .retain_current_resource(&manifest.canonical_bytes()?, self.reservation)?;
+            resources.push(airk_store::current::resources::ResourceChange {
+                key: "embedding-cache".into(),
+                reference: Some(reference),
+            });
+        } else if captured_model.is_none() && trusted_cache.is_some() {
+            resources.push(airk_store::current::resources::ResourceChange {
+                key: "embedding-cache".into(),
+                reference: None,
+            });
+        }
+        drop(semantic);
         drop(read);
         let sealed = Arc::try_unwrap(overlay)
             .map_err(|_| anyhow::anyhow!("current graph retained preparation reader"))?
             .seal()?;
+        let sealed = if replacing {
+            sealed.replacing(base.graph_head.clone())?
+        } else {
+            sealed
+        };
         let mut target = base.clone();
         target.sequence = target
             .sequence
@@ -471,31 +615,33 @@ impl CurrentUpdater<'_> {
             .context("current sequence overflow")?;
         target.lexical_sequence = target.sequence;
         target.graph_head = sealed.descriptor().target.clone();
-        let lexical_changes = changes
-            .iter()
-            .zip(&artifacts)
-            .map(|(change, artifact)| LexicalChange {
-                path: path(change),
-                artifact: artifact.as_ref(),
-            })
-            .collect::<Vec<_>>();
+        let paths = changes.iter().map(path).collect::<Vec<_>>();
+        let mut inputs = changes.iter();
         let reservation = self.reservation.clone();
         let charge: Charge = Arc::new(move |bytes| reservation.charge(bytes));
-        let (lexical, ticket, lexical_work) = CurrentLexical::fork_changed(
+        let (lexical, ticket, lexical_work) = CurrentLexical::fork_loaded(
             &verified,
             &self
                 .store
                 .directory()
                 .join(target.lexical_directory_name()?),
             charge,
-            &lexical_changes,
+            &paths,
+            &mut |_| match inputs.next().context("current lexical input missing")? {
+                ArtifactChange::Upsert(input) => Ok(Some(
+                    self.store
+                        .load_retrieval_artifact(&input.artifact)?
+                        .artifact,
+                )),
+                ArtifactChange::Delete(_) => Ok(None),
+            },
         )?;
         drop(lexical);
         let manifest_bytes = ticket.manifest().canonical_bytes()?;
         let mut writer = self
             .store
             .current_write(self.writer, self.quota, self.scope, capacity)?;
-        let pending = writer.prepare_artifacts_with_occurrences(
+        let pending = writer.prepare_artifacts_with_resources(
             &base.token()?,
             target,
             &sealed,
@@ -506,6 +652,8 @@ impl CurrentUpdater<'_> {
             },
             captured_model,
             &manifest_bytes,
+            &metadata,
+            &resources,
         )?;
         observer(CurrentUpdateStage::Prepared);
         writer.mark_applying(&pending)?;
@@ -514,6 +662,27 @@ impl CurrentUpdater<'_> {
         observer(CurrentUpdateStage::Committed);
         if let Err(error) = writer.reclaim_lexical_candidates() {
             let message = format!("current lexical cleanup: {error:#}");
+            committed.maintenance_error = Some(match committed.maintenance_error {
+                Some(previous) => format!("{previous}; {message}"),
+                None => message,
+            });
+        }
+        drop(writer);
+        let cleanup = (|| -> Result<()> {
+            let read = self.store.current_read(self.scope)?;
+            if read.collection_state()?.is_none() {
+                return Ok(());
+            }
+            let plan = read.reclamation_plan(self.store)?;
+            drop(read);
+            let capacity = self.store.current_database_capacity(self.scope)?;
+            self.store
+                .current_write(self.writer, self.quota, self.scope, capacity)?
+                .reclaim_objects(&plan)?;
+            Ok(())
+        })();
+        if let Err(error) = cleanup {
+            let message = format!("current object cleanup: {error:#}");
             committed.maintenance_error = Some(match committed.maintenance_error {
                 Some(previous) => format!("{previous}; {message}"),
                 None => message,

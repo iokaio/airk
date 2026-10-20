@@ -10,7 +10,7 @@ Everything runs on your machine. There is no cloud service, API key, Docker, Rus
 
 **Open AIRK Tools** on any collection opens a console in VS Code's Terminal panel. Enter `list`, `help airk_search`, or `call airk_status` to inspect and call MCP tools directly. Help includes argument schemas, defaults and examples. The console uses the selected collection and bundled helper; no coding agent or PATH setup is required.
 
-**Usage & Savings** now shows how many eligible requests were compared, why comparisons were unavailable, and how much recorded activity was evidence retrieval versus background work. New index generations retain compact source-size measurements tied to the exact cited revision. After updating, index the collection and restart connected agent MCP sessions. Earlier missing comparisons remain unmeasured; estimated context reductions are not verified bill savings.
+**Usage & Savings** now shows how many eligible requests were compared, why comparisons were unavailable, and how much recorded activity was evidence retrieval versus background work. The current index retains compact source-size measurements tied to the exact cited revision. After updating, index the collection and restart connected agent MCP sessions. Earlier missing comparisons remain unmeasured; estimated context reductions are not verified bill savings.
 
 ## What's new in 1.1.3
 
@@ -20,7 +20,7 @@ Every collection now has a **Usage & Savings** button. See how much smaller AIRK
 
 - **Larger workspaces:** machine-aware ingestion limits, measured source/extracted sizes and reviewed limit increases with a single retry.
 - **Collection controls:** a dashboard with coverage, MCP helper checks, indexing and pause controls, and Essential/Balanced/Detailed evidence selection. New collections default to Balanced.
-- **Storage and recovery:** smaller fact catalogs, reuse of unchanged native rows and faster repeated exact queries; adjustable 100 GiB collection/500 GiB root quota defaults; retention targeting 1–9 generations, active-only for new collections; recovery for interrupted publication. Existing saved policies remain in force.
+- **Storage and recovery:** one current index, incremental changed-component updates, authenticated cleanup and startup replay. 1.2 collections/settings start fresh; old 1.1 state remains untouched. Historical retention/checkpoints are unsupported.
 - **Agent setup:** persistent guides can create missing Codex project configuration, install Claude Code/Gemini CLI/Antigravity entries while preserving settings, or enable Copilot registration. Verify the agent's actual tools separately from helper health.
 
 The [combined October 17 release notes](https://github.com/iokaio/airk/blob/main/docs/releases-2026-10-17.md) include upgrade steps, measured Windows results and remaining qualification limits. Download matching packages from [GitHub Releases](https://github.com/iokaio/airk/releases/tag/v1.1.2); Marketplace publication is a separate process.
@@ -46,7 +46,7 @@ AIRK gives each agent **sixteen read-only MCP tools**:
 | `airk_references` | Exact textual occurrences of an identifier, explicitly not resolved |
 | `airk_code_facts`, `airk_relationships` | Scopes, signatures and caller/callee/dependency candidates |
 | `airk_document_facts` | Requirements, dates, quantities and design/decision candidates from documents |
-| `airk_changes`, `airk_history` | What changed between indexed revisions; retained revision identities |
+| `airk_changes` | Current remembered-evidence validation and independent freshness; historical baselines unavailable |
 | `airk_status`, `airk_capabilities` | Collection revision and counts; supported formats and their limits |
 
 Every response is size-bounded. The tools cannot write files, run commands, switch collections or reach the network. Full reference: [MCP tools](https://github.com/iokaio/airk/blob/main/docs/mcp.md).
@@ -181,7 +181,7 @@ If no tools appear, check the active client config, server enablement, trust, ex
 
 ## How indexing works
 
-- **One collection per folder.** Each workspace folder gets its own isolated collection. Several agents can share it by using the same root, storage folder and collection ID. Agents keep reading the current index while a new revision is being built.
+- **One collection per folder.** Each workspace folder gets its own isolated collection. Several agents can share it by using the same root, storage folder and collection ID. Requests share the current head during preparation; publication can return busy while it holds exclusive access. Idle connections retain no old generations.
 - **Edits are batched.** By default AIRK waits until file changes have been quiet for 2 seconds, then indexes incrementally. That includes edits made by coding agents outside the editor. **Reindex Collection** re-extracts everything.
 - **Only saved files are indexed.** The status tooltip counts open documents with unsaved changes.
 - **Ignore rules are respected.** AIRK honors `.gitignore` and an optional `.airkignore` in the same syntax. It always skips common dependency, VCS and secret paths such as `.git`, `node_modules`, `target`, `.venv`, `.env*`, `.ssh`, `*.pem` and `*.key`. It is not a secret scanner; review what you index.
@@ -191,17 +191,17 @@ Open **AIRK** in the Activity Bar for the persistent **Dashboard**. Each workspa
 
 Choose the indexing mode, pause/resume automatic work, choose storage, set up coding agents and open reports directly in the sidebar. Maintenance and extraction controls are grouped in expandable sections. Coverage measures saved-file freshness; it is not an indexing progress estimate. The collapsed **Collections** view includes inactive stored collections and confirmed removal controls.
 
-### Storage budgets and generation retention
+### Storage budgets and current cleanup
 
-The sidebar’s **Storage limits…** control edits the selected collection quota (default **100 GiB**) and shared storage quota (default **500 GiB**). These are ceilings, not disk reservations. Existing saved quotas are preserved. **Generations and cleanup…** chooses automatic or manual retention and **1–9 completed generations**, default **1 (active only)** for new collections. Live readers, checkpoints and selected history can retain additional data. The active index remains intact until a new build commits; reducing retention does not remove that failure protection. Previously retired generations cannot be restored by increasing the count.
+**Storage limits…** edits the selected collection and shared root quotas, defaulting to 100 GiB and 500 GiB. **Reclaim Unreferenced Index Objects** runs bounded cleanup of objects no longer owned by current evidence or durable pending work. Active requests, corruption or incomplete ownership checks prevent deletion. Source files remain untouched.
 
-Automatic retention trims eligible old generations after publication and before builds with low estimated headroom; storage pressure allows one bounded cleanup and retry. **Reclaim eligible space…** previews manual maintenance using the same protections. If protected data or work budgets prevent recovery, indexing stops with the previous index retained. Review storage limits/retention, then Resume or Index now. New file events do not restart a capacity-blocked job.
+The 1.2 namespace starts fresh settings and leaves old state on disk. Historical generation counts, checkpoints, retention policies and rollback are unavailable. Capacity failures stop automatic retries until Resume or Index now; resolving a failure does not imply that every file is current.
 
 ### Choose indexing detail
 
 The AIRK sidebar offers **Essential**, **Balanced** (the default for new collections), and **Detailed** for each collection. Essential keeps searchable text and exact citations. Balanced adds declarations, imports, useful structural/document facts and declaration change tracking. Detailed also retains individual calls and document-unit change tracking. Existing collections keep their previous Detailed behavior until changed.
 
-The panel shows the configured and published levels separately. Changing a level rebuilds evidence; the previous index stays available until the rebuild succeeds. Storage quotas, retained generations and vector search are separate controls. Native fact and relationship responses explicitly report omitted detail. See [ingestion limits and index detail](https://github.com/iokaio/airk/blob/main/docs/ingestion-limits.md) for limits and CLI equivalents.
+The panel shows the configured and published levels separately. Changing a level rebuilds evidence; preparation keeps the current head readable, and Applying requires completion or recovery before reads resume. Storage quotas, current-object cleanup and vector search are separate controls. Native fact and relationship responses explicitly report omitted detail. See [ingestion limits and index detail](https://github.com/iokaio/airk/blob/main/docs/ingestion-limits.md) for limits and CLI equivalents.
 
 ## Commands
 
@@ -236,14 +236,14 @@ Reports open as formatted panels; **Open as JSON** shows the full native output.
 | Choose Index Storage Folder… | Pick a folder, for example on a larger or faster drive. Existing indexes are not moved or deleted. Restart connected agents afterwards. |
 | Manage Collections and Disk Space | Every collection in a storage folder with size, root, last index time and revision, plus free space on the drive. |
 | Remove Unneeded Collection… | Deletes one collection's derived index; source files are untouched. Refused while the collection is open in this window or still in use by an agent. |
-| Trim Obsolete Index Generations… | Previews reclaimable space from superseded index builds, then trims after you confirm. The current index and anything an agent is still reading are kept. |
+| Reclaim Unreferenced Index Objects | Runs bounded current-object cleanup under ownership checks and request exclusion. |
 
-**Retention, history and extraction** (advanced)
+**Extraction** (advanced)
 
 | Command | What it does |
 |---|---|
-| Show Retention Status · Choose Retention Policy… · Run Retention Maintenance… | Inspect and set whether superseded searchable revisions are cleaned up manually or automatically. Every change is previewed and confirmed. New collections default to automatic; collections from older versions stay manual until you change them. |
-| Show History Status · Choose History Policy… · Run History Maintenance… | Inspect and bound the retained history of committed index revisions. |
+
+
 | List Retained Publication Identities · Show / Create / Remove Checkpoint… | Pin a committed revision under a label so it is kept, or release a pin. Checkpoints pin indexed evidence, not live source files. |
 | Preview Logical History Purge… | Plan removal of selected retained revisions, then confirm. This is a logical purge, not secure erasure. |
 | Show Extraction Policy · Configure Extraction Policy… | Inspect, or validate and save, a JSON policy that chooses which built-in extractor handles which files. A saved policy applies on the next successful index. |

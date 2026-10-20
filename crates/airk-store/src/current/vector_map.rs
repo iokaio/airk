@@ -12,7 +12,8 @@ use serde::{Deserialize, Serialize};
 mod plan;
 pub(crate) use plan::{VectorPlanContext, attach_new_occurrences, retire_changed_paths};
 
-pub const MAX_VECTOR_OCCURRENCES: usize = 128;
+// Fits a canonical binding within the existing 256 KiB authenticated value cap.
+pub const MAX_VECTOR_OCCURRENCES: usize = 2048;
 
 /// A new path-local citation and its already allocated DiskANN node. The
 /// pointer refers to the changed artifact's verified retained extraction;

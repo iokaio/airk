@@ -62,6 +62,10 @@ pub(crate) fn discover_scope(
     Ok(owner.scope)
 }
 
+pub(crate) fn owned_scope(directory: &Path) -> Result<CurrentScope> {
+    Ok(read_owner(directory)?.scope)
+}
+
 fn read_owner(directory: &Path) -> Result<Owner> {
     let path = directory.join(OWNER_FILE);
     let metadata = fs::symlink_metadata(&path)

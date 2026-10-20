@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Original command-level fixtures for explicit retention policy and maintenance.
 use anyhow::{Result, ensure};
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::{
     fs,
     path::Path,
@@ -27,335 +27,31 @@ fn call(root: &Path, state: &Path, args: &[&str]) -> Result<Value> {
     );
     Ok(serde_json::from_slice(&result.stdout)?)
 }
-fn policy(mode: &str) -> String {
-    json!({"version":1,"mode":mode,"searchable_predecessors":1}).to_string()
-}
-fn generations(state: &Path) -> Result<usize> {
-    Ok(fs::read_dir(state.join("collections/default/generations"))?
-        .collect::<std::io::Result<Vec<_>>>()?
-        .len())
-}
-
 #[test]
-fn retention_preview_set_and_apply_preserve_source_and_manual_prune_semantics() -> Result<()> {
+fn current_maintenance_replaces_retention_and_preserves_sources_and_token() -> Result<()> {
     let root = tempfile::tempdir()?;
     let state = tempfile::tempdir()?;
-    let source = root.path().join("original.py");
-    fs::write(&source, "def original_aurora():\n    return 1\n")?;
+    fs::write(root.path().join("note.txt"), "original source")?;
     call(root.path(), state.path(), &["index"])?;
-    let manual = policy("manual");
-    let receipt = call(
-        root.path(),
-        state.path(),
-        &["collections", "retention", "set", "--json", &manual],
-    )?;
-    assert_eq!(receipt["origin"], "explicit");
-    assert_eq!(receipt["policy"]["mode"], "manual");
-    for value in 2..=4 {
-        fs::write(
-            &source,
-            format!("def original_aurora():\n    return {value}\n"),
-        )?;
-        call(root.path(), state.path(), &["index"])?;
-    }
-    assert_eq!(generations(state.path())?, 4);
-    let source_bytes = fs::read(&source)?;
-    let status = call(
-        root.path(),
-        state.path(),
-        &["collections", "retention", "show"],
-    )?;
-    assert_eq!(status["history_supported"], true);
-    assert_eq!(status["checkpoints_supported"], true);
-    assert_eq!(status["policy"]["digest"], receipt["digest"]);
-    let automatic = policy("automatic");
-    let preview = call(
-        root.path(),
-        state.path(),
-        &["collections", "retention", "preview", "--json", &automatic],
-    )?;
-    assert_eq!(preview["status"]["policy"]["policy"]["mode"], "automatic");
-    assert_eq!(generations(state.path())?, 4);
-    let after = call(
-        root.path(),
-        state.path(),
-        &["collections", "retention", "show"],
-    )?;
-    assert_eq!(after["policy"], status["policy"]);
-    assert_eq!(after["active"], status["active"]);
-    let dry = call(
-        root.path(),
-        state.path(),
-        &[
-            "collections",
-            "retention",
-            "run",
-            "--max-removal-bytes",
-            "1073741824",
-            "--max-duration-ms",
-            "10000",
-            "--max-metadata-bytes",
-            "33554432",
-        ],
-    )?;
-    assert_eq!(dry["candidates"].as_array().unwrap().len(), 2);
-    assert_eq!(generations(state.path())?, 4);
-    let mut complete = false;
-    for _ in 0..16 {
-        let applied = call(
-            root.path(),
-            state.path(),
-            &["collections", "retention", "run", "--apply"],
-        )?;
-        if applied["receipt"]["state"] == "complete" {
-            complete = true;
-            break;
-        }
-        assert_eq!(applied["receipt"]["state"], "pending", "{applied}");
-        assert_eq!(applied["receipt"]["pending"], true);
-    }
-    assert!(
-        complete,
-        "bounded explicit passes must finish this four-revision fixture"
+    let before = call(root.path(), state.path(), &["status"])?;
+    let clean = call(root.path(), state.path(), &["collections", "maintain"])?;
+    assert_eq!(clean["removed_files"], 0);
+    assert_eq!(
+        call(root.path(), state.path(), &["status"])?["publication"],
+        before["publication"]
     );
-    assert_eq!(generations(state.path())?, 2);
-    assert_eq!(fs::read(&source)?, source_bytes);
-    // Legacy manual prune is separately explicit and keeps only active evidence.
-    call(
-        root.path(),
-        state.path(),
-        &["collections", "prune", "--apply"],
-    )?;
-    assert_eq!(generations(state.path())?, 1);
-    assert_eq!(fs::read(&source)?, source_bytes);
-    Ok(())
-}
-
-#[test]
-fn policy_file_and_inline_inputs_are_bounded_and_invalid_updates_leave_policy_unchanged()
--> Result<()> {
-    let root = tempfile::tempdir()?;
-    let state = tempfile::tempdir()?;
-    fs::write(
-        root.path().join("original.txt"),
-        "Original retention validation fixture.\n",
-    )?;
-    call(root.path(), state.path(), &["index"])?;
-    let input = tempfile::tempdir()?;
-    let file = input.path().join("policy.json");
-    fs::write(&file, policy("manual"))?;
-    let file_name = file.to_str().unwrap();
-    let receipt = call(
-        root.path(),
-        state.path(),
-        &["collections", "retention", "set", file_name],
-    )?;
-    let invalid = json!({"version":1,"mode":"manual","searchable_predecessors":9}).to_string();
-    for args in [
-        vec!["collections", "retention", "set"],
-        vec!["collections", "retention", "set", "--json", "{}"],
-        vec!["collections", "retention", "set", "--json", &invalid],
-        vec![
-            "collections",
-            "retention",
-            "run",
-            "--max-metadata-bytes",
-            "16383",
-        ],
-        vec![
-            "collections",
-            "retention",
-            "run",
-            "--apply",
-            "--max-metadata-bytes",
-            "8589934593",
-        ],
-        vec![
-            "collections",
-            "retention",
-            "run",
-            "--max-duration-ms",
-            "60001",
-        ],
-        vec![
-            "collections",
-            "retention",
-            "run",
-            "--apply",
-            "--max-removal-bytes",
-            "68719476737",
-        ],
-        vec![
-            "collections",
-            "retention",
-            "run",
-            "--max-removal-bytes",
-            "0",
-        ],
-        vec![
-            "collections",
-            "retention",
-            "set",
-            file_name,
-            "--json",
-            &policy("manual"),
-        ],
-    ] {
-        assert!(!run(root.path(), state.path(), &args)?.status.success());
-    }
-    fs::write(&file, vec![b' '; 65_537])?;
-    assert!(
-        !run(
-            root.path(),
-            state.path(),
-            &["collections", "retention", "preview", "--file", file_name]
-        )?
-        .status
-        .success()
-    );
-    let status = call(
-        root.path(),
-        state.path(),
-        &["collections", "retention", "show"],
-    )?;
-    assert_eq!(status["policy"], receipt);
-    let foreign_root = tempfile::tempdir()?;
     for args in [
         vec!["collections", "retention", "show"],
-        vec!["collections", "retention", "preview"],
-        vec![
-            "collections",
-            "retention",
-            "set",
-            "--json",
-            &policy("automatic"),
-        ],
         vec!["collections", "retention", "run", "--apply"],
+        vec!["collections", "prune", "--apply"],
     ] {
-        assert!(
-            !run(foreign_root.path(), state.path(), &args)?
-                .status
-                .success(),
-            "foreign root must not operate on bound collection"
-        );
+        let output = run(root.path(), state.path(), &args)?;
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("unsupported"));
     }
-    Ok(())
-}
-
-#[test]
-fn configurable_generation_counts_preserve_active_and_cannot_restore_retired_data() -> Result<()> {
-    let root = tempfile::tempdir()?;
-    let state = tempfile::tempdir()?;
-    fs::write(root.path().join("evidence.txt"), "original zero")?;
-    call(root.path(), state.path(), &["index"])?;
-    let initial = call(
-        root.path(),
-        state.path(),
-        &["collections", "retention", "show"],
-    )?;
-    assert_eq!(initial["policy"]["policy"]["searchable_predecessors"], 0);
-    let manual = json!({"version":1,"mode":"manual","searchable_predecessors":2}).to_string();
-    call(
-        root.path(),
-        state.path(),
-        &["collections", "retention", "set", "--json", &manual],
-    )?;
-    for value in 1..5 {
-        fs::write(
-            root.path().join("evidence.txt"),
-            format!("original {value}"),
-        )?;
-        call(root.path(), state.path(), &["index"])?;
-    }
-    for _ in 0..4 {
-        call(
-            root.path(),
-            state.path(),
-            &["collections", "retention", "run", "--apply"],
-        )?;
-    }
-    assert_eq!(generations(state.path())?, 3);
-    let active_only =
-        json!({"version":1,"mode":"automatic","searchable_predecessors":0}).to_string();
-    call(
-        root.path(),
-        state.path(),
-        &["collections", "retention", "set", "--json", &active_only],
-    )?;
-    for _ in 0..4 {
-        call(
-            root.path(),
-            state.path(),
-            &["collections", "retention", "run", "--apply"],
-        )?;
-    }
-    assert_eq!(generations(state.path())?, 1);
     assert_eq!(
-        fs::read_to_string(root.path().join("evidence.txt"))?,
-        "original 4"
+        fs::read_to_string(root.path().join("note.txt"))?,
+        "original source"
     );
-    call(
-        root.path(),
-        state.path(),
-        &["collections", "retention", "set", "--json", &manual],
-    )?;
-    let preview = call(
-        root.path(),
-        state.path(),
-        &["collections", "retention", "preview"],
-    )?;
-    assert_eq!(preview["candidates"].as_array().unwrap().len(), 0);
-    Ok(())
-}
-
-#[test]
-fn quota_inline_edit_preserves_other_collections_and_rejects_stale_reviews() -> Result<()> {
-    let root = tempfile::tempdir()?;
-    let state = tempfile::tempdir()?;
-    let current = call(
-        root.path(),
-        state.path(),
-        &["collections", "quota", "policy"],
-    )?;
-    assert_eq!(current["root_bytes"], 500u64 * 1024 * 1024 * 1024);
-    assert_eq!(
-        current["default_collection_bytes"],
-        100u64 * 1024 * 1024 * 1024
-    );
-    let mut proposed = current.clone();
-    proposed["collections"]["other"] = json!(123456789);
-    call(
-        root.path(),
-        state.path(),
-        &[
-            "collections",
-            "quota",
-            "set",
-            "--json",
-            &proposed.to_string(),
-            "--expected-json",
-            &current.to_string(),
-        ],
-    )?;
-    let stale = run(
-        root.path(),
-        state.path(),
-        &[
-            "collections",
-            "quota",
-            "set",
-            "--json",
-            &current.to_string(),
-            "--expected-json",
-            &current.to_string(),
-        ],
-    )?;
-    assert!(!stale.status.success());
-    let saved = call(
-        root.path(),
-        state.path(),
-        &["collections", "quota", "policy"],
-    )?;
-    assert_eq!(saved, proposed);
     Ok(())
 }

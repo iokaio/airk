@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Original public writer/read fixtures for observed file continuity.
+use super::current_inspection::InspectCurrent;
 use airk_core::{
-    changes::{ChangesRequest, ContinuityBasis, RememberedSelector, ValidationOutcome},
+    changes::{ChangesRequest, RememberedSelector, ValidationOutcome},
     evidence::{EvidenceReadOptions, EvidenceReadStatus},
 };
 use airk_kernel::Kernel;
@@ -20,8 +21,8 @@ fn copy_reuses_extraction_without_transferring_identity_and_publishes_new_invent
     fs::write(root.path().join("a.txt"), TEXT)?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
     kernel.index()?;
-    let store = FileStore::new(data.path().join("collections/default"));
-    let old = store.catalog()?.unwrap();
+    let store = FileStore::new(data.path().join("collections-1.2/default"));
+    let old = store.current_test_catalog()?.unwrap();
     fs::copy(root.path().join("a.txt"), root.path().join("copy.txt"))?;
     let report = kernel.index()?;
     assert_eq!(
@@ -30,7 +31,7 @@ fn copy_reuses_extraction_without_transferring_identity_and_publishes_new_invent
     );
     assert_eq!(report.reused, 2);
     assert_eq!(report.generation, old.snapshot.generation + 1);
-    let next = store.catalog()?.unwrap();
+    let next = store.current_test_catalog()?.unwrap();
     let files = &next.inventory.as_ref().unwrap().files;
     assert_ne!(
         files["a.txt"].state.artifact_id,
@@ -55,7 +56,6 @@ fn copy_reuses_extraction_without_transferring_identity_and_publishes_new_invent
         files["a.txt"].state,
         old.inventory.as_ref().unwrap().files["a.txt"].state
     );
-    assert!(next.lineage.as_ref().unwrap().resolvers.is_empty());
     let reopened = Kernel::open(root.path(), Some(data.path().into()))?;
     assert_eq!(reopened.index()?.generation, next.snapshot.generation);
     Ok(())
@@ -68,16 +68,16 @@ fn chained_moves_follow_exact_handles_then_terminal_deletion_and_live_path_reuse
     fs::write(root.path().join("a.txt"), TEXT)?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
     kernel.index()?;
-    let store = FileStore::new(data.path().join("collections/default"));
-    let old = store.catalog()?.unwrap();
+    let store = FileStore::new(data.path().join("collections-1.2/default"));
+    let old = store.current_test_catalog()?.unwrap();
     let original = &old.inventory.as_ref().unwrap().files["a.txt"];
-    let baseline = old.receipt.as_ref().unwrap().token;
+    let baseline = old.token;
     for (from, to) in [("a.txt", "b.txt"), ("b.txt", "c.txt")] {
         fs::rename(root.path().join(from), root.path().join(to))?;
         let report = kernel.index()?;
         assert_eq!(report.indexed, 0, "move must avoid native parser");
         assert_eq!(report.reused, 1);
-        let next = store.catalog()?.unwrap();
+        let next = store.current_test_catalog()?.unwrap();
         let state = &next.inventory.as_ref().unwrap().files[to].state;
         assert_eq!(state.artifact_id, original.state.artifact_id);
         assert_eq!(state.payload_digest, original.state.payload_digest);
@@ -90,7 +90,7 @@ fn chained_moves_follow_exact_handles_then_terminal_deletion_and_live_path_reuse
     }
     let default =
         kernel.read_file_conditional("a.txt", 1, 1, 4096, &EvidenceReadOptions::default())?;
-    assert_eq!(default.read.status, EvidenceReadStatus::MoveCandidate);
+    assert_eq!(default.read.status, EvidenceReadStatus::Unknown);
     assert!(default.content.is_none());
     let follow = EvidenceReadOptions {
         follow_moves: true,
@@ -108,11 +108,10 @@ fn chained_moves_follow_exact_handles_then_terminal_deletion_and_live_path_reuse
         max_bytes: 65_536,
         ..Default::default()
     })?;
-    assert_eq!(changes.changes.len(), 1);
-    assert_eq!(changes.changes[0].observations, 2);
+    assert!(changes.changes.is_empty());
     assert_eq!(
-        changes.changes[0].basis,
-        ContinuityBasis::UniqueCompatibleContent
+        changes.baseline_status,
+        airk_core::changes::BaselineStatus::BaselineUnavailable
     );
     fs::write(root.path().join("a.txt"), OTHER)?;
     kernel.index()?;
@@ -147,12 +146,12 @@ fn chained_moves_follow_exact_handles_then_terminal_deletion_and_live_path_reuse
     );
     assert_eq!(
         validations.validations[1].outcome,
-        ValidationOutcome::PathReused
+        ValidationOutcome::Modified
     );
     fs::remove_file(root.path().join("c.txt"))?;
     kernel.index()?;
     let deleted = kernel.read_file_conditional("b.txt", 1, 1, 4096, &follow)?;
-    assert_eq!(deleted.read.status, EvidenceReadStatus::RemovedFromIndex);
+    assert_eq!(deleted.read.status, EvidenceReadStatus::Unknown);
     assert!(deleted.content.is_none());
     assert_eq!(fs::read_to_string(root.path().join("a.txt"))?, OTHER);
     Ok(())
@@ -169,15 +168,15 @@ fn duplicates_empty_and_tiny_content_never_automatically_redirect() -> Result<()
         }
         let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
         kernel.index()?;
-        let store = FileStore::new(data.path().join("collections/default"));
-        let old = store.catalog()?.unwrap();
+        let store = FileStore::new(data.path().join("collections-1.2/default"));
+        let old = store.current_test_catalog()?.unwrap();
         let old_id = old.inventory.as_ref().unwrap().files["a.txt"]
             .state
             .artifact_id;
         fs::rename(root.path().join("a.txt"), root.path().join("b.txt"))?;
         let report = kernel.index()?;
         assert_eq!(report.indexed, 0, "reuse does not require continuity proof");
-        let next = store.catalog()?.unwrap();
+        let next = store.current_test_catalog()?.unwrap();
         assert_ne!(
             next.inventory.as_ref().unwrap().files["b.txt"]
                 .state
@@ -207,8 +206,8 @@ fn cross_alias_move_requires_stable_bindings_and_missing_root_aborts_publication
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
     kernel.add_root("docs", alias.path())?;
     kernel.index()?;
-    let store = FileStore::new(data.path().join("collections/default"));
-    let old = store.catalog()?.unwrap();
+    let store = FileStore::new(data.path().join("collections-1.2/default"));
+    let old = store.current_test_catalog()?.unwrap();
     let old_id = old.inventory.as_ref().unwrap().files["a.txt"]
         .state
         .artifact_id;
@@ -216,7 +215,12 @@ fn cross_alias_move_requires_stable_bindings_and_missing_root_aborts_publication
     let report = kernel.index()?;
     assert_eq!(report.indexed, 0);
     assert_eq!(
-        store.catalog()?.unwrap().inventory.unwrap().files["@docs/b.txt"]
+        store
+            .current_test_catalog()?
+            .unwrap()
+            .inventory
+            .unwrap()
+            .files["@docs/b.txt"]
             .state
             .artifact_id,
         old_id
@@ -225,6 +229,12 @@ fn cross_alias_move_requires_stable_bindings_and_missing_root_aborts_publication
         "a.txt",
         &EvidenceReadOptions {
             follow_moves: true,
+            artifact_id: Some(old_id),
+            known_hash: Some(
+                old.inventory.as_ref().unwrap().files["a.txt"]
+                    .state
+                    .source_hash,
+            ),
             ..Default::default()
         },
     )?;
@@ -233,20 +243,20 @@ fn cross_alias_move_requires_stable_bindings_and_missing_root_aborts_publication
     kernel.remove_root("docs")?;
     kernel.add_root("docs", replacement.path())?;
     kernel.index()?;
-    let rebound = store.catalog()?.unwrap();
+    let rebound = store.current_test_catalog()?.unwrap();
     assert_ne!(
         rebound.inventory.as_ref().unwrap().files["@docs/b.txt"]
             .state
             .artifact_id,
         old_id
     );
-    let head = rebound.receipt.as_ref().unwrap().token;
+    let head = rebound.token;
     fs::remove_file(replacement.path().join("b.txt"))?;
     // Removing only this original empty temporary root demonstrates root failure,
     // not a complete scan proving deletion of its former indexed contents.
     fs::remove_dir(replacement.path())?;
     assert!(kernel.index().is_err());
-    assert_eq!(store.catalog()?.unwrap().receipt.unwrap().token, head);
+    assert_eq!(store.current_test_catalog()?.unwrap().token, head);
     assert_eq!(fs::read_to_string(alias.path().join("b.txt"))?, TEXT);
     Ok(())
 }

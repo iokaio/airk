@@ -24,7 +24,7 @@ test('retention status distinguishes unknown bytes, pending work and failed clea
     assert.equal(retentionSummary(), 'Retention: not inspected');
 });
 
-test('retention controls preview before explicit mutation and never rewrite client settings', async () => {
+test('current maintenance replaces historical controls; extraction and quota changes preserve explicit review', async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'airk-retention-controls-'));
     const root = path.join(directory, 'Original Workspace'); await fs.mkdir(root);
     const policyFile = path.join(directory, 'original-policy.json');
@@ -68,6 +68,7 @@ test('retention controls preview before explicit mutation and never rewrite clie
             if (extra[1] !== 'show') { snapshots.push(extra[3]); extractionInputs.push(await fs.readFile(extra[3], 'utf8')); }
             return { policy: { version: 1, rules: [] }, digest: 'configured', applied_digest: 'published', pending_reindex: true, origin: extra[1] === 'validate' ? 'preview' : 'explicit' };
         }
+        if (extra[0] === 'maintain') { return { removed_files: 2, removed_bytes: 123, pending: false }; }
         if (extra[0] === 'prune') { return { dry_run: !extra.includes('--apply'), candidates: [], pinned: [], reclaimable_bytes: 123, removed_bytes: 0, ...pruneExtra }; }
         if (extra[1] === 'show') { return structuredClone(status); }
         if (extra[1] === 'preview') { return { status, candidates: [], legacy_candidates: [{ revision: 'original-legacy-digest', bytes: 456, reasons: [] }], candidates_truncated: false, estimated_reclaimable_bytes: null }; }
@@ -91,37 +92,12 @@ test('retention controls preview before explicit mutation and never rewrite clie
         globalStorageUri: { fsPath: path.join(directory, 'Host') }, globalState: { get: (_key: string, fallback: unknown) => fallback, update: async () => {} } };
     try {
         delete require.cache[require.resolve('../extension')]; await require('../extension').activate(context);
-        await commands.get('airk.retention')!();
-        assert.deepEqual(calls, [['collections', 'retention', 'show']]);
-        await commands.get('airk.retentionPolicy')!();
-        assert.equal(calls.filter(call => call[2] === 'set').length, 0, 'Cancellation must not persist the proposed policy');
-        confirm = true; await commands.get('airk.retentionPolicy')!();
-        const set = calls.findIndex(call => call[2] === 'set');
-        assert.equal(calls[set - 1][2], 'preview');
-        assert.equal(calls[set - 1][4], calls[set][4], 'Persist exactly the previewed policy');
-        assert.equal(status.policy.policy.mode, 'automatic');
-        assert.equal(calls.filter(call => call[2] === 'run').length, 0, 'Setting policy does not run cleanup');
-        await commands.get('airk.retentionRun')!();
-        const applied = calls.findIndex(call => call[2] === 'run');
-        assert.equal(calls[applied - 1][2], 'preview'); assert.equal(calls[applied][3], '--apply');
-        assert.ok(documents.some(document => document.retention?.protected_bytes === 123));
-        assert.ok(documents.some(document => document.receipt?.state === 'pending'));
-        assert.ok(documents.some(document => document.preview?.legacy_candidates?.[0].revision === 'original-legacy-digest'));
-        assert.ok(warnings.some(message => message.includes('1 legacy revision candidates')));
-        const pruneApplies = () => calls.filter(call => call[1] === 'prune' && call[2] === '--apply').length;
-        await commands.get('airk.prune')!();
-        assert.equal(pruneApplies(), 0, 'Older reports without work retain the no-op behavior');
-        assert.ok(information.some(message => message.includes('No unpinned')));
-        pruneExtra = { unreferenced_objects: 2 }; confirm = false;
-        await commands.get('airk.prune')!();
-        assert.equal(pruneApplies(), 0, 'Orphan cleanup still requires confirmation');
-        confirm = true; await commands.get('airk.prune')!();
-        assert.equal(pruneApplies(), 1, 'Orphan-only work reaches apply');
-        assert.ok(warnings.some(message => message.includes('2 unreferenced objects')));
-        pruneExtra = { unreferenced_objects: 0, receipt_cleanup_pending: true };
-        await commands.get('airk.prune')!();
-        assert.equal(pruneApplies(), 2, 'Pending receipt cleanup reaches apply without generation candidates');
-        assert.ok(warnings.some(message => message.includes('Receipt cleanup')));
+        for (const retired of ['airk.retention', 'airk.retentionPolicy', 'airk.retentionRun', 'airk.history', 'airk.checkpoints', 'airk.prune']) {
+            assert.equal(commands.has(retired), false);
+        }
+        await commands.get('airk.currentMaintenance')!();
+        assert.deepEqual(calls, [['collections', 'maintain']]);
+        assert.ok(documents.some(document => document.removed_files === 2));
         await commands.get('airk.extractionPolicy')!();
         confirm = false; await commands.get('airk.configureExtractionPolicy')!();
         assert.equal(calls.filter(call => call[1] === 'extraction' && call[2] === 'set').length, 0);
@@ -134,7 +110,6 @@ test('retention controls preview before explicit mutation and never rewrite clie
         for (const snapshot of snapshots) { await assert.rejects(fs.stat(snapshot), { code: 'ENOENT' }); }
         assert.ok(documents.some(document => document.proposed?.pending_reindex === true));
         assert.equal(calls.filter(call => call[0] === 'index').length, 0, 'Saving policy does not implicitly index');
-        assert.equal(status.policy.policy.searchable_predecessors, 0, 'User can select active-only retention');
         inputs.push(undefined); await commands.get('airk.storageLimits')!();
         assert.equal(calls.filter(call => call[1] === 'quota' && call[2] === 'set').length, 0);
         confirm = false; inputs.push('150', '600'); await commands.get('airk.storageLimits')!();

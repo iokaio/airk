@@ -23,6 +23,10 @@ pub enum MapDomain {
     FactName,
     EdgeSource,
     EdgeTarget,
+    FileMetadata,
+    SourceMeasurement,
+    ArtifactHandle,
+    UnitHandle,
 }
 
 #[derive(Clone, Debug)]
@@ -69,6 +73,10 @@ impl MapDomain {
             Self::FactName => b"fact-name",
             Self::EdgeSource => b"edge-source",
             Self::EdgeTarget => b"edge-target",
+            Self::FileMetadata => b"file-metadata",
+            Self::SourceMeasurement => b"source-measurement",
+            Self::ArtifactHandle => b"artifact-handle",
+            Self::UnitHandle => b"unit-handle",
         }
     }
 }
@@ -418,7 +426,6 @@ pub(crate) struct MapPlan<'a> {
     buckets: BTreeMap<u16, Vec<Entry>>,
     nodes: BTreeMap<(u8, u16), Sha256Digest>,
     bucket_bytes: usize,
-    operations: usize,
     poisoned: bool,
 }
 
@@ -436,7 +443,6 @@ impl<'a> MapPlan<'a> {
             buckets: BTreeMap::new(),
             nodes: BTreeMap::new(),
             bucket_bytes: 0,
-            operations: 0,
             poisoned: false,
         })
     }
@@ -504,10 +510,6 @@ impl<'a> MapPlan<'a> {
     }
 
     fn put_inner(&mut self, key: Sha256Digest, value: Option<&[u8]>) -> Result<()> {
-        ensure!(
-            self.operations < 65_536,
-            "current map plan operation bound exceeded"
-        );
         if let Some(value) = value {
             ensure!(
                 value.len() <= MAX_VALUE_BYTES,
@@ -545,7 +547,7 @@ impl<'a> MapPlan<'a> {
             .and_then(|bytes| bytes.checked_add(size))
             .context("current map plan byte overflow")?;
         ensure!(
-            next_bytes <= 64 * 1024 * 1024,
+            next_bytes <= super::MAX_PENDING_MAP_BYTES,
             "current map plan byte bound exceeded"
         );
         let mut digest = if entries.is_empty() {
@@ -575,7 +577,6 @@ impl<'a> MapPlan<'a> {
         );
         self.bucket_bytes = next_bytes;
         self.root = digest;
-        self.operations += 1;
         Ok(())
     }
 }
@@ -590,8 +591,8 @@ impl Default for MapVisitLimits {
     fn default() -> Self {
         Self {
             nodes: 1_000_000,
-            entries: 100_000,
-            bytes: 64 * 1024 * 1024,
+            entries: super::MAX_PENDING_MAP_CHANGES,
+            bytes: super::MAX_PENDING_MAP_BYTES,
         }
     }
 }
@@ -599,8 +600,8 @@ impl MapVisitLimits {
     fn validate(self) -> Result<()> {
         ensure!(
             (1..=2_000_000).contains(&self.nodes)
-                && (1..=1_000_000).contains(&self.entries)
-                && (1..=256 * 1024 * 1024).contains(&self.bytes),
+                && (1..=super::MAX_PENDING_MAP_CHANGES).contains(&self.entries)
+                && (1..=super::MAX_PENDING_MAP_BYTES).contains(&self.bytes),
             "invalid current map visit limits"
         );
         Ok(())

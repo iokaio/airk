@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+use super::current_inspection::InspectCurrent;
 use airk_kernel::{Kernel, limits::ScanLimits};
 use airk_store::FileStore;
 use anyhow::Result;
@@ -31,9 +32,16 @@ fn missing_ignored_oversized_and_invalid_context_never_select_cpp() -> Result<()
         let kernel = Kernel::open(root.path(), Some(state.path().into()))?;
         kernel.configure_extraction_policy(policy())?;
         let report = kernel.index()?;
-        let store = FileStore::new(state.path().join("collections/default"));
+        let store = FileStore::new(state.path().join("collections-1.2/default"));
         assert_eq!(
-            store.catalog()?.unwrap().inventory.as_ref().unwrap().files["beacon.h"].language,
+            store
+                .current_test_catalog()?
+                .unwrap()
+                .inventory
+                .as_ref()
+                .unwrap()
+                .files["beacon.h"]
+                .language,
             "c",
             "{mode}"
         );
@@ -72,9 +80,16 @@ fn captured_source_bytes_consume_scan_budget_without_double_charging() -> Result
         ..original
     })?;
     kernel.index()?;
-    let store = FileStore::new(state.path().join("collections/default"));
+    let store = FileStore::new(state.path().join("collections-1.2/default"));
     assert_eq!(
-        store.catalog()?.unwrap().inventory.as_ref().unwrap().files["beacon.h"].language,
+        store
+            .current_test_catalog()?
+            .unwrap()
+            .inventory
+            .as_ref()
+            .unwrap()
+            .files["beacon.h"]
+            .language,
         "cpp"
     );
     assert_eq!(
@@ -99,9 +114,16 @@ fn symlinked_configuration_is_ineligible() -> Result<()> {
     let kernel = Kernel::open(root.path(), Some(state.path().into()))?;
     kernel.configure_extraction_policy(policy())?;
     kernel.index()?;
-    let store = FileStore::new(state.path().join("collections/default"));
+    let store = FileStore::new(state.path().join("collections-1.2/default"));
     assert_eq!(
-        store.catalog()?.unwrap().inventory.as_ref().unwrap().files["beacon.h"].language,
+        store
+            .current_test_catalog()?
+            .unwrap()
+            .inventory
+            .as_ref()
+            .unwrap()
+            .files["beacon.h"]
+            .language,
         "c"
     );
     Ok(())

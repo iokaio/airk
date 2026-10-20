@@ -254,7 +254,7 @@ fn publication_rejects_selection_digest_and_count_mismatches() -> Result<()> {
         "vector_excluded_artifacts",
     ] {
         let root = tempfile::tempdir()?;
-        let store = FileStore::new(root.path().join("collections/fixture"));
+        let store = FileStore::new(root.path().join("collections-1.2/fixture"));
         let (inventory, mut receipt, reservation) =
             prepare(&store, "Selection binding evidence.\n", 1, None)?;
         let path = store
@@ -292,7 +292,7 @@ fn prepared_publication_crash_child() -> Result<()> {
     };
     let root = std::path::PathBuf::from(root);
     let mode = std::env::var("AIRK_PUBLICATION_CRASH_MODE")?;
-    let store = FileStore::new(root.join("collections/fixture"));
+    let store = FileStore::new(root.join("collections-1.2/fixture"));
     let _writer = store.lock()?;
     let expected = store.expected_head()?;
     let parent = match expected {
@@ -330,7 +330,7 @@ fn dead_preparation_recovers_without_adopting_or_deleting_committed_evidence() -
     for existing in [false, true] {
         for mode in ["prepared", "committed", "detached"] {
             let root = tempfile::tempdir()?;
-            let store = FileStore::new(root.path().join("collections/fixture"));
+            let store = FileStore::new(root.path().join("collections-1.2/fixture"));
             if existing {
                 let (inventory, receipt, reservation) =
                     prepare(&store, "Previous evidence.\n", 1, None)?;
@@ -394,7 +394,7 @@ fn dead_preparation_recovers_without_adopting_or_deleting_committed_evidence() -
 fn prepared_recovery_refuses_corruption_and_respects_live_readers() -> Result<()> {
     for corrupt in [false, true] {
         let root = tempfile::tempdir()?;
-        let store = FileStore::new(root.path().join("collections/fixture"));
+        let store = FileStore::new(root.path().join("collections-1.2/fixture"));
         let (_, receipt, reservation) = prepare(&store, "Protected prepared evidence.\n", 1, None)?;
         assert!(
             reservation
@@ -441,7 +441,7 @@ fn prepared_recovery_refuses_corruption_and_respects_live_readers() -> Result<()
 #[test]
 fn prepared_recovery_preserves_data_when_authoritative_head_changes() -> Result<()> {
     let root = tempfile::tempdir()?;
-    let store = FileStore::new(root.path().join("collections/fixture"));
+    let store = FileStore::new(root.path().join("collections-1.2/fixture"));
     let (first_inventory, first, first_reservation) =
         prepare(&store, "First evidence.\n", 1, None)?;
     store.publish_catalog_v2(
@@ -485,7 +485,7 @@ fn prepared_recovery_preserves_data_when_authoritative_head_changes() -> Result<
 #[cfg(windows)]
 fn empty_locked_coordination_component_remains_verifiable() -> Result<()> {
     let root = tempfile::tempdir()?;
-    let store = FileStore::new(root.path().join("collections/fixture"));
+    let store = FileStore::new(root.path().join("collections-1.2/fixture"));
     let _writer = store.lock()?;
     let (inventory, mut receipt, reservation) =
         prepare(&store, "Concurrent lexical reader fixture.\n", 1, None)?;
@@ -518,7 +518,7 @@ fn empty_locked_coordination_component_remains_verifiable() -> Result<()> {
 #[test]
 fn atomic_receipt_migration_reopen_and_indexed_metadata() -> Result<()> {
     let root = tempfile::tempdir()?;
-    let store = FileStore::new(root.path().join("collections/fixture"));
+    let store = FileStore::new(root.path().join("collections-1.2/fixture"));
     let _writer = store.lock()?;
     let mut legacy = Snapshot::empty("/original".into());
     legacy.collection = "fixture".into();
@@ -585,7 +585,7 @@ fn atomic_receipt_migration_reopen_and_indexed_metadata() -> Result<()> {
 #[test]
 fn failed_catalog_and_receipt_tampering_do_not_advance_pointer() -> Result<()> {
     let root = tempfile::tempdir()?;
-    let store = FileStore::new(root.path().join("collections/fixture"));
+    let store = FileStore::new(root.path().join("collections-1.2/fixture"));
     let _writer = store.lock()?;
     let (first, receipt, reservation) = prepare(&store, "One.\n", 1, None)?;
     store.publish_catalog_v2(&first, &receipt, &ExpectedHead::Empty, &reservation)?;
@@ -637,7 +637,7 @@ fn failed_catalog_and_receipt_tampering_do_not_advance_pointer() -> Result<()> {
 fn warmed_fact_verification_detects_same_size_corruption_replacement_and_new_publication()
 -> Result<()> {
     let root = tempfile::tempdir()?;
-    let store = FileStore::new(root.path().join("collections/fixture"));
+    let store = FileStore::new(root.path().join("collections-1.2/fixture"));
     let _writer = store.lock()?;
     let (first, receipt, reservation) = prepare(&store, "Original one.\n", 1, None)?;
     store.publish_catalog_v2(&first, &receipt, &ExpectedHead::Empty, &reservation)?;
@@ -721,7 +721,7 @@ fn warmed_fact_verification_detects_same_size_corruption_replacement_and_new_pub
 #[test]
 fn failed_json_migration_never_shadows_legacy_state_with_an_empty_database() -> Result<()> {
     let root = tempfile::tempdir()?;
-    let store = FileStore::new(root.path().join("collections/fixture"));
+    let store = FileStore::new(root.path().join("collections-1.2/fixture"));
     let _writer = store.lock()?;
     let mut snapshot = Snapshot::empty("/original".into());
     snapshot.collection = "fixture".into();
@@ -762,7 +762,7 @@ fn failed_json_migration_never_shadows_legacy_state_with_an_empty_database() -> 
 #[test]
 fn unlisted_sqlite_sidecars_are_rejected_by_cold_catalog_verification() -> Result<()> {
     let root = tempfile::tempdir()?;
-    let store = FileStore::new(root.path().join("collections/fixture"));
+    let store = FileStore::new(root.path().join("collections-1.2/fixture"));
     let _writer = store.lock()?;
     let (inventory, receipt, reservation) = prepare(&store, "Anchored main database.\n", 1, None)?;
     store.publish_catalog_v2(&inventory, &receipt, &ExpectedHead::Empty, &reservation)?;
@@ -786,7 +786,7 @@ fn unlisted_sqlite_sidecars_are_rejected_by_cold_catalog_verification() -> Resul
 #[test]
 fn reader_leases_protect_v2_payloads_and_unpinned_objects_are_reclaimed() -> Result<()> {
     let root = tempfile::tempdir()?;
-    let store = FileStore::new(root.path().join("collections/fixture"));
+    let store = FileStore::new(root.path().join("collections-1.2/fixture"));
     let _writer = store.lock()?;
     let (first, receipt, reservation) = prepare(&store, "Old.\n", 1, None)?;
     store.publish_catalog_v2(&first, &receipt, &ExpectedHead::Empty, &reservation)?;
@@ -822,7 +822,7 @@ fn reader_leases_protect_v2_payloads_and_unpinned_objects_are_reclaimed() -> Res
 #[test]
 fn legacy_original_inventory_bytes_survive_new_default_fields() -> Result<()> {
     let root = tempfile::tempdir()?;
-    let store = FileStore::new(root.path().join("collections/fixture"));
+    let store = FileStore::new(root.path().join("collections-1.2/fixture"));
     let _writer = store.lock()?;
     let mut snapshot = Snapshot::empty("/original".into());
     snapshot.collection = "fixture".into();
@@ -870,7 +870,7 @@ fn legacy_original_inventory_bytes_survive_new_default_fields() -> Result<()> {
 #[test]
 fn retirement_admission_failure_preserves_all_evidence_until_retry() -> Result<()> {
     let root = tempfile::tempdir()?;
-    let store = FileStore::new(root.path().join("collections/fixture"));
+    let store = FileStore::new(root.path().join("collections-1.2/fixture"));
     let writer = store.lock()?;
     let (first, receipt, reservation) = prepare(&store, "Old quota fixture.\n", 1, None)?;
     store.publish_catalog_v2(&first, &receipt, &ExpectedHead::Empty, &reservation)?;
@@ -975,7 +975,7 @@ fn retirement_admission_failure_preserves_all_evidence_until_retry() -> Result<(
 fn relocation_preserves_v2_receipts_and_source_bindings() -> Result<()> {
     let root = tempfile::tempdir()?;
     let source = root.path().join("state");
-    let store = FileStore::new(source.join("collections/fixture"));
+    let store = FileStore::new(source.join("collections-1.2/fixture"));
     let writer = store.lock()?;
     let (inventory, receipt, reservation) = prepare(&store, "Relocated evidence.\n", 1, None)?;
     store.publish_catalog_v2(&inventory, &receipt, &ExpectedHead::Empty, &reservation)?;
@@ -983,7 +983,7 @@ fn relocation_preserves_v2_receipts_and_source_bindings() -> Result<()> {
     drop(writer);
     let destination = root.path().join("destination");
     airk_store::relocation::relocate(&source, &destination)?;
-    let moved = FileStore::new(destination.join("collections/fixture"));
+    let moved = FileStore::new(destination.join("collections-1.2/fixture"));
     assert_eq!(moved.receipt(&receipt.token)?, Some(receipt));
     assert_eq!(
         moved.catalog()?.unwrap().inventory.unwrap().root,

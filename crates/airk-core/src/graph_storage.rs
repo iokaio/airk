@@ -190,13 +190,25 @@ impl GraphDeltaDescriptor {
         self.base.validate()?;
         self.target.validate()?;
         ensure!(
-            self.version == GRAPH_STORAGE_VERSION && self.base.scope == self.target.scope,
+            self.version == GRAPH_STORAGE_VERSION
+                && self.base.scope.collection == self.target.scope.collection
+                && self.base.scope.root == self.target.scope.root
+                && self.base.scope.incarnation == self.target.scope.incarnation,
             "unsupported or mismatched graph delta"
         );
+        if self.base.scope != self.target.scope {
+            ensure!(
+                self.base.scope.graph_instance != self.target.scope.graph_instance
+                    && self.record_count == self.target.allocated_count,
+                "graph replacement requires a fresh instance and every target record"
+            );
+        }
         ensure!(
-            self.target.allocated_count >= self.base.allocated_count
-                && self.record_count <= self.target.allocated_count
-                && self.record_count >= self.target.allocated_count - self.base.allocated_count,
+            self.base.scope != self.target.scope
+                || (self.target.allocated_count >= self.base.allocated_count
+                    && self.record_count <= self.target.allocated_count
+                    && self.record_count
+                        >= self.target.allocated_count - self.base.allocated_count),
             "invalid graph delta allocation"
         );
         ensure!(

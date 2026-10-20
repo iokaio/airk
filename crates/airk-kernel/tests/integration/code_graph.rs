@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-use airk_core::{EvidenceBasis, FactQuery, RelationshipQuery, SnapshotStore};
+use super::current_inspection::InspectCurrent;
+use airk_core::{EvidenceBasis, FactQuery, RelationshipQuery};
 use airk_kernel::Kernel;
 use airk_store::FileStore;
 use protobuf::{Message, MessageField};
@@ -85,8 +86,8 @@ fn sqlite_facts_graph_budgets_scope_refresh_and_candidates() -> anyhow::Result<(
     );
     let foreign = tempfile::tempdir()?;
     assert!(
-        Kernel::open_collection(foreign.path(), Some(state.path().into()), "fixture")?
-            .relationships(&edges("db.query", None))
+        Kernel::open_collection(foreign.path(), Some(state.path().into()), "fixture")
+            .and_then(|k| k.relationships(&edges("db.query", None)))
             .is_err()
     );
     fs::write(
@@ -270,9 +271,10 @@ fn scip_requires_binding_and_invalidates_on_source_and_unindexed_build_changes()
             .is_empty()
     );
     assert!(
-        FileStore::new(state.path().join("collections/default"))
-            .load()?
-            .expect("snapshot")
+        FileStore::new(state.path().join("collections-1.2/default"))
+            .current_test_catalog()?
+            .expect("current observation")
+            .snapshot
             .analysis
             .is_none()
     );

@@ -63,15 +63,21 @@ pub(crate) fn stage(
         record_count == 0 && node_count == 0,
         "graph transaction ID already staged"
     );
-    let mut counts = descriptor.base.counts();
-    let mut root = descriptor.base.merkle_root;
+    let replacing = descriptor.base.scope != descriptor.target.scope;
+    let replay_base = if replacing {
+        GraphHead::empty(descriptor.target.scope.clone())?
+    } else {
+        descriptor.base.clone()
+    };
+    let mut counts = replay_base.counts();
+    let mut root = replay_base.merkle_root;
     let mut records = digest::Stream::new(true, &descriptor.base, &descriptor.target)?;
     delta.visit_records(&mut|id,record|{
         ensure!(records.count<descriptor.record_count,"extra staged graph record");
         records.record(&descriptor.target.scope,id,record)?;
-        let proof=sql::read_proof(transaction,&descriptor.base,id)?;
-        staging::update_counts(&mut counts,&descriptor.base,id,proof.record.as_ref(),record)?;
-        root=merkle::update_path(&descriptor.base.scope,id,proof.record.as_ref(),record,(&proof.siblings,root),
+        let proof=if replacing { sql::Proof::empty(&replay_base,id)? } else { sql::read_proof(transaction,&replay_base,id)? };
+        staging::update_counts(&mut counts,&replay_base,id,proof.record.as_ref(),record)?;
+        root=merkle::update_path(&replay_base.scope,id,proof.record.as_ref(),record,(&proof.siblings,root),
             |height,index|pending_node(transaction,txn,height,index),
             |node|{
                 put_pending_node(transaction,txn,node)?;
@@ -186,7 +192,10 @@ fn validate_pending(
         );
     } else {
         ensure!(
-            descriptor.base == descriptor.target && descriptor.node_count == 0,
+            (descriptor.base == descriptor.target
+                || descriptor.base.scope != descriptor.target.scope
+                    && descriptor.target == GraphHead::empty(descriptor.target.scope.clone())?)
+                && descriptor.node_count == 0,
             "empty graph delta changes head"
         );
     }
@@ -199,6 +208,10 @@ pub(crate) fn apply(
     descriptor: &GraphDeltaDescriptor,
 ) -> Result<()> {
     validate_pending(transaction, txn, descriptor)?;
+    if descriptor.base.scope != descriptor.target.scope {
+        transaction.execute("DELETE FROM graph_records", [])?;
+        transaction.execute("DELETE FROM graph_merkle", [])?;
+    }
     // OR ROLLBACK avoids statement journals outside the current owner's reserved
     // rollback-journal allowance. SQLite UPSERT's DO UPDATE uses ABORT regardless
     // of the INSERT conflict clause, so use explicit update/insert pairs instead.

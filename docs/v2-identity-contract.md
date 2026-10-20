@@ -1,5 +1,8 @@
 # V2 identity and change contract 1
 
+> Historical 1.1 implementation record. AIRK 1.2 production uses the [single-current-index contract](current-index-runtime.md). Retained historical reads, checkpoint/retention administration and receipt-backed generations below are not current capabilities. Old primitive storage tests remain separate from production routing.
+
+
 These pure primitives live in [identity.rs](../crates/airk-core/src/identity.rs), [changes.rs](../crates/airk-core/src/changes.rs) and [continuity.rs](../crates/airk-core/src/continuity.rs). Kernel/store implement allocation, reconciliation and publication. The [publication contract](v2-publication-contract.md) defines activation and legacy compatibility.
 
 The active versions are independent:

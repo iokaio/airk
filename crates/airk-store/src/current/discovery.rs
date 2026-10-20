@@ -32,7 +32,8 @@ pub struct CurrentFactPage {
 
 fn matches(artifact: &Artifact, fact: &Fact, q: &FactQuery, code_only: bool) -> bool {
     (!code_only || fact.code.is_some())
-        && (!q.document_only || fact.document.is_some())
+        && (!q.document_only
+            || (fact.code.is_none() && !matches!(fact.kind.as_str(), "definition" | "import")))
         && q.kind.as_ref().is_none_or(|kind| kind == &fact.kind)
         && q.language
             .as_ref()
@@ -104,6 +105,11 @@ impl CurrentRead {
                 && (!options.compact || query.path_exact),
             "invalid current fact filters or compact representation"
         );
+        let imported = self.analysis(store)?;
+        let mut imported_facts = imported
+            .as_ref()
+            .map(|a| a.native_facts())
+            .unwrap_or_default();
         let revision = self.token()?;
         let mut filters = query.clone();
         filters.limit = 0;
@@ -131,7 +137,7 @@ impl CurrentRead {
         } else {
             Lookup::Files
         };
-        let (mut paths, more_paths) = if query.path_exact {
+        let (mut paths, mut more_paths) = if query.path_exact {
             (
                 self.artifact(&query.path_prefix)?
                     .map(|_| vec![query.path_prefix.clone()])
@@ -147,6 +153,23 @@ impl CurrentRead {
             )?;
             (page.paths, page.next_after.is_some())
         };
+        if !query.path_exact {
+            paths.extend(
+                imported_facts
+                    .keys()
+                    .filter(|path| {
+                        path.starts_with(&query.path_prefix)
+                            && after.as_ref().is_none_or(|key| *path > &key.path)
+                    })
+                    .cloned(),
+            );
+            paths.sort();
+            paths.dedup();
+            if paths.len() > MAX_FILES_PER_PAGE {
+                paths.truncate(MAX_FILES_PER_PAGE);
+                more_paths = true;
+            }
+        }
         // Resume within the last file before moving to later posting paths.
         if !query.path_exact
             && let Some(after) = after.as_ref().filter(|key| key.ordinal != FILE_END)
@@ -163,10 +186,14 @@ impl CurrentRead {
                 ..Default::default()
             },
             truncated: more_paths,
-            evidence_scope: "native",
+            evidence_scope: if imported.is_some() {
+                "native-and-imported-assertions"
+            } else {
+                "native"
+            },
         };
         let mut last = after.clone();
-        let mut work = 0usize;
+        let mut work = self.resource_reference("analysis")?.map_or(0, |r| r.bytes);
         'files: for path in paths {
             if after
                 .as_ref()
@@ -181,9 +208,11 @@ impl CurrentRead {
                 .retained
                 .as_ref()
                 .context("current fact extraction missing")?;
+            let metadata_bytes = self.file_metadata_bytes(&path)?;
             let bytes = compact
                 .bytes
                 .checked_add(retained.object_bytes)
+                .and_then(|bytes| bytes.checked_add(metadata_bytes))
                 .context("current fact evidence size overflow")?;
             if bytes > MAX_EVIDENCE_BYTES.saturating_sub(work) {
                 ensure!(
@@ -194,8 +223,19 @@ impl CurrentRead {
                 break;
             }
             work += bytes;
-            let artifact = store.load_retained_bounded(&compact, retained.object_bytes as u64)?;
+            let mut artifact =
+                store.load_retained_bounded(&compact, retained.object_bytes as u64)?;
             store.read_retained_source(&compact)?;
+            if let Some(facts) = imported_facts.remove(&path) {
+                self.verify_analysis_path(imported.as_ref().expect("imported facts"), &path)?;
+                artifact.facts.extend(facts);
+            }
+            let file_metadata = self.file_metadata(store, &path)?;
+            let keys = airk_core::continuity::FactKeyIndex::new(
+                file_metadata
+                    .as_ref()
+                    .map_or(&[], |file| file.continuity.as_slice()),
+            );
             let restored = after
                 .as_ref()
                 .filter(|key| key.path == path)
@@ -226,7 +266,8 @@ impl CurrentRead {
                 }
                 let fact = &artifact.facts[ordinal];
                 if matches(&artifact, fact, query, code_only) {
-                    let hit = fact_hit(&artifact, fact);
+                    let mut hit = fact_hit(&artifact, fact);
+                    hit.continuity_key = keys.key(ordinal, fact);
                     let compact_hit = options.compact.then(|| CompactFact::from(&hit));
                     let bytes = match &compact_hit {
                         Some(hit) => serde_json::to_vec(hit)?.len(),

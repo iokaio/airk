@@ -210,11 +210,10 @@ impl FileStore {
         sqlite::publish_catalog_v2(&self.directory, inventory, receipt, expected, reservation)
     }
     pub(crate) fn lifecycle(&self, create: bool) -> Result<Option<Arc<File>>> {
-        let Some(collections) = self
-            .directory
-            .parent()
-            .filter(|path| path.file_name().is_some_and(|name| name == "collections"))
-        else {
+        let Some(collections) = self.directory.parent().filter(|path| {
+            path.file_name()
+                .is_some_and(|name| name == "collections-1.2")
+        }) else {
             return Ok(None);
         };
         let root = collections
@@ -446,7 +445,7 @@ pub fn validate_collection(collection: &str) -> Result<()> {
 }
 
 pub fn list_collections(data_root: &Path) -> Result<Vec<CollectionUsage>> {
-    let collections = data_root.join("collections");
+    let collections = data_root.join("collections-1.2");
     if !collections.exists() {
         return Ok(Vec::new());
     }
@@ -459,21 +458,22 @@ pub fn list_collections(data_root: &Path) -> Result<Vec<CollectionUsage>> {
         }
         let (disk_bytes, files) = directory_usage(&entry.path())?;
         let store = FileStore::new(entry.path());
-        let (generation, indexed_files, status) = match store.persistent_revision() {
-            Ok(Some(header)) if header.collection == id => {
-                (Some(header.generation), Some(header.files), "indexed")
-            }
-            Ok(None) => match store.load() {
-                Ok(Some(snapshot)) if snapshot.collection == id => (
-                    Some(snapshot.generation),
-                    Some(snapshot.artifacts.len()),
-                    "indexed",
-                ),
-                Ok(None) => (None, None, "no-snapshot"),
-                _ => (None, None, "invalid-snapshot"),
-            },
-            _ => (None, None, "invalid-snapshot"),
-        };
+        let observed = (|| -> Result<_> {
+            let Some(scope) = store.current_owned_scope()? else {
+                return Ok((None, None, "unindexed"));
+            };
+            let read = store.current_read(&scope)?;
+            let state = read
+                .collection_state()?
+                .context("current collection metadata missing")?;
+            Ok((
+                Some(read.head().sequence),
+                Some(usize::try_from(state.counts.files)?),
+                "indexed",
+            ))
+        })();
+        let (generation, indexed_files, status) =
+            observed.unwrap_or((None, None, "unavailable-current-index"));
         result.push(CollectionUsage {
             collection: id,
             disk_bytes,
@@ -519,7 +519,7 @@ pub fn remove_collection(data_root: &Path, id: &str) -> Result<CollectionUsage> 
         .worker_lock()?
         .context("scheduler worker active; wait before removing collections")?;
     let base = data_root
-        .join("collections")
+        .join("collections-1.2")
         .canonicalize()
         .context("no collection storage exists")?;
     let path = base.join(id);
@@ -535,30 +535,24 @@ pub fn remove_collection(data_root: &Path, id: &str) -> Result<CollectionUsage> 
     let store = FileStore::new(&resolved);
     let lock = store.lock()?;
     let usage_deletion = usage::deletion_guard(&resolved)?;
-    let _generation_leases = retention::exclusive_collection_leases(&resolved)?;
-    let (stored_collection, stored_root, generation, indexed_files) =
-        if let Some(header) = store.persistent_revision()? {
-            (
-                header.collection,
-                header.root,
-                header.generation,
-                header.files,
-            )
-        } else {
-            let snapshot = store
-                .load()?
-                .context("no managed snapshot; refusing collection deletion")?;
-            (
-                snapshot.collection,
-                snapshot.root,
-                snapshot.generation,
-                snapshot.artifacts.len(),
-            )
-        };
+    let scope = store
+        .current_owned_scope()?
+        .context("no current collection owner; refusing deletion")?;
+    let read = store.current_read(&scope)?;
+    let generation = read.head().sequence;
+    let indexed_files = usize::try_from(
+        read.collection_state()?
+            .context("current collection metadata missing")?
+            .counts
+            .files,
+    )?;
+    let stored_root = scope.root;
     ensure!(
-        stored_collection == id,
+        scope.collection == id,
         "collection identity mismatch; refusing deletion"
     );
+    drop(read);
+    let _current_gate = store.current_deletion_gate(&lock)?;
     let (disk_bytes, files) = directory_usage(&resolved)?;
     scheduler.forget_locked(&worker, id, &stored_root)?;
     // The lock remains held while snapshot and derived artifacts are removed.

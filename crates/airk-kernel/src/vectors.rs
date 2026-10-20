@@ -60,7 +60,7 @@ impl Kernel {
 
     fn vector_policy(&self) -> Result<VectorPolicy> {
         // Validate collection ownership without opening obsolete derived evidence.
-        self.store.index_format(&self.root_id(), &self.collection)?;
+        self.current_scope()?;
         let bytes = self.store.vector_policy_bytes(&self.root_id())?;
         let policy = match bytes {
             Some(bytes) => serde_json::from_slice::<VectorPolicy>(&bytes)?,
@@ -85,9 +85,10 @@ impl Kernel {
     }
 
     fn published_vector_status(&self) -> Result<Option<crate::Status>> {
-        match self.store.index_format(&self.root_id(), &self.collection)? {
-            airk_store::IndexFormat::Current => self.status().map(Some),
-            _ => Ok(None),
+        if self.current_scope()?.is_some() {
+            self.status().map(Some)
+        } else {
+            Ok(None)
         }
     }
 

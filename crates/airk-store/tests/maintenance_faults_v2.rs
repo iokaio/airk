@@ -39,7 +39,7 @@ impl Fixture {
     }
     fn with_generations(count: u64) -> Result<Self> {
         let root = tempfile::tempdir()?;
-        let store = FileStore::new(root.path().join("collections/fixture"));
+        let store = FileStore::new(root.path().join("collections-1.2/fixture"));
         let writer = store.lock()?;
         let quota = Quota::open(root.path())?;
         let mut tokens = vec![];

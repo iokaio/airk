@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+use super::current_inspection::InspectCurrent;
 use airk_core::{
     DocumentLocation,
     changes::ChangeDimension,
@@ -11,7 +12,7 @@ use std::fs;
 
 fn records(store: &FileStore, path: &str) -> Result<Vec<ContinuityRecord>> {
     Ok(store
-        .catalog()?
+        .current_test_catalog()?
         .context("catalog")?
         .inventory
         .as_ref()
@@ -31,7 +32,7 @@ fn unchanged_child_shift_changes_original_location_then_child_edit_changes_body(
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
     kernel.configure_index_detail(airk_core::extraction::IndexDetail::Detailed)?;
     kernel.index()?;
-    let store = FileStore::new(data.path().join("collections/default"));
+    let store = FileStore::new(data.path().join("collections-1.2/default"));
     let first = records(&store, "original.html")?
         .into_iter()
         .find(|r| r.descriptor.family == ContinuityFamily::Code)
@@ -95,7 +96,7 @@ fn notebook_markdown_array_gaps_and_paragraph_insertion_preserve_unit_key() -> R
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
     kernel.configure_index_detail(airk_core::extraction::IndexDetail::Detailed)?;
     kernel.index()?;
-    let store = FileStore::new(data.path().join("collections/default"));
+    let store = FileStore::new(data.path().join("collections-1.2/default"));
     let first = records(&store, "original.ipynb")?
         .into_iter()
         .find(|r| {
@@ -149,7 +150,7 @@ fn identical_sibling_scripts_do_not_promote_position_into_region_identity() -> R
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
     kernel.configure_index_detail(airk_core::extraction::IndexDetail::Detailed)?;
     kernel.index()?;
-    let store = FileStore::new(data.path().join("collections/default"));
+    let store = FileStore::new(data.path().join("collections-1.2/default"));
     let before = records(&store, "duplicate.html")?;
     let regions: Vec<_> = before
         .iter()

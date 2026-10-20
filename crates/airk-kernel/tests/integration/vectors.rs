@@ -86,12 +86,11 @@ fn missing_model_never_silently_disables_default_vectors_and_foreign_policy_is_r
     kernel.configure_vectors(false)?;
     assert!(kernel.default_search(&query).is_ok());
     let foreign = tempfile::tempdir()?;
-    let other = Kernel::open(foreign.path(), Some(data.path().into()))?;
-    assert!(other.vectors_enabled().is_err());
-    assert!(other.configure_vectors(true).is_err());
+    assert!(Kernel::open(foreign.path(), Some(data.path().into())).is_err());
     // Corrupt configuration cannot reset a saved opt-out to the enabled default.
     fs::write(
-        data.path().join("collections/default/vector-policy.json"),
+        data.path()
+            .join("collections-1.2/default/vector-policy.json"),
         b"{}",
     )
     .unwrap();
@@ -218,7 +217,6 @@ fn maximum_valid_selection_policy_survives_its_saved_configuration_wrapper() -> 
 #[test]
 fn selection_changes_only_vectors_and_file_info_describes_its_committed_revision() -> Result<()> {
     use airk_core::evidence::{EvidenceReadOptions, EvidenceReadStatus};
-    use airk_store::retention::{RetentionMode, RetentionPolicy};
     let root = tempfile::tempdir()?;
     let data = tempfile::tempdir_in(std::env::temp_dir().canonicalize()?)?;
     fs::create_dir(root.path().join("generated"))?;
@@ -237,10 +235,6 @@ fn selection_changes_only_vectors_and_file_info_describes_its_committed_revision
         }))?,
     )?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
-    kernel.configure_retention(RetentionPolicy {
-        mode: RetentionMode::Manual,
-        ..Default::default()
-    })?;
     kernel.index()?;
     let before = kernel.file_info_conditional("generated/auth.txt", &Default::default())?;
     let old_token = before.read.publication.as_ref().unwrap().token;
@@ -281,41 +275,8 @@ fn selection_changes_only_vectors_and_file_info_describes_its_committed_revision
             .eligible
     );
     assert!(kernel.vector_selection_status()?.pending_reindex);
-    // Metadata-only publication uses the committed policy and model assets even
-    // while both saved selection and provisioned model inputs have changed.
-    use airk_kernel::history_controls::{HistoryWorkBudget, PurgeApplyRequest, PurgeRequest};
-    let request = PurgeRequest {
-        revisions: vec![],
-        checkpoints: vec![],
-        clear_lineage: true,
-    };
-    let preview = kernel.purge_history_preview(&request, HistoryWorkBudget::default())?;
-    let metadata = kernel.purge_history(
-        &PurgeApplyRequest {
-            request,
-            expected_plan_digest: preview.digest,
-        },
-        HistoryWorkBudget::default(),
-    )?;
-    assert!(
-        metadata.storage.error.is_none(),
-        "{:?}",
-        metadata.storage.error
-    );
-    assert!(metadata.lineage_publication.is_some());
-    assert!(
-        kernel
-            .file_info("generated/auth.txt")?
-            .vector_selection
-            .eligible
-    );
-    assert_eq!(
-        kernel
-            .file_info("generated/auth.txt")?
-            .vector_selection_digest,
-        old_info.vector_selection_digest
-    );
-    assert!(kernel.vector_selection_status()?.pending_reindex);
+    kernel.maintain_current()?;
+    assert_eq!(kernel.status()?.publication.unwrap().token, old_token);
     fs::write(directory.join("vocabulary.json"), vocabulary)?;
     let report = kernel.index()?;
     assert_eq!(report.indexed, 0);
@@ -352,14 +313,17 @@ fn selection_changes_only_vectors_and_file_info_describes_its_committed_revision
             .text
             .contains("recovery")
     );
-    let historic = kernel.file_info_conditional(
-        "generated/auth.txt",
-        &EvidenceReadOptions {
-            revision: Some(old_token),
-            ..Default::default()
-        },
-    )?;
-    assert!(historic.content.unwrap().vector_selection.eligible);
+    assert!(
+        kernel
+            .file_info_conditional(
+                "generated/auth.txt",
+                &EvidenceReadOptions {
+                    revision: Some(old_token),
+                    ..Default::default()
+                }
+            )
+            .is_err()
+    );
     // Rule order is not policy identity and must not trigger a replacement.
     let applied = kernel.status()?.publication.unwrap().token;
     policy.exclusions.reverse();
@@ -373,8 +337,7 @@ fn selection_changes_only_vectors_and_file_info_describes_its_committed_revision
 }
 
 #[test]
-fn selection_can_be_saved_before_obsolete_rebuild_and_matches_aliased_paths() -> Result<()> {
-    use airk_core::SnapshotStore;
+fn selection_can_be_saved_before_initial_index_and_matches_aliased_paths() -> Result<()> {
     let root = tempfile::tempdir()?;
     let external = tempfile::tempdir()?;
     let data = tempfile::tempdir()?;
@@ -383,9 +346,6 @@ fn selection_can_be_saved_before_obsolete_rebuild_and_matches_aliased_paths() ->
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
     kernel.configure_vectors(false)?;
     kernel.add_root("extra", external.path())?;
-    let store = airk_store::FileStore::new(data.path().join("collections/default"));
-    let snapshot = airk_core::Snapshot::empty(root.path().canonicalize()?.to_str().unwrap().into());
-    store.save(&snapshot)?;
     let policy = serde_json::from_value(serde_json::json!({
         "version":1,"exclusions":[{"id":"extra-only","path_prefix":"@extra/","basename":"same.txt"}]
     }))?;

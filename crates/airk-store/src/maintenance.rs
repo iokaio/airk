@@ -251,7 +251,7 @@ pub(crate) fn check_writer(store: &FileStore, writer: &WriterLock, quota: &Quota
         store.directory().canonicalize()?
             == quota
                 .root()
-                .join("collections")
+                .join("collections-1.2")
                 .join(collection(store)?)
                 .canonicalize()?,
         "maintenance quota root mismatch"

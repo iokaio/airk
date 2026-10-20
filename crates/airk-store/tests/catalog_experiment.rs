@@ -359,7 +359,7 @@ struct Fixture {
 impl Fixture {
     fn new(files: usize, facts: usize) -> Result<Self> {
         let root = tempfile::tempdir()?;
-        let store = FileStore::new(root.path().join("collections/experiment"));
+        let store = FileStore::new(root.path().join("collections-1.2/experiment"));
         let writer = store.lock()?;
         let quota = Quota::open(root.path())?;
         let reservation = quota.reserve("experiment", 256 * 1024 * 1024)?;
