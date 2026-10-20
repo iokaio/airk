@@ -618,6 +618,15 @@ impl Kernel {
                 work.graph_read_bytes = work
                     .graph_read_bytes
                     .saturating_add(result.graph.read_bytes);
+                work.graph_base_record_reads = work
+                    .graph_base_record_reads
+                    .saturating_add(result.graph.base_record_reads);
+                work.graph_proof_cache_hits = work
+                    .graph_proof_cache_hits
+                    .saturating_add(result.graph.base_proof_cache_hits);
+                work.graph_proof_cache_evictions = work
+                    .graph_proof_cache_evictions
+                    .saturating_add(result.graph.base_proof_cache_evictions);
                 work.linked_lexical_bytes = work
                     .linked_lexical_bytes
                     .saturating_add(result.lexical.hardlinked_bytes);
