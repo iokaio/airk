@@ -1,6 +1,6 @@
 # AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents
 
-**Development version 1.2.0.** The last published release is [1.1.4](docs/release-1.1.4.md). Download published [native ZIPs and platform VSIX packages](https://github.com/iokaio/airk/releases).
+**Version 1.2.0.** See the [1.2.0 behavior and upgrade notes](docs/release-1.2.0.md). Download published [native ZIPs and platform VSIX packages](https://github.com/iokaio/airk/releases).
 
 **Give Claude Code, Codex, Gemini CLI/Antigravity, GitHub Copilot and other MCP-capable agents a shared, local index of your workspace.** AIRK indexes files and returns bounded facts and passages with source paths, hashes and original locations. The agent supplies the reasoning. Runtime storage uses memory and local disk.
 
@@ -9,6 +9,12 @@
 This is an independent, runnable open-source project. Munarium, VCP and local reference files inform the design; their implementations are not dependencies. Tantivy lexical indexes, authenticated SQLite records and mutable Microsoft DiskANN publish one coherent current revision. Vector indexing and hybrid retrieval are enabled by default. The trusted panel prepares the pinned [local CPU embedding model](docs/onnx-models.md) on first use (about 91 MB); turn **Vector search** off per collection to opt out. Inference and source data stay local. Model quality must be evaluated for the intended corpus.
 
 [Code facts and relationships](docs/code-facts-and-relationships.md) add scopes, signatures, written types, call/framework candidates and optional source/build-bound SCIP imports. Sixteen read-only MCP tools expose bounded evidence with explicit syntax versus producer provenance. Native indexing needs no external compiler/indexer installation.
+
+## What's new in 1.2.0
+
+**Agent Lean** keeps useful code declarations, signatures, imports and document facts with compact MCP replies. **Rich Structure** and **Search Only** name the existing Balanced and Essential policies; new collections retain Rich Structure while Agent Lean remains opt-in. Progressive indexing publishes bounded exact-evidence and semantic batches, preserves committed work when paused, and reports discovery and semantic readiness separately. Optional lossless retained-object compression starts off.
+
+Version 1.2 uses one authenticated current index and incremental Tantivy/DiskANN publication. Create a fresh derived collection when upgrading from 1.1; source files remain untouched. See [current-index operation and recovery](docs/current-index-runtime.md) and the [qualification ledger](docs/indexingenhancements.md).
 
 ## What's new in 1.1.4
 
