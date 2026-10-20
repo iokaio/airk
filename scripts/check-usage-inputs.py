@@ -164,7 +164,7 @@ def main():
         assert scenario["session_input_equivalents"][0]["unpriced_input_tokens_unknown_cache_split"] == "120"
         assert scenario["session_input_equivalents"][0]["uncached_input_equivalent"] is None
         assert scenario["session_input_equivalents"][0]["output_equivalent"] == "0.000120000000"
-        ledger = state / "collections" / "usage-fixture" / "usage.sqlite3"
+        ledger = state / "collections-1.2" / "usage-fixture" / "usage.sqlite3"
         assert b"hellohello" not in ledger.read_bytes()
         run("usage", "configure", "--mode", "disabled")
         before = hashlib.sha256(ledger.read_bytes()).digest()

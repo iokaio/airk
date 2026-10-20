@@ -251,9 +251,14 @@ fn publish(
     Ok(receipt)
 }
 
+fn unlinked_tempdir() -> Result<tempfile::TempDir> {
+    // Model guards require real ancestors; macOS exposes temporary paths through /var.
+    Ok(tempfile::Builder::new().tempdir_in(std::env::temp_dir().canonicalize()?)?)
+}
+
 #[test]
 fn reference_lookup_authenticates_receipt_sidecar_and_collection() -> Result<()> {
-    let root = tempfile::tempdir()?;
+    let root = unlinked_tempdir()?;
     let store = FileStore::new(root.path().join("collections-1.2/original"));
     let _writer = store.lock()?;
     let cache = object(&store, &["original vector"])?;
@@ -299,7 +304,7 @@ fn reference_lookup_authenticates_receipt_sidecar_and_collection() -> Result<()>
 #[test]
 fn leased_roots_share_vectors_orphans_reclaim_once_and_other_collections_are_untouched()
 -> Result<()> {
-    let root = tempfile::tempdir()?;
+    let root = unlinked_tempdir()?;
     let store = FileStore::new(root.path().join("collections-1.2/original"));
     let writer = store.lock()?;
     let quota = Quota::open(root.path())?;
@@ -354,7 +359,7 @@ fn leased_roots_share_vectors_orphans_reclaim_once_and_other_collections_are_unt
 
 #[test]
 fn cacheless_publication_is_none_and_corrupt_roots_block_orphan_deletion() -> Result<()> {
-    let root = tempfile::tempdir()?;
+    let root = unlinked_tempdir()?;
     let store = FileStore::new(root.path().join("collections-1.2/original"));
     let writer = store.lock()?;
     let quota = Quota::open(root.path())?;
@@ -383,7 +388,7 @@ fn cacheless_publication_is_none_and_corrupt_roots_block_orphan_deletion() -> Re
 
 #[test]
 fn publication_rejects_cache_pipeline_and_model_dimension_mismatches() -> Result<()> {
-    let root = tempfile::tempdir()?;
+    let root = unlinked_tempdir()?;
     let store = FileStore::new(root.path().join("collections-1.2/original"));
     let _writer = store.lock()?;
     let first = publish(&store, None, None)?;
@@ -435,7 +440,7 @@ fn publication_rejects_cache_pipeline_and_model_dimension_mismatches() -> Result
 
 #[test]
 fn maintenance_authenticates_unused_records_before_reclaiming_orphans() -> Result<()> {
-    let root = tempfile::tempdir()?;
+    let root = unlinked_tempdir()?;
     let store = FileStore::new(root.path().join("collections-1.2/original"));
     let writer = store.lock()?;
     let quota = Quota::open(root.path())?;
@@ -464,7 +469,7 @@ fn maintenance_authenticates_unused_records_before_reclaiming_orphans() -> Resul
 
 #[test]
 fn prepared_publication_blocks_pack_collection_until_its_commit() -> Result<()> {
-    let root = tempfile::tempdir()?;
+    let root = unlinked_tempdir()?;
     let store = FileStore::new(root.path().join("collections-1.2/original"));
     let writer = store.lock()?;
     let quota = Quota::open(root.path())?;
@@ -542,7 +547,7 @@ fn pack_publication_crash_child() -> Result<()> {
 #[test]
 fn process_exit_around_publication_commit_preserves_exact_pack_ownership() -> Result<()> {
     for committed in [false, true] {
-        let root = tempfile::tempdir()?;
+        let root = unlinked_tempdir()?;
         let store = FileStore::new(root.path().join("collections-1.2/original"));
         let writer = store.lock()?;
         let first_cache = object(&store, &["previous publication record"])?;

@@ -85,7 +85,9 @@ def run_campaign(binary, base, attempts, full_disk):
                       "new_managed_files_observed": len(seen-before),
                       "retained_old_generation": status["generation"] == old_generation,
                       "atomic_revision_and_recovery": True})
-        call("collections", "prune", "--apply")
+        current = call("status")["publication"]["token"]
+        assert not call("collections", "maintain")["pending"]
+        assert call("status")["publication"]["token"] == current
 
     if full_disk:
         # Only this script's exclusive temporary tmpfs allocation is filled.

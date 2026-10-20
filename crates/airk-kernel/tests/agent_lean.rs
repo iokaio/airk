@@ -21,10 +21,15 @@ fn query(path: &str) -> SearchQuery {
     }
 }
 
+fn unlinked_tempdir() -> Result<tempfile::TempDir> {
+    // Model guards require real ancestors; macOS exposes temporary paths through /var.
+    Ok(tempfile::Builder::new().tempdir_in(std::env::temp_dir().canonicalize()?)?)
+}
+
 #[test]
 fn lean_preserves_declarations_text_and_policy_omissions() -> Result<()> {
-    let root = tempfile::tempdir()?;
-    let data = tempfile::tempdir()?;
+    let root = unlinked_tempdir()?;
+    let data = unlinked_tempdir()?;
     fs::write(
         root.path().join("auth.rs"),
         "fn authenticate(name: &str) -> bool { println!(\"login\"); !name.is_empty() }\n",
@@ -60,8 +65,8 @@ fn lean_preserves_declarations_text_and_policy_omissions() -> Result<()> {
 
 #[test]
 fn repack_preserves_evidence_and_is_idempotent_in_both_directions() -> Result<()> {
-    let root = tempfile::tempdir()?;
-    let data = tempfile::tempdir()?;
+    let root = unlinked_tempdir()?;
+    let data = unlinked_tempdir()?;
     let source = format!(
         "fn authenticate() -> bool {{\n{}true\n}}\n",
         "// original retained login evidence\r\n".repeat(3000)
@@ -101,8 +106,8 @@ fn repack_preserves_evidence_and_is_idempotent_in_both_directions() -> Result<()
 
 #[test]
 fn compressed_continuity_metadata_survives_reopen_update_and_cleanup() -> Result<()> {
-    let root = tempfile::tempdir()?;
-    let data = tempfile::tempdir()?;
+    let root = unlinked_tempdir()?;
+    let data = unlinked_tempdir()?;
     let mut source: String = (0..80)
         .map(|n| format!("pub fn authenticate_{n}() -> usize {{ {n} }}\n"))
         .collect();
@@ -141,8 +146,8 @@ fn compressed_continuity_metadata_survives_reopen_update_and_cleanup() -> Result
 
 #[test]
 fn paused_update_keeps_prior_paths_until_a_complete_rescan() -> Result<()> {
-    let root = tempfile::tempdir()?;
-    let data = tempfile::tempdir()?;
+    let root = unlinked_tempdir()?;
+    let data = unlinked_tempdir()?;
     for index in 0..40 {
         fs::write(
             root.path().join(format!("file_{index:02}.rs")),
@@ -215,8 +220,8 @@ fn repack_crash_child() -> Result<()> {
 #[test]
 fn repack_keeps_graph_and_lexical_identity_with_vectors() -> Result<()> {
     use sha2::{Digest, Sha256};
-    let root = tempfile::tempdir()?;
-    let data = tempfile::tempdir()?;
+    let root = unlinked_tempdir()?;
+    let data = unlinked_tempdir()?;
     let model = data.path().join("models/local");
     fs::create_dir_all(&model)?;
     let vocabulary = br#"{"authenticate":[1.0,0.0],"login":[0.0,1.0]}"#;
@@ -253,8 +258,8 @@ fn repack_keeps_graph_and_lexical_identity_with_vectors() -> Result<()> {
 #[test]
 fn repack_recovers_twice_at_each_journal_boundary() -> Result<()> {
     for stage in ["Prepared", "Applying", "Committed"] {
-        let root = tempfile::tempdir()?;
-        let data = tempfile::tempdir()?;
+        let root = unlinked_tempdir()?;
+        let data = unlinked_tempdir()?;
         fs::write(
             root.path().join("auth.rs"),
             format!(
