@@ -67,10 +67,10 @@ impl Admission {
             let result =
                 tokio::time::timeout(QUEUE_TIMEOUT, semaphore.clone().acquire_owned()).await;
             drop(waiting);
-            if let Ok(Ok(permit)) = result {
-                if !self.0.closing.load(Ordering::Acquire) {
-                    return Ok(permit);
-                }
+            if let Ok(Ok(permit)) = result
+                && !self.0.closing.load(Ordering::Acquire)
+            {
+                return Ok(permit);
             }
         }
         self.0.rejected.fetch_add(1, Ordering::Relaxed);

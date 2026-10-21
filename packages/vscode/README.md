@@ -4,7 +4,7 @@
 
 Everything runs on your machine. There is no cloud service, API key, Docker, Rust or Python to install: the native helper is bundled in the extension.
 
-> **Version 1.2.4.** Packages support Windows x64, Linux x64 and macOS (Intel and Apple Silicon). AIRK 1.2 starts a fresh current index; existing 1.1 indexes and settings remain untouched. See [the 1.2.4 diagnosis and recovery notes](https://github.com/iokaio/airk/blob/main/docs/release-1.2.4.md), [the 1.2.3 Agent Lean default and indexing fix](https://github.com/iokaio/airk/blob/main/docs/release-1.2.3.md), [the 1.2.2 semantic indexing fix](https://github.com/iokaio/airk/blob/main/docs/release-1.2.2.md), [the 1.2 behavior notes](https://github.com/iokaio/airk/blob/main/docs/release-1.2.0.md), and [Known limits](#known-limits).
+> **Version 1.2.5 in source; not released.** Published 1.2.4 packages support Windows x64, Linux x64 and macOS (Intel and Apple Silicon). AIRK 1.2 starts a fresh current index; existing 1.1 indexes and settings remain untouched. See [the 1.2.5 candidate notes](https://github.com/iokaio/airk/blob/main/docs/release-1.2.5.md), [the 1.2.4 diagnosis and recovery notes](https://github.com/iokaio/airk/blob/main/docs/release-1.2.4.md), [the 1.2.3 Agent Lean default and indexing fix](https://github.com/iokaio/airk/blob/main/docs/release-1.2.3.md), [the 1.2.2 semantic indexing fix](https://github.com/iokaio/airk/blob/main/docs/release-1.2.2.md), [the 1.2 behavior notes](https://github.com/iokaio/airk/blob/main/docs/release-1.2.0.md), and [Known limits](#known-limits).
 
 ## What's new in 1.2.4
 
