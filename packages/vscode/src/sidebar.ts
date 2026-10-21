@@ -7,6 +7,7 @@ import { VectorStatus } from './vectorModel';
 export interface ControlGroup { label: string; commands: [string, string, string][] }
 export interface McpVerification {
     phase: 'preparing' | 'checking' | 'verified' | 'failed'; checkedAt?: number; tools?: string[]; error?: string;
+    indexState?: 'not_indexed' | 'published';
 }
 export type IndexDetail = 'agent_lean' | 'essential' | 'balanced' | 'detailed';
 export function detailLabel(level: IndexDetail): string {
@@ -19,6 +20,9 @@ export interface SidebarCollection {
     collection: string; name: string; root: string; dataDir: string; state: string;
     coverage?: CoverageView; diskBytes?: number; lastIndexed?: string; error?: string;
     mcp?: McpVerification; detail?: DetailStatus; vectors?: VectorStatus; vectorProgress?: string;
+    indexActivity?: { phase: string; revision: string | null; processed_artifacts: number; committed_artifacts: number;
+        selected_artifacts: number | null; completed_artifacts: number | null; elapsedSeconds: number; quietSeconds: number };
+    semanticElapsedSeconds?: number;
     usage?: { calls: number; reduction?: string; compared: number; checkedAt: number; disabled: boolean };
 }
 export interface SidebarState {
@@ -108,28 +112,33 @@ export function sidebarContent(state: SidebarState): string {
             <p class="muted">On by default. Combines local vector search with keyword results. First setup downloads about 91 MB of model files; your source files stay on this machine. Uses CPU and additional index storage.</p>
             <p role="status">${escape(item.vectorProgress ?? (!item.vectors ? 'Loading vector setting...' : !item.vectors.enabled ? 'Off: keyword search' : item.vectors.pending_reindex ? 'On: waiting for model setup and indexing' : `On: ${item.vectors.indexed_vectors} indexed vectors`))}</p>
             ${semanticLabel ? `<p class="muted" role="status">${escape(semanticLabel)}</p>` : ''}
+            ${item.semanticElapsedSeconds !== undefined ? `<p class="muted" role="status">Semantic batch running for ${escape(Math.floor(item.semanticElapsedSeconds / 60))}m ${escape(item.semanticElapsedSeconds % 60)}s. Published evidence remains available while this batch runs; a batch stops after twenty minutes.</p>` : ''}
             ${discoveryLabel ? `<p class="muted" role="status">${escape(discoveryLabel)}</p>` : ''}
             ${discovery?.failure ? `<p class="error">${escape(discovery.failure.slice(0, 300))}</p>` : ''}
             ${semantic?.failure ? `<p class="error">${escape(semantic.failure.slice(0, 300))}</p>` : ''}
             ${item.vectors?.pending_reindex ? '<p class="muted">Index now to apply the setting. Previous index data remains until a successful rebuild and normal cleanup.</p>' : ''}</div>`;
         const percentage = /^\d+%$/.test(label) ? Number(label.slice(0, -1)) : undefined;
         const progress = percentage === undefined ? '' : `<progress max="100" value="${percentage}" aria-label="Measured index coverage">${percentage}%</progress>`;
+        const activity = item.indexActivity;
+        const elapsed = activity ? `${Math.floor(activity.elapsedSeconds / 60)}m ${activity.elapsedSeconds % 60}s` : '';
+        const published = !!(activity?.revision || item.vectors?.published || item.detail?.published_detail);
+        const activeIndex = activity ? `<p class="muted" role="status">Indexing for ${escape(elapsed)}: ${escape(activity.committed_artifacts)} files committed, ${escape(activity.processed_artifacts)} processed. ${published ? 'Published evidence is available to MCP now; discovery remains incomplete.' : 'MCP can start; search awaits the first publication.'}</p>${activity.quietSeconds >= 120 ? `<p class="notice" role="status">No new progress for ${escape(Math.floor(activity.quietSeconds / 60))} minutes. Open Diagnose &amp; Repair if this persists; a stalled scan stops after ten minutes without progress.</p>` : ''}` : '';
         const last = item.lastIndexed ? new Date(item.lastIndexed).toLocaleString() : 'Not indexed in this editor yet';
         const error = item.error || view?.error;
         const mcp = item.mcp, checking = mcp?.phase === 'checking' || mcp?.phase === 'preparing';
         const mcpLabel = !mcp ? 'Not checked' : mcp.phase === 'preparing' ? 'Preparing collection…' : mcp.phase === 'checking' ? 'Checking MCP…'
-            : mcp.phase === 'verified' ? `Verified · ${mcp.tools?.length ?? 0} tools available` : 'Verification failed';
+            : mcp.phase === 'verified' ? `Verified · ${mcp.tools?.length ?? 0} tools available${mcp.indexState === 'not_indexed' ? '; indexing pending' : ''}` : 'Verification failed';
         const connection = `<div class="mcp"><h3>AIRK helper check</h3><p role="status" aria-live="polite">Helper: <strong>${escape(mcpLabel)}</strong></p>
             ${mcp?.checkedAt ? `<p class="muted">Last checked: ${escape(new Date(mcp.checkedAt).toLocaleString())}</p>` : ''}
             ${mcp?.error ? `<p class="error">${escape(mcp.error.slice(0, 600))}</p>` : ''}
             <div class="actions"><button id="${escape(item.collection)}-verify" ${attributes} data-action="verify"${disabled || checking || state.changingStorage ? ' disabled' : ''}>Check AIRK helper</button>
             <button id="${escape(item.collection)}-mcpDetails" class="secondary" ${attributes} data-action="mcpDetails"${disabled || !mcp || checking ? ' disabled' : ''}>View details</button></div>
-            <p class="muted">Checks this collection’s helper, not whether an agent is connected. Verification updates the index first.</p>
+            <p class="muted">Checks this collection’s helper without waiting for indexing, not whether an agent is connected.</p>
             <button id="${escape(item.collection)}-tools" class="secondary" ${attributes} data-action="tools"${disabled || state.changingStorage ? ' disabled' : ''}>Open AIRK Tools</button>
             <p class="muted">Call tools directly in the Terminal panel. Includes help, examples and JSON results for this collection.</p></div>`;
         return `<section class="collection"><div class="heading"><h2>${escape(item.name)}</h2><span class="badge${indexing ? ' working' : ''}">${escape(status)}</span></div>
             <p class="path" title="${escape(item.root)}">${escape(item.root)}</p>
-            <div class="coverage"><strong>${escape(label)}</strong><span>saved-file coverage</span></div>${progress}
+            <div class="coverage"><strong>${escape(label)}</strong><span>saved-file coverage</span></div>${progress}${activeIndex}
             <div class="metrics">${metric('Current', report?.current)}${metric('Eligible', report?.eligible)}${metric('Stale', report?.stale)}${metric('Missing', report?.missing)}</div>
             ${report ? `<p class="muted">${escape(report.extraction_failed)} extraction failures · ${escape(report.unsupported)} unsupported · ${escape(report.capacity_blocked)} capacity blocked</p>` : '<p class="muted">Coverage appears after the first inventory scan.</p>'}
             ${view?.pending && report ? '<p class="muted">Files changed; these counts are from the previous scan.</p>' : ''}

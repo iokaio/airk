@@ -5,6 +5,27 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { LaunchSpec, launchArgs } from './model';
 
+export interface IndexProgress {
+    phase: string; revision: string | null; processed_artifacts: number; committed_artifacts: number;
+    selected_artifacts: number | null; completed_artifacts: number | null;
+}
+
+export function parseIndexProgress(line: string): IndexProgress | undefined {
+    if (line.length > 4096) { return undefined; }
+    try {
+        const value: unknown = JSON.parse(line);
+        if (!value || typeof value !== 'object' || Array.isArray(value)) { return undefined; }
+        const event = value as Record<string, unknown>;
+        const count = (field: string) => Number.isSafeInteger(event[field]) && Number(event[field]) >= 0;
+        if (!['scan_started', 'base_committed', 'enrichment_committed', 'base_coverage_complete'].includes(String(event.phase))
+            || !count('processed_artifacts') || !count('committed_artifacts')
+            || (event.revision !== null && (typeof event.revision !== 'string' || event.revision.length > 256))
+            || (event.selected_artifacts !== null && !count('selected_artifacts'))
+            || (event.completed_artifacts !== null && !count('completed_artifacts'))) { return undefined; }
+        return event as unknown as IndexProgress;
+    } catch { return undefined; }
+}
+
 /** Serialize this extension host's writers; native locks still arbitrate other processes. */
 export class NativeWriteQueue {
     private tails = new Map<string, Promise<void>>();
@@ -78,7 +99,9 @@ export class NativeProcessError extends Error {
                 // execFile already bounds captured output. Parse before applying
                 // the diagnostic display limit: JSON escaping can expand a valid
                 // 4,096-character native message beyond that limit.
-                const outcome: unknown = JSON.parse(stderr.trim());
+                const lines = stderr.trim().split(/\r?\n/);
+                const structured = lines.length === 1 || lines.slice(0, -1).every(line => parseIndexProgress(line));
+                const outcome: unknown = structured ? JSON.parse(lines.at(-1)!) : undefined;
                 if (outcome && typeof outcome === 'object' && !Array.isArray(outcome)) {
                     const fields = outcome as Record<string, unknown>;
                     if (fields.airk_error === 1 && typeof fields.code === 'string'
@@ -107,19 +130,46 @@ export class NativeProcessError extends Error {
     }
 }
 
-export function runText(command: string, args: string[], cwd?: string, timeout = 300000): Promise<string> {
+export function runText(command: string, args: string[], cwd?: string, timeout = 300000,
+    onStderrLine?: (line: string) => boolean, idleTimeout = 0): Promise<string> {
     return new Promise((resolve, reject) => {
         const started = performance.now();
-        execFile(command, args, { cwd, env: { ...process.env, AIRK_CLIENT: 'vscode', AIRK_ERROR_FORMAT: 'json' }, windowsHide: true, maxBuffer: 16 * 1024 * 1024, timeout }, (error, stdout, stderr) => {
+        let idleExpired = false;
+        let idleTimer: NodeJS.Timeout | undefined;
+        const child = execFile(command, args, { cwd, env: { ...process.env, AIRK_CLIENT: 'vscode', AIRK_ERROR_FORMAT: 'json' }, windowsHide: true, maxBuffer: 16 * 1024 * 1024, timeout }, (error, stdout, stderr) => {
+            if (idleTimer) { clearTimeout(idleTimer); }
+            if (idleExpired) { reject(new Error(`AIRK index stopped after ${idleTimeout} ms without progress. Committed evidence remains available; use Diagnose & Repair, then retry indexing.`)); return; }
             if (error) { reject(new NativeProcessError(command, error, stderr, Math.round(performance.now() - started), timeout)); }
             else { resolve(stdout); }
         });
+        const armIdle = () => {
+            if (!idleTimeout) { return; }
+            if (idleTimer) { clearTimeout(idleTimer); }
+            idleTimer = setTimeout(() => { idleExpired = true; child.kill(); }, idleTimeout);
+        };
+        armIdle();
+        if (onStderrLine) {
+            let pending = '';
+            child.stderr?.on('data', (bytes: Buffer) => {
+                pending += bytes.toString();
+                if (pending.length > 8192) { pending = ''; return; }
+                let end: number;
+                while ((end = pending.indexOf('\n')) >= 0) {
+                    const line = pending.slice(0, end); pending = pending.slice(end + 1);
+                    if (line.length <= 4096) {
+                        try { if (onStderrLine(line)) { armIdle(); } }
+                        catch { /* Progress display cannot interrupt native indexing. */ }
+                    }
+                }
+            });
+        }
     });
 }
 
-export async function runJson<T>(spec: LaunchSpec, command: string, extra: string[] = []): Promise<T> {
+export async function runJson<T>(spec: LaunchSpec, command: string, extra: string[] = [], onStderrLine?: (line: string) => boolean): Promise<T> {
     return JSON.parse(await runText(spec.command, [...launchArgs(spec, command), ...extra], spec.root,
-        command === 'index' || (command === 'semantic' && extra[0] === 'run') ? 3600000 : 300000)) as T;
+        command === 'index' ? 3600000 : command === 'semantic' && extra[0] === 'run' ? 1200000 : 300000,
+        onStderrLine, command === 'index' && onStderrLine ? 600000 : 0)) as T;
 }
 
 /** Real bounded stdio initialization/tool-list/status probe, independent of any coding agent. */
@@ -171,7 +221,11 @@ export function probeMcp(spec: LaunchSpec, expectedTools: 14 | 15 | 16 = 15, cli
             const required = ['airk_status', 'airk_symbols', 'airk_code_facts', 'airk_relationships', ...(expectedTools >= 15 ? ['airk_changes'] : []), ...(expectedTools === 16 ? ['airk_history'] : [])];
             if (tools.length !== expectedTools || !required.every(name => tools.includes(name))) { throw new Error(`AIRK MCP tool inventory differs from the expected ${expectedTools} tools.`); }
             const status = await request(3, 'tools/call', { name: 'airk_status', arguments: {} });
-            if (status.isError) { throw new Error('AIRK MCP status failed. Index the collection first.'); }
+            if (status.isError) {
+                const message = status.content?.map((part: { text?: string }) => part.text ?? '').join('\n') ?? '';
+                if (!message.includes('workspace is not indexed')) { throw new Error(`AIRK MCP status failed: ${message.slice(0, 300)}`); }
+                finish(undefined, { tools, status: { state: 'not_indexed' } }); return;
+            }
             finish(undefined, { tools, status });
         })().catch(error => finish(error instanceof Error ? error : new Error(String(error))));
     });

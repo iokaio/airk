@@ -45,14 +45,33 @@ test('tools button opens a collection-bound console and is disabled without trus
 test('semantic indexing remains visible independently of complete saved-file coverage', () => {
     const sample = structuredClone(state);
     sample.collections[0].state = 'enriching';
+    sample.collections[0].semanticElapsedSeconds = 125;
     sample.collections[0].coverage!.report!.current = 1000;
     const html = sidebarContent(sample);
     assert.match(html, /100%/);
     assert.match(html, /Building semantic index/);
+    assert.match(html, /Semantic batch running for 2m 5s/);
     assert.doesNotMatch(html, /Indexing saved files/);
     assert.match(html, /data-action="index"[^>]*disabled/);
     sample.collections[0].state = 'semantic-pending';
     assert.match(sidebarContent(sample), /Semantic indexing pending/);
+});
+
+test('initial indexing shows committed MCP evidence and a quiet scan warning', () => {
+    const sample = structuredClone(state);
+    sample.collections[0].indexActivity = { phase: 'base_committed', revision: 'airk-r1:fixture',
+        processed_artifacts: 64, committed_artifacts: 32, selected_artifacts: 32,
+        completed_artifacts: 8, elapsedSeconds: 181, quietSeconds: 130 };
+    sample.collections[0].mcp = { phase: 'verified', tools: Array(15).fill('tool'), indexState: 'published' };
+    const html = sidebarContent(sample);
+    assert.match(html, /32 files committed, 64 processed/);
+    assert.match(html, /Published evidence is available to MCP now/);
+    assert.match(html, /No new progress for 2 minutes/);
+    assert.match(html, /Verified · 15 tools available/);
+    sample.collections[0].indexActivity.revision = null;
+    sample.collections[0].mcp.indexState = 'not_indexed';
+    assert.match(sidebarContent(sample), /MCP can start; search awaits the first publication/);
+    assert.match(sidebarContent(sample), /indexing pending/);
 });
 
 test('CLI getting-started note reports setup failures and keeps repair behind workspace trust', () => {

@@ -8,7 +8,7 @@ import { DashboardView } from './dashboardView';
 import { collectDiagnostics, DiagnosticHistory, verifyDiagnosticIntegrity } from './diagnostics';
 import { openDiagnosticsPanel } from './diagnosticsView';
 import { CollectionItem, CollectionTree } from './collectionTree';
-import { NativeProcessError, NativeWriteQueue, prepareHelper, probeMcp, runJson } from './native';
+import { IndexProgress, NativeProcessError, NativeWriteQueue, parseIndexProgress, prepareHelper, probeMcp, runJson } from './native';
 import { installCli } from './cliInstall';
 import { CapacityError, Options, PausedError, Scheduler, SemanticResult } from './scheduler';
 import { Coverage, CoverageQueue, coverageDetails, coverageLabel } from './coverage';
@@ -55,6 +55,9 @@ class Controller implements vscode.Disposable {
     private detailViews = new Map<string, DetailStatus>();
     private vectorViews = new Map<string, VectorStatus>();
     private vectorProgress = new Map<string, string>();
+    private indexProgress = new Map<string, { event: IndexProgress; started: number; updated: number }>();
+    private semanticStarted = new Map<string, number>();
+    private readonly progressRefresh: NodeJS.Timeout;
     private mcpChecks = new Map<string, McpVerification & { result?: { tools: string[]; status: unknown } }>();
     private mcpPending = new Map<string, Promise<void>>();
     private toolsTerminals = new Map<string, { spec: LaunchSpec; terminal: vscode.Terminal }>();
@@ -76,15 +79,20 @@ class Controller implements vscode.Disposable {
         this.rescan = setInterval(() => {
             if (vscode.workspace.isTrusted) { for (const spec of this.specs.values()) { this.coverage.request(spec); } }
         }, 300000);
+        this.progressRefresh = setInterval(() => {
+            if (this.indexProgress.size || this.semanticStarted.size) { this.updateStatus(); }
+        }, 15000);
     }
     private trusted(): void {
         if (!vscode.workspace.isTrusted) { throw new Error('Trust this workspace before starting AIRK or indexing files.'); }
     }
-    private writeNative<T>(spec: LaunchSpec, command: string, extra: string[] = []): Promise<T> {
+    private writeNative<T>(spec: LaunchSpec, command: string, extra: string[] = [], onStderrLine?: (line: string) => boolean,
+        onStart?: () => void): Promise<T> {
         return this.nativeWrites.run(spec, async () => {
             this.trusted();
             if (this.disposed) { throw new Error('AIRK extension closed.'); }
-            return runJson<T>(spec, command, extra);
+            onStart?.();
+            return runJson<T>(spec, command, extra, onStderrLine);
         });
     }
     private options(): Options {
@@ -215,7 +223,9 @@ class Controller implements vscode.Disposable {
         this.sidebar.refresh();
         const unsaved = spec ? (vscode.workspace.textDocuments ?? []).filter(document => document.isDirty && eligibleEvent(this.sourcePath(document.uri.fsPath), spec.root, spec.dataDir)).length : 0;
         this.status.tooltip = spec ? coverageDetails(spec.name, view || undefined, unsaved)
-            + `\nAuto-indexing: ${this.scheduler?.isPaused ? 'paused' : this.options().mode}${state?.pending ? '; indexing pending' : ''}\nClick to open AIRK controls.`
+            + `\nAuto-indexing: ${this.scheduler?.isPaused ? 'paused' : this.options().mode}${state?.pending ? '; indexing pending' : ''}`
+            + (this.indexProgress.get(this.mcpKey(spec))?.event.revision ? '\nPublished indexed evidence is available to MCP while indexing continues.' : '')
+            + '\nClick to open AIRK controls.'
             : 'Select a workspace folder to index. Click to open AIRK controls.';
     }
     private sourcePath(file: string): string {
@@ -262,6 +272,7 @@ class Controller implements vscode.Disposable {
     private async index(spec: LaunchSpec, full: boolean, automatic: boolean): Promise<IndexReport> {
         this.trusted();
         this.indexErrors.delete(JSON.stringify([spec.dataDir, spec.collection]));
+        const progressKey = this.mcpKey(spec);
         const maxBytes = this.machineValue('storage.maxBytes', 0);
         if (automatic && maxBytes > 0) {
             const usage = await runJson<Usage[]>(spec, 'collections', ['list']);
@@ -289,7 +300,23 @@ class Controller implements vscode.Disposable {
             this.trusted();
             if (this.specs.get(spec.collection)?.dataDir !== spec.dataDir) { throw new Error('Collection storage changed.'); }
             report = await indexWithLimitApproval(
-                () => this.writeNative<IndexReport>(spec, 'index', ['--scheduled', ...(automatic ? ['--automatic'] : []), ...(full ? ['--full'] : [])]),
+                () => {
+                    let started = 0;
+                    return this.writeNative<IndexReport>(spec, 'index', ['--progress', '--scheduled', ...(automatic ? ['--automatic'] : []), ...(full ? ['--full'] : [])], line => {
+                        const event = parseIndexProgress(line);
+                        if (!event) { return false; }
+                        if (this.currentSpec(spec)) {
+                            this.indexProgress.set(progressKey, { event, started, updated: Date.now() });
+                            this.updateStatus();
+                        }
+                        return true;
+                    }, () => {
+                        started = Date.now();
+                        this.indexProgress.set(progressKey, { event: { phase: 'scan_started', revision: null, processed_artifacts: 0,
+                            committed_artifacts: 0, selected_artifacts: null, completed_artifacts: null }, started, updated: started });
+                        this.updateStatus();
+                    }).catch(error => { this.indexProgress.delete(progressKey); this.updateStatus(); throw error; });
+                },
                 error => authorizeLimitIncrease({
                     describe: () => { this.trusted(); return runJson<LimitsDescription>(spec, 'collections', ['limits', 'describe']); },
                     review: async message => await vscode.window.showWarningMessage(message, 'Review larger limit') === 'Review larger limit',
@@ -309,7 +336,7 @@ class Controller implements vscode.Disposable {
             if (error instanceof Error && error.message.includes('native automatic scheduling is paused')) { throw new PausedError(error.message); }
             throw error;
         }
-        finally { this.vectorProgress.delete(this.mcpKey(spec)); await this.refreshVectors(spec); if (this.specs.get(spec.collection)?.dataDir === spec.dataDir) { this.coverage.request(spec, true); } this.sidebar.refresh(); }
+        finally { this.indexProgress.delete(progressKey); this.vectorProgress.delete(progressKey); await this.refreshVectors(spec); if (this.specs.get(spec.collection)?.dataDir === spec.dataDir) { this.coverage.request(spec, true); } this.updateStatus(); }
         this.output.appendLine(`${spec.name}: generation ${report.generation}; indexed ${report.indexed}, reused ${report.reused}, removed ${report.removed}, skipped ${report.skipped.length + (report.skipped_truncated ?? 0)}`);
         if (report.repaired_retained_artifacts || report.retained_repair_retries) {
             const action = `Retained data repair: ${report.repaired_retained_artifacts ?? 0} files rebuilt during reuse; ${report.retained_repair_retries ?? 0} fresh scan retries.`;
@@ -342,7 +369,15 @@ class Controller implements vscode.Disposable {
                 state: states.find(state => state.collection === spec.collection)?.state ?? 'queued',
                 coverage: this.coverage.get(spec.collection), lastIndexed: known[spec.collection]?.lastIndexed,
                 diskBytes: this.treeUsage?.dataDir === spec.dataDir ? this.treeUsage.entries.find(item => item.collection === spec.collection)?.disk_bytes : undefined,
-                error: this.indexErrors.get(JSON.stringify([spec.dataDir, spec.collection])), mcp: this.mcpChecks.get(this.mcpKey(spec)), detail: this.detailViews.get(this.mcpKey(spec)), vectors: this.vectorViews.get(this.mcpKey(spec)), vectorProgress: this.vectorProgress.get(this.mcpKey(spec)), usage: this.usageSummaries.get(this.mcpKey(spec)) })) : [] };
+                error: this.indexErrors.get(JSON.stringify([spec.dataDir, spec.collection])), mcp: this.mcpChecks.get(this.mcpKey(spec)), detail: this.detailViews.get(this.mcpKey(spec)), vectors: this.vectorViews.get(this.mcpKey(spec)), vectorProgress: this.vectorProgress.get(this.mcpKey(spec)),
+                indexActivity: this.indexProgress.get(this.mcpKey(spec)) ? {
+                    ...this.indexProgress.get(this.mcpKey(spec))!.event,
+                    elapsedSeconds: Math.floor((Date.now() - this.indexProgress.get(this.mcpKey(spec))!.started) / 1000),
+                    quietSeconds: Math.floor((Date.now() - this.indexProgress.get(this.mcpKey(spec))!.updated) / 1000)
+                } : undefined,
+                semanticElapsedSeconds: this.semanticStarted.has(this.mcpKey(spec))
+                    ? Math.floor((Date.now() - this.semanticStarted.get(this.mcpKey(spec))!) / 1000) : undefined,
+                usage: this.usageSummaries.get(this.mcpKey(spec)) })) : [] };
     }
     async sidebarMessage(message: unknown): Promise<void> {
         const action = sidebarAction(message, new Set(this.controlGroups().flatMap(group => group.commands.map(([, command]) => command))));
@@ -664,40 +699,48 @@ class Controller implements vscode.Disposable {
     }
     private async enrich(spec: LaunchSpec): Promise<SemanticResult> {
         if (!this.currentSpec(spec)) { return 'ready'; }
-        this.indexErrors.delete(JSON.stringify([spec.dataDir, spec.collection]));
-        let result: {state: string; error?: string | null} | undefined;
+        const progressKey = this.mcpKey(spec);
         try {
-            result = await this.nativeWrites.run(spec, async () => {
-                // A collection may have closed or changed storage while this write
-                // waited behind coverage or another native operation.
-                if (!this.currentSpec(spec)) { return undefined; }
-                return runJson<{state: string; error?: string | null}>(spec, 'semantic', ['run', '--scheduled']);
-            });
-        } catch (error) {
-            if (currentReadBusy(error)) { return this.currentSpec(spec) ? 'busy' : 'ready'; }
-            throw error;
+            this.indexErrors.delete(JSON.stringify([spec.dataDir, spec.collection]));
+            let result: {state: string; error?: string | null} | undefined;
+            try {
+                result = await this.nativeWrites.run(spec, async () => {
+                    // A collection may have closed or changed storage while this write
+                    // waited behind coverage or another native operation.
+                    if (!this.currentSpec(spec)) { return undefined; }
+                    this.semanticStarted.set(progressKey, Date.now());
+                    this.updateStatus();
+                    return runJson<{state: string; error?: string | null}>(spec, 'semantic', ['run', '--scheduled']);
+                });
+            } catch (error) {
+                if (currentReadBusy(error)) { return this.currentSpec(spec) ? 'busy' : 'ready'; }
+                throw error;
+            }
+            if (!result || !this.currentSpec(spec)) { return 'ready'; }
+            if (result.state === 'paused') { return 'paused'; }
+            if (result.state === 'busy') { return 'busy'; }
+            if (result.state === 'blocked' || result.state === 'semantic_failed') {
+                throw new Error(result.error || 'Semantic indexing failed. Use Resume or Index now after resolving the error.');
+            }
+            if (result.state === 'unregistered') { throw new Error('Semantic work has no scheduler registration. Use Index now to resume it.'); }
+            if (!['enriched', 'idle'].includes(result.state)) { throw new Error(`Unexpected semantic indexing state: ${result.state}`); }
+            let status: VectorStatus | undefined;
+            try { status = await this.refreshVectors(spec, true); }
+            catch (error) {
+                if (currentReadBusy(error)) { return this.currentSpec(spec) ? result.state === 'enriched' ? 'pending' : 'busy' : 'ready'; }
+                throw error;
+            }
+            if (!this.currentSpec(spec)) { return 'ready'; }
+            this.treeUsage = undefined;
+            this.sidebar.refresh();
+            if (status?.semantic_readiness?.state === 'failed') {
+                throw new Error(status.semantic_readiness.failure || 'Semantic indexing failed.');
+            }
+            return status?.enabled && ['pending', 'partial'].includes(status.semantic_readiness?.state ?? '') ? 'pending' : 'ready';
+        } finally {
+            this.semanticStarted.delete(progressKey);
+            this.updateStatus();
         }
-        if (!result || !this.currentSpec(spec)) { return 'ready'; }
-        if (result.state === 'paused') { return 'paused'; }
-        if (result.state === 'busy') { return 'busy'; }
-        if (result.state === 'blocked' || result.state === 'semantic_failed') {
-            throw new Error(result.error || 'Semantic indexing failed. Use Resume or Index now after resolving the error.');
-        }
-        if (result.state === 'unregistered') { throw new Error('Semantic work has no scheduler registration. Use Index now to resume it.'); }
-        if (!['enriched', 'idle'].includes(result.state)) { throw new Error(`Unexpected semantic indexing state: ${result.state}`); }
-        let status: VectorStatus | undefined;
-        try { status = await this.refreshVectors(spec, true); }
-        catch (error) {
-            if (currentReadBusy(error)) { return this.currentSpec(spec) ? result.state === 'enriched' ? 'pending' : 'busy' : 'ready'; }
-            throw error;
-        }
-        if (!this.currentSpec(spec)) { return 'ready'; }
-        this.treeUsage = undefined;
-        this.sidebar.refresh();
-        if (status?.semantic_readiness?.state === 'failed') {
-            throw new Error(status.semantic_readiness.failure || 'Semantic indexing failed.');
-        }
-        return status?.enabled && ['pending', 'partial'].includes(status.semantic_readiness?.state ?? '') ? 'pending' : 'ready';
     }
     private async refreshVectors(spec: LaunchSpec, strict = false): Promise<VectorStatus | undefined> {
         try {
@@ -926,12 +969,11 @@ class Controller implements vscode.Disposable {
             && [...this.specs.values()].some(item => this.mcpKey(item) === key);
         const operation = (async () => {
             try {
-                await this.scheduler.request(spec, true);
-                if (!current()) { return; }
                 check.phase = 'checking'; this.updateStatus();
                 const result = await probeMcp(spec, 15, this.context.extension.packageJSON.version);
                 if (!current()) { return; }
                 check.phase = 'verified'; check.tools = result.tools; check.result = result; check.checkedAt = Date.now();
+                check.indexState = (result.status as { state?: string })?.state === 'not_indexed' ? 'not_indexed' : 'published';
                 this.output.appendLine(`${spec.name}: MCP helper verified; ${result.tools.length} tools available. Agent connection status is separate.`);
                 if (!selected) { void vscode.window.showInformationMessage(`AIRK helper verified: ${result.tools.length} tools for ${spec.name}. See the dashboard for results.`); }
             } catch (error) {
@@ -963,12 +1005,8 @@ class Controller implements vscode.Disposable {
         if (!(definition instanceof vscode.McpStdioServerDefinition)) { throw new Error('AIRK requires native stdio.'); }
         const spec = [...this.specs.values()].find(item => item.command === definition.command && JSON.stringify(launchArgs(item)) === JSON.stringify(definition.args));
         if (!spec) { throw new Error('AIRK workspace/storage configuration changed. Refresh its MCP definitions.'); }
-        // Existing snapshots remain usable while edits settle or automatic indexing is paused.
-        try { await runJson(spec, 'status'); }
-        catch (error) {
-            if (!(error instanceof Error) || !error.message.includes('workspace is not indexed')) { throw error; }
-            await this.scheduler.request(spec, true);
-        }
+        // MCP starts independently of indexing. Tools disclose unavailable or partial evidence
+        // until the first publication, then serve each committed snapshot during the scan.
         this.trusted();
         if (!this.registrationEnabled()) { throw new Error('AIRK automatic VS Code registration is off.'); }
         return definition;
@@ -986,7 +1024,7 @@ class Controller implements vscode.Disposable {
     configure(): void { const options = this.options(); this.scheduler.configure(options); this.coverage?.configure(options.quietMs, options.mode === 'idle' ? options.idleMs : 0); }
     dispose(): Promise<void> {
         if (this.disposal) { return this.disposal; }
-        this.disposed = true; this.closeToolsTerminals(); this.toolsClosed?.dispose(); clearInterval(this.rescan);
+        this.disposed = true; this.closeToolsTerminals(); this.toolsClosed?.dispose(); clearInterval(this.rescan); clearInterval(this.progressRefresh);
         this.sidebar.dispose(); this.coverage.dispose(); this.scheduler.dispose(); this.definitions.dispose(); this.collectionTree.dispose(); this.status.dispose();
         return this.disposal = (this.historyStore?.close() ?? Promise.resolve()).finally(() => this.output.dispose());
     }

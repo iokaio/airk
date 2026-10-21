@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { NativeProcessError, NativeWriteQueue, prepareHelper, probeMcp, runJson, runText } from '../native';
+import { NativeProcessError, NativeWriteQueue, parseIndexProgress, prepareHelper, probeMcp, runJson, runText } from '../native';
 import { IndexReport, LaunchSpec, collectionId } from '../model';
 import { Coverage } from '../coverage';
 
@@ -20,6 +20,11 @@ test('only a structured gate outcome with an ordinary exit authorizes contention
     const failure = (stderr: string, properties: object = { code: 1 }) => new NativeProcessError('airk',
         Object.assign(new Error('Command failed'), properties), stderr, 1, 10000);
     assert.equal(failure(JSON.stringify(busy)).retryableGateContention, true);
+    const progress = JSON.stringify({ phase: 'scan_started', revision: null, processed_artifacts: 0,
+        committed_artifacts: 0, selected_artifacts: null, completed_artifacts: null });
+    assert.equal(failure(`${progress}\n${JSON.stringify(busy)}`).retryableGateContention, true,
+        'Validated index progress may precede a structured native failure');
+    assert.equal(failure(`untrusted stderr\n${JSON.stringify(busy)}`).retryableGateContention, false);
     for (const stderr of [
         'Error: current index is busy applying an update\nCaused by:\n    lock acquisition failed because the operation would block',
         JSON.stringify({ ...busy, airk_error: 2 }), JSON.stringify({ ...busy, retryable: false }),
@@ -85,6 +90,29 @@ test('native process timeout identifies the limit and termination without stderr
         assert.ok(error.elapsedMs >= 90);
         return true;
     });
+});
+
+test('index progress is validated and a silent native scan is stopped', async () => {
+    const event = { phase: 'base_committed', revision: 'airk-r1:fixture', processed_artifacts: 32,
+        committed_artifacts: 32, selected_artifacts: 10, completed_artifacts: 4 };
+    assert.deepEqual(parseIndexProgress(JSON.stringify(event)), event);
+    assert.equal(parseIndexProgress(JSON.stringify({ ...event, processed_artifacts: -1 })), undefined);
+    assert.equal(parseIndexProgress('{'), undefined);
+    await assert.rejects(runText(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], undefined, 5000,
+        () => false, 150), /stopped after 150 ms without progress/);
+});
+
+test('MCP helper verifies before the first index publication', { skip: !process.env.AIRK_TEST_BINARY }, async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'airk-unindexed-mcp-'));
+    try {
+        const root = path.join(directory, 'project'), dataDir = path.join(directory, 'state');
+        await fs.mkdir(root);
+        const spec: LaunchSpec = { command: process.env.AIRK_TEST_BINARY!, root, dataDir,
+            collection: collectionId(await fs.realpath(root)), name: 'Project' };
+        const result = await probeMcp(spec);
+        assert.equal(result.tools.length, 15);
+        assert.deepEqual(result.status, { state: 'not_indexed' });
+    } finally { await removeFixture(directory, 'airk-unindexed-mcp-'); }
 });
 
 test('native process diagnostics stay bounded and retain both ends of stderr', async () => {
@@ -257,7 +285,15 @@ test('extension native adapter indexes, rebuilds, probes MCP, isolates and remov
         const spec: LaunchSpec = { command, root, dataDir, collection: collectionId(root), name: 'A' };
         const detail = await runJson<{ configured_detail: string; published_detail: string | null }>(spec, 'collections', ['extraction', 'show']);
         assert.equal(detail.configured_detail, 'agent_lean'); assert.equal(detail.published_detail, null);
-        const first = await runJson<IndexReport>(spec, 'index', ['--scheduled']); assert.equal(first.indexed, 1);
+        const progress: string[] = [];
+        const first = await runJson<IndexReport>(spec, 'index', ['--progress', '--scheduled'], line => {
+            const event = parseIndexProgress(line);
+            if (event) { progress.push(event.phase); }
+            return !!event;
+        });
+        assert.equal(first.indexed, 1);
+        assert.ok(progress.includes('scan_started'));
+        assert.ok(progress.includes('base_committed') || progress.includes('base_coverage_complete'));
         const published = await runJson<{ configured_detail: string; published_detail: string }>(spec, 'collections', ['extraction', 'show']);
         assert.equal(published.configured_detail, 'agent_lean'); assert.equal(published.published_detail, 'agent_lean');
         const coverage = await runJson<Coverage>(spec, 'coverage', ['--refresh']); assert.equal(coverage.percent, 100); assert.equal(coverage.current, 1);

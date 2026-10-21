@@ -98,7 +98,7 @@ test('extension continues semantic work without a service, survives transient pu
                         selected_artifacts: 65, completed_units: completed, selected_units: 65, failure: null } };
             }
             if (command === 'index') {
-                assert.deepEqual(extra, ['--scheduled']); scans++; completed = 32;
+                assert.deepEqual(extra, ['--progress', '--scheduled']); scans++; completed = 32;
                 return { generation: 1, indexed: 65, reused: 0, removed: 0, skipped: [] };
             }
             if (command === 'semantic') {
@@ -403,7 +403,7 @@ test('trusted MCP definitions ignore workspace storage overrides and reconnect w
         const first: Definition[] = await api.getServerDefinitions(); assert.equal(first.length, 1);
         assert.equal(first[0].args[first[0].args.indexOf('--data-dir') + 1], await fs.realpath(path.join(storage, 'indexes')));
         const priorEvents = events; await api.getServerDefinitions(); assert.equal(events, priorEvents, 'No recursive definition-change loop');
-        await provider.resolveMcpServerDefinition(first[0]); assert.deepEqual(calls, ['status']);
+        await provider.resolveMcpServerDefinition(first[0]); assert.deepEqual(calls, [], 'MCP registration does not wait for index status');
         const beforeDisabled = calls.length;
         enabled = false;
         assert.deepEqual(await api.getServerDefinitions(), []);
@@ -578,7 +578,7 @@ test('multi-root Index Now selects the active folder and coverage refresh never 
         const held = new Promise<void>(resolve => { releaseProbe = resolve; });
         native.probeMcp = async (spec: { root: string }) => { probes++; assert.equal(spec.root, await fs.realpath(roots[0])); probeStarted(); await held; return { tools: ['status', 'search'], status: {} }; };
         const verifying = receive({ type: 'collection', action: 'verify', collection, dataDir });
-        assert.equal(check().phase, 'preparing');
+        assert.equal(check().phase, 'checking', 'Helper verification begins without waiting for indexing');
         await started; assert.equal(check().phase, 'checking');
         const duplicate = receive({ type: 'collection', action: 'verify', collection, dataDir });
         releaseProbe(); await Promise.all([verifying, duplicate]);
