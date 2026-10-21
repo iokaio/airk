@@ -4,7 +4,8 @@ import * as path from 'node:path';
 
 export interface LaunchSpec { command: string; root: string; dataDir: string; collection: string; name: string }
 export interface Usage { collection: string; disk_bytes: number; indexed_files: number | null; generation: number | null; status: string }
-export interface IndexReport { generation: number; indexed: number; reused: number; removed: number; source_bytes?: number; skipped_truncated?: number; skipped: { path: string; reason: string }[] }
+export interface IndexReport { generation: number; indexed: number; reused: number; removed: number; source_bytes?: number; skipped_truncated?: number;
+    repaired_retained_artifacts?: number; retained_repair_retries?: number; skipped: { path: string; reason: string }[] }
 export type IndexMode = 'manual' | 'onSave' | 'debounced' | 'idle';
 export const clients = ['vscode', 'claude', 'codex', 'cursor', 'gemini', 'antigravity', 'cline', 'roo', 'junie', 'copilot-cli', 'opencode', 'opencode-v2', 'kilo', 'amazon-q', 'windsurf'] as const;
 export type Client = typeof clients[number];

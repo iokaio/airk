@@ -5,8 +5,10 @@ import * as path from 'node:path';
 import { IndexReport, LaunchSpec, Usage, collectionId, eligibleEvent, launchArgs } from './model';
 import { setupAgent } from './agentSetup';
 import { DashboardView } from './dashboardView';
+import { collectDiagnostics, DiagnosticHistory, verifyDiagnosticIntegrity } from './diagnostics';
+import { openDiagnosticsPanel } from './diagnosticsView';
 import { CollectionItem, CollectionTree } from './collectionTree';
-import { NativeWriteQueue, prepareHelper, probeMcp, runJson } from './native';
+import { NativeProcessError, NativeWriteQueue, prepareHelper, probeMcp, runJson } from './native';
 import { installCli } from './cliInstall';
 import { CapacityError, Options, PausedError, Scheduler, SemanticResult } from './scheduler';
 import { Coverage, CoverageQueue, coverageDetails, coverageLabel } from './coverage';
@@ -19,6 +21,13 @@ import { ControlGroup, DetailStatus, IndexDetail, McpVerification, SidebarCollec
 
 interface KnownCollection { name: string; root: string; lastIndexed?: string }
 
+function currentReadBusy(error: unknown): boolean {
+    if (!(error instanceof NativeProcessError) || error.code !== 1 || error.killed || error.signal) { return false; }
+    // The gate context can also wrap an I/O failure. Require Rust's fixed
+    // TryLockError::WouldBlock display, not a localized OS error or a prefix.
+    return /^(?:Error: )?current index is busy applying an update(?:\s*\r?\n\s*Caused by:\s*\r?\n\s*|:\s*)lock acquisition failed because the operation would block\s*$/.test(error.stderr);
+}
+
 class Controller implements vscode.Disposable {
     readonly output = vscode.window.createOutputChannel('AIRK');
     readonly status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 40);
@@ -26,6 +35,13 @@ class Controller implements vscode.Disposable {
     readonly collectionTree = new CollectionTree(this);
     readonly sidebar = new DashboardView(this);
     readonly scheduler: Scheduler;
+    private historyStore?: DiagnosticHistory;
+    private disposal?: Promise<void>;
+    private get diagnosticHistory(): DiagnosticHistory {
+        this.historyStore ??= new DiagnosticHistory(path.join(this.context.globalStorageUri.fsPath, 'diagnostics'));
+        if (this.disposed) { void this.historyStore.close(); }
+        return this.historyStore;
+    }
     private readonly coverage: CoverageQueue;
     private readonly nativeWrites = new NativeWriteQueue();
     private readonly rescan: NodeJS.Timeout;
@@ -54,7 +70,9 @@ class Controller implements vscode.Disposable {
         this.scheduler = new Scheduler(this.options(), (spec, full, automatic) => this.index(spec, full, automatic),
             () => this.updateStatus(), (spec, error) => {
                 this.indexErrors.set(JSON.stringify([spec.dataDir, spec.collection]), String(error));
-                this.output.appendLine(`${spec.name}: ${String(error)}`);
+                this.output.appendLine(`[${new Date().toISOString()}] ${spec.name}: ${String(error)}`);
+                void this.diagnosticHistory.append(spec, { kind: 'index_failed', helperVersion: context.extension.packageJSON.version, error })
+                    .catch(historyError => this.output.appendLine(`AIRK diagnostic history unavailable: ${String(historyError)}`));
             }, undefined, spec => this.enrich(spec));
         this.coverage = new CoverageQueue(spec => this.writeNative<Coverage>(spec, 'coverage', ['--refresh']), () => this.updateStatus());
         this.configure();
@@ -96,7 +114,9 @@ class Controller implements vscode.Disposable {
     }
     private command(): Promise<string> {
         this.trusted();
-        this.helper ??= prepareHelper(this.context.extensionPath, this.context.globalStorageUri.fsPath, this.context.extension.packageJSON.version)
+        this.helper ??= prepareHelper(this.context.extensionPath, this.context.globalStorageUri.fsPath, this.context.extension.packageJSON.version,
+            message => this.output.appendLine(`[${new Date().toISOString()}] ${message}`))
+            .then(command => { this.output.appendLine(`AIRK helper verified: ${this.context.extension.packageJSON.version}; ${command}`); return command; })
             .catch(error => { this.helper = undefined; throw error; });
         return this.helper;
     }
@@ -161,6 +181,10 @@ class Controller implements vscode.Disposable {
             const known = this.context.globalState.get<Record<string, KnownCollection>>('collections-1.2', {});
             for (const spec of next.values()) {
                 known[spec.collection] = { ...known[spec.collection], name: spec.name, root: spec.root };
+                if (!prior.has(spec.collection) || prior.get(spec.collection)?.command !== spec.command) {
+                    void this.diagnosticHistory.append(spec, { kind: 'helper', helperVersion: this.context.extension.packageJSON.version })
+                        .catch(error => this.output.appendLine(`AIRK diagnostic history unavailable: ${String(error)}`));
+                }
                 if (!prior.has(spec.collection) || prior.get(spec.collection)?.dataDir !== spec.dataDir) {
                     this.coverage.request(spec);
                     if (this.options().mode !== 'manual') { void this.scheduler.request(spec); }
@@ -290,11 +314,19 @@ class Controller implements vscode.Disposable {
         }
         finally { this.vectorProgress.delete(this.mcpKey(spec)); await this.refreshVectors(spec); if (this.specs.get(spec.collection)?.dataDir === spec.dataDir) { this.coverage.request(spec, true); } this.sidebar.refresh(); }
         this.output.appendLine(`${spec.name}: generation ${report.generation}; indexed ${report.indexed}, reused ${report.reused}, removed ${report.removed}, skipped ${report.skipped.length + (report.skipped_truncated ?? 0)}`);
+        if (report.repaired_retained_artifacts || report.retained_repair_retries) {
+            const action = `Retained data repair: ${report.repaired_retained_artifacts ?? 0} files rebuilt during reuse; ${report.retained_repair_retries ?? 0} fresh scan retries.`;
+            this.output.appendLine(`[${new Date().toISOString()}] ${spec.name}: ${action}`);
+            void this.diagnosticHistory.append(spec, { kind: 'repair', action, helperVersion: this.context.extension.packageJSON.version })
+                .catch(error => this.output.appendLine(`AIRK diagnostic history unavailable: ${String(error)}`));
+        }
         for (const skipped of report.skipped.slice(0, 20)) { this.output.appendLine(`Skipped ${skipped.path}: ${skipped.reason}`); }
         const known = this.context.globalState.get<Record<string, KnownCollection>>('collections-1.2', {});
         known[spec.collection] = { name: spec.name, root: spec.root, lastIndexed: new Date().toISOString() };
         await this.context.globalState.update('collections-1.2', known);
         await this.refreshDetail(spec);
+        void this.diagnosticHistory.append(spec, { kind: 'index_completed', helperVersion: this.context.extension.packageJSON.version })
+            .catch(error => this.output.appendLine(`AIRK diagnostic history unavailable: ${String(error)}`));
         this.invalidateCollectionTree();
         return report;
     }
@@ -339,6 +371,7 @@ class Controller implements vscode.Disposable {
         if (action.action === 'compression') { await this.compression(spec); return; }
         if (action.action === 'verify') { await this.verify(spec); return; }
         if (action.action === 'tools') { await this.openTools(spec); return; }
+        if (action.action === 'diagnose') { await this.diagnose(spec); return; }
         if (action.action === 'mcpDetails') {
             const check = this.mcpChecks.get(this.mcpKey(spec));
             if (check) { await this.showJson('AIRK helper verification; agent connection status is separate', { collection: spec.collection, root: spec.root, dataDir: spec.dataDir, ...check }); }
@@ -435,6 +468,63 @@ class Controller implements vscode.Disposable {
             entry = { spec, terminal }; this.toolsTerminals.set(key, entry);
         }
         entry.terminal.show();
+    }
+    async diagnose(selected?: LaunchSpec): Promise<void> {
+        this.trusted();
+        const configuredStorage = this.machineValue('storage.path', '');
+        const folders = await Promise.all((vscode.workspace.workspaceFolders ?? [])
+            .filter(folder => folder.uri.scheme === 'file' || (!!vscode.env.remoteName && folder.uri.scheme === 'vscode-remote'))
+            .map(async folder => ({ folder, root: await fs.realpath(folder.uri.fsPath) })));
+        const active = selected ?? this.activeSpec();
+        const chosen = active ? folders.find(item => item.root === active.root)
+            : folders.length === 1 ? folders[0]
+            : await vscode.window.showQuickPick(folders.map(item => ({ ...item, label: item.folder.name, description: item.root })), { title: 'Diagnose AIRK collection' });
+        if (!chosen) { return; }
+        let spec: LaunchSpec = active ?? { command: path.join(this.context.extensionPath, 'native', process.platform === 'win32' ? 'airk.exe' : 'airk'),
+            root: chosen.root, dataDir: await this.dataDir(), collection: collectionId(chosen.root), name: chosen.folder.name };
+        const registered = this.specs.has(spec.collection);
+        const valid = () => !this.disposed && vscode.workspace.isTrusted && !this.storageChoice
+            && this.machineValue('storage.path', '') === configuredStorage
+            && !!vscode.workspace.workspaceFolders?.some(folder => folder.uri.fsPath === chosen.folder.uri.fsPath)
+            && (!registered || this.specs.has(spec.collection))
+            && this.rootBindings.every(binding => binding.opened !== chosen.folder.uri.fsPath || binding.canonical === spec.root)
+            && (!this.specs.has(spec.collection) || (this.specs.get(spec.collection)?.root === spec.root && this.specs.get(spec.collection)?.dataDir === spec.dataDir));
+        await openDiagnosticsPanel({ name: spec.name, valid,
+            diagnose: async () => {
+                if (!valid()) { throw new Error('Collection closed or storage changed. Reopen Diagnose & Repair.'); }
+                let helperError: unknown;
+                try { spec = { ...spec, command: await this.command() }; }
+                catch (error) { helperError = error; }
+                const editor = this.scheduler.states().find(item => item.collection === spec.collection);
+                let events: Awaited<ReturnType<DiagnosticHistory['read']>> = [], historyError: unknown;
+                try { events = await this.diagnosticHistory.read(spec); }
+                catch (error) { historyError = error; }
+                return collectDiagnostics(spec, { expectedVersion: this.context.extension.packageJSON.version, helperError, events, historyError, shouldContinue: valid,
+                    editor: { paused: this.scheduler.isPaused, busy: ['indexing', 'enriching'].includes(editor?.state ?? ''), state: editor?.state, pending: editor?.pending } });
+            },
+            verify: (report, onProgress, shouldContinue) => verifyDiagnosticIntegrity(spec, report, { onProgress,
+                shouldContinue: () => valid() && shouldContinue() }),
+            act: async (action, report) => {
+                if (!valid()) { throw new Error('Collection closed or storage changed. Reopen Diagnose & Repair.'); }
+                if (action === 'showOutput') { this.output.show(); return; }
+                if (action === 'rebuild' && await vscode.window.showWarningMessage(
+                    `Rebuild the derived AIRK index for ${spec.name}? This re-extracts eligible saved files and recomputes semantic evidence. Source files are preserved.`,
+                    { modal: true }, 'Rebuild index') !== 'Rebuild index') { return; }
+                if (!valid()) { throw new Error('Collection closed or storage changed.'); }
+                if (report?.probes.helper.state === 'failed') { this.helper = undefined; }
+                await this.refresh();
+                if (!valid()) { throw new Error('Collection closed or storage changed.'); }
+                const current = this.specs.get(spec.collection);
+                if (!current || current.root !== spec.root || current.dataDir !== spec.dataDir) { throw new Error('Collection binding changed.'); }
+                spec = current;
+                await this.diagnosticHistory.append(spec, { kind: 'repair', action, helperVersion: this.context.extension.packageJSON.version })
+                    .catch(error => this.output.appendLine(`AIRK diagnostic history unavailable: ${String(error)}`));
+                if (action === 'resume') { await this.pauseAuto(false); return; }
+                await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification,
+                    title: `${action === 'rebuild' ? 'Rebuilding' : 'Retrying'} AIRK: ${spec.name}` },
+                    () => this.scheduler.request(spec, true, action === 'rebuild'));
+            }
+        });
     }
     async manualIndex(full = false): Promise<void> {
         const spec = await this.chooseSpec(); if (!spec) { return; }
@@ -576,20 +666,32 @@ class Controller implements vscode.Disposable {
     private async enrich(spec: LaunchSpec): Promise<SemanticResult> {
         if (!this.currentSpec(spec)) { return 'ready'; }
         this.indexErrors.delete(JSON.stringify([spec.dataDir, spec.collection]));
-        const result = await this.nativeWrites.run(spec, async () => {
-            // A collection may have closed or changed storage while this write
-            // waited behind coverage or another native operation.
-            if (!this.currentSpec(spec)) { return undefined; }
-            return runJson<{state: string; error?: string | null}>(spec, 'semantic', ['run', '--scheduled']);
-        });
+        let result: {state: string; error?: string | null} | undefined;
+        try {
+            result = await this.nativeWrites.run(spec, async () => {
+                // A collection may have closed or changed storage while this write
+                // waited behind coverage or another native operation.
+                if (!this.currentSpec(spec)) { return undefined; }
+                return runJson<{state: string; error?: string | null}>(spec, 'semantic', ['run', '--scheduled']);
+            });
+        } catch (error) {
+            if (currentReadBusy(error)) { return this.currentSpec(spec) ? 'pending' : 'ready'; }
+            throw error;
+        }
         if (!result || !this.currentSpec(spec)) { return 'ready'; }
         if (result.state === 'paused') { return 'paused'; }
+        if (result.state === 'busy') { return 'pending'; }
         if (result.state === 'blocked' || result.state === 'semantic_failed') {
             throw new Error(result.error || 'Semantic indexing failed. Use Resume or Index now after resolving the error.');
         }
         if (result.state === 'unregistered') { throw new Error('Semantic work has no scheduler registration. Use Index now to resume it.'); }
-        if (!['enriched', 'busy', 'idle'].includes(result.state)) { throw new Error(`Unexpected semantic indexing state: ${result.state}`); }
-        const status = await this.refreshVectors(spec, true);
+        if (!['enriched', 'idle'].includes(result.state)) { throw new Error(`Unexpected semantic indexing state: ${result.state}`); }
+        let status: VectorStatus | undefined;
+        try { status = await this.refreshVectors(spec, true); }
+        catch (error) {
+            if (currentReadBusy(error)) { return this.currentSpec(spec) ? 'pending' : 'ready'; }
+            throw error;
+        }
         if (!this.currentSpec(spec)) { return 'ready'; }
         this.treeUsage = undefined;
         this.sidebar.refresh();
@@ -608,7 +710,7 @@ class Controller implements vscode.Disposable {
             }
             return status;
         } catch (error) {
-            this.output.appendLine(`Vector status unavailable: ${String(error)}`);
+            this.output.appendLine(`[${new Date().toISOString()}] ${spec.name}: Vector status unavailable: ${String(error)}`);
             if (strict) { throw error; }
             return undefined;
         }
@@ -634,7 +736,7 @@ class Controller implements vscode.Disposable {
             if (vscode.workspace.isTrusted && this.specs.get(spec.collection)?.dataDir === spec.dataDir) {
                 this.detailViews.set(this.mcpKey(spec), result);
             }
-        } catch (error) { this.output.appendLine(`Index detail unavailable: ${String(error)}`); }
+        } catch (error) { this.output.appendLine(`[${new Date().toISOString()}] ${spec.name}: Index detail unavailable: ${String(error)}`); }
     }
     async compression(spec: LaunchSpec): Promise<void> {
         this.trusted();
@@ -883,11 +985,20 @@ class Controller implements vscode.Disposable {
         if (choice?.command) { await vscode.commands.executeCommand(choice.command); }
     }
     configure(): void { const options = this.options(); this.scheduler.configure(options); this.coverage?.configure(options.quietMs, options.mode === 'idle' ? options.idleMs : 0); }
-    dispose(): void { this.disposed = true; this.closeToolsTerminals(); this.toolsClosed?.dispose(); clearInterval(this.rescan); this.sidebar.dispose(); this.coverage.dispose(); this.scheduler.dispose(); this.definitions.dispose(); this.collectionTree.dispose(); this.status.dispose(); this.output.dispose(); }
+    dispose(): Promise<void> {
+        if (this.disposal) { return this.disposal; }
+        this.disposed = true; this.closeToolsTerminals(); this.toolsClosed?.dispose(); clearInterval(this.rescan);
+        this.sidebar.dispose(); this.coverage.dispose(); this.scheduler.dispose(); this.definitions.dispose(); this.collectionTree.dispose(); this.status.dispose();
+        return this.disposal = (this.historyStore?.close() ?? Promise.resolve()).finally(() => this.output.dispose());
+    }
 }
+
+let activeController: Controller | undefined;
+export async function deactivate(): Promise<void> { await activeController?.dispose(); activeController = undefined; }
 
 export async function activate(context: vscode.ExtensionContext): Promise<{ getServerDefinitions(): Promise<vscode.McpStdioServerDefinition[]> }> {
     const controller = new Controller(context); context.subscriptions.push(controller);
+    activeController = controller;
     context.subscriptions.push(vscode.window.createTreeView('airk.collectionsView', { treeDataProvider: controller.collectionTree }));
     context.subscriptions.push(vscode.window.registerWebviewViewProvider('airk.dashboard', controller.sidebar));
     const safe = (action: () => void | Promise<unknown>, propagate = false) => async () => {
@@ -900,7 +1011,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<{ getS
     const commands: Record<string, () => void | Promise<unknown>> = {
         installCli: () => controller.installCommandLine(),
         openTools: () => controller.openTools(),
-        menu: () => controller.menu(), index: () => controller.manualIndex(), reindex: () => controller.manualIndex(true),
+        menu: () => controller.menu(), index: () => controller.manualIndex(), reindex: () => controller.manualIndex(true), diagnose: () => controller.diagnose(),
         indexMode: () => controller.chooseMode(), pause: () => controller.pauseAuto(true),
         resume: async () => { await controller.refresh(); await controller.pauseAuto(false); },
         chooseStorage: () => controller.chooseStorage(), storageLimits: () => controller.storageLimits(), collections: () => controller.collections(), removeCollection: () => controller.collections(true), currentMaintenance: () => controller.currentMaintenance(),

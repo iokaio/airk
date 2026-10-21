@@ -70,6 +70,27 @@ Quotas reserve growth before participating writes. Explicit [relocation](storage
 
 ## Recovery
 
+### Diagnose and repair in the extension
+
+Use **Diagnose & Repair** on the affected collection, or **AIRK: Diagnose & Repair** from the command palette. The view checks the helper version/path, current discovery and semantic readiness, native queue, vector setting, extraction detail and storage measurements. It reads the selected collection without initiating an index scan. **Copy report** includes these bounded observations and recent local events; source and query text are not requested. Current observations and previous failed attempts are displayed separately.
+
+Refresh also verifies a bounded page of retained source and extraction objects. **Verify retained data** continues at the same exact publication for up to two minutes; cancellation, a changed publication, skipped oversized inputs or an incomplete page sequence remain visible. Complete retained-input verification does not imply every lexical or graph record was checked. A damaged diagnostic history file is reported separately and does not prevent live diagnosis or repair.
+
+The scoped CLI equivalent is `airk collections diagnose`. Defaults are 128 files and 32 MiB per page; use `--max-files` and `--max-bytes` to reduce the work. Continuation requires both `--revision` from `publication.token` and `--after` from `next_after`. A changed revision rejects continuation; restart from the current head. `complete` means enumeration reached the end: also inspect `failed_objects`, `skipped_large`, verified input counts and whether verification began at the first page. The command does not recover journals or modify retained objects.
+
+The view's other helper commands keep normal startup recovery: a valid captured journal can be replayed when opening the collection. The dedicated retained-data verifier observes pending publication without replaying it. Neither path rebuilds evidence from changed source files during journal recovery.
+
+| Observation | Action |
+| --- | --- |
+| Discovery ready, semantic partial, no failure | Refresh diagnostics and compare completion counts; the source pass is complete and semantic work remains. |
+| Temporary publication contention | The extension retries semantic work automatically after yielding. |
+| Paused queue | **Resume window indexing** resumes the open collections in this window. |
+| Failed or blocked indexing | **Retry indexing** rechecks saved source and can recreate missing retained objects. |
+| Retry cannot recover derived evidence | Review the exact error. **Rebuild index** recomputes compatible derived evidence and preserves source files, but missing prior extraction inputs or an unavailable journal can still prevent it. |
+| Permission, quota, bundled-helper or journal-integrity failure | Review the reported path and cause; repair the underlying condition before retrying. Rebuild is not guaranteed to repair an unavailable journal. |
+
+Normal indexing can recreate missing retained source/extraction objects only from freshly validated source bytes, and a guarded recapture is bounded to one retry. Integrity errors are not silently ignored. Keep data and diagnostics when a fault repeats; wiping the index removes useful evidence. Diagnostic history is bounded per collection and stays in the extension's local storage across reloads.
+
 Operating-system locks release after process exit. Never unlink active stable locks in `collections-1.2/.writer-locks/`, `.current-gates/`, `scheduler-1.2-worker.lock` or `usage.lock`. A PID alone is not proof of abandoned ownership.
 
 The current database records Prepared and Applying. Prepared keeps the base readable; Applying blocks evidence reads until captured replay completes. Kernel, CLI and MCP startup recover pending updates from retained inputs without consulting changed live source. Repeated recovery is idempotent. A runtime-bootstrap recipe covers interrupted initial setup. Database growth has an admitted durable capacity/rollback allowance before changing the owner header.

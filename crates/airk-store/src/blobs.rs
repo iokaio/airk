@@ -14,6 +14,54 @@ use std::{
 const MAX_ARTIFACT_BYTES: u64 = airk_core::extraction::MAX_PAYLOAD_BYTES as u64;
 pub const MAX_CATALOG_BYTES: u64 = airk_core::publication::MAX_INVENTORY_BYTES as u64;
 
+/// A missing derived source/extraction object. This typed context is attached
+/// only to NotFound reads, never to corrupt, inaccessible or missing model state.
+#[derive(Debug)]
+pub struct MissingRetainedObject {
+    kind: &'static str,
+    path: PathBuf,
+    logical_digest: String,
+}
+
+impl std::fmt::Display for MissingRetainedObject {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "missing retained {} object {} (content SHA-256 {})",
+            self.kind,
+            self.path.display(),
+            self.logical_digest
+        )
+    }
+}
+
+impl std::error::Error for MissingRetainedObject {}
+
+fn retained_read_context<T>(result: Result<T>, kind: &str, path: &Path, digest: &str) -> Result<T> {
+    result.map_err(|error| {
+        let missing = error
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound);
+        let repair_kind = match kind {
+            "sources" => Some("source"),
+            "artifacts" => Some("extraction"),
+            _ => None,
+        };
+        if missing && let Some(kind) = repair_kind {
+            error.context(MissingRetainedObject {
+                kind,
+                path: path.into(),
+                logical_digest: digest.into(),
+            })
+        } else {
+            error.context(format!(
+                "read retained {kind} object {} (content SHA-256 {digest})",
+                path.display()
+            ))
+        }
+    })
+}
+
 pub fn valid_digest(value: &str) -> bool {
     value.len() == 64
         && value
@@ -58,8 +106,12 @@ fn object_path(base: &Path, kind: &str, digest: &str) -> Result<PathBuf> {
 }
 
 pub(crate) fn read_verified(path: &Path, digest: &str, limit: u64) -> Result<Vec<u8>> {
-    let file = File::open(path)
-        .context("retained object missing; previous generation cannot be reconstructed")?;
+    let file = File::open(path).with_context(|| {
+        format!(
+            "retained object missing; previous generation cannot be reconstructed: {}",
+            path.display()
+        )
+    })?;
     ensure!(
         file.metadata()?.len() <= limit,
         "retained object exceeds byte limit"
@@ -784,16 +836,14 @@ fn read_object(
     encoding: Option<&airk_core::compression::EncodedObject>,
     maximum: u64,
 ) -> Result<Vec<u8>> {
-    if let Some(encoding) = encoding {
-        crate::compression::read_all(
-            &object_path(base, kind, &encoding.stored_digest)?,
-            encoding,
-            digest,
-            maximum,
-        )
+    let stored_digest = encoding.map_or(digest, |value| value.stored_digest.as_str());
+    let path = object_path(base, kind, stored_digest)?;
+    let result = if let Some(encoding) = encoding {
+        crate::compression::read_all(&path, encoding, digest, maximum)
     } else {
-        read_verified(&object_path(base, kind, digest)?, digest, maximum)
-    }
+        read_verified(&path, digest, maximum)
+    };
+    retained_read_context(result, kind, &path, digest)
 }
 
 impl FileStore {
@@ -1036,7 +1086,8 @@ impl FileStore {
             &reference.object,
             reference.payload_encoding.as_ref(),
             MAX_ARTIFACT_BYTES.min(maximum),
-        )?;
+        )
+        .with_context(|| format!("load retained extraction for indexed path {:?}", entry.path))?;
         ensure!(
             bytes.len() == reference.object_bytes,
             "retained artifact length does not match pinned inventory"
@@ -1089,18 +1140,44 @@ impl FileStore {
             .as_ref()
             .and_then(|r| r.source_encoding.as_ref())
         {
+            let path = object_path(self.directory(), "sources", &encoding.stored_digest)?;
             ensure!(
-                crate::compression::verify(
-                    &object_path(self.directory(), "sources", &encoding.stored_digest)?,
-                    encoding,
+                retained_read_context(
+                    crate::compression::verify(
+                        &path,
+                        encoding,
+                        &entry.content_hash,
+                        entry.bytes as u64,
+                    ),
+                    "sources",
+                    &path,
                     &entry.content_hash,
-                    entry.bytes as u64
-                )? == entry.bytes,
+                )
+                .with_context(|| {
+                    format!(
+                        "verify retained source for indexed path {:?}: {} (content SHA-256 {})",
+                        entry.path,
+                        path.display(),
+                        entry.content_hash
+                    )
+                })? == entry.bytes,
                 "encoded source length mismatch"
             );
         } else {
             let path = object_path(self.directory(), "sources", &entry.content_hash)?;
-            let mut file = File::open(&path)?;
+            let mut file = retained_read_context(
+                File::open(&path).map_err(Into::into),
+                "sources",
+                &path,
+                &entry.content_hash,
+            )
+            .with_context(|| {
+                format!(
+                    "verify retained source for indexed path {:?}: {}",
+                    entry.path,
+                    path.display()
+                )
+            })?;
             ensure!(
                 file.metadata()?.is_file() && file.metadata()?.len() == entry.bytes as u64,
                 "retained source length mismatch"
@@ -1184,7 +1261,8 @@ impl FileStore {
                 .as_ref()
                 .and_then(|r| r.source_encoding.as_ref()),
             maximum,
-        )?;
+        )
+        .with_context(|| format!("read retained source for indexed path {:?}", entry.path))?;
         ensure!(
             bytes.len() == entry.bytes,
             "retained source byte count mismatch"
@@ -1834,6 +1912,143 @@ mod tests {
             "existing mismatched content must never be overwritten"
         );
         assert_eq!(fs::read(path)?, b"corrupt retained fixture");
+        Ok(())
+    }
+
+    #[test]
+    fn only_missing_source_and_extraction_objects_admit_repair() -> Result<()> {
+        for kind in ["sources", "artifacts", "models"] {
+            for failure in [
+                std::io::ErrorKind::NotFound,
+                std::io::ErrorKind::PermissionDenied,
+            ] {
+                let error = retained_read_context::<()>(
+                    Err(std::io::Error::from(failure).into()),
+                    kind,
+                    Path::new("fixture-derived-object"),
+                    &"a".repeat(64),
+                )
+                .unwrap_err();
+                assert_eq!(
+                    error.downcast_ref::<MissingRetainedObject>().is_some(),
+                    failure == std::io::ErrorKind::NotFound && kind != "models"
+                );
+                assert_eq!(
+                    error.downcast_ref::<std::io::Error>().unwrap().kind(),
+                    failure
+                );
+            }
+        }
+        let error = retained_read_context::<()>(
+            Err(anyhow::anyhow!("retained object digest mismatch")),
+            "artifacts",
+            Path::new("fixture-derived-object"),
+            &"a".repeat(64),
+        )
+        .unwrap_err();
+        assert!(error.downcast_ref::<MissingRetainedObject>().is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn missing_retained_objects_identify_indexed_path_and_exact_derived_object() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let store = FileStore::new(directory.path());
+        let raw = b"private source contents must not enter the diagnostic";
+        let artifact = Artifact {
+            path: "src/original.txt".into(),
+            content_hash: format!("{:x}", Sha256::digest(raw)),
+            bytes: raw.len(),
+            chunks: vec![],
+            language: "text".into(),
+            extraction_method: "text".into(),
+            parse_status: "parsed".into(),
+            facts: vec![],
+            retained: None,
+        };
+        let retained = store.retain_artifact(&artifact, Some(raw))?;
+        let extraction_path = object_path(
+            store.directory(),
+            "artifacts",
+            &retained.retained.as_ref().unwrap().object,
+        )?;
+        fs::remove_file(&extraction_path)?;
+        let error = store.load_retained(&retained).unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains(&artifact.path), "{message}");
+        assert!(message.contains("extraction"), "{message}");
+        assert!(
+            message.contains(&extraction_path.display().to_string()),
+            "{message}"
+        );
+        assert!(message.contains("retained object missing"), "{message}");
+        assert_eq!(
+            error.downcast_ref::<std::io::Error>().unwrap().kind(),
+            std::io::ErrorKind::NotFound
+        );
+        assert!(!message.contains(std::str::from_utf8(raw)?));
+        assert_eq!(store.read_retained_source(&retained)?, raw);
+
+        store.retain_artifact(&artifact, Some(raw))?;
+        let source_path = object_path(store.directory(), "sources", &artifact.content_hash)?;
+        fs::remove_file(&source_path)?;
+        assert!(store.load_retained(&retained).is_ok());
+        for error in [
+            store.read_retained_source(&retained).unwrap_err(),
+            store.verify_retained_source(&retained).unwrap_err(),
+        ] {
+            let message = format!("{error:#}");
+            assert!(message.contains(&artifact.path), "{message}");
+            assert!(message.contains("source"), "{message}");
+            assert!(
+                message.contains(&source_path.display().to_string()),
+                "{message}"
+            );
+            assert_eq!(
+                error.downcast_ref::<std::io::Error>().unwrap().kind(),
+                std::io::ErrorKind::NotFound
+            );
+            assert!(!message.contains(std::str::from_utf8(raw)?));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn missing_encoded_object_identifies_both_logical_and_stored_digests() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let bytes = b"original compressible fixture content\n".repeat(1024);
+        let digest = format!("{:x}", Sha256::digest(&bytes));
+        for kind in ["sources", "artifacts"] {
+            let encoding = put_encoded(
+                directory.path(),
+                kind,
+                &bytes,
+                &digest,
+                None,
+                airk_core::compression::CompressionMode::Automatic,
+            )?
+            .context("fixture must select compressed encoding")?;
+            assert_ne!(encoding.stored_digest, digest);
+            let path = object_path(directory.path(), kind, &encoding.stored_digest)?;
+            fs::remove_file(&path)?;
+            let error = read_object(
+                directory.path(),
+                kind,
+                &digest,
+                Some(&encoding),
+                bytes.len() as u64,
+            )
+            .unwrap_err();
+            let message = format!("{error:#}");
+            assert!(message.contains(kind), "{message}");
+            assert!(message.contains(&path.display().to_string()), "{message}");
+            assert!(message.contains(&digest), "{message}");
+            assert_eq!(
+                error.downcast_ref::<std::io::Error>().unwrap().kind(),
+                std::io::ErrorKind::NotFound
+            );
+            assert!(!message.contains("original compressible fixture content"));
+        }
         Ok(())
     }
 

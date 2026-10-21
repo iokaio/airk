@@ -45,7 +45,7 @@ def main():
                                  "response_utf8_bytes": len(result.stdout)})
             return payload
 
-        # Call candidates belong to Detailed; Balanced is the user default.
+        # Call candidates belong to Detailed; Agent Lean is the user default.
         run("configure_detail", "collections", "extraction", "detail", "detailed")
         index = run("index_initial", "index")
         assert index["indexed"] == args.files

@@ -14,6 +14,7 @@ pub mod compression;
 mod continuity;
 pub mod coverage;
 pub mod current;
+pub mod diagnostics;
 mod discovery;
 mod execution;
 pub mod extraction;
@@ -161,6 +162,25 @@ impl Kernel {
         data_dir: Option<PathBuf>,
         collection: &str,
     ) -> Result<Self> {
+        Self::open_collection_with_recovery(root, data_dir, collection, true)
+    }
+
+    /// Open retained state for inspection without replaying pending publications
+    /// or runtime bootstrap recovery. Reads reject an incomplete publication.
+    pub fn open_collection_for_diagnostics(
+        root: impl AsRef<Path>,
+        data_dir: Option<PathBuf>,
+        collection: &str,
+    ) -> Result<Self> {
+        Self::open_collection_with_recovery(root, data_dir, collection, false)
+    }
+
+    fn open_collection_with_recovery(
+        root: impl AsRef<Path>,
+        data_dir: Option<PathBuf>,
+        collection: &str,
+        recover: bool,
+    ) -> Result<Self> {
         airk_store::validate_collection(collection)?;
         let root = root
             .as_ref()
@@ -192,19 +212,21 @@ impl Kernel {
             data_root: directory.clone(),
             store: FileStore::new(directory.join("collections-1.2").join(collection)),
         };
-        kernel.recover_runtime_bootstrap()?;
-        if let Some(scope) = kernel.current_scope()?
-            && kernel
-                .store
-                .current_read(&scope)
-                .and_then(|r| r.has_prepared_update())
-                .unwrap_or(true)
-        {
-            current::recover_current(
-                &kernel.store,
-                &airk_store::quota::Quota::open(&kernel.data_root)?,
-                &scope,
-            )?;
+        if recover {
+            kernel.recover_runtime_bootstrap()?;
+            if let Some(scope) = kernel.current_scope()?
+                && kernel
+                    .store
+                    .current_read(&scope)
+                    .and_then(|r| r.has_prepared_update())
+                    .unwrap_or(true)
+            {
+                current::recover_current(
+                    &kernel.store,
+                    &airk_store::quota::Quota::open(&kernel.data_root)?,
+                    &scope,
+                )?;
+            }
         }
         Ok(kernel)
     }

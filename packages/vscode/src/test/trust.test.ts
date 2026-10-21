@@ -31,23 +31,24 @@ function addReportApi(stub: any): void {
     });
 }
 
-test('extension continues semantic work without a service and rejects closed bindings after queued writes', { timeout: 15000 }, async () => {
-    for (const scenario of ['index', 'reopen', 'close']) {
+test('extension continues semantic work without a service, survives transient publication contention and blocks real failures', { timeout: 20000 }, async () => {
+    for (const scenario of ['index', 'reopen', 'close', 'native-busy', 'helper-busy', 'post-busy', 'permission', 'post-permission', 'integrity']) {
         const reopen = scenario !== 'index';
         const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'airk-semantic-editor-'));
         const root = path.join(directory, 'Project'), storage = path.join(directory, 'Host');
         await fs.mkdir(root);
         const commands = new Map<string, () => Promise<unknown>>(), state = new Map<string, unknown>();
         const disposable = { dispose() {} }, event = () => disposable;
-        let dashboard: any, completed = reopen ? 32 : 65, scans = 0, batches = 0;
-        const errors: string[] = [];
+        let dashboard: any, completed = reopen ? 32 : 65, scans = 0, batches = 0, attempts = 0;
+        let statusBusy = false, readFailureInjected = false, statusReadsWhileBusy = 0;
+        const errors: string[] = [], output: string[] = [];
         const stub = {
             workspace: { isTrusted: true, workspaceFolders: [{ name: 'Project', uri: { scheme: 'file', fsPath: root } }],
                 getConfiguration: () => ({ get: (key: string, fallback: unknown) => key === 'index.mode' ? 'manual' : fallback, inspect: () => undefined }),
                 createFileSystemWatcher: () => ({ ...disposable, onDidChange: event, onDidCreate: event, onDidDelete: event }),
                 onDidSaveTextDocument: event, onDidChangeTextDocument: event, onDidGrantWorkspaceTrust: event,
                 onDidChangeWorkspaceFolders: event, onDidChangeConfiguration: event },
-            window: { createOutputChannel: () => ({ ...disposable, appendLine() {}, show() {} }),
+            window: { createOutputChannel: () => ({ ...disposable, appendLine(line: string) { output.push(line); }, show() {} }),
                 createStatusBarItem: () => ({ ...disposable, show() {} }), onDidChangeTextEditorSelection: event, onDidChangeActiveTextEditor: event,
                 showInformationMessage() {}, showErrorMessage: (error: string) => { errors.push(error); },
                 withProgress: async (_options: unknown, run: () => Promise<unknown>) => run() },
@@ -62,7 +63,16 @@ test('extension continues semantic work without a service and rejects closed bin
         mock.method(native, 'runJson', async (spec: {root: string; dataDir: string}, command: string, extra: string[] = []) => {
             assert.equal(spec.root, await fs.realpath(root));
             assert.equal(spec.dataDir, await fs.realpath(path.join(storage, 'indexes')));
+            const gateFailure = (permission: boolean) => new native.NativeProcessError('/fixture/airk', Object.assign(new Error('Command failed'), { code: 1 }),
+                `Error: current index is busy applying an update\n\nCaused by:\n    ${permission ? 'Permission denied (os error 13)' : 'lock acquisition failed because the operation would block'}`, 20, 300000);
             if (command === 'collections' && extra[0] === 'vectors') {
+                if (statusBusy) { statusReadsWhileBusy++; throw gateFailure(false); }
+                if (batches === 1 && !readFailureInjected && ['post-busy', 'post-permission', 'integrity'].includes(scenario)) {
+                    readFailureInjected = true;
+                    if (scenario !== 'integrity') { throw gateFailure(scenario === 'post-permission'); }
+                    throw new native.NativeProcessError('/fixture/airk', Object.assign(new Error('Command failed'), { code: 1 }),
+                        'Error: current index journal requires recovery', 20, 300000);
+                }
                 return { enabled: true, published: true, indexed_vectors: completed, pending_reindex: false, default_search_mode: 'hybrid',
                     semantic_readiness: { state: completed < 65 ? 'partial' : 'ready', completed_artifacts: completed,
                         selected_artifacts: 65, completed_units: completed, selected_units: 65, failure: null } };
@@ -72,7 +82,11 @@ test('extension continues semantic work without a service and rejects closed bin
                 return { generation: 1, indexed: 65, reused: 0, removed: 0, skipped: [] };
             }
             if (command === 'semantic') {
-                assert.deepEqual(extra, ['run', '--scheduled']); batches++; completed = Math.min(65, completed + 32);
+                assert.deepEqual(extra, ['run', '--scheduled']); attempts++;
+                if (scenario === 'native-busy' && attempts === 1) { statusBusy = true; return { state: 'busy', error: null }; }
+                if (attempts === 1 && ['helper-busy', 'permission'].includes(scenario)) { throw gateFailure(scenario === 'permission'); }
+                statusBusy = false;
+                batches++; completed = Math.min(65, completed + 32);
                 return { state: 'enriched', error: null };
             }
             assert.notEqual(command, 'service', 'The extension must not install a background service');
@@ -88,6 +102,7 @@ test('extension continues semantic work without a service and rejects closed bin
             for (const module of ['../extension', '../agentSetup', '../dashboardView', '../collectionTree']) { delete require.cache[require.resolve(module)]; }
             await require('../extension').activate(context);
             assert.equal(dashboard.visible, false);
+            assert.deepEqual(output.filter(line => line.startsWith('AIRK helper verified:')), ['AIRK helper verified: 1.2.2; /fixture/airk']);
             if (scenario === 'close') {
                 const controller = dashboard.controller, spec = [...controller.specs.values()][0];
                 let release!: () => void;
@@ -107,16 +122,34 @@ test('extension continues semantic work without a service and rejects closed bin
                 continue;
             }
             if (!reopen) { await commands.get('airk.index')!(); }
+            if (['integrity', 'permission', 'post-permission'].includes(scenario)) {
+                const deadline = Date.now() + 2000;
+                while (dashboard.controller.scheduler.states()[0]?.state !== 'failed') {
+                    assert.ok(Date.now() < deadline, 'A genuine current-index failure was not reported');
+                    await new Promise(resolve => setTimeout(resolve, 20));
+                }
+                await new Promise(resolve => setTimeout(resolve, 1200));
+                assert.equal(attempts, 1, 'Recovery and permission errors must not automatically retry');
+                const expected = scenario === 'integrity' ? /journal requires recovery/ : /Permission denied/;
+                assert.match(dashboard.controller.sidebarState().collections[0].error, expected);
+                assert.ok(output.some(line => /^\[\d{4}-\d{2}-\d{2}T[^\]]+\] Project: NativeProcessError:/.test(line)
+                    && expected.test(line)), 'Failure output needs a timestamp and collection identity');
+                continue;
+            }
             const deadline = Date.now() + 5000;
             while (dashboard.controller.sidebarState().collections[0]?.vectors?.semantic_readiness?.state !== 'ready' || batches < 2) {
                 assert.ok(Date.now() < deadline, 'Semantic completion stalled without a service');
                 await new Promise(resolve => setTimeout(resolve, 20));
             }
             assert.equal(batches, 2); assert.equal(scans, reopen ? 0 : 1);
+            assert.equal(attempts, ['native-busy', 'helper-busy'].includes(scenario) ? 3 : 2);
+            assert.equal(statusReadsWhileBusy, 0, 'A native busy outcome must yield before another status read');
+            assert.equal(readFailureInjected, scenario === 'post-busy');
             assert.equal(dashboard.controller.sidebarState().collections[0].vectors.semantic_readiness.completed_artifacts, 65);
             assert.deepEqual(errors, []);
+            assert.equal(output.filter(line => line.startsWith('AIRK helper verified:')).length, 1);
         } finally {
-            context.subscriptions.forEach(item => item.dispose());
+            await Promise.all(context.subscriptions.map(item => item.dispose()));
             loader._load = original; mock.restoreAll();
             mock.method(cliInstall, 'installCli', async () => []);
             const resolved = await fs.realpath(directory);
@@ -203,7 +236,7 @@ test('storage picker holds startup indexing, waits for active writes, and restor
             assert.equal(indexed.at(-1), await fs.realpath(changed ? destination : path.join(storage, 'indexes')));
             if (changed) { assert.ok((state.get('storageHistory') as string[]).includes(await fs.realpath(path.join(storage, 'indexes')))); }
         } finally {
-            select(undefined); releaseIndex(); context.subscriptions.forEach(item => item.dispose());
+            select(undefined); releaseIndex(); await Promise.all(context.subscriptions.map(item => item.dispose()));
             for (const module of ['../extension', '../agentSetup', '../dashboardView', '../collectionTree']) { delete require.cache[require.resolve(module)]; }
             loader._load = original; native.prepareHelper = priorPrepare; native.runJson = priorRun;
             const resolved = await fs.realpath(directory); assert.equal(path.dirname(resolved), await fs.realpath(os.tmpdir()));
@@ -247,7 +280,7 @@ test('untrusted workspaces expose no MCP servers and commands cannot launch a he
             await assert.rejects(commands.get(name)!(), /Trust this workspace/);
         }
         await assert.rejects(provider.resolveMcpServerDefinition({}), /Trust this workspace/);
-        context.subscriptions.forEach(item => item.dispose());
+        await Promise.all(context.subscriptions.map(item => item.dispose()));
     } finally { loader._load = original; }
 });
 
@@ -338,7 +371,7 @@ test('trusted MCP definitions ignore workspace storage overrides and reconnect w
         assert.equal(removals, 1, 'Only the inactive indexed collection is removable after confirmation');
         const unrelated = new Definition('Other', '/fixture/airk', ['--collection', 'other'], {}, '0.1.0');
         await assert.rejects(provider.resolveMcpServerDefinition(unrelated), /configuration changed/);
-        context.subscriptions.forEach(item => item.dispose());
+        await Promise.all(context.subscriptions.map(item => item.dispose()));
     } finally {
         loader._load = original; native.prepareHelper = priorPrepare; native.runJson = priorRun;
         const resolved = await fs.realpath(directory); assert.equal(path.dirname(resolved), await fs.realpath(os.tmpdir()));
@@ -524,7 +557,7 @@ test('multi-root Index Now selects the active folder and coverage refresh never 
         assert.equal(registration, true);
 
     } finally {
-        context.subscriptions.forEach(item => item.dispose()); loader._load = original;
+        await Promise.all(context.subscriptions.map(item => item.dispose())); loader._load = original;
         native.prepareHelper = priorPrepare; native.runJson = priorRun; native.probeMcp = priorProbe;
         const resolved = await fs.realpath(directory); assert.equal(path.dirname(resolved), await fs.realpath(os.tmpdir()));
         assert.ok(path.basename(resolved).startsWith('airk-vscode-multiroot-')); await fs.rm(resolved, { recursive: true, force: true });
@@ -656,7 +689,7 @@ test('Manage Agent Connections selects Codex, creates only on request, and refus
         await receive({ action: 'copy' }); assert.match(panel.webview.html, /Trust this workspace/);
         await assert.rejects(commands.get('airk.manageMcp')!(), /Trust this workspace/);
     } finally {
-        context.subscriptions.forEach(item => item.dispose()); loader._load = original;
+        await Promise.all(context.subscriptions.map(item => item.dispose())); loader._load = original;
         native.prepareHelper = priorPrepare; native.runJson = priorRun; native.probeMcp = priorProbe;
         const resolved = await fs.realpath(directory); assert.equal(path.dirname(resolved), await fs.realpath(os.tmpdir()));
         assert.ok(path.basename(resolved).startsWith('airk-vscode-connections-')); await fs.rm(resolved, { recursive: true, force: true });
@@ -748,7 +781,7 @@ test('coverage and indexing share native writer exclusion and command failures r
         assert.equal(vectorsEnabled, false);
 
     } finally {
-        releaseCoverage(); context.subscriptions.forEach(item => item.dispose()); loader._load = original;
+        releaseCoverage(); await Promise.all(context.subscriptions.map(item => item.dispose())); loader._load = original;
         native.prepareHelper = priorPrepare; native.runJson = priorRun; vectorModel.prepareVectorModel = priorVectorPrepare;
         const resolved = await fs.realpath(directory); assert.equal(path.dirname(resolved), await fs.realpath(os.tmpdir()));
         assert.ok(path.basename(resolved).startsWith('airk-vscode-writers-')); await fs.rm(resolved, { recursive: true, force: true });

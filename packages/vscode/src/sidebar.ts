@@ -30,7 +30,7 @@ export interface SidebarState {
 export type SidebarAction = { type: 'vectors'; collection: string; dataDir: string; enabled: boolean } | { type: 'detail'; collection: string; dataDir: string; level: IndexDetail } | { type: 'ready' } | { type: 'mode'; value: IndexMode }
     | { type: 'registration'; enabled: boolean }
     | { type: 'command'; command: string }
-    | { type: 'collection'; action: 'index' | 'reindex' | 'status' | 'usage' | 'verify' | 'mcpDetails' | 'tools' | 'compression'; collection: string; dataDir: string };
+    | { type: 'collection'; action: 'index' | 'reindex' | 'status' | 'usage' | 'verify' | 'mcpDetails' | 'tools' | 'compression' | 'diagnose'; collection: string; dataDir: string };
 
 export function sidebarAction(value: unknown, allowed: Set<string>): SidebarAction | undefined {
     if (!value || typeof value !== 'object') { return; }
@@ -50,7 +50,7 @@ export function sidebarAction(value: unknown, allowed: Set<string>): SidebarActi
     if (item.type === 'command' && typeof item.command === 'string' && allowed.has(item.command)) {
         return { type: 'command', command: item.command };
     }
-    if (item.type === 'collection' && typeof item.action === 'string' && ['index', 'reindex', 'status', 'usage', 'verify', 'mcpDetails', 'tools', 'compression'].includes(item.action)
+    if (item.type === 'collection' && typeof item.action === 'string' && ['index', 'reindex', 'status', 'usage', 'verify', 'mcpDetails', 'tools', 'compression', 'diagnose'].includes(item.action)
         && typeof item.collection === 'string' && typeof item.dataDir === 'string') {
         return { type: 'collection', action: item.action as Extract<SidebarAction, { type: 'collection' }>['action'], collection: item.collection, dataDir: item.dataDir };
     }
@@ -134,6 +134,7 @@ export function sidebarContent(state: SidebarState): string {
             ${report ? `<p class="muted">${escape(report.extraction_failed)} extraction failures · ${escape(report.unsupported)} unsupported · ${escape(report.capacity_blocked)} capacity blocked</p>` : '<p class="muted">Coverage appears after the first inventory scan.</p>'}
             ${view?.pending && report ? '<p class="muted">Files changed; these counts are from the previous scan.</p>' : ''}
             ${error ? `<p class="error" role="status">${escape(error.slice(0, 600))}</p>` : ''}${actions}
+            <div class="actions"><button class="secondary" data-action="diagnose" ${attributes}${disabled || state.changingStorage ? ' disabled' : ''}>Diagnose &amp; Repair</button></div>
             <p class="muted">${item.usage ? `Last 30 days: ${escape(item.usage.calls)} recorded calls · ${escape(item.usage.reduction ?? 'Not measured')} estimated tokens avoided versus complete cited files (${escape(item.usage.compared)} comparisons). ${item.usage.disabled ? 'Recording is off. ' : ''}Updated ${escape(new Date(item.usage.checkedAt).toLocaleTimeString())}.` : 'Open Usage &amp; Savings to see activity and estimated savings.'}</p>${vectors}${detail}
             <details id="location-${escape(item.collection)}"><summary>Storage and last index</summary><dl><dt>Index size</dt><dd>${bytes(item.diskBytes)}</dd><dt>Eligible source size</dt><dd>${bytes(report?.eligible_source_bytes)}</dd><dt>Last indexed</dt><dd>${escape(last)}</dd><dt>Index folder</dt><dd class="path">${escape(item.dataDir)}</dd></dl></details>${connection}</section>`;
     }).join('');
@@ -193,6 +194,7 @@ export function sidebarControlGroups(): ControlGroup[] {
             ['Pause Auto-indexing', 'airk.pause', 'Stop automatic jobs; keep queued changes'],
             ['Resume Auto-indexing', 'airk.resume', 'Restart automatic jobs after a pause or budget stop']] },
         { label: 'Setup and reports', commands: [
+            ['Diagnose & Repair', 'airk.diagnose', 'Inspect current progress and saved failures; retry or rebuild from here'],
             ['Install or Repair CLI', 'airk.installCli', 'Make airk available in new terminals'],
             ['Open AIRK Tools', 'airk.openTools', 'Call MCP tools in a collection terminal with help and examples'],
             ['Connect Coding Agent…', 'airk.setupAgent', 'Choose an agent and follow its setup guide'],

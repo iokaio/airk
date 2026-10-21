@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { NativeWriteQueue, prepareHelper, probeMcp, runJson, runText } from '../native';
+import { NativeProcessError, NativeWriteQueue, prepareHelper, probeMcp, runJson, runText } from '../native';
 import { IndexReport, LaunchSpec, collectionId } from '../model';
 import { Coverage } from '../coverage';
 
@@ -14,6 +14,45 @@ async function removeFixture(directory: string, prefix: string): Promise<void> {
     assert.equal(path.dirname(resolved), base); assert.ok(path.basename(resolved).startsWith(prefix));
     await fs.rm(resolved, { recursive: true, force: true });
 }
+
+test('native process failures retain exit status and stderr diagnostics', async () => {
+    await assert.rejects(runText(process.execPath, ['-e', 'process.stderr.write("fixture indexing failure"); process.exit(7)']), error => {
+        assert.ok(error instanceof NativeProcessError);
+        assert.equal(error.code, 7); assert.equal(error.killed, false); assert.equal(error.timedOut, false);
+        assert.match(error.message, /exit code 7/); assert.match(error.message, /fixture indexing failure/);
+        assert.equal(error.stderr, 'fixture indexing failure');
+        return true;
+    });
+});
+
+test('native process timeout identifies the limit and termination without stderr', async () => {
+    await assert.rejects(runText(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], undefined, 100), error => {
+        assert.ok(error instanceof NativeProcessError);
+        assert.equal(error.killed, true); assert.equal(error.timedOut, true); assert.equal(error.timeoutMs, 100);
+        assert.match(error.message, /timed out \(limit 100 ms\)/); assert.match(error.message, /terminated/);
+        assert.ok(error.elapsedMs >= 90);
+        return true;
+    });
+});
+
+test('native process diagnostics stay bounded and retain both ends of stderr', async () => {
+    await assert.rejects(runText(process.execPath, ['-e', 'process.stderr.write("first diagnostic\\n" + "x".repeat(20000) + "\\nlast diagnostic", () => process.exit(3))']), error => {
+        assert.ok(error instanceof NativeProcessError);
+        assert.ok(error.message.length < 9000); assert.ok(error.stderr.length < 8300);
+        assert.match(error.message, /first diagnostic/); assert.match(error.message, /last diagnostic/);
+        assert.match(error.message, /diagnostic truncated/);
+        return true;
+    });
+});
+
+test('native output cap remains distinguishable from a timeout', async () => {
+    await assert.rejects(runText(process.execPath, ['-e', 'process.stdout.write("x".repeat(17 * 1024 * 1024)); setInterval(() => {}, 1000)']), error => {
+        assert.ok(error instanceof NativeProcessError);
+        assert.equal(error.code, 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'); assert.equal(error.timedOut, false);
+        assert.match(error.message, /maxBuffer/);
+        return true;
+    });
+});
 
 test('native writer queue isolates data directories and collections', async () => {
     const queue = new NativeWriteQueue();
@@ -209,10 +248,21 @@ test('extension native adapter indexes, rebuilds, probes MCP, isolates and remov
         await fs.writeFile(path.join(native, executable), binary);
         // The real helper reports the workspace version, which must match the extension package.
         const version: string = require('../../package.json').version;
+        const digest = createHash('sha256').update(binary).digest('hex');
         await fs.writeFile(path.join(native, 'manifest.json'), JSON.stringify({ version, vsix_target: `${process.platform}-${process.arch}`,
-            payload: { [executable]: createHash('sha256').update(binary).digest('hex') } }));
-        const cached = await prepareHelper(extension, path.join(directory, 'cache'), version);
-        assert.ok(cached.startsWith(path.join(directory, 'cache')));
-        assert.equal(await prepareHelper(extension, path.join(directory, 'cache'), version), cached);
+            payload: { [executable]: digest } }));
+        // Seed damage before execution: Windows may still map a just-exited
+        // executable, and the repair contract does not overwrite a live image.
+        const cacheDirectory = path.join(directory, 'cache', 'helpers', `${version}-${process.platform}-${process.arch}-${digest.slice(0, 16)}`);
+        await fs.mkdir(cacheDirectory, { recursive: true });
+        await fs.writeFile(path.join(cacheDirectory, executable), 'damaged derived helper cache');
+        const repairs: string[] = [];
+        const cached = await prepareHelper(extension, path.join(directory, 'cache'), version, message => repairs.push(message));
+        assert.equal(cached, path.join(cacheDirectory, executable));
+        assert.equal(createHash('sha256').update(await fs.readFile(cached)).digest('hex'), digest);
+        assert.equal(repairs.length, 1);
+        assert.equal(await prepareHelper(extension, path.join(directory, 'cache'), version, message => repairs.push(message)), cached);
+        assert.equal(repairs.length, 1, 'Verified cached bytes need no second repair');
+        assert.equal((await runText(cached, ['--version'])).trim(), `airk ${version}`);
     } finally { await removeFixture(directory, 'airk-native-extension-'); }
 });
