@@ -13,6 +13,11 @@ class FakeClock implements Clock {
     now(): number { return this.time; }
     set(fn: () => void, ms: number): number { const id = ++this.sequence; this.timers.set(id, { fn, at: this.time + ms }); return id; }
     clear(timer: unknown): void { this.timers.delete(timer as number); }
+    async fireNextEarly(ms: number): Promise<void> {
+        const next = [...this.timers.entries()].sort((a, b) => a[1].at - b[1].at)[0];
+        assert.ok(next && ms > 0 && next[1].at - ms >= this.time, 'Expected a future timer');
+        this.time = next[1].at - ms; this.timers.delete(next[0]); next[1].fn(); await flush();
+    }
     async advance(ms: number): Promise<void> {
         const end = this.time + ms;
         for (let count = 0; count < 1000; count++) {
@@ -23,6 +28,58 @@ class FakeClock implements Clock {
         throw new Error('Scheduler timer loop');
     }
 }
+
+test('an early source timer preserves its deadline without starting unrequested semantic work', async () => {
+    for (const hasEnrichment of [true, false]) {
+        const clock = new FakeClock(); let scans = 0, batches = 0, failures = 0;
+        const scheduler = new Scheduler({ ...options, quietMs: 250 }, async () => { scans++; return report; },
+            () => {}, () => { failures++; }, clock, hasEnrichment ? async () => {
+                batches++; throw new Error('Unrequested semantic work must not block the source scan');
+            } : undefined);
+        try {
+            await scheduler.request(spec);
+            await clock.fireNextEarly(1);
+            assert.equal(clock.now(), 249);
+            assert.deepEqual({ scans, batches, failures }, { scans: 0, batches: 0, failures: 0 });
+            assert.equal(scheduler.states()[0].state, 'queued');
+            assert.equal(scheduler.states()[0].pending, true);
+            assert.equal(clock.timers.size, 1, 'Early delivery must rearm pending work');
+            await clock.advance(1);
+            assert.deepEqual({ scans, batches, failures }, { scans: 1, batches: 0, failures: 0 });
+            assert.equal(scheduler.states()[0].state, 'current');
+            assert.equal(scheduler.states()[0].pending, false);
+            await clock.advance(10000);
+            assert.equal(scans, 1); assert.equal(batches, 0);
+        } finally { scheduler.dispose(); }
+    }
+});
+
+test('an early semantic timer keeps its retry deadline and yields to due source work', async () => {
+    const clock = new FakeClock(); const ran: { kind: string; collection: string; at: number }[] = [];
+    const other = { ...spec, collection: 'second', root: '/fixture/second' }; let batches = 0;
+    const scheduler = new Scheduler({ ...options, mode: 'manual' }, async current => {
+        ran.push({ kind: 'source', collection: current.collection, at: clock.now() }); return report;
+    }, () => {}, () => {}, clock, async current => {
+        ran.push({ kind: 'semantic', collection: current.collection, at: clock.now() });
+        return ++batches === 1 ? 'pending' : 'ready';
+    });
+    try {
+        scheduler.observeSemantic(spec, true); await clock.advance(0);
+        await clock.fireNextEarly(1);
+        assert.equal(clock.now(), 999); assert.equal(batches, 1);
+        assert.equal(scheduler.states()[0].state, 'semantic-pending');
+        const indexed = scheduler.request(other, true);
+        await clock.advance(0); await indexed;
+        await clock.advance(1);
+        assert.deepEqual(ran, [
+            { kind: 'semantic', collection: spec.collection, at: 0 },
+            { kind: 'source', collection: other.collection, at: 999 },
+            { kind: 'semantic', collection: spec.collection, at: 1000 },
+        ]);
+        assert.ok(scheduler.states().every(state => !state.pending));
+        assert.equal(clock.timers.size, 0);
+    } finally { scheduler.dispose(); }
+});
 
 test('semantic batches finish after Index Now without another source edit or background service', async () => {
     const clock = new FakeClock(); let scans = 0, batches = 0;

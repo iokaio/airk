@@ -120,10 +120,12 @@ export class Scheduler {
     }
     private nextDue(job: Job): number {
         const source = job.revision > job.completed ? this.due(job) : Infinity;
+        return Math.min(source, this.semanticDue(job));
+    }
+    private semanticDue(job: Job): number {
         // Manual/on-save modes control new source scans, not completion of an
         // already requested semantic build. Explicit Pause still stops batches.
-        const semantic = this.enrich && job.semanticPending && !this.paused && !job.blocked ? job.semanticAt : Infinity;
-        return Math.min(source, semantic);
+        return this.enrich && job.semanticPending && !this.paused && !job.blocked ? job.semanticAt : Infinity;
     }
     private due(job: Job): number {
         if (job.manual) { return this.clock.now(); }
@@ -144,7 +146,14 @@ export class Scheduler {
         if (!job) { return; }
         this.timer = this.clock.set(() => {
             this.timer = undefined;
-            void (job.revision > job.completed && this.due(job) <= this.clock.now() ? this.execute(job) : this.executeSemantic(job));
+            if (this.busy || this.stopped || this.holds || this.jobs.get(job.spec.collection) !== job) { return; }
+            const source = job.revision > job.completed ? this.due(job) : Infinity;
+            const semantic = this.semanticDue(job), now = this.clock.now();
+            if (source <= now) { void this.execute(job); }
+            else if (semantic <= now) { void this.executeSemantic(job); }
+            // Timers can arrive before the wall-clock deadline. Keep the work
+            // queued instead of treating an early source timer as semantic work.
+            else { this.schedule(); }
         }, Math.max(0, this.nextDue(job) - this.clock.now()));
     }
     private async executeSemantic(job: Job): Promise<void> {

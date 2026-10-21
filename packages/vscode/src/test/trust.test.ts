@@ -31,6 +31,23 @@ function addReportApi(stub: any): void {
     });
 }
 
+/** Reject inside the fixture so its finally block runs before the runner's timeout. */
+async function waitForFixture<T>(pending: Promise<T>, label: string, details: () => unknown, signal?: AbortSignal): Promise<T> {
+    let timer: NodeJS.Timeout | undefined;
+    let abort: (() => void) | undefined;
+    try {
+        return await Promise.race([pending, new Promise<never>((_resolve, reject) => {
+            const fail = () => reject(new Error(`${label} did not settle: ${JSON.stringify(details())}`));
+            timer = setTimeout(fail, 3000);
+            abort = fail;
+            if (signal?.aborted) { fail(); } else { signal?.addEventListener('abort', abort, { once: true }); }
+        })]);
+    } finally {
+        clearTimeout(timer);
+        if (abort) { signal?.removeEventListener('abort', abort); }
+    }
+}
+
 test('extension continues semantic work without a service, survives transient publication contention and blocks real failures', { timeout: 20000 }, async () => {
     for (const scenario of ['index', 'reopen', 'close', 'native-busy', 'helper-busy', 'post-busy', 'permission', 'post-permission', 'integrity']) {
         const reopen = scenario !== 'index';
@@ -160,7 +177,7 @@ test('extension continues semantic work without a service, survives transient pu
     }
 });
 
-test('storage picker holds startup indexing, waits for active writes, and restores scheduling on cancellation or invalid paths', { timeout: 20000 }, async () => {
+test('storage picker holds startup indexing, waits for active writes, and restores scheduling on cancellation or invalid paths', { timeout: 20000 }, async testContext => {
     for (const scenario of ['startup', 'busy', 'cancel', 'invalid', 'root-added']) {
         const busy = scenario === 'busy' || scenario === 'root-added';
         const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'airk-vscode-storage-'));
@@ -174,25 +191,36 @@ test('storage picker holds startup indexing, waits for active writes, and restor
         const started = new Promise<void>(resolve => { indexStarted = resolve; });
         const waiting = new Promise<void>(resolve => { progressStarted = resolve; });
         const indexing = new Promise<void>(resolve => { releaseIndex = resolve; });
-        const indexed: string[] = [], errors: string[] = [];
+        const indexed: string[] = [], errors: string[] = [], output: string[] = [];
+        const operations: Promise<unknown>[] = [];
+        const track = <T>(pending: Promise<T>): Promise<T> => {
+            // Observe rejection immediately, including commands deliberately held by the fixture.
+            operations.push(pending); void pending.catch(() => {}); return pending;
+        };
+        let controller: any;
+        const details = () => ({ scenario, indexed: indexed.length, dialogs, errors, output: output.slice(-5), scheduling: controller?.scheduler.states() });
+        const wait = <T>(pending: Promise<T>, label: string) => waitForFixture(pending, `${scenario}: ${label}`, details, testContext.signal);
         const stub = {
             workspace: { isTrusted: true, workspaceFolders: [{ name: 'Project', uri: { scheme: 'file', fsPath: root } }],
-                getConfiguration: () => ({ get: (key: string, fallback: unknown) => key === 'index.quietMs' ? 250 : fallback,
+                getConfiguration: () => ({ get: (key: string, fallback: unknown) => key === 'index.quietMs' ? 250 : key === 'index.mode' && busy ? 'manual' : fallback,
                     inspect: (key: string) => key === 'storage.path' ? { globalValue: configured } : undefined,
                     update: async (key: string, value: string) => { assert.equal(key, 'storage.path'); configured = value; } }),
                 createFileSystemWatcher: () => ({ ...disposable, onDidChange: event, onDidCreate: event, onDidDelete: event }),
                 onDidSaveTextDocument: event, onDidChangeTextDocument: event, onDidGrantWorkspaceTrust: event,
                 onDidChangeWorkspaceFolders: event, onDidChangeConfiguration: event },
-            window: { createOutputChannel: () => ({ ...disposable, appendLine() {}, show() {} }),
+            window: { createOutputChannel: () => ({ ...disposable, appendLine(line: string) { output.push(line); }, show() {} }),
                 createStatusBarItem: () => ({ ...disposable, show() {} }), onDidChangeTextEditorSelection: event, onDidChangeActiveTextEditor: event,
                 showOpenDialog: () => { dialogs++; return selected; }, showInformationMessage() {},
-                withProgress: async (_options: unknown, run: () => Promise<unknown>) => { progressStarted(); return run(); },
+                withProgress: async (options: { title: string }, run: () => Promise<unknown>) => {
+                    if (options.title.startsWith('AIRK: Waiting for the current indexing pass')) { progressStarted(); }
+                    return run();
+                },
                 showErrorMessage: (error: string) => { errors.push(error); } },
             commands: { registerCommand: (name: string, handler: () => Promise<unknown>) => { commands.set(name, handler); return disposable; } },
             env: {}, ConfigurationTarget: { Global: 1 }, StatusBarAlignment: { Left: 1 }, ProgressLocation: { Notification: 1 },
             EventEmitter: class { event = event; fire() {} dispose() {} }, lm: {}
         };
-        addTreeApi(stub);
+        addTreeApi(stub, undefined, provider => { controller = provider.controller; });
         const loader = Module as unknown as { _load: (...args: any[]) => any }, original = loader._load;
         const native = require('../native'), priorPrepare = native.prepareHelper, priorRun = native.runJson;
         native.prepareHelper = async () => '/fixture/airk';
@@ -203,6 +231,7 @@ test('storage picker holds startup indexing, waits for active writes, and restor
                 if (busy && indexed.length === 1) { await indexing; }
                 return { generation: indexed.length, indexed: 1, reused: 0, removed: 0, skipped: [] };
             }
+            assert.notEqual(command, 'semantic', 'Opted-out storage fixtures must not start semantic work');
             return { scan_complete: true, eligible: 1, current: 1, indexed: true };
         };
         loader._load = function(request: string, ...args: any[]) { return request === 'vscode' ? stub : original.call(this, request, ...args); };
@@ -211,36 +240,49 @@ test('storage picker holds startup indexing, waits for active writes, and restor
             globalState: { get: (key: string, fallback: unknown) => state.get(key) ?? fallback,
                 update: async (key: string, value: unknown) => { state.set(key, value); } } };
         try {
-            for (const module of ['../extension', '../agentSetup', '../dashboardView', '../collectionTree']) { delete require.cache[require.resolve(module)]; } await require('../extension').activate(context);
-            if (busy) { await started; }
-            const choosing = commands.get('airk.chooseStorage')!();
-            const duplicate = commands.get('airk.chooseStorage')!();
+            for (const module of ['../extension', '../agentSetup', '../dashboardView', '../collectionTree']) { delete require.cache[require.resolve(module)]; }
+            await wait(track(require('../extension').activate(context)), 'extension activation');
+            // Active-writer cases control their writer explicitly; startup remains automatic in the other cases.
+            const initialIndex = busy ? track(commands.get('airk.index')!()) : undefined;
+            if (initialIndex) {
+                await wait(Promise.race([started, initialIndex.then(() => { throw new Error('Index command finished without entering the native writer'); })]), 'native writer start');
+            }
+            const choosing = track(commands.get('airk.chooseStorage')!());
+            const duplicate = track(commands.get('airk.chooseStorage')!());
             assert.equal(dialogs, 1, 'Repeated clicks share one picker even during an active index');
             await new Promise<void>(resolve => setTimeout(resolve, 350));
             assert.equal(indexed.length, busy ? 1 : 0, 'Opening the picker holds startup indexing');
             select(scenario === 'cancel' ? undefined : [{ fsPath: scenario === 'invalid' ? root : destination }]);
             if (busy) {
-                await waiting; assert.equal(configured, undefined, 'Storage cannot switch before the writer finishes');
+                await wait(Promise.race([waiting, choosing.then(() => { throw new Error('Storage picker finished before waiting for the active writer'); })]), 'storage waiting for the writer');
+                assert.equal(configured, undefined, 'Storage cannot switch before the writer finishes');
                 if (scenario === 'root-added') { stub.workspace.workspaceFolders.push({ name: 'Added', uri: { scheme: 'file', fsPath: destination } }); }
                 releaseIndex();
             }
             if (scenario === 'invalid' || scenario === 'root-added') {
-                const results = await Promise.allSettled([choosing, duplicate]);
+                const results = await wait(Promise.allSettled([choosing, duplicate]), 'invalid storage rejection');
                 assert.ok(results.every(result => result.status === 'rejected' && /must not be the workspace root/.test(String(result.reason))));
-            } else { await Promise.all([choosing, duplicate]); assert.deepEqual(errors, []); }
+            } else { await wait(Promise.all([choosing, duplicate]), 'storage selection'); assert.deepEqual(errors, []); }
+            if (initialIndex) { await wait(initialIndex, 'initial indexing completion'); }
             const changed = scenario === 'startup' || scenario === 'busy';
             assert.equal(configured, changed ? await fs.realpath(destination) : undefined);
             if (scenario === 'root-added') { stub.workspace.workspaceFolders.pop(); }
             // Explicit requests also resume after the hold ends; no lingering suspension.
-            await commands.get('airk.index')!();
+            await wait(track(commands.get('airk.index')!()), 'indexing after storage selection');
             assert.equal(indexed.at(-1), await fs.realpath(changed ? destination : path.join(storage, 'indexes')));
             if (changed) { assert.ok((state.get('storageHistory') as string[]).includes(await fs.realpath(path.join(storage, 'indexes')))); }
         } finally {
-            select(undefined); releaseIndex(); await Promise.all(context.subscriptions.map(item => item.dispose()));
-            for (const module of ['../extension', '../agentSetup', '../dashboardView', '../collectionTree']) { delete require.cache[require.resolve(module)]; }
-            loader._load = original; native.prepareHelper = priorPrepare; native.runJson = priorRun;
-            const resolved = await fs.realpath(directory); assert.equal(path.dirname(resolved), await fs.realpath(os.tmpdir()));
-            assert.ok(path.basename(resolved).startsWith('airk-vscode-storage-')); await fs.rm(resolved, { recursive: true, force: true });
+            // Release every gate even when an assertion or wait fails, then drain accepted operations.
+            stub.workspace.isTrusted = false; select(undefined); releaseIndex();
+            try {
+                await waitForFixture(Promise.all([Promise.allSettled(operations),
+                    Promise.all(context.subscriptions.map(item => item.dispose()))]), `${scenario}: fixture cleanup`, details);
+            } finally {
+                for (const module of ['../extension', '../agentSetup', '../dashboardView', '../collectionTree']) { delete require.cache[require.resolve(module)]; }
+                loader._load = original; native.prepareHelper = priorPrepare; native.runJson = priorRun;
+                const resolved = await fs.realpath(directory); assert.equal(path.dirname(resolved), await fs.realpath(os.tmpdir()));
+                assert.ok(path.basename(resolved).startsWith('airk-vscode-storage-')); await fs.rm(resolved, { recursive: true, force: true });
+            }
         }
     }
 });
@@ -266,9 +308,10 @@ test('untrusted workspaces expose no MCP servers and commands cannot launch a he
     const loader = Module as unknown as { _load: (...args: any[]) => any };
     const original = loader._load;
     loader._load = function(request: string, ...args: any[]) { return request === 'vscode' ? stub : original.call(this, request, ...args); };
+    const context = { subscriptions: [] as { dispose(): void }[], extensionPath: '/nonexistent-helper-fixture' };
     try {
+        for (const module of ['../extension', '../agentSetup', '../dashboardView', '../collectionTree']) { delete require.cache[require.resolve(module)]; }
         const extension = require('../extension');
-        const context = { subscriptions: [] as { dispose(): void }[], extensionPath: '/nonexistent-helper-fixture' };
         const exported = await extension.activate(context);
         const contributed = (require('../../package.json').contributes.commands as { command: string }[]).map(item => item.command);
         assert.deepEqual([...commands.keys()].sort(), contributed.sort()); assert.deepEqual(await exported.getServerDefinitions(), []);
@@ -280,8 +323,13 @@ test('untrusted workspaces expose no MCP servers and commands cannot launch a he
             await assert.rejects(commands.get(name)!(), /Trust this workspace/);
         }
         await assert.rejects(provider.resolveMcpServerDefinition({}), /Trust this workspace/);
-        await Promise.all(context.subscriptions.map(item => item.dispose()));
-    } finally { loader._load = original; }
+    } finally {
+        try { await Promise.all(context.subscriptions.map(item => item.dispose())); }
+        finally {
+            for (const module of ['../extension', '../agentSetup', '../dashboardView', '../collectionTree']) { delete require.cache[require.resolve(module)]; }
+            loader._load = original;
+        }
+    }
 });
 
 test('trusted MCP definitions ignore workspace storage overrides and reconnect without immediate reindexing', async context => {
