@@ -89,13 +89,13 @@ export function renderDiagnosticsReport(name: string, report?: DiagnosticReport,
         <p class="muted">These observations cover known project configuration files and the Codex user configuration. They do not verify an agent connection or an already running helper.</p>
         ${rows([['Checked', configuration.checkedAt], ['Configuration checks', configuration.state], ['Files checked', configuration.filesChecked],
             ['Files present', configuration.filesPresent], ['Current extension helper', report.binding.helperPath]])}
-        ${configuration.entries.length ? `<ol>${configuration.entries.slice(0, 32).map(entry => `<li><details open><summary>${escape(entry.client)} · ${escape(entryStatus[entry.status])}</summary>
+        ${configuration.entries.length ? `<ol>${configuration.entries.slice(0, 32).map(entry => `<li><details open><summary>${escape(entry.client)} · ${escape(entry.helperMatch === 'installed_cli_digest' && entry.status === 'matches' ? 'Installed CLI contents match this helper and collection' : entryStatus[entry.status])}</summary>
             ${rows([['Scope', entry.scope], ['Configuration', entry.configPath], ['Server', entry.serverName], ['Configured helper', entry.helperPath],
                 ['Version hint from path', entry.helperVersion]])}${entry.issue ? `<p>${escape(entry.issue)}</p>` : ''}</details></li>`).join('')}</ol>`
             : '<p>No comparable AIRK entries were found in the checked configuration files.</p>'}
         ${configuration.issues.length ? `<ul>${configuration.issues.slice(0, 16).map(issue => `<li>${escape(issue.client)} · ${escape(issue.configPath)}: ${escape(issue.reason)}</li>`).join('')}</ul>` : ''}
         ${configuration.truncated ? '<p class="muted">Some configuration entries were omitted from this bounded report.</p>' : ''}
-        <p>For a different helper path, review the current configuration in Connect Coding Agent, update the saved entry, then reload that agent.</p></section>` : '';
+        ${configuration.entries.some(entry => entry.status === 'different_helper') ? '<p>For a different helper path, review the current configuration in Connect Coding Agent, update the saved entry, then reload that agent.</p>' : ''}</section>` : '';
     return `<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}';">
     <title>AIRK Diagnose &amp; Repair</title><style nonce="${nonce}">

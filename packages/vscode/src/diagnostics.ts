@@ -179,7 +179,7 @@ function assess(probes: DiagnosticReport['probes'], editor?: DiagnosticEditorSta
     if (failures || discovery?.state === 'failed' || semantic?.state === 'failed' || schedule?.blocked) {
         const state = schedule?.blocked ? 'blocked' : 'failed';
         if (/retained object missing|previous generation cannot be reconstructed/i.test(failures)) { return set(state, 'retry', 'The current observation reports missing retained index data. Retry indexing repairs eligible derived inputs from saved files.'); }
-        if (/quota|disk is full|insufficient.*space|permission denied|access is denied/i.test(failures)) { return set(state, 'review', 'Indexing reports a storage or access problem. Review the current errors before retrying.'); }
+        if (/quota|disk is full|insufficient.*space|permission denied|access is denied|readonly database|SQLite writer.*read.only/i.test(failures)) { return set(state, 'review', 'Indexing reports a storage or access problem. Review the current errors before retrying.'); }
         return set(state, 'retry', 'A current indexing or diagnostic operation failed. Review its details, then retry; no state has been deleted.');
     }
     if (schedule?.paused || discovery?.state === 'paused' || editor?.paused || editor?.state === 'paused') { return set('paused', 'resume', 'Indexing is paused. Resume allows already requested work to continue.'); }
@@ -243,7 +243,9 @@ export async function collectDiagnostics(spec: LaunchSpec, options: DiagnosticOp
             }));
         }
     }
-    const agentConfiguration = await inspectAgentConfiguration(spec, { ...options.agentConfiguration, shouldContinue: options.shouldContinue });
+    const agentConfiguration = await inspectAgentConfiguration(spec, { ...options.agentConfiguration, shouldContinue: options.shouldContinue,
+        verifiedHelper: !!options.agentConfiguration?.verifiedHelper && options.helperError === undefined
+            && probes.helper.state === 'ok' && probes.helper.value?.matchesExtension !== false });
     return { schemaVersion: 1, capturedAt, binding: { helperPath: bounded(spec.command, 32768), root: bounded(spec.root, 32768),
         dataDir: bounded(spec.dataDir, 32768), collection: bounded(spec.collection, 256), name: bounded(spec.name, 512) },
         probes, assessment: assess(probes, options.editor), recentEvents: sanitizeEvents(options.events ?? []), agentConfiguration,

@@ -21,17 +21,18 @@ fn fact(name: &str, kind: &str) -> airk_core::extraction::LocalFact {
 }
 
 #[test]
-fn missing_extractions_retire_shared_postings_in_one_replayable_transaction() -> Result<()> {
+fn many_missing_extractions_retire_shared_postings_with_one_traversal_and_replay() -> Result<()> {
     use airk_core::identity::framed_digest;
+    const DAMAGED: usize = 32;
     let fixture = Fixture::new()?;
-    let paths = (0..10_000)
+    let paths = (0..100_000)
         .map(|n| format!("src/{n:05}.txt"))
         .filter(|path| {
             framed_digest(b"current-posting-path/1", &[path.as_bytes()]).as_bytes()[0] == 0
         })
-        .take(3)
+        .take(DAMAGED + 1)
         .collect::<Vec<_>>();
-    assert_eq!(paths.len(), 3);
+    assert_eq!(paths.len(), DAMAGED + 1);
     let inputs = paths
         .iter()
         .enumerate()
@@ -44,12 +45,18 @@ fn missing_extractions_retire_shared_postings_in_one_replayable_transaction() ->
             )
         })
         .collect::<Result<Vec<_>>>()?;
-    let changed = retained_input_with_facts(
-        &fixture,
-        &paths[0],
-        "replacement body",
-        vec![fact("Beta", "label")],
-    )?;
+    let replacements = paths[..DAMAGED]
+        .iter()
+        .step_by(2)
+        .map(|path| {
+            retained_input_with_facts(
+                &fixture,
+                path,
+                "replacement body",
+                vec![fact("Beta", "label")],
+            )
+        })
+        .collect::<Result<Vec<_>>>()?;
     let writer = fixture.store.lock()?;
     let mut current =
         fixture
@@ -63,7 +70,7 @@ fn missing_extractions_retire_shared_postings_in_one_replayable_transaction() ->
     }
     drop(current);
     drop(writer);
-    for input in &inputs[..2] {
+    for input in &inputs[..DAMAGED] {
         fs::remove_file(
             fixture
                 .store
@@ -88,15 +95,23 @@ fn missing_extractions_retire_shared_postings_in_one_replayable_transaction() ->
     )?
     .seal()?;
     target.graph_head = sealed.descriptor().target.clone();
-    let changes = [
-        ArtifactChange::Upsert(Box::new(changed.clone())),
-        ArtifactChange::Delete(paths[1].clone()),
-    ];
+    let changes = paths[..DAMAGED]
+        .iter()
+        .enumerate()
+        .map(|(n, path)| {
+            if n % 2 == 0 {
+                ArtifactChange::Upsert(Box::new(replacements[n / 2].clone()))
+            } else {
+                ArtifactChange::Delete(path.clone())
+            }
+        })
+        .collect::<Vec<_>>();
     let writer = fixture.store.lock()?;
     let mut current =
         fixture
             .store
             .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    let visits = map::base_visit_count();
     let pending = current.prepare_artifacts(
         &token,
         target,
@@ -105,6 +120,11 @@ fn missing_extractions_retire_shared_postings_in_one_replayable_transaction() ->
         None,
         br#"{"engine":"test"}"#,
     )?;
+    assert_eq!(
+        map::base_visit_count() - visits,
+        1,
+        "missing prior artifacts must share one complete traversal"
+    );
     current.mark_applying(&pending)?;
     drop(current);
     drop(writer);
@@ -125,36 +145,165 @@ fn missing_extractions_retire_shared_postings_in_one_replayable_transaction() ->
     assert_eq!(
         read.lookup_paths(Lookup::FactName("Alpha"), "", None, 10)?
             .paths,
-        [paths[2].clone()]
+        [paths[DAMAGED].clone()]
     );
     assert_eq!(
         read.lookup_paths(Lookup::FactKind("heading"), "", None, 10)?
             .paths,
-        [paths[2].clone()]
+        [paths[DAMAGED].clone()]
     );
     assert_eq!(
-        read.lookup_paths(Lookup::FactName("Beta"), "", None, 10)?
+        read.lookup_paths(Lookup::FactName("Beta"), "", None, DAMAGED + 1)?
             .paths,
-        [paths[0].clone()]
+        paths[..DAMAGED]
+            .iter()
+            .step_by(2)
+            .cloned()
+            .collect::<Vec<_>>()
     );
     assert_eq!(
-        read.lookup_paths(Lookup::Files, "", None, 10)?.paths,
-        [paths[0].clone(), paths[2].clone()]
+        read.lookup_paths(Lookup::Files, "", None, DAMAGED + 1)?
+            .paths,
+        paths.iter().step_by(2).cloned().collect::<Vec<_>>()
     );
-    assert!(read.artifact(&paths[1])?.is_none());
-    let replacement = fixture
-        .store
-        .load_retained(&read.artifact(&paths[0])?.unwrap())?;
-    assert_eq!(replacement.content_hash, changed.artifact.content_hash);
-    assert_eq!(replacement.chunks[0].text, "replacement body");
+    for (n, path) in paths[..DAMAGED].iter().enumerate() {
+        if n % 2 == 0 {
+            let replacement = fixture
+                .store
+                .load_retained(&read.artifact(path)?.unwrap())?;
+            assert_eq!(
+                replacement.content_hash,
+                replacements[n / 2].artifact.content_hash
+            );
+            assert_eq!(replacement.chunks[0].text, "replacement body");
+        } else {
+            assert!(read.artifact(path)?.is_none());
+        }
+    }
     assert_eq!(
         fixture
             .store
-            .load_retained(&read.artifact(&paths[2])?.unwrap())?
+            .load_retained(&read.artifact(&paths[DAMAGED])?.unwrap())?
             .chunks[0]
             .text,
-        "body 2"
+        format!("body {DAMAGED}")
     );
+    assert_eq!(
+        map::base_visit_count() - visits,
+        1,
+        "journal replay must use captured afterimages"
+    );
+    Ok(())
+}
+
+#[test]
+fn retirement_ignores_selector_shaped_values_from_other_authenticated_domains() -> Result<()> {
+    let fixture = Fixture::new()?;
+    let input = retained_input_with_facts(
+        &fixture,
+        "evidence.txt",
+        "body",
+        vec![fact("Alpha", "heading")],
+    )?;
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    current.commit_artifact(&fixture.head.token()?, &input.artifact.path, Some(&input))?;
+    drop(current);
+    drop(writer);
+    let read = fixture.store.current_read(&fixture.scope)?;
+    let base = read.head().clone();
+    let posting = read
+        .map_entries(map::MapVisitLimits::default())?
+        .into_iter()
+        .find(|(_, bytes)| {
+            serde_json::from_slice::<serde_json::Value>(bytes)
+                .is_ok_and(|value| value.get("selector").is_some())
+        })
+        .unwrap()
+        .1;
+    let values = [
+        posting,
+        br#"{"selector":"unrelated metadata","shard":"also unrelated"}"#.to_vec(),
+        br#"{"selector":17}"#.to_vec(),
+    ];
+    let reservation = fixture
+        .quota
+        .reserve(&fixture.scope.collection, 4 * 1024 * 1024)?;
+    let sealed = graph::GraphOverlay::new(
+        &reservation,
+        read,
+        graph::GraphOverlayLimits {
+            maximum_bytes: 1024 * 1024,
+            ..Default::default()
+        },
+    )?
+    .seal()?;
+    let connection = database::open_reader(&fixture.store.directory().join("current.sqlite3"))?;
+    let mut plan = map::MapPlan::new(&connection, &fixture.scope, base.artifact_root)?;
+    let mut changes = Vec::new();
+    for (n, value) in values.iter().enumerate() {
+        let change = map::MapChange::new(
+            &fixture.scope,
+            map::MapDomain::Metadata,
+            format!("foreign-{n}").as_bytes(),
+            Some(value.clone()),
+        )?;
+        plan.put(change.key(), change.value())?;
+        changes.push(change);
+    }
+    changes.sort_by_key(map::MapChange::key);
+    let mut target = base.clone();
+    target.sequence += 1;
+    target.artifact_root = plan.root()?;
+    target.graph_head = sealed.descriptor().target.clone();
+    drop(plan);
+    drop(connection);
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    let pending = current.prepare_mapped(
+        &base.token()?,
+        target,
+        &sealed,
+        &Vec::<CapturedInput>::new(),
+        None,
+        &changes,
+    )?;
+    current.mark_applying(&pending)?;
+    current.commit(&pending, pending.target.lexical_commit)?;
+    fs::remove_file(
+        fixture
+            .store
+            .directory()
+            .join("objects/artifacts")
+            .join(&input.artifact.retained.as_ref().unwrap().object),
+    )?;
+    current.commit_artifact(&pending.target.token()?, &input.artifact.path, None)?;
+    drop(current);
+    drop(writer);
+    let read = fixture.store.current_read(&fixture.scope)?;
+    assert!(
+        read.lookup_paths(Lookup::Files, "", None, 10)?
+            .paths
+            .is_empty()
+    );
+    assert!(
+        read.lookup_paths(Lookup::FactName("Alpha"), "", None, 10)?
+            .paths
+            .is_empty()
+    );
+    for (n, value) in values.iter().enumerate() {
+        assert_eq!(
+            read.map_get(map::MapDomain::Metadata, format!("foreign-{n}").as_bytes())?
+                .as_deref(),
+            Some(value.as_slice())
+        );
+    }
     Ok(())
 }
 

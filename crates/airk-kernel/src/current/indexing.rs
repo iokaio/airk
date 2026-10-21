@@ -28,6 +28,10 @@ use std::sync::Arc;
 mod tests;
 
 const MAX_INDEX_RESERVATION_BYTES: u64 = 32 << 30;
+// Bounded grace for a foreign diagnostic page (128 files, 32 MiB by default,
+// up to 512 MiB explicitly). Byte limits do not guarantee a disk-time bound;
+// allow the existing explicit verification time budget, then fail visibly.
+const RETAINED_REPAIR_ADMISSION_BUDGET: std::time::Duration = std::time::Duration::from_secs(120);
 
 fn incarnation() -> Result<Incarnation> {
     let mut bytes = [0; 16];
@@ -600,6 +604,11 @@ impl Kernel {
                     Ok(false) => return Err(error.context(
                         "automatic retained-object repair requires a ready index with no pending journal; captured journal inputs must be recovered separately"
                     )),
+                    Err(admission) if admission.is::<crate::scheduler::ScanPaused>() => {
+                        return Err(admission.context(format!(
+                            "automatic retained-object repair paused before a fresh scan; original failure: {error:#}"
+                        )));
+                    }
                     Err(admission) => return Err(error.context(format!(
                         "automatic retained-object repair could not verify an idle index: {admission:#}"
                     ))),
@@ -615,12 +624,19 @@ impl Kernel {
     }
 
     fn retained_repair_can_rescan(&self) -> Result<bool> {
-        self.retained_repair_can_rescan_with_budget(std::time::Duration::from_secs(2))
+        self.retained_repair_can_rescan_with_budget(RETAINED_REPAIR_ADMISSION_BUDGET)
     }
 
     fn retained_repair_can_rescan_with_budget(&self, budget: std::time::Duration) -> Result<bool> {
         let started = std::time::Instant::now();
+        let mut delay = std::time::Duration::from_millis(25);
         loop {
+            if airk_store::scheduler::Queue::new(&self.data_root)
+                .status(&self.collection, &self.root_id())?
+                .is_some_and(|job| job.paused && !job.manual)
+            {
+                return Err(crate::scheduler::ScanPaused.into());
+            }
             match self.retained_repair_admission() {
                 Err(error)
                     if error
@@ -630,11 +646,10 @@ impl Kernel {
                 {
                     // Release every handle before waiting. A diagnostic reader
                     // may finish between attempts; journal/I/O errors never retry.
-                    std::thread::sleep(
-                        budget
-                            .saturating_sub(started.elapsed())
-                            .min(std::time::Duration::from_millis(25)),
-                    );
+                    // Back off repeated opens with at most 250 ms of sleeping
+                    // before the next Pause check and admission attempt.
+                    std::thread::sleep(budget.saturating_sub(started.elapsed()).min(delay));
+                    delay = (delay * 2).min(std::time::Duration::from_millis(250));
                 }
                 outcome => return outcome,
             }

@@ -9,6 +9,9 @@ use rusqlite::{
 use std::io::{Read, Write};
 use std::{fs, path::Path, time::Duration};
 
+#[cfg(all(test, windows))]
+mod tests;
+
 pub const DATABASE_VERSION: u32 = 120;
 pub const PAGE_BYTES: u64 = 4096;
 const APPLICATION_ID: i32 = 0x4149_524b;
@@ -234,7 +237,7 @@ fn open_writer_mode(
     if create {
         flags |= OpenFlags::SQLITE_OPEN_CREATE;
     }
-    let connection = Connection::open_with_flags(path, flags)?;
+    let connection = open_writer_connection(path, flags)?;
     connection.busy_timeout(Duration::ZERO)?;
     if create {
         connection.pragma_update(None, "page_size", PAGE_BYTES as i64)?;
@@ -275,6 +278,81 @@ fn open_writer_mode(
         );
     }
     Ok(connection)
+}
+
+fn open_writer_connection(path: &Path, flags: OpenFlags) -> Result<Connection> {
+    #[cfg(windows)]
+    {
+        open_windows_writer_connection(path, flags, Duration::from_secs(5))
+    }
+    #[cfg(not(windows))]
+    {
+        let connection = Connection::open_with_flags(path, flags)?;
+        ensure!(
+            !connection.is_readonly("main")?,
+            "SQLite writer opened read-only: {}",
+            path.display()
+        );
+        Ok(connection)
+    }
+}
+
+#[cfg(windows)]
+fn open_windows_writer_connection(
+    path: &Path,
+    flags: OpenFlags,
+    sharing_budget: Duration,
+) -> Result<Connection> {
+    let started = std::time::Instant::now();
+    let mut delay = Duration::from_millis(25);
+    let mut retried_after_native_access = false;
+    loop {
+        let connection = Connection::open_with_flags(path, flags)?;
+        if !connection.is_readonly("main")? {
+            return Ok(connection);
+        }
+        // SQLite can silently fall back from READ_WRITE to READ_ONLY when a
+        // Windows handle denies shared write access. Release its connection
+        // before probing so none of our database handles survive a retry wait.
+        drop(connection);
+        match fs::OpenOptions::new().read(true).write(true).open(path) {
+            Ok(probe) => {
+                drop(probe);
+                // The conflicting handle may have closed between SQLite's
+                // fallback and this probe. Permit only one immediate reopen.
+                ensure!(
+                    !retried_after_native_access,
+                    "SQLite writer remained read-only after native write access was verified: {}",
+                    path.display()
+                );
+                retried_after_native_access = true;
+            }
+            Err(error) if error.raw_os_error() == Some(32) => {
+                let remaining = sharing_budget.saturating_sub(started.elapsed());
+                if remaining.is_zero() {
+                    return Err(error).with_context(|| {
+                        format!(
+                            "SQLite writer read-only fallback: Windows sharing retry exhausted after {} ms: {}",
+                            sharing_budget.as_millis(),
+                            path.display()
+                        )
+                    });
+                }
+                // The caller retains its writer/request gates, but this helper
+                // retains no SQLite or native database handles while waiting.
+                std::thread::sleep(delay.min(remaining));
+                delay = (delay * 2).min(Duration::from_millis(250));
+            }
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "SQLite writer opened read-only; native read/write open failed: {}",
+                        path.display()
+                    )
+                });
+            }
+        }
+    }
 }
 
 pub(crate) fn restrict(connection: &Connection) -> Result<()> {

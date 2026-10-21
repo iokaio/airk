@@ -1190,7 +1190,7 @@ impl CurrentWriter<'_> {
                 input.map(|input| &input.artifact),
             )?;
             plan.put(identity, changes[0].value())?;
-            changes.extend(postings.into_changes());
+            changes.extend(postings.finish(&mut plan, &self.scope)?);
             changes.extend(collection.finish(&mut plan, &self.scope)?);
             plan.root()?
         };
@@ -1534,7 +1534,7 @@ impl CurrentWriter<'_> {
             };
             plan.put(key, value.as_deref())?;
         }
-        map_changes.extend(postings.into_changes());
+        map_changes.extend(postings.finish(&mut plan, &self.scope)?);
         map_changes.extend(collection.finish(&mut plan, &self.scope)?);
         map_changes.extend(super::metadata::prepare(
             &self.store,
@@ -1801,6 +1801,10 @@ impl CurrentWriter<'_> {
         verify_model(&self.store, &model)?;
         let id = transaction_id(expected, &target, &graph_descriptor, &model)?;
         let grant_scope = self.grant_scope(id);
+        // A failed pre-Prepared SQL transaction preserves its durable allowance.
+        // This writer has verified Ready with no pending journal, so retire
+        // those allowances before reserving this exact transaction again.
+        self.release_orphan_grants()?;
         let connection = self
             .connection
             .as_mut()
@@ -2073,12 +2077,14 @@ impl CurrentWriter<'_> {
             "pending current transaction still owns recovery capacity"
         );
         let grants = self.quota.current_grants(self.writer)?;
+        ensure!(
+            grants
+                .iter()
+                .all(|grant| grant.scope().incarnation == self.scope.incarnation),
+            "foreign current recovery capacity grant"
+        );
         let mut released = 0;
         for grant in grants {
-            ensure!(
-                grant.scope().incarnation == self.scope.incarnation,
-                "foreign current recovery capacity grant"
-            );
             grant.release(self.writer)?;
             released += 1;
         }

@@ -15,12 +15,16 @@ fn retained_repair_admission_waits_for_readers_and_bounds_contention() -> Result
     let reader = kernel.store.current_read(&scope)?;
     let before = reader.token()?;
     let release = std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(100));
+        // A bounded diagnostic page can legitimately outlive the former
+        // two-second repair admission limit, especially on a slower disk.
+        std::thread::sleep(std::time::Duration::from_millis(2250));
         drop(reader);
     });
+    let started = std::time::Instant::now();
     let admitted = kernel.retained_repair_can_rescan();
     release.join().unwrap();
     assert!(admitted?);
+    assert!(started.elapsed() >= std::time::Duration::from_secs(2));
     let reader = kernel.store.current_read(&scope)?;
     assert_eq!(reader.token()?, before);
     let started = std::time::Instant::now();
@@ -33,11 +37,101 @@ fn retained_repair_admission_waits_for_readers_and_bounds_contention() -> Result
             .is_some()
     );
     assert!(started.elapsed() >= std::time::Duration::from_millis(40));
+    assert!(started.elapsed() < std::time::Duration::from_secs(2));
     assert_eq!(reader.token()?, before);
     drop(reader);
     assert!(kernel.retained_repair_can_rescan()?);
     Ok(())
 }
+
+#[test]
+fn retained_repair_admission_observes_pause_and_explicit_manual_override() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let data = tempfile::tempdir()?;
+    std::fs::write(root.path().join("readers.txt"), "read gate fixture\n")?;
+    let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    kernel.configure_vectors(false)?;
+    kernel.index()?;
+    kernel.schedule_enqueue(false)?;
+    let scope = kernel.current_scope()?.unwrap();
+    let reader = kernel.store.current_read(&scope)?;
+    let before = reader.token()?;
+    let pause_root = kernel.root_id();
+    let pause_collection = kernel.collection.clone();
+    let pause_data = kernel.data_root.clone();
+    let pause = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        airk_store::scheduler::Queue::new(&pause_data).pause(&pause_collection, &pause_root, true)
+    });
+    let started = std::time::Instant::now();
+    let admission =
+        kernel.retained_repair_can_rescan_with_budget(std::time::Duration::from_secs(2));
+    pause.join().unwrap()?;
+    let error = admission.unwrap_err();
+    assert!(error.is::<crate::scheduler::ScanPaused>(), "{error:#}");
+    assert!(started.elapsed() < std::time::Duration::from_millis(1500));
+    assert_eq!(reader.token()?, before);
+    let job = kernel.schedule_status()?.unwrap();
+    assert!(job.paused && !job.manual && !job.blocked);
+    assert!(job.requested_revision > job.completed_revision);
+    drop(reader);
+    let manual = airk_store::scheduler::Queue::new(&kernel.data_root).enqueue(
+        &kernel.collection,
+        &kernel.root_id(),
+        false,
+        true,
+        false,
+        1,
+    )?;
+    assert!(manual.paused && manual.manual);
+    assert!(kernel.retained_repair_can_rescan()?);
+    Ok(())
+}
+
+#[test]
+fn retained_repair_pause_preserves_cancellation_without_a_second_scan() -> Result<()> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let root = tempfile::tempdir()?;
+    let data = tempfile::tempdir()?;
+    std::fs::write(root.path().join("pause.txt"), "capture pause fixture\n")?;
+    let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    kernel.configure_vectors(false)?;
+    kernel.schedule_enqueue(false)?;
+    let captures = Arc::new(AtomicUsize::new(0));
+    let observed_captures = captures.clone();
+    let pause_root = kernel.root_id();
+    let pause_collection = kernel.collection.clone();
+    let pause_data = kernel.data_root.clone();
+    let fault = capture_fault(Box::new(move |store, artifact| {
+        observed_captures.fetch_add(1, Ordering::AcqRel);
+        std::fs::remove_file(retained_object_path(store, artifact, "sources"))?;
+        airk_store::scheduler::Queue::new(&pause_data).pause(
+            &pause_collection,
+            &pause_root,
+            true,
+        )?;
+        // Surface the real typed missing-object error after Pause is persisted,
+        // so cancellation must cross the automatic-repair wrapper unchanged.
+        store.verify_retained_source(artifact)
+    }));
+    let error = kernel.index_current(false, true).unwrap_err();
+    drop(fault);
+    assert!(error.is::<crate::scheduler::ScanPaused>(), "{error:#}");
+    assert!(
+        format!("{error:#}").contains("missing retained source object"),
+        "{error:#}"
+    );
+    assert_eq!(captures.load(Ordering::Acquire), 1);
+    let job = kernel.schedule_status()?.unwrap();
+    assert!(job.paused && !job.manual && !job.blocked);
+    assert!(job.requested_revision > job.completed_revision);
+    assert_eq!(
+        std::fs::read_to_string(root.path().join("pause.txt"))?,
+        "capture pause fixture\n"
+    );
+    Ok(())
+}
+
 thread_local! {
     static CAPTURE_FAULT: std::cell::RefCell<Option<CaptureFault>> = const {
         std::cell::RefCell::new(None)

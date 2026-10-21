@@ -7,6 +7,7 @@ import * as path from 'node:path';
 import { collectDiagnostics, diagnosticError, DiagnosticHistory, DiagnosticRunner, verifyDiagnosticIntegrity } from '../diagnostics';
 import { configFor, LaunchSpec } from '../model';
 import { NativeProcessError } from '../native';
+import { publishCli } from '../cliInstall';
 
 const spec: LaunchSpec = { command: path.resolve('fixture/airk'), root: path.resolve('fixture/project'), dataDir: path.resolve('fixture/state'), collection: 'project-fixture', name: 'Fixture' };
 const discovery = { state: 'ready', processed_artifacts: 100, committed_artifacts: 100, total_artifacts: 100, failure: null };
@@ -74,6 +75,27 @@ test('live diagnostics expose stale configured helpers separately from verified 
     }
 });
 
+test('installed CLI equivalence requires both a verified reference and a matching helper probe', async () => {
+    const directory = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'airk-cli-report-')));
+    try {
+        const selected = { ...spec, root: directory, command: path.join(directory, 'verified', 'airk') }, codexHome = path.join(directory, 'user');
+        await fs.mkdir(path.dirname(selected.command)); await fs.writeFile(selected.command, 'inert helper fixture'); await fs.mkdir(codexHome);
+        const cliDirectory = await publishCli(selected.command, directory);
+        const installedCliPath = path.join(cliDirectory, process.platform === 'win32' ? 'airk.exe' : 'airk');
+        await fs.writeFile(path.join(directory, '.mcp.json'), configFor('claude', { ...selected, command: installedCliPath }));
+        const responses = replies(); (responses['schedule status'] as any).root = directory;
+        const options = { runner: fakeRunner(responses), agentConfiguration: { codexHome, installedCliPath, verifiedHelper: true } };
+        const matching = await collectDiagnostics(selected, { ...options, expectedVersion: '1.2.4' });
+        assert.equal(matching.agentConfiguration?.entries[0].helperMatch, 'installed_cli_digest');
+        const mismatched = await collectDiagnostics(selected, { ...options, expectedVersion: '1.2.5' });
+        assert.equal(mismatched.agentConfiguration?.entries[0].status, 'unresolved');
+        assert.equal(mismatched.agentConfiguration?.entries[0].helperMatch, undefined);
+    } finally {
+        assert.equal(path.dirname(directory), await fs.realpath(os.tmpdir())); assert.ok(path.basename(directory).startsWith('airk-cli-report-'));
+        await fs.rm(directory, { recursive: true, force: true });
+    }
+});
+
 test('diagnostic cancellation stops queued probes when trust or collection binding changes', async () => {
     const responses = replies(), calls: string[] = [];
     let allowed = true;
@@ -114,6 +136,18 @@ test('diagnostics distinguish exact contention from permission errors, missing o
         if (scenario === 'permission') { assert.equal(report.assessment.recommendedAction, 'review'); }
         if (scenario === 'unregistered' || scenario === 'policy-pending') { assert.equal(report.assessment.recommendedAction, 'retry'); }
     }
+});
+
+test('a blocked publication remains visible when failed semantic readiness could not be recorded', async () => {
+    const responses = replies();
+    (responses.status as any).semantic_readiness = { ...semantic, state: 'partial', completed_artifacts: 50, failure: null };
+    Object.assign(responses['schedule status'] as object, { blocked: true,
+        error: 'record failed semantic enrichment also failed: prepare current journal: attempt to write a readonly database: Error code 8' });
+    const report = await collectDiagnostics(spec, { runner: fakeRunner(responses) });
+    assert.equal(report.assessment.state, 'blocked');
+    assert.equal(report.assessment.recommendedAction, 'review');
+    assert.match(String(report.probes.schedule.value?.error), /readonly database/);
+    assert.equal((report.probes.status.value?.semantic_readiness as any).failure, null);
 });
 
 test('unverified helpers never run diagnostic subprocesses and process metadata survives bounded formatting', async () => {

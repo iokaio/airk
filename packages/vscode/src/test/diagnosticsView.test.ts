@@ -80,6 +80,11 @@ test('agent configuration distinguishes a saved helper path from current native 
     assert.match(html, /Some configuration entries were omitted/);
     assert.match(html, /&lt;\/summary&gt;&lt;script&gt;unsafe\(\)&lt;\/script&gt;/);
     assert.doesNotMatch(html, /<script>unsafe|command:/);
+    report.agentConfiguration.entries[0] = { ...report.agentConfiguration.entries[0], status: 'matches', helperMatch: 'installed_cli_digest', issue: undefined };
+    const currentCopy = renderDiagnosticsReport('Fixture', report);
+    assert.match(currentCopy, /Installed CLI contents match this helper and collection/);
+    assert.doesNotMatch(currentCopy, /Different helper path|update the saved entry/);
+    assert.match(currentCopy, /do not verify an agent connection/);
 });
 
 test('diagnostics panel rejects stale bindings and concurrent repairs and copies only its captured report', async () => {

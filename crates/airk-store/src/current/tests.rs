@@ -19,6 +19,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[path = "grants_tests.rs"]
+mod grants_tests;
 #[path = "postings_tests.rs"]
 mod postings_tests;
 
@@ -818,7 +820,7 @@ fn prepared_map_and_graph_replay_commit_one_authenticated_head() -> Result<()> {
         None,
         Some(&input.artifact),
     )?;
-    changes.extend(postings.into_changes());
+    changes.extend(postings.finish(&mut plan, &fixture.scope)?);
     changes.sort_by_key(map::MapChange::key);
     target.artifact_root = plan.root()?;
     drop(connection);
@@ -1055,7 +1057,7 @@ fn changed_path_retires_only_its_share_of_a_live_vector() -> Result<()> {
             Some(&input.artifact),
         )?;
     }
-    changes.extend(postings.into_changes());
+    changes.extend(postings.finish(&mut plan, &fixture.scope)?);
     changes.sort_by_key(map::MapChange::key);
     target.artifact_root = plan.root()?;
     drop(connection);
