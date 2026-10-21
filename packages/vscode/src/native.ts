@@ -72,6 +72,23 @@ export class NativeProcessError extends Error {
     readonly retryableGateContention: boolean;
     readonly nativeMessage?: string;
     constructor(command: string, error: ExecFileException, stderr: string, readonly elapsedMs: number, readonly timeoutMs: number) {
+        let nativeMessage: string | undefined, retryableGateContention = false;
+        if (error.code === 1 && !error.killed && !error.signal) {
+            try {
+                // execFile already bounds captured output. Parse before applying
+                // the diagnostic display limit: JSON escaping can expand a valid
+                // 4,096-character native message beyond that limit.
+                const outcome: unknown = JSON.parse(stderr.trim());
+                if (outcome && typeof outcome === 'object' && !Array.isArray(outcome)) {
+                    const fields = outcome as Record<string, unknown>;
+                    if (fields.airk_error === 1 && typeof fields.code === 'string'
+                        && typeof fields.retryable === 'boolean' && typeof fields.message === 'string') {
+                        nativeMessage = boundedDiagnostic(fields.message);
+                        retryableGateContention = fields.code === 'current_gate_busy' && fields.retryable;
+                    }
+                }
+            } catch { /* Unstructured stderr never authorizes a retry. */ }
+        }
         // With no AbortSignal or exposed child handle, execFile only kills a
         // child for its timeout or output cap. An external signal does not set killed.
         const timedOut = !!error.killed && timeoutMs > 0 && error.code !== 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER';
@@ -80,25 +97,13 @@ export class NativeProcessError extends Error {
         const details = [code != null ? `exit code ${code}` : undefined,
             error.signal ? `signal ${error.signal}` : undefined, error.killed ? 'terminated' : undefined,
             `elapsed ${elapsedMs} ms`].filter(Boolean).join('; ');
-        const diagnostic = boundedDiagnostic(stderr.trim() || error.message);
+        const diagnostic = boundedDiagnostic(nativeMessage ?? (stderr.trim() || error.message));
         super(`${path.basename(command)} ${timedOut ? `timed out (limit ${timeoutMs} ms)` : 'failed'}: ${details}\n${diagnostic}`);
         this.name = 'NativeProcessError';
         this.code = error.code; this.signal = error.signal; this.killed = !!error.killed; this.timedOut = timedOut;
         this.stderr = boundedDiagnostic(stderr.trim());
-        this.retryableGateContention = false;
-        if (error.code === 1 && !error.killed && !error.signal && stderr.length <= 8192) {
-            try {
-                const outcome: unknown = JSON.parse(stderr.trim());
-                if (outcome && typeof outcome === 'object' && !Array.isArray(outcome)) {
-                    const fields = outcome as Record<string, unknown>;
-                    if (fields.airk_error === 1 && typeof fields.code === 'string'
-                        && typeof fields.retryable === 'boolean' && typeof fields.message === 'string') {
-                        this.nativeMessage = fields.message;
-                        this.retryableGateContention = fields.code === 'current_gate_busy' && fields.retryable;
-                    }
-                }
-            } catch { /* Unstructured stderr never authorizes a retry. */ }
-        }
+        this.nativeMessage = nativeMessage;
+        this.retryableGateContention = retryableGateContention;
     }
 }
 

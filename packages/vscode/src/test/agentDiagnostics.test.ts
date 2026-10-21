@@ -6,6 +6,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { inspectAgentConfiguration } from '../agentDiagnostics';
 import { configFor, LaunchSpec } from '../model';
+import { publishCli } from '../cliInstall';
 
 async function fixture(run: (spec: LaunchSpec, codexHome: string, directory: string) => Promise<void>): Promise<void> {
     const directory = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'airk-agent-diagnostics-')));
@@ -96,4 +97,50 @@ test('configuration checks stop after lost trust and bound reported AIRK entries
     await write(path.join(spec.root, '.mcp.json'), JSON.stringify({ mcpServers: servers }));
     const bounded = await inspectAgentConfiguration(spec, { codexHome });
     assert.equal(bounded.entries.length, 32); assert.equal(bounded.truncated, true); assert.equal(bounded.state, 'partial');
+}));
+
+test('only the exact installed CLI copy can match a verified helper by contents', async () => fixture(async (spec, codexHome, directory) => {
+    const bytes = Buffer.from('AIRK inert executable comparison fixture\n');
+    await fs.mkdir(path.dirname(spec.command), { recursive: true }); await fs.writeFile(spec.command, bytes);
+    const cliDirectory = await publishCli(spec.command, directory);
+    const installedCliPath = path.join(cliDirectory, process.platform === 'win32' ? 'airk.exe' : 'airk');
+    const config = path.join(spec.root, '.mcp.json');
+    await write(config, configFor('claude', { ...spec, command: installedCliPath }));
+    const options = { codexHome, installedCliPath, verifiedHelper: true };
+    const matching = await inspectAgentConfiguration(spec, options);
+    assert.equal(matching.entries[0].status, 'matches'); assert.equal(matching.entries[0].helperMatch, 'installed_cli_digest');
+    assert.equal(matching.connection, 'not_verified', 'Matching installed bytes do not establish a running agent connection');
+    await fs.writeFile(installedCliPath, Buffer.from('X' + bytes.toString().slice(1)));
+    const stale = await inspectAgentConfiguration(spec, options);
+    assert.equal(stale.entries[0].status, 'different_helper'); assert.equal(stale.entries[0].helperMatch, undefined);
+    assert.match(stale.entries[0].issue!, /Refresh the CLI installation/);
+    await fs.writeFile(installedCliPath, bytes);
+    const unverified = await inspectAgentConfiguration(spec, { ...options, verifiedHelper: false });
+    assert.equal(unverified.entries[0].status, 'unresolved');
+    const unrelated = path.join(directory, 'unrelated', 'airk.exe');
+    await fs.mkdir(path.dirname(unrelated)); await fs.writeFile(unrelated, bytes);
+    await write(config, configFor('claude', { ...spec, command: unrelated }));
+    const other = await inspectAgentConfiguration(spec, options);
+    assert.equal(other.entries[0].status, 'different_helper', 'Identical bytes at arbitrary configured paths do not receive the installed-copy exception');
+    assert.equal(other.entries[0].helperMatch, undefined);
+}));
+
+test('installed CLI digest checks fail closed for redirected, oversized, or cancelled inputs', async () => fixture(async (spec, codexHome, directory) => {
+    await fs.mkdir(path.dirname(spec.command), { recursive: true }); await fs.writeFile(spec.command, 'reference');
+    const installedCliPath = path.join(directory, 'cli', 'bin', process.platform === 'win32' ? 'airk.exe' : 'airk');
+    await fs.mkdir(path.dirname(installedCliPath), { recursive: true }); await fs.writeFile(installedCliPath, 'reference');
+    await write(path.join(spec.root, '.vscode', 'mcp.json'), configFor('vscode', { ...spec, command: installedCliPath }));
+    const options = { codexHome, installedCliPath, verifiedHelper: true };
+    const file = await fs.open(installedCliPath, 'r+');
+    try { await file.truncate(256 * 1024 * 1024 + 1); } finally { await file.close(); }
+    assert.equal((await inspectAgentConfiguration(spec, options)).entries[0].status, 'unresolved');
+    await fs.unlink(installedCliPath);
+    const outside = path.join(directory, 'outside'); await fs.mkdir(outside);
+    await fs.rmdir(path.dirname(installedCliPath));
+    await fs.symlink(outside, path.dirname(installedCliPath), process.platform === 'win32' ? 'junction' : 'dir');
+    await fs.writeFile(path.join(outside, path.basename(installedCliPath)), 'reference');
+    assert.equal((await inspectAgentConfiguration(spec, options)).entries[0].status, 'unresolved');
+    let calls = 0;
+    const cancelled = await inspectAgentConfiguration(spec, { ...options, shouldContinue: () => ++calls < 5 });
+    assert.equal(cancelled.state, 'partial'); assert.deepEqual(cancelled.entries, []);
 }));

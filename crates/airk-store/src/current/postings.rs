@@ -133,75 +133,117 @@ fn selectors(store: &FileStore, compact: &Artifact) -> Result<BTreeSet<Sha256Dig
 pub(crate) struct PostingChanges {
     values: BTreeMap<Sha256Digest, map::MapChange>,
     bytes: usize,
-    recovery_entries: usize,
+    missing: BTreeMap<String, MissingPosting>,
+    recovery_selectors: usize,
     recovery_bytes: usize,
 }
+
+struct MissingPosting {
+    language: String,
+    previous: BTreeSet<Sha256Digest>,
+    next: BTreeSet<Sha256Digest>,
+}
+
 impl PostingChanges {
-    fn prior_selectors(
-        &mut self,
-        plan: &map::MapPlan<'_>,
-        scope: &CurrentScope,
-        store: &FileStore,
-        previous: &Artifact,
-    ) -> Result<BTreeSet<Sha256Digest>> {
-        match selectors(store, previous) {
-            Ok(selectors) => return Ok(selectors),
-            Err(error)
-                if error
-                    .downcast_ref::<crate::blobs::MissingRetainedObject>()
-                    .is_some() => {}
-            Err(error) => return Err(error),
-        }
+    fn defer_missing(&mut self, previous: &Artifact, next: BTreeSet<Sha256Digest>) -> Result<()> {
         ensure!(
-            self.recovery_entries < MAX_CHANGED_KEYS && self.recovery_bytes < MAX_CHANGED_BYTES,
-            "current posting recovery traversal budget exceeded"
+            self.missing.len() < super::MAX_PENDING_INPUTS
+                && !self.missing.contains_key(&previous.path),
+            "current posting recovery path bound or uniqueness exceeded"
         );
-        let mut selectors = BTreeSet::new();
-        let limits = map::MapVisitLimits {
-            entries: MAX_CHANGED_KEYS - self.recovery_entries,
-            bytes: MAX_CHANGED_BYTES - self.recovery_bytes,
-            ..Default::default()
-        };
-        plan.visit_base(limits, &mut |key, bytes| {
-            self.recovery_entries += 1;
-            self.recovery_bytes = self
-                .recovery_bytes
-                .checked_add(bytes.len())
-                .context("current posting recovery byte overflow")?;
-            // Domains share one keyed map. Posting values are self-describing;
-            // authenticate their domain and identity before trusting membership.
-            // Other authenticated domains also contain binary handle values.
-            let Ok(value) = serde_json::from_slice::<serde_json::Value>(bytes) else {
+        let bytes = previous
+            .path
+            .len()
+            .checked_add(previous.language.len())
+            .and_then(|bytes| {
+                next.len()
+                    .checked_mul(32)
+                    .and_then(|selectors| bytes.checked_add(selectors))
+            })
+            .context("current posting recovery byte overflow")?;
+        self.charge_recovery(next.len(), bytes)?;
+        self.missing.insert(
+            previous.path.clone(),
+            MissingPosting {
+                language: previous.language.clone(),
+                previous: BTreeSet::new(),
+                next,
+            },
+        );
+        Ok(())
+    }
+
+    fn charge_recovery(&mut self, selectors: usize, bytes: usize) -> Result<()> {
+        self.recovery_selectors = self
+            .recovery_selectors
+            .checked_add(selectors)
+            .context("current posting recovery selector overflow")?;
+        self.recovery_bytes = self
+            .recovery_bytes
+            .checked_add(bytes)
+            .context("current posting recovery byte overflow")?;
+        ensure!(
+            self.recovery_selectors <= MAX_CHANGED_KEYS && self.recovery_bytes <= MAX_CHANGED_BYTES,
+            "current posting recovery membership budget exceeded"
+        );
+        Ok(())
+    }
+
+    fn recover_missing(&mut self, plan: &mut map::MapPlan<'_>, scope: &CurrentScope) -> Result<()> {
+        if self.missing.is_empty() {
+            return Ok(());
+        }
+        #[derive(Deserialize)]
+        struct PostingIdentity {
+            selector: Sha256Digest,
+            shard: u8,
+        }
+        // Traverse the base once for the complete affected-path set, even
+        // when healthy artifacts have already changed the planned afterimages.
+        plan.visit_base(map::MapVisitLimits::default(), &mut |key, bytes| {
+            // Other map domains may contain binary values or JSON with the
+            // same field names. Only a matching scoped Posting key establishes
+            // this domain; canonical decoding is mandatory once it matches.
+            let Ok(candidate) = serde_json::from_slice::<PostingIdentity>(bytes) else {
                 return Ok(());
             };
-            if value.get("selector").is_none() && value.get("shard").is_none() {
+            if map::key(
+                scope,
+                map::MapDomain::Posting,
+                &identity(candidate.selector, candidate.shard),
+            )? != key
+            {
                 return Ok(());
             }
-            let posting: Posting = serde_json::from_value(value)?;
-            ensure!(
-                map::key(
-                    scope,
-                    map::MapDomain::Posting,
-                    &identity(posting.selector, posting.shard)
-                )? == key
-                    && posting.bytes()? == bytes,
-                "current posting recovery identity or encoding differs"
-            );
-            if posting.paths.contains(&previous.path) {
-                selectors.insert(posting.selector);
-                ensure!(
-                    selectors.len() <= MAX_SELECTORS_PER_ARTIFACT,
-                    "current artifact selector limit exceeded"
-                );
+            let posting = Posting::decode(bytes, candidate.selector, candidate.shard)?;
+            for path in posting.paths {
+                if let Some(missing) = self.missing.get_mut(&path)
+                    && missing.previous.insert(posting.selector)
+                {
+                    ensure!(
+                        missing.previous.len() <= MAX_SELECTORS_PER_ARTIFACT,
+                        "current artifact selector limit exceeded"
+                    );
+                    self.charge_recovery(1, 32)?;
+                }
             }
             Ok(())
         })?;
-        ensure!(
-            selectors.contains(&Lookup::Files.identity())
-                && selectors.contains(&Lookup::Language(&previous.language).identity()),
-            "current posting recovery lacks required prior artifact membership"
-        );
-        Ok(selectors)
+        // Do not apply any recovered membership until the complete traversal
+        // and every affected artifact's mandatory memberships verify.
+        for missing in self.missing.values() {
+            ensure!(
+                missing.previous.contains(&Lookup::Files.identity())
+                    && missing
+                        .previous
+                        .contains(&Lookup::Language(&missing.language).identity()),
+                "current posting recovery lacks required prior artifact membership"
+            );
+        }
+        for (path, missing) in std::mem::take(&mut self.missing) {
+            self.apply(plan, scope, &path, &missing.previous, &missing.next)?;
+        }
+        Ok(())
     }
 
     pub(crate) fn update(
@@ -220,19 +262,37 @@ impl PostingChanges {
             valid_current_path(path) && previous.is_none_or(|old| &old.path == path),
             "posting artifact path mismatch"
         );
-        let old = previous
-            .map(|a| self.prior_selectors(plan, scope, store, a))
-            .transpose()?
-            .unwrap_or_default();
         let new = next
             .map(|a| selectors(store, a))
             .transpose()?
             .unwrap_or_default();
+        let old = match previous.map(|a| selectors(store, a)).transpose() {
+            Ok(old) => old.unwrap_or_default(),
+            Err(error)
+                if error
+                    .downcast_ref::<crate::blobs::MissingRetainedObject>()
+                    .is_some() =>
+            {
+                return self.defer_missing(previous.expect("missing previous selectors"), new);
+            }
+            Err(error) => return Err(error),
+        };
+        self.apply(plan, scope, path, &old, &new)
+    }
+
+    fn apply(
+        &mut self,
+        plan: &mut map::MapPlan<'_>,
+        scope: &CurrentScope,
+        path: &str,
+        old: &BTreeSet<Sha256Digest>,
+        new: &BTreeSet<Sha256Digest>,
+    ) -> Result<()> {
         let shard = shard(path);
         for (selector, insert) in old
-            .difference(&new)
+            .difference(new)
             .map(|id| (*id, false))
-            .chain(new.difference(&old).map(|id| (*id, true)))
+            .chain(new.difference(old).map(|id| (*id, true)))
         {
             let id = identity(selector, shard);
             let key = map::key(scope, map::MapDomain::Posting, &id)?;
@@ -246,7 +306,7 @@ impl PostingChanges {
                 },
             };
             let changed = if insert {
-                posting.paths.insert(path.clone())
+                posting.paths.insert(path.to_owned())
             } else {
                 posting.paths.remove(path)
             };
@@ -281,8 +341,13 @@ impl PostingChanges {
         }
         Ok(())
     }
-    pub(crate) fn into_changes(self) -> impl Iterator<Item = map::MapChange> {
-        self.values.into_values()
+    pub(crate) fn finish(
+        mut self,
+        plan: &mut map::MapPlan<'_>,
+        scope: &CurrentScope,
+    ) -> Result<impl Iterator<Item = map::MapChange>> {
+        self.recover_missing(plan, scope)?;
+        Ok(self.values.into_values())
     }
 }
 

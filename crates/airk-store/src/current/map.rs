@@ -12,6 +12,16 @@ pub const MAX_BUCKET_BYTES: usize = 512 * 1024;
 pub const MAX_VALUE_BYTES: usize = 256 * 1024;
 pub const MAX_BUCKET_ENTRIES: usize = 128;
 
+#[cfg(test)]
+thread_local! {
+    static BASE_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn base_visit_count() -> usize {
+    BASE_VISITS.get()
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MapDomain {
     Metadata,
@@ -463,6 +473,8 @@ impl<'a> MapPlan<'a> {
         visitor: &mut dyn FnMut(Sha256Digest, &[u8]) -> Result<()>,
     ) -> Result<()> {
         ensure!(!self.poisoned, "current map plan is poisoned");
+        #[cfg(test)]
+        BASE_VISITS.set(BASE_VISITS.get() + 1);
         visit_all(self.connection, self.scope, self.base_root, limits, visitor)
     }
 

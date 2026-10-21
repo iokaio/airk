@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import * as fs from 'node:fs/promises';
+import { constants, Stats } from 'node:fs';
+import { createHash } from 'node:crypto';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { getNodeValue, Node, parseTree, ParseError } from 'jsonc-parser';
@@ -11,6 +13,7 @@ interface Candidate { client: Client; scope: Scope; configPath: string; base: st
 export interface AgentConfigurationEntry {
     client: Client; scope: Scope; configPath: string; serverName: string;
     helperPath?: string; helperVersion?: string;
+    helperMatch?: 'installed_cli_digest';
     status: 'matches' | 'different_helper' | 'different_binding' | 'unresolved'; issue?: string;
 }
 export interface AgentConfigurationReport {
@@ -19,7 +22,13 @@ export interface AgentConfigurationReport {
     issues: { client: Client; scope: Scope; configPath: string; reason: string }[];
     truncated: boolean; connection: 'not_verified';
 }
-export interface AgentConfigurationOptions { codexHome?: string; shouldContinue?: () => boolean }
+export interface AgentConfigurationOptions {
+    codexHome?: string; shouldContinue?: () => boolean;
+    /** Exact managed cli/bin path supplied by the extension host, never by workspace configuration. */
+    installedCliPath?: string;
+    /** The selected helper was returned by digest/version verification. */
+    verifiedHelper?: boolean;
+}
 const MAX_ENTRIES = 32, MAX_SERVERS = 256;
 const object = (value: unknown): Record<string, unknown> | undefined => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 const samePath = (left: string, right: string) => {
@@ -166,6 +175,57 @@ async function readCandidate(candidate: Candidate): Promise<string | undefined> 
     return readJsonConfig(path.join(base, relative));
 }
 
+const sameFile = (left: Stats, right: Stats) => left.dev === right.dev && left.ino === right.ino && left.size === right.size
+    && left.mtimeMs === right.mtimeMs && left.ctimeMs === right.ctimeMs;
+const checkExecutable = (info: Stats) => {
+    if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1 || info.size < 1 || info.size > 256 * 1024 * 1024) {
+        throw new Error('Executable comparison requires a bounded regular file.');
+    }
+};
+async function executableDigest(file: string, allowed: () => boolean): Promise<{ digest: string; info: Stats }> {
+    if (!allowed()) { throw new Error('Executable comparison stopped.'); }
+    const before = await fs.lstat(file); checkExecutable(before);
+    if (!allowed()) { throw new Error('Executable comparison stopped.'); }
+    const handle = await fs.open(file, constants.O_RDONLY | (constants.O_NOFOLLOW || 0));
+    try {
+        const opened = await handle.stat(); checkExecutable(opened);
+        if (!sameFile(before, opened)) { throw new Error('Executable changed before comparison.'); }
+        const hash = createHash('sha256'), buffer = Buffer.alloc(65536); let offset = 0;
+        while (offset < opened.size) {
+            if (!allowed()) { throw new Error('Executable comparison stopped.'); }
+            const { bytesRead } = await handle.read(buffer, 0, Math.min(buffer.length, opened.size - offset), offset);
+            if (!bytesRead) { throw new Error('Executable changed during comparison.'); }
+            hash.update(buffer.subarray(0, bytesRead)); offset += bytesRead;
+        }
+        const held = await handle.stat(), current = await fs.lstat(file);
+        checkExecutable(held); checkExecutable(current);
+        if (!allowed() || !sameFile(opened, held) || !sameFile(held, current)) { throw new Error('Executable changed during comparison.'); }
+        return { digest: hash.digest('hex'), info: held };
+    } finally { await handle.close(); }
+}
+
+/** Hash only the host's exact managed CLI copy and its verified reference, never arbitrary agent commands. */
+async function compareInstalledCli(spec: LaunchSpec, options: AgentConfigurationOptions): Promise<'matches' | 'different' | 'unresolved'> {
+    const installed = options.installedCliPath;
+    if (!installed || !options.verifiedHelper || !path.isAbsolute(installed)
+        || path.basename(installed).toLowerCase() !== (process.platform === 'win32' ? 'airk.exe' : 'airk')
+        || path.basename(path.dirname(installed)) !== 'bin' || path.basename(path.dirname(path.dirname(installed))) !== 'cli') { return 'unresolved'; }
+    const deadline = performance.now() + 5000, allowed = () => options.shouldContinue?.() !== false && performance.now() < deadline;
+    try {
+        if (!allowed()) { return 'unresolved'; }
+        const storage = path.dirname(path.dirname(path.dirname(installed))), canonical = await fs.realpath(storage);
+        for (const directory of [path.join(canonical, 'cli'), path.join(canonical, 'cli', 'bin')]) {
+            if (!allowed()) { return 'unresolved'; }
+            const info = await fs.lstat(directory);
+            if (!info.isDirectory() || info.isSymbolicLink()) { return 'unresolved'; }
+        }
+        const target = path.join(canonical, 'cli', 'bin', path.basename(installed));
+        const reference = await executableDigest(spec.command, allowed), copy = await executableDigest(target, allowed);
+        if (!allowed() || !sameFile(reference.info, await fs.lstat(spec.command)) || !sameFile(copy.info, await fs.lstat(target))) { return 'unresolved'; }
+        return reference.digest === copy.digest ? 'matches' : 'different';
+    } catch { return 'unresolved'; }
+}
+
 /** Read-only: never launches configured commands, copies unrelated arguments or edits agent settings. */
 export async function inspectAgentConfiguration(spec: LaunchSpec, options: AgentConfigurationOptions = {}): Promise<AgentConfigurationReport> {
     const report: AgentConfigurationReport = { checkedAt: new Date().toISOString(), state: 'not_checked', scope: 'known_project_files_and_codex_user',
@@ -174,6 +234,7 @@ export async function inspectAgentConfiguration(spec: LaunchSpec, options: Agent
     let root: string;
     try { root = await fs.realpath(spec.root); } catch { return report; }
     const codexHome = path.resolve(options.codexHome ?? process.env.CODEX_HOME ?? path.join(os.homedir(), '.codex'));
+    let installedComparison: Promise<'matches' | 'different' | 'unresolved'> | undefined;
     for (const candidate of candidates(root, codexHome)) {
         if (options.shouldContinue?.() === false) { report.state = report.filesChecked ? 'partial' : 'not_checked'; return report; }
         report.filesChecked++;
@@ -188,6 +249,18 @@ export async function inspectAgentConfiguration(spec: LaunchSpec, options: Agent
                 const entry = entryFor(spec, candidate, name, value);
                 if (!entry) { continue; }
                 if (report.entries.length >= MAX_ENTRIES) { report.truncated = true; break; }
+                if (entry.status === 'different_helper' && entry.helperPath && options.installedCliPath && samePath(entry.helperPath, options.installedCliPath)) {
+                    const result = await (installedComparison ??= compareInstalledCli(spec, options));
+                    if (result === 'matches') {
+                        entry.status = 'matches'; entry.helperMatch = 'installed_cli_digest';
+                        entry.issue = 'The installed AIRK CLI copy has the same SHA-256 digest as the verified extension helper.';
+                    } else if (result === 'different') {
+                        entry.issue = 'The installed AIRK CLI copy differs from the verified extension helper. Refresh the CLI installation, then reload the agent.';
+                    } else {
+                        entry.status = 'unresolved'; entry.issue = 'The installed AIRK CLI copy could not be compared with a stable verified extension helper within the read budget.';
+                    }
+                    if (options.shouldContinue?.() === false) { report.state = 'partial'; return report; }
+                }
                 report.entries.push(entry);
             }
         } catch (error) {

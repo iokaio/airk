@@ -24,8 +24,7 @@ test('only a structured gate outcome with an ordinary exit authorizes contention
         'Error: current index is busy applying an update\nCaused by:\n    lock acquisition failed because the operation would block',
         JSON.stringify({ ...busy, airk_error: 2 }), JSON.stringify({ ...busy, retryable: false }),
         JSON.stringify({ ...busy, code: 'operation_failed' }), JSON.stringify({ ...busy, message: null }),
-        JSON.stringify(busy) + '\nstack backtrace:\n1: fixture', '[]', 'null', '{',
-        JSON.stringify({ ...busy, message: 'x'.repeat(8192) })
+        JSON.stringify(busy) + '\nstack backtrace:\n1: fixture', '[]', 'null', '{'
     ]) { assert.equal(failure(stderr).retryableGateContention, false); }
     for (const properties of [{ code: 7 }, { code: 1, killed: true }, { code: 1, signal: 'SIGTERM' }]) {
         assert.equal(failure(JSON.stringify(busy), properties).retryableGateContention, false);
@@ -34,6 +33,36 @@ test('only a structured gate outcome with an ordinary exit authorizes contention
         'if (process.env.AIRK_ERROR_FORMAT !== "json") process.exit(7); process.stderr.write(JSON.stringify({airk_error:1,code:"current_gate_busy",retryable:true,message:"gate"}), () => process.exit(1))']), error => {
         assert.ok(error instanceof NativeProcessError);
         assert.equal(error.retryableGateContention, true);
+        return true;
+    });
+});
+
+test('structured errors display the native message and parse before diagnostic truncation', async () => {
+    // 4,096 characters is within the CLI message limit; JSON escaping exceeds
+    // the old 8,192-character parser cutoff even though the message is bounded.
+    const prefix = 'Retained object unavailable: ';
+    const message = prefix + '\\'.repeat(4096 - prefix.length);
+    assert.equal(message.length, 4096);
+    const stderr = JSON.stringify({ airk_error: 1, code: 'operation_failed', retryable: false, message });
+    assert.ok(stderr.length > 8192);
+    const error = new NativeProcessError('airk', Object.assign(new Error('Command failed'), { code: 1 }), stderr, 9, 10000);
+    assert.equal(error.nativeMessage, message);
+    assert.equal(error.message, `airk failed: exit code 1; elapsed 9 ms\n${message}`);
+    assert.equal(error.retryableGateContention, false);
+    assert.ok(error.stderr.startsWith('{"airk_error":1'));
+    assert.match(error.stderr, /diagnostic truncated/);
+    assert.ok(error.stderr.length < 8300);
+
+    const busy = JSON.stringify({ airk_error: 1, code: 'current_gate_busy', retryable: true, message });
+    const busyError = new NativeProcessError('airk', Object.assign(new Error('Command failed'), { code: 1 }), busy, 9, 10000);
+    assert.equal(busyError.retryableGateContention, true);
+    assert.equal(busyError.nativeMessage, message);
+    await assert.rejects(runText(process.execPath, ['-e',
+        'process.stderr.write(JSON.stringify({airk_error:1,code:"operation_failed",retryable:false,message:"Readable native failure"}), () => process.exit(1))']), failure => {
+        assert.ok(failure instanceof NativeProcessError);
+        assert.ok(failure.message.endsWith('\nReadable native failure'));
+        assert.ok(!failure.message.includes('airk_error'));
+        assert.ok(failure.stderr.includes('"airk_error":1'));
         return true;
     });
 });

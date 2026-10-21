@@ -27,6 +27,8 @@ const CAPACITY: u64 = 16 * 1024 * 1024;
 
 #[path = "current_foundation/update.rs"]
 mod current_update;
+#[path = "current_foundation/grants.rs"]
+mod grants;
 
 fn pipeline() -> Sha256Digest {
     framed_digest(b"current-foundation-original-fixture/1", &[])

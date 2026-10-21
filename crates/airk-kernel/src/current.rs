@@ -68,6 +68,7 @@ pub fn recover_current(
         TransactionPhase::Ready => {
             let head = writer.head()?;
             verify_physical_lexical(store, &head, &writer.committed_lexical_manifest()?)?;
+            writer.release_orphan_grants()?;
             Ok(CurrentRecovery {
                 token: head.token()?,
                 action: CurrentRecoveryAction::AlreadyReady,

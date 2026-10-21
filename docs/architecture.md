@@ -54,6 +54,8 @@ From 1.2.4, missing retained inputs encountered during reuse cause re-extraction
 
 When a changed or deleted file's prior extraction is missing, publication can retire its old posting memberships through a complete, bounded traversal of the authenticated committed map. The writer verifies posting encoding and collection-scoped identity, then removes only that path from the staged afterimages. A changed file receives freshly captured evidence under its new hash; a deleted file's missing payload is not recreated. Traversal exhaustion, corrupt proofs and permission failures remain explicit errors. Prepared/Applying journals still require their captured inputs and never substitute changed live sources.
 
+All missing prior paths in one publication share that traversal. Healthy changes retain their normal incremental path; deferred memberships are applied only after the complete base traversal and required memberships verify. The authenticated key must match the scoped Posting domain before a value is decoded as a posting. Other domains may reuse JSON field names without being interpreted as postings. Deferred paths and memberships have separate count and byte ceilings.
+
 ## Scheduling, cleanup and scale
 
 The 1.2.2 extension drives one native semantic batch per active trusted collection at a time after indexing and on reopen. These calls share the existing scheduler worker lock and native pause/failure policy, but do not select work from other collections. The editor queue yields between batches and refreshes readiness independently of source coverage; no service installation is required.
@@ -63,6 +65,8 @@ The native scheduler serializes submitted work and persists revisions, pause, ex
 The extension rechecks pending work and deadlines when its timer fires. An early callback reschedules rather than dispatching unrequested semantic work. This preserves source requests, semantic retry intervals, pause and storage-selection holds independently of wall-clock timing.
 
 Quota-admitted database growth reserves the larger SQLite bound and rollback allowance before publication. Postcommit cleanup proves current ownership before removing bounded unreferenced objects and lexical forks. `collections maintain` repeats cleanup without publishing. Active requests block destructive collection operations; idle connections do not. Fresh 1.2 collection/settings ownership isolates old indexes rather than migrating them. See [collections](collections.md), [recovery](operations.md#recovery) and [quota limits](storage-quotas.md).
+
+Failed preparation retains its durable allowance until rollback/recovery is proven. Ready recovery and component preparation retire orphan allowances only under the writer and exclusive request gates with no pending journal; all candidate incarnations must validate before release. Windows writer admission separately checks for SQLite's silent read-only fallback and permits bounded reopening only for verified sharing denial. These paths preserve pending-journal capacity and never change source or filesystem permissions.
 
 Changed-component counters measure localized publication work. Scanning, manifest verification and complete ownership checks still grow with corpus size. Large batches have explicit admission limits; no constant total update latency, complete language understanding, power-loss durability or cross-platform qualification is implied.
 

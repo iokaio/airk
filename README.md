@@ -16,6 +16,12 @@ This is an independent, runnable open-source project. Munarium, VCP and local re
 
 **Verify retained data** checks source and extraction inputs in bounded pages at one indexed revision. It reports incomplete checks and failures explicitly; saved readiness alone is not proof of intact retained data. Verification yields to active indexing and enrichment. Diagnostics also flag older helper paths in known agent configurations after an update; settings are preserved for manual review.
 
+Diagnostics recognize the managed CLI copy when its bytes match the verified extension helper. Native failures display readable messages while preserving bounded stderr details. Missing extractions across a batch share one authenticated posting-map traversal; automatic recapture waits for readers within a bounded, pause-aware admission window.
+
+Native writer admission also detects SQLite's silent read-only fallback. On Windows, verified temporary sharing denial permits a bounded reopen; genuine permission failures remain explicit.
+
+Retry safely releases abandoned publication quota reservations after proving the index is Ready with no pending journal. Committed evidence and reservations needed for recovery remain protected.
+
 Temporary publication contention retries with a capped delay using structured native outcomes that are independent of Rust backtraces. Indexing can recreate missing retained objects from validated source files and retire old postings for changed or deleted files when the prior extraction is missing. Repair remains bounded; corruption, permissions and unavailable journals remain visible failures. Slow semantic work no longer forces the next source batch to publish prematurely. Agent Lean remains the default.
 
 Automatic scheduling rechecks what is due when a timer fires. An early timer callback cannot start unrequested semantic work and block a pending source scan.

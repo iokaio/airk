@@ -498,6 +498,7 @@ class Controller implements vscode.Disposable {
                 try { events = await this.diagnosticHistory.read(spec); }
                 catch (error) { historyError = error; }
                 return collectDiagnostics(spec, { expectedVersion: this.context.extension.packageJSON.version, helperError, events, historyError, shouldContinue: valid,
+                    agentConfiguration: { installedCliPath: path.join(this.context.globalStorageUri.fsPath, 'cli', 'bin', process.platform === 'win32' ? 'airk.exe' : 'airk'), verifiedHelper: helperError === undefined },
                     editor: { paused: this.scheduler.isPaused, busy: ['indexing', 'enriching'].includes(editor?.state ?? ''), state: editor?.state, pending: editor?.pending } });
             },
             verify: (report, onProgress, shouldContinue) => verifyDiagnosticIntegrity(spec, report, { onProgress,
