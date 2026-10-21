@@ -43,6 +43,8 @@ Repair requires enough verified inputs to preserve the publication contract. For
 
 Regression coverage exercises native scheduler contention, contention before/after a semantic batch, genuine failure blocking, delayed enrichment batch boundaries, raw/encoded missing-object diagnostics, real child-process exit/timeout/output-limit behavior, and helper identity logging. Fault injection deletes newly captured source or extraction objects immediately before progressive publication. Tests check one successful recapture, bounded failure after repeated loss, changed source identities, and refusal to substitute live files into a pending journal. The 1.2.3 capture-lifetime regressions remain part of the suite.
 
+Model-backed recovery fixtures use canonical temporary storage paths, including on macOS where the temporary directory can use the `/var` alias. Production checks continue to reject linked model paths.
+
 These changes do not establish a new cause for every historical `retained object missing` report. The 1.2.3 capture-lifetime fix remains in place; a new occurrence requires its helper identity, exact missing-object diagnostic and current collection status. Do not describe an unreproduced failure as fixed merely because CI is green.
 
 Native and extension versions and lockfiles are synchronized at 1.2.4. Publication is a separate release step.
