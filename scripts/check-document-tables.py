@@ -44,6 +44,7 @@ def main():
                                         "--collection", "tables", *command], capture_output=True, check=True, timeout=120, env=environment)
             return json.loads(completed.stdout)
 
+        assert run("collections", "extraction", "show")["configured_detail"] == "agent_lean"
         indexed = run("index")
         assert indexed["indexed"] == 2, indexed
         for filename, location in [
@@ -55,6 +56,11 @@ def main():
             assert table_fact["citation"]["content_hash"] == originals[filename]
             assert table_fact["document"]["table"]["cells"][1]["header"] == "Requirement"
             assert table_fact["document"]["quantities"]
+        # Agent Lean preserves useful requirement rows above. The optional
+        # individual-cell/header inventory requires Rich Structure.
+        run("collections", "extraction", "detail", "balanced")
+        indexed = run("index")
+        assert indexed["indexed"] == 2, indexed
         formula = run("facts", xlsx.name, "--kind", "table_cell", "--name", "C14")["facts"][0]
         assert formula["document"]["table"]["cells"][0]["formula"] == "1+1"
         assert formula["document"]["table"]["cells"][0]["cached_value"] is True

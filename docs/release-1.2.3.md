@@ -27,4 +27,6 @@ The collection writer now protects these objects for the scan's lifetime, includ
 
 After updating the extension and bundled helper to 1.2.3, use **Index now** to retry an affected partial collection. A fresh wipe is not required for this bug: previously committed files remain valid. On 1.2.2, **Reindex** (`index --full` with the affected collection's root/data directory) bypasses progressive publication as a workaround. Semantic readiness now explicitly says it covers committed files when discovery is incomplete; it does not claim complete repository coverage.
 
+The public DOCX/XLSX smoke check verifies useful requirement evidence under the Agent Lean default, then explicitly selects Rich Structure to check optional individual-cell and header inventories. Storage lifecycle, usage input, retrieval quality and publication-fault smoke checks use the built helper.
+
 Native and extension versions and their lockfiles are synchronized at 1.2.3. Storage format and model identity are unchanged. This default is a product decision; outstanding paired-agent task and broader performance qualification remain outstanding. Historical 1.2.0–1.2.2 release and qualification records retain their original defaults. Publication remains a separate release step.
