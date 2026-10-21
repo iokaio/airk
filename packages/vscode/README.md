@@ -6,6 +6,10 @@ Everything runs on your machine. There is no cloud service, API key, Docker, Rus
 
 > **Version 1.2.5 in source; not released.** Published 1.2.4 packages support Windows x64, Linux x64 and macOS (Intel and Apple Silicon). AIRK 1.2 starts a fresh current index; existing 1.1 indexes and settings remain untouched. See [the 1.2.5 candidate notes](https://github.com/iokaio/airk/blob/main/docs/release-1.2.5.md), [the 1.2.4 diagnosis and recovery notes](https://github.com/iokaio/airk/blob/main/docs/release-1.2.4.md), [the 1.2.3 Agent Lean default and indexing fix](https://github.com/iokaio/airk/blob/main/docs/release-1.2.3.md), [the 1.2.2 semantic indexing fix](https://github.com/iokaio/airk/blob/main/docs/release-1.2.2.md), [the 1.2 behavior notes](https://github.com/iokaio/airk/blob/main/docs/release-1.2.0.md), and [Known limits](#known-limits).
 
+## What's new in 1.2.5 (not released)
+
+MCP can start while indexing continues. Source scans publish searchable lexical evidence and facts before semantic inference runs through the existing background queue. The first batch stays small; subsequent batches adapt to publication cost to reduce repeated transaction overhead in large repositories. The dashboard shows committed progress and elapsed time, with bounded termination for stalled work. Semantic coverage remains explicit; these changes do not claim a measured speedup. See the [candidate notes](https://github.com/iokaio/airk/blob/main/docs/release-1.2.5.md) for compact replies, focused snippets, validated hashes and removal of the unsupported history tool.
+
 ## What's new in 1.2.4
 
 **Diagnose & Repair** collects the selected collection's helper identity, current indexing/semantic progress, queue state and recent failures inside the extension. Copy a bounded report, retry indexing, resume window indexing or rebuild derived evidence from the same view. Recent failures survive reloads and are kept separate from current observations.

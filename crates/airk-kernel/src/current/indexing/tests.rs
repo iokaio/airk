@@ -725,7 +725,7 @@ fn retire_missing_prior_extraction(deleted: bool) -> Result<()> {
 }
 
 #[test]
-fn slow_semantic_publication_does_not_consume_the_next_source_batch_interval() -> Result<()> {
+fn source_batches_defer_semantics_and_preserve_the_next_scan_interval() -> Result<()> {
     use std::sync::{
         Mutex,
         atomic::{AtomicBool, Ordering},
@@ -751,10 +751,8 @@ fn slow_semantic_publication_does_not_consume_the_next_source_batch_interval() -
                     .unwrap()
                     .push(event.committed_artifacts);
             }
-            if event.phase == "enrichment_committed" && !observed_delay.swap(true, Ordering::AcqRel)
-            {
-                // Slow neural inference/publication occupies the same synchronous
-                // flush interval. It must not age the following source batch.
+            if event.phase == "base_committed" && !observed_delay.swap(true, Ordering::AcqRel) {
+                // A slow publication must not age the following source batch.
                 std::thread::sleep(std::time::Duration::from_millis(2100));
             }
         });
@@ -763,12 +761,12 @@ fn slow_semantic_publication_does_not_consume_the_next_source_batch_interval() -
     assert_eq!(
         *base_commits.lock().unwrap(),
         vec![32],
-        "remaining files should share the final source batch after slow enrichment"
+        "remaining files should share the final source batch after slow publication"
     );
     let status = kernel.status()?;
     assert_eq!(status.files, 35);
     assert_eq!(status.discovery_readiness.committed_artifacts, 35);
-    assert_eq!(status.semantic_readiness.completed_artifacts, 8);
+    assert_eq!(status.semantic_readiness.completed_artifacts, 0);
     assert_eq!(status.semantic_readiness.selected_artifacts, 35);
     for file in [0, 31, 32, 34] {
         let evidence = kernel.read_file(&format!("file_{file:02}.txt"), 1, 1, 4096)?;
@@ -801,7 +799,6 @@ fn many_progressive_publications_do_not_spend_the_capture_reservation() -> Resul
     // capacities must not accumulate here as small publications complete.
     let capture = quota.reserve(kernel.collection(), 1 << 20)?;
     let selection = kernel.vector_selection()?;
-    let execution = kernel.execution_status()?;
     let mut stats = EmbeddingCacheStats::default();
     let mut progressive = ProgressiveBase {
         kernel: &kernel,
@@ -813,22 +810,20 @@ fn many_progressive_publications_do_not_spend_the_capture_reservation() -> Resul
         objects: None,
         selection: &selection,
         stats: &mut stats,
-        execution: &execution,
         previous: &previous,
         snapshot: previous.clone(),
         semantic_work: None,
-        semantic_failed: false,
         scan_work: progress::ScanWork::start()?,
         batch: Default::default(),
         batch_bytes: 0,
         last_flush: std::time::Instant::now(),
+        flush_interval: std::time::Duration::from_secs(2),
         last_pause_check: std::time::Instant::now(),
         next_batch: 1,
         processed: 0,
         committed: 0,
         current: Default::default(),
         first_ready_us: None,
-        first_vector_us: None,
         started: std::time::Instant::now(),
     };
     for artifact in previous.artifacts.values() {
@@ -885,7 +880,6 @@ fn progressive_flush_preserves_the_next_captured_input() -> Result<()> {
         let captured_objects = writer.capture_objects();
         let reservation = quota.reserve(kernel.collection(), 16 << 20)?;
         let selection = kernel.vector_selection()?;
-        let execution = kernel.execution_status()?;
         let mut stats = EmbeddingCacheStats::default();
         let mut progressive = ProgressiveBase {
             kernel: &kernel,
@@ -897,22 +891,20 @@ fn progressive_flush_preserves_the_next_captured_input() -> Result<()> {
             objects: None,
             selection: &selection,
             stats: &mut stats,
-            execution: &execution,
             previous: &previous,
             snapshot: previous.clone(),
             semantic_work: None,
-            semantic_failed: false,
             scan_work: progress::ScanWork::start()?,
             batch: Default::default(),
             batch_bytes: 0,
             last_flush: std::time::Instant::now(),
+            flush_interval: std::time::Duration::from_secs(2),
             last_pause_check: std::time::Instant::now(),
             next_batch: 32,
             processed: 0,
             committed: 0,
             current: Default::default(),
             first_ready_us: None,
-            first_vector_us: None,
             started: std::time::Instant::now(),
         };
 
@@ -985,4 +977,16 @@ fn progressive_flush_preserves_the_next_captured_input() -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[test]
+fn publication_cadence_amortizes_cost_with_bounded_delay() {
+    use std::time::Duration;
+    for (cost_ms, interval_ms) in [(0, 2000), (100, 2000), (1500, 6000), (9000, 30000)] {
+        assert_eq!(
+            publication_interval(Duration::from_millis(cost_ms)),
+            Duration::from_millis(interval_ms)
+        );
+    }
+    assert_eq!(publication_interval(Duration::MAX), Duration::from_secs(30));
 }

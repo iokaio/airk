@@ -351,18 +351,20 @@ fn semantic_batches_disclose_partial_coverage() -> Result<()> {
             semantic_signal.store(true, Ordering::Release);
         }
     });
-    observed.scheduled_index(false, false)?;
+    let report = observed.scheduled_index(false, false)?;
+    assert_eq!(report.embedding_inferences, 0);
+    assert!(report.first_vector_us.is_none());
     assert!(
         exact_early.load(Ordering::Acquire),
         "exact evidence must answer before discovery completes"
     );
     assert!(
-        semantic_early.load(Ordering::Acquire),
-        "committed vectors must answer before discovery completes"
+        !semantic_early.load(Ordering::Acquire),
+        "source discovery must not wait for inline semantic enrichment"
     );
     let base = kernel.status()?.semantic_readiness;
-    assert_eq!(base.state, SemanticState::Partial);
-    assert!(base.completed_artifacts > 0 && base.completed_artifacts < 65);
+    assert_eq!(base.state, SemanticState::Pending);
+    assert_eq!(base.completed_artifacts, 0);
     let pending_path = SearchQuery {
         text: "login".into(),
         path_prefix: Some("file_64.txt".into()),
@@ -372,7 +374,7 @@ fn semantic_batches_disclose_partial_coverage() -> Result<()> {
     let pending_search = kernel.semantic_search(&pending_path)?;
     assert_eq!(
         pending_search.semantic_readiness.unwrap().state,
-        SemanticState::Partial
+        SemanticState::Pending
     );
     assert!(pending_search.hits.is_empty());
     let mut completed = base.completed_artifacts;

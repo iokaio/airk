@@ -16,6 +16,14 @@ VS Code MCP definition resolution and the helper check no longer wait for a full
 
 `known_hash` now fails explicitly when a present indexed source has a different hash. `airk_references` selects candidate chunks from the current authenticated lexical index before verifying exact-case whole identifiers in retained source. It remains bounded and textual: strings, comments and declarations can match; a truncated result does not prove complete impact coverage. Agent Lean still omits call occurrences, so relationship results cannot establish a complete caller graph at that detail level.
 
+## Large-workspace indexing
+
+Progressive source publication no longer runs a semantic batch inline after every base batch. Source discovery continues while pending semantic work is persisted; the existing scheduler processes it after the source scan. Lexical search and facts remain available from committed batches. On a cold scan, vector evidence starts after discovery; on compatible updates, unchanged vectors remain available and changed inputs lose incompatible vectors at publication.
+
+The initial source batch targets 32 changed files or two seconds of scanning. Later count targets grow after every publication up to 4,096 files, with the existing 64 MiB source-byte trigger. The interval between publications adapts to four times the preceding publication duration, bounded to 2-30 seconds of scanning. This reduces repeated transaction overhead when publication is expensive. Capture and publication can exceed that interval; it is not a wall-clock deadline. No physical shards, tool-triggered refresh or index history are added.
+
+These changes address observed large-workspace delays without requiring another large-corpus benchmark before implementation. Correctness checks cover early lexical availability, deferred inference, subsequent semantic completion, bounded cadence, pause and retained-input recovery. End-to-end speedup has not been measured.
+
 ## Qualification status
 
 On 2026-10-21, local Windows checks passed: `cargo build --workspace --locked`, `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, `cargo test --workspace --locked`, the repository checks, Python repository tests, and the native-backed VS Code suite (132 passed, 2 skipped). The focused regressions cover the queue, hash mismatch, snippet coordinates, CamelCase references, 15-tool catalog, MCP availability before indexing, progress parsing and idle termination. macOS and Linux qualification and measured indexing or token savings remain open before release.

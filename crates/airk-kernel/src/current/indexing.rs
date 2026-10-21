@@ -39,6 +39,16 @@ fn incarnation() -> Result<Incarnation> {
     Ok(Incarnation::from_bytes(bytes))
 }
 
+// Spend up to four times the previous publication duration preparing the next
+// batch, within a 2-30 second scan interval. Count/byte caps can publish sooner;
+// this is not a wall-clock publication deadline.
+fn publication_interval(elapsed: std::time::Duration) -> std::time::Duration {
+    elapsed.saturating_mul(4).clamp(
+        std::time::Duration::from_secs(2),
+        std::time::Duration::from_secs(30),
+    )
+}
+
 struct ProgressiveBase<'a> {
     kernel: &'a Kernel,
     quota: &'a Quota,
@@ -49,22 +59,20 @@ struct ProgressiveBase<'a> {
     objects: Option<&'a ModelObjectSet>,
     selection: &'a airk_core::vector_selection::VectorSelectionPolicy,
     stats: &'a mut EmbeddingCacheStats,
-    execution: &'a airk_core::execution::ExecutionPlan,
     previous: &'a airk_core::Snapshot,
     snapshot: airk_core::Snapshot,
     semantic_work: Option<enrichment::SemanticWork>,
-    semantic_failed: bool,
     scan_work: progress::ScanWork,
     batch: std::collections::BTreeMap<String, ArtifactChange>,
     batch_bytes: usize,
     last_flush: std::time::Instant,
+    flush_interval: std::time::Duration,
     last_pause_check: std::time::Instant,
     next_batch: usize,
     processed: u64,
     committed: u64,
     current: airk_ingest::CurrentIndexWork,
     first_ready_us: Option<u64>,
-    first_vector_us: Option<u64>,
     started: std::time::Instant,
 }
 
@@ -84,8 +92,7 @@ impl ProgressiveBase<'_> {
             self.check_pause()?;
         }
         self.processed += 1;
-        if !self.batch.is_empty() && self.last_flush.elapsed() >= std::time::Duration::from_secs(2)
-        {
+        if !self.batch.is_empty() && self.last_flush.elapsed() >= self.flush_interval {
             self.flush()?;
         }
         let same = self
@@ -114,7 +121,6 @@ impl ProgressiveBase<'_> {
             self.batch_bytes = self.batch_bytes.saturating_add(artifact.bytes);
             if self.batch.len() >= self.next_batch || self.batch_bytes >= 64 << 20 {
                 self.flush()?;
-                self.next_batch = (self.next_batch * 2).min(4096);
             }
         } else {
             self.committed += 1;
@@ -127,12 +133,13 @@ impl ProgressiveBase<'_> {
             return Ok(());
         }
         self.check_pause()?;
+        let publication_started = std::time::Instant::now();
         // Each publication owns its temporary capacity. Completed transactions
         // must not consume the scan's long-lived capture allowance.
         let reservation = self
             .kernel
             .publication_reservation_with_limit(MAX_INDEX_RESERVATION_BYTES)?;
-        let mut selected = self
+        let selected = self
             .objects
             .map(|objects| {
                 enrichment::prepare_work(
@@ -145,11 +152,6 @@ impl ProgressiveBase<'_> {
                 )
             })
             .transpose()?;
-        if self.semantic_failed
-            && let (Some(selected), Some(prior)) = (&mut selected, &self.semantic_work)
-        {
-            selected.failure = prior.failure.clone();
-        }
         let mut next_scan_work = self.scan_work.clone();
         next_scan_work.advanced(self.processed, self.committed + self.batch.len() as u64)?;
         let mut resources = vec![
@@ -249,136 +251,13 @@ impl ProgressiveBase<'_> {
                 completed_artifacts: self.semantic_work.as_ref().map(|w| w.completed_artifacts),
                 completed_units: self.semantic_work.as_ref().map(|w| w.completed_units),
             });
-        self.enrich_batch()?;
-        // The next source batch gets its own scan interval. Time spent publishing
-        // and enriching this batch must not force its successor to flush one file.
+        // Let discovery continue without synchronous neural inference. The durable
+        // semantic queue is drained by the scheduler after the source scan.
+        // Amortize expensive publications while keeping the initial batch small
+        // and later batches bounded by count, bytes and scan time.
+        self.flush_interval = publication_interval(publication_started.elapsed());
+        self.next_batch = self.next_batch.saturating_mul(2).min(4096);
         self.last_flush = std::time::Instant::now();
-        Ok(())
-    }
-
-    fn enrich_batch(&mut self) -> Result<()> {
-        let Some((model, objects)) = self.model.zip(self.objects) else {
-            return Ok(());
-        };
-        let Some(mut work) = self.semantic_work.clone() else {
-            return Ok(());
-        };
-        if self.semantic_failed || work.pending.is_empty() || work.failure.is_some() {
-            return Ok(());
-        }
-        self.check_pause()?;
-        let read = self.kernel.store.current_read(self.scope)?;
-        let count = work.pending.len().min(8);
-        let mut inputs = Vec::with_capacity(count);
-        for pending in work.pending.iter().take(count) {
-            let artifact = read
-                .artifact(&pending.path)?
-                .context("progressive semantic source missing")?;
-            ensure!(
-                artifact
-                    .content_hash
-                    .parse::<airk_core::identity::Sha256Digest>()?
-                    == pending.source_hash
-                    && artifact
-                        .retained
-                        .as_ref()
-                        .context("progressive semantic extraction missing")?
-                        .object
-                        .parse::<airk_core::identity::Sha256Digest>()?
-                        == pending.extraction_object,
-                "progressive semantic binding expired"
-            );
-            inputs.push(CapturedInput { artifact });
-        }
-        drop(read);
-        work.pending.drain(..count);
-        work.completed_artifacts += count as u64;
-        let reservation = self
-            .kernel
-            .publication_reservation_with_limit(MAX_INDEX_RESERVATION_BYTES)?;
-        let updater = CurrentUpdater {
-            store: &self.kernel.store,
-            quota: self.quota,
-            scope: self.scope,
-            writer: self.writer,
-            reservation: &reservation,
-            configuration: None,
-        };
-        match updater.apply_enrichment(
-            &inputs,
-            SemanticUpdate {
-                model,
-                objects: objects.clone(),
-                selection: self.selection,
-                defer: false,
-                cache: EmbeddingCacheContext {
-                    cache: None,
-                    bypass: work.force_recompute,
-                    stats: self.stats,
-                    max_workers: self.execution.inference_workers,
-                    working_memory_bytes: self.execution.working_memory_bytes,
-                },
-            },
-            &mut work,
-        ) {
-            Ok(result) => {
-                self.kernel
-                    .emit_progress(airk_core::readiness::IndexProgress {
-                        phase: "enrichment_committed",
-                        revision: Some(super::runtime::revision(result.commit.token).to_string()),
-                        processed_artifacts: self.processed,
-                        committed_artifacts: self.committed,
-                        total_artifacts: None,
-                        selected_artifacts: Some(work.selected_artifacts),
-                        completed_artifacts: Some(work.completed_artifacts),
-                        completed_units: Some(work.completed_units),
-                    });
-                if result.occurrences > 0 {
-                    self.first_vector_us.get_or_insert_with(|| {
-                        self.started
-                            .elapsed()
-                            .as_micros()
-                            .try_into()
-                            .unwrap_or(u64::MAX)
-                    });
-                }
-                self.current.graph_records = self
-                    .current
-                    .graph_records
-                    .saturating_add(result.graph.sealed_records);
-                self.current.graph_read_bytes = self
-                    .current
-                    .graph_read_bytes
-                    .saturating_add(result.graph.read_bytes);
-                self.current.graph_base_record_reads = self
-                    .current
-                    .graph_base_record_reads
-                    .saturating_add(result.graph.base_record_reads);
-                self.current.graph_proof_cache_hits = self
-                    .current
-                    .graph_proof_cache_hits
-                    .saturating_add(result.graph.base_proof_cache_hits);
-                self.current.graph_proof_cache_evictions = self
-                    .current
-                    .graph_proof_cache_evictions
-                    .saturating_add(result.graph.base_proof_cache_evictions);
-                self.semantic_work = Some(work);
-            }
-            Err(error) => {
-                self.semantic_failed = true;
-                let mut failed = self
-                    .semantic_work
-                    .clone()
-                    .context("semantic work disappeared")?;
-                failed.failure = Some(format!("{error:#}").chars().take(1024).collect());
-                updater.apply_with_resources(
-                    &[],
-                    None,
-                    &[failed.resource_change(&self.kernel.store, &reservation)?],
-                )?;
-                self.semantic_work = Some(failed);
-            }
-        }
         Ok(())
     }
 
@@ -834,22 +713,20 @@ impl Kernel {
                 objects: objects.as_ref(),
                 selection: &selection,
                 stats: &mut stats,
-                execution: &execution_lease.plan,
                 previous: &previous,
                 snapshot: previous.clone(),
                 semantic_work: prior_semantic_work.clone(),
-                semantic_failed: false,
                 scan_work,
                 batch: Default::default(),
                 batch_bytes: 0,
                 last_flush: std::time::Instant::now(),
+                flush_interval: std::time::Duration::from_secs(2),
                 last_pause_check: std::time::Instant::now(),
                 next_batch: 32,
                 processed: 0,
                 committed: 0,
                 current: Default::default(),
                 first_ready_us: None,
-                first_vector_us: None,
                 started: index_started,
             })
         } else {
@@ -979,7 +856,6 @@ impl Kernel {
             return Err(error);
         }
         let progressive_first_ready_us = progressive.as_ref().and_then(|p| p.first_ready_us);
-        let progressive_first_vector_us = progressive.as_ref().and_then(|p| p.first_vector_us);
         let progressive_current = progressive.as_ref().map(|p| p.current.clone());
         let progressive_work = progressive.as_ref().and_then(|p| p.semantic_work.clone());
         let mut final_scan_work = progressive.as_ref().map(|p| p.scan_work.clone());
@@ -989,7 +865,6 @@ impl Kernel {
         }
         report.extraction_workers_requested = execution.requested;
         report.execution = Some(execution_lease.plan.clone());
-        report.first_vector_us = progressive_first_vector_us;
         report.scan_extract_us =
             u64::try_from(scan_started.elapsed().as_micros()).unwrap_or(u64::MAX);
         let committed_previous = if progressive_enabled {

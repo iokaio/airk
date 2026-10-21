@@ -4,7 +4,7 @@
 
 Start with the [unreleased 1.2.5 candidate notes](release-1.2.5.md), [published 1.2.4 diagnosis and recovery notes](release-1.2.4.md), [1.2.3 Agent Lean default and indexing fix](release-1.2.3.md), [1.2.2 semantic indexing fix](release-1.2.2.md) and [1.2.0 behavior and upgrade notes](release-1.2.0.md) for current defaults, upgrade steps and qualification limits. For setup, use [coding-agent integration](agent-integration.md) and [extension controls](vscode-extension.md); for indexing and disk use, use [ingestion limits and detail](ingestion-limits.md), [storage quotas](storage-quotas.md), [current-index operation](current-index-runtime.md) and [current-object cleanup](retention.md). The 1.1 release notes and v2 design records below are historical.
 
-The [1.2.5 candidate](release-1.2.5.md) includes the [MCP tool retirement](unreleased-mcp-tool-retirement.md), early MCP availability during initial indexing, progress display and bounded recovery. No release is attached to these source changes yet.
+The [1.2.5 candidate](release-1.2.5.md) includes the [MCP tool retirement](unreleased-mcp-tool-retirement.md), early MCP availability during initial indexing, deferred semantic inference during source discovery, adaptive publication batches, progress display and bounded recovery. No release is attached to these source changes yet.
 
 - [Architecture and code boundaries](architecture.md)
 - [Historical architecture v2 implementation plan](architecture-v2.md)
