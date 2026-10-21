@@ -46,7 +46,8 @@ fn tools_help_works_without_a_workspace_and_exposes_live_schemas() {
             .unwrap(),
     );
     let tools = list["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 16);
+    assert_eq!(tools.len(), 15);
+    assert!(!tools.iter().any(|tool| tool["name"] == "airk_history"));
     for tool in tools {
         let help = success(
             command(&root, &state)

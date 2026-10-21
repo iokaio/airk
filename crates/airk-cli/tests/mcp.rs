@@ -204,7 +204,7 @@ fn durable_key_reads_match_cli_and_mcp_and_reject_filter_combinations() -> anyho
             .as_array()
             .unwrap()
             .len(),
-        16
+        15
     );
     for (id, command, option, tool, field, key) in [
         (
@@ -638,7 +638,8 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
     let mut advertised = tools.clone();
     advertised.sort_by_key(|tool| tool["name"].as_str().unwrap().to_owned());
     assert_eq!(catalog["tools"], json!(advertised));
-    assert_eq!(tools.len(), 16);
+    assert_eq!(tools.len(), 15);
+    assert!(!tools.iter().any(|tool| tool["name"] == "airk_history"));
     assert!(
         tools
             .iter()
@@ -765,9 +766,6 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
             );
         }
     }
-    let unsupported = session.call(18, "airk_history", json!({"limit":2,"max_bytes":4096}))?;
-    assert_eq!(unsupported["result"]["isError"], true);
-    assert!(unsupported.to_string().contains("unsupported"));
     let budget = session.call(
         20,
         "airk_search",

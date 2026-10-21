@@ -65,7 +65,7 @@ Use the original public fixture and a separate derived-state directory:
 
 Setup prints a configuration fragment; it does not overwrite editor settings. Merge its entry into the selected client's configuration, then verify that the agent connects and can call `airk_status`, `airk_symbols` and `airk_search`. Use `--client codex`, `claude` or another supported renderer as appropriate; [agent integration](agent-integration.md) explains the formats and client steps.
 
-The Cargo test suite also exercises real stdio initialization and all sixteen tools through the native binary. Confirm extraction fixtures, collection isolation, source-preserving removal and Unix symlink tests pass on the Mac.
+The Cargo test suite also exercises real stdio initialization and all fifteen tools in the unreleased source through the native binary. Confirm extraction fixtures, collection isolation, source-preserving removal and Unix symlink tests pass on the Mac.
 
 When finished, disconnect the fixture's MCP worker and remove only its derived collection:
 

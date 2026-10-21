@@ -75,7 +75,7 @@ Read the [1.2 release notes](https://github.com/iokaio/airk/blob/main/docs/relea
 | "What response-time limit does this design require?" | Requirement candidates from Markdown, PDF, DOCX, XLSX or PPTX with the original page, paragraph, table row, worksheet cell or slide | You can open the exact source and check the wording. A requirement cue is evidence, not an inferred obligation. |
 | "Is this answer based on current code?" | The indexed revision and source hashes, current evidence validation, and saved-file coverage in the status bar | You can check indexed freshness and reindex when saved files change. AIRK does not retain historical search. |
 
-AIRK gives each agent **sixteen read-only MCP tools**:
+The 1.2.5 source gives each agent **fifteen read-only MCP tools**. Published 1.2.4 helpers still expose sixteen, including the unsupported `airk_history` endpoint. Version 1.2.5 has not been published.
 
 | Tool | Purpose |
 |---|---|
@@ -87,10 +87,11 @@ AIRK gives each agent **sixteen read-only MCP tools**:
 | `airk_code_facts`, `airk_relationships` | Scopes, signatures and caller/callee/dependency candidates |
 | `airk_document_facts` | Requirements, dates, quantities and design/decision candidates from documents |
 | `airk_changes` | Current remembered-evidence validation and independent freshness; historical baselines unavailable |
-| `airk_history` | Compatibility endpoint that reports history as unsupported in 1.2 |
 | `airk_status`, `airk_capabilities` | Collection revision and counts; supported formats and their limits |
 
 Every response is size-bounded. The tools cannot write files, run commands, switch collections or reach the network. Full reference: [MCP tools](https://github.com/iokaio/airk/blob/main/docs/mcp.md).
+
+In the 1.2.5 source, search returns focused snippets; request `full_chunks: true` for complete indexed chunks. Set `AIRK_MCP_RESPONSE_MODE=terse` on a manually configured MCP worker to shorten repeated envelope metadata while keeping tokens, citations, hashes and coverage state. The helper check expects fifteen tools. See the [1.2.5 candidate notes](https://github.com/iokaio/airk/blob/main/docs/release-1.2.5.md); no release or Marketplace publication has occurred.
 
 ## Supported content
 
@@ -214,7 +215,7 @@ Each collection’s **AIRK helper check** section shows Not checked, Preparing c
 
 Under **Agent connections**, the **VS Code registration** switch controls automatic AIRK server definitions on this extension host (`airk.mcp.registrationEnabled`, a machine-scoped user setting). Turning it off prevents new provider resolutions; it does not pause indexing, remove manual server entries or disable external agents. **Connect coding agent…** (also available through **Manage Agent Connections**) first asks which agent to configure. **VS Code / Copilot MCP controls** opens only VS Code’s server controls. Codex, Claude Code and other coding agents use their own configurations. The guide never labels an agent connected just because configuration was copied/created or its helper check passed.
 
-Run **AIRK: Check AIRK MCP Helper** for the intended folder. A successful result confirms AIRK's stdio handshake, sixteen-tool inventory and collection status. It does not prove the selected coding agent has loaded or approved the entry.
+Run **AIRK: Check AIRK MCP Helper** for the intended folder. A successful result confirms AIRK's stdio handshake, fifteen-tool inventory in the unreleased source and collection status. It does not prove the selected coding agent has loaded or approved the entry.
 
 In that agent, explicitly request `airk_status` and `airk_capabilities` from the configured AIRK server. Confirm the collection, then request a lexical `airk_search` for a known indexed phrase and check its source path and original location. Use **AIRK: Index Now** after edits if automatic indexing is paused or set to Manual; MCP retrieval does not initiate reindexing.
 

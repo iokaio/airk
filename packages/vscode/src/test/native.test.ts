@@ -212,7 +212,7 @@ test('cached old helper survives extension replacement and a changed trusted hel
         // 1.2 builds an independent current-index namespace and leaves the old
         // helper's derived collection untouched.
         await runJson(newAgent, 'index', ['--full']);
-        assert.equal((await probeMcp(newAgent)).tools.length, 16);
+        assert.equal((await probeMcp(newAgent)).tools.length, 15);
         await assert.rejects(runJson(newAgent, 'collections', ['history', 'set', '--json', JSON.stringify({
             version: 1, enabled: true, recent: 3, hourly_hours: 24,
             max_packages: 12, max_bytes: 268435456, quota_basis_points: 1000
@@ -276,9 +276,9 @@ test('extension native adapter indexes, rebuilds, probes MCP, isolates and remov
         await runJson(spec, 'schedule', ['resume']);
         assert.equal((await runJson<IndexReport>(spec, 'index')).reused, 1);
         const full = await runJson<IndexReport>(spec, 'index', ['--full']); assert.equal(full.reused, 0); assert.ok(full.generation > first.generation);
-        const probe = await probeMcp(spec); assert.equal(probe.tools.length, 16);
+        const probe = await probeMcp(spec); assert.equal(probe.tools.length, 15);
         assert.ok(probe.tools.includes('airk_changes'));
-        assert.ok(probe.tools.includes('airk_history'));
+        assert.ok(!probe.tools.includes('airk_history'));
         await assert.rejects(runJson(spec, 'collections', ['retention', 'show']), /generation retention is unsupported/i);
         await assert.rejects(runJson(spec, 'collections', ['prune', '--apply']), /unsupported/i);
         const beforeMaintenance = await runJson<{ publication: { token: unknown } }>(spec, 'status');

@@ -120,7 +120,7 @@ async function checkSidebar(target) {
         await until("document.body.innerText.includes('VS Code registration: On')");
         await until("!document.querySelector('[data-action=verify]').disabled");
         await evaluate("document.querySelector('[data-action=verify]').click()");
-        await until("document.body.innerText.includes('Verified · 16 tools available')");
+        await until("document.body.innerText.includes('Verified · 15 tools available')");
         await evaluate("document.querySelector('[data-action=verify]').scrollIntoView({block:'center'})");
         return ['real dashboard DOM', 'registration switch clicked off/on', 'Verify connection button completed real handshake'];
     } finally { socket.close(); }

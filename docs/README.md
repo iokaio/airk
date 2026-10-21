@@ -2,7 +2,9 @@
 
 **AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents**
 
-Start with the [1.2.4 diagnosis and recovery notes](release-1.2.4.md), [1.2.3 Agent Lean default and indexing fix](release-1.2.3.md), [1.2.2 semantic indexing fix](release-1.2.2.md) and [1.2.0 behavior and upgrade notes](release-1.2.0.md) for current defaults, upgrade steps and qualification limits. For setup, use [coding-agent integration](agent-integration.md) and [extension controls](vscode-extension.md); for indexing and disk use, use [ingestion limits and detail](ingestion-limits.md), [storage quotas](storage-quotas.md), [current-index operation](current-index-runtime.md) and [current-object cleanup](retention.md). The 1.1 release notes and v2 design records below are historical.
+Start with the [unreleased 1.2.5 candidate notes](release-1.2.5.md), [published 1.2.4 diagnosis and recovery notes](release-1.2.4.md), [1.2.3 Agent Lean default and indexing fix](release-1.2.3.md), [1.2.2 semantic indexing fix](release-1.2.2.md) and [1.2.0 behavior and upgrade notes](release-1.2.0.md) for current defaults, upgrade steps and qualification limits. For setup, use [coding-agent integration](agent-integration.md) and [extension controls](vscode-extension.md); for indexing and disk use, use [ingestion limits and detail](ingestion-limits.md), [storage quotas](storage-quotas.md), [current-index operation](current-index-runtime.md) and [current-object cleanup](retention.md). The 1.1 release notes and v2 design records below are historical.
+
+The [1.2.5 candidate](release-1.2.5.md) includes the [MCP tool retirement](unreleased-mcp-tool-retirement.md). No release is attached to these source changes yet.
 
 - [Architecture and code boundaries](architecture.md)
 - [Historical architecture v2 implementation plan](architecture-v2.md)
@@ -26,6 +28,8 @@ Start with the [1.2.4 diagnosis and recovery notes](release-1.2.4.md), [1.2.3 Ag
 - [Explicit local model assets and vector/hybrid retrieval](local-models.md)
 - [Durable native scheduling and crash recovery](native-scheduler.md)
 - [MCP tool contracts](mcp.md)
+- [1.2.5 candidate changes, not released](release-1.2.5.md)
+- [Unreleased MCP tool retirement](unreleased-mcp-tool-retirement.md)
 - [Request execution, bounded admission and verification costs](request-execution.md)
 - [Code review findings and 1.1.4 implementation record](airkimprovements.md)
 - [Source, parser and provider hardening](ingest-hardening.md)

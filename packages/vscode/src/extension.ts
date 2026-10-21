@@ -929,7 +929,7 @@ class Controller implements vscode.Disposable {
                 await this.scheduler.request(spec, true);
                 if (!current()) { return; }
                 check.phase = 'checking'; this.updateStatus();
-                const result = await probeMcp(spec, 16, this.context.extension.packageJSON.version);
+                const result = await probeMcp(spec, 15, this.context.extension.packageJSON.version);
                 if (!current()) { return; }
                 check.phase = 'verified'; check.tools = result.tools; check.result = result; check.checkedAt = Date.now();
                 this.output.appendLine(`${spec.name}: MCP helper verified; ${result.tools.length} tools available. Agent connection status is separate.`);

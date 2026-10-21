@@ -295,6 +295,10 @@ fn facts_are_specialized_and_reference_results_disclose_resolution() -> anyhow::
         root.path().join("a.py"),
         "import os\n# authenticate is mentioned\ndef authenticate():\n    return True\n",
     )?;
+    fs::write(
+        root.path().join("z.cs"),
+        "class AuthService { void ConfigureAuthentication() {} }\n",
+    )?;
     let kernel = Kernel::open(root.path(), None)?;
     kernel.index()?;
     let facts = kernel.facts(&FactQuery {
@@ -313,6 +317,9 @@ fn facts_are_specialized_and_reference_results_disclose_resolution() -> anyhow::
     let refs = kernel.references("authenticate", "", 10, 8192)?;
     assert!(refs.resolution.contains("textual"));
     assert_eq!(refs.evidence.hits.len(), 2);
+    let camel = kernel.references("ConfigureAuthentication", "z.cs", 10, 8192)?;
+    assert_eq!(camel.evidence.hits.len(), 1);
+    assert_eq!(camel.evidence.hits[0].citation.path, "z.cs");
     assert_eq!(kernel.file_info("a.py")?.language, "python");
     assert_eq!(
         kernel.context("a.py", 3, 1, 1, 8192)?.hits[0].text,

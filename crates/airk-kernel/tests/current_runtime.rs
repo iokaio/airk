@@ -608,6 +608,22 @@ fn old_namespace_is_untouched_and_exact_tokens_and_cursors_expire() -> Result<()
     kernel.configure_vectors(false)?;
     kernel.index()?;
     let first = kernel.read_file_conditional("a.txt", 1, 1, 4096, &Default::default())?;
+    assert!(
+        kernel
+            .read_file_conditional(
+                "a.txt",
+                1,
+                1,
+                4096,
+                &EvidenceReadOptions {
+                    known_hash: Some("00".repeat(32).parse()?),
+                    ..Default::default()
+                }
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("known_hash does not match")
+    );
     let revision = first.read.publication.unwrap().token;
     let page = kernel.list_files_page("", 1, 4096, &Default::default())?;
     let cursor = page.page.cursor;

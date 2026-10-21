@@ -1,6 +1,6 @@
 # AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents
 
-**Version 1.2.4.** See the [1.2.4 diagnosis and recovery notes](docs/release-1.2.4.md), the [1.2.3 Agent Lean default and indexing fix](docs/release-1.2.3.md), the [1.2.2 semantic indexing fix](docs/release-1.2.2.md) and [1.2.0 behavior and upgrade notes](docs/release-1.2.0.md). Download published [native ZIPs and platform VSIX packages](https://github.com/iokaio/airk/releases).
+**Version 1.2.5 in source, pending release.** See the [1.2.5 candidate notes](docs/release-1.2.5.md) and [1.2.4 diagnosis and recovery notes](docs/release-1.2.4.md). Download currently published [native ZIPs and platform VSIX packages](https://github.com/iokaio/airk/releases).
 
 **Give Claude Code, Codex, Gemini CLI/Antigravity, GitHub Copilot and other MCP-capable agents a shared, local index of your workspace.** AIRK indexes files and returns bounded facts and passages with source paths, hashes and original locations. The agent supplies the reasoning. Runtime storage uses memory and local disk.
 
@@ -8,7 +8,11 @@
 
 This is an independent, runnable open-source project. Munarium, VCP and local reference files inform the design; their implementations are not dependencies. Tantivy lexical indexes, authenticated SQLite records and mutable Microsoft DiskANN publish one coherent current revision. Vector indexing and hybrid retrieval are enabled by default. The trusted panel prepares the pinned [local CPU embedding model](docs/onnx-models.md) on first use (about 91 MB); turn **Vector search** off per collection to opt out. Inference and source data stay local. Model quality must be evaluated for the intended corpus.
 
-[Code facts and relationships](docs/code-facts-and-relationships.md) add scopes, signatures, written types, call/framework candidates and optional source/build-bound SCIP imports. Sixteen read-only MCP tools expose bounded evidence with explicit syntax versus producer provenance. Native indexing needs no external compiler/indexer installation.
+[Code facts and relationships](docs/code-facts-and-relationships.md) add scopes, signatures, written types, call/framework candidates and optional source/build-bound SCIP imports. The 1.2.5 source has fifteen read-only MCP tools; the published 1.2.4 helper has sixteen. Both expose bounded evidence with explicit syntax versus producer provenance. Native indexing needs no external compiler/indexer installation.
+
+## 1.2.5 candidate changes (unreleased)
+
+The unsupported `airk_history` MCP tool is removed. Search returns focused snippets by default, with `full_chunks: true` for complete indexed chunks. `AIRK_MCP_RESPONSE_MODE=terse` shortens repeated response metadata while retaining the exact token, citations, hashes and coverage state. MCP requests can wait briefly in a bounded queue; `known_hash` mismatches fail explicitly; textual references select indexed candidates before exact source verification. [Candidate notes](docs/release-1.2.5.md) describe the limits. No 1.2.5 release or Marketplace publication has occurred.
 
 ## What's new in 1.2.4
 
@@ -131,7 +135,7 @@ Configure each workspace's agent with its own root and collection, using [the Do
 
 ## Implemented retrieval
 
-Sixteen read-only MCP tools provide search, file listing, bounded reads, file metadata, context, outlines, native syntax definitions/imports, structured document facts, code facts/relationships, textual identifier occurrences, indexed changes, retained revision metadata, status and capability inspection. Results describe published evidence; freshness requires indexing, and counts alone do not prove live workspace coverage.
+The 1.2.5 source provides fifteen read-only MCP tools for search, file listing, bounded reads, file metadata, context, outlines, native syntax definitions/imports, structured document facts, code facts/relationships, textual identifier occurrences, indexed changes, status and capability inspection. It removes the unsupported `airk_history` endpoint; the published 1.2.4 helper still lists it. Results describe published evidence; freshness requires indexing, and counts alone do not prove live workspace coverage.
 
 Native grammar profiles cover Rust, Python, JavaScript/JSX, TypeScript/TSX, Go, Java, C/C++, C#, Ruby, PHP, Bash, PowerShell, Lua, Swift, Kotlin and SQL. Structured adapters cover Markdown, JSON/YAML/TOML, HTML/CSS, XML/SVG, CSV/TSV, INI-style configuration and Dockerfiles. Native extraction supports text-layer PDF, DOCX paragraphs and structured tables, XLSX stored worksheet rows/cells, and PPTX slide text in presentation order. Spreadsheet formulas are retained with any stored result; AIRK does not calculate formulas. Other UTF-8 files retain lexical retrieval without an extension allowlist.
 

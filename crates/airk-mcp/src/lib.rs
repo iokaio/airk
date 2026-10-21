@@ -46,23 +46,6 @@ impl EvidenceArgs {
 }
 
 #[derive(Deserialize, Serialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct HistoryArgs {
-    pub revision: Option<String>,
-    pub cursor: Option<String>,
-    #[serde(default = "history_limit")]
-    pub limit: usize,
-    #[serde(default = "history_bytes")]
-    pub max_bytes: usize,
-}
-fn history_limit() -> usize {
-    64
-}
-fn history_bytes() -> usize {
-    65536
-}
-
-#[derive(Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SelectorArgs {
     Path { path: String },
@@ -118,6 +101,9 @@ pub struct SearchArgs {
     pub limit: usize,
     #[serde(default = "default_budget")]
     pub max_bytes: usize,
+    /// Return complete indexed chunks instead of focused snippets.
+    #[serde(default)]
+    pub full_chunks: bool,
 }
 
 #[derive(Clone, Copy, Deserialize, schemars::JsonSchema)]
@@ -418,7 +404,7 @@ impl AirkServer {
 
     #[tool(
         name = "airk_relationships",
-        description = "Investigate callers, implementations, dependencies or candidate impact through incoming/outgoing edges, scoped paths and 1..3 hops. Syntax call targets are exact written expressions and remain candidates; optional SCIP references/implements are producer assertions, never automatically calls. Use IDs from code facts. Results have provenance, coverage and count/byte/time limits; absence is not proof of no impact.",
+        description = "Investigate available structural links and candidate impact through incoming/outgoing edges, scoped paths and 1..3 hops. Agent Lean omits call occurrences, so caller analysis needs richer indexing or bound producer evidence. Syntax targets remain unresolved candidates; SCIP assertions are not calls. Check coverage; absent edges do not prove no impact.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -445,7 +431,7 @@ impl AirkServer {
 
     #[tool(
         name = "airk_search",
-        description = "Find code or documentation. Omitted mode uses hybrid (lexical plus DiskANN rank fusion), or lexical when the collection has opted out in the panel. Explicit lexical uses AND terms; vector uses local embeddings. Vector/hybrid require an indexed local model; missing assets fail explicitly, with no network inference. semantic=true is a compatibility alias for vector; omit mode with that alias. Returns bounded indexed evidence, paths, locations and hashes.",
+        description = "Find code or documents. Use path_prefix when the question concerns one project or component; a relevant document does not prove application behavior. Omitted mode uses hybrid, or lexical after vector opt-out. Lexical uses AND terms; vector/hybrid need an indexed local model. semantic=true aliases vector. Results default to focused snippets with exact citations; full_chunks requests complete indexed chunks.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -464,13 +450,17 @@ impl AirkServer {
                 limit: args.limit,
                 max_bytes: args.max_bytes,
             };
-            match args.mode {
+            let mut result = match args.mode {
                 Some(SearchMode::Lexical) => kernel.search(&query),
                 Some(SearchMode::Vector) => kernel.semantic_search(&query),
                 Some(SearchMode::Hybrid) => kernel.hybrid_search(&query),
                 None if args.semantic => kernel.semantic_search(&query),
                 None => kernel.default_search(&query),
+            }?;
+            if !args.full_chunks {
+                focus_search_hits(&mut result, &query.text, 768);
             }
+            Ok(result)
         })
         .await
     }
@@ -668,7 +658,7 @@ impl AirkServer {
 
     #[tool(
         name = "airk_references",
-        description = "Locate possible usages of a code identifier as bounded exact-case whole-identifier textual occurrences. Includes definitions, strings and comments; these are NOT resolved semantic references. Confirm refactoring impacts with the agent's language tools and current source.",
+        description = "Locate exact-case whole-identifier textual occurrences using indexed lexical candidates verified against retained source, including CamelCase. Includes definitions, strings and comments, never resolved semantic references. Check truncation before impact analysis and verify live source.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -722,27 +712,6 @@ impl AirkServer {
     }
 
     #[tool(
-        name = "airk_history",
-        description = "Unsupported in AIRK 1.2. Only the current index is retained; historical availability and reads have been removed.",
-        annotations(
-            read_only_hint = true,
-            destructive_hint = false,
-            open_world_hint = false
-        )
-    )]
-    async fn history(&self, Parameters(args): Parameters<HistoryArgs>) -> CallToolResult {
-        self.execute(UsageOperation::Status, move |kernel| {
-            kernel.history_availability(&airk_kernel::HistoryAvailabilityRequest {
-                revision: args.revision.as_deref().map(str::parse).transpose()?,
-                cursor: args.cursor,
-                limit: args.limit,
-                max_bytes: args.max_bytes,
-            })
-        })
-        .await
-    }
-
-    #[tool(
         name = "airk_capabilities",
         description = "Check native formats, explicitly provisioned local model/OCR/code-provider adapters and their limits before planning exploration. Works before indexing. Reports available capabilities, not whether optional providers or this collection are ready.",
         annotations(
@@ -790,6 +759,70 @@ impl AirkServer {
     }
 }
 
+fn focus_search_hits(response: &mut airk_core::SearchResponse, query: &str, limit: usize) {
+    let words: Vec<String> = query
+        .split(|c: char| !c.is_alphanumeric() && c != '_')
+        .filter(|word| word.len() > 2)
+        .map(str::to_lowercase)
+        .collect();
+    for hit in &mut response.hits {
+        if hit.text.len() <= limit {
+            continue;
+        }
+        let mut best = (0usize, 0usize);
+        let mut offset = 0usize;
+        for line in hit.text.split_inclusive('\n') {
+            let lower = line.to_lowercase();
+            let score = words
+                .iter()
+                .filter(|word| lower.contains(word.as_str()))
+                .count();
+            if score > best.1 {
+                let within = if line.is_ascii() {
+                    words
+                        .iter()
+                        .filter_map(|word| lower.find(word))
+                        .min()
+                        .unwrap_or(0)
+                } else {
+                    0
+                };
+                best = (offset + within.saturating_sub(limit / 4), score);
+            }
+            offset += line.len();
+        }
+        let mut start = best.0;
+        while !hit.text.is_char_boundary(start) {
+            start -= 1;
+        }
+        let mut end = hit.text.len().min(start + limit);
+        while !hit.text.is_char_boundary(end) {
+            end -= 1;
+        }
+        let first =
+            hit.citation.start_line + hit.text[..start].bytes().filter(|b| *b == b'\n').count();
+        let last = first
+            + hit.text.as_bytes()[start..end.saturating_sub(1)]
+                .iter()
+                .filter(|b| **b == b'\n')
+                .count();
+        hit.citation.start_line = first;
+        hit.citation.end_line = last;
+        if matches!(
+            hit.citation.location,
+            airk_core::DocumentLocation::Lines { .. }
+        ) {
+            hit.citation.location = airk_core::DocumentLocation::Lines {
+                start: first,
+                end: last,
+            };
+        }
+        hit.text = hit.text[start..end].to_owned();
+        hit.truncated = true;
+        response.truncated = true;
+    }
+}
+
 fn render<T: Serialize>(
     kernel: &Kernel,
     span: airk_kernel::usage::RequestSpan,
@@ -833,6 +866,11 @@ fn render<T: Serialize>(
         }
     }
     if let Some(object) = logical.as_mut().and_then(serde_json::Value::as_object_mut)
+        && std::env::var("AIRK_MCP_RESPONSE_MODE").as_deref() == Ok("terse")
+    {
+        terse_envelope(object);
+    }
+    if let Some(object) = logical.as_mut().and_then(serde_json::Value::as_object_mut)
         && let Some(id) = span.request_id()
     {
         object.insert("request_id".into(), id.into());
@@ -858,6 +896,44 @@ fn render<T: Serialize>(
     rendered
 }
 
+fn terse_envelope(object: &mut serde_json::Map<String, serde_json::Value>) {
+    if object.contains_key("execution")
+        || object.contains_key("adapters")
+        || object.contains_key("baseline_status")
+    {
+        return;
+    }
+    let mut coverage = serde_json::Map::new();
+    for (field, label) in [
+        ("discovery_readiness", "discovery"),
+        ("semantic_readiness", "semantic"),
+    ] {
+        if let Some(state) = object
+            .remove(field)
+            .and_then(|value| value.get("state").cloned())
+        {
+            coverage.insert(label.into(), state);
+        }
+    }
+    if let Some(detail) = object
+        .remove("indexing")
+        .and_then(|value| value.get("level").cloned())
+    {
+        coverage.insert("indexed_detail".into(), detail);
+    }
+    if !coverage.is_empty() {
+        coverage.insert("live_source_verified".into(), false.into());
+        object.insert("coverage".into(), coverage.into());
+    }
+    object.remove("freshness");
+    object.remove("generation");
+    if let Some(publication) = object.get_mut("publication")
+        && let Some(token) = publication.get("token").cloned()
+    {
+        *publication = serde_json::json!({"token": token});
+    }
+}
+
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for AirkServer {
     fn get_info(&self) -> ServerInfo {
@@ -880,6 +956,60 @@ pub async fn serve(kernel: Kernel) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn terse_envelope_keeps_identity_citations_and_omission_state() {
+        let mut response = serde_json::json!({
+            "publication": {"token":"exact-token", "generation":7, "revision":"digest"},
+            "generation": 7,
+            "collection": "project-a",
+            "hits": [{"citation":{"path":"src/a.cs","content_hash":"hash"}}],
+            "truncated": true,
+            "freshness": {"live_source_verified":false},
+            "discovery_readiness": {"state":"ready"},
+            "semantic_readiness": {"state":"partial"},
+            "indexing": {"level":"agent_lean", "note":"long explanation"}
+        });
+        terse_envelope(response.as_object_mut().unwrap());
+        assert_eq!(response["publication"]["token"], "exact-token");
+        assert_eq!(response["hits"][0]["citation"]["path"], "src/a.cs");
+        assert_eq!(response["truncated"], true);
+        assert_eq!(response["coverage"]["semantic"], "partial");
+        assert_eq!(response["coverage"]["indexed_detail"], "agent_lean");
+        assert_eq!(response["coverage"]["live_source_verified"], false);
+        assert!(response.get("freshness").is_none());
+    }
+
+    #[test]
+    fn focused_search_keeps_matching_line_and_exact_source_coordinates() {
+        let mut response = airk_core::SearchResponse {
+            publication: None,
+            semantic_readiness: None,
+            discovery_readiness: None,
+            generation: 1,
+            collection: "fixture".into(),
+            hits: vec![airk_core::Hit {
+                text: format!("{}\nConfigureAuthentication()\n", "unrelated\n".repeat(100)),
+                truncated: false,
+                citation: airk_core::Citation {
+                    path: "src/Auth.cs".into(),
+                    content_hash: "hash".into(),
+                    start_line: 10,
+                    end_line: 111,
+                    location: airk_core::DocumentLocation::Lines {
+                        start: 10,
+                        end: 111,
+                    },
+                },
+            }],
+            truncated: false,
+        };
+        focus_search_hits(&mut response, "ConfigureAuthentication", 128);
+        assert!(response.hits[0].text.contains("ConfigureAuthentication"));
+        assert!(response.hits[0].text.len() <= 128);
+        assert_eq!(response.hits[0].citation.start_line, 111);
+        assert!(response.hits[0].truncated && response.truncated);
+    }
 
     #[tokio::test]
     async fn agent_lean_defaults_to_useful_compact_facts_and_allows_rich_reads()

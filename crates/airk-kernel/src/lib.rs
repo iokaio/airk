@@ -699,52 +699,74 @@ impl Kernel {
         let mut remaining = max_bytes;
         let deadline = std::time::Instant::now() + std::time::Duration::from_millis(250);
         let mut read_bytes = 0usize;
-        'files: for (path, entry) in &snapshot.artifacts {
-            if !path.starts_with(path_prefix) {
-                continue;
-            }
+        let lexical =
+            current::open_selected_lexical(&self.store, &read, std::sync::Arc::new(|_| Ok(())))?;
+        let candidates = lexical.search(&SearchQuery {
+            text: name.into(),
+            path_prefix: Some(path_prefix.into()),
+            limit: 100,
+            max_bytes: 65536,
+        })?;
+        evidence.truncated |= candidates.incomplete;
+        'files: for candidate in candidates.values {
+            let path = &candidate.hit.citation.path;
+            let entry = snapshot
+                .artifacts
+                .get(path)
+                .context("reference candidate missing from current index")?;
             read_bytes = read_bytes.saturating_add(entry.extracted_bytes());
             if read_bytes > 16_777_216 || std::time::Instant::now() >= deadline {
                 evidence.truncated = true;
                 break;
             }
             let a = self.current_artifact(&read, path, false)?;
-            for chunk in &a.chunks {
-                for (offset, line) in chunk.text.split_inclusive('\n').enumerate() {
-                    if !line
-                        .split(|c: char| !c.is_alphanumeric() && c != '_')
-                        .any(|word| word == name)
-                    {
-                        continue;
-                    }
-                    if evidence.hits.len() == limit || remaining == 0 {
-                        evidence.truncated = true;
-                        break 'files;
-                    }
-                    let (text, truncated) = truncate_utf8(line, remaining);
-                    remaining -= text.len();
-                    evidence.truncated |= truncated;
-                    let number = chunk.start_line + offset;
-                    let location = if a.extraction_method == "utf8" {
-                        DocumentLocation::Lines {
-                            start: number,
-                            end: number,
-                        }
-                    } else {
-                        chunk.location.clone()
-                    };
-                    evidence.hits.push(Hit {
-                        text,
-                        truncated,
-                        citation: Citation {
-                            path: path.clone(),
-                            content_hash: a.content_hash.clone(),
-                            start_line: number,
-                            end_line: number,
-                            location,
-                        },
-                    });
+            let chunk = a
+                .chunks
+                .get(usize::try_from(candidate.local)?)
+                .context("reference candidate chunk missing")?;
+            ensure!(
+                candidate.stable_id
+                    == airk_retrieval::current_lexical::stable_id(path, candidate.local)?
+                    && candidate.hit.citation.content_hash == a.content_hash
+                    && candidate.hit.citation.start_line == chunk.start_line
+                    && candidate.hit.citation.end_line == chunk.end_line
+                    && candidate.hit.text == chunk.text,
+                "reference candidate differs from retained evidence"
+            );
+            for (offset, line) in chunk.text.split_inclusive('\n').enumerate() {
+                if !line
+                    .split(|c: char| !c.is_alphanumeric() && c != '_')
+                    .any(|word| word == name)
+                {
+                    continue;
                 }
+                if evidence.hits.len() == limit || remaining == 0 {
+                    evidence.truncated = true;
+                    break 'files;
+                }
+                let (text, truncated) = truncate_utf8(line, remaining);
+                remaining -= text.len();
+                evidence.truncated |= truncated;
+                let number = chunk.start_line + offset;
+                let location = if a.extraction_method == "utf8" {
+                    DocumentLocation::Lines {
+                        start: number,
+                        end: number,
+                    }
+                } else {
+                    chunk.location.clone()
+                };
+                evidence.hits.push(Hit {
+                    text,
+                    truncated,
+                    citation: Citation {
+                        path: path.clone(),
+                        content_hash: a.content_hash.clone(),
+                        start_line: number,
+                        end_line: number,
+                        location,
+                    },
+                });
             }
         }
         Ok(ReferencesResponse {
