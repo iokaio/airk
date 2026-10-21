@@ -4,7 +4,7 @@ Version 1.2.4 fixes a reproduced extension stall after temporary publication con
 
 ## Continue after temporary publication contention
 
-Another native writer can briefly prevent a status read while it publishes. Previously, the extension could finish a semantic batch, fail its next status read with `current index is busy applying an update`, and permanently block the remaining batches. A regression reproduced this with one file left to enrich even after the competing writer was gone.
+Another native writer can prevent a status read while it publishes. Previously, the extension could finish a semantic batch, fail its next status read with `current index is busy applying an update`, and permanently block the remaining batches. A regression reproduced this with one file left to enrich even after the competing writer was gone.
 
 The extension now keeps semantic work pending when the native scheduler reports `busy` or a semantic command/status read reports the specific current-gate `WouldBlock` error. It yields through the existing scheduler interval and tries again. Pause, workspace closure and storage changes still apply between attempts. Missing retained objects, permission failures, interrupted journals requiring recovery and integrity failures still stop work with an error.
 
