@@ -411,7 +411,7 @@ fn concurrent_mcp_agents_share_one_index_and_refresh_after_publication() -> anyh
                     )?)?;
                     assert_eq!(payload["generation"], old_generation);
                     assert_eq!(payload["collection"], "project-a");
-                    assert_eq!(payload["hits"][0]["text"], old_text.trim_end_matches('\n'));
+                    assert_eq!(payload["hits"][0]["text"], old_text);
                     Ok(())
                 })
             })
@@ -454,9 +454,9 @@ fn concurrent_mcp_agents_share_one_index_and_refresh_after_publication() -> anyh
                         assert_eq!(
                             payload["hits"][0]["text"],
                             if generation == old_generation {
-                                old_text.trim_end_matches('\n')
+                                old_text
                             } else {
-                                new_text.trim_end_matches('\n')
+                                new_text
                             }
                         );
                     }
@@ -490,7 +490,7 @@ fn concurrent_mcp_agents_share_one_index_and_refresh_after_publication() -> anyh
             json!({"query":"authenticate", "mode":"lexical"}),
         )?)?;
         assert_eq!(payload["generation"], published["generation"]);
-        assert_eq!(payload["hits"][0]["text"], new_text.trim_end_matches('\n'));
+        assert_eq!(payload["hits"][0]["text"], new_text);
         let hash = payload["hits"][0]["citation"]["content_hash"].clone();
         assert!(hash.as_str().is_some());
         if let Some(expected) = &shared_hash {
@@ -580,6 +580,26 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
         root.path().join("requirements.md"),
         "# Architecture\n\n## Requirements\n\nREQ-1: The interface must be accessible in at most 200 ms by 13 October 2026.\n",
     )?;
+    // This fixture exercises broad document facts retained by Rich Structure.
+    let configured = Command::new(env!("CARGO_BIN_EXE_airk"))
+        .arg("--root")
+        .arg(root.path())
+        .arg("--data-dir")
+        .arg(state.path())
+        .args([
+            "--collection",
+            "project-a",
+            "collections",
+            "extraction",
+            "detail",
+            "balanced",
+        ])
+        .output()?;
+    anyhow::ensure!(
+        configured.status.success(),
+        "{}",
+        String::from_utf8_lossy(&configured.stderr)
+    );
     let setup = Command::new(env!("CARGO_BIN_EXE_airk"))
         .args([
             "--root",
@@ -705,7 +725,7 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
             // Status includes changing quota/usage observations.
             let mut expected = payload.clone();
             expected.as_object_mut().unwrap().remove("request_id");
-            if name == "airk_changes" {
+            if direct.get("freshness").is_some() {
                 // Each call observes scheduler freshness at its own wall-clock instant.
                 assert!(direct["freshness"]["observed_unix_ms"].is_number());
                 direct["freshness"]["observed_unix_ms"] = Value::Null;

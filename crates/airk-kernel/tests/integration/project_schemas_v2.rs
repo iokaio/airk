@@ -56,6 +56,8 @@ fn project_schemas_public_reads_reuse_moves_and_profile_invalidation() -> Result
         let original = fs::read(fixtures.join(source))?;
         fs::write(root.path().join(path), &original)?;
         let kernel = Kernel::open(root.path(), Some(state.path().into()))?;
+        // This adapter fixture requires the broad configuration fact inventory.
+        kernel.configure_index_detail(airk_core::extraction::IndexDetail::Balanced)?;
         let first = kernel.index()?;
         let store = FileStore::new(state.path().join("collections-1.2/default"));
         let initial = store.current_test_catalog()?.unwrap();

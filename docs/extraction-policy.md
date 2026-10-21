@@ -19,11 +19,11 @@ Both `validate` and `set` require exactly one of `--file PATH` or `--json JSON`.
 airk collections extraction set --json '{"version":3,"detail":"balanced","rules":[]}'
 ```
 
-New collections default to version 3, Balanced detail and no overrides. Existing indexed collections without a saved policy keep their published detail; legacy indexes and version 1/2 policies use Detailed. A version 3 policy without `detail` also retains the legacy Detailed interpretation. No policy file is automatically read from the source workspace.
+From 1.2.3, new collections default to version 3, Agent Lean detail and no overrides. Existing indexed collections without a saved policy keep their published detail; legacy indexes and version 1/2 policies use Detailed. A version 3 policy without `detail` also retains the legacy Detailed interpretation. No policy file is automatically read from the source workspace.
 
 Use `airk collections extraction detail balanced` (or `agent_lean` / `essential` / `detailed`) to change only detail while preserving adapter rules. The sidebar offers the same selection with a review of rebuild costs. Status includes `configured_detail`, `published_detail` and `pending_reindex`; [index detail](ingestion-limits.md#index-detail) explains the evidence retained at each level.
 
-Agent Lean is an explicit opt-in in 1.2.0. The display labels are **Agent Lean**, **Rich Structure** (`balanced`) and **Search Only** (`essential`); Detailed remains an advanced option. Agent Lean retains selected declarations/signatures/imports, local structure and useful document facts, while omitting continuity fingerprints, generic call occurrences and broad document inventories. Its default vector policy skips reviewed lockfile basenames and minified JS/CSS; saved explicit vector policies keep their semantics. See [1.2.0 operation and limits](release-1.2.0.md).
+Agent Lean is the new-collection default from 1.2.3; it was opt-in in 1.2.0–1.2.2. The display labels are **Agent Lean**, **Rich Structure** (`balanced`) and **Search Only** (`essential`); Detailed remains an advanced option. Agent Lean retains selected declarations/signatures/imports, local structure and useful document facts, while omitting continuity fingerprints, generic call occurrences and broad document inventories. Its default vector policy skips reviewed lockfile basenames and minified JS/CSS; saved explicit vector policies keep their semantics. See [1.2.3 defaults](release-1.2.3.md) and [1.2.0 operation and limits](release-1.2.0.md).
 
 ## Detail-aware extraction
 

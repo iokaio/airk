@@ -2,7 +2,7 @@
 
 **AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents**
 
-Start with the [1.2.2 semantic indexing fix](release-1.2.2.md) and [1.2.0 behavior and upgrade notes](release-1.2.0.md) for current defaults, upgrade steps and qualification limits. For setup, use [coding-agent integration](agent-integration.md) and [extension controls](vscode-extension.md); for indexing and disk use, use [ingestion limits and detail](ingestion-limits.md), [storage quotas](storage-quotas.md), [current-index operation](current-index-runtime.md) and [current-object cleanup](retention.md). The 1.1 release notes and v2 design records below are historical.
+Start with the [1.2.3 Agent Lean default and indexing fix](release-1.2.3.md), [1.2.2 semantic indexing fix](release-1.2.2.md) and [1.2.0 behavior and upgrade notes](release-1.2.0.md) for current defaults, upgrade steps and qualification limits. For setup, use [coding-agent integration](agent-integration.md) and [extension controls](vscode-extension.md); for indexing and disk use, use [ingestion limits and detail](ingestion-limits.md), [storage quotas](storage-quotas.md), [current-index operation](current-index-runtime.md) and [current-object cleanup](retention.md). The 1.1 release notes and v2 design records below are historical.
 
 - [Architecture and code boundaries](architecture.md)
 - [Historical architecture v2 implementation plan](architecture-v2.md)
@@ -34,6 +34,7 @@ Start with the [1.2.2 semantic indexing fix](release-1.2.2.md) and [1.2.0 behavi
 - [Google Antigravity manual MCP setup](antigravity-mcp.md)
 - [Coding-agent tool alignment and online documentation review](agent-tool-alignment.md)
 - [Agent Lean index modes and MCP efficiency plan](mcp-prioritization.md)
+- [1.2.3 Agent Lean default and indexing fix](release-1.2.3.md)
 - [1.2.2 semantic indexing fix](release-1.2.2.md)
 - [1.2.1 documentation update](release-1.2.1.md)
 - [1.2.0 current-index, Agent Lean and compression behavior](release-1.2.0.md)

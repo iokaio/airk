@@ -105,6 +105,8 @@ fn actions_selection_uses_each_source_root_and_logical_override_precedence() -> 
         fs::write(path, source)?;
     }
     let kernel = Kernel::open(root.path(), Some(state.path().into()))?;
+    // These adapter fixtures exercise the broader configuration fact inventory.
+    kernel.configure_index_detail(airk_core::extraction::IndexDetail::Balanced)?;
     kernel.add_root("vendor", external.path())?;
     kernel.index()?;
     let store = FileStore::new(state.path().join("collections-1.2/default"));
@@ -167,6 +169,8 @@ fn build_profiles_publication_reuse_move_policy_locations_and_budgets() -> Resul
         fs::create_dir_all(original.parent().unwrap())?;
         fs::write(&original, fixture.source)?;
         let kernel = Kernel::open(root.path(), Some(state.path().into()))?;
+        // These adapter fixtures exercise the broader configuration fact inventory.
+        kernel.configure_index_detail(airk_core::extraction::IndexDetail::Balanced)?;
         let first = kernel.index()?;
         assert_eq!(first.indexed, 1, "{}", fixture.adapter);
         let store = FileStore::new(state.path().join("collections-1.2/default"));

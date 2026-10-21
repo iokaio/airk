@@ -46,7 +46,7 @@ These clients discover standard MCP tool definitions. Their displayed/namespaced
 
 Choose `airk_search` for conceptual discovery and `airk_code_facts`/`airk_outline` for declarations and written signatures. In Agent Lean, code/document facts default to compact records; request `compact: false` only when the richer indexed metadata is useful. Use `airk_capabilities` with an exact `adapter` for focused coverage rather than expanding the complete rich catalog. Original spans and hashes remain evidence validators; verify live source before editing.
 
-Selecting Agent Lean changes collection evidence through an explicit index publication. It does not change client tool permissions or enable missing facts. Rich Structure (`balanced`) and Search Only (`essential`) retain their stored identities. All existing endpoints remain compatible, including the explicit unsupported history response; [the rollout plan](mcp-prioritization.md) makes default promotion and tool retirement separate measured decisions.
+Selecting Agent Lean changes collection evidence through an explicit index publication. It does not change client tool permissions or enable missing facts. Rich Structure (`balanced`) and Search Only (`essential`) retain their stored identities. All existing endpoints remain compatible, including the explicit unsupported history response; [1.2.3](release-1.2.3.md) makes Agent Lean the new-collection default. Tool retirement and broader task-quality qualification remain separate follow-up work.
 
 ## Guidance and verification
 

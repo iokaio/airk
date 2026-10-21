@@ -1,5 +1,7 @@
 # Indexing and retrieval optimization implementation plan
 
+**1.2.3 update (2026-10-20):** Agent Lean is now the new-collection default by product decision. Existing saved or published choices remain intact. Balanced-default and opt-in decisions below record the earlier 1.2.0 qualification; they do not describe the current default. This change does not claim that the outstanding paired-task or performance gates have passed. See [1.2.3 release notes](release-1.2.3.md).
+
 Review date: 2026-10-19. Measurement baseline: `dd3675701242e91a03a0808f2f20c6d8f0af44a7` (1.1.4). Implementation branch: `feat/indexoptimizations`. The execution ledger below distinguishes completed work from proposals. Historical measurements describe the baseline, not later implementations. The accompanying [measurement harness](../scripts/benchmark-indexing.py) runs against isolated state and does not change the user's collection.
 
 ## Execution contract and stage ledger

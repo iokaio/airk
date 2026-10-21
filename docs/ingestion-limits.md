@@ -16,7 +16,7 @@ For 8 GiB RAM the source/extracted/read budgets are 1/2/4 GiB; for 4 GiB they ar
 
 ## Index detail
 
-Each collection selects how much derived evidence to retain. **Rich Structure (`balanced`) is the default for new collections.** Existing saved extraction policies retain their selected level until explicitly changed.
+Each collection selects how much derived evidence to retain. **Agent Lean (`agent_lean`) is the default for new collections from 1.2.3.** Existing saved extraction policies retain their selected level until explicitly changed; existing collections without a saved policy retain their published level.
 
 | Level | Retained native evidence | Deliberate omissions |
 |---|---|---|
@@ -24,6 +24,8 @@ Each collection selects how much derived evidence to retain. **Rich Structure (`
 | Rich Structure (`balanced`) | Essential plus adapter-supported declarations, signatures, imports, structural/configuration/document facts and declaration continuity | Individual call occurrences and document-unit continuity |
 | Agent Lean (`agent_lean`) | Searchable text, exact locations, declarations/signatures/imports, selected local structure and document facts | Generic call occurrences, continuity fingerprints and broad document inventories |
 | Detailed | The full existing adapter-supported fact/relationship and continuity output | Adapter limitations still apply; no claim of complete resolution |
+
+Start lean and fast. Move to Rich Structure when broader structural facts or declaration continuity help the task, or Detailed when call occurrences or document-unit tracking are needed. Search Only suits workflows that require text and citations without structured facts. Richer detail can add extraction work and retained data; semantic inference remains separate, so this is not a guarantee of faster vector indexing.
 
 In the sidebar, choose **Index detail → Evidence to retain** on the collection card. Review the explanation and choose **Save and index** or **Save for next index**. The card distinguishes the configured level from the published level while a change is pending. Changing detail preserves adapter-selection overrides and affects only that collection. The CLI equivalent is:
 

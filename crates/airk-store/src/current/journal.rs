@@ -647,6 +647,12 @@ pub struct CurrentWriter<'a> {
     _gate: Gate,
 }
 
+impl CurrentWriter<'_> {
+    pub(super) fn has_object_captures(&self) -> bool {
+        self.writer.has_object_captures()
+    }
+}
+
 struct ComponentChanges<'a> {
     map: &'a [map::MapChange],
     lexical_manifest: Option<&'a [u8]>,

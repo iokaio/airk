@@ -125,6 +125,14 @@ impl CurrentWriter<'_> {
             collection.canonicalize()? == plan.collection,
             "foreign current reclamation plan"
         );
+        // A current-head proof does not include the writer's next captured
+        // batch or its prior reuse inputs. Defer until that owner releases them.
+        if self.has_object_captures() {
+            return Ok(ReclamationReport {
+                pending: true,
+                ..Default::default()
+            });
+        }
         let mut candidates = Vec::new();
         let mut count = 0;
         for name in [

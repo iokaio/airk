@@ -36,7 +36,11 @@ fn lean_preserves_declarations_text_and_policy_omissions() -> Result<()> {
     )?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
     kernel.configure_vectors(false)?;
-    kernel.configure_index_detail(IndexDetail::AgentLean)?;
+    assert_eq!(
+        kernel.extraction_policy()?.configured_detail,
+        IndexDetail::AgentLean
+    );
+    assert_eq!(kernel.extraction_policy()?.origin, "default");
     kernel.index()?;
     assert_eq!(kernel.status()?.indexing.level, IndexDetail::AgentLean);
     let facts = kernel.outline("auth.rs", 100, 65536)?;
@@ -237,7 +241,10 @@ fn repack_keeps_graph_and_lexical_identity_with_vectors() -> Result<()> {
         "authenticate login original evidence\n".repeat(500),
     )?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
-    kernel.configure_index_detail(IndexDetail::AgentLean)?;
+    assert_eq!(
+        kernel.extraction_policy()?.configured_detail,
+        IndexDetail::AgentLean
+    );
     kernel.index()?;
     let store = airk_store::FileStore::new(data.path().join("collections-1.2/default"));
     let scope = store
@@ -287,5 +294,29 @@ fn repack_recovers_twice_at_each_journal_boundary() -> Result<()> {
             kernel.maintain_current()?;
         }
     }
+    Ok(())
+}
+
+#[test]
+fn existing_detail_survives_reopen_without_an_explicit_policy() -> Result<()> {
+    let root = unlinked_tempdir()?;
+    let data = unlinked_tempdir()?;
+    fs::write(root.path().join("auth.rs"), "pub fn authenticate() {}\n")?;
+    let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    kernel.configure_vectors(false)?;
+    kernel.configure_index_detail(IndexDetail::Balanced)?;
+    kernel.index()?;
+    drop(kernel);
+    // Reproduce a pre-1.2.3 collection that used the implicit Balanced default.
+    fs::remove_file(
+        data.path()
+            .join("collections-1.2/default/extraction-policy.json"),
+    )?;
+    let reopened = Kernel::open(root.path(), Some(data.path().into()))?;
+    let policy = reopened.extraction_policy()?;
+    assert_eq!(policy.configured_detail, IndexDetail::Balanced);
+    assert!(!policy.pending_reindex);
+    assert_eq!(reopened.index()?.reused, 1);
+    assert_eq!(reopened.status()?.indexing.level, IndexDetail::Balanced);
     Ok(())
 }

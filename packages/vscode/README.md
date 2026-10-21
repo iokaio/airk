@@ -4,7 +4,13 @@
 
 Everything runs on your machine. There is no cloud service, API key, Docker, Rust or Python to install: the native helper is bundled in the extension.
 
-> **Version 1.2.2.** Packages support Windows x64, Linux x64 and macOS (Intel and Apple Silicon). AIRK 1.2 starts a fresh current index; existing 1.1 indexes and settings remain untouched. See [the 1.2.2 semantic indexing fix](https://github.com/iokaio/airk/blob/main/docs/release-1.2.2.md), [the 1.2 behavior notes](https://github.com/iokaio/airk/blob/main/docs/release-1.2.0.md), and [Known limits](#known-limits).
+> **Version 1.2.3.** Packages support Windows x64, Linux x64 and macOS (Intel and Apple Silicon). AIRK 1.2 starts a fresh current index; existing 1.1 indexes and settings remain untouched. See [the 1.2.3 Agent Lean default and indexing fix](https://github.com/iokaio/airk/blob/main/docs/release-1.2.3.md), [the 1.2.2 semantic indexing fix](https://github.com/iokaio/airk/blob/main/docs/release-1.2.2.md), [the 1.2 behavior notes](https://github.com/iokaio/airk/blob/main/docs/release-1.2.0.md), and [Known limits](#known-limits).
+
+## What's new in 1.2.3
+
+New collections start with **Agent Lean**: selected declarations, imports and document facts with compact MCP replies. Start lean and fast, then choose Rich Structure for broader structural facts and declaration tracking, Detailed for call occurrences or document-unit tracking, or Search Only for text and citations. Existing collections retain their saved or published detail level. Rich Structure, Search Only and Detailed remain selectable. Semantic search stays enabled; the default Agent Lean vector policy excludes reviewed lockfiles and minified JS/CSS while retaining their lexical evidence.
+
+Progressive indexing also keeps newly captured and reusable objects alive across intermediate batches. This fixes the `retained object missing` failure that could stop a fresh scan; update and retry **Index now** without wiping the collection.
 
 ## What's new in 1.2.2
 
@@ -20,7 +26,7 @@ The extension Details and Marketplace description now match AIRK 1.2's current i
 
 **Progressive indexing.** Scheduled scans publish bounded batches of exact evidence before discovery finishes, then add local vector results in semantic batches. The dashboard reports saved-file coverage, discovery progress and semantic readiness separately. Earlier committed batches remain available if a later batch fails or indexing is paused.
 
-**Choose the evidence to retain.** New collections default to **Rich Structure**. **Agent Lean** is an opt-in compact mode for useful declarations, imports and document facts; **Search Only** keeps text search and citations. Detailed remains available as an advanced choice. Vector search is configured separately from these modes.
+**Choose the evidence to retain.** In 1.2.0–1.2.2, new collections defaulted to **Rich Structure**. Since 1.2.3, **Agent Lean** is the default compact mode for useful declarations, imports and document facts; **Search Only** keeps text search and citations. Detailed remains available as an advanced choice. Vector search is configured separately from these modes.
 
 **Local execution and storage controls.** AIRK admits extraction and inference workers within bounded CPU and memory plans. Optional lossless retained-object compression starts off; the collection's **Compression** control can configure it and repack current objects in bounded passes. These features do not establish universal search quality or performance for every corpus.
 
@@ -81,7 +87,7 @@ Document extraction keeps heading context, dates, requirement IDs and modality (
 
 ## Get started
 
-1. **Install the stable extension** from the VS Code Marketplace, or download the matching 1.2.2 VSIX from [GitHub Releases](https://github.com/iokaio/airk/releases) and use **Extensions: Install from VSIX…**. Packages target `win32-x64`, `linux-x64`, `darwin-x64` and `darwin-arm64`. If you previously opted into pre-release versions, use **Switch to Release Version** in the extension menu to stay on stable updates.
+1. **Install the stable extension** from the VS Code Marketplace, or download the matching 1.2.3 VSIX from [GitHub Releases](https://github.com/iokaio/airk/releases) and use **Extensions: Install from VSIX…**. Packages target `win32-x64`, `linux-x64`, `darwin-x64` and `darwin-arm64`. If you previously opted into pre-release versions, use **Switch to Release Version** in the extension menu to stay on stable updates.
 2. **Open a folder and trust it.** AIRK does not start its helper or read files in an untrusted window.
 3. **Index.** Click the **AIRK** status-bar item and choose **Index Now**, or run **AIRK: Index Now**. The status item then shows measured coverage, for example `AIRK: 97%`, and its tooltip lists stale, missing and failed files.
 4. **Connect an agent.**
@@ -218,7 +224,7 @@ The 1.2 namespace starts fresh settings and leaves old state on disk. Historical
 
 ### Choose indexing detail
 
-The AIRK sidebar offers **Search Only**, **Agent Lean**, **Rich Structure** (the default for new collections), and **Detailed**. Search Only keeps searchable text and exact citations. Agent Lean keeps selected declarations, imports and useful document facts with compact MCP replies. Rich Structure adds broader structural facts and declaration tracking. Detailed also retains individual calls and document-unit tracking. Existing saved detail choices keep their meanings.
+The AIRK sidebar offers **Search Only**, **Agent Lean** (the default for new collections), **Rich Structure**, and **Detailed**. Search Only keeps searchable text and exact citations. Agent Lean keeps selected declarations, imports and useful document facts with compact MCP replies. Rich Structure adds broader structural facts and declaration tracking. Detailed also retains individual calls and document-unit tracking. Existing saved detail choices keep their meanings.
 
 The panel shows the configured and published levels separately. Changing a level rebuilds evidence; preparation keeps the current head readable, and Applying requires completion or recovery before reads resume. Storage quotas, current-object cleanup and vector search are separate controls. Native fact and relationship responses explicitly report omitted detail. See [ingestion limits and index detail](https://github.com/iokaio/airk/blob/main/docs/ingestion-limits.md) for limits and CLI equivalents.
 

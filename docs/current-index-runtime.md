@@ -46,6 +46,8 @@ airk collections maintain
 
 The extension command **Reclaim Unreferenced Index Objects** runs the same operation. Its result reports `removed_files`, `removed_bytes` and `pending`. Repeat a pending pass after resolving the cause. Historical retention/prune/checkpoint commands return unsupported errors. Source files and other collections are never cleanup candidates.
 
+During a scan, the collection writer also owns captured objects that are not yet in the current head, and prior objects still needed for reuse. From 1.2.3, an in-process capture guard defers object reclamation across intermediate base and semantic publications. The guard is released after scan reconciliation, before the final publication performs normal bounded cleanup. The exclusive collection writer prevents another process from reclaiming these inputs. On failure or process exit, committed/journal ownership remains authoritative; unused captures can be reclaimed on a later maintenance pass. Quota admission remains in force throughout the scan.
+
 ## Work bounds and qualification
 
 The runtime admits at most 100,000 compact scan entries and 512 MiB of compact scan metadata. Per-update capacities distinguish files from their fan-out: 100,000 changed files, one million vector occurrences/keys, and four million final catalog changes with a 1 GiB encoded map-plan/journal byte ceiling. Captured input metadata is capped at 256 MiB; captured evidence at 8 GiB. Prior/generated continuity metadata is processed one file at a time with an 8 GiB cumulative allowance each; individual file metadata remains capped at 16 MiB. These are admission ceilings, not a promise that every combination fits memory, disk quota or acceptable latency.

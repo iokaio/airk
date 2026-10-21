@@ -47,7 +47,10 @@ impl Kernel {
             Some(bytes) => ExtractionPolicy::parse(bytes, &registry)?,
             None => ExtractionPolicy {
                 version: 3,
-                detail: Some(airk_core::extraction::IndexDetail::Balanced),
+                detail: Some(
+                    self.applied_index_detail()?
+                        .unwrap_or(airk_core::extraction::IndexDetail::AgentLean),
+                ),
                 rules: vec![],
             },
         };

@@ -16,6 +16,8 @@ fn instruction_markdown_retains_documents_untrusted_cues_and_safe_move_reuse() -
     let source = fs::read_to_string(fixture)?.replace('\n', "\r\n");
     fs::write(root.path().join("AGENTS.md"), &source)?;
     let kernel = Kernel::open(root.path(), Some(state.path().into()))?;
+    // Broad instruction-document cue inventory is a Rich Structure capability.
+    kernel.configure_index_detail(airk_core::extraction::IndexDetail::Balanced)?;
     kernel.index()?;
     let store = FileStore::new(state.path().join("collections-1.2/default"));
     let initial = store.current_test_catalog()?.unwrap();

@@ -1121,6 +1121,8 @@ mod tests {
             std::fs::write(root.path().join(format!("fixture_{file}.rs")), source)?;
         }
         let kernel = crate::Kernel::open(root.path(), None)?;
+        // Rich metadata keeps this regression fixture above the historical 8 MiB limit.
+        kernel.configure_index_detail(airk_core::extraction::IndexDetail::Balanced)?;
         kernel.index()?;
         let metadata_bytes = std::fs::read_dir(kernel.store.directory().join("current-metadata"))?
             .map(|entry| entry?.metadata().map(|m| m.len()))

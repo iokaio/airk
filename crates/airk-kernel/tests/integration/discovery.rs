@@ -43,6 +43,8 @@ fn keyset_discovery_enumerates_flat_files_facts_and_compact_outlines() -> Result
         "Original aliased fixture.\n",
     )?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    // This continuation fixture includes durable declaration keys.
+    kernel.configure_index_detail(airk_core::extraction::IndexDetail::Balanced)?;
     kernel.add_root("extra", aliases.path())?;
     kernel.index()?;
     let mut page = DiscoveryOptions::default();
