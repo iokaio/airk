@@ -793,7 +793,7 @@ fn interrupted_runtime_bootstrap_completes_before_any_source_scan() -> Result<()
 }
 
 #[test]
-fn slow_progressive_scan_keeps_captures_through_enrichment_and_reopen() -> Result<()> {
+fn delayed_progressive_publication_keeps_captures_through_enrichment_and_reopen() -> Result<()> {
     use std::sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -813,8 +813,8 @@ fn slow_progressive_scan_keeps_captures_through_enrichment_and_reopen() -> Resul
     let signal = delayed.clone();
     let observed = kernel.clone().with_index_progress(move |event| {
         if event.phase == "base_committed" && !signal.swap(true, Ordering::AcqRel) {
-            // Make the next nonempty batch cross the real time-based flush
-            // boundary, as slow extraction/inference does on an ordinary host.
+            // Retained inputs survive a delayed publication, compression,
+            // enrichment and reopen. Unit tests force the time/size boundaries.
             std::thread::sleep(std::time::Duration::from_millis(2100));
         }
     });

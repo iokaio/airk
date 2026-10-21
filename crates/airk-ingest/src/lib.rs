@@ -301,10 +301,20 @@ pub struct IndexReport {
     pub collection: String,
     pub indexed: usize,
     pub reused: usize,
+    /// Retained inputs recreated after a missing-object reuse miss in this scan.
+    #[serde(default, skip_serializing_if = "count_is_zero")]
+    pub repaired_retained_artifacts: usize,
+    /// Bounded fresh scans after retained-object loss before journal admission.
+    #[serde(default, skip_serializing_if = "count_is_zero")]
+    pub retained_repair_retries: usize,
     pub removed: usize,
     pub source_bytes: usize,
     pub skipped_truncated: usize,
     pub skipped: Vec<SkippedFile>,
+}
+
+fn count_is_zero(value: &usize) -> bool {
+    *value == 0
 }
 
 #[derive(Debug, Serialize, Deserialize)]

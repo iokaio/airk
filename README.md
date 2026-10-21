@@ -1,6 +1,6 @@
 # AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents
 
-**Version 1.2.3.** See the [1.2.3 Agent Lean default and indexing fix](docs/release-1.2.3.md), the [1.2.2 semantic indexing fix](docs/release-1.2.2.md) and [1.2.0 behavior and upgrade notes](docs/release-1.2.0.md). Download published [native ZIPs and platform VSIX packages](https://github.com/iokaio/airk/releases).
+**Version 1.2.4.** See the [1.2.4 diagnosis and recovery notes](docs/release-1.2.4.md), the [1.2.3 Agent Lean default and indexing fix](docs/release-1.2.3.md), the [1.2.2 semantic indexing fix](docs/release-1.2.2.md) and [1.2.0 behavior and upgrade notes](docs/release-1.2.0.md). Download published [native ZIPs and platform VSIX packages](https://github.com/iokaio/airk/releases).
 
 **Give Claude Code, Codex, Gemini CLI/Antigravity, GitHub Copilot and other MCP-capable agents a shared, local index of your workspace.** AIRK indexes files and returns bounded facts and passages with source paths, hashes and original locations. The agent supplies the reasoning. Runtime storage uses memory and local disk.
 
@@ -9,6 +9,14 @@
 This is an independent, runnable open-source project. Munarium, VCP and local reference files inform the design; their implementations are not dependencies. Tantivy lexical indexes, authenticated SQLite records and mutable Microsoft DiskANN publish one coherent current revision. Vector indexing and hybrid retrieval are enabled by default. The trusted panel prepares the pinned [local CPU embedding model](docs/onnx-models.md) on first use (about 91 MB); turn **Vector search** off per collection to opt out. Inference and source data stay local. Model quality must be evaluated for the intended corpus.
 
 [Code facts and relationships](docs/code-facts-and-relationships.md) add scopes, signatures, written types, call/framework candidates and optional source/build-bound SCIP imports. Sixteen read-only MCP tools expose bounded evidence with explicit syntax versus producer provenance. Native indexing needs no external compiler/indexer installation.
+
+## What's new in 1.2.4
+
+**Diagnose & Repair** collects the selected collection's helper identity, current indexing/semantic progress, queue state and recent failures inside the extension. Copy a bounded report, retry indexing, resume window indexing or rebuild derived evidence from the same view. Recent failures survive reloads and are kept separate from current observations.
+
+**Verify retained data** checks source and extraction inputs in bounded pages at one indexed revision. It reports incomplete checks and failures explicitly; saved readiness alone is not proof of intact retained data.
+
+Temporary publication contention automatically retries. Indexing can recreate missing retained objects from freshly validated source files, and one guarded rescan handles a missing capture before publication when no journal requires recovery. Genuine corruption, permissions and unrecoverable journals remain visible failures. Slow semantic work no longer forces the next source batch to publish prematurely. Agent Lean remains the default.
 
 ## What's new in 1.2.3
 

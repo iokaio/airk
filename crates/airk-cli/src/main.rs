@@ -500,7 +500,7 @@ impl Command {
             | Self::Service { .. }
             | Self::Storage { .. } => return None,
             Self::Collections {
-                action: CollectionCommand::Quota { .. },
+                action: CollectionCommand::Quota { .. } | CollectionCommand::Diagnose { .. },
             } => return None,
             // The native worker records the actual job once, including joined callers.
             Self::Index {
@@ -681,6 +681,17 @@ fn vector_selection_input(
 
 #[derive(Subcommand)]
 enum CollectionCommand {
+    /// Verify one bounded, revision-bound page of retained source and extraction inputs.
+    Diagnose {
+        #[arg(long)]
+        revision: Option<airk_core::identity::RevisionToken>,
+        #[arg(long, requires = "revision")]
+        after: Option<String>,
+        #[arg(long, default_value_t = 128)]
+        max_files: usize,
+        #[arg(long, default_value_t = 33554432)]
+        max_bytes: u64,
+    },
     /// Reclaim unreferenced current-index objects after a complete ownership check.
     Maintain,
     /// Inspect or save the collection vector setting used by the panel.
@@ -1076,7 +1087,16 @@ async fn main_async() -> anyhow::Result<()> {
         } => path.clone(),
         _ => cli.root,
     };
-    let kernel = Kernel::open_collection(root, cli.data_dir, &cli.collection)?;
+    let kernel = if matches!(
+        &cli.command,
+        Command::Collections {
+            action: CollectionCommand::Diagnose { .. }
+        }
+    ) {
+        Kernel::open_collection_for_diagnostics(root, cli.data_dir, &cli.collection)?
+    } else {
+        Kernel::open_collection(root, cli.data_dir, &cli.collection)?
+    };
     let recorder = OutputRecorder {
         kernel: &kernel,
         span: std::cell::RefCell::new(
@@ -1243,6 +1263,9 @@ async fn main_async() -> anyhow::Result<()> {
             max_bytes,
         })?),
         Command::Collections { action } => match action {
+            CollectionCommand::Diagnose { revision, after, max_files, max_bytes } => {
+                recorder.print(&kernel.diagnose_current(revision, after.as_deref(), max_files, max_bytes)?)
+            }
             CollectionCommand::Vectors { action } => match action {
                 VectorCommand::Show => recorder.print(&kernel.vector_status()?),
                 VectorCommand::Install { source } => recorder.print(&kernel.install_vector_model(&source)?),

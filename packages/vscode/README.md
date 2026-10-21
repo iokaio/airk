@@ -4,7 +4,15 @@
 
 Everything runs on your machine. There is no cloud service, API key, Docker, Rust or Python to install: the native helper is bundled in the extension.
 
-> **Version 1.2.3.** Packages support Windows x64, Linux x64 and macOS (Intel and Apple Silicon). AIRK 1.2 starts a fresh current index; existing 1.1 indexes and settings remain untouched. See [the 1.2.3 Agent Lean default and indexing fix](https://github.com/iokaio/airk/blob/main/docs/release-1.2.3.md), [the 1.2.2 semantic indexing fix](https://github.com/iokaio/airk/blob/main/docs/release-1.2.2.md), [the 1.2 behavior notes](https://github.com/iokaio/airk/blob/main/docs/release-1.2.0.md), and [Known limits](#known-limits).
+> **Version 1.2.4.** Packages support Windows x64, Linux x64 and macOS (Intel and Apple Silicon). AIRK 1.2 starts a fresh current index; existing 1.1 indexes and settings remain untouched. See [the 1.2.4 diagnosis and recovery notes](https://github.com/iokaio/airk/blob/main/docs/release-1.2.4.md), [the 1.2.3 Agent Lean default and indexing fix](https://github.com/iokaio/airk/blob/main/docs/release-1.2.3.md), [the 1.2.2 semantic indexing fix](https://github.com/iokaio/airk/blob/main/docs/release-1.2.2.md), [the 1.2 behavior notes](https://github.com/iokaio/airk/blob/main/docs/release-1.2.0.md), and [Known limits](#known-limits).
+
+## What's new in 1.2.4
+
+**Diagnose & Repair** collects the selected collection's helper identity, current indexing/semantic progress, queue state and recent failures inside the extension. Copy a bounded report, retry indexing, resume window indexing or rebuild derived evidence from the same view. Recent failures survive reloads and are kept separate from current observations.
+
+**Verify retained data** checks source and extraction inputs in bounded pages at one indexed revision. It reports incomplete checks and failures explicitly; saved readiness alone is not proof of intact retained data.
+
+Temporary publication contention automatically retries. Indexing can recreate missing retained objects from freshly validated source files, and one guarded rescan handles a missing capture before publication when no journal requires recovery. Genuine corruption, permissions and unrecoverable journals remain visible failures. Slow semantic work no longer forces the next source batch to publish prematurely. Agent Lean remains the default.
 
 ## What's new in 1.2.3
 
@@ -87,7 +95,7 @@ Document extraction keeps heading context, dates, requirement IDs and modality (
 
 ## Get started
 
-1. **Install the stable extension** from the VS Code Marketplace, or download the matching 1.2.3 VSIX from [GitHub Releases](https://github.com/iokaio/airk/releases) and use **Extensions: Install from VSIX…**. Packages target `win32-x64`, `linux-x64`, `darwin-x64` and `darwin-arm64`. If you previously opted into pre-release versions, use **Switch to Release Version** in the extension menu to stay on stable updates.
+1. **Install the stable extension** from the VS Code Marketplace, or download the matching 1.2.4 VSIX from [GitHub Releases](https://github.com/iokaio/airk/releases) and use **Extensions: Install from VSIX…**. Packages target `win32-x64`, `linux-x64`, `darwin-x64` and `darwin-arm64`. If you previously opted into pre-release versions, use **Switch to Release Version** in the extension menu to stay on stable updates.
 2. **Open a folder and trust it.** AIRK does not start its helper or read files in an untrusted window.
 3. **Index.** Click the **AIRK** status-bar item and choose **Index Now**, or run **AIRK: Index Now**. The status item then shows measured coverage, for example `AIRK: 97%`, and its tooltip lists stale, missing and failed files.
 4. **Connect an agent.**

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { execFile, spawn } from 'node:child_process';
+import { execFile, ExecFileException, spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
@@ -19,7 +19,7 @@ export class NativeWriteQueue {
     }
 }
 
-export async function prepareHelper(extensionPath: string, storage: string, version: string): Promise<string> {
+export async function prepareHelper(extensionPath: string, storage: string, version: string, repaired?: (message: string) => void): Promise<string> {
     const executable = process.platform === 'win32' ? 'airk.exe' : 'airk';
     const native = path.join(extensionPath, 'native');
     const manifest = JSON.parse(await fs.readFile(path.join(native, 'manifest.json'), 'utf8'));
@@ -36,26 +36,61 @@ export async function prepareHelper(extensionPath: string, storage: string, vers
     const directory = path.join(storage, 'helpers', `${version}-${platform}-${digest.slice(0, 16)}`);
     await fs.mkdir(directory, { recursive: true });
     const destination = path.join(directory, executable);
+    let replace = false;
     try {
         const cached = await fs.readFile(destination);
-        if (createHash('sha256').update(cached).digest('hex') !== digest) { throw new Error('AIRK cached helper digest mismatch.'); }
+        replace = createHash('sha256').update(cached).digest('hex') !== digest;
     } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') { throw error; }
+        replace = true;
+    }
+    if (replace) {
         const temporary = path.join(directory, randomUUID() + '.tmp');
         try {
             await fs.writeFile(temporary, bytes, { flag: 'wx', mode: 0o755 });
             await fs.rename(temporary, destination);
         } finally { await fs.unlink(temporary).catch(() => undefined); }
+        repaired?.(`Prepared verified AIRK ${version} helper from the bundled copy: ${destination}`);
     }
     const actual = await runText(destination, ['--version']);
     if (actual.trim() !== `airk ${version}`) { throw new Error('AIRK helper version mismatch.'); }
     return destination;
 }
 
+function boundedDiagnostic(message: string): string {
+    const limit = 8192;
+    return message.length <= limit ? message : `${message.slice(0, limit / 2)}\n[diagnostic truncated]\n${message.slice(-limit / 2)}`;
+}
+
+/** Preserve process failure details even when the helper supplied its own stderr. */
+export class NativeProcessError extends Error {
+    readonly code: string | number | null | undefined;
+    readonly signal: NodeJS.Signals | null | undefined;
+    readonly killed: boolean;
+    readonly timedOut: boolean;
+    readonly stderr: string;
+    constructor(command: string, error: ExecFileException, stderr: string, readonly elapsedMs: number, readonly timeoutMs: number) {
+        // With no AbortSignal or exposed child handle, execFile only kills a
+        // child for its timeout or output cap. An external signal does not set killed.
+        const timedOut = !!error.killed && timeoutMs > 0 && error.code !== 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER';
+        const code = typeof error.code === 'number' && (error.code < 0 || error.code >= 0x80000000)
+            ? `${error.code} (0x${(error.code >>> 0).toString(16).padStart(8, '0')})` : error.code;
+        const details = [code != null ? `exit code ${code}` : undefined,
+            error.signal ? `signal ${error.signal}` : undefined, error.killed ? 'terminated' : undefined,
+            `elapsed ${elapsedMs} ms`].filter(Boolean).join('; ');
+        const diagnostic = boundedDiagnostic(stderr.trim() || error.message);
+        super(`${path.basename(command)} ${timedOut ? `timed out (limit ${timeoutMs} ms)` : 'failed'}: ${details}\n${diagnostic}`);
+        this.name = 'NativeProcessError';
+        this.code = error.code; this.signal = error.signal; this.killed = !!error.killed; this.timedOut = timedOut;
+        this.stderr = boundedDiagnostic(stderr.trim());
+    }
+}
+
 export function runText(command: string, args: string[], cwd?: string, timeout = 300000): Promise<string> {
     return new Promise((resolve, reject) => {
+        const started = performance.now();
         execFile(command, args, { cwd, env: { ...process.env, AIRK_CLIENT: 'vscode' }, windowsHide: true, maxBuffer: 16 * 1024 * 1024, timeout }, (error, stdout, stderr) => {
-            if (error) { reject(new Error(stderr.trim() || error.message)); }
+            if (error) { reject(new NativeProcessError(command, error, stderr, Math.round(performance.now() - started), timeout)); }
             else { resolve(stdout); }
         });
     });

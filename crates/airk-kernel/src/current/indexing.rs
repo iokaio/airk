@@ -197,7 +197,6 @@ impl ProgressiveBase<'_> {
         drop(reservation);
         self.committed += changes.len() as u64;
         self.batch_bytes = 0;
-        self.last_flush = std::time::Instant::now();
         self.scan_work = next_scan_work;
         self.semantic_work = selected;
         self.current.changed_artifacts = self
@@ -247,6 +246,9 @@ impl ProgressiveBase<'_> {
                 completed_units: self.semantic_work.as_ref().map(|w| w.completed_units),
             });
         self.enrich_batch()?;
+        // The next source batch gets its own scan interval. Time spent publishing
+        // and enriching this batch must not force its successor to flush one file.
+        self.last_flush = std::time::Instant::now();
         Ok(())
     }
 
@@ -583,6 +585,56 @@ impl Kernel {
         full: bool,
         defer_completion: bool,
     ) -> Result<airk_ingest::IndexReport> {
+        match self.index_current_once(full, defer_completion) {
+            Ok(report) => Ok(report),
+            Err(error)
+                if error
+                    .downcast_ref::<airk_store::blobs::MissingRetainedObject>()
+                    .is_some() =>
+            {
+                // The failed attempt has released its capture guard, writer and
+                // reservations. Never replace captured inputs in a durable journal
+                // with live source bytes, even if the live path still exists.
+                match self.retained_repair_can_rescan() {
+                    Ok(true) => {}
+                    Ok(false) => return Err(error.context(
+                        "automatic retained-object repair requires a ready index with no pending journal; captured journal inputs must be recovered separately"
+                    )),
+                    Err(admission) => return Err(error.context(format!(
+                        "automatic retained-object repair could not verify an idle index: {admission:#}"
+                    ))),
+                }
+                let mut report = self.index_current_once(full, defer_completion).context(
+                    "automatic retained-object repair failed after one fresh scan; indexing stopped without further retries; run AIRK: Diagnose & Repair to inspect the remaining failure"
+                )?;
+                report.retained_repair_retries = 1;
+                Ok(report)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    fn retained_repair_can_rescan(&self) -> Result<bool> {
+        let writer = self.store.lock()?;
+        let Some(scope) = self.current_scope()? else {
+            return Ok(false);
+        };
+        let quota = Quota::open(&self.data_root)?;
+        let capacity = self.store.current_database_capacity(&scope)?;
+        let current = self
+            .store
+            .current_write(&writer, &quota, &scope, capacity)?;
+        Ok(
+            current.phase()? == airk_store::current::TransactionPhase::Ready
+                && current.pending()?.is_none(),
+        )
+    }
+
+    fn index_current_once(
+        &self,
+        full: bool,
+        defer_completion: bool,
+    ) -> Result<airk_ingest::IndexReport> {
         let index_started = std::time::Instant::now();
         let execution_lease = crate::execution::acquire(&self.data_root)?;
         self.emit_progress(airk_core::readiness::IndexProgress {
@@ -777,6 +829,7 @@ impl Kernel {
                 .or_insert(artifact);
         }
         let scan_started = std::time::Instant::now();
+        let mut repaired_retained_artifacts = 0usize;
         let scan_result = airk_ingest::scan_payloads_with_execution(
             &self.root,
             &self.data_root,
@@ -815,8 +868,25 @@ impl Kernel {
                 }) else {
                     return Ok(None);
                 };
-                self.store.load_retained(old)?;
-                self.store.verify_retained_source(old)?;
+                if let Err(error) = self
+                    .store
+                    .load_retained(old)
+                    .and_then(|_| self.store.verify_retained_source(old))
+                {
+                    if error
+                        .downcast_ref::<airk_store::blobs::MissingRetainedObject>()
+                        .is_some()
+                    {
+                        // The scanner already captured and hashed the live source
+                        // before lookup. Reextract those bytes under its selected
+                        // profile to restore missing derived objects. Integrity and
+                        // permission failures still stop indexing; reads and journal
+                        // recovery never reconstruct from live sources.
+                        repaired_retained_artifacts += 1;
+                        return Ok(None);
+                    }
+                    return Err(error);
+                }
                 let mut artifact = old.clone();
                 artifact.path = request.path.to_owned();
                 Ok(Some(airk_ingest::observations::VerifiedReuse {
@@ -845,6 +915,8 @@ impl Kernel {
                         compression,
                     )?
                 };
+                #[cfg(test)]
+                tests::after_capture(&self.store, &retained)?;
                 if let Some(progressive) = progressive.as_mut() {
                     progressive.observe(&retained)?;
                 }
@@ -857,6 +929,7 @@ impl Kernel {
             let _ = progressive.fail(error);
         }
         let (snapshot, mut report, observation) = scan_result?;
+        report.repaired_retained_artifacts = repaired_retained_artifacts;
         if let Some(progressive) = progressive.as_mut()
             && let Err(error) = progressive.check_pause()
         {
