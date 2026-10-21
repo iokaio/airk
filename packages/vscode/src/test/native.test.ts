@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { NativeProcessError, NativeWriteQueue, parseIndexProgress, prepareHelper, probeMcp, runJson, runText } from '../native';
+import { NativeProcessError, NativeWriteQueue, joinScheduledIndex, parseIndexProgress, prepareHelper, probeMcp, runJson, runText } from '../native';
 import { IndexReport, LaunchSpec, collectionId } from '../model';
 import { Coverage } from '../coverage';
 
@@ -167,9 +167,12 @@ test('native semantic adapter finishes bounded batches and honors saved pause wi
         const spec: LaunchSpec = { command: path.resolve(process.env.AIRK_TEST_BINARY!), root, dataDir,
             collection: 'semantic-adapter', name: 'Fixture' };
         await runJson(spec, 'index', ['--scheduled']);
+        const queued = await runJson<{ requested_revision: number }>(spec, 'schedule', ['status']);
+        await runJson(spec, 'schedule', ['wait', String(queued.requested_revision), '--progress']);
+        assert.equal((await runJson<{ requested_revision: number }>(spec, 'schedule', ['status'])).requested_revision, queued.requested_revision);
         type Ready = {state: string; completed_artifacts: number; selected_artifacts: number};
         let status = await runJson<Ready>(spec, 'semantic', ['status']);
-        assert.equal(status.state, 'partial'); assert.ok(status.completed_artifacts < 65);
+        assert.equal(status.state, 'pending'); assert.equal(status.completed_artifacts, 0);
         await runJson(spec, 'schedule', ['pause']);
         assert.equal((await runJson<{state: string}>(spec, 'semantic', ['run', '--scheduled'])).state, 'paused');
         const paused = await runJson<Ready>(spec, 'semantic', ['status']);
@@ -353,4 +356,29 @@ test('extension native adapter indexes, rebuilds, probes MCP, isolates and remov
         assert.equal(repairs.length, 1, 'Verified cached bytes need no second repair');
         assert.equal((await runText(cached, ['--version'])).trim(), `airk ${version}`);
     } finally { await removeFixture(directory, 'airk-native-extension-'); }
+});
+
+
+test('native queue waits resume the same request and reject untyped or invalid continuations', async () => {
+    const pending = { airk_error: 1, code: 'scheduled_index_pending', retryable: true, requested_revision: 7, message: 'still queued' };
+    const failure = (value: unknown, properties: object = { code: 1 }) => new NativeProcessError('airk',
+        Object.assign(new Error('Command failed'), properties), JSON.stringify(value), 240000, 3600000);
+    const calls: string[][] = []; let waits = 0;
+    const result = await joinScheduledIndex(['--scheduled', '--progress'], async (command, args) => {
+        calls.push([command, ...args]);
+        if (calls.length < 3) { throw failure(pending); }
+        return { generation: 9 };
+    }, () => { waits++; });
+    assert.equal(result.generation, 9); assert.equal(waits, 2);
+    assert.deepEqual(calls, [['index', '--scheduled', '--progress'], ['schedule', 'wait', '7', '--progress'], ['schedule', 'wait', '7', '--progress']]);
+    for (const value of [{ ...pending, requested_revision: -1 }, { ...pending, requested_revision: Number.MAX_SAFE_INTEGER + 1 },
+        { ...pending, retryable: false }, { ...pending, code: 'operation_failed' }]) {
+        assert.equal(failure(value).pendingIndexRevision, undefined);
+    }
+    assert.equal(failure(pending, { code: 1, killed: true }).pendingIndexRevision, undefined);
+    assert.equal(failure(pending, { code: 1, signal: 'SIGTERM' }).pendingIndexRevision, undefined);
+    await assert.rejects(joinScheduledIndex([], async () => { throw failure(pending); }, () => { throw new Error('Workspace closed'); }), /Workspace closed/);
+    let attempt = 0;
+    await assert.rejects(joinScheduledIndex([], async () => { throw failure({ ...pending, requested_revision: ++attempt }); }, () => {}), /different request revision/);
+    await assert.rejects(joinScheduledIndex([], async () => { throw new Error('permission denied'); }, () => { assert.fail(); }), /permission denied/);
 });

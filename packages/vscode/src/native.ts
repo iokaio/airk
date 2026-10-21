@@ -92,8 +92,9 @@ export class NativeProcessError extends Error {
     readonly stderr: string;
     readonly retryableGateContention: boolean;
     readonly nativeMessage?: string;
+    readonly pendingIndexRevision?: number;
     constructor(command: string, error: ExecFileException, stderr: string, readonly elapsedMs: number, readonly timeoutMs: number) {
-        let nativeMessage: string | undefined, retryableGateContention = false;
+        let nativeMessage: string | undefined, retryableGateContention = false, pendingIndexRevision: number | undefined;
         if (error.code === 1 && !error.killed && !error.signal) {
             try {
                 // execFile already bounds captured output. Parse before applying
@@ -108,6 +109,10 @@ export class NativeProcessError extends Error {
                         && typeof fields.retryable === 'boolean' && typeof fields.message === 'string') {
                         nativeMessage = boundedDiagnostic(fields.message);
                         retryableGateContention = fields.code === 'current_gate_busy' && fields.retryable;
+                        if (fields.code === 'scheduled_index_pending' && fields.retryable
+                            && Number.isSafeInteger(fields.requested_revision) && Number(fields.requested_revision) > 0) {
+                            pendingIndexRevision = Number(fields.requested_revision);
+                        }
                     }
                 }
             } catch { /* Unstructured stderr never authorizes a retry. */ }
@@ -127,6 +132,7 @@ export class NativeProcessError extends Error {
         this.stderr = boundedDiagnostic(stderr.trim());
         this.nativeMessage = nativeMessage;
         this.retryableGateContention = retryableGateContention;
+        this.pendingIndexRevision = pendingIndexRevision;
     }
 }
 
@@ -167,9 +173,27 @@ export function runText(command: string, args: string[], cwd?: string, timeout =
 }
 
 export async function runJson<T>(spec: LaunchSpec, command: string, extra: string[] = [], onStderrLine?: (line: string) => boolean): Promise<T> {
+    const indexing = command === 'index' || command === 'schedule' && extra[0] === 'wait';
     return JSON.parse(await runText(spec.command, [...launchArgs(spec, command), ...extra], spec.root,
-        command === 'index' ? 3600000 : command === 'semantic' && extra[0] === 'run' ? 1200000 : 300000,
-        onStderrLine, command === 'index' && onStderrLine ? 600000 : 0)) as T;
+        indexing ? 3600000 : command === 'semantic' && extra[0] === 'run' ? 1200000 : 300000,
+        onStderrLine, indexing && onStderrLine ? 600000 : 0)) as T;
+}
+
+/** Continue the same durable request after a bounded native join expires. */
+export async function joinScheduledIndex<T>(initialArgs: string[],
+    run: (command: string, args: string[]) => Promise<T>, onPending: () => void): Promise<T> {
+    let revision: number | undefined;
+    for (;;) {
+        try { return await run(revision === undefined ? 'index' : 'schedule',
+            revision === undefined ? initialArgs : ['wait', String(revision), '--progress']); }
+        catch (error) {
+            if (!(error instanceof NativeProcessError) || error.pendingIndexRevision === undefined) { throw error; }
+            if (revision !== undefined && error.pendingIndexRevision !== revision) { throw new Error('Native indexing wait returned a different request revision.'); }
+            revision = error.pendingIndexRevision;
+            // The caller rechecks trust, shutdown and collection binding between joins.
+            onPending();
+        }
+    }
 }
 
 /** Real bounded stdio initialization/tool-list/status probe, independent of any coding agent. */

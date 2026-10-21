@@ -247,3 +247,30 @@ test('closing diagnostic history drains accepted writes and prevents late events
         await fs.rm(resolved, { recursive: true, force: true });
     }
 });
+
+
+test('a completed native queue wait supersedes stale editor failure without claiming full integrity', async () => {
+    const responses = replies(), at = '2026-10-21T18:00:00.000Z';
+    Object.assign(responses['schedule status'] as object, { requested_revision: 4, completed_revision: 4, running_revision: 0,
+        last_completed_unix_ms: Date.parse(at) + 1000, scan_error: null });
+    Object.assign(responses['collections diagnose'] as object, { checked_files: 16, verified_sources: 16, verified_extractions: 16,
+        complete: false, next_after: 'fixture.txt' });
+    const event = { at, kind: 'index_failed' as const, helperPath: spec.command,
+        error: diagnosticError(processError(nativeOutcome('scheduled indexing wait exceeded 240 seconds; request remains queued'))) };
+    const options = { runner: fakeRunner(responses), editor: { paused: false, state: 'failed', pending: true, busy: false }, events: [event] };
+    const report = await collectDiagnostics(spec, options);
+    assert.equal(report.assessment.state, 'unknown');
+    assert.match(report.assessment.summary, /completed after the editor stopped waiting/);
+    assert.match(report.assessment.summary, /verification is partial/);
+    assert.equal(report.recentEvents[0].kind, 'index_failed');
+    assert.equal(report.editor?.state, 'failed', 'Preserve the original editor observation');
+    for (const mutation of [{ completed_revision: 3 }, { running_revision: 4 }, { last_completed_unix_ms: Date.parse(at) - 1 }, { blocked: true }]) {
+        const prior = { ...(responses['schedule status'] as object) };
+        Object.assign(responses['schedule status'] as object, mutation);
+        const pending = await collectDiagnostics(spec, options);
+        assert.equal(pending.assessment.state, 'blocked');
+        responses['schedule status'] = prior;
+    }
+    const unrelated = await collectDiagnostics(spec, { ...options, events: [{ ...event, error: diagnosticError(processError(nativeOutcome('permission denied'))) }] });
+    assert.equal(unrelated.assessment.state, 'blocked');
+});

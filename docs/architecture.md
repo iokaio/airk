@@ -62,7 +62,7 @@ All missing prior paths in one publication share that traversal. Healthy changes
 
 The 1.2.2 extension drives one native semantic batch per active trusted collection at a time after indexing and on reopen. These calls share the existing scheduler worker lock and native pause/failure policy, but do not select work from other collections. The editor queue yields between batches and refreshes readiness independently of source coverage; no service installation is required.
 
-The native scheduler serializes submitted work and persists revisions, pause, explicit requests and blocked failures in the 1.2 namespace. Coverage remains an independent observation of saved source files. The extension manages collection-scoped controls and coalesced requests; it neither implements indexing nor claims live editor buffers are indexed.
+The native scheduler serializes submitted work and persists revisions, pause, explicit requests and blocked failures in the 1.2 namespace. Coverage remains an independent observation of saved source files. A bounded scheduler join returns a typed pending revision; adapters resume that same request without enqueueing or clearing state. The extension manages collection-scoped controls and coalesced requests; it neither implements indexing nor claims live editor buffers are indexed.
 
 The extension rechecks pending work and deadlines when its timer fires. An early callback reschedules rather than dispatching unrequested semantic work. This preserves source requests, semantic retry intervals, pause and storage-selection holds independently of wall-clock timing.
 

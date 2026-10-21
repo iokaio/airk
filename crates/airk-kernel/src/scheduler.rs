@@ -45,6 +45,22 @@ impl std::fmt::Display for ScanPaused {
 }
 impl std::error::Error for ScanPaused {}
 
+/// The caller exhausted its join budget; durable indexing has not failed.
+#[derive(Debug)]
+pub struct ScheduledIndexPending {
+    pub revision: u64,
+}
+impl std::fmt::Display for ScheduledIndexPending {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "scheduled indexing wait ended; request {} remains queued; resume with schedule wait {}",
+            self.revision, self.revision
+        )
+    }
+}
+impl std::error::Error for ScheduledIndexPending {}
+
 impl Kernel {
     /// Advance one semantic batch for this collection only. Editor hosts use
     /// this after base indexing and on reopen, without installing a service or
@@ -419,12 +435,31 @@ impl Kernel {
             !automatic || !requested.paused,
             "native automatic scheduling is paused; request remains queued"
         );
+        self.wait_scheduled_index(requested.requested_revision)
+    }
+
+    /// Join an existing durable request without enqueueing or clearing failures.
+    pub fn wait_scheduled_index(&self, revision: u64) -> Result<IndexReport> {
+        self.wait_scheduled_index_with_budget(revision, Duration::from_secs(240))
+    }
+
+    fn wait_scheduled_index_with_budget(
+        &self,
+        revision: u64,
+        budget: Duration,
+    ) -> Result<IndexReport> {
+        ensure!(revision > 0, "scheduled revision must be positive");
+        let queue = self.queue()?;
         let start = Instant::now();
         loop {
             let job = queue
                 .status(&self.collection, &self.root_id())?
                 .context("scheduled collection was removed")?;
-            if job.completed_revision >= requested.requested_revision {
+            ensure!(
+                revision <= job.requested_revision,
+                "scheduled revision was not requested"
+            );
+            if job.completed_revision >= revision {
                 return serde_json::from_str(
                     job.last_report
                         .as_deref()
@@ -441,22 +476,76 @@ impl Kernel {
             if job.paused && !job.manual {
                 return Err(ScanPaused.into());
             }
+            if start.elapsed() >= budget {
+                return Err(ScheduledIndexPending { revision }.into());
+            }
             let outcome = self.run_scheduled_once()?;
             if outcome.collection.as_deref() == Some(&self.collection)
                 && outcome.state == "indexed"
                 && outcome
                     .revision
-                    .is_some_and(|revision| revision >= requested.requested_revision)
+                    .is_some_and(|completed| completed >= revision)
             {
                 return outcome
                     .report
                     .context("successful scheduled report missing");
             }
-            ensure!(
-                start.elapsed() < Duration::from_secs(240),
-                "scheduled indexing wait exceeded 240 seconds; request remains queued"
-            );
             thread::sleep(Duration::from_millis(100));
         }
+    }
+}
+
+#[cfg(test)]
+mod join_tests {
+    use super::*;
+
+    #[test]
+    fn expired_join_can_resume_the_same_revision_without_new_work() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let data = tempfile::tempdir()?;
+        std::fs::write(root.path().join("fixture.txt"), "original queued evidence")?;
+        let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+        kernel.configure_vectors(false)?;
+        let request = kernel.schedule_enqueue(false)?;
+        let revision = request.requested_revision;
+        let error = kernel
+            .wait_scheduled_index_with_budget(revision, Duration::ZERO)
+            .unwrap_err();
+        assert_eq!(
+            error
+                .downcast_ref::<ScheduledIndexPending>()
+                .unwrap()
+                .revision,
+            revision
+        );
+        let pending = kernel.schedule_status()?.unwrap();
+        assert!(!pending.blocked);
+        assert_eq!(pending.requested_revision, revision);
+        let report = kernel.wait_scheduled_index(revision)?;
+        let completed = kernel.schedule_status()?.unwrap();
+        assert_eq!(completed.requested_revision, revision);
+        assert_eq!(completed.completed_revision, revision);
+        // Check completion before the wait budget, including late completions.
+        assert_eq!(
+            kernel
+                .wait_scheduled_index_with_budget(revision, Duration::ZERO)?
+                .generation,
+            report.generation
+        );
+        assert!(kernel.wait_scheduled_index(0).is_err());
+        assert!(kernel.wait_scheduled_index(revision + 1).is_err());
+        let next = kernel.schedule_enqueue(false)?;
+        kernel.schedule_pause(true)?;
+        assert!(
+            kernel
+                .wait_scheduled_index(next.requested_revision)
+                .unwrap_err()
+                .is::<ScanPaused>()
+        );
+        assert_eq!(
+            kernel.schedule_status()?.unwrap().requested_revision,
+            next.requested_revision
+        );
+        Ok(())
     }
 }

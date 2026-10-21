@@ -8,7 +8,7 @@ Everything runs on your machine. There is no cloud service, API key, Docker, Rus
 
 ## What's new in 1.2.5 (not released)
 
-MCP can start while indexing continues. Source scans publish searchable lexical evidence and facts before semantic inference runs through the existing background queue. The first batch stays small; subsequent batches adapt to publication cost to reduce repeated transaction overhead in large repositories. The dashboard shows committed progress and elapsed time, with bounded termination for stalled work. Semantic coverage remains explicit; these changes do not claim a measured speedup. See the [candidate notes](https://github.com/iokaio/airk/blob/main/docs/release-1.2.5.md) for compact replies, focused snippets, validated hashes and removal of the unsupported history tool.
+MCP can start while indexing continues. Source scans publish searchable lexical evidence and facts before semantic inference runs through the existing background queue. The first batch stays small; subsequent batches adapt to publication cost to reduce repeated transaction overhead in large repositories. The dashboard shows committed progress and elapsed time, with bounded termination for stalled work. Waiting for a shared indexing worker continues the same queued request instead of failing after four minutes. Diagnostics recognize a native request that completed after an earlier editor wait failure, while keeping incomplete retained-data verification explicit. Semantic coverage remains explicit; these changes do not claim a measured speedup. See the [candidate notes](https://github.com/iokaio/airk/blob/main/docs/release-1.2.5.md) for compact replies, focused snippets, validated hashes and removal of the unsupported history tool.
 
 ## What's new in 1.2.4
 

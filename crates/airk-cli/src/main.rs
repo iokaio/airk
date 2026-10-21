@@ -365,6 +365,13 @@ enum ScheduleCommand {
         full: bool,
     },
     Status,
+    /// Join an existing request without enqueueing another scan.
+    Wait {
+        #[arg(value_parser = clap::value_parser!(u64).range(1..))]
+        revision: u64,
+        #[arg(long)]
+        progress: bool,
+    },
     Pause,
     Resume,
     Forget,
@@ -1046,6 +1053,7 @@ fn main() -> std::process::ExitCode {
                 let busy = error
                     .downcast_ref::<airk_kernel::CurrentGateContention>()
                     .is_some();
+                let pending = error.downcast_ref::<airk_kernel::scheduler::ScheduledIndexPending>();
                 // Display the cause chain without anyhow's environment-dependent
                 // Debug backtrace. Retry admission depends only on the typed error.
                 let message: String = format!("{error:#}").chars().take(4096).collect();
@@ -1053,8 +1061,9 @@ fn main() -> std::process::ExitCode {
                     "{}",
                     serde_json::json!({
                         "airk_error": 1,
-                        "code": if busy { "current_gate_busy" } else { "operation_failed" },
-                        "retryable": busy,
+                        "code": if busy { "current_gate_busy" } else if pending.is_some() { "scheduled_index_pending" } else { "operation_failed" },
+                        "retryable": busy || pending.is_some(),
+                        "requested_revision": pending.map(|pending| pending.revision),
                         "message": message,
                     })
                 );
@@ -1153,6 +1162,12 @@ async fn main_async() -> anyhow::Result<()> {
         Command::Schedule { action } => match action {
             ScheduleCommand::Enqueue { full } => print_json(&kernel.schedule_enqueue(full)?),
             ScheduleCommand::Status => print_json(&kernel.schedule_status()?),
+            ScheduleCommand::Wait { revision, progress } => {
+                let worker = if progress { kernel.clone().with_index_progress(|event| {
+                    if let Ok(json) = serde_json::to_string(event) { eprintln!("{json}"); }
+                }) } else { kernel.clone() };
+                print_json(&tokio::task::spawn_blocking(move || worker.wait_scheduled_index(revision)).await??)
+            }
             ScheduleCommand::Pause => print_json(&kernel.schedule_pause(true)?),
             ScheduleCommand::Resume => print_json(&kernel.schedule_pause(false)?),
             ScheduleCommand::Forget => {

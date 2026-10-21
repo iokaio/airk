@@ -72,6 +72,9 @@ test('initial indexing shows committed MCP evidence and a quiet scan warning', (
     sample.collections[0].mcp.indexState = 'not_indexed';
     assert.match(sidebarContent(sample), /MCP can start; search awaits the first publication/);
     assert.match(sidebarContent(sample), /indexing pending/);
+    sample.collections[0].indexActivity.phase = 'waiting';
+    assert.match(sidebarContent(sample), /Waiting for the shared indexing worker/);
+    assert.doesNotMatch(sidebarContent(sample), /No new progress|Published evidence remains available/);
 });
 
 test('CLI getting-started note reports setup failures and keeps repair behind workspace trust', () => {

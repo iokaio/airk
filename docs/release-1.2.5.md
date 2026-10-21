@@ -24,6 +24,12 @@ The initial source batch targets 32 changed files or two seconds of scanning. La
 
 These changes address observed large-workspace delays without requiring another large-corpus benchmark before implementation. Correctness checks cover early lexical availability, deferred inference, subsequent semantic completion, bounded cadence, pause and retained-input recovery. End-to-end speedup has not been measured.
 
+## Queued indexing and late completion
+
+A 240-second scheduler join timeout previously appeared as an indexing failure in the editor even though the request remained queued and could complete in another worker. It now returns the typed `scheduled_index_pending` outcome with the requested scheduler revision. VS Code continues with `schedule wait <revision> --progress`, which joins that same request without enqueueing another scan or clearing pause/failure state. The dashboard identifies the queue wait. Each helper invocation retains its execution and idle limits; closing the workspace or losing trust prevents another join.
+
+Diagnostics recognize the specific earlier wait failure as superseded only when the native queue reports all requested revisions completed, no running or blocked request, and a completion timestamp after that failure. Current native failures still take precedence. Partial retained-input verification remains partial; a ready scheduler is not proof of every retained object. The original editor observation and event remain visible.
+
 ## Qualification status
 
 On 2026-10-21, local Windows checks passed: `cargo build --workspace --locked`, `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, `cargo test --workspace --locked`, the repository checks, Python repository tests, and the native-backed VS Code suite (132 passed, 2 skipped). The focused regressions cover the queue, hash mismatch, snippet coordinates, CamelCase references, 15-tool catalog, MCP availability before indexing, progress parsing and idle termination. macOS and Linux qualification and measured indexing or token savings remain open before release.

@@ -8,7 +8,7 @@ import { DashboardView } from './dashboardView';
 import { collectDiagnostics, DiagnosticHistory, verifyDiagnosticIntegrity } from './diagnostics';
 import { openDiagnosticsPanel } from './diagnosticsView';
 import { CollectionItem, CollectionTree } from './collectionTree';
-import { IndexProgress, NativeProcessError, NativeWriteQueue, parseIndexProgress, prepareHelper, probeMcp, runJson } from './native';
+import { IndexProgress, NativeProcessError, NativeWriteQueue, joinScheduledIndex, parseIndexProgress, prepareHelper, probeMcp, runJson } from './native';
 import { installCli } from './cliInstall';
 import { CapacityError, Options, PausedError, Scheduler, SemanticResult } from './scheduler';
 import { Coverage, CoverageQueue, coverageDetails, coverageLabel } from './coverage';
@@ -302,20 +302,32 @@ class Controller implements vscode.Disposable {
             report = await indexWithLimitApproval(
                 () => {
                     let started = 0;
-                    return this.writeNative<IndexReport>(spec, 'index', ['--progress', '--scheduled', ...(automatic ? ['--automatic'] : []), ...(full ? ['--full'] : [])], line => {
-                        const event = parseIndexProgress(line);
-                        if (!event) { return false; }
-                        if (this.currentSpec(spec)) {
-                            this.indexProgress.set(progressKey, { event, started, updated: Date.now() });
+                    return joinScheduledIndex<IndexReport>(['--progress', '--scheduled', ...(automatic ? ['--automatic'] : []), ...(full ? ['--full'] : [])],
+                        (command, args) => {
+                            this.trusted();
+                            if (!this.currentSpec(spec)) { throw new Error('Collection closed or storage changed.'); }
+                            return this.writeNative<IndexReport>(spec, command, args, line => {
+                                const event = parseIndexProgress(line);
+                                if (!event) { return false; }
+                                if (this.currentSpec(spec)) {
+                                    this.indexProgress.set(progressKey, { event, started, updated: Date.now() });
+                                    this.updateStatus();
+                                }
+                                return true;
+                            }, () => {
+                                if (started) { return; }
+                                started = Date.now();
+                                this.indexProgress.set(progressKey, { event: { phase: 'scan_started', revision: null, processed_artifacts: 0,
+                                    committed_artifacts: 0, selected_artifacts: null, completed_artifacts: null }, started, updated: started });
+                                this.updateStatus();
+                            });
+                        }, () => {
+                            this.trusted();
+                            if (this.disposed || !this.currentSpec(spec)) { throw new Error('Collection closed or storage changed.'); }
+                            const prior = this.indexProgress.get(progressKey);
+                            if (prior) { this.indexProgress.set(progressKey, { ...prior, event: { ...prior.event, phase: 'waiting' } }); }
                             this.updateStatus();
-                        }
-                        return true;
-                    }, () => {
-                        started = Date.now();
-                        this.indexProgress.set(progressKey, { event: { phase: 'scan_started', revision: null, processed_artifacts: 0,
-                            committed_artifacts: 0, selected_artifacts: null, completed_artifacts: null }, started, updated: started });
-                        this.updateStatus();
-                    }).catch(error => { this.indexProgress.delete(progressKey); this.updateStatus(); throw error; });
+                        }).catch(error => { this.indexProgress.delete(progressKey); this.updateStatus(); throw error; });
                 },
                 error => authorizeLimitIncrease({
                     describe: () => { this.trusted(); return runJson<LimitsDescription>(spec, 'collections', ['limits', 'describe']); },
@@ -333,7 +345,7 @@ class Controller implements vscode.Disposable {
             if (error instanceof Error && /storage quota exhausted|quota_blocked|database or disk is full|private catalog cannot grow|physical.*(capacity|space|headroom)|insufficient.*space/i.test(error.message)) {
                 throw new CapacityError(`${error.message} Automatic indexing is stopped for this collection. Review Storage limits, run current index cleanup or increase the quota, then Resume or Index now.`);
             }
-            if (error instanceof Error && error.message.includes('native automatic scheduling is paused')) { throw new PausedError(error.message); }
+            if (error instanceof Error && (error.message.includes('native automatic scheduling is paused') || error.message.includes('scan paused; committed batches remain available'))) { throw new PausedError(error.message); }
             throw error;
         }
         finally { this.indexProgress.delete(progressKey); this.vectorProgress.delete(progressKey); await this.refreshVectors(spec); if (this.specs.get(spec.collection)?.dataDir === spec.dataDir) { this.coverage.request(spec, true); } this.updateStatus(); }
