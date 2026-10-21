@@ -101,7 +101,7 @@ Document extraction keeps heading context, dates, requirement IDs and modality (
 4. **Connect an agent.**
    - *VS Code and Copilot Chat:* choose **VS Code / GitHub Copilot Chat** in **AIRK: Connect Coding Agent…**, then **Enable AIRK for Copilot**. Select the collection in the opened MCP controls and complete any start/trust prompts.
    - *Claude Code, Codex, Gemini CLI/Antigravity, Cursor, Cline, Roo Code, Junie, Copilot CLI, OpenCode or Kilo Code:* run **AIRK: Connect Coding Agent…** and choose the agent by name. The persistent guide shows its configuration, reload instructions and a verification prompt. Codex can create a missing project configuration. Claude Code, Gemini CLI and Google Antigravity offer project configuration installation that preserves existing settings. Other clients receive configuration to merge. AIRK does not approve tools for another agent.
-5. **Verify.** **AIRK: Check AIRK MCP Helper** confirms that the helper starts, lists its tools and reports collection status. Then ask your agent about a file you know and check that its answer cites a path. Verification proves AIRK is healthy; it does not prove that a particular agent has enabled the server.
+5. **Verify.** **AIRK: Check AIRK MCP Helper** confirms that the helper starts, lists its tools and reports collection status. Use **Diagnose & Repair → Verify retained data** to check retained source and extraction inputs. Then ask your agent about a file you know and check that its answer cites a path. Helper verification does not establish that a particular agent has enabled the server.
 
 The **Get Started with AIRK** walkthrough (**Help › Welcome**) links these steps.
 
