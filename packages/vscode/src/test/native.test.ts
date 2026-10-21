@@ -164,7 +164,11 @@ test('extension native adapter indexes, rebuilds, probes MCP, isolates and remov
         await fs.writeFile(path.join(other, 'b.py'), 'def second_fixture():\n    return False\n');
         const command = path.resolve(process.env.AIRK_TEST_BINARY!);
         const spec: LaunchSpec = { command, root, dataDir, collection: collectionId(root), name: 'A' };
+        const detail = await runJson<{ configured_detail: string; published_detail: string | null }>(spec, 'collections', ['extraction', 'show']);
+        assert.equal(detail.configured_detail, 'agent_lean'); assert.equal(detail.published_detail, null);
         const first = await runJson<IndexReport>(spec, 'index', ['--scheduled']); assert.equal(first.indexed, 1);
+        const published = await runJson<{ configured_detail: string; published_detail: string }>(spec, 'collections', ['extraction', 'show']);
+        assert.equal(published.configured_detail, 'agent_lean'); assert.equal(published.published_detail, 'agent_lean');
         const coverage = await runJson<Coverage>(spec, 'coverage', ['--refresh']); assert.equal(coverage.percent, 100); assert.equal(coverage.current, 1);
         const limits = await runJson<import('../ingestionLimits').LimitsDescription>(spec, 'collections', ['limits', 'describe']);
         assert.equal(limits.mode, 'automatic'); assert.ok(limits.effective.corpus_bytes <= 2147483648);

@@ -188,3 +188,23 @@ test('successful indexing does not claim current coverage after new changes or a
     sample.collections[0].coverage = undefined;
     assert.match(sidebarContent(sample), /Indexed; coverage unverified/);
 });
+
+
+test('semantic readiness does not imply discovery completed after a failed scan', () => {
+    const sample = structuredClone(state);
+    sample.collections[0].state = 'failed';
+    sample.collections[0].vectors = { enabled: true, published: true, indexed_vectors: 17,
+        pending_reindex: false, default_search_mode: 'hybrid',
+        semantic_readiness: { state: 'ready', selected_artifacts: 17, completed_artifacts: 17,
+            selected_units: null, completed_units: 17, failure: null },
+        discovery_readiness: { state: 'failed', processed_artifacts: 18, committed_artifacts: 17,
+            total_artifacts: null, failure: 'retained object missing' } };
+    const html = sidebarContent(sample);
+    assert.match(html, /Indexing failed/);
+    assert.match(html, /Semantic evidence ready for committed files; discovery incomplete/);
+    assert.match(html, /Discovery stopped after 17 committed files/);
+    assert.match(html, /retained object missing/);
+    assert.match(html, /data-action="reindex"[^>]*>Reindex/);
+    sample.collections[0].vectors.discovery_readiness!.state = 'ready';
+    assert.doesNotMatch(sidebarContent(sample), /discovery incomplete/);
+});

@@ -606,6 +606,9 @@ impl Kernel {
             !self.root.starts_with(quota.root()),
             "index storage must not contain sources"
         );
+        // Intermediate publications must not reclaim the scan's next retained
+        // input or superseded objects still needed by prior-content reuse.
+        let captured_objects = writer.capture_objects();
         let mut previous = self
             .load_optional()?
             .unwrap_or_else(|| self.empty_snapshot());
@@ -937,6 +940,9 @@ impl Kernel {
             })
             .transpose()?;
         let moves = compatible_moves(&self.store, &previous, &snapshot, &observation)?;
+        // Every remaining input is now bound to the final publication. Its
+        // normal cleanup can reclaim unused captures and superseded objects.
+        drop(captured_objects);
         let scope = match progressive_scope.or(existing) {
             Some(scope) => scope,
             None => self

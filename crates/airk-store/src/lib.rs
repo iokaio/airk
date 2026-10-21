@@ -366,6 +366,7 @@ impl FileStore {
             path,
             _file: advisory,
             _lifecycle: lifecycle,
+            object_captures: std::sync::atomic::AtomicUsize::new(0),
         };
         Ok(guard)
     }
@@ -413,6 +414,37 @@ pub struct WriterLock {
     path: PathBuf,
     _file: File,
     _lifecycle: Option<Arc<File>>,
+    object_captures: std::sync::atomic::AtomicUsize,
+}
+
+/// Keeps unpublished captured objects and prior scan reuse inputs alive across
+/// intermediate publications. The collection writer excludes other processes;
+/// after a crash, only durable current/journal ownership needs to survive.
+#[must_use]
+pub struct ObjectCaptureGuard<'a> {
+    writer: &'a WriterLock,
+}
+
+impl WriterLock {
+    pub fn capture_objects(&self) -> ObjectCaptureGuard<'_> {
+        self.object_captures
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        ObjectCaptureGuard { writer: self }
+    }
+
+    pub fn has_object_captures(&self) -> bool {
+        self.object_captures
+            .load(std::sync::atomic::Ordering::Acquire)
+            != 0
+    }
+}
+
+impl Drop for ObjectCaptureGuard<'_> {
+    fn drop(&mut self) {
+        self.writer
+            .object_captures
+            .fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+    }
 }
 
 #[derive(Debug, Serialize)]

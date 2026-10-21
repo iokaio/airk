@@ -336,6 +336,8 @@ fn document_categories_roundtrip_with_metadata_budgets_and_extractor_refresh() -
         "# The UI must be accessible by 2026-10-13.\ndef render():\n    pass\n",
     )?;
     let kernel = Kernel::open(root.path(), Some(state.path().to_path_buf()))?;
+    // This fixture checks separate date facts from the broad document inventory.
+    kernel.configure_index_detail(airk_core::extraction::IndexDetail::Balanced)?;
     let first = kernel.index()?;
     let fact_query = |kind: &str, max_bytes| FactQuery {
         path_prefix: String::new(),

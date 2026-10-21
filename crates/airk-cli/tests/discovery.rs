@@ -74,7 +74,7 @@ fn cli_and_mcp_resume_the_same_compact_outline_and_fact_pages() -> Result<()> {
     let first = cli(&["code-facts", "--kind", "definition", "--limit", "1"])?;
     let next = tool(
         "airk_code_facts",
-        json!({"kind":"definition","limit":1,"cursor":first["cursor"]}),
+        json!({"kind":"definition","compact":false,"limit":1,"cursor":first["cursor"]}),
     )?;
     assert_eq!(first["facts"][0]["name"], "alpha");
     assert_eq!(next["facts"][0]["name"], "beta");

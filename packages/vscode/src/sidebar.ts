@@ -101,7 +101,8 @@ export function sidebarContent(state: SidebarState): string {
         const semanticLabel = semantic?.state === 'pending' || semantic?.state === 'partial'
             ? `Semantic ${semantic.state}: ${semantic.completed_artifacts} of ${semantic.selected_artifacts} selected files complete`
             : semantic?.state === 'failed' ? `Semantic enrichment failed: ${semantic.completed_artifacts} of ${semantic.selected_artifacts} selected files complete`
-            : semantic?.state === 'ready' ? 'Semantic evidence ready' : '';
+            : semantic?.state === 'ready' ? (discovery && discovery.state !== 'ready'
+                ? 'Semantic evidence ready for committed files; discovery incomplete' : 'Semantic evidence ready') : '';
         const vectors = `<div class="mcp"><h3>Vector search</h3>
             <label class="toggle"><input id="${escape(item.collection)}-vectors" type="checkbox" role="switch" ${attributes} data-vectors="true"${item.vectors?.enabled !== false ? ' checked' : ''}${disabled || !item.vectors || indexing || state.changingStorage ? ' disabled' : ''}> Include meaning-based matches</label>
             <p class="muted">On by default. Combines local vector search with keyword results. First setup downloads about 91 MB of model files; your source files stay on this machine. Uses CPU and additional index storage.</p>

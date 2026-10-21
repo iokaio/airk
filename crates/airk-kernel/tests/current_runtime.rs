@@ -791,3 +791,72 @@ fn interrupted_runtime_bootstrap_completes_before_any_source_scan() -> Result<()
     );
     Ok(())
 }
+
+#[test]
+fn slow_progressive_scan_keeps_captures_through_enrichment_and_reopen() -> Result<()> {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    let root = unlinked_tempdir()?;
+    let data = unlinked_tempdir()?;
+    model(&data.path().join("models/local"), 2)?;
+    for file in 0..65 {
+        std::fs::write(
+            root.path().join(format!("file_{file:02}.txt")),
+            format!("authenticate original capture {file}\n").repeat(100),
+        )?;
+    }
+    let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    kernel.configure_compression(airk_core::compression::CompressionMode::Automatic)?;
+    let delayed = Arc::new(AtomicBool::new(false));
+    let signal = delayed.clone();
+    let observed = kernel.clone().with_index_progress(move |event| {
+        if event.phase == "base_committed" && !signal.swap(true, Ordering::AcqRel) {
+            // Make the next nonempty batch cross the real time-based flush
+            // boundary, as slow extraction/inference does on an ordinary host.
+            std::thread::sleep(std::time::Duration::from_millis(2100));
+        }
+    });
+    let report = observed.scheduled_index(false, false)?;
+    assert!(delayed.load(Ordering::Acquire));
+    assert!(report.maintenance_error.is_none(), "{report:?}");
+    assert_eq!(
+        kernel.status()?.discovery_readiness.state,
+        DiscoveryState::Ready
+    );
+    drop(observed);
+    drop(kernel);
+    let reopened = Kernel::open(root.path(), Some(data.path().into()))?;
+    for _ in 0..4 {
+        if reopened.status()?.semantic_readiness.state == SemanticState::Ready {
+            break;
+        }
+        assert_eq!(reopened.run_scheduled_enrichment()?.state, "enriched");
+    }
+    let status = reopened.status()?;
+    assert_eq!(status.files, 65);
+    assert_eq!(status.semantic_readiness.state, SemanticState::Ready);
+    assert_eq!(status.semantic_readiness.completed_artifacts, 65);
+    for file in 0..65 {
+        let read = reopened.read_file(&format!("file_{file:02}.txt"), 1, 1, 4096)?;
+        assert!(
+            read.hits[0]
+                .text
+                .contains(&format!("original capture {file}\n"))
+        );
+    }
+    let query = SearchQuery {
+        text: "login".into(),
+        path_prefix: Some("file_64.txt".into()),
+        limit: 1,
+        max_bytes: 4096,
+    };
+    assert_eq!(
+        reopened.semantic_search(&query)?.hits[0].citation.path,
+        "file_64.txt"
+    );
+    assert_eq!(reopened.scheduled_index(false, false)?.reused, 65);
+    assert!(!reopened.maintain_current()?.pending);
+    Ok(())
+}

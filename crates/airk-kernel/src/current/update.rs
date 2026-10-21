@@ -867,6 +867,9 @@ impl CurrentUpdater<'_> {
         }
         drop(writer);
         let cleanup = (|| -> Result<()> {
+            if self.writer.has_object_captures() {
+                return Ok(());
+            }
             let read = self.store.current_read(self.scope)?;
             if read.collection_state()?.is_none() {
                 return Ok(());

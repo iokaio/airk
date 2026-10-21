@@ -37,25 +37,25 @@ fn levels_rebuild_cache_preserve_citations_and_report_published_coverage() -> Re
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
     assert_eq!(
         kernel.extraction_policy()?.configured_detail,
-        IndexDetail::Balanced
+        IndexDetail::AgentLean
     );
     kernel.index()?;
     let before = kernel.facts(&facts())?;
-    assert_eq!(before.indexing.level, IndexDetail::Balanced);
+    assert_eq!(before.indexing.level, IndexDetail::AgentLean);
     assert!(before.facts.iter().any(|f| f.kind == "definition"));
     assert!(!before.facts.iter().any(|f| f.kind == "call"));
     assert_eq!(kernel.index()?.reused, 3);
     let store = FileStore::new(data.path().join("collections-1.2/default"));
-    let balanced = store.current_test_catalog()?.unwrap();
-    let first_profile = balanced.inventory.as_ref().unwrap().files["sample.rs"]
+    let lean = store.current_test_catalog()?.unwrap();
+    let first_profile = lean.inventory.as_ref().unwrap().files["sample.rs"]
         .state
         .profile_id;
-    drop(balanced);
+    drop(lean);
     kernel.configure_index_detail(IndexDetail::Detailed)?;
     assert!(kernel.extraction_policy()?.pending_reindex);
     assert_eq!(
         kernel.facts(&facts())?.indexing.level,
-        IndexDetail::Balanced
+        IndexDetail::AgentLean
     );
     let report = kernel.index()?;
     assert_eq!(report.indexed, 3);
@@ -117,7 +117,7 @@ fn levels_rebuild_cache_preserve_citations_and_report_published_coverage() -> Re
     let other = Kernel::open_collection(root.path(), Some(data.path().into()), "other")?;
     assert_eq!(
         other.extraction_policy()?.configured_detail,
-        IndexDetail::Balanced
+        IndexDetail::AgentLean
     );
     assert_eq!(other.extraction_policy()?.published_detail, None);
     Ok(())

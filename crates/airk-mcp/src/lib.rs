@@ -767,7 +767,7 @@ impl AirkServer {
             "request_admission": admission,
             "discovery": {"cursor_tools":["airk_list_files","airk_outline","airk_symbols","airk_imports","airk_code_facts","airk_document_facts"], "binding":"exact publication, filters and representation", "compact_outline":true, "budget":"complete serialized records; framing is additional", "expired_cursor":"restart discovery"},
             "adapters": adapters,
-            "index_detail": {"new_collection_default":"balanced", "levels":["agent_lean","essential","balanced","detailed"], "labels":{"agent_lean":"Agent Lean","balanced":"Rich Structure","essential":"Search Only","detailed":"Detailed"}, "coverage":"Fact and relationship responses report their published indexing level and deliberate omissions. Configured changes apply only after a successful index. Optional provider imports preserve their source and producer binding."},
+            "index_detail": {"new_collection_default":"agent_lean", "levels":["agent_lean","essential","balanced","detailed"], "labels":{"agent_lean":"Agent Lean","balanced":"Rich Structure","essential":"Search Only","detailed":"Detailed"}, "coverage":"Fact and relationship responses report their published indexing level and deliberate omissions. Configured changes apply only after a successful index. Optional provider imports preserve their source and producer binding."},
             "history": {"supported":false,"exact_reads":[],"optional_retention":false,"search":false,"live_fallback":false,"checkpoints":false,"reason":"AIRK 1.2 retains one current index"},
             "changes": {"observed_indexed_changes":false,"remembered_evidence_validation":true,"expired_baseline":"baseline_unavailable","selectors":64,"selector_bytes":32768,"max_payload_bytes":65536,"exact_revision_tokens":true,"live_source_verified":false,"symbol_continuity":"adapter-specific conservative coverage","document_continuity":"adapter-specific conservative coverage"},
             "conditional_reads": {"tools":["airk_file_info","airk_read_file","airk_outline","airk_context"],"validator":"representation-specific if_evidence","follow_moves_default":false,"move_basis":"unique compatible exact content; not filesystem intent"},
@@ -892,10 +892,19 @@ mod tests {
         )?;
         let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
         kernel.configure_vectors(false)?;
-        kernel.configure_index_detail(airk_core::extraction::IndexDetail::AgentLean)?;
         kernel.index()?;
         let generation = kernel.status()?.generation;
         let server = AirkServer::new(kernel.clone());
+        let capabilities = server
+            .capabilities(Parameters(CapabilitiesArgs {
+                adapter: None,
+                rich: false,
+            }))
+            .await;
+        let outer = serde_json::to_value(capabilities)?;
+        let body: serde_json::Value =
+            serde_json::from_str(outer["content"][0]["text"].as_str().unwrap())?;
+        assert_eq!(body["index_detail"]["new_collection_default"], "agent_lean");
         for compact in [None, Some(false)] {
             let args: CodeFactArgs = serde_json::from_value(
                 serde_json::json!({"name":"authenticate","compact":compact}),
