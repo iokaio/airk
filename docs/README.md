@@ -34,7 +34,7 @@ Start with the [1.2.4 diagnosis and recovery notes](release-1.2.4.md), [1.2.3 Ag
 - [Google Antigravity manual MCP setup](antigravity-mcp.md)
 - [Coding-agent tool alignment and online documentation review](agent-tool-alignment.md)
 - [Agent Lean index modes and MCP efficiency plan](mcp-prioritization.md)
-- [1.2.4 built-in diagnosis and indexing recovery](release-1.2.4.md)
+- [1.2.4 diagnostics, scheduler fixes and indexing recovery](release-1.2.4.md)
 - [1.2.3 Agent Lean default and indexing fix](release-1.2.3.md)
 - [1.2.2 semantic indexing fix](release-1.2.2.md)
 - [1.2.1 documentation update](release-1.2.1.md)

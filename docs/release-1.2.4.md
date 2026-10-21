@@ -12,6 +12,12 @@ The extension now keeps semantic work pending when the native scheduler reports 
 
 Scheduled scanning interleaves source batches and semantic enrichment. The source-batch timer previously started before enrichment, so a slow semantic batch could immediately exhaust the next source interval and repeatedly publish very small batches. The timer now starts after enrichment finishes. Count/byte limits and pause checks remain in force. This removes avoidable publication work; it does not establish a universal indexing-time improvement.
 
+## Recheck scheduled work when timers fire
+
+An editor timer can fire before the source-scan deadline, including after a wall-clock adjustment. Previously, the scheduler could treat that callback as permission to run semantic work even when none was pending. An error from that premature command could then block the source scan. A deterministic regression reproduces the wrong command and blocked source work.
+
+The scheduler now rechecks which work is pending and due before dispatching it. If neither a source scan nor semantic work is due, it schedules another wake-up. Pending source work remains queued; this does not clear genuine failures or override pause and storage-selection holds.
+
 ## Make failures diagnosable
 
 Each collection has a **Diagnose & Repair** button; the command palette also exposes **AIRK: Diagnose & Repair**. It observes the selected helper and collection, shows current readiness separately from previous attempts, and can copy a bounded report. Diagnostics do not request source text or launch a scan. Recent helper identity, failure, repair and completion events remain on the local machine across extension reloads.
@@ -41,9 +47,11 @@ Repair requires enough verified inputs to preserve the publication contract. For
 
 ## Validation and limits
 
-Regression coverage exercises native scheduler contention, contention before/after a semantic batch, genuine failure blocking, delayed enrichment batch boundaries, raw/encoded missing-object diagnostics, real child-process exit/timeout/output-limit behavior, and helper identity logging. Fault injection deletes newly captured source or extraction objects immediately before progressive publication. Tests check one successful recapture, bounded failure after repeated loss, changed source identities, and refusal to substitute live files into a pending journal. The 1.2.3 capture-lifetime regressions remain part of the suite.
+Regression coverage exercises native scheduler contention, contention before/after a semantic batch, early timer callbacks, semantic retry deadlines, genuine failure blocking, delayed enrichment batch boundaries, raw/encoded missing-object diagnostics, real child-process exit/timeout/output-limit behavior, and helper identity logging. Fault injection deletes newly captured source or extraction objects immediately before progressive publication. Tests check one successful recapture, bounded failure after repeated loss, changed source identities, and refusal to substitute live files into a pending journal. The 1.2.3 capture-lifetime regressions remain part of the suite.
 
 Model-backed recovery fixtures use canonical temporary storage paths, including on macOS where the temporary directory can use the `/var` alias. Production checks continue to reject linked model paths.
+
+Storage-control fixtures use explicit operation barriers and bounded waits. Failure cleanup releases held operations, drains teardown and restores mocks. An injected missing callback verifies that the test reports the failure and terminates after teardown.
 
 These changes do not establish a new cause for every historical `retained object missing` report. The 1.2.3 capture-lifetime fix remains in place; a new occurrence requires its helper identity, exact missing-object diagnostic and current collection status. Do not describe an unreproduced failure as fixed merely because CI is green.
 

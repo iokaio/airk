@@ -14,6 +14,8 @@ Everything runs on your machine. There is no cloud service, API key, Docker, Rus
 
 Temporary publication contention automatically retries. Indexing can recreate missing retained objects from freshly validated source files, and one guarded rescan handles a missing capture before publication when no journal requires recovery. Genuine corruption, permissions and unrecoverable journals remain visible failures. Slow semantic work no longer forces the next source batch to publish prematurely. Agent Lean remains the default.
 
+Automatic scheduling rechecks what is due when a timer fires. An early timer callback cannot start unrequested semantic work and block a pending source scan.
+
 ## What's new in 1.2.3
 
 New collections start with **Agent Lean**: selected declarations, imports and document facts with compact MCP replies. Start lean and fast, then choose Rich Structure for broader structural facts and declaration tracking, Detailed for call occurrences or document-unit tracking, or Search Only for text and citations. Existing collections retain their saved or published detail level. Rich Structure, Search Only and Detailed remain selectable. Semantic search stays enabled; the default Agent Lean vector policy excludes reviewed lockfiles and minified JS/CSS while retaining their lexical evidence.

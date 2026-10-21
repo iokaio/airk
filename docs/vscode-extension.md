@@ -35,6 +35,8 @@ Package platform-specific helpers for Windows, macOS and Linux. VS Code supports
 
 From 1.2.2, the extension continues pending semantic batches after **Index now** and on trusted workspace reopen, even with the dashboard hidden. A background service is not required. The collection and status bar show **Building semantic index** or **Semantic indexing pending**, with refreshed completed/selected counts after each batch. Manual mode still completes already requested semantic work. Pause prevents new batches; a running batch finishes first. Failures stop retries until Resume or a new index request. Closing a folder or changing storage prevents another batch against the old binding.
 
+From 1.2.4, the specific temporary current-publication lock error yields and retries through the scheduler instead of permanently blocking semantic work. Other failures remain explicit. Batch durations vary with the amount of evidence; unchanged counts during an active batch do not alone establish a stopped process.
+
 Each collection defaults to local vector indexing and hybrid retrieval. The **Vector search** panel switch saves a native collection policy and requests indexing. Turning it off changes default queries to lexical immediately; the next successful index omits vectors. Turning it on prepares the pinned MiniLM assets (about 91 MB) if absent, then indexes. Scheduled indexing publishes lexical/fact evidence first, then the native scheduler commits bounded vector batches. The panel shows pending, partial, ready or failed semantic coverage with completed and selected file counts. A paused collection keeps its pending work; Resume permits it to continue. Existing custom assets are preserved, downloads are size/digest checked and installed atomically, and inference stays local. See [model setup and opt-out behavior](local-models.md) and [semantic readiness](current-index-runtime.md#semantic-readiness-and-deferred-work).
 
 ## Storage and collection UI
@@ -55,6 +57,7 @@ Implemented settings and commands:
 | airk.index.idleMs | 10000 ms without editor activity in idle mode |
 | airk.storage.maxBytes | User-selected soft total budget; never silently deletes active evidence |
 | Index Now / Reindex Collection | Immediate queued incremental update / deliberate full rebuild |
+| Diagnose & Repair | Inspect the selected helper, collection readiness, queue and recent failures; verify retained data, retry, resume window indexing or confirm a rebuild |
 | Pause Auto-index / Resume | Persist native pause state and retain pending revisions; explicit indexing remains available |
 | Manage Collections / Trim | Preview usage and reclaim plan; remove selected derived state |
 | Choose Index Storage Folder | Select a new location; reindex there and retain prior collections without moving/deleting them |
@@ -65,6 +68,8 @@ The indexing-mode Quick Pick offers Manual, After edits settle, On save and When
 Coverage and usage commands open themed report panels with selected metrics as cards and tables. **Open as JSON** preserves the full native diagnostic output. Panels load no workspace resources. Coverage accepts only the fixed JSON-open message. Usage & Savings additionally accepts validated fixed actions for refresh, 7/30-day selection, exports, recording, clearing, feedback, explicit imports and cost scenarios. Mutations recheck trust and captured collection/storage identity; clearing requires confirmation.
 
 The AIRK Activity Bar opens a **Dashboard** with a card for every active workspace collection. Each card shows indexing state, measured coverage, current/eligible/stale/missing counts, extraction failures and direct **Index now**, **Reindex** and **Details** buttons. Expand **Storage and last index** for disk usage and paths. A mode selector and pause/resume button control automatic indexing; storage selection, agent setup, reports, cleanup and extraction controls remain available in the sidebar. Coverage is a measured inventory result, not a percentage of indexing progress; pending scans retain labeled previous counts without claiming fresh coverage.
+
+**Diagnose & Repair** keeps current observations separate from previous failures and can copy a bounded report without requesting source contents. **Verify retained data** checks source and extraction inputs at one exact publication, with cancellation and a two-minute time budget; incomplete checks and oversized inputs remain explicit. Retry and rebuild actions recheck trust and the collection/storage binding. Recent helper and failure events persist locally across reloads. See [diagnosis and recovery](operations.md#recovery) for the controls and remaining repair limits.
 
 Each collection’s **AIRK helper check** section shows Not checked, Preparing collection, Checking MCP, Verified with a tool count, or Verification failed with an error. **Check AIRK helper** updates that collection’s index before checking the native handshake, tool inventory and status. The result and last-check time stay in the panel for this editor session; **View details** opens the cached diagnostic result. This verifies the helper, not an agent’s live connection.
 
@@ -79,6 +84,8 @@ The [extraction-policy controls](extraction-policy.md) show the configured diges
 [Workspace coverage](index-coverage.md) implements the current/eligible file percentage with a native, bounded inventory. Clicking the status item opens grouped AIRK controls, including **Index Now** for the active editor's folder; multi-root workspaces without an active match prompt for a folder. The tooltip shows stale/missing/extraction-failed/capacity counts and unsaved editor documents. Incomplete scans and new disk events show unknown coverage; zero eligibility never becomes 100%. **AIRK: Open Controls** is also a palette command. Its entries use the same names as the palette titles, with a one-line description of each command.
 
 ## Scheduler and space behavior
+
+The editor scheduler checks pending work and deadlines again when a timer fires. An early callback schedules another wake-up instead of starting unrequested semantic work. Source requests and semantic retry intervals remain independent; pause, storage-selection holds and genuine failure blocking still apply.
 
 **Reclaim Unreferenced Index Objects** runs bounded native current-object maintenance. The current head owns its source, extraction, metadata, model and cache objects; cleanup removes only verified unreferenced objects under the exclusive collection gate. A busy reader/writer or invalid ownership state is reported explicitly. History, checkpoint and generation-retention controls have been removed in 1.2. See [current cleanup](retention.md).
 

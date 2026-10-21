@@ -58,6 +58,8 @@ The 1.2.2 extension drives one native semantic batch per active trusted collecti
 
 The native scheduler serializes submitted work and persists revisions, pause, explicit requests and blocked failures in the 1.2 namespace. Coverage remains an independent observation of saved source files. The extension manages collection-scoped controls and coalesced requests; it neither implements indexing nor claims live editor buffers are indexed.
 
+The extension rechecks pending work and deadlines when its timer fires. An early callback reschedules rather than dispatching unrequested semantic work. This preserves source requests, semantic retry intervals, pause and storage-selection holds independently of wall-clock timing.
+
 Quota-admitted database growth reserves the larger SQLite bound and rollback allowance before publication. Postcommit cleanup proves current ownership before removing bounded unreferenced objects and lexical forks. `collections maintain` repeats cleanup without publishing. Active requests block destructive collection operations; idle connections do not. Fresh 1.2 collection/settings ownership isolates old indexes rather than migrating them. See [collections](collections.md), [recovery](operations.md#recovery) and [quota limits](storage-quotas.md).
 
 Changed-component counters measure localized publication work. Scanning, manifest verification and complete ownership checks still grow with corpus size. Large batches have explicit admission limits; no constant total update latency, complete language understanding, power-loss durability or cross-platform qualification is implied.
