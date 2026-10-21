@@ -49,7 +49,7 @@ async function waitForFixture<T>(pending: Promise<T>, label: string, details: ()
 }
 
 test('extension continues semantic work without a service, survives transient publication contention and blocks real failures', { timeout: 20000 }, async () => {
-    for (const scenario of ['index', 'reopen', 'close', 'native-busy', 'helper-busy', 'post-busy', 'permission', 'post-permission', 'integrity']) {
+    for (const scenario of ['index', 'reopen', 'close', 'native-busy', 'helper-busy', 'post-busy', 'permission', 'post-permission', 'integrity', 'untyped-busy']) {
         const reopen = scenario !== 'index';
         const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'airk-semantic-editor-'));
         const root = path.join(directory, 'Project'), storage = path.join(directory, 'Host');
@@ -80,8 +80,11 @@ test('extension continues semantic work without a service, survives transient pu
         mock.method(native, 'runJson', async (spec: {root: string; dataDir: string}, command: string, extra: string[] = []) => {
             assert.equal(spec.root, await fs.realpath(root));
             assert.equal(spec.dataDir, await fs.realpath(path.join(storage, 'indexes')));
-            const gateFailure = (permission: boolean) => new native.NativeProcessError('/fixture/airk', Object.assign(new Error('Command failed'), { code: 1 }),
-                `Error: current index is busy applying an update\n\nCaused by:\n    ${permission ? 'Permission denied (os error 13)' : 'lock acquisition failed because the operation would block'}`, 20, 300000);
+            const gateFailure = (permission: boolean, untyped = false) => {
+                const message = `Error: current index is busy applying an update\n\nCaused by:\n    ${permission ? 'Permission denied (os error 13)' : 'lock acquisition failed because the operation would block'}`;
+                return new native.NativeProcessError('/fixture/airk', Object.assign(new Error('Command failed'), { code: 1 }), untyped ? message :
+                    JSON.stringify({ airk_error: 1, code: permission ? 'operation_failed' : 'current_gate_busy', retryable: !permission, message }), 20, 300000);
+            };
             if (command === 'collections' && extra[0] === 'vectors') {
                 if (statusBusy) { statusReadsWhileBusy++; throw gateFailure(false); }
                 if (batches === 1 && !readFailureInjected && ['post-busy', 'post-permission', 'integrity'].includes(scenario)) {
@@ -101,7 +104,7 @@ test('extension continues semantic work without a service, survives transient pu
             if (command === 'semantic') {
                 assert.deepEqual(extra, ['run', '--scheduled']); attempts++;
                 if (scenario === 'native-busy' && attempts === 1) { statusBusy = true; return { state: 'busy', error: null }; }
-                if (attempts === 1 && ['helper-busy', 'permission'].includes(scenario)) { throw gateFailure(scenario === 'permission'); }
+                if (attempts === 1 && ['helper-busy', 'permission', 'untyped-busy'].includes(scenario)) { throw gateFailure(scenario === 'permission', scenario === 'untyped-busy'); }
                 statusBusy = false;
                 batches++; completed = Math.min(65, completed + 32);
                 return { state: 'enriched', error: null };
@@ -139,15 +142,15 @@ test('extension continues semantic work without a service, survives transient pu
                 continue;
             }
             if (!reopen) { await commands.get('airk.index')!(); }
-            if (['integrity', 'permission', 'post-permission'].includes(scenario)) {
+            if (['integrity', 'permission', 'post-permission', 'untyped-busy'].includes(scenario)) {
                 const deadline = Date.now() + 2000;
                 while (dashboard.controller.scheduler.states()[0]?.state !== 'failed') {
                     assert.ok(Date.now() < deadline, 'A genuine current-index failure was not reported');
                     await new Promise(resolve => setTimeout(resolve, 20));
                 }
                 await new Promise(resolve => setTimeout(resolve, 1200));
-                assert.equal(attempts, 1, 'Recovery and permission errors must not automatically retry');
-                const expected = scenario === 'integrity' ? /journal requires recovery/ : /Permission denied/;
+                assert.equal(attempts, 1, 'Recovery, permission and untyped errors must not automatically retry');
+                const expected = scenario === 'integrity' ? /journal requires recovery/ : scenario === 'untyped-busy' ? /operation would block/ : /Permission denied/;
                 assert.match(dashboard.controller.sidebarState().collections[0].error, expected);
                 assert.ok(output.some(line => /^\[\d{4}-\d{2}-\d{2}T[^\]]+\] Project: NativeProcessError:/.test(line)
                     && expected.test(line)), 'Failure output needs a timestamp and collection identity');

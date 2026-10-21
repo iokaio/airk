@@ -52,6 +52,8 @@ During a scan, the collection writer also owns captured objects that are not yet
 
 From 1.2.4, missing retained inputs encountered during reuse cause re-extraction from the scanner's newly captured, hashed source bytes. A typed missing-object failure during indexing can trigger one fresh scan only after the failed attempt releases its writer and the current store proves Ready without a pending journal. Corruption, permission failures and interrupted-journal inputs do not use this repair path. Read-only retained-input diagnostics hold the current read gate, authenticate bounded catalog pages and expire continuation when the publication changes; they never consult live source files or initiate recovery.
 
+When a changed or deleted file's prior extraction is missing, publication can retire its old posting memberships through a complete, bounded traversal of the authenticated committed map. The writer verifies posting encoding and collection-scoped identity, then removes only that path from the staged afterimages. A changed file receives freshly captured evidence under its new hash; a deleted file's missing payload is not recreated. Traversal exhaustion, corrupt proofs and permission failures remain explicit errors. Prepared/Applying journals still require their captured inputs and never substitute changed live sources.
+
 ## Scheduling, cleanup and scale
 
 The 1.2.2 extension drives one native semantic batch per active trusted collection at a time after indexing and on reopen. These calls share the existing scheduler worker lock and native pause/failure policy, but do not select work from other collections. The editor queue yields between batches and refreshes readiness independently of source coverage; no service installation is required.

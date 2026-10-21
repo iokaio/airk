@@ -14,9 +14,9 @@ This is an independent, runnable open-source project. Munarium, VCP and local re
 
 **Diagnose & Repair** collects the selected collection's helper identity, current indexing/semantic progress, queue state and recent failures inside the extension. Copy a bounded report, retry indexing, resume window indexing or rebuild derived evidence from the same view. Recent failures survive reloads and are kept separate from current observations.
 
-**Verify retained data** checks source and extraction inputs in bounded pages at one indexed revision. It reports incomplete checks and failures explicitly; saved readiness alone is not proof of intact retained data.
+**Verify retained data** checks source and extraction inputs in bounded pages at one indexed revision. It reports incomplete checks and failures explicitly; saved readiness alone is not proof of intact retained data. Verification yields to active indexing and enrichment. Diagnostics also flag older helper paths in known agent configurations after an update; settings are preserved for manual review.
 
-Temporary publication contention automatically retries. Indexing can recreate missing retained objects from freshly validated source files, and one guarded rescan handles a missing capture before publication when no journal requires recovery. Genuine corruption, permissions and unrecoverable journals remain visible failures. Slow semantic work no longer forces the next source batch to publish prematurely. Agent Lean remains the default.
+Temporary publication contention retries with a capped delay using structured native outcomes that are independent of Rust backtraces. Indexing can recreate missing retained objects from validated source files and retire old postings for changed or deleted files when the prior extraction is missing. Repair remains bounded; corruption, permissions and unavailable journals remain visible failures. Slow semantic work no longer forces the next source batch to publish prematurely. Agent Lean remains the default.
 
 Automatic scheduling rechecks what is due when a timer fires. An early timer callback cannot start unrequested semantic work and block a pending source scan.
 

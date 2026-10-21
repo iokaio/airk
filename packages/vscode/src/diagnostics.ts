@@ -4,6 +4,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { LaunchSpec, launchArgs } from './model';
 import { NativeProcessError, runText } from './native';
+import { AgentConfigurationOptions, AgentConfigurationReport, inspectAgentConfiguration } from './agentDiagnostics';
 
 export interface DiagnosticError {
     kind: 'native_process' | 'invalid_response' | 'error'; message: string;
@@ -30,12 +31,14 @@ export interface DiagnosticReport {
     recentEvents: DiagnosticEvent[];
     editor?: DiagnosticEditorState;
     historyError?: DiagnosticError;
+    agentConfiguration?: AgentConfigurationReport;
 }
 export interface DiagnosticEditorState { paused: boolean; state?: string; pending?: boolean; busy: boolean }
 export type DiagnosticRunner = (spec: LaunchSpec, command: string, extra: string[], timeoutMs: number) => Promise<unknown>;
 export interface DiagnosticOptions {
     expectedVersion?: string; runner?: DiagnosticRunner; events?: DiagnosticEvent[]; helperError?: unknown; editor?: DiagnosticEditorState; historyError?: unknown;
     shouldContinue?: () => boolean;
+    agentConfiguration?: Omit<AgentConfigurationOptions, 'shouldContinue'>;
 }
 export interface IntegrityVerificationOptions {
     runner?: DiagnosticRunner; maxMs?: number; shouldContinue?: () => boolean;
@@ -61,8 +64,8 @@ export function diagnosticError(error: unknown): DiagnosticError {
 
 function nativeReadReason(error: unknown): 'busy' | 'not_indexed' | undefined {
     if (!(error instanceof NativeProcessError) || error.code !== 1 || error.killed || error.signal) { return undefined; }
-    if (/^(?:Error: )?current index is busy applying an update(?:\s*\r?\n\s*Caused by:\s*\r?\n\s*|:\s*)lock acquisition failed because the operation would block\s*$/.test(error.stderr)) { return 'busy'; }
-    if (/^(?:Error: )?workspace is not indexed(?:; run airk index first)?\s*$/.test(error.stderr)) { return 'not_indexed'; }
+    if (error.retryableGateContention) { return 'busy'; }
+    if (/^(?:Error: )?workspace is not indexed(?:; run airk index first)?\s*$/.test(error.nativeMessage ?? error.stderr)) { return 'not_indexed'; }
     return undefined;
 }
 
@@ -181,7 +184,7 @@ function assess(probes: DiagnosticReport['probes'], editor?: DiagnosticEditorSta
     }
     if (schedule?.paused || discovery?.state === 'paused' || editor?.paused || editor?.state === 'paused') { return set('paused', 'resume', 'Indexing is paused. Resume allows already requested work to continue.'); }
     if (editor?.state === 'failed' || editor?.state === 'capacity-limited') { return set('blocked', editor.state === 'capacity-limited' ? 'review' : 'retry', 'The editor stopped its current indexing request. Review its recorded error before retrying.'); }
-    if (Object.values(probes).some(probe => probe.state === 'busy')) { return set('busy', 'wait', 'A native publication is holding the index. Refresh after the current batch finishes.'); }
+    if (Object.values(probes).some(probe => probe.state === 'busy')) { return set('busy', 'wait', 'Another native reader or publication is holding the index gate. Refresh after the current operation finishes.'); }
     if (probes.status.reason === 'not_indexed') { return set('not_indexed', 'retry', 'This collection has no published index yet. Index now starts it.'); }
     if (probes.status.state !== 'ok') { return set('unknown', 'review', 'Current index state could not be established. Historical errors do not establish a current failure.'); }
     if (['pending', 'partial'].includes(String(semantic?.state)) && probes.schedule.state === 'ok' && schedule === null) {
@@ -240,9 +243,10 @@ export async function collectDiagnostics(spec: LaunchSpec, options: DiagnosticOp
             }));
         }
     }
+    const agentConfiguration = await inspectAgentConfiguration(spec, { ...options.agentConfiguration, shouldContinue: options.shouldContinue });
     return { schemaVersion: 1, capturedAt, binding: { helperPath: bounded(spec.command, 32768), root: bounded(spec.root, 32768),
         dataDir: bounded(spec.dataDir, 32768), collection: bounded(spec.collection, 256), name: bounded(spec.name, 512) },
-        probes, assessment: assess(probes, options.editor), recentEvents: sanitizeEvents(options.events ?? []),
+        probes, assessment: assess(probes, options.editor), recentEvents: sanitizeEvents(options.events ?? []), agentConfiguration,
         ...(options.historyError === undefined ? {} : { historyError: diagnosticError(options.historyError) }), ...(options.editor ? { editor: {
             paused: !!options.editor.paused, busy: !!options.editor.busy, ...(typeof options.editor.state === 'string' ? { state: bounded(options.editor.state, 64) } : {}),
             ...(typeof options.editor.pending === 'boolean' ? { pending: options.editor.pending } : {}) } } : {}) };

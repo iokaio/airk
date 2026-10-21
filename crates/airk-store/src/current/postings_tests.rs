@@ -21,6 +21,258 @@ fn fact(name: &str, kind: &str) -> airk_core::extraction::LocalFact {
 }
 
 #[test]
+fn missing_extractions_retire_shared_postings_in_one_replayable_transaction() -> Result<()> {
+    use airk_core::identity::framed_digest;
+    let fixture = Fixture::new()?;
+    let paths = (0..10_000)
+        .map(|n| format!("src/{n:05}.txt"))
+        .filter(|path| {
+            framed_digest(b"current-posting-path/1", &[path.as_bytes()]).as_bytes()[0] == 0
+        })
+        .take(3)
+        .collect::<Vec<_>>();
+    assert_eq!(paths.len(), 3);
+    let inputs = paths
+        .iter()
+        .enumerate()
+        .map(|(n, path)| {
+            retained_input_with_facts(
+                &fixture,
+                path,
+                &format!("body {n}"),
+                vec![fact("Alpha", "heading")],
+            )
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let changed = retained_input_with_facts(
+        &fixture,
+        &paths[0],
+        "replacement body",
+        vec![fact("Beta", "label")],
+    )?;
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    let mut token = fixture.head.token()?;
+    for input in &inputs {
+        token = current
+            .commit_artifact(&token, &input.artifact.path, Some(input))?
+            .token;
+    }
+    drop(current);
+    drop(writer);
+    for input in &inputs[..2] {
+        fs::remove_file(
+            fixture
+                .store
+                .directory()
+                .join("objects/artifacts")
+                .join(&input.artifact.retained.as_ref().unwrap().object),
+        )?;
+    }
+    let read = fixture.store.current_read(&fixture.scope)?;
+    let mut target = read.head().clone();
+    target.sequence += 1;
+    let reservation = fixture
+        .quota
+        .reserve(&fixture.scope.collection, 4 * 1024 * 1024)?;
+    let sealed = graph::GraphOverlay::new(
+        &reservation,
+        read,
+        graph::GraphOverlayLimits {
+            maximum_bytes: 1024 * 1024,
+            ..Default::default()
+        },
+    )?
+    .seal()?;
+    target.graph_head = sealed.descriptor().target.clone();
+    let changes = [
+        ArtifactChange::Upsert(Box::new(changed.clone())),
+        ArtifactChange::Delete(paths[1].clone()),
+    ];
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    let pending = current.prepare_artifacts(
+        &token,
+        target,
+        &sealed,
+        &changes,
+        None,
+        br#"{"engine":"test"}"#,
+    )?;
+    current.mark_applying(&pending)?;
+    drop(current);
+    drop(writer);
+    assert!(fixture.store.current_read(&fixture.scope).is_err());
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    let recovered = current.pending()?.unwrap();
+    current.mark_applying(&recovered)?;
+    current.commit(&recovered, recovered.target.lexical_commit)?;
+    assert!(current.pending()?.is_none());
+    drop(current);
+    drop(writer);
+    let read = fixture.store.current_read(&fixture.scope)?;
+    assert_eq!(read.token()?, pending.target.token()?);
+    assert_eq!(
+        read.lookup_paths(Lookup::FactName("Alpha"), "", None, 10)?
+            .paths,
+        [paths[2].clone()]
+    );
+    assert_eq!(
+        read.lookup_paths(Lookup::FactKind("heading"), "", None, 10)?
+            .paths,
+        [paths[2].clone()]
+    );
+    assert_eq!(
+        read.lookup_paths(Lookup::FactName("Beta"), "", None, 10)?
+            .paths,
+        [paths[0].clone()]
+    );
+    assert_eq!(
+        read.lookup_paths(Lookup::Files, "", None, 10)?.paths,
+        [paths[0].clone(), paths[2].clone()]
+    );
+    assert!(read.artifact(&paths[1])?.is_none());
+    let replacement = fixture
+        .store
+        .load_retained(&read.artifact(&paths[0])?.unwrap())?;
+    assert_eq!(replacement.content_hash, changed.artifact.content_hash);
+    assert_eq!(replacement.chunks[0].text, "replacement body");
+    assert_eq!(
+        fixture
+            .store
+            .load_retained(&read.artifact(&paths[2])?.unwrap())?
+            .chunks[0]
+            .text,
+        "body 2"
+    );
+    Ok(())
+}
+
+#[test]
+fn missing_extraction_retirement_rejects_omitted_or_corrupt_posting_buckets() -> Result<()> {
+    for mutation in [
+        "DELETE FROM current_map_buckets WHERE prefix=?1",
+        "UPDATE current_map_buckets SET content=zeroblob(length(content)) WHERE prefix=?1",
+    ] {
+        let fixture = Fixture::new()?;
+        let input = retained_input_with_facts(
+            &fixture,
+            "evidence.txt",
+            "body",
+            vec![fact("Alpha", "heading")],
+        )?;
+        let writer = fixture.store.lock()?;
+        let mut current =
+            fixture
+                .store
+                .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+        let committed =
+            current.commit_artifact(&fixture.head.token()?, &input.artifact.path, Some(&input))?;
+        drop(current);
+        drop(writer);
+        let artifact_key = map::key(
+            &fixture.scope,
+            map::MapDomain::Artifact,
+            input.artifact.path.as_bytes(),
+        )?;
+        let read = fixture.store.current_read(&fixture.scope)?;
+        let (posting_key, _) = read
+            .map_entries(map::MapVisitLimits::default())?
+            .into_iter()
+            .find(|(key, bytes)| {
+                key.as_bytes()[..2] != artifact_key.as_bytes()[..2]
+                    && serde_json::from_slice::<serde_json::Value>(bytes)
+                        .is_ok_and(|value| value.get("selector").is_some())
+            })
+            .context("fixture has no distinct posting bucket")?;
+        drop(read);
+        fs::remove_file(
+            fixture
+                .store
+                .directory()
+                .join("objects/artifacts")
+                .join(&input.artifact.retained.as_ref().unwrap().object),
+        )?;
+        let connection = database::open_writer(
+            &fixture.store.directory().join("current.sqlite3"),
+            CAPACITY,
+            false,
+        )?;
+        assert_eq!(
+            connection.execute(
+                mutation,
+                [i64::from(u16::from_be_bytes(
+                    posting_key.as_bytes()[..2].try_into()?
+                ))]
+            )?,
+            1
+        );
+        drop(connection);
+        let writer = fixture.store.lock()?;
+        let mut current =
+            fixture
+                .store
+                .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+        assert!(
+            current
+                .commit_artifact(&committed.token, &input.artifact.path, None)
+                .is_err(),
+            "{mutation}"
+        );
+        assert_eq!(current.head()?.token()?, committed.token);
+        assert_eq!(current.phase()?, TransactionPhase::Ready);
+        assert!(current.pending()?.is_none());
+    }
+    Ok(())
+}
+
+#[test]
+fn corrupt_prior_extraction_is_not_treated_as_missing_during_retirement() -> Result<()> {
+    let fixture = Fixture::new()?;
+    let input = retained_input_with_facts(
+        &fixture,
+        "evidence.txt",
+        "body",
+        vec![fact("Alpha", "heading")],
+    )?;
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    let committed =
+        current.commit_artifact(&fixture.head.token()?, &input.artifact.path, Some(&input))?;
+    let object = fixture
+        .store
+        .directory()
+        .join("objects/artifacts")
+        .join(&input.artifact.retained.as_ref().unwrap().object);
+    fs::write(&object, "corrupt derived fixture")?;
+    let error = current
+        .commit_artifact(&committed.token, &input.artifact.path, None)
+        .unwrap_err();
+    assert!(
+        error
+            .downcast_ref::<crate::blobs::MissingRetainedObject>()
+            .is_none()
+    );
+    assert_eq!(current.head()?.token()?, committed.token);
+    assert!(current.pending()?.is_none());
+    assert_eq!(fs::read(object)?, b"corrupt derived fixture");
+    Ok(())
+}
+
+#[test]
 fn catalog_postings_follow_replacement_deletion_and_exact_case() -> Result<()> {
     let fixture = Fixture::new()?;
     let first = retained_input_with_facts(

@@ -1038,7 +1038,35 @@ fn client_config(kernel: &Kernel, client: SetupClient) -> anyhow::Result<String>
     Ok(serde_json::to_string(&config)?)
 }
 
-fn main() -> anyhow::Result<()> {
+fn main() -> std::process::ExitCode {
+    match run_cli() {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(error) => {
+            if std::env::var("AIRK_ERROR_FORMAT").as_deref() == Ok("json") {
+                let busy = error
+                    .downcast_ref::<airk_kernel::CurrentGateContention>()
+                    .is_some();
+                // Display the cause chain without anyhow's environment-dependent
+                // Debug backtrace. Retry admission depends only on the typed error.
+                let message: String = format!("{error:#}").chars().take(4096).collect();
+                eprintln!(
+                    "{}",
+                    serde_json::json!({
+                        "airk_error": 1,
+                        "code": if busy { "current_gate_busy" } else { "operation_failed" },
+                        "retryable": busy,
+                        "message": message,
+                    })
+                );
+            } else {
+                eprintln!("Error: {error:?}");
+            }
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+fn run_cli() -> anyhow::Result<()> {
     if airk_kernel::dispatch_pdf_worker()? {
         return Ok(());
     }

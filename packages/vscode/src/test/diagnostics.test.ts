@@ -5,7 +5,7 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { collectDiagnostics, diagnosticError, DiagnosticHistory, DiagnosticRunner, verifyDiagnosticIntegrity } from '../diagnostics';
-import { LaunchSpec } from '../model';
+import { configFor, LaunchSpec } from '../model';
 import { NativeProcessError } from '../native';
 
 const spec: LaunchSpec = { command: path.resolve('fixture/airk'), root: path.resolve('fixture/project'), dataDir: path.resolve('fixture/state'), collection: 'project-fixture', name: 'Fixture' };
@@ -29,7 +29,9 @@ const fakeRunner = (responses: Record<string, unknown>): DiagnosticRunner => asy
     const result = responses[[command, ...extra].join(' ')]; if (result instanceof Error) { throw result; } return result;
 };
 const processError = (stderr: string, code: number = 1) => new NativeProcessError(spec.command, Object.assign(new Error('Command failed'), { code }), stderr, 25, 10000);
-const gate = 'Error: current index is busy applying an update\n\nCaused by:\n    lock acquisition failed because the operation would block';
+const nativeOutcome = (message: string, busy = false) => JSON.stringify({ airk_error: 1,
+    code: busy ? 'current_gate_busy' : 'operation_failed', retryable: busy, message });
+const gate = nativeOutcome('current index is busy applying an update: lock acquisition failed because the operation would block', true);
 
 test('diagnostics use bounded read-only collection probes and whitelist metadata', async () => {
     const responses = replies(), calls: string[] = []; let active = 0, peak = 0;
@@ -53,6 +55,25 @@ test('native scheduler canonical Windows paths match the selected Node workspace
     assert.equal(report.probes.schedule.state, 'ok'); assert.equal(report.assessment.state, 'ready');
 });
 
+test('live diagnostics expose stale configured helpers separately from verified index health', async () => {
+    const directory = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'airk-config-report-')));
+    try {
+        const selected = { ...spec, root: directory }, codexHome = path.join(directory, 'user');
+        await fs.mkdir(codexHome); await fs.mkdir(path.join(directory, '.codex'));
+        const old = { ...selected, command: path.join(directory, 'helpers', '1.2.3-win32-x64-old', 'airk.exe') };
+        await fs.writeFile(path.join(directory, '.codex', 'config.toml'), configFor('codex', old));
+        const responses = replies(); (responses['schedule status'] as any).root = directory;
+        const report = await collectDiagnostics(selected, { runner: fakeRunner(responses), agentConfiguration: { codexHome } });
+        assert.equal(report.assessment.state, 'ready', 'Index integrity and saved agent configuration are separate observations');
+        assert.equal(report.agentConfiguration?.entries[0].status, 'different_helper');
+        assert.equal(report.agentConfiguration?.entries[0].helperPath, old.command);
+        assert.equal(report.agentConfiguration?.connection, 'not_verified');
+    } finally {
+        assert.equal(path.dirname(directory), await fs.realpath(os.tmpdir())); assert.ok(path.basename(directory).startsWith('airk-config-report-'));
+        await fs.rm(directory, { recursive: true, force: true });
+    }
+});
+
 test('diagnostic cancellation stops queued probes when trust or collection binding changes', async () => {
     const responses = replies(), calls: string[] = [];
     let allowed = true;
@@ -70,12 +91,13 @@ test('diagnostic cancellation stops queued probes when trust or collection bindi
 });
 
 test('diagnostics distinguish exact contention from permission errors, missing objects and unknown observations', async () => {
-    for (const scenario of ['busy', 'permission', 'missing', 'unindexed', 'invalid', 'paused', 'blocked', 'partial', 'unregistered', 'policy-pending', 'mismatch', 'editor-failed', 'editor-paused'] as const) {
+    for (const scenario of ['busy', 'untyped-busy', 'permission', 'missing', 'unindexed', 'invalid', 'paused', 'blocked', 'partial', 'unregistered', 'policy-pending', 'mismatch', 'editor-failed', 'editor-paused'] as const) {
         const responses = replies();
         if (scenario === 'busy') { responses.status = processError(gate); }
-        if (scenario === 'permission') { responses.status = processError(gate.replace('lock acquisition failed because the operation would block', 'Permission denied (os error 13)')); }
-        if (scenario === 'missing') { responses.status = processError('Error: retained object missing; previous generation cannot be reconstructed'); }
-        if (scenario === 'unindexed') { responses.status = processError('Error: workspace is not indexed; run airk index first'); }
+        if (scenario === 'untyped-busy') { responses.status = processError('Error: current index is busy applying an update\n\nCaused by:\n    lock acquisition failed because the operation would block'); }
+        if (scenario === 'permission') { responses.status = processError(nativeOutcome('current index is busy applying an update: Permission denied (os error 13)')); }
+        if (scenario === 'missing') { responses.status = processError(nativeOutcome('retained object missing; previous generation cannot be reconstructed')); }
+        if (scenario === 'unindexed') { responses.status = processError(nativeOutcome('workspace is not indexed; run airk index first')); }
         if (scenario === 'invalid') { responses.status = { collection: 'foreign', generation: 7, files: 1 }; }
         if (scenario === 'paused') { (responses['schedule status'] as any).paused = true; }
         if (scenario === 'blocked') { Object.assign(responses['schedule status'] as object, { blocked: true, error: 'fixture failure' }); }
@@ -85,7 +107,7 @@ test('diagnostics distinguish exact contention from permission errors, missing o
         const report = await collectDiagnostics(spec, { expectedVersion: scenario === 'mismatch' ? '1.2.5' : '1.2.4', runner: fakeRunner(responses),
             ...(scenario === 'editor-failed' ? { editor: { paused: false, state: 'failed', busy: false, pending: true } } : {}),
             ...(scenario === 'editor-paused' ? { editor: { paused: true, busy: false, pending: true } } : {}) });
-        const expected = { busy: 'busy', permission: 'failed', missing: 'failed', unindexed: 'not_indexed', invalid: 'unknown', paused: 'paused', blocked: 'blocked',
+        const expected = { busy: 'busy', 'untyped-busy': 'failed', permission: 'failed', missing: 'failed', unindexed: 'not_indexed', invalid: 'unknown', paused: 'paused', blocked: 'blocked',
             partial: 'building', unregistered: 'blocked', 'policy-pending': 'building', mismatch: 'failed', 'editor-failed': 'blocked', 'editor-paused': 'paused' }[scenario];
         assert.equal(report.assessment.state, expected, scenario);
         if (scenario === 'missing') { assert.equal(report.assessment.recommendedAction, 'retry'); }

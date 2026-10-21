@@ -127,13 +127,83 @@ fn selectors(store: &FileStore, compact: &Artifact) -> Result<BTreeSet<Sha256Dig
 }
 
 /// Accumulates final afterimages and charges them before they can grow beyond
-/// the journal's admission ceiling. No whole-corpus enumeration is performed.
+/// the journal's admission ceiling. Missing retained evidence can require a
+/// bounded authenticated base-map traversal to retire old path memberships.
 #[derive(Default)]
 pub(crate) struct PostingChanges {
     values: BTreeMap<Sha256Digest, map::MapChange>,
     bytes: usize,
+    recovery_entries: usize,
+    recovery_bytes: usize,
 }
 impl PostingChanges {
+    fn prior_selectors(
+        &mut self,
+        plan: &map::MapPlan<'_>,
+        scope: &CurrentScope,
+        store: &FileStore,
+        previous: &Artifact,
+    ) -> Result<BTreeSet<Sha256Digest>> {
+        match selectors(store, previous) {
+            Ok(selectors) => return Ok(selectors),
+            Err(error)
+                if error
+                    .downcast_ref::<crate::blobs::MissingRetainedObject>()
+                    .is_some() => {}
+            Err(error) => return Err(error),
+        }
+        ensure!(
+            self.recovery_entries < MAX_CHANGED_KEYS && self.recovery_bytes < MAX_CHANGED_BYTES,
+            "current posting recovery traversal budget exceeded"
+        );
+        let mut selectors = BTreeSet::new();
+        let limits = map::MapVisitLimits {
+            entries: MAX_CHANGED_KEYS - self.recovery_entries,
+            bytes: MAX_CHANGED_BYTES - self.recovery_bytes,
+            ..Default::default()
+        };
+        plan.visit_base(limits, &mut |key, bytes| {
+            self.recovery_entries += 1;
+            self.recovery_bytes = self
+                .recovery_bytes
+                .checked_add(bytes.len())
+                .context("current posting recovery byte overflow")?;
+            // Domains share one keyed map. Posting values are self-describing;
+            // authenticate their domain and identity before trusting membership.
+            // Other authenticated domains also contain binary handle values.
+            let Ok(value) = serde_json::from_slice::<serde_json::Value>(bytes) else {
+                return Ok(());
+            };
+            if value.get("selector").is_none() && value.get("shard").is_none() {
+                return Ok(());
+            }
+            let posting: Posting = serde_json::from_value(value)?;
+            ensure!(
+                map::key(
+                    scope,
+                    map::MapDomain::Posting,
+                    &identity(posting.selector, posting.shard)
+                )? == key
+                    && posting.bytes()? == bytes,
+                "current posting recovery identity or encoding differs"
+            );
+            if posting.paths.contains(&previous.path) {
+                selectors.insert(posting.selector);
+                ensure!(
+                    selectors.len() <= MAX_SELECTORS_PER_ARTIFACT,
+                    "current artifact selector limit exceeded"
+                );
+            }
+            Ok(())
+        })?;
+        ensure!(
+            selectors.contains(&Lookup::Files.identity())
+                && selectors.contains(&Lookup::Language(&previous.language).identity()),
+            "current posting recovery lacks required prior artifact membership"
+        );
+        Ok(selectors)
+    }
+
     pub(crate) fn update(
         &mut self,
         plan: &mut map::MapPlan<'_>,
@@ -151,7 +221,7 @@ impl PostingChanges {
             "posting artifact path mismatch"
         );
         let old = previous
-            .map(|a| selectors(store, a))
+            .map(|a| self.prior_selectors(plan, scope, store, a))
             .transpose()?
             .unwrap_or_default();
         let new = next

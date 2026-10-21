@@ -15,6 +15,29 @@ async function removeFixture(directory: string, prefix: string): Promise<void> {
     await fs.rm(resolved, { recursive: true, force: true });
 }
 
+test('only a structured gate outcome with an ordinary exit authorizes contention retry', async () => {
+    const busy = { airk_error: 1, code: 'current_gate_busy', retryable: true, message: 'localized gate diagnostic' };
+    const failure = (stderr: string, properties: object = { code: 1 }) => new NativeProcessError('airk',
+        Object.assign(new Error('Command failed'), properties), stderr, 1, 10000);
+    assert.equal(failure(JSON.stringify(busy)).retryableGateContention, true);
+    for (const stderr of [
+        'Error: current index is busy applying an update\nCaused by:\n    lock acquisition failed because the operation would block',
+        JSON.stringify({ ...busy, airk_error: 2 }), JSON.stringify({ ...busy, retryable: false }),
+        JSON.stringify({ ...busy, code: 'operation_failed' }), JSON.stringify({ ...busy, message: null }),
+        JSON.stringify(busy) + '\nstack backtrace:\n1: fixture', '[]', 'null', '{',
+        JSON.stringify({ ...busy, message: 'x'.repeat(8192) })
+    ]) { assert.equal(failure(stderr).retryableGateContention, false); }
+    for (const properties of [{ code: 7 }, { code: 1, killed: true }, { code: 1, signal: 'SIGTERM' }]) {
+        assert.equal(failure(JSON.stringify(busy), properties).retryableGateContention, false);
+    }
+    await assert.rejects(runText(process.execPath, ['-e',
+        'if (process.env.AIRK_ERROR_FORMAT !== "json") process.exit(7); process.stderr.write(JSON.stringify({airk_error:1,code:"current_gate_busy",retryable:true,message:"gate"}), () => process.exit(1))']), error => {
+        assert.ok(error instanceof NativeProcessError);
+        assert.equal(error.retryableGateContention, true);
+        return true;
+    });
+});
+
 test('native process failures retain exit status and stderr diagnostics', async () => {
     await assert.rejects(runText(process.execPath, ['-e', 'process.stderr.write("fixture indexing failure"); process.exit(7)']), error => {
         assert.ok(error instanceof NativeProcessError);

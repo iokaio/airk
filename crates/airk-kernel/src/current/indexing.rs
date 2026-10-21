@@ -615,6 +615,33 @@ impl Kernel {
     }
 
     fn retained_repair_can_rescan(&self) -> Result<bool> {
+        self.retained_repair_can_rescan_with_budget(std::time::Duration::from_secs(2))
+    }
+
+    fn retained_repair_can_rescan_with_budget(&self, budget: std::time::Duration) -> Result<bool> {
+        let started = std::time::Instant::now();
+        loop {
+            match self.retained_repair_admission() {
+                Err(error)
+                    if error
+                        .downcast_ref::<crate::CurrentGateContention>()
+                        .is_some()
+                        && started.elapsed() < budget =>
+                {
+                    // Release every handle before waiting. A diagnostic reader
+                    // may finish between attempts; journal/I/O errors never retry.
+                    std::thread::sleep(
+                        budget
+                            .saturating_sub(started.elapsed())
+                            .min(std::time::Duration::from_millis(25)),
+                    );
+                }
+                outcome => return outcome,
+            }
+        }
+    }
+
+    fn retained_repair_admission(&self) -> Result<bool> {
         let writer = self.store.lock()?;
         let Some(scope) = self.current_scope()? else {
             return Ok(false);

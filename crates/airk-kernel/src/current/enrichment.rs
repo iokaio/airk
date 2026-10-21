@@ -383,6 +383,25 @@ impl Kernel {
         Ok(())
     }
 
+    fn semantic_failure(&self, error: anyhow::Error) -> anyhow::Error {
+        if error
+            .downcast_ref::<crate::CurrentGateContention>()
+            .is_some()
+        {
+            // A reader may release its gate before this handler runs. Temporary
+            // publication exclusion must not become durable semantic failure.
+            return error;
+        }
+        match self.record_semantic_failure(&error) {
+            Ok(()) => error,
+            // Preserve the original typed cause. In particular, a secondary
+            // busy gate must not make corruption or permission errors retryable.
+            Err(record) => error.context(format!(
+                "record failed semantic enrichment also failed: {record:#}"
+            )),
+        }
+    }
+
     pub(super) fn drain_with_failure_record(
         &self,
         model: &EmbeddingModel,
@@ -393,11 +412,7 @@ impl Kernel {
     ) -> Result<Option<u64>> {
         match self.drain_current_enrichment(model, selection, stats, max_batches, current_work) {
             Ok(result) => Ok(result),
-            Err(error) => {
-                self.record_semantic_failure(&error)
-                    .context("record failed semantic enrichment")?;
-                Err(error)
-            }
+            Err(error) => Err(self.semantic_failure(error)),
         }
     }
 
@@ -431,8 +446,7 @@ impl Kernel {
             Ok(model) => model,
             Err(error) => {
                 drop(read);
-                self.record_semantic_failure(&error)?;
-                return Err(error);
+                return Err(self.semantic_failure(error));
             }
         };
         drop(read);
@@ -474,8 +488,7 @@ impl Kernel {
             Ok(model) => model,
             Err(error) => {
                 drop(read);
-                self.record_semantic_failure(&error)?;
-                return Err(error);
+                return Err(self.semantic_failure(error));
             }
         };
         drop(read);
@@ -610,3 +623,6 @@ impl Kernel {
         Ok(generation)
     }
 }
+
+#[cfg(test)]
+mod tests;

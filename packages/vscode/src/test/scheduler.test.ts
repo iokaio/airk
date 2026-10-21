@@ -29,6 +29,42 @@ class FakeClock implements Clock {
     }
 }
 
+test('semantic contention backs off to a bounded delay while successful pending batches keep their cadence', async () => {
+    const clock = new FakeClock(), times: number[] = [];
+    const results: SemanticResult[] = [...Array<SemanticResult>(7).fill('busy'), 'pending', 'busy', 'ready'];
+    const scheduler = new Scheduler({ ...options, mode: 'manual' }, async () => report, () => {}, error => assert.fail(String(error)), clock,
+        async () => { times.push(clock.now()); return results.shift()!; });
+    try {
+        scheduler.observeSemantic(spec, true);
+        await clock.advance(94000);
+        assert.deepEqual(times, [0, 1000, 3000, 7000, 15000, 31000, 61000, 91000, 92000, 93000]);
+        assert.equal(scheduler.states()[0].pending, false);
+    } finally { scheduler.dispose(); }
+});
+
+test('explicit retry and resume clear contention backoff, including an older busy response still in flight', async () => {
+    for (const action of ['retry', 'resume'] as const) {
+        const clock = new FakeClock(), times: number[] = [];
+        let finish!: (result: SemanticResult) => void, scans = 0;
+        const scheduler = new Scheduler({ ...options, mode: 'manual' }, async () => { scans++; return report; }, () => {}, () => {}, clock,
+            async () => {
+                times.push(clock.now());
+                return times.length === 3 ? new Promise<SemanticResult>(resolve => { finish = resolve; }) : 'busy';
+            });
+        try {
+            scheduler.observeSemantic(spec, true); await clock.advance(3000);
+            assert.deepEqual(times, [0, 1000, 3000]);
+            const retry = action === 'retry' ? scheduler.request(spec, true) : undefined;
+            if (action === 'resume') { scheduler.resume(); }
+            finish('busy'); await flush(); await clock.advance(0); await retry;
+            assert.equal(times.at(-1), 3000, 'The explicit action must not inherit the older attempt backoff');
+            assert.equal(scans, action === 'retry' ? 1 : 0);
+            await clock.advance(999); assert.equal(times.length, 4);
+            await clock.advance(1); assert.equal(times.at(-1), 4000, 'The next busy response starts at the initial delay');
+        } finally { scheduler.dispose(); }
+    }
+});
+
 test('an early source timer preserves its deadline without starting unrequested semantic work', async () => {
     for (const hasEnrichment of [true, false]) {
         const clock = new FakeClock(); let scans = 0, batches = 0, failures = 0;

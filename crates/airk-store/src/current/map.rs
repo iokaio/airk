@@ -422,6 +422,7 @@ pub(crate) fn put(
 pub(crate) struct MapPlan<'a> {
     connection: &'a Connection,
     scope: &'a CurrentScope,
+    base_root: Sha256Digest,
     root: Sha256Digest,
     buckets: BTreeMap<u16, Vec<Entry>>,
     nodes: BTreeMap<(u8, u16), Sha256Digest>,
@@ -439,6 +440,7 @@ impl<'a> MapPlan<'a> {
         Ok(Self {
             connection,
             scope,
+            base_root: root,
             root,
             buckets: BTreeMap::new(),
             nodes: BTreeMap::new(),
@@ -450,6 +452,18 @@ impl<'a> MapPlan<'a> {
     pub fn root(&self) -> Result<Sha256Digest> {
         ensure!(!self.poisoned, "current map plan is poisoned");
         Ok(self.root)
+    }
+
+    /// Prove a complete, bounded traversal of the immutable committed base.
+    /// Planned mutations are deliberately excluded: recovery needs the old
+    /// path's memberships, then applies removals through `get`/`put` afterimages.
+    pub fn visit_base(
+        &self,
+        limits: MapVisitLimits,
+        visitor: &mut dyn FnMut(Sha256Digest, &[u8]) -> Result<()>,
+    ) -> Result<()> {
+        ensure!(!self.poisoned, "current map plan is poisoned");
+        visit_all(self.connection, self.scope, self.base_root, limits, visitor)
     }
 
     /// Read through the planned afterimage, proving the bucket against the

@@ -2,6 +2,42 @@
 use super::*;
 
 type CaptureFault = Box<dyn FnMut(&airk_store::FileStore, &Artifact) -> Result<()>>;
+
+#[test]
+fn retained_repair_admission_waits_for_readers_and_bounds_contention() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let data = tempfile::tempdir()?;
+    std::fs::write(root.path().join("readers.txt"), "read gate fixture\n")?;
+    let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    kernel.configure_vectors(false)?;
+    kernel.index()?;
+    let scope = kernel.current_scope()?.unwrap();
+    let reader = kernel.store.current_read(&scope)?;
+    let before = reader.token()?;
+    let release = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        drop(reader);
+    });
+    let admitted = kernel.retained_repair_can_rescan();
+    release.join().unwrap();
+    assert!(admitted?);
+    let reader = kernel.store.current_read(&scope)?;
+    assert_eq!(reader.token()?, before);
+    let started = std::time::Instant::now();
+    let error = kernel
+        .retained_repair_can_rescan_with_budget(std::time::Duration::from_millis(40))
+        .unwrap_err();
+    assert!(
+        error
+            .downcast_ref::<crate::CurrentGateContention>()
+            .is_some()
+    );
+    assert!(started.elapsed() >= std::time::Duration::from_millis(40));
+    assert_eq!(reader.token()?, before);
+    drop(reader);
+    assert!(kernel.retained_repair_can_rescan()?);
+    Ok(())
+}
 thread_local! {
     static CAPTURE_FAULT: std::cell::RefCell<Option<CaptureFault>> = const {
         std::cell::RefCell::new(None)
@@ -466,100 +502,131 @@ fn missing_retained_source_never_relabels_changed_live_bytes_as_old_evidence() -
 }
 
 #[test]
-fn missing_prior_extraction_with_changed_or_deleted_source_stops_without_relabeling() -> Result<()>
-{
+fn missing_prior_extraction_with_changed_source_retires_old_evidence() -> Result<()> {
+    retire_missing_prior_extraction(false)
+}
+
+#[test]
+fn missing_prior_extraction_with_deleted_source_retires_old_evidence() -> Result<()> {
+    retire_missing_prior_extraction(true)
+}
+
+fn retire_missing_prior_extraction(deleted: bool) -> Result<()> {
+    use sha2::{Digest, Sha256};
     use std::sync::atomic::{AtomicUsize, Ordering};
-    for deleted in [false, true] {
-        let root = tempfile::tempdir()?;
-        let data = tempfile::tempdir()?;
-        let source = root.path().join("alpha.txt");
-        let neighbor = root.path().join("neighbor.txt");
-        std::fs::write(&source, "original alpha evidence\n")?;
-        std::fs::write(&neighbor, "unrelated neighbor evidence\n")?;
-        let attempts = Arc::new(AtomicUsize::new(0));
-        let observed_attempts = attempts.clone();
-        let kernel = Kernel::open(root.path(), Some(data.path().into()))?.with_index_progress(
-            move |event| {
-                if event.phase == "scan_started" {
-                    observed_attempts.fetch_add(1, Ordering::AcqRel);
-                }
-            },
-        );
-        kernel.configure_vectors(false)?;
-        kernel.scheduled_index(false, false)?;
-        attempts.store(0, Ordering::Release);
-        let before = kernel.current_reader()?;
-        let original = before.artifact("alpha.txt")?.unwrap();
-        let identity = before.file_metadata(&kernel.store, "alpha.txt")?.unwrap();
-        let neighbor_identity = before
-            .file_metadata(&kernel.store, "neighbor.txt")?
-            .unwrap();
-        drop(before);
-        let missing = retained_object_path(&kernel.store, &original, "artifacts");
-        std::fs::remove_file(&missing)?;
-        if deleted {
-            std::fs::remove_file(&source)?;
-        } else {
-            std::fs::write(&source, "updated live alpha evidence\n")?;
-        }
+    let root = tempfile::tempdir()?;
+    let data = model_data_directory()?;
+    let source = root.path().join("alpha.txt");
+    let neighbor = root.path().join("neighbor.txt");
+    std::fs::write(&source, "original alpha evidence\n")?;
+    std::fs::write(&neighbor, "unrelated neighbor evidence\n")?;
+    write_static_test_model(&data.path().join("models/local"))?;
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let observed_attempts = attempts.clone();
+    let kernel =
+        Kernel::open(root.path(), Some(data.path().into()))?.with_index_progress(move |event| {
+            if event.phase == "scan_started" {
+                observed_attempts.fetch_add(1, Ordering::AcqRel);
+            }
+        });
+    kernel.scheduled_index(false, false)?;
+    kernel.resume_current_enrichment()?;
+    attempts.store(0, Ordering::Release);
+    let before = kernel.current_reader()?;
+    let original = before.artifact("alpha.txt")?.unwrap();
+    let identity = before.file_metadata(&kernel.store, "alpha.txt")?.unwrap();
+    let neighbor_identity = before
+        .file_metadata(&kernel.store, "neighbor.txt")?
+        .unwrap();
+    drop(before);
+    let missing = retained_object_path(&kernel.store, &original, "artifacts");
+    std::fs::remove_file(&missing)?;
+    if deleted {
+        std::fs::remove_file(&source)?;
+    } else {
+        std::fs::write(&source, "updated live alpha evidence\n")?;
+    }
 
-        // Replacing or deleting this row still needs its old extraction to
-        // authenticate prior posting selectors. New live bytes cannot supply it.
-        let error = kernel.scheduled_index(false, false).unwrap_err();
-        let message = format!("{error:#}");
-        assert!(message.contains("after one fresh scan"), "{message}");
-        assert!(message.contains("missing retained extraction"), "{message}");
-        assert!(message.contains("alpha.txt"), "{message}");
-        assert!(
-            message.contains(&missing.display().to_string()),
-            "{message}"
-        );
-        assert_eq!(attempts.load(Ordering::Acquire), 2);
-        assert!(kernel.schedule_status()?.unwrap().blocked);
-        assert!(kernel.retained_repair_can_rescan()?);
-        assert!(
-            !missing.exists(),
-            "later bytes must not recreate old evidence"
-        );
-        drop(kernel);
+    // Retire old path memberships from authenticated current state. A
+    // replacement publishes only freshly captured bytes under their hash.
+    let report = kernel.scheduled_index(false, false)?;
+    assert_eq!(report.indexed, usize::from(!deleted));
+    assert_eq!(report.reused, 1);
+    assert!(report.maintenance_error.is_none(), "{report:?}");
+    assert_eq!(attempts.load(Ordering::Acquire), 1);
+    assert!(!kernel.schedule_status()?.unwrap().blocked);
+    assert!(kernel.retained_repair_can_rescan()?);
+    kernel.resume_current_enrichment()?;
+    assert!(
+        !missing.exists(),
+        "later bytes must not recreate old evidence"
+    );
+    drop(kernel);
 
-        let reopened = Kernel::open(root.path(), Some(data.path().into()))?;
-        let after = reopened.current_reader()?;
+    let reopened = Kernel::open(root.path(), Some(data.path().into()))?;
+    let after = reopened.current_reader()?;
+    let updated_hash = format!("{:x}", Sha256::digest(b"updated live alpha evidence\n"));
+    if deleted {
+        assert!(after.artifact("alpha.txt")?.is_none());
+        assert!(after.file_metadata(&reopened.store, "alpha.txt")?.is_none());
+        assert!(after.path_occurrences("alpha.txt")?.is_none());
+    } else {
+        let updated = after.artifact("alpha.txt")?.unwrap();
+        assert_eq!(updated.content_hash, updated_hash);
+        assert_ne!(updated.content_hash, original.content_hash);
+        let updated_identity = after.file_metadata(&reopened.store, "alpha.txt")?.unwrap();
         assert_eq!(
-            serde_json::to_value(after.artifact("alpha.txt")?)?,
-            serde_json::to_value(Some(original))?
+            updated_identity.state.artifact_id,
+            identity.state.artifact_id
         );
-        assert_eq!(
-            serde_json::to_value(after.file_metadata(&reopened.store, "alpha.txt")?)?,
-            serde_json::to_value(Some(identity))?
-        );
-        assert_eq!(
-            serde_json::to_value(after.file_metadata(&reopened.store, "neighbor.txt")?)?,
-            serde_json::to_value(Some(neighbor_identity))?
-        );
-        drop(after);
+        assert_eq!(updated_identity.state.source_hash.to_string(), updated_hash);
+    }
+    assert_eq!(
+        serde_json::to_value(after.file_metadata(&reopened.store, "neighbor.txt")?)?,
+        serde_json::to_value(Some(neighbor_identity))?
+    );
+    drop(after);
+    let mut query = airk_core::SearchQuery {
+        text: "original".into(),
+        path_prefix: Some("alpha.txt".into()),
+        limit: 10,
+        max_bytes: 4096,
+    };
+    assert!(reopened.search(&query)?.hits.is_empty());
+    query.text = "updated".into();
+    let lexical = reopened.search(&query)?;
+    let semantic = reopened.semantic_search(&query)?;
+    if deleted {
         assert!(reopened.read_file("alpha.txt", 1, 1, 4096).is_err());
-        assert_eq!(
-            reopened.read_file("neighbor.txt", 1, 1, 4096)?.hits[0].text,
-            "unrelated neighbor evidence\n"
-        );
-        assert!(reopened.schedule_status()?.unwrap().blocked);
-        if deleted {
-            assert!(
-                !source.exists(),
-                "indexing must not restore a deleted source"
-            );
-        } else {
-            assert_eq!(
-                std::fs::read_to_string(source)?,
-                "updated live alpha evidence\n"
-            );
+        assert!(lexical.hits.is_empty());
+        assert!(semantic.hits.is_empty());
+    } else {
+        let exact = reopened.read_file("alpha.txt", 1, 1, 4096)?;
+        for response in [&exact, &lexical, &semantic] {
+            assert_eq!(response.hits[0].text, "updated live alpha evidence\n");
+            assert_eq!(response.hits[0].citation.content_hash, updated_hash);
         }
+    }
+    assert_eq!(
+        reopened.read_file("neighbor.txt", 1, 1, 4096)?.hits[0].text,
+        "unrelated neighbor evidence\n"
+    );
+    assert!(!reopened.schedule_status()?.unwrap().blocked);
+    if deleted {
+        assert!(
+            !source.exists(),
+            "indexing must not restore a deleted source"
+        );
+    } else {
         assert_eq!(
-            std::fs::read_to_string(neighbor)?,
-            "unrelated neighbor evidence\n"
+            std::fs::read_to_string(source)?,
+            "updated live alpha evidence\n"
         );
     }
+    assert_eq!(
+        std::fs::read_to_string(neighbor)?,
+        "unrelated neighbor evidence\n"
+    );
     Ok(())
 }
 
