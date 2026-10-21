@@ -19,3 +19,5 @@ VS Code MCP definition resolution and the helper check no longer wait for a full
 ## Qualification status
 
 On 2026-10-21, local Windows checks passed: `cargo build --workspace --locked`, `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, `cargo test --workspace --locked`, the repository checks, Python repository tests, and the native-backed VS Code suite (132 passed, 2 skipped). The focused regressions cover the queue, hash mismatch, snippet coordinates, CamelCase references, 15-tool catalog, MCP availability before indexing, progress parsing and idle termination. macOS and Linux qualification and measured indexing or token savings remain open before release.
+
+The [current-index sharding review](index-sharding-review.md) documents a possible physical shard design and a measurement gate. No shard format or historical index behavior is introduced in 1.2.5.

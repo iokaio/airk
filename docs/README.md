@@ -16,6 +16,7 @@ The [1.2.5 candidate](release-1.2.5.md) includes the [MCP tool retirement](unrel
 - [Per-collection extraction policy](extraction-policy.md)
 - [Measured scale and performance qualification](scale-qualification.md)
 - [1.2 indexing optimization and qualification record](indexingenhancements.md)
+- [Current-index sharding review and measurement gate](index-sharding-review.md)
 - [Document requirements, dates and design indexing](document-indexing.md)
 - [Code-indexing recommendations and optional semantic-provider review](code-indexing-options.md)
 - [Implemented SQLite code facts, relationships and SCIP imports](code-facts-and-relationships.md)
