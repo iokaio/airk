@@ -17,6 +17,7 @@ pub mod resources;
 pub mod vector_map;
 
 pub use database::{DATABASE_VERSION, PAGE_BYTES, journal_bound};
+pub use gate::CurrentGateContention;
 pub use journal::{
     ArtifactChange, ArtifactVectorChanges, CapturedInput, CapturedInputs, CurrentCapacityChange,
     CurrentCommit, CurrentWriter, PendingTransaction, TransactionPhase,

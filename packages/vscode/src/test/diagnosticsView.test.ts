@@ -55,9 +55,31 @@ test('diagnostics escape observed values and keep current readiness separate fro
     assert.match(active, /data-action="rebuild">/);
     assert.match(active, /data-action="retry">/);
     assert.match(active, /data-action="refresh">/);
+    report.editor = { paused: false, busy: true, state: 'enriching', pending: true };
+    assert.match(renderDiagnosticsReport('Fixture', report), /data-action="verify" disabled/);
     report.assessment.recommendedAction = 'retry';
     assert.match(renderDiagnosticsReport('Fixture', report), /data-action="retry">/,
         'A pending settings change must permit its recommended retry');
+});
+
+test('agent configuration distinguishes a saved helper path from current native health and verified connections', () => {
+    const report = fixture(), hostile = '</summary><script>unsafe()</script>';
+    report.agentConfiguration = { checkedAt: report.capturedAt, state: 'partial', scope: 'known_project_files_and_codex_user',
+        filesChecked: 12, filesPresent: 1, truncated: true, connection: 'not_verified',
+        entries: [{ client: 'codex', scope: 'user', configPath: hostile, serverName: hostile, helperPath: hostile,
+            helperVersion: '1.2.3', status: 'different_helper', issue: hostile }],
+        issues: [{ client: 'claude', scope: 'project', configPath: hostile, reason: hostile }] };
+    const html = renderDiagnosticsReport('Fixture', report);
+    assert.match(html, /<h2>Ready<\/h2>/, 'Saved configuration differences must not rewrite the current native assessment');
+    assert.match(html, /Agent configuration/);
+    assert.match(html, /Different helper path/);
+    assert.match(html, /Current extension helper/);
+    assert.match(html, /Version hint from path/);
+    assert.match(html, /do not verify an agent connection or an already running helper/);
+    assert.match(html, /Connect Coding Agent/);
+    assert.match(html, /Some configuration entries were omitted/);
+    assert.match(html, /&lt;\/summary&gt;&lt;script&gt;unsafe\(\)&lt;\/script&gt;/);
+    assert.doesNotMatch(html, /<script>unsafe|command:/);
 });
 
 test('diagnostics panel rejects stale bindings and concurrent repairs and copies only its captured report', async () => {
@@ -156,6 +178,50 @@ test('retained verification exposes partial results and stops paging on cancella
             assert.equal(pages, 1, `${stop} must prevent another page request`);
             assert.doesNotMatch(webview.html, /<h2>Ready<\/h2>/);
             if (stop !== 'cancel') { assert.match(webview.html, /Reopen Diagnose &amp; Repair/); }
+        } finally { loader._load = original; }
+    }
+});
+
+test('retained verification refuses active indexing and rechecks after progress setup, page reads and completion', async () => {
+    for (const phase of ['initial', 'progress', 'page', 'completion'] as const) {
+        let receive: (value: unknown) => Promise<void> = async () => undefined;
+        let active = phase === 'initial', calls = 0, pages = 0;
+        const observed = fixture();
+        observed.assessment = { state: 'unknown', summary: 'Retained data verification is incomplete.', recommendedAction: 'review' };
+        const webview = { html: '', onDidReceiveMessage: (listener: typeof receive) => { receive = listener; return { dispose() {} }; } };
+        const vscode = { ViewColumn: { Active: 1 }, ProgressLocation: { Notification: 1 }, workspace: { isTrusted: true },
+            window: { createWebviewPanel: () => ({ webview, onDidDispose() {} }),
+                withProgress: async (_options: unknown, run: (progress: unknown, cancellation: unknown) => Promise<unknown>) => {
+                    await Promise.resolve();
+                    if (phase === 'progress') { active = true; }
+                    return run({ report() {} }, { isCancellationRequested: false });
+                } } };
+        const loader = Module as unknown as { _load: (...args: any[]) => any }, original = loader._load;
+        loader._load = function(request: string, ...args: any[]) { return request === 'vscode' ? vscode : original.call(this, request, ...args); };
+        try {
+            await openDiagnosticsPanel({ name: 'Fixture', valid: () => true, canVerify: () => !active,
+                diagnose: async () => observed, act: async () => { assert.fail('Verification cannot repair or pause indexing'); },
+                verify: async (_report, onProgress, shouldContinue) => {
+                    calls++;
+                    for (let page = 0; page < 3; page++) {
+                        if (!shouldContinue()) { break; }
+                        pages++; await Promise.resolve();
+                        if (phase === 'page') { active = true; }
+                        onProgress(observed);
+                        if (phase === 'completion') { active = true; break; }
+                    }
+                    return fixture();
+                } });
+            if (phase === 'initial') { assert.match(webview.html, /data-action="verify" disabled/); }
+            // A forged click or an editor job starting after render must also be rejected by the host.
+            await receive({ type: 'diagnostics', action: 'verify' });
+            assert.equal(calls, phase === 'initial' || phase === 'progress' ? 0 : 1, phase);
+            assert.equal(pages, calls, 'No subsequent retained page is requested after indexing starts');
+            assert.match(webview.html, /This collection is indexing/);
+            assert.match(webview.html, /data-action="verify" disabled/);
+            assert.doesNotMatch(webview.html, /<h2>Ready<\/h2>/, 'A late verified result must not replace observations after new work starts');
+            active = false; await receive({ type: 'diagnostics', action: 'refresh' });
+            assert.match(webview.html, /data-action="verify">/);
         } finally { loader._load = original; }
     }
 });

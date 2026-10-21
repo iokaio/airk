@@ -13,6 +13,36 @@ pub(crate) struct Gate {
     _lifecycle: Option<Arc<File>>,
 }
 
+/// Retryable only when the current-index gate returned `WouldBlock`.
+/// I/O failures at the same gate deliberately do not carry this marker.
+#[derive(Clone, Copy, Debug)]
+pub enum CurrentGateContention {
+    Applying,
+    Readers,
+}
+
+impl std::fmt::Display for CurrentGateContention {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Applying => "current index is busy applying an update",
+            Self::Readers => "current index has active readers; retry after they finish",
+        })
+    }
+}
+
+fn acquired(
+    result: std::result::Result<(), std::fs::TryLockError>,
+    contention: CurrentGateContention,
+) -> Result<()> {
+    match result {
+        Ok(()) => Ok(()),
+        Err(error @ std::fs::TryLockError::WouldBlock) => {
+            Err(anyhow::Error::new(error).context(contention))
+        }
+        Err(error) => Err(error).context(contention.to_string()),
+    }
+}
+
 fn open(store: &FileStore) -> Result<File> {
     let directory = store.directory().canonicalize()?;
     let parent = directory
@@ -66,8 +96,7 @@ impl Gate {
     pub(crate) fn shared(store: &FileStore) -> Result<Self> {
         let lifecycle = store.lifecycle(false)?;
         let file = open(store)?;
-        file.try_lock_shared()
-            .context("current index is busy applying an update")?;
+        acquired(file.try_lock_shared(), CurrentGateContention::Applying)?;
         Ok(Self {
             file,
             _lifecycle: lifecycle,
@@ -77,8 +106,7 @@ impl Gate {
     pub(crate) fn exclusive(store: &FileStore, writer: &WriterLock) -> Result<Self> {
         check_writer(store, writer)?;
         let file = open(store)?;
-        file.try_lock()
-            .context("current index has active readers; retry after they finish")?;
+        acquired(file.try_lock(), CurrentGateContention::Readers)?;
         Ok(Self {
             file,
             _lifecycle: None,
@@ -91,5 +119,42 @@ impl Drop for Gate {
         // Explicit unlock also releases this operation's Unix flock when a
         // concurrent fork briefly inherited the same open file description.
         let _ = self.file.unlock();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_gate_would_block_has_retryable_identity() {
+        for gate in [
+            CurrentGateContention::Applying,
+            CurrentGateContention::Readers,
+        ] {
+            let error = acquired(Err(std::fs::TryLockError::WouldBlock), gate)
+                .unwrap_err()
+                .context("outer operation");
+            assert!(error.downcast_ref::<CurrentGateContention>().is_some());
+            assert!(matches!(
+                error.downcast_ref::<std::fs::TryLockError>(),
+                Some(std::fs::TryLockError::WouldBlock)
+            ));
+            for kind in [
+                std::io::ErrorKind::PermissionDenied,
+                std::io::ErrorKind::NotFound,
+                std::io::ErrorKind::WouldBlock,
+            ] {
+                let error = acquired(
+                    Err(std::fs::TryLockError::Error(std::io::Error::from(kind))),
+                    gate,
+                )
+                .unwrap_err();
+                assert!(
+                    error.downcast_ref::<CurrentGateContention>().is_none(),
+                    "{error:#}"
+                );
+            }
+        }
     }
 }

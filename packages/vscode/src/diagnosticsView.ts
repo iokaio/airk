@@ -50,14 +50,17 @@ const recommendations: Record<DiagnosticReport['assessment']['recommendedAction'
     rebuild: 'Rebuild the derived index if retry cannot recover the retained evidence.',
     review: 'Review the current observations and helper errors before choosing a repair.'
 };
+const observedWorkActive = (report?: DiagnosticReport): boolean => !!report?.editor?.busy
+    || ['indexing', 'enriching'].includes(report?.editor?.state ?? '');
 
 export function renderDiagnosticsReport(name: string, report?: DiagnosticReport,
-    state: { busy?: boolean; activity?: string; error?: string; canVerify?: boolean } = {}): string {
+    state: { busy?: boolean; activity?: string; error?: string; canVerify?: boolean; indexing?: boolean } = {}): string {
     const nonce = randomBytes(24).toString('hex');
     const button = (action: DiagnosticsAction, title: string, unavailable = false) =>
         `<button type="button" data-action="${action}"${state.busy || unavailable ? ' disabled' : ''}>${title}</button>`;
     const active = report?.assessment.state === 'busy'
         || (report?.assessment.state === 'building' && report.assessment.recommendedAction === 'wait');
+    const verificationBusy = state.indexing ?? observedWorkActive(report);
     const current = report ? `<section aria-labelledby="current-heading"><h2 id="current-heading">Current observations</h2>
         <p class="muted">Checked ${escape(report.capturedAt)}. Refresh to observe changes.</p>
         ${rows([['Collection', report.binding.name], ['Collection ID', report.binding.collection], ['Workspace', report.binding.root], ['Index storage', report.binding.dataDir], ['Helper', report.binding.helperPath]])}
@@ -79,6 +82,20 @@ export function renderDiagnosticsReport(name: string, report?: DiagnosticReport,
         ${rows([['Helper', event.helperPath], ['Helper version', event.helperVersion], ['Action', event.action]])}
         ${event.error ? `<p class="error">${escape(event.error.message)}</p>` : ''}</details></li>`).join('')}</ol>`
             : '<p>No previous attempts have been recorded for this collection.</p>'}</section>` : '';
+    const configuration = report?.agentConfiguration;
+    const entryStatus = { matches: 'Matches this helper and collection', different_helper: 'Different helper path',
+        different_binding: 'Different collection binding', unresolved: 'Could not compare' };
+    const agentConfiguration = configuration ? `<section aria-labelledby="agent-heading"><h2 id="agent-heading">Agent configuration</h2>
+        <p class="muted">These observations cover known project configuration files and the Codex user configuration. They do not verify an agent connection or an already running helper.</p>
+        ${rows([['Checked', configuration.checkedAt], ['Configuration checks', configuration.state], ['Files checked', configuration.filesChecked],
+            ['Files present', configuration.filesPresent], ['Current extension helper', report.binding.helperPath]])}
+        ${configuration.entries.length ? `<ol>${configuration.entries.slice(0, 32).map(entry => `<li><details open><summary>${escape(entry.client)} · ${escape(entryStatus[entry.status])}</summary>
+            ${rows([['Scope', entry.scope], ['Configuration', entry.configPath], ['Server', entry.serverName], ['Configured helper', entry.helperPath],
+                ['Version hint from path', entry.helperVersion]])}${entry.issue ? `<p>${escape(entry.issue)}</p>` : ''}</details></li>`).join('')}</ol>`
+            : '<p>No comparable AIRK entries were found in the checked configuration files.</p>'}
+        ${configuration.issues.length ? `<ul>${configuration.issues.slice(0, 16).map(issue => `<li>${escape(issue.client)} · ${escape(issue.configPath)}: ${escape(issue.reason)}</li>`).join('')}</ul>` : ''}
+        ${configuration.truncated ? '<p class="muted">Some configuration entries were omitted from this bounded report.</p>' : ''}
+        <p>For a different helper path, review the current configuration in Connect Coding Agent, update the saved entry, then reload that agent.</p></section>` : '';
     return `<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}';">
     <title>AIRK Diagnose &amp; Repair</title><style nonce="${nonce}">
@@ -93,21 +110,23 @@ export function renderDiagnosticsReport(name: string, report?: DiagnosticReport,
     <div role="status" aria-live="polite">${state.busy ? `<p>${escape(state.activity ?? 'Checking diagnostics…')}</p>` : ''}
     ${report ? `<h2>${state.busy ? 'Last observed: ' : ''}${escape(label(report.assessment.state))}</h2><p>${escape(report.assessment.summary)}</p><p>${escape(recommendations[report.assessment.recommendedAction])}</p>` : '<p>Collect diagnostics for this collection to see its current state.</p>'}</div>
     ${state.error ? `<p class="error" role="alert">${escape(state.error)}</p>` : ''}
-    <nav aria-label="Diagnostics">${button('refresh', 'Refresh diagnostics')}${button('verify', 'Verify retained data', !report || state.canVerify === false)}${button('copy', 'Copy report', !report)}${button('showOutput', 'Show Output')}</nav>
+    <nav aria-label="Diagnostics">${button('refresh', 'Refresh diagnostics')}${button('verify', 'Verify retained data', !report || state.canVerify === false || verificationBusy)}${button('copy', 'Copy report', !report)}${button('showOutput', 'Show Output')}</nav>
     <p class="muted">Refresh checks a bounded sample of retained data. Verify retained data continues through bounded pages of the same indexed revision; you can cancel it.</p>
+    ${verificationBusy ? '<p class="muted">Retained data verification is unavailable while this collection is indexing. Refresh after the current work finishes.</p>' : ''}
     ${current}<section aria-labelledby="repair-heading"><h2 id="repair-heading">Repair choices</h2>
     <p><strong>Retry indexing</strong> checks saved files and continues committed work for this collection.</p>
     <p><strong>Resume window indexing</strong> resumes automatic indexing for the open collections in this window.</p>
     <p><strong>Rebuild index</strong> recalculates the derived index from saved files. Source files are preserved. Large collections can take time to rebuild.</p>
     ${active ? '<p class="muted">Indexing is active or a publication is busy. A retry or rebuild may wait for the current batch.</p>' : ''}
     <nav aria-label="Repair">${button('retry', 'Retry indexing', !report)}${button('resume', 'Resume window indexing', !report)}${button('rebuild', 'Rebuild index', !report)}</nav></section>
-    ${history}<p class="muted">The copied report includes local paths, measurements and helper errors for troubleshooting.</p>
+    ${agentConfiguration}${history}<p class="muted">The copied report includes local paths, measurements and helper errors for troubleshooting.</p>
     <script nonce="${nonce}">const api=acquireVsCodeApi();const allowed=['refresh','verify','copy','retry','resume','rebuild','showOutput'];document.addEventListener('click',event=>{if(!(event.target instanceof Element))return;const button=event.target.closest('button[data-action]');if(!button||button.disabled||!allowed.includes(button.dataset.action))return;api.postMessage({type:'diagnostics',action:button.dataset.action});});</script></body></html>`;
 }
 
 export interface DiagnosticsPanelOptions {
     name: string;
     valid: () => boolean;
+    canVerify?: () => boolean;
     diagnose: () => Promise<DiagnosticReport>;
     act: (action: Exclude<DiagnosticsAction, 'refresh' | 'verify' | 'copy'>, report: DiagnosticReport | undefined) => Promise<void>;
     verify?: (report: DiagnosticReport, onProgress: (report: DiagnosticReport) => void,
@@ -125,7 +144,12 @@ export async function openDiagnosticsPanel(options: DiagnosticsPanelOptions): Pr
             throw new Error('The collection, storage selection or workspace trust changed. Reopen Diagnose & Repair for the current collection.');
         }
     };
-    const render = () => { if (!disposed) { panel.webview.html = renderDiagnosticsReport(options.name, report, { busy, activity, error, canVerify: !!options.verify }); } };
+    const canVerify = () => options.canVerify ? options.canVerify() : !observedWorkActive(report);
+    const checkVerification = () => {
+        check();
+        if (!canVerify()) { throw new Error('This collection is indexing. Refresh diagnostics and verify retained data after the current work finishes.'); }
+    };
+    const render = () => { if (!disposed) { panel.webview.html = renderDiagnosticsReport(options.name, report, { busy, activity, error, canVerify: !!options.verify, indexing: !canVerify() }); } };
     const refresh = async () => { check(); const observed = await options.diagnose(); check(); report = observed; };
     const run = async (action: DiagnosticsAction) => {
         if (busy || disposed) { return; }
@@ -138,17 +162,19 @@ export async function openDiagnosticsPanel(options: DiagnosticsPanelOptions): Pr
             if (action === 'refresh') { await refresh(); }
             else if (action === 'verify') {
                 if (!report || !options.verify) { return; }
+                checkVerification();
                 const initial = report;
                 const verified = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification,
                     title: `Verifying AIRK retained data: ${options.name}`, cancellable: true }, async (progress, token) => {
+                    checkVerification();
                     return options.verify!(initial, observed => {
-                        check(); report = observed;
+                        checkVerification(); report = observed;
                         const integrity = observed.probes.integrity.value;
                         activity = `Verifying retained data: ${text(integrity?.checked_files)} of ${text(integrity?.total_files)} files checked…`;
                         progress.report({ message: activity }); render();
-                    }, () => !disposed && vscode.workspace.isTrusted && options.valid() && !token.isCancellationRequested);
+                    }, () => !disposed && vscode.workspace.isTrusted && options.valid() && canVerify() && !token.isCancellationRequested);
                 });
-                check(); report = verified;
+                checkVerification(); report = verified;
             }
             else if (action === 'copy') {
                 if (report) { await vscode.env.clipboard.writeText(JSON.stringify(report, null, 2)); check(); }

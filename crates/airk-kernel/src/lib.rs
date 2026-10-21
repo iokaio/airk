@@ -7,6 +7,7 @@ use airk_core::{
 pub use airk_core::{FactQuery, RelationshipQuery};
 use airk_ingest::IndexReport;
 pub use airk_ingest::pdf_worker::dispatch as dispatch_pdf_worker;
+pub use airk_store::current::CurrentGateContention;
 
 pub mod analysis;
 pub mod changes;
@@ -214,18 +215,28 @@ impl Kernel {
         };
         if recover {
             kernel.recover_runtime_bootstrap()?;
-            if let Some(scope) = kernel.current_scope()?
-                && kernel
+            if let Some(scope) = kernel.current_scope()? {
+                let needs_recovery = match kernel
                     .store
                     .current_read(&scope)
                     .and_then(|r| r.has_prepared_update())
-                    .unwrap_or(true)
-            {
-                current::recover_current(
-                    &kernel.store,
-                    &airk_store::quota::Quota::open(&kernel.data_root)?,
-                    &scope,
-                )?;
+                {
+                    Ok(prepared) => prepared,
+                    // A writer can acquire the gate after scope discovery.
+                    // Preserve contention instead of trying to recover its work
+                    // and replacing the cause with a writer-lock error.
+                    Err(error) if error.downcast_ref::<CurrentGateContention>().is_some() => {
+                        return Err(error);
+                    }
+                    Err(_) => true,
+                };
+                if needs_recovery {
+                    current::recover_current(
+                        &kernel.store,
+                        &airk_store::quota::Quota::open(&kernel.data_root)?,
+                        &scope,
+                    )?;
+                }
             }
         }
         Ok(kernel)

@@ -22,10 +22,7 @@ import { ControlGroup, DetailStatus, IndexDetail, McpVerification, SidebarCollec
 interface KnownCollection { name: string; root: string; lastIndexed?: string }
 
 function currentReadBusy(error: unknown): boolean {
-    if (!(error instanceof NativeProcessError) || error.code !== 1 || error.killed || error.signal) { return false; }
-    // The gate context can also wrap an I/O failure. Require Rust's fixed
-    // TryLockError::WouldBlock display, not a localized OS error or a prefix.
-    return /^(?:Error: )?current index is busy applying an update(?:\s*\r?\n\s*Caused by:\s*\r?\n\s*|:\s*)lock acquisition failed because the operation would block\s*$/.test(error.stderr);
+    return error instanceof NativeProcessError && error.retryableGateContention;
 }
 
 class Controller implements vscode.Disposable {
@@ -489,7 +486,8 @@ class Controller implements vscode.Disposable {
             && (!registered || this.specs.has(spec.collection))
             && this.rootBindings.every(binding => binding.opened !== chosen.folder.uri.fsPath || binding.canonical === spec.root)
             && (!this.specs.has(spec.collection) || (this.specs.get(spec.collection)?.root === spec.root && this.specs.get(spec.collection)?.dataDir === spec.dataDir));
-        await openDiagnosticsPanel({ name: spec.name, valid,
+        const canVerify = () => !this.scheduler.states().some(item => item.collection === spec.collection && ['indexing', 'enriching'].includes(item.state));
+        await openDiagnosticsPanel({ name: spec.name, valid, canVerify,
             diagnose: async () => {
                 if (!valid()) { throw new Error('Collection closed or storage changed. Reopen Diagnose & Repair.'); }
                 let helperError: unknown;
@@ -503,7 +501,7 @@ class Controller implements vscode.Disposable {
                     editor: { paused: this.scheduler.isPaused, busy: ['indexing', 'enriching'].includes(editor?.state ?? ''), state: editor?.state, pending: editor?.pending } });
             },
             verify: (report, onProgress, shouldContinue) => verifyDiagnosticIntegrity(spec, report, { onProgress,
-                shouldContinue: () => valid() && shouldContinue() }),
+                shouldContinue: () => valid() && canVerify() && shouldContinue() }),
             act: async (action, report) => {
                 if (!valid()) { throw new Error('Collection closed or storage changed. Reopen Diagnose & Repair.'); }
                 if (action === 'showOutput') { this.output.show(); return; }
@@ -675,12 +673,12 @@ class Controller implements vscode.Disposable {
                 return runJson<{state: string; error?: string | null}>(spec, 'semantic', ['run', '--scheduled']);
             });
         } catch (error) {
-            if (currentReadBusy(error)) { return this.currentSpec(spec) ? 'pending' : 'ready'; }
+            if (currentReadBusy(error)) { return this.currentSpec(spec) ? 'busy' : 'ready'; }
             throw error;
         }
         if (!result || !this.currentSpec(spec)) { return 'ready'; }
         if (result.state === 'paused') { return 'paused'; }
-        if (result.state === 'busy') { return 'pending'; }
+        if (result.state === 'busy') { return 'busy'; }
         if (result.state === 'blocked' || result.state === 'semantic_failed') {
             throw new Error(result.error || 'Semantic indexing failed. Use Resume or Index now after resolving the error.');
         }
@@ -689,7 +687,7 @@ class Controller implements vscode.Disposable {
         let status: VectorStatus | undefined;
         try { status = await this.refreshVectors(spec, true); }
         catch (error) {
-            if (currentReadBusy(error)) { return this.currentSpec(spec) ? 'pending' : 'ready'; }
+            if (currentReadBusy(error)) { return this.currentSpec(spec) ? result.state === 'enriched' ? 'pending' : 'busy' : 'ready'; }
             throw error;
         }
         if (!this.currentSpec(spec)) { return 'ready'; }

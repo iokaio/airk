@@ -69,6 +69,8 @@ export class NativeProcessError extends Error {
     readonly killed: boolean;
     readonly timedOut: boolean;
     readonly stderr: string;
+    readonly retryableGateContention: boolean;
+    readonly nativeMessage?: string;
     constructor(command: string, error: ExecFileException, stderr: string, readonly elapsedMs: number, readonly timeoutMs: number) {
         // With no AbortSignal or exposed child handle, execFile only kills a
         // child for its timeout or output cap. An external signal does not set killed.
@@ -83,13 +85,27 @@ export class NativeProcessError extends Error {
         this.name = 'NativeProcessError';
         this.code = error.code; this.signal = error.signal; this.killed = !!error.killed; this.timedOut = timedOut;
         this.stderr = boundedDiagnostic(stderr.trim());
+        this.retryableGateContention = false;
+        if (error.code === 1 && !error.killed && !error.signal && stderr.length <= 8192) {
+            try {
+                const outcome: unknown = JSON.parse(stderr.trim());
+                if (outcome && typeof outcome === 'object' && !Array.isArray(outcome)) {
+                    const fields = outcome as Record<string, unknown>;
+                    if (fields.airk_error === 1 && typeof fields.code === 'string'
+                        && typeof fields.retryable === 'boolean' && typeof fields.message === 'string') {
+                        this.nativeMessage = fields.message;
+                        this.retryableGateContention = fields.code === 'current_gate_busy' && fields.retryable;
+                    }
+                }
+            } catch { /* Unstructured stderr never authorizes a retry. */ }
+        }
     }
 }
 
 export function runText(command: string, args: string[], cwd?: string, timeout = 300000): Promise<string> {
     return new Promise((resolve, reject) => {
         const started = performance.now();
-        execFile(command, args, { cwd, env: { ...process.env, AIRK_CLIENT: 'vscode' }, windowsHide: true, maxBuffer: 16 * 1024 * 1024, timeout }, (error, stdout, stderr) => {
+        execFile(command, args, { cwd, env: { ...process.env, AIRK_CLIENT: 'vscode', AIRK_ERROR_FORMAT: 'json' }, windowsHide: true, maxBuffer: 16 * 1024 * 1024, timeout }, (error, stdout, stderr) => {
             if (error) { reject(new NativeProcessError(command, error, stderr, Math.round(performance.now() - started), timeout)); }
             else { resolve(stdout); }
         });

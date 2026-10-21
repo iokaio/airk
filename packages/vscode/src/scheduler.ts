@@ -6,7 +6,7 @@ export interface Clock { now(): number; set(fn: () => void, ms: number): unknown
 const systemClock: Clock = { now: () => Date.now(), set: (fn, ms) => setTimeout(fn, ms), clear: timer => clearTimeout(timer as NodeJS.Timeout) };
 export class CapacityError extends Error {}
 export class PausedError extends Error {}
-export type SemanticResult = 'pending' | 'ready' | 'paused';
+export type SemanticResult = 'pending' | 'busy' | 'ready' | 'paused';
 type State = 'queued' | 'indexing' | 'enriching' | 'semantic-pending' | 'current' | 'partial' | 'failed' | 'capacity-limited' | 'paused';
 interface Waiter { revision: number; resolve(): void; reject(error: unknown): void }
 interface Job {
@@ -14,6 +14,7 @@ interface Job {
     ended: number; manual: boolean; full: boolean; blocked: boolean; state: State; waiters: Waiter[];
     runningRevision?: number; runningFull?: boolean;
     semanticPending: boolean; semanticAt: number; baseState: 'current' | 'partial';
+    semanticBusyDelay: number; semanticResetRevision: number;
 }
 
 /** Batches UI events; the native kernel remains the sole index writer/publisher. */
@@ -42,6 +43,7 @@ export class Scheduler {
         this.paused = false;
         for (const job of this.jobs.values()) {
             job.blocked = false;
+            this.resetSemanticBackoff(job);
             if (job.semanticPending && job.state === 'paused') { job.state = 'semantic-pending'; }
         }
         this.schedule();
@@ -82,7 +84,7 @@ export class Scheduler {
         if (!job) {
             job = { spec, revision: 0, completed: 0, first: now, last: now, ended: -Infinity,
                 manual: false, full: false, blocked: false, state: 'queued', waiters: [],
-                semanticPending: false, semanticAt: now, baseState: 'current' };
+                semanticPending: false, semanticAt: now, baseState: 'current', semanticBusyDelay: 0, semanticResetRevision: 0 };
             this.jobs.set(spec.collection, job);
         }
         // Repeated explicit clicks share the existing up-to-date pass. Filesystem
@@ -90,6 +92,7 @@ export class Scheduler {
         const coalesced = manual && job.revision > job.completed && (!full || job.full || job.runningFull);
         if (job.revision === job.completed) { job.first = now; }
         job.spec = spec;
+        if (manual) { this.resetSemanticBackoff(job); }
         if (!coalesced) { job.revision++; job.last = now; }
         const capacityBlocked = job.blocked && job.state === 'capacity-limited' && !manual;
         if (!capacityBlocked) { job.blocked = false; }
@@ -108,11 +111,12 @@ export class Scheduler {
             const now = this.clock.now();
             job = { spec, revision: 0, completed: 0, first: now, last: now, ended: -Infinity,
                 manual: false, full: false, blocked: false, state: 'semantic-pending', waiters: [],
-                semanticPending: true, semanticAt: now, baseState: 'current' };
+                semanticPending: true, semanticAt: now, baseState: 'current', semanticBusyDelay: 0, semanticResetRevision: 0 };
             this.jobs.set(spec.collection, job);
         }
         if (!job) { return; }
         job.semanticPending = pending;
+        if (!pending) { this.resetSemanticBackoff(job); }
         if (!job.blocked && job.revision === job.completed && !['indexing', 'enriching'].includes(job.state)) {
             job.state = pending ? 'semantic-pending' : job.baseState;
         }
@@ -159,9 +163,18 @@ export class Scheduler {
     private async executeSemantic(job: Job): Promise<void> {
         if (this.stopped || !this.enrich) { return; }
         const resumeRevision = this.resumeRevision;
+        const resetRevision = job.semanticResetRevision;
+        let delay = 1000;
         this.busy = true; job.state = 'enriching'; this.changed();
         try {
             const result = await this.enrich(job.spec);
+            if (result === 'busy' && resetRevision === job.semanticResetRevision) {
+                job.semanticBusyDelay = Math.min(30000, Math.max(1000, job.semanticBusyDelay * 2));
+                delay = job.semanticBusyDelay;
+            } else {
+                job.semanticBusyDelay = 0;
+                if (resetRevision !== job.semanticResetRevision) { delay = 0; }
+            }
             job.semanticPending = result !== 'ready';
             job.blocked = result === 'paused' && resumeRevision === this.resumeRevision;
             job.state = job.blocked ? 'paused' : job.revision > job.completed ? 'queued'
@@ -169,10 +182,13 @@ export class Scheduler {
         } catch (error) {
             job.blocked = true; job.state = 'failed'; this.failed(job.spec, error);
         } finally {
-            this.busy = false; job.semanticAt = this.clock.now() + 1000;
+            this.busy = false; job.semanticAt = this.clock.now() + delay;
             for (const ready of this.idleWaiters) { ready(); }
             this.idleWaiters.clear(); this.schedule();
         }
+    }
+    private resetSemanticBackoff(job: Job): void {
+        job.semanticBusyDelay = 0; job.semanticAt = this.clock.now(); job.semanticResetRevision++;
     }
     private async execute(job: Job): Promise<void> {
         if (this.stopped) { return; }
@@ -182,6 +198,7 @@ export class Scheduler {
         job.manual = false; job.full = false; job.state = 'indexing'; this.changed();
         try {
             const report = await this.run(job.spec, full, automatic);
+            this.resetSemanticBackoff(job);
             job.completed = revision;
             job.baseState = report.skipped.length ? 'partial' : 'current';
             job.state = job.revision > revision ? 'queued' : job.semanticPending ? 'semantic-pending' : job.baseState;
