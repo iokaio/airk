@@ -181,7 +181,7 @@ function assess(probes: DiagnosticReport['probes'], editor?: DiagnosticEditorSta
     }
     if (schedule?.paused || discovery?.state === 'paused' || editor?.paused || editor?.state === 'paused') { return set('paused', 'resume', 'Indexing is paused. Resume allows already requested work to continue.'); }
     if (editor?.state === 'failed' || editor?.state === 'capacity-limited') { return set('blocked', editor.state === 'capacity-limited' ? 'review' : 'retry', 'The editor stopped its current indexing request. Review its recorded error before retrying.'); }
-    if (Object.values(probes).some(probe => probe.state === 'busy')) { return set('busy', 'wait', 'A native publication held the index briefly. Refresh after the current batch finishes; this is not evidence of corruption.'); }
+    if (Object.values(probes).some(probe => probe.state === 'busy')) { return set('busy', 'wait', 'A native publication is holding the index. Refresh after the current batch finishes.'); }
     if (probes.status.reason === 'not_indexed') { return set('not_indexed', 'retry', 'This collection has no published index yet. Index now starts it.'); }
     if (probes.status.state !== 'ok') { return set('unknown', 'review', 'Current index state could not be established. Historical errors do not establish a current failure.'); }
     if (['pending', 'partial'].includes(String(semantic?.state)) && probes.schedule.state === 'ok' && schedule === null) {
