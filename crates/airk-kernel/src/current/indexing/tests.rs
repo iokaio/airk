@@ -58,7 +58,7 @@ fn progressive_capture_loss_is_repaired_by_one_fresh_scan() -> Result<()> {
     for kind in ["sources", "artifacts"] {
         for changed in [false, true] {
             let root = tempfile::tempdir()?;
-            let data = tempfile::tempdir()?;
+            let data = model_data_directory()?;
             for index in 0..35 {
                 std::fs::write(
                     root.path().join(format!("file_{index:02}.txt")),
@@ -253,6 +253,12 @@ fn applying_missing_capture_never_reconstructs_from_changed_live_source() -> Res
     Ok(())
 }
 
+fn model_data_directory() -> Result<tempfile::TempDir> {
+    // macOS temporary paths can contain the /var symlink. Model admission
+    // requires physical ancestors, as do the current_runtime test fixtures.
+    Ok(tempfile::Builder::new().tempdir_in(std::env::temp_dir().canonicalize()?)?)
+}
+
 fn write_static_test_model(directory: &std::path::Path) -> Result<()> {
     use sha2::{Digest, Sha256};
     std::fs::create_dir_all(directory)?;
@@ -279,7 +285,7 @@ fn scheduled_scan_repairs_missing_retained_inputs_from_verified_sources() -> Res
     for compression in [CompressionMode::Off, CompressionMode::Automatic] {
         for kind in ["sources", "artifacts"] {
             let root = tempfile::tempdir()?;
-            let data = tempfile::tempdir()?;
+            let data = model_data_directory()?;
             let source = "original repair fixture alpha evidence\n".repeat(1024);
             let neighbor = "unrelated original neighbor evidence\n".repeat(1024);
             std::fs::write(root.path().join("alpha.txt"), &source)?;
@@ -417,7 +423,7 @@ fn scheduled_scan_does_not_replace_corrupt_retained_inputs() -> Result<()> {
 fn missing_retained_source_never_relabels_changed_live_bytes_as_old_evidence() -> Result<()> {
     use sha2::{Digest, Sha256};
     let root = tempfile::tempdir()?;
-    let data = tempfile::tempdir()?;
+    let data = model_data_directory()?;
     std::fs::write(root.path().join("alpha.txt"), "original alpha evidence\n")?;
     write_static_test_model(&data.path().join("models/local"))?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
@@ -564,7 +570,7 @@ fn slow_semantic_publication_does_not_consume_the_next_source_batch_interval() -
         atomic::{AtomicBool, Ordering},
     };
     let root = tempfile::tempdir()?;
-    let data = tempfile::tempdir()?;
+    let data = model_data_directory()?;
     write_static_test_model(&data.path().join("models/local"))?;
     for index in 0..35 {
         std::fs::write(
