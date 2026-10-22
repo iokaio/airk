@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Bounded process-local verified seals. A digest alone never authorizes reuse:
 //! bind it to the database file identity/change time, a SQLite change counter
-//! and, on local Windows volumes, a directory change notification. Silent device
+//! and, on supported local Windows/Linux filesystems, a change notification. Silent device
 //! corruption is not a change notification: entries expire after thirty seconds,
 //! and explicit integrity diagnostics always bypass this cache.
 //! No cache entry retains a collection gate or a SQLite read transaction.
@@ -87,9 +87,70 @@ impl Drop for ChangeGuard {
         }
     }
 }
-#[cfg(not(windows))]
+// Linux can assign the same ctime to consecutive writes within one clock tick.
+// Watch the inode before verification instead of treating timestamps as a write
+// sequence. A pending event, overflow, watch removal or failed poll invalidates
+// the entry; no callback thread or open database handle survives the request.
+#[cfg(target_os = "linux")]
+struct ChangeGuard(std::os::fd::OwnedFd);
+#[cfg(target_os = "linux")]
+impl ChangeGuard {
+    fn new(path: &Path) -> Option<Self> {
+        use std::os::{fd::FromRawFd, unix::ffi::OsStrExt};
+        let name = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
+        let mut filesystem = std::mem::MaybeUninit::<libc::statfs>::uninit();
+        // Remote filesystems need not deliver notifications for peer writes.
+        // Unknown filesystems retain the full physical verifier.
+        let local = unsafe {
+            if libc::statfs(name.as_ptr(), filesystem.as_mut_ptr()) != 0 {
+                return None;
+            }
+            matches!(
+                filesystem.assume_init().f_type,
+                libc::EXT4_SUPER_MAGIC
+                    | libc::XFS_SUPER_MAGIC
+                    | libc::BTRFS_SUPER_MAGIC
+                    | libc::TMPFS_MAGIC
+                    | libc::OVERLAYFS_SUPER_MAGIC
+            )
+        };
+        if !local {
+            return None;
+        }
+        unsafe {
+            let descriptor = libc::inotify_init1(libc::IN_CLOEXEC | libc::IN_NONBLOCK);
+            if descriptor < 0 {
+                return None;
+            }
+            let owned = std::os::fd::OwnedFd::from_raw_fd(descriptor);
+            let watch = libc::inotify_add_watch(
+                descriptor,
+                name.as_ptr(),
+                libc::IN_MODIFY
+                    | libc::IN_ATTRIB
+                    | libc::IN_CLOSE_WRITE
+                    | libc::IN_MOVE_SELF
+                    | libc::IN_DELETE_SELF
+                    | libc::IN_UNMOUNT,
+            );
+            (watch >= 0).then_some(Self(owned))
+        }
+    }
+    fn unchanged(&self) -> bool {
+        use std::os::fd::AsRawFd;
+        let mut descriptor = libc::pollfd {
+            fd: self.0.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        // Do not consume events: a signaled guard can never become reusable.
+        unsafe { libc::poll(&mut descriptor, 1, 0) == 0 && descriptor.revents == 0 }
+    }
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 struct ChangeGuard;
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 impl ChangeGuard {
     fn new(_path: &Path) -> Option<Self> {
         Some(Self)
