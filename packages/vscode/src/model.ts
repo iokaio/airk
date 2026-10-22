@@ -1,11 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 import { createHash } from 'node:crypto';
 import * as path from 'node:path';
+import type { VectorStatus } from './vectorModel';
 
 export interface LaunchSpec { command: string; root: string; dataDir: string; collection: string; name: string }
 export interface Usage { collection: string; disk_bytes: number; indexed_files: number | null; generation: number | null; status: string }
 export interface IndexReport { generation: number; indexed: number; reused: number; removed: number; source_bytes?: number; skipped_truncated?: number;
-    repaired_retained_artifacts?: number; retained_repair_retries?: number; skipped: { path: string; reason: string }[] }
+    repaired_retained_artifacts?: number; retained_repair_retries?: number; skipped: { path: string; reason: string }[];
+    path_scoped?: boolean; yield_to_source?: boolean; scan_extract_us?: number; publish_us?: number; first_ready_us?: number | null; fully_ready_us?: number | null;
+    embedding_model_load_us?: number; embedding_inference_us?: number; vector_graph_insert_us?: number;
+    indexed_vectors?: number; semantic_readiness?: VectorStatus['semantic_readiness']; discovery_readiness?: VectorStatus['discovery_readiness'];
+    maintenance_error?: string | null }
 export type IndexMode = 'manual' | 'onSave' | 'debounced' | 'idle';
 export const clients = ['vscode', 'claude', 'codex', 'cursor', 'gemini', 'antigravity', 'cline', 'roo', 'junie', 'copilot-cli', 'opencode', 'opencode-v2', 'kilo', 'amazon-q', 'windsurf'] as const;
 export type Client = typeof clients[number];

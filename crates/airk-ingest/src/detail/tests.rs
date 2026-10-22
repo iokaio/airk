@@ -79,15 +79,28 @@ fn fixture() -> ExtractionPayload {
         chunks: vec![],
         semantic_projection: SemanticProjection::default(),
         regions: vec![],
-        relationships: vec![LocalRelationship {
-            source: 91,
-            target: LocalRelationshipTarget::Local { id: 90 },
-            kind: "test_target".into(),
-            basis: EvidenceBasis::StructuralRule,
-            producer: "original-detail-fixture".into(),
-            producer_version: "1".into(),
-            span: LocalSpan { start: 10, end: 18 },
-        }],
+        relationships: vec![
+            LocalRelationship {
+                source: 91,
+                target: LocalRelationshipTarget::Local { id: 90 },
+                kind: "test_target".into(),
+                basis: EvidenceBasis::StructuralRule,
+                producer: "original-detail-fixture".into(),
+                producer_version: "1".into(),
+                span: LocalSpan { start: 10, end: 18 },
+            },
+            LocalRelationship {
+                source: 12,
+                target: LocalRelationshipTarget::Written {
+                    spelling: "run".into(),
+                },
+                kind: "call".into(),
+                basis: EvidenceBasis::Syntax,
+                producer: "original-detail-fixture".into(),
+                producer_version: "1".into(),
+                span: LocalSpan { start: 10, end: 18 },
+            },
+        ],
         continuity: vec![],
         continuity_coverage: BTreeMap::new(),
         diagnostics: vec![],
@@ -100,20 +113,26 @@ fn selection_preserves_shared_nodes_nonemitted_owners_and_fact_edges() -> Result
     let mut payload = fixture();
     payload.facts[2].owner = Some(90);
     select(&mut payload, IndexDetail::Balanced)?;
-    assert_eq!(payload.facts.len(), 2);
-    assert_eq!(payload.facts[1].owner, Some(0));
-    assert_eq!(payload.relationships[0].source, 1);
+    assert_eq!(payload.facts.len(), 3);
+    assert_eq!(payload.facts[0].kind, "call");
+    assert_eq!(payload.facts[2].owner, Some(1));
+    assert_eq!(payload.relationships[0].source, 2);
     assert!(matches!(
         payload.relationships[0].target,
-        LocalRelationshipTarget::Local { id: 0 }
+        LocalRelationshipTarget::Local { id: 1 }
     ));
-    assert_eq!(payload.syntax_identities.len(), 2);
+    assert_eq!(payload.relationships[1].kind, "call");
+    assert_eq!(payload.relationships[1].source, 0);
+    assert_eq!(payload.syntax_identities.len(), 3);
     assert_eq!(
         payload.syntax_identities[0].syntax_kind,
         "class_declaration"
     );
-    for code in payload.facts.iter().filter_map(|fact| fact.code.as_ref()) {
-        assert_eq!(code.syntax_id, LocalSyntaxId(1));
+    for code in payload.facts[1..]
+        .iter()
+        .filter_map(|fact| fact.code.as_ref())
+    {
+        assert_eq!(code.syntax_id, LocalSyntaxId(2));
         assert_eq!(code.owner_id, Some(LocalSyntaxId(0)));
     }
     let once = serde_json::to_vec(&payload)?;
@@ -130,19 +149,17 @@ fn selection_preserves_shared_nodes_nonemitted_owners_and_fact_edges() -> Result
 }
 
 #[test]
-fn selected_ids_do_not_depend_on_discarded_calls_or_initial_ordinals() -> Result<()> {
+fn selected_ids_do_not_depend_on_initial_syntax_ordinals() -> Result<()> {
     let mut complete = fixture();
     let mut early = fixture();
-    early.facts.remove(0);
-    early
-        .syntax_identities
-        .retain(|node| node.id != LocalSyntaxId(7));
     for node in &mut early.syntax_identities {
         node.id.0 += 100;
     }
     for code in early.facts.iter_mut().filter_map(|fact| fact.code.as_mut()) {
         code.syntax_id.0 += 100;
-        code.owner_id.as_mut().unwrap().0 += 100;
+        if let Some(owner_id) = &mut code.owner_id {
+            owner_id.0 += 100;
+        }
     }
     select(&mut complete, IndexDetail::Balanced)?;
     select(&mut early, IndexDetail::Balanced)?;

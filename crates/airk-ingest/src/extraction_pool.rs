@@ -179,6 +179,31 @@ impl<J: Send + 'static, R: Send + 'static> OrderedPool<J, R> {
         Ok(())
     }
 
+    /// Queue an already prepared reuse result behind earlier extraction jobs.
+    /// It consumes the same count/byte allowance without starting a worker.
+    pub fn push_ready(&mut self, result: R, bytes: usize) -> Result<()> {
+        ensure!(
+            self.can_admit(bytes),
+            "extraction result admission exceeded its bound"
+        );
+        let id = self.next_id;
+        self.next_id = self
+            .next_id
+            .checked_add(1)
+            .context("extraction job ordinal overflow")?;
+        self.pending.push_back((id, bytes));
+        self.ready.insert(
+            id,
+            Completed {
+                result: Ok(result),
+                work_us: 0,
+            },
+        );
+        self.source_bytes += bytes;
+        self.source_peak_bytes = self.source_peak_bytes.max(self.source_bytes);
+        Ok(())
+    }
+
     pub fn next(&mut self) -> Result<Option<Completed<R>>> {
         let Some(&(wanted, bytes)) = self.pending.front() else {
             return Ok(None);
@@ -256,6 +281,31 @@ mod tests {
         for value in 0..4 {
             assert_eq!(pool.next()?.unwrap().result?, value);
         }
+        Ok(())
+    }
+
+    #[test]
+    fn ready_reuse_shares_bounds_and_order_without_starting_workers() -> Result<()> {
+        let mut pool = OrderedPool::new(
+            ExtractionExecution {
+                workers: 4,
+                max_in_flight_source_bytes: 4,
+            },
+            reordered,
+        )?;
+        pool.push_ready(7, 1)?;
+        assert_eq!(pool.workers_spawned(), 0);
+        assert_eq!(pool.next()?.unwrap().result?, 7);
+        pool.push(0, 1)?;
+        pool.push_ready(1, 1)?;
+        pool.push(2, 1)?;
+        pool.push_ready(3, 1)?;
+        assert!(!pool.can_admit(1));
+        assert!(pool.push_ready(4, 1).is_err());
+        for expected in 0..4 {
+            assert_eq!(pool.next()?.unwrap().result?, expected);
+        }
+        assert_eq!(pool.source_peak_bytes, 4);
         Ok(())
     }
 

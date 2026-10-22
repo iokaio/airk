@@ -8,10 +8,13 @@ use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicU64, Ordering},
 };
+use std::time::Duration;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 const EVIDENCE_WORKERS: u32 = 4;
 const CONTROL_WORKERS: u32 = 2;
+const MAX_QUEUED_REQUESTS: u64 = 16;
+const QUEUE_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Clone)]
 pub(crate) struct Admission(Arc<State>);
@@ -20,6 +23,7 @@ struct State {
     evidence: Arc<Semaphore>,
     control: Arc<Semaphore>,
     closing: AtomicBool,
+    queued: AtomicU64,
     rejected: AtomicU64,
 }
 
@@ -29,13 +33,14 @@ impl Default for Admission {
             evidence: Arc::new(Semaphore::new(EVIDENCE_WORKERS as usize)),
             control: Arc::new(Semaphore::new(CONTROL_WORKERS as usize)),
             closing: AtomicBool::new(false),
+            queued: AtomicU64::new(0),
             rejected: AtomicU64::new(0),
         }))
     }
 }
 
 impl Admission {
-    fn admit(&self, control: bool) -> Result<OwnedSemaphorePermit, CallToolResult> {
+    async fn admit(&self, control: bool) -> Result<OwnedSemaphorePermit, CallToolResult> {
         let semaphore = if control {
             &self.0.control
         } else {
@@ -47,9 +52,30 @@ impl Admission {
         {
             return Ok(permit);
         }
+        if self.0.closing.load(Ordering::Acquire) {
+            self.0.rejected.fetch_add(1, Ordering::Relaxed);
+            return Err(error("AIRK server is closing"));
+        }
+        let queued = self
+            .0
+            .queued
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
+                (n < MAX_QUEUED_REQUESTS).then_some(n + 1)
+            });
+        if queued.is_ok() {
+            let waiting = Queued(&self.0.queued);
+            let result =
+                tokio::time::timeout(QUEUE_TIMEOUT, semaphore.clone().acquire_owned()).await;
+            drop(waiting);
+            if let Ok(Ok(permit)) = result
+                && !self.0.closing.load(Ordering::Acquire)
+            {
+                return Ok(permit);
+            }
+        }
         self.0.rejected.fetch_add(1, Ordering::Relaxed);
         Err(error(
-            "AIRK request capacity unavailable; retry after outstanding requests complete",
+            "AIRK request queue is full or timed out; retry after outstanding requests complete",
         ))
     }
 
@@ -57,7 +83,9 @@ impl Admission {
         serde_json::json!({
             "evidence_workers": EVIDENCE_WORKERS,
             "control_workers": CONTROL_WORKERS,
-            "queued_requests": 0,
+            "queued_requests": self.0.queued.load(Ordering::Acquire),
+            "max_queued_requests": MAX_QUEUED_REQUESTS,
+            "queue_timeout_ms": QUEUE_TIMEOUT.as_millis(),
             "rejected_requests": self.0.rejected.load(Ordering::Relaxed),
             "cancellation": "Accepted blocking work completes and records once; its permit is retained until completion.",
             "shutdown": "Stop admission and drain accepted work before exit."
@@ -83,6 +111,14 @@ impl Admission {
     }
 }
 
+struct Queued<'a>(&'a AtomicU64);
+
+impl Drop for Queued<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
 fn error(message: &str) -> CallToolResult {
     CallToolResult::error(vec![ContentBlock::text(message)])
 }
@@ -97,7 +133,7 @@ impl AirkServer {
             operation,
             UsageOperation::Status | UsageOperation::Capabilities
         );
-        let permit = match self.admission.admit(control) {
+        let permit = match self.admission.admit(control).await {
             Ok(permit) => permit,
             Err(result) => return result,
         };
@@ -120,6 +156,33 @@ impl AirkServer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn queue_overflow_timeout_and_cancellation_release_admission_slots() {
+        let admission = Admission::default();
+        let _held = admission
+            .0
+            .evidence
+            .clone()
+            .acquire_many_owned(EVIDENCE_WORKERS)
+            .await
+            .unwrap();
+        let mut waiting = Vec::new();
+        for _ in 0..MAX_QUEUED_REQUESTS {
+            let request = admission.clone();
+            waiting.push(tokio::spawn(async move { request.admit(false).await }));
+        }
+        tokio::task::yield_now().await;
+        assert_eq!(admission.status()["queued_requests"], MAX_QUEUED_REQUESTS);
+        assert!(admission.admit(false).await.is_err());
+        waiting.pop().unwrap().abort();
+        tokio::task::yield_now().await;
+        for task in waiting {
+            assert!(task.await.unwrap().is_err());
+        }
+        assert_eq!(admission.status()["queued_requests"], 0);
+        assert_eq!(admission.status()["rejected_requests"], MAX_QUEUED_REQUESTS);
+    }
 
     #[tokio::test(flavor = "current_thread")]
     async fn complete_pipeline_records_success_failure_and_panic_once() -> anyhow::Result<()> {
@@ -161,27 +224,32 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn saturation_preserves_control_capacity_and_counts_rejection() {
+    async fn saturation_queues_fifth_evidence_request_and_preserves_control_capacity() {
         let admission = Admission::default();
         let permits: Vec<_> = (0..EVIDENCE_WORKERS)
-            .map(|_| admission.admit(false).unwrap())
+            .map(|_| admission.0.evidence.clone().try_acquire_owned().unwrap())
             .collect();
-        assert!(admission.admit(false).is_err());
-        assert_eq!(admission.status()["rejected_requests"], 1);
-        assert!(admission.admit(true).is_ok());
+        let waiting = admission.clone();
+        let fifth = tokio::spawn(async move { waiting.admit(false).await });
+        tokio::task::yield_now().await;
+        assert_eq!(admission.status()["queued_requests"], 1);
+        assert!(admission.admit(true).await.is_ok());
         drop(permits);
+        assert!(fifth.await.unwrap().is_ok());
+        assert_eq!(admission.status()["queued_requests"], 0);
+        assert_eq!(admission.status()["rejected_requests"], 0);
         admission.shutdown().await;
-        assert!(admission.admit(false).is_err());
-        assert!(admission.admit(true).is_err());
+        assert!(admission.admit(false).await.is_err());
+        assert!(admission.admit(true).await.is_err());
     }
 
     #[tokio::test(flavor = "current_thread")]
     async fn cancelled_waiter_keeps_worker_permit_and_shutdown_drains() {
         let admission = Admission::default();
         let permits: Vec<_> = (1..EVIDENCE_WORKERS)
-            .map(|_| admission.admit(false).unwrap())
+            .map(|_| admission.0.evidence.clone().try_acquire_owned().unwrap())
             .collect();
-        let permit = admission.admit(false).unwrap();
+        let permit = admission.admit(false).await.unwrap();
         let (entered, started) = tokio::sync::oneshot::channel();
         let (release, hold) = std::sync::mpsc::channel();
         let worker = tokio::task::spawn_blocking(move || {
@@ -191,7 +259,13 @@ mod tests {
         });
         started.await.unwrap();
         worker.abort(); // A running blocking task cannot be forcibly cancelled.
-        assert!(admission.admit(false).is_err());
+        let waiting = admission.clone();
+        let queued = tokio::spawn(async move { waiting.admit(false).await });
+        tokio::task::yield_now().await;
+        assert_eq!(admission.status()["queued_requests"], 1);
+        queued.abort();
+        let _ = queued.await;
+        assert_eq!(admission.status()["queued_requests"], 0);
         let drain_admission = admission.clone();
         let drain = tokio::spawn(async move { drain_admission.shutdown().await });
         tokio::task::yield_now().await;

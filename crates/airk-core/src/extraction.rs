@@ -116,13 +116,13 @@ impl IndexDetail {
     pub fn coverage(self) -> &'static str {
         match self {
             Self::AgentLean => {
-                "Selected declarations, imports, local structure, entry points and document facts. Call occurrences, broad framework facts, standalone dates and fine-grained continuity are deliberately omitted. Syntax is not resolved; exact text and semantic inputs remain independently available."
+                "Selected declarations, imports, call occurrences, local structure, entry points and document facts. Broad framework facts, standalone dates and fine-grained continuity are deliberately omitted. Call targets are written syntax candidates, not resolved; exact text and semantic inputs remain independently available."
             }
             Self::Essential => {
                 "Native structured facts, relationships and fine-grained continuity are not indexed at Essential detail. Text and exact citations remain available. Explicit imported analysis is separate."
             }
             Self::Balanced => {
-                "Native call occurrences and document-unit continuity are not indexed at Balanced detail. Declarations, imports, other structural facts and declaration continuity are adapter-dependent. Explicit imported analysis is separate."
+                "Native call occurrences, declarations, imports, other structural facts and declaration continuity are adapter-dependent. Call targets are written syntax candidates, not resolved. Document-unit continuity is not indexed at Balanced detail. Explicit imported analysis is separate."
             }
             Self::Detailed => {
                 "Selected adapter-supported facts, relationships and continuity; not complete language understanding or resolved references."
@@ -136,6 +136,8 @@ impl IndexDetail {
             Self::AgentLean => matches!(
                 kind,
                 "definition"
+                    | "call"
+                    | "dynamic_call"
                     | "import"
                     | "inherits"
                     | "key"
@@ -152,7 +154,7 @@ impl IndexDetail {
                     | "table"
                     | "table_row"
             ),
-            Self::Balanced => kind != "call",
+            Self::Balanced => true,
             Self::Detailed => true,
         }
     }

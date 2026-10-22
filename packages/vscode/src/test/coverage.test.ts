@@ -25,11 +25,16 @@ class FakeClock implements Clock {
 test('coverage labels never round partial, empty, changed or nearly complete inventories to 100%', () => {
     const view = { report, scanning: false, pending: false };
     assert.equal(coverageLabel(view), '99%');
+    assert.equal(coverageLabel(view, new Date(report.scanned_at_unix_ms + 1).toISOString()), 'Coverage pending rescan');
+    assert.equal(coverageLabel(view, new Date(report.scanned_at_unix_ms).toISOString()), '99%');
     assert.equal(coverageLabel({ ...view, report: { ...report, current: 1000 } }), '100%');
     assert.equal(coverageLabel({ ...view, report: { ...report, eligible: 0 } }), 'No eligible files');
     assert.equal(coverageLabel({ ...view, report: { ...report, scan_complete: false } }), 'Coverage unknown');
     assert.equal(coverageLabel({ ...view, report: { ...report, source_configuration_pending: true } }), 'Coverage unknown');
-    assert.equal(coverageLabel({ ...view, pending: true }), 'Coverage unknown');
+    assert.equal(coverageLabel({ ...view, pending: true }), 'Coverage pending rescan');
+    assert.equal(coverageLabel(undefined), 'Coverage pending rescan');
+    assert.equal(coverageLabel({ ...view, pending: true, error: 'inventory failed' }), 'Coverage unknown');
+    assert.match(coverageDetails('Fixture', { ...view, pending: true }, 0), /five minutes or on explicit refresh/);
     assert.equal(coverageLabel({ ...view, report: { ...report, indexed: false } }), 'Not indexed');
     assert.match(coverageDetails('Fixture', view, 2), /2 unsaved documents/);
     assert.match(coverageDetails('Fixture', view, 0), /999 of 1000 eligible files current/);
@@ -45,7 +50,7 @@ test('coverage scans coalesce events and invalidate observations when edits arri
     await clock.advance(1999); assert.equal(calls, 0);
     await clock.advance(1); assert.equal(calls, 1);
     queue.request(spec); release(report); await flush();
-    assert.equal(coverageLabel(queue.get(spec.collection)), 'Coverage unknown');
+    assert.equal(coverageLabel(queue.get(spec.collection)), 'Coverage pending rescan');
     await clock.advance(2000); assert.equal(calls, 2);
     release(report); await flush(); assert.equal(coverageLabel(queue.get(spec.collection)), '99%'); queue.dispose();
 });
@@ -56,6 +61,19 @@ test('closing and reopening a folder discards scans for its previous storage bin
     queue.request(spec, true); await clock.advance(0);
     queue.forget(spec.collection); queue.request({ ...spec, dataDir: '/fixture/new-state' });
     release(report); await flush();
-    assert.equal(coverageLabel(queue.get(spec.collection)), 'Coverage unknown');
+    assert.equal(coverageLabel(queue.get(spec.collection)), 'Coverage pending rescan');
     assert.ok(queue.get(spec.collection)?.pending); queue.dispose();
+});
+
+test('edit invalidation launches no inventory and rejects a scan that predates the edit', async () => {
+    const clock = new FakeClock(); let calls = 0; let release!: (value: Coverage) => void;
+    const queue = new CoverageQueue(async () => { calls++; return new Promise(resolve => { release = resolve; }); }, () => {}, clock);
+    queue.request(spec, true); await clock.advance(0);
+    for (let index = 0; index < 100; index++) { queue.invalidate(spec); }
+    release(report); await flush(); await clock.advance(30000);
+    assert.equal(calls, 1);
+    assert.equal(coverageLabel(queue.get(spec.collection)), 'Coverage pending rescan');
+    queue.request(spec, true); await clock.advance(0); release(report); await flush();
+    assert.equal(coverageLabel(queue.get(spec.collection)), '99%');
+    queue.dispose();
 });

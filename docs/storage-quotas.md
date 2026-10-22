@@ -1,6 +1,6 @@
 # Storage quotas
 
-AIRK enforces reservations for application-written logical bytes in one canonical data root. The default policy allows 500 GiB for the root and 100 GiB for each collection. Temporary publication files, content-addressed source/extraction objects, models, current databases and recovery journals all consume capacity. Current and pending ownership remains protected; a quota never authorizes deleting referenced evidence.
+AIRK enforces reservations for application-written logical bytes in one canonical data root. The default policy allows 500 GiB for the root and 256 GiB for each collection. Temporary publication files, content-addressed source/extraction objects, models, current databases and recovery journals all consume capacity. Current and pending ownership remains protected; a quota never authorizes deleting referenced evidence.
 
 ## Inspect and configure
 
@@ -17,7 +17,7 @@ airk --data-dir /path/to/state --collection project-a collections quota set quot
 ~~~json
 {
   "root_bytes": 536870912000,
-  "default_collection_bytes": 107374182400,
+  "default_collection_bytes": 274877906944,
   "collections": { "project-a": 214748364800 }
 }
 ~~~

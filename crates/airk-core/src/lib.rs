@@ -15,6 +15,7 @@ pub mod execution;
 pub mod extraction;
 pub mod graph_storage;
 pub mod identity;
+pub mod lexical;
 pub mod location;
 pub mod mapped_binding;
 pub mod model_objects;
@@ -26,7 +27,7 @@ pub mod vector_selection;
 pub use code::*;
 
 pub const SCHEMA_VERSION: u32 = 3;
-pub const EXTRACTOR_VERSION: &str = "native-facts/9";
+pub const EXTRACTOR_VERSION: &str = "native-facts/10";
 pub const MAX_RESPONSE_BYTES: usize = 65_536;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -53,7 +54,7 @@ pub struct Artifact {
     pub retained: Option<ArtifactRef>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ArtifactRef {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_encoding: Option<compression::EncodedObject>,

@@ -19,7 +19,7 @@ MODULES = ("extension.js", "model.js", "native.js", "cliInstall.js", "scheduler.
            "retention.js", "extractionPolicy.js", "ingestionLimits.js", "history.js", "report.js", "sidebar.js",
            "agentConnections.js", "agentConfig.js", "agentSetup.js", "dashboardView.js", "collectionTree.js",
            "usagePanel.js", "usageReport.js", "vectorModel.js", "diagnostics.js", "diagnosticsView.js",
-           "agentDiagnostics.js")
+           "agentDiagnostics.js", "indexProgress.js")
 JSONC_FILES = ("package.json", "LICENSE.md", "lib/umd/main.js", "lib/umd/impl/edit.js",
                "lib/umd/impl/format.js", "lib/umd/impl/parser.js", "lib/umd/impl/scanner.js",
                "lib/umd/impl/string-intern.js")

@@ -45,8 +45,7 @@ fn search(fixture: &Fixture, text: &str) -> Result<airk_kernel::current::Current
         limit: 10,
         max_bytes: 4096,
     };
-    let lexical =
-        airk_kernel::current::open_selected_lexical(&fixture.store, &read, Arc::new(|_| Ok(())))?;
+    let lexical = airk_kernel::current::open_selected_lexical(&fixture.store, &read)?;
     airk_kernel::current::materialize_lexical(
         &fixture.store,
         &read,

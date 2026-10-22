@@ -28,9 +28,6 @@ pub(crate) fn select(payload: &mut ExtractionPayload, detail: IndexDetail) -> Re
         fact.owner = fact.owner.and_then(|id| ids.get(&id).copied());
     }
     payload.relationships.retain_mut(|edge| {
-        if detail != IndexDetail::Detailed && edge.kind == "call" {
-            return false;
-        }
         let Some(source) = ids.get(&edge.source) else {
             return false;
         };

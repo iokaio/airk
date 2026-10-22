@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { NativeProcessError, NativeWriteQueue, prepareHelper, probeMcp, runJson, runText } from '../native';
+import { NativeProcessError, NativeWriteQueue, joinScheduledIndex, ScheduledIndexStillQueued, parseIndexProgress, prepareHelper, probeMcp, runJson, runText } from '../native';
 import { IndexReport, LaunchSpec, collectionId } from '../model';
 import { Coverage } from '../coverage';
 
@@ -20,11 +20,16 @@ test('only a structured gate outcome with an ordinary exit authorizes contention
     const failure = (stderr: string, properties: object = { code: 1 }) => new NativeProcessError('airk',
         Object.assign(new Error('Command failed'), properties), stderr, 1, 10000);
     assert.equal(failure(JSON.stringify(busy)).retryableGateContention, true);
+    const progress = JSON.stringify({ phase: 'scan_started', revision: null, processed_artifacts: 0,
+        committed_artifacts: 0, selected_artifacts: null, completed_artifacts: null });
+    assert.equal(failure(`${progress}\n${JSON.stringify(busy)}`).retryableGateContention, true,
+        'Validated index progress may precede a structured native failure');
+    assert.equal(failure(`usage warning\n${JSON.stringify(busy)}`).retryableGateContention, true);
     for (const stderr of [
         'Error: current index is busy applying an update\nCaused by:\n    lock acquisition failed because the operation would block',
         JSON.stringify({ ...busy, airk_error: 2 }), JSON.stringify({ ...busy, retryable: false }),
         JSON.stringify({ ...busy, code: 'operation_failed' }), JSON.stringify({ ...busy, message: null }),
-        JSON.stringify(busy) + '\nstack backtrace:\n1: fixture', '[]', 'null', '{'
+        JSON.stringify(busy) + '\n' + JSON.stringify({airk_error: 1, retryable: 'invalid'}), '[]', 'null', '{'
     ]) { assert.equal(failure(stderr).retryableGateContention, false); }
     for (const properties of [{ code: 7 }, { code: 1, killed: true }, { code: 1, signal: 'SIGTERM' }]) {
         assert.equal(failure(JSON.stringify(busy), properties).retryableGateContention, false);
@@ -87,6 +92,31 @@ test('native process timeout identifies the limit and termination without stderr
     });
 });
 
+test('index progress is validated and a silent native scan is stopped', async () => {
+    const event = { collection: 'fixture', phase: 'base_committed', revision: 'airk-r1:fixture', processed_artifacts: 32,
+        committed_artifacts: 32, selected_artifacts: 10, completed_artifacts: 4 };
+    assert.deepEqual(parseIndexProgress(JSON.stringify(event)), event);
+    assert.deepEqual(parseIndexProgress(JSON.stringify({ ...event, phase: 'enrichment_prepared', revision: null })),
+        { ...event, phase: 'enrichment_prepared', revision: null });
+    assert.equal(parseIndexProgress(JSON.stringify({ ...event, processed_artifacts: -1 })), undefined);
+    assert.equal(parseIndexProgress('{'), undefined);
+    await assert.rejects(runText(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], undefined, 5000,
+        () => false, 150), /stopped after 150 ms without progress/);
+});
+
+test('MCP helper verifies before the first index publication', { skip: !process.env.AIRK_TEST_BINARY }, async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'airk-unindexed-mcp-'));
+    try {
+        const root = path.join(directory, 'project'), dataDir = path.join(directory, 'state');
+        await fs.mkdir(root);
+        const spec: LaunchSpec = { command: process.env.AIRK_TEST_BINARY!, root, dataDir,
+            collection: collectionId(await fs.realpath(root)), name: 'Project' };
+        const result = await probeMcp(spec);
+        assert.equal(result.tools.length, 15);
+        assert.deepEqual(result.status, { state: 'not_indexed' });
+    } finally { await removeFixture(directory, 'airk-unindexed-mcp-'); }
+});
+
 test('native process diagnostics stay bounded and retain both ends of stderr', async () => {
     await assert.rejects(runText(process.execPath, ['-e', 'process.stderr.write("first diagnostic\\n" + "x".repeat(20000) + "\\nlast diagnostic", () => process.exit(3))']), error => {
         assert.ok(error instanceof NativeProcessError);
@@ -139,22 +169,28 @@ test('native semantic adapter finishes bounded batches and honors saved pause wi
         const spec: LaunchSpec = { command: path.resolve(process.env.AIRK_TEST_BINARY!), root, dataDir,
             collection: 'semantic-adapter', name: 'Fixture' };
         await runJson(spec, 'index', ['--scheduled']);
+        const queued = await runJson<{ requested_revision: number }>(spec, 'schedule', ['status']);
+        await runJson(spec, 'schedule', ['wait', String(queued.requested_revision), '--progress']);
+        assert.equal((await runJson<{ requested_revision: number }>(spec, 'schedule', ['status'])).requested_revision, queued.requested_revision);
         type Ready = {state: string; completed_artifacts: number; selected_artifacts: number};
         let status = await runJson<Ready>(spec, 'semantic', ['status']);
-        assert.equal(status.state, 'partial'); assert.ok(status.completed_artifacts < 65);
+        assert.equal(status.state, 'pending'); assert.equal(status.completed_artifacts, 0);
         await runJson(spec, 'schedule', ['pause']);
         assert.equal((await runJson<{state: string}>(spec, 'semantic', ['run', '--scheduled'])).state, 'paused');
         const paused = await runJson<Ready>(spec, 'semantic', ['status']);
         assert.equal(paused.state, status.state); assert.equal(paused.completed_artifacts, status.completed_artifacts);
         await runJson(spec, 'schedule', ['resume']);
-        let passes = 0;
-        while (status.state !== 'ready') {
-            assert.ok(++passes <= 3, 'Semantic indexing stopped advancing');
-            assert.equal((await runJson<{state: string}>(spec, 'semantic', ['run', '--scheduled'])).state, 'enriched');
-            const next = await runJson<Ready>(spec, 'semantic', ['status']);
-            assert.equal(next.completed_artifacts, Math.min(65, status.completed_artifacts + 32));
-            status = next;
-        }
+        const committed: number[] = [];
+        const outcome = await runJson<{state: string; report: IndexReport}>(spec, 'semantic', ['run', '--scheduled', '--progress'], line => {
+            const event = parseIndexProgress(line);
+            if (event?.phase === 'enrichment_committed' && event.completed_artifacts !== null) { committed.push(event.completed_artifacts); }
+            return !!event;
+        });
+        assert.equal(outcome.state, 'enriched');
+        assert.deepEqual(committed, [32, 64, 65], 'One helper reuses its model across durable batches');
+        assert.equal(outcome.report.semantic_readiness?.state, 'ready');
+        assert.equal(typeof outcome.report.embedding_model_load_us, 'number');
+        status = await runJson<Ready>(spec, 'semantic', ['status']);
         assert.equal(status.completed_artifacts, 65);
         assert.equal((await runJson<{state: string}>(spec, 'semantic', ['run', '--scheduled'])).state, 'idle');
         assert.equal(await fs.readFile(path.join(root, 'file_64.txt'), 'utf8'), 'authenticate\n');
@@ -212,7 +248,7 @@ test('cached old helper survives extension replacement and a changed trusted hel
         // 1.2 builds an independent current-index namespace and leaves the old
         // helper's derived collection untouched.
         await runJson(newAgent, 'index', ['--full']);
-        assert.equal((await probeMcp(newAgent)).tools.length, 16);
+        assert.equal((await probeMcp(newAgent)).tools.length, 15);
         await assert.rejects(runJson(newAgent, 'collections', ['history', 'set', '--json', JSON.stringify({
             version: 1, enabled: true, recent: 3, hourly_hours: 24,
             max_packages: 12, max_bytes: 268435456, quota_basis_points: 1000
@@ -257,12 +293,20 @@ test('extension native adapter indexes, rebuilds, probes MCP, isolates and remov
         const spec: LaunchSpec = { command, root, dataDir, collection: collectionId(root), name: 'A' };
         const detail = await runJson<{ configured_detail: string; published_detail: string | null }>(spec, 'collections', ['extraction', 'show']);
         assert.equal(detail.configured_detail, 'agent_lean'); assert.equal(detail.published_detail, null);
-        const first = await runJson<IndexReport>(spec, 'index', ['--scheduled']); assert.equal(first.indexed, 1);
+        const progress: string[] = [];
+        const first = await runJson<IndexReport>(spec, 'index', ['--progress', '--scheduled'], line => {
+            const event = parseIndexProgress(line);
+            if (event) { progress.push(event.phase); }
+            return !!event;
+        });
+        assert.equal(first.indexed, 1);
+        assert.ok(progress.includes('scan_started'));
+        assert.ok(progress.includes('base_committed') || progress.includes('base_coverage_complete'));
         const published = await runJson<{ configured_detail: string; published_detail: string }>(spec, 'collections', ['extraction', 'show']);
         assert.equal(published.configured_detail, 'agent_lean'); assert.equal(published.published_detail, 'agent_lean');
         const coverage = await runJson<Coverage>(spec, 'coverage', ['--refresh']); assert.equal(coverage.percent, 100); assert.equal(coverage.current, 1);
         const limits = await runJson<import('../ingestionLimits').LimitsDescription>(spec, 'collections', ['limits', 'describe']);
-        assert.equal(limits.mode, 'automatic'); assert.ok(limits.effective.corpus_bytes <= 2147483648);
+        assert.equal(limits.mode, 'automatic'); assert.ok(limits.effective.corpus_bytes <= 4294967296);
         const reduced = { ...limits.effective, corpus_bytes: 1 };
         await runJson(spec, 'collections', ['limits', 'set', '--json', JSON.stringify(reduced), '--expected-json', JSON.stringify(limits.effective)]);
         await assert.rejects(runJson(spec, 'index', ['--scheduled', '--automatic']), /corpus exceeds configured byte limit/);
@@ -276,9 +320,8 @@ test('extension native adapter indexes, rebuilds, probes MCP, isolates and remov
         await runJson(spec, 'schedule', ['resume']);
         assert.equal((await runJson<IndexReport>(spec, 'index')).reused, 1);
         const full = await runJson<IndexReport>(spec, 'index', ['--full']); assert.equal(full.reused, 0); assert.ok(full.generation > first.generation);
-        const probe = await probeMcp(spec); assert.equal(probe.tools.length, 16);
+        const probe = await probeMcp(spec); assert.equal(probe.tools.length, 15);
         assert.ok(probe.tools.includes('airk_changes'));
-        assert.ok(probe.tools.includes('airk_history'));
         await assert.rejects(runJson(spec, 'collections', ['retention', 'show']), /generation retention is unsupported/i);
         await assert.rejects(runJson(spec, 'collections', ['prune', '--apply']), /unsupported/i);
         const beforeMaintenance = await runJson<{ publication: { token: unknown } }>(spec, 'status');
@@ -317,4 +360,46 @@ test('extension native adapter indexes, rebuilds, probes MCP, isolates and remov
         assert.equal(repairs.length, 1, 'Verified cached bytes need no second repair');
         assert.equal((await runText(cached, ['--version'])).trim(), `airk ${version}`);
     } finally { await removeFixture(directory, 'airk-native-extension-'); }
+});
+
+
+test('native queue waits resume the same request and reject untyped or invalid continuations', async () => {
+    const pending = { airk_error: 1, code: 'scheduled_index_pending', retryable: true, requested_revision: 7, message: 'still queued' };
+    const failure = (value: unknown, properties: object = { code: 1 }) => new NativeProcessError('airk',
+        Object.assign(new Error('Command failed'), properties), JSON.stringify(value), 240000, 3600000);
+    const calls: string[][] = []; let waits = 0;
+    const result = await joinScheduledIndex(['--scheduled', '--progress'], async (command, args) => {
+        calls.push([command, ...args]);
+        if (calls.length < 3) { throw failure(pending); }
+        return { generation: 9 };
+    }, () => { waits++; });
+    assert.equal(result.generation, 9); assert.equal(waits, 2);
+    assert.deepEqual(calls, [['index', '--scheduled', '--progress'], ['schedule', 'wait', '7', '--progress'], ['schedule', 'wait', '7', '--progress']]);
+    for (const value of [{ ...pending, requested_revision: -1 }, { ...pending, requested_revision: Number.MAX_SAFE_INTEGER + 1 },
+        { ...pending, retryable: false }, { ...pending, code: 'operation_failed' }]) {
+        assert.equal(failure(value).pendingIndexRevision, undefined);
+    }
+    assert.equal(failure(pending, { code: 1, killed: true }).pendingIndexRevision, undefined);
+    assert.equal(failure(pending, { code: 1, signal: 'SIGTERM' }).pendingIndexRevision, undefined);
+    await assert.rejects(joinScheduledIndex([], async () => { throw failure(pending); }, () => { throw new Error('Workspace closed'); }), /Workspace closed/);
+    let attempt = 0;
+    await assert.rejects(joinScheduledIndex([], async () => { throw failure({ ...pending, requested_revision: ++attempt }); }, () => {}), /different request revision/);
+    await assert.rejects(joinScheduledIndex([], async () => { throw new Error('permission denied'); }, () => { assert.fail(); }), /permission denied/);
+});
+
+
+test('queue joins yield after a bounded number and Pause prevents another join', async () => {
+    const pending = new NativeProcessError('airk', Object.assign(new Error('pending'), { code: 1 }),
+        'usage warning\n' + JSON.stringify({ airk_error: 1, code: 'scheduled_index_pending', retryable: true, requested_revision: 7, message: 'queued' }), 240000, 3600000);
+    let calls = 0;
+    await assert.rejects(joinScheduledIndex([], async () => { calls++; throw pending; }, () => {}), error => {
+        assert.ok(error instanceof ScheduledIndexStillQueued); assert.equal(error.revision, 7); return true;
+    });
+    assert.equal(calls, 3); calls = 0;
+    await assert.rejects(joinScheduledIndex([], async (command, args) => {
+        calls++; assert.equal(command, 'schedule'); assert.equal(args[1], '7'); throw pending;
+    }, () => false, 7), error => {
+        assert.ok(error instanceof ScheduledIndexStillQueued); assert.equal(error.paused, true); return true;
+    });
+    assert.equal(calls, 1);
 });

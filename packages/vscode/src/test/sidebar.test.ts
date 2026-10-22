@@ -2,7 +2,7 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { Coverage } from '../coverage';
-import { SidebarState, renderSidebar, sidebarAction, sidebarContent, sidebarControlGroups } from '../sidebar';
+import { SidebarState, renderSidebar, sidebarAction, sidebarContent, sidebarControlGroups, semanticCompletion } from '../sidebar';
 
 const report: Coverage = { collection: 'a', root: '/project/a', generation: 1, indexed: true, inventory_revision: 1,
     scanned_at_unix_ms: 1, scan_complete: true, eligible: 1000, current: 999, stale: 1, missing: 0, extraction_failed: 0,
@@ -11,6 +11,19 @@ const state: SidebarState = { trusted: true, paused: false, changingStorage: fal
     groups: [{ label: 'Setup and reports', commands: [['Connect agent', 'airk.setupAgent', 'Preview configuration']] }],
     collections: [{ collection: 'a', name: 'Project A', root: '/project/a', dataDir: '/data', state: 'indexing',
         coverage: { report, scanning: false, pending: false }, diskBytes: 1048576 }] };
+
+test('semantic progress uses committed batches and never reports 100% before readiness', () => {
+    const vectors = { enabled: true, published: true, indexed_vectors: 0, pending_reindex: false,
+        default_search_mode: 'hybrid' as const, semantic_readiness: {
+            state: 'pending' as const, selected_artifacts: 754, completed_artifacts: 0,
+            selected_units: null, completed_units: 0, failure: null } };
+    assert.deepEqual(semanticCompletion(vectors), { completed: 0, total: 754, percent: 0 });
+    assert.deepEqual(semanticCompletion(vectors, { phase: 'enrichment_committed', selected_artifacts: 754,
+        completed_artifacts: 32 }), { completed: 32, total: 754, percent: 4 });
+    assert.deepEqual(semanticCompletion(vectors, { phase: 'enrichment_prepared', selected_artifacts: 754,
+        completed_artifacts: 32 }), { completed: 0, total: 754, percent: 0 });
+    assert.equal(semanticCompletion(undefined), undefined);
+});
 
 test('vector switch reflects persisted opt-out, readiness and trust and validates collection-bound actions', () => {
     const sample = structuredClone(state);
@@ -22,7 +35,11 @@ test('vector switch reflects persisted opt-out, readiness and trust and validate
         state: 'partial', selected_artifacts: 33, completed_artifacts: 32,
         selected_units: null, completed_units: 32, failure: null
     };
-    assert.match(sidebarContent(sample), /Semantic partial: 32 of 33 selected files complete/);
+    assert.match(sidebarContent(sample), /Semantic indexing 97%: 32 of 33 selected files complete; 1 remaining/);
+    assert.match(sidebarContent(sample), /value="32" aria-label="Published semantic indexing progress"/);
+    sample.collections[0].vectors.semantic_readiness.selected_artifacts = 1000;
+    sample.collections[0].vectors.semantic_readiness.completed_artifacts = 999;
+    assert.match(sidebarContent(sample), /Semantic indexing 99%: 999 of 1000/);
     sample.collections[0].vectors.enabled = false;
     assert.doesNotMatch(sidebarContent(sample), /data-vectors="true" checked/);
     assert.match(sidebarContent(sample), /Off: keyword search/);
@@ -45,14 +62,46 @@ test('tools button opens a collection-bound console and is disabled without trus
 test('semantic indexing remains visible independently of complete saved-file coverage', () => {
     const sample = structuredClone(state);
     sample.collections[0].state = 'enriching';
+    sample.collections[0].semanticElapsedSeconds = 125;
+    sample.collections[0].semanticStartedAt = 1000;
+    sample.collections[0].vectors = { enabled: true, published: true, indexed_vectors: 416,
+        pending_reindex: false, default_search_mode: 'hybrid', semantic_readiness: {
+            state: 'partial', selected_artifacts: 745, completed_artifacts: 416,
+            selected_units: null, completed_units: 5000, failure: null } };
+    sample.collections[0].semanticProgress = { phase: 'enrichment_prepared', selected_artifacts: 745, completed_artifacts: 416 };
     sample.collections[0].coverage!.report!.current = 1000;
     const html = sidebarContent(sample);
     assert.match(html, /100%/);
     assert.match(html, /Building semantic index/);
+    assert.match(html, /Semantic indexing 56%: 416 of 745 selected files complete; 329 remaining/);
+    assert.match(html, /Computing vectors and publishing this batch/);
+    assert.match(html, /data-semantic-started="1000">2m 5s/);
+    assert.match(html, /value="416" aria-label="Published semantic indexing progress"/);
+    assert.doesNotMatch(html, /stops after twenty minutes/);
     assert.doesNotMatch(html, /Indexing saved files/);
     assert.match(html, /data-action="index"[^>]*disabled/);
     sample.collections[0].state = 'semantic-pending';
     assert.match(sidebarContent(sample), /Semantic indexing pending/);
+});
+
+test('initial indexing shows committed MCP evidence and a quiet scan warning', () => {
+    const sample = structuredClone(state);
+    sample.collections[0].indexActivity = { phase: 'base_committed', revision: 'airk-r1:fixture',
+        processed_artifacts: 64, committed_artifacts: 32, selected_artifacts: 32,
+        completed_artifacts: 8, elapsedSeconds: 181, quietSeconds: 130 };
+    sample.collections[0].mcp = { phase: 'verified', tools: Array(15).fill('tool'), indexState: 'published' };
+    const html = sidebarContent(sample);
+    assert.match(html, /32 files committed, 64 processed/);
+    assert.match(html, /Published evidence is available to MCP now/);
+    assert.match(html, /No new progress for 2 minutes/);
+    assert.match(html, /Verified · 15 tools available/);
+    sample.collections[0].indexActivity.revision = null;
+    sample.collections[0].mcp.indexState = 'not_indexed';
+    assert.match(sidebarContent(sample), /MCP can start; search awaits the first publication/);
+    assert.match(sidebarContent(sample), /indexing pending/);
+    sample.collections[0].indexActivity.phase = 'waiting';
+    assert.match(sidebarContent(sample), /Waiting for the shared indexing worker/);
+    assert.doesNotMatch(sidebarContent(sample), /No new progress|Published evidence remains available/);
 });
 
 test('CLI getting-started note reports setup failures and keeps repair behind workspace trust', () => {
@@ -76,7 +125,9 @@ test('sidebar shows measured coverage, direct collection controls and no invente
     assert.doesNotMatch(sidebarContent(changed), /<progress/);
     assert.match(sidebarContent(changed), /previous scan/);
     changed.collections[0].coverage = undefined;
-    assert.match(sidebarContent(changed), /Coverage unknown/); assert.doesNotMatch(sidebarContent(changed), /<progress/);
+    assert.match(sidebarContent(changed), /Coverage pending rescan/);
+    assert.match(sidebarContent(changed), /five minutes or on explicit refresh/);
+    assert.doesNotMatch(sidebarContent(changed), /<progress/);
 });
 
 test('sidebar escapes workspace names, paths and errors and uses a nonce-only content policy', () => {

@@ -12,16 +12,20 @@ export interface Coverage {
     scan_limits?: { corpus_bytes: number; extracted_bytes: number };
 }
 export interface CoverageView { report?: Coverage; scanning: boolean; pending: boolean; error?: string }
-export function coverageLabel(view: CoverageView | undefined): string {
+export function coverageLabel(view: CoverageView | undefined, lastIndexed?: string): string {
     if (view?.scanning) { return 'Scanning'; }
+    if (view?.error) { return 'Coverage unknown'; }
     const report = view?.report;
-    if (!report || view?.error || !report.scan_complete || report.source_configuration_pending || view.pending) { return 'Coverage unknown'; }
+    if (!report || view?.pending) { return 'Coverage pending rescan'; }
+    const indexedAt = lastIndexed ? Date.parse(lastIndexed) : NaN;
+    if (Number.isFinite(indexedAt) && report.scanned_at_unix_ms < indexedAt) { return 'Coverage pending rescan'; }
+    if (!report.scan_complete || report.source_configuration_pending) { return 'Coverage unknown'; }
     if (!report.eligible) { return 'No eligible files'; }
     if (!report.indexed) { return 'Not indexed'; }
     // Calculate independently using floor: 999/1000 must never display 100%.
     return `${Math.floor(Math.min(report.current, report.eligible) * 100 / report.eligible)}%`;
 }
-export function coverageDetails(name: string, view: CoverageView | undefined, unsaved: number): string {
+export function coverageDetails(name: string, view: CoverageView | undefined, unsaved: number, lastIndexed?: string): string {
     const report = view?.report;
     const rows = [`${name} — click to open AIRK controls`];
     if (report) {
@@ -35,7 +39,9 @@ export function coverageDetails(name: string, view: CoverageView | undefined, un
         }
         if (report.source_configuration_pending) { rows.push('Source folders changed; index to publish their new bindings.'); }
     }
-    if (view?.pending) { rows.push('Disk changes pending; previous inventory is out of date.'); }
+    if (coverageLabel(view, lastIndexed) === 'Coverage pending rescan') {
+        rows.push('Coverage pending rescan; inventories refresh every five minutes or on explicit refresh.');
+    }
     if (unsaved) { rows.push(`${unsaved} unsaved document${unsaved === 1 ? '' : 's'}; AIRK indexes saved files.`); }
     if (view?.error) { rows.push(view.error); }
     return rows.join('\n');
@@ -60,6 +66,14 @@ export class CoverageQueue {
     get(collection: string): CoverageView | undefined { return this.views.get(collection); }
     configure(quietMs: number, idleMs: number): void { this.quietMs = quietMs; this.idleMs = idleMs; this.schedule(); }
     activity(): void { this.lastActivity = this.timing.now(); if (this.idleMs) { this.schedule(); } }
+    /** An edit invalidates coverage without launching a separate source inventory. */
+    invalidate(spec: LaunchSpec): void {
+        if (this.stopped) { return; }
+        this.revisions.set(spec.collection, ++this.sequence);
+        const prior = this.views.get(spec.collection);
+        this.views.set(spec.collection, { ...prior, scanning: prior?.scanning ?? false, pending: true });
+        this.changed();
+    }
     request(spec: LaunchSpec, immediate = false): void {
         if (this.stopped) { return; }
         const revision = ++this.sequence;

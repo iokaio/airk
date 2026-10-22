@@ -2,7 +2,9 @@
 
 **AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents**
 
-Start with the [1.2.4 diagnosis and recovery notes](release-1.2.4.md), [1.2.3 Agent Lean default and indexing fix](release-1.2.3.md), [1.2.2 semantic indexing fix](release-1.2.2.md) and [1.2.0 behavior and upgrade notes](release-1.2.0.md) for current defaults, upgrade steps and qualification limits. For setup, use [coding-agent integration](agent-integration.md) and [extension controls](vscode-extension.md); for indexing and disk use, use [ingestion limits and detail](ingestion-limits.md), [storage quotas](storage-quotas.md), [current-index operation](current-index-runtime.md) and [current-object cleanup](retention.md). The 1.1 release notes and v2 design records below are historical.
+Start with the [1.3.0 release notes](release-1.3.0.md), [published 1.2.4 diagnosis and recovery notes](release-1.2.4.md), [1.2.3 Agent Lean default and indexing fix](release-1.2.3.md), [1.2.2 semantic indexing fix](release-1.2.2.md) and [1.2.0 behavior and upgrade notes](release-1.2.0.md) for current defaults, upgrade steps and qualification limits. For setup, use [coding-agent integration](agent-integration.md) and [extension controls](vscode-extension.md); for indexing and disk use, use [ingestion limits and detail](ingestion-limits.md), [storage quotas](storage-quotas.md), [current-index operation](current-index-runtime.md) and [current-object cleanup](retention.md). The 1.1 release notes and v2 design records below are historical.
+
+The [1.3.0 release](release-1.3.0.md) retires the former `airk_history` MCP endpoint because the single-current-index design cannot serve retained history; see the [retirement record](unreleased-mcp-tool-retirement.md). It also includes early MCP availability during initial indexing, scoped path updates, deferred semantic inference, adaptive publication batches, revision-bound queue reports, pending-rescan coverage, guarded lexical snapshots, a qualified model catalog and SQLite FTS5 lexical storage. The extension detects recognized older 1.2 formats during indexing and starts the required full rebuild automatically, preserving original files, collection IDs and saved settings; CLI upgrades use `index --full`. The [dated follow-up](indexing-follow-up-2026-10-21.md) records cache integrity limits and validation. GitHub and Marketplace release workflow records establish their separate publication status.
 
 - [Architecture and code boundaries](architecture.md)
 - [Historical architecture v2 implementation plan](architecture-v2.md)
@@ -13,7 +15,10 @@ Start with the [1.2.4 diagnosis and recovery notes](release-1.2.4.md), [1.2.3 Ag
 - [Ingestion limits, machine sizing and index detail](ingestion-limits.md)
 - [Per-collection extraction policy](extraction-policy.md)
 - [Measured scale and performance qualification](scale-qualification.md)
-- [1.2 indexing optimization and qualification record](indexingenhancements.md)
+- [October 21 indexing feedback review, implementation and measurement](indexing-speed-review-2026-10-21.md)
+- [October 21 follow-up: durable rebuilds, exact completion reports and guarded lexical cache](indexing-follow-up-2026-10-21.md)
+- [Historical 1.2 indexing optimization and qualification record](indexingenhancements.md)
+- [Current-index sharding, Tantivy-to-FTS5 rationale and storage alternatives](index-sharding-review.md)
 - [Document requirements, dates and design indexing](document-indexing.md)
 - [Code-indexing recommendations and optional semantic-provider review](code-indexing-options.md)
 - [Implemented SQLite code facts, relationships and SCIP imports](code-facts-and-relationships.md)
@@ -24,8 +29,12 @@ Start with the [1.2.4 diagnosis and recovery notes](release-1.2.4.md), [1.2.3 Ag
 - [Transactional storage relocation and recovery](storage-relocation.md)
 - [Additional source folders and revision-bound aliases](source-roots.md)
 - [Explicit local model assets and vector/hybrid retrieval](local-models.md)
+- [Native CPU capability detection, qualified model catalog and future INT8 selection](onnx-models.md#capabilities-and-qualified-model-catalog)
 - [Durable native scheduling and crash recovery](native-scheduler.md)
 - [MCP tool contracts](mcp.md)
+- [1.3.0 changes and qualification limits](release-1.3.0.md)
+- [Historical 1.2.5 local candidate and dated validation](release-1.2.5.md)
+- [MCP tool retirement in 1.3.0](unreleased-mcp-tool-retirement.md)
 - [Request execution, bounded admission and verification costs](request-execution.md)
 - [Code review findings and 1.1.4 implementation record](airkimprovements.md)
 - [Source, parser and provider hardening](ingest-hardening.md)

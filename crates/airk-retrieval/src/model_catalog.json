@@ -1,0 +1,53 @@
+{
+  "schema": 1,
+  "default_profile": "minilm-l6-v2-fp32-v1",
+  "profiles": [
+    {
+      "id": "minilm-l6-v2-fp32-v1",
+      "precision": "fp32",
+      "runtime": "tract-cpu-onnx/0.23.8/airk-buckets-2",
+      "qualification": {
+        "verified_platforms": ["windows-x86_64"],
+        "evidence": "docs/onnx-models.md#reproducible-qualification",
+        "scope": "Local Windows x64 execution, exact cache/batch checks and small retrieval fixtures; not production relevance or cross-platform qualification."
+      },
+      "manifest": {
+        "schema": 2,
+        "name": "sentence-transformers/all-MiniLM-L6-v2",
+        "license": "Apache-2.0",
+        "source": "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2",
+        "revision": "10dbd2f06a8baf40ad285b037edda610c1b9a57c",
+        "model_sha256": "6fd5d72fe4589f189f8ebc006442dbb529bb7ce38f8082112682524616046452",
+        "tokenizer_sha256": "be50c3628f2bf5bb5e3a7f17b1f74611b2561a3a27eeab05e5aa30f411572037",
+        "license_sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+        "dimensions": 384,
+        "max_tokens": 256,
+        "pooling": "attention-mask-mean-l2",
+        "input_ids": "input_ids",
+        "attention_mask": "attention_mask",
+        "token_type_ids": "token_type_ids",
+        "output": "last_hidden_state"
+      },
+      "assets": [
+        {
+          "name": "model.onnx",
+          "url": "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/10dbd2f06a8baf40ad285b037edda610c1b9a57c/onnx/model.onnx",
+          "bytes": 90405214,
+          "sha256": "6fd5d72fe4589f189f8ebc006442dbb529bb7ce38f8082112682524616046452"
+        },
+        {
+          "name": "tokenizer.json",
+          "url": "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/10dbd2f06a8baf40ad285b037edda610c1b9a57c/tokenizer.json",
+          "bytes": 466247,
+          "sha256": "be50c3628f2bf5bb5e3a7f17b1f74611b2561a3a27eeab05e5aa30f411572037"
+        },
+        {
+          "name": "LICENSE",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+          "bytes": 11358,
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        }
+      ]
+    }
+  ]
+}

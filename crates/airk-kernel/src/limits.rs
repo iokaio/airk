@@ -31,7 +31,7 @@ pub struct LimitsDescription {
 }
 
 /// Permit at most one eighth of machine capacity as eligible source, capped at
-/// 2 GiB. This is admission policy, not a bound on process RSS or index storage.
+/// 4 GiB. This is admission policy, not a bound on process RSS or index storage.
 pub fn automatic_scan_limits(memory_bytes: Option<u64>) -> ScanLimits {
     let mib = 1024 * 1024;
     let corpus = memory_bytes
@@ -154,7 +154,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn automatic_defaults_scale_without_exceeding_two_gib() {
+    fn automatic_defaults_scale_without_exceeding_four_gib() {
         let gib = 1024 * 1024 * 1024;
         for (memory, expected) in [
             (None, gib / 2),
@@ -162,7 +162,8 @@ mod tests {
             (Some(2 * gib), gib / 4),
             (Some(8 * gib), gib),
             (Some(16 * gib), 2 * gib),
-            (Some(128 * gib), 2 * gib),
+            (Some(32 * gib), 4 * gib),
+            (Some(128 * gib), 4 * gib),
         ] {
             let limits = automatic_scan_limits(memory);
             assert_eq!(limits.corpus_bytes as u64, expected);

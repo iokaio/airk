@@ -210,7 +210,7 @@ class LocalSetupTests(unittest.TestCase):
         command = [binary, *self.args[:-1]]
         subprocess.run([*command, 'collections', 'vectors', 'set', '--enabled', 'false'],
                        check=True, capture_output=True, **setup.process_options())
-        with (self.storage / 'collections' / '.writer-locks' / 'fixture').open('r+b') as lock:
+        with (self.storage / 'collections-1.2' / '.writer-locks' / 'fixture').open('r+b') as lock:
             if os.name == 'nt':
                 import msvcrt
                 msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)

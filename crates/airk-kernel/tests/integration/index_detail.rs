@@ -43,7 +43,7 @@ fn levels_rebuild_cache_preserve_citations_and_report_published_coverage() -> Re
     let before = kernel.facts(&facts())?;
     assert_eq!(before.indexing.level, IndexDetail::AgentLean);
     assert!(before.facts.iter().any(|f| f.kind == "definition"));
-    assert!(!before.facts.iter().any(|f| f.kind == "call"));
+    assert!(before.facts.iter().any(|f| f.kind == "call"));
     assert_eq!(kernel.index()?.reused, 3);
     let store = FileStore::new(data.path().join("collections-1.2/default"));
     let lean = store.current_test_catalog()?.unwrap();

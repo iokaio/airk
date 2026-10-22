@@ -47,6 +47,15 @@ impl Kernel {
                 }
             }
         }
+        if let (Some(selected), Some(expected)) = (resolved.as_deref(), options.known_hash) {
+            let artifact = read
+                .artifact(selected)?
+                .context("current artifact missing")?;
+            ensure!(
+                artifact.content_hash == expected.to_string(),
+                "known_hash does not match current indexed source; refresh the citation"
+            );
+        }
         let present = resolved.is_some();
         let publication = envelope(read)?;
         let state = read

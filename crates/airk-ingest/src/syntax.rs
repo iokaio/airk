@@ -354,7 +354,9 @@ fn analyze_profile_with_detail(
                     let framework = (kind == "call")
                         .then(|| framework_call(profile.language, name.trim()))
                         .flatten();
-                    if detail.retains_fact(framework.unwrap_or(kind)) {
+                    if detail.retains_fact(kind)
+                        || framework.is_some_and(|rule| detail.retains_fact(rule))
+                    {
                         let start = node.start_position().row + 1;
                         let end =
                             node.end_position().row + usize::from(node.end_position().column > 0);
@@ -388,18 +390,22 @@ fn analyze_profile_with_detail(
                                 end: end.max(start),
                             },
                         };
-                        if let Some(rule) = framework {
-                            if detail == IndexDetail::Detailed {
-                                let mut cue = fact.clone();
-                                framework_evidence(&mut cue, rule);
-                                facts.push(fact);
+                        if detail.retains_fact(kind) {
+                            let cue =
+                                framework
+                                    .filter(|rule| detail.retains_fact(rule))
+                                    .map(|rule| {
+                                        let mut cue = fact.clone();
+                                        framework_evidence(&mut cue, rule);
+                                        cue
+                                    });
+                            facts.push(fact);
+                            if let Some(cue) = cue {
                                 budget.charge(0, 1, 0, 0)?;
                                 facts.push(cue);
-                            } else {
-                                framework_evidence(&mut fact, rule);
-                                facts.push(fact);
                             }
-                        } else {
+                        } else if let Some(rule) = framework {
+                            framework_evidence(&mut fact, rule);
                             facts.push(fact);
                         }
                         if kind == "definition" {

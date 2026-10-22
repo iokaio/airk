@@ -34,6 +34,7 @@ mod languages_b_r_perl_groovy;
 mod msbuild;
 mod notebook;
 pub mod observations;
+pub mod priority;
 mod project_build;
 mod project_schemas;
 mod razor;
@@ -53,11 +54,11 @@ mod syntax_repairs;
 pub const MAX_FILE_BYTES: usize = airk_core::extraction::MAX_SOURCE_BYTES;
 /// Structured parsers never inherit the larger raw-file admission ceiling.
 pub(crate) const MAX_STRUCTURED_BYTES: usize = 4 * 1024 * 1024;
-pub const MAX_CORPUS_BYTES: usize = 2 * 1024 * 1024 * 1024;
-pub const MAX_EXTRACTED_CORPUS_BYTES: usize = 4 * 1024 * 1024 * 1024;
+pub const MAX_CORPUS_BYTES: usize = 4 * 1024 * 1024 * 1024;
+pub const MAX_EXTRACTED_CORPUS_BYTES: usize = 8 * 1024 * 1024 * 1024;
 pub const MAX_FILES: usize = 100_000;
 pub const MAX_DISCOVERY_ENTRIES: usize = 1_000_000;
-pub const MAX_SCAN_READ_BYTES: usize = 8 * 1024 * 1024 * 1024;
+pub const MAX_SCAN_READ_BYTES: usize = 16 * 1024 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -301,6 +302,18 @@ pub struct IndexReport {
     pub collection: String,
     pub indexed: usize,
     pub reused: usize,
+    /// Only explicitly requested paths were observed; other bindings were retained.
+    #[serde(default)]
+    pub path_scoped: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub semantic_readiness: Option<airk_core::readiness::SemanticReadiness>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discovery_readiness: Option<airk_core::readiness::DiscoveryReadiness>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub indexed_vectors: Option<u64>,
+    /// Release the scheduler worker to another pending source request.
+    #[serde(default, skip_serializing_if = "flag_is_false")]
+    pub yield_to_source: bool,
     /// Retained inputs recreated after a missing-object reuse miss in this scan.
     #[serde(default, skip_serializing_if = "count_is_zero")]
     pub repaired_retained_artifacts: usize,
@@ -315,6 +328,10 @@ pub struct IndexReport {
 
 fn count_is_zero(value: &usize) -> bool {
     *value == 0
+}
+
+fn flag_is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -503,6 +520,7 @@ fn scan_streaming_profiled(
         policy,
         full_reindex,
         ExtractionExecution::default(),
+        None,
         |request| {
             Ok(
                 lookup(request.path, request.source_hash, request.profile)?.map(|artifact| {
@@ -547,6 +565,7 @@ pub fn scan_observed_v2_with_budgets(
         policy,
         full_reindex,
         ExtractionExecution::default(),
+        None,
         lookup,
         |profile, artifact, bytes, _| emit(profile, artifact, bytes),
     )
@@ -581,6 +600,7 @@ pub fn scan_payloads_with_budgets(
         policy,
         full_reindex,
         ExtractionExecution::default(),
+        None,
         lookup,
         emit,
     )
@@ -605,6 +625,42 @@ pub fn scan_payloads_with_execution(
         Option<&airk_core::extraction::ExtractionPayload>,
     ) -> Result<Artifact>,
 ) -> Result<(Snapshot, IndexReport, observations::ScanObservation)> {
+    scan_payloads_with_execution_paths(
+        root,
+        data_dir,
+        previous,
+        roots,
+        limits,
+        policy,
+        full_reindex,
+        execution,
+        None,
+        lookup,
+        emit,
+    )
+}
+
+/// Refresh explicit logical paths while preserving all other committed bindings.
+/// Hints restrict discovery; normal ignore rules and protected source reads apply.
+#[allow(clippy::too_many_arguments)]
+pub fn scan_payloads_with_execution_paths(
+    root: &Path,
+    data_dir: &Path,
+    previous: &Snapshot,
+    roots: &BTreeMap<String, String>,
+    limits: ScanLimits,
+    policy: &adapters::profile::ExtractionPolicy,
+    full_reindex: bool,
+    execution: ExtractionExecution,
+    paths: Option<&std::collections::BTreeSet<String>>,
+    lookup: impl FnMut(observations::ReuseRequest<'_>) -> Result<Option<observations::VerifiedReuse>>,
+    emit: impl FnMut(
+        &airk_core::extraction::ExtractionProfile,
+        &Artifact,
+        &[u8],
+        Option<&airk_core::extraction::ExtractionPayload>,
+    ) -> Result<Artifact>,
+) -> Result<(Snapshot, IndexReport, observations::ScanObservation)> {
     limits.validate()?;
     execution.validate()?;
     scan_observed_profiled(
@@ -616,6 +672,7 @@ pub fn scan_payloads_with_execution(
         policy,
         full_reindex,
         execution,
+        paths,
         lookup,
         emit,
     )
@@ -631,6 +688,7 @@ fn scan_observed_profiled(
     policy: &adapters::profile::ExtractionPolicy,
     full_reindex: bool,
     execution: ExtractionExecution,
+    paths: Option<&std::collections::BTreeSet<String>>,
     mut lookup: impl FnMut(
         observations::ReuseRequest<'_>,
     ) -> Result<Option<observations::VerifiedReuse>>,
@@ -641,7 +699,7 @@ fn scan_observed_profiled(
         Option<&airk_core::extraction::ExtractionPayload>,
     ) -> Result<Artifact>,
 ) -> Result<(Snapshot, IndexReport, observations::ScanObservation)> {
-    use observations::{DisappearanceCause, ReuseBasis};
+    use observations::DisappearanceCause;
     let mut observation = observations::ScanObservation::default();
     let registry = adapters::registry::AdapterRegistry::baseline();
     policy.validate(&registry)?;
@@ -687,7 +745,14 @@ fn scan_observed_profiled(
         &mut read_bytes,
     )?;
     let walker = sources.iter().flat_map(|(prefix, source)| {
-        discovery(source, &data_dir).map(move |entry| (prefix, source, entry))
+        let selected = paths.map(|paths| {
+            paths
+                .iter()
+                .filter_map(|path| path.strip_prefix(prefix.as_str()))
+                .map(str::to_owned)
+                .collect()
+        });
+        discovery_selected(source, &data_dir, selected).map(move |entry| (prefix, source, entry))
     });
     let scanned = (|| -> Result<()> {
         for (prefix, source, entry) in walker {
@@ -711,6 +776,9 @@ fn scan_observed_profiled(
                 .context("non-UTF-8 source path is unsupported")?
                 .replace('\\', "/");
             let path = format!("{prefix}{path}");
+            if paths.is_some_and(|selected| !selected.contains(&path)) {
+                continue;
+            }
             if path.len() > 4096 {
                 sink.drain(&mut pool, &mut report, &mut observation)?;
                 report.skip(SkippedFile {
@@ -850,28 +918,34 @@ fn scan_observed_profiled(
                 profile,
             };
             if let Some(reused) = cached {
-                sink.drain(&mut pool, &mut report, &mut observation)?;
-                let old = reused.artifact;
-                ensure!(
-                    old.path == captured.path
-                        && old.content_hash == content_hash
-                        && old.bytes == captured.bytes.len()
-                        && old.language == captured.profile.language,
-                    "cache returned incompatible artifact binding"
-                );
-                ensure!(
-                    old.retained
-                        .as_ref()
-                        .and_then(|reference| reference.profile.as_ref())
-                        .is_none_or(|cached_profile| cached_profile == &captured.profile),
-                    "cache returned incompatible extraction profile"
-                );
-                report.reused += 1;
-                match reused.basis {
-                    ReuseBasis::SamePath => observation.usage.same_path_hits += 1,
-                    ReuseBasis::PriorContent => observation.usage.prior_content_hits += 1,
+                let bytes = captured.bytes.len();
+                if bytes <= execution.max_in_flight_source_bytes {
+                    while !pool.can_admit(bytes) {
+                        sink.finish_next(&mut pool, &mut report, &mut observation)?;
+                    }
+                    pool.push_ready(
+                        extraction_jobs::FreshExtraction {
+                            captured,
+                            prepared: extraction_jobs::PreparedExtraction::Reused(Box::new(reused)),
+                        },
+                        bytes,
+                    )?;
+                } else {
+                    sink.drain(&mut pool, &mut report, &mut observation)?;
+                    sink.finish(
+                        extraction_pool::Completed {
+                            result: Ok(extraction_jobs::FreshExtraction {
+                                captured,
+                                prepared: extraction_jobs::PreparedExtraction::Reused(Box::new(
+                                    reused,
+                                )),
+                            }),
+                            work_us: 0,
+                        },
+                        &mut report,
+                        &mut observation,
+                    )?;
                 }
-                sink.retain(&captured, &old, None)?;
             } else {
                 ensure!(
                     captured.profile.language != "ocr",
@@ -881,8 +955,12 @@ fn scan_observed_profiled(
                 let parallel = execution.workers > 1
                     && captured.parallel_eligible()
                     && captured.bytes.len() <= execution.max_in_flight_source_bytes;
-                if !parallel || !pool.can_admit(captured.bytes.len()) {
+                if !parallel {
                     sink.drain(&mut pool, &mut report, &mut observation)?;
+                } else {
+                    while !pool.can_admit(captured.bytes.len()) {
+                        sink.finish_next(&mut pool, &mut report, &mut observation)?;
+                    }
                 }
                 if parallel {
                     let bytes = captured.bytes.len();
@@ -909,14 +987,37 @@ fn scan_observed_profiled(
     report.extraction_workers_spawned = pool.workers_spawned();
     report.extraction_source_peak_bytes = pool.source_peak_bytes as u64;
     report.extraction_wait_us = pool.wait_us;
-    let total_bytes = sink.source_bytes;
-    let artifacts = sink.artifacts;
+    let mut artifacts = sink.artifacts;
+    if let Some(paths) = paths {
+        for (path, artifact) in &previous.artifacts {
+            if !paths.contains(path) {
+                artifacts.insert(path.clone(), artifact.clone());
+            }
+        }
+    }
+    let total_bytes = artifacts.values().try_fold(0usize, |sum, artifact| {
+        sum.checked_add(artifact.bytes)
+            .context("source corpus byte count overflow")
+    })?;
+    let extracted_bytes = artifacts.values().try_fold(0usize, |sum, artifact| {
+        sum.checked_add(artifact.extracted_bytes())
+            .context("extracted corpus byte count overflow")
+    })?;
+    ensure!(
+        total_bytes <= limits.corpus_bytes
+            && extracted_bytes <= limits.extracted_bytes
+            && artifacts.len() <= limits.files,
+        "merged path update exceeds configured corpus limits"
+    );
     report.removed = previous
         .artifacts
         .keys()
         .filter(|path| !artifacts.contains_key(*path))
         .count();
     for path in previous.artifacts.keys() {
+        if paths.is_some_and(|selected| !selected.contains(path)) {
+            continue;
+        }
         ensure!(
             observation.usage.charged_entries() < limits.discovery_entries,
             "previous-path reconciliation budget exhausted; previous generation retained"
@@ -959,7 +1060,7 @@ fn scan_observed_profiled(
     for (_, source) in &sources {
         observations::verify_root(source, &mut observation.usage, limits.discovery_entries)?;
     }
-    observation.complete = true;
+    observation.complete = paths.is_none();
     // Parsing and extraction reuse are independent from inventory changes.
     let changed = artifacts.len() != previous.artifacts.len()
         || artifacts.iter().any(|(path, artifact)| {
@@ -1033,7 +1134,12 @@ fn capture_header_inputs(
         return Ok((captured, bytes_by_path));
     }
     for (prefix, root) in sources {
-        for entry in discovery(root, data_dir) {
+        let selected = wanted
+            .iter()
+            .filter_map(|path| path.strip_prefix(prefix))
+            .map(str::to_owned)
+            .collect();
+        for entry in discovery_selected(root, data_dir, Some(selected)) {
             ensure!(
                 usage.charged_entries() < limits.discovery_entries,
                 "header configuration discovery budget exhausted; previous generation retained"
@@ -1081,15 +1187,43 @@ fn capture_header_inputs(
 }
 
 fn discovery(root: &Path, data_dir: &Path) -> ignore::Walk {
+    discovery_selected(root, data_dir, None)
+}
+
+fn discovery_selected(root: &Path, data_dir: &Path, selected: Option<Vec<String>>) -> ignore::Walk {
     let data_dir = data_dir.to_path_buf();
+    let ordering_root = root.to_path_buf();
+    let selected = selected.map(|paths| {
+        paths
+            .into_iter()
+            .map(|path| root.join(path))
+            .collect::<Vec<_>>()
+    });
     WalkBuilder::new(root)
         .require_git(false)
         .hidden(false)
         .follow_links(false)
         .add_custom_ignore_filename(".airkignore")
+        .sort_by_file_path(move |left, right| {
+            let rank = |path: &Path| {
+                priority::agent_path_priority(
+                    &path
+                        .strip_prefix(&ordering_root)
+                        .unwrap_or(path)
+                        .to_string_lossy()
+                        .replace('\\', "/"),
+                )
+            };
+            rank(left).cmp(&rank(right)).then_with(|| left.cmp(right))
+        })
         .filter_entry(move |entry| {
             let name = entry.file_name().to_string_lossy();
-            entry.depth() == 0 || (!excluded(&name) && !entry.path().starts_with(&data_dir))
+            entry.depth() == 0
+                || (!excluded(&name)
+                    && !entry.path().starts_with(&data_dir)
+                    && selected.as_ref().is_none_or(|paths| {
+                        paths.iter().any(|path| path.starts_with(entry.path()))
+                    }))
         })
         .build()
 }

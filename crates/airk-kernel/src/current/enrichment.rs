@@ -19,6 +19,11 @@ use std::collections::BTreeMap;
 const KEY: &str = "semantic-work";
 const POLICY_KEY: &str = "semantic-policy";
 
+pub(super) struct DrainOutcome {
+    generation: Option<u64>,
+    maintenance_error: Option<String>,
+}
+
 pub(super) fn now_unix_ms() -> Result<u64> {
     Ok(u64::try_from(
         std::time::SystemTime::now()
@@ -409,9 +414,17 @@ impl Kernel {
         stats: &mut EmbeddingCacheStats,
         max_batches: usize,
         current_work: Option<&mut airk_ingest::CurrentIndexWork>,
+        deadline: Option<std::time::Instant>,
     ) -> Result<Option<u64>> {
-        match self.drain_current_enrichment(model, selection, stats, max_batches, current_work) {
-            Ok(result) => Ok(result),
+        match self.drain_current_enrichment(
+            model,
+            selection,
+            stats,
+            max_batches,
+            current_work,
+            deadline,
+        ) {
+            Ok(result) => Ok(result.generation),
             Err(error) => Err(self.semantic_failure(error)),
         }
     }
@@ -456,25 +469,39 @@ impl Kernel {
             &mut EmbeddingCacheStats::default(),
             usize::MAX,
             None,
+            None,
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn resume_current_enrichment_batches(
         &self,
         max_batches: usize,
     ) -> Result<Option<u64>> {
+        self.resume_current_enrichment_batches_bounded(max_batches, None)
+            .map(|(generation, _)| generation)
+    }
+
+    pub(crate) fn resume_current_enrichment_batches_bounded(
+        &self,
+        max_batches: usize,
+        budget: Option<std::time::Duration>,
+    ) -> Result<(Option<u64>, airk_ingest::IndexReport)> {
         ensure!(
             max_batches > 0 && max_batches <= 8,
             "semantic batch limit exceeded"
         );
+        let started = std::time::Instant::now();
         let scope = self.current_scope()?.context("workspace is not indexed")?;
         super::recover_current(&self.store, &Quota::open(&self.data_root)?, &scope)?;
         let read = self.store.current_read(&scope)?;
         let Some(work) = read_work(&read, &self.store)? else {
-            return Ok(None);
+            let report = self.semantic_report(&read, &EmbeddingCacheStats::default(), started)?;
+            return Ok((None, report));
         };
         if work.pending.is_empty() {
-            return Ok(Some(read.head().sequence));
+            let report = self.semantic_report(&read, &EmbeddingCacheStats::default(), started)?;
+            return Ok((Some(read.head().sequence), report));
         }
         let configuration = read
             .collection_state()?
@@ -484,6 +511,7 @@ impl Kernel {
             .model
             .as_ref()
             .context("pending semantic model missing")?;
+        let model_started = std::time::Instant::now();
         let model = match EmbeddingModel::open_objects(self.store.directory(), objects) {
             Ok(model) => model,
             Err(error) => {
@@ -491,14 +519,51 @@ impl Kernel {
                 return Err(self.semantic_failure(error));
             }
         };
+        let mut stats = EmbeddingCacheStats {
+            model_load_us: u64::try_from(model_started.elapsed().as_micros()).unwrap_or(u64::MAX),
+            ..Default::default()
+        };
         drop(read);
-        self.drain_with_failure_record(
-            &model,
-            &configuration.vector_selection,
-            &mut EmbeddingCacheStats::default(),
-            max_batches,
-            None,
-        )
+        let mut current_work = airk_ingest::CurrentIndexWork::default();
+        let result = self
+            .drain_current_enrichment(
+                &model,
+                &configuration.vector_selection,
+                &mut stats,
+                max_batches,
+                Some(&mut current_work),
+                budget.map(|duration| started + duration),
+            )
+            .map_err(|error| self.semantic_failure(error))?;
+        let read = self.store.current_read(&scope)?;
+        let mut report = self.semantic_report(&read, &stats, started)?;
+        report.yield_to_source =
+            airk_store::scheduler::Queue::new(&self.data_root).has_pending_source()?;
+        report.current = Some(current_work);
+        report.maintenance_error = result.maintenance_error;
+        Ok((result.generation, report))
+    }
+
+    fn semantic_report(
+        &self,
+        read: &CurrentRead,
+        stats: &EmbeddingCacheStats,
+        started: std::time::Instant,
+    ) -> Result<airk_ingest::IndexReport> {
+        let elapsed = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
+        let semantic = readiness(read, &self.store)?;
+        let mut report = airk_ingest::IndexReport {
+            collection: self.collection.clone(),
+            generation: read.head().sequence,
+            indexed_vectors: Some(read.head().graph_head.live_nodes),
+            fully_ready_us: (semantic.state == SemanticState::Ready).then_some(elapsed),
+            semantic_readiness: Some(semantic),
+            publish_us: elapsed,
+            ..Default::default()
+        };
+        report.discovery_readiness = Some(super::progress::readiness(read, &self.store)?);
+        super::indexing::record_embedding_stats(&mut report, stats);
+        Ok(report)
     }
 
     pub(super) fn drain_current_enrichment(
@@ -508,20 +573,41 @@ impl Kernel {
         stats: &mut EmbeddingCacheStats,
         max_batches: usize,
         mut current_work: Option<&mut airk_ingest::CurrentIndexWork>,
-    ) -> Result<Option<u64>> {
+        deadline: Option<std::time::Instant>,
+    ) -> Result<DrainOutcome> {
         let scope = self.current_scope()?.context("workspace is not indexed")?;
         let execution = crate::execution::acquire(&self.data_root)?;
         let writer = self.store.lock()?;
         let quota = Quota::open(&self.data_root)?;
+        let captures = writer.capture_objects();
         let mut generation = None;
-        for _ in 0..max_batches {
+        for batch in 0..max_batches {
+            if batch > 0 && deadline.is_some_and(|end| std::time::Instant::now() >= end) {
+                break;
+            }
+            let job = airk_store::scheduler::Queue::new(&self.data_root)
+                .status(&self.collection, &self.root_id())?;
+            if max_batches <= 8
+                && (job.as_ref().is_some_and(|job| {
+                    job.paused || job.blocked || job.requested_revision > job.completed_revision
+                }) || (batch > 0
+                    && airk_store::scheduler::Queue::new(&self.data_root).has_pending_source()?))
+            {
+                break;
+            }
+            let recent: std::collections::BTreeSet<_> = job
+                .as_ref()
+                .into_iter()
+                .flat_map(|job| &job.recent_paths)
+                .map(String::as_str)
+                .collect();
             let read = self.store.current_read(&scope)?;
             let Some(mut work) = read_work(&read, &self.store)? else {
-                return Ok(generation);
+                break;
             };
             generation = Some(read.head().sequence);
             if work.pending.is_empty() {
-                return Ok(generation);
+                break;
             }
             let state = read
                 .collection_state()?
@@ -537,8 +623,47 @@ impl Kernel {
                 "pending semantic work differs from current configuration"
             );
             let batch_len = work.pending.len().min(32);
+            // Keep the durable manifest path-sorted for canonical validation,
+            // while selecting recent edits and useful repository context first.
+            let mut selected: Vec<_> = work
+                .pending
+                .iter()
+                .map(|pending| {
+                    (
+                        !recent.contains(pending.path.as_str()),
+                        airk_ingest::priority::agent_path_priority(&pending.path),
+                        pending,
+                    )
+                })
+                .collect();
+            if selected.len() > batch_len {
+                selected.select_nth_unstable_by(batch_len, |left, right| {
+                    (left.0, left.1, &left.2.path).cmp(&(right.0, right.1, &right.2.path))
+                });
+            }
+            selected.truncate(batch_len);
+            selected.sort_unstable_by(|left, right| {
+                (left.0, left.1, &left.2.path).cmp(&(right.0, right.1, &right.2.path))
+            });
+            let mut selected: Vec<_> = selected
+                .into_iter()
+                .map(|(_, _, pending)| pending.clone())
+                .collect();
+            // Publication validates a canonical path order within each batch.
+            selected.sort_unstable_by(|left, right| left.path.cmp(&right.path));
+            self.emit_progress(airk_core::readiness::IndexProgress {
+                collection: String::new(),
+                phase: "enrichment_started",
+                revision: None,
+                processed_artifacts: 0,
+                committed_artifacts: 0,
+                selected_artifacts: Some(work.selected_artifacts),
+                total_artifacts: None,
+                completed_artifacts: Some(work.completed_artifacts),
+                completed_units: Some(work.completed_units),
+            });
             let mut changes = Vec::with_capacity(batch_len);
-            for pending in work.pending.iter().take(batch_len) {
+            for pending in &selected {
                 let artifact = read
                     .artifact(&pending.path)?
                     .context("pending semantic artifact missing")?;
@@ -556,8 +681,24 @@ impl Kernel {
                 changes.push(CapturedInput { artifact });
             }
             drop(read);
+            self.emit_progress(airk_core::readiness::IndexProgress {
+                collection: String::new(),
+                phase: "enrichment_prepared",
+                revision: None,
+                processed_artifacts: batch_len as u64,
+                committed_artifacts: 0,
+                selected_artifacts: Some(work.selected_artifacts),
+                total_artifacts: None,
+                completed_artifacts: Some(work.completed_artifacts),
+                completed_units: Some(work.completed_units),
+            });
             let reservation = self.publication_reservation()?;
-            work.pending.drain(..batch_len);
+            let selected_paths: std::collections::BTreeSet<_> = selected
+                .iter()
+                .map(|pending| pending.path.as_str())
+                .collect();
+            work.pending
+                .retain(|pending| !selected_paths.contains(pending.path.as_str()));
             work.completed_artifacts += batch_len as u64;
             work.failure = None;
             let result = CurrentUpdater {
@@ -604,12 +745,10 @@ impl Kernel {
                 work.graph_proof_cache_evictions = work
                     .graph_proof_cache_evictions
                     .saturating_add(result.graph.base_proof_cache_evictions);
-                work.linked_lexical_bytes = work
-                    .linked_lexical_bytes
-                    .saturating_add(result.lexical.hardlinked_bytes);
             }
             generation = Some(result.commit.token.sequence);
             self.emit_progress(airk_core::readiness::IndexProgress {
+                collection: String::new(),
                 phase: "enrichment_committed",
                 revision: Some(super::runtime::revision(result.commit.token).to_string()),
                 processed_artifacts: 0,
@@ -620,7 +759,18 @@ impl Kernel {
                 completed_units: Some(work.completed_units),
             });
         }
-        Ok(generation)
+        drop(captures);
+        let maintenance_error = if generation.is_some() {
+            super::update::reclaim_current_objects(&self.store, &quota, &scope, &writer)
+                .err()
+                .map(|error| format!("current object cleanup: {error:#}"))
+        } else {
+            None
+        };
+        Ok(DrainOutcome {
+            generation,
+            maintenance_error,
+        })
     }
 }
 

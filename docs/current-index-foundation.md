@@ -1,5 +1,7 @@
 # Current-index storage foundation
 
+> Historical 1.2.0 foundation record. Version 1.3.0 replaces the Tantivy adapter and its private lexical forks with FTS5 in the current SQLite transaction (format 126). See [current operation](current-index-runtime.md) and the [replacement rationale](index-sharding-review.md#decision-replace-tantivy-with-sqlite-fts5). The stage descriptions below retain their original implementation context.
+
 This records the storage foundation developed in S7 and integrated into production in S8 of the [indexing optimization plan](indexingenhancements.md). The normal kernel, CLI and MCP routes now use it. See [the current runtime contract](current-index-runtime.md) for the complete 1.2 behavior and rebuild boundary. These APIs do not read or convert an older index. Earlier format numbers below describe development steps; the adopted database format is `user_version=120`.
 
 ## Ownership and data

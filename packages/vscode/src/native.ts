@@ -5,6 +5,28 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { LaunchSpec, launchArgs } from './model';
 
+export interface IndexProgress {
+    collection: string; phase: string; revision: string | null; processed_artifacts: number; committed_artifacts: number;
+    selected_artifacts: number | null; completed_artifacts: number | null;
+}
+
+export function parseIndexProgress(line: string): IndexProgress | undefined {
+    if (line.length > 4096) { return undefined; }
+    try {
+        const value: unknown = JSON.parse(line);
+        if (!value || typeof value !== 'object' || Array.isArray(value)) { return undefined; }
+        const event = value as Record<string, unknown>;
+        const count = (field: string) => Number.isSafeInteger(event[field]) && Number(event[field]) >= 0;
+        if (typeof event.collection !== 'string' || !event.collection || event.collection.length > 256
+            || !['scan_started', 'base_committed', 'enrichment_started', 'enrichment_prepared', 'enrichment_committed', 'base_coverage_complete'].includes(String(event.phase))
+            || !count('processed_artifacts') || !count('committed_artifacts')
+            || (event.revision !== null && (typeof event.revision !== 'string' || event.revision.length > 256))
+            || (event.selected_artifacts !== null && !count('selected_artifacts'))
+            || (event.completed_artifacts !== null && !count('completed_artifacts'))) { return undefined; }
+        return event as unknown as IndexProgress;
+    } catch { return undefined; }
+}
+
 /** Serialize this extension host's writers; native locks still arbitrate other processes. */
 export class NativeWriteQueue {
     private tails = new Map<string, Promise<void>>();
@@ -71,21 +93,34 @@ export class NativeProcessError extends Error {
     readonly stderr: string;
     readonly retryableGateContention: boolean;
     readonly nativeMessage?: string;
+    readonly pendingIndexRevision?: number;
+    readonly scanPaused: boolean;
     constructor(command: string, error: ExecFileException, stderr: string, readonly elapsedMs: number, readonly timeoutMs: number) {
-        let nativeMessage: string | undefined, retryableGateContention = false;
+        let nativeMessage: string | undefined, retryableGateContention = false, scanPaused = false, pendingIndexRevision: number | undefined;
         if (error.code === 1 && !error.killed && !error.signal) {
             try {
                 // execFile already bounds captured output. Parse before applying
                 // the diagnostic display limit: JSON escaping can expand a valid
                 // 4,096-character native message beyond that limit.
-                const outcome: unknown = JSON.parse(stderr.trim());
-                if (outcome && typeof outcome === 'object' && !Array.isArray(outcome)) {
+                for (const line of stderr.trim().split(/\r?\n/).reverse()) {
+                    let outcome: unknown;
+                    try { outcome = JSON.parse(line); } catch { continue; }
+                    if (!outcome || typeof outcome !== 'object' || Array.isArray(outcome)) { continue; }
                     const fields = outcome as Record<string, unknown>;
+                    if (!Object.hasOwn(fields, 'airk_error')) { continue; }
+                    // The last error envelope is authoritative. Malformed fields
+                    // never authorize retry using an earlier, unrelated error.
                     if (fields.airk_error === 1 && typeof fields.code === 'string'
                         && typeof fields.retryable === 'boolean' && typeof fields.message === 'string') {
                         nativeMessage = boundedDiagnostic(fields.message);
                         retryableGateContention = fields.code === 'current_gate_busy' && fields.retryable;
+                        scanPaused = fields.code === 'scheduled_index_paused' && fields.retryable;
+                        if (fields.code === 'scheduled_index_pending' && fields.retryable
+                            && Number.isSafeInteger(fields.requested_revision) && Number(fields.requested_revision) > 0) {
+                            pendingIndexRevision = Number(fields.requested_revision);
+                        }
                     }
+                    break;
                 }
             } catch { /* Unstructured stderr never authorizes a retry. */ }
         }
@@ -104,26 +139,79 @@ export class NativeProcessError extends Error {
         this.stderr = boundedDiagnostic(stderr.trim());
         this.nativeMessage = nativeMessage;
         this.retryableGateContention = retryableGateContention;
+        this.pendingIndexRevision = pendingIndexRevision; this.scanPaused = scanPaused;
     }
 }
 
-export function runText(command: string, args: string[], cwd?: string, timeout = 300000): Promise<string> {
+export function runText(command: string, args: string[], cwd?: string, timeout = 300000,
+    onStderrLine?: (line: string) => boolean, idleTimeout = 0): Promise<string> {
     return new Promise((resolve, reject) => {
         const started = performance.now();
-        execFile(command, args, { cwd, env: { ...process.env, AIRK_CLIENT: 'vscode', AIRK_ERROR_FORMAT: 'json' }, windowsHide: true, maxBuffer: 16 * 1024 * 1024, timeout }, (error, stdout, stderr) => {
+        let idleExpired = false;
+        let idleTimer: NodeJS.Timeout | undefined;
+        const child = execFile(command, args, { cwd, env: { ...process.env, AIRK_CLIENT: 'vscode', AIRK_ERROR_FORMAT: 'json' }, windowsHide: true, maxBuffer: 16 * 1024 * 1024, timeout }, (error, stdout, stderr) => {
+            if (idleTimer) { clearTimeout(idleTimer); }
+            if (idleExpired && error) { reject(new Error(`AIRK index stopped after ${idleTimeout} ms without progress. Committed evidence remains available; use Diagnose & Repair, then retry indexing.`)); return; }
             if (error) { reject(new NativeProcessError(command, error, stderr, Math.round(performance.now() - started), timeout)); }
             else { resolve(stdout); }
         });
+        const armIdle = () => {
+            if (!idleTimeout) { return; }
+            if (idleTimer) { clearTimeout(idleTimer); }
+            idleTimer = setTimeout(() => { idleExpired = true; child.kill(); }, idleTimeout);
+        };
+        armIdle();
+        if (onStderrLine) {
+            let pending = '';
+            child.stderr?.on('data', (bytes: Buffer) => {
+                pending += bytes.toString();
+                if (pending.length > 8192) { pending = ''; return; }
+                let end: number;
+                while ((end = pending.indexOf('\n')) >= 0) {
+                    const line = pending.slice(0, end); pending = pending.slice(end + 1);
+                    if (line.length <= 4096) {
+                        try { if (onStderrLine(line)) { armIdle(); } }
+                        catch { /* Progress display cannot interrupt native indexing. */ }
+                    }
+                }
+            });
+        }
     });
 }
 
-export async function runJson<T>(spec: LaunchSpec, command: string, extra: string[] = []): Promise<T> {
+export async function runJson<T>(spec: LaunchSpec, command: string, extra: string[] = [], onStderrLine?: (line: string) => boolean): Promise<T> {
+    const indexing = command === 'index' || command === 'schedule' && extra[0] === 'wait';
     return JSON.parse(await runText(spec.command, [...launchArgs(spec, command), ...extra], spec.root,
-        command === 'index' || (command === 'semantic' && extra[0] === 'run') ? 3600000 : 300000)) as T;
+        indexing ? 3600000 : command === 'semantic' && extra[0] === 'run' ? 1200000 : 300000,
+        onStderrLine, indexing && onStderrLine ? 600000 : 0)) as T;
+}
+
+export class ScheduledIndexStillQueued extends Error {
+    constructor(readonly revision: number, readonly paused = false) {
+        super(`AIRK indexing request ${revision} is ${paused ? 'paused' : 'still queued'}. Committed evidence remains available.`);
+    }
+}
+
+/** Continue the same durable request after a bounded native join expires. */
+export async function joinScheduledIndex<T>(initialArgs: string[],
+    run: (command: string, args: string[]) => Promise<T>, onPending: () => boolean | void, initialRevision?: number): Promise<T> {
+    let revision = initialRevision;
+    for (let joins = 0; ; joins++) {
+        try { return await run(revision === undefined ? 'index' : 'schedule',
+            revision === undefined ? initialArgs : ['wait', String(revision), '--progress']); }
+        catch (error) {
+            if (!(error instanceof NativeProcessError) || error.pendingIndexRevision === undefined) { throw error; }
+            if (revision !== undefined && error.pendingIndexRevision !== revision) { throw new Error('Native indexing wait returned a different request revision.'); }
+            revision = error.pendingIndexRevision;
+            // The caller rechecks trust, shutdown and collection binding between joins.
+            const paused = onPending() === false;
+            if (paused || joins >= 2) { throw new ScheduledIndexStillQueued(revision, paused); }
+        }
+    }
 }
 
 /** Real bounded stdio initialization/tool-list/status probe, independent of any coding agent. */
-export function probeMcp(spec: LaunchSpec, expectedTools: 14 | 15 | 16 = 16, clientVersion = 'development'): Promise<{ tools: string[]; status: unknown }> {
+export function probeMcp(spec: LaunchSpec, expectedTools: 14 | 15 | 16 = 15, clientVersion = 'development'): Promise<{ tools: string[]; status: unknown }> {
     return new Promise((resolve, reject) => {
         const child = spawn(spec.command, launchArgs(spec), { cwd: spec.root, env: { ...process.env, AIRK_CLIENT: 'vscode' }, windowsHide: true, stdio: 'pipe' });
         let buffer = '', stderr = '', total = 0, done = false;
@@ -168,10 +256,14 @@ export function probeMcp(spec: LaunchSpec, expectedTools: 14 | 15 | 16 = 16, cli
             child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
             const listed = await request(2, 'tools/list', {});
             const tools: string[] = listed.tools.map((tool: { name: string }) => tool.name);
-            const required = ['airk_status', 'airk_symbols', 'airk_code_facts', 'airk_relationships', ...(expectedTools >= 15 ? ['airk_changes'] : []), ...(expectedTools >= 16 ? ['airk_history'] : [])];
+            const required = ['airk_status', 'airk_symbols', 'airk_code_facts', 'airk_relationships', ...(expectedTools >= 15 ? ['airk_changes'] : [])];
             if (tools.length !== expectedTools || !required.every(name => tools.includes(name))) { throw new Error(`AIRK MCP tool inventory differs from the expected ${expectedTools} tools.`); }
             const status = await request(3, 'tools/call', { name: 'airk_status', arguments: {} });
-            if (status.isError) { throw new Error('AIRK MCP status failed. Index the collection first.'); }
+            if (status.isError) {
+                const message = status.content?.map((part: { text?: string }) => part.text ?? '').join('\n') ?? '';
+                if (!message.includes('workspace is not indexed')) { throw new Error(`AIRK MCP status failed: ${message.slice(0, 300)}`); }
+                finish(undefined, { tools, status: { state: 'not_indexed' } }); return;
+            }
             finish(undefined, { tools, status });
         })().catch(error => finish(error instanceof Error ? error : new Error(String(error))));
     });

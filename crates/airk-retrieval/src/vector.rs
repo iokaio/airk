@@ -285,10 +285,10 @@ impl DiskIndex {
         let len = output.current_len();
         Ok(ids.into_iter().zip(distances).take(len).collect())
     }
-
     /// Exact comparisons for a bounded path-filtered subset of this same disk
     /// graph. This does not replace DiskANN construction or unfiltered ANN.
-    pub(crate) fn search_subset(
+    #[cfg(test)]
+    fn search_subset(
         &self,
         query: &[f32],
         ids: impl IntoIterator<Item = u32>,

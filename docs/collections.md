@@ -12,7 +12,7 @@ The layout is `<data-dir>/collections-1.2/<id>`. Collection identifiers remain s
 
 ## Retrieval and memory
 
-Requests hold one shared gate through candidate selection and evidence rendering. Exact source reads decode only the selected retained artifact. Fact/relationship postings and graph records are authenticated with bounded reads; cursors bind the current token and filters. Scan preparation uses a bounded compact projection, not a persisted historical snapshot. Tantivy manifest verification and ownership scans still have corpus-dependent work.
+Requests hold one shared gate through candidate selection and evidence rendering. Exact source reads decode only the selected retained artifact. Fact/relationship postings and graph records are authenticated with bounded reads; cursors bind the current token and filters. Scan preparation uses a bounded compact projection, not a persisted historical snapshot. FTS5 integrity verification and ownership scans still have corpus-dependent work.
 
 ## Multiple agents sharing one collection
 

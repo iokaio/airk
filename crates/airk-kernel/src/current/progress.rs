@@ -75,6 +75,19 @@ impl ScanWork {
         Ok(())
     }
 
+    /// Reflect explicit additions/removals in an already complete inventory.
+    /// This retains its epoch and does not establish a new full source scan.
+    pub fn adjust_complete_inventory(&mut self, total: u64) -> Result<()> {
+        ensure!(
+            self.complete() && self.failure.is_none() && !self.paused,
+            "path update requires a complete inventory"
+        );
+        self.total_artifacts = Some(total);
+        self.processed_artifacts = total;
+        self.committed_artifacts = total;
+        Ok(())
+    }
+
     pub fn fail(&mut self, error: &anyhow::Error) {
         if error.is::<crate::scheduler::ScanPaused>() {
             self.paused = true;

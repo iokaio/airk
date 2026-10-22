@@ -8,16 +8,22 @@ from pathlib import Path
 import tempfile
 import urllib.request
 
-REVISION = "10dbd2f06a8baf40ad285b037edda610c1b9a57c"
-SOURCE = "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2"
-ASSETS = {
-    "model.onnx": (f"{SOURCE}/resolve/{REVISION}/onnx/model.onnx", 90_405_214,
-                   "6fd5d72fe4589f189f8ebc006442dbb529bb7ce38f8082112682524616046452"),
-    "tokenizer.json": (f"{SOURCE}/resolve/{REVISION}/tokenizer.json", 466_247,
-                       "be50c3628f2bf5bb5e3a7f17b1f74611b2561a3a27eeab05e5aa30f411572037"),
-    "LICENSE": ("https://www.apache.org/licenses/LICENSE-2.0.txt", 11_358,
-                "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"),
-}
+CATALOG_PATH = Path(__file__).resolve().parents[1] / "crates/airk-retrieval/src/model_catalog.json"
+CATALOG = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
+PROFILE, = CATALOG["profiles"]
+if CATALOG["schema"] != 1 or PROFILE["id"] != CATALOG["default_profile"] or PROFILE["precision"] != "fp32":
+    raise ValueError("No approved FP32 provisioning profile")
+REVISION = PROFILE["manifest"]["revision"]
+SOURCE = PROFILE["manifest"]["source"]
+ASSETS = {asset["name"]: (asset["url"], asset["bytes"], asset["sha256"]) for asset in PROFILE["assets"]}
+
+
+def validate_asset_bindings():
+    if set(ASSETS) != {"model.onnx", "tokenizer.json", "LICENSE"} or len(PROFILE["assets"]) != 3:
+        raise ValueError("Model catalog asset inventory differs")
+    for name, field in [("model.onnx", "model_sha256"), ("tokenizer.json", "tokenizer_sha256"), ("LICENSE", "license_sha256")]:
+        if PROFILE["manifest"][field] != ASSETS[name][2]:
+            raise ValueError("Model catalog manifest and asset hashes differ")
 
 
 def verify(path, expected_size, expected_digest):
@@ -36,6 +42,7 @@ def verify(path, expected_size, expected_digest):
 
 
 def provision(destination, download=False):
+    validate_asset_bindings()
     destination = Path(destination)
     destination.mkdir(parents=True, exist_ok=True)
     if destination.is_symlink():
@@ -70,17 +77,7 @@ def provision(destination, download=False):
         finally:
             if temporary is not None:
                 temporary.unlink(missing_ok=True)
-    manifest = {
-        "schema": 2, "name": "sentence-transformers/all-MiniLM-L6-v2",
-        "license": "Apache-2.0", "source": SOURCE, "revision": REVISION,
-        "model_sha256": ASSETS["model.onnx"][2],
-        "tokenizer_sha256": ASSETS["tokenizer.json"][2],
-        "license_sha256": ASSETS["LICENSE"][2],
-        "dimensions": 384, "max_tokens": 256,
-        "pooling": "attention-mask-mean-l2", "input_ids": "input_ids",
-        "attention_mask": "attention_mask", "token_type_ids": "token_type_ids",
-        "output": "last_hidden_state",
-    }
+    manifest = dict(PROFILE["manifest"])
     path = destination / "model.json"
     payload = (json.dumps(manifest, indent=2) + "\n").encode()
     if path.exists() or path.is_symlink():

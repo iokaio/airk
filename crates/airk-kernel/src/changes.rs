@@ -18,11 +18,25 @@ impl Kernel {
             last_success_unix_ms: None,
             error: None,
             live_source_verified: false,
+            last_inventory_unix_ms: None,
+            last_index: None,
         };
         match airk_store::scheduler::Queue::new(&self.data_root)
             .status(&self.collection, &self.root_id())
         {
             Ok(Some(job)) => {
+                let inventory = job
+                    .scan_completed_unix_ms
+                    .max(job.inventory_completed_unix_ms);
+                observation.last_inventory_unix_ms = (inventory != 0).then_some(inventory);
+                observation.last_index = job
+                    .last_report
+                    .as_deref()
+                    .and_then(|bytes| serde_json::from_str::<IndexTimingObservation>(bytes).ok())
+                    .map(|mut timing| {
+                        timing.completed_unix_ms = job.last_completed_unix_ms;
+                        timing
+                    });
                 observation.requested_watermark = Some(job.requested_revision);
                 observation.completed_watermark = Some(job.completed_revision);
                 observation.running_watermark = Some(job.running_revision);

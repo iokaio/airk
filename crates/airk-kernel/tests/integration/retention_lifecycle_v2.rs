@@ -38,7 +38,7 @@ fn two_hundred_current_edits_reach_object_and_database_plateau() -> Result<()> {
                 .filter_map(|e| e.ok())
                 .filter(|e| e.file_name().to_string_lossy().starts_with("lexical-"))
                 .count(),
-            1
+            0
         );
         let bytes = fs::metadata(directory.join("current.sqlite3"))?.len();
         if index == 100 {

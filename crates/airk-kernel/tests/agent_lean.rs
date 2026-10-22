@@ -48,7 +48,6 @@ fn lean_preserves_declarations_text_and_policy_omissions() -> Result<()> {
         && f.code.as_ref().is_some_and(|c| {
             c.signature.as_ref().is_some_and(|s| s.contains("-> bool")) && c.fingerprints.is_none()
         })));
-    assert!(!facts.facts.iter().any(|f| f.kind == "call"));
     assert!(!kernel.search(&query("auth.rs"))?.hits.is_empty());
     assert_eq!(kernel.index()?.current.unwrap().changed_artifacts, 0);
     kernel.configure_index_detail(IndexDetail::Essential)?;

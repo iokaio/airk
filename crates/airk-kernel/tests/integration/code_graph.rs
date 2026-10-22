@@ -33,6 +33,35 @@ fn edges(symbol: &str, kind: Option<&str>) -> RelationshipQuery {
 }
 
 #[test]
+fn call_candidates_are_available_at_each_structured_detail() -> anyhow::Result<()> {
+    for detail in [
+        airk_core::extraction::IndexDetail::AgentLean,
+        airk_core::extraction::IndexDetail::Balanced,
+        airk_core::extraction::IndexDetail::Detailed,
+        airk_core::extraction::IndexDetail::Essential,
+    ] {
+        let root = tempfile::tempdir()?;
+        let state = tempfile::tempdir()?;
+        fs::write(
+            root.path().join("a.ts"),
+            "class Auth { run() { db.query('x'); } }\n",
+        )?;
+        let kernel = Kernel::open_collection(root.path(), Some(state.path().into()), "fixture")?;
+        kernel.configure_index_detail(detail)?;
+        kernel.index()?;
+        let facts = kernel.code_facts(&fact_query(Some("db.query"), Some("call")))?;
+        let relationships = kernel.relationships(&edges("db.query", Some("call")))?;
+        let expected = usize::from(detail != airk_core::extraction::IndexDetail::Essential);
+        assert_eq!(facts.facts.len(), expected, "{detail:?}");
+        assert_eq!(relationships.relationships.len(), expected, "{detail:?}");
+        if let Some(edge) = relationships.relationships.first() {
+            assert_eq!(edge.resolution, "syntax_candidate");
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn sqlite_facts_graph_budgets_scope_refresh_and_candidates() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let state = tempfile::tempdir()?;

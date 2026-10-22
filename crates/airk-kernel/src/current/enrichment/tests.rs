@@ -31,6 +31,93 @@ fn pending_fixture() -> Result<(tempfile::TempDir, Kernel)> {
 }
 
 #[test]
+fn bounded_drain_prioritizes_edits_and_docs_yields_on_pause_and_sweeps_once() -> Result<()> {
+    let (_directory, kernel) = pending_fixture()?;
+    for index in 0..64 {
+        fs::write(
+            kernel.root.join(format!("a_{index:02}.txt")),
+            "authenticate\n",
+        )?;
+    }
+    fs::write(
+        kernel.root.join("README.md"),
+        "# Authenticate\nauthenticate\n",
+    )?;
+    fs::write(kernel.root.join("z_recent.txt"), "authenticate\n")?;
+    kernel.scheduled_index(false, false)?;
+    fs::write(kernel.root.join("z_recent.txt"), "authenticate updated\n")?;
+    assert!(
+        kernel
+            .scheduled_index_selected(false, false, Some(&["z_recent.txt".into()]), true)?
+            .path_scoped
+    );
+    let orphan = kernel
+        .store
+        .directory()
+        .join("objects/sources")
+        .join("f".repeat(64));
+    fs::write(&orphan, "unreferenced original fixture")?;
+    let observed = orphan.clone();
+    let early_sweep = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let sweep_observation = early_sweep.clone();
+    let with_progress = kernel.clone().with_index_progress(move |event| {
+        if event.phase == "enrichment_committed" && !observed.exists() {
+            sweep_observation.store(true, std::sync::atomic::Ordering::Release);
+        }
+    });
+    let outcome =
+        with_progress.run_scheduled_enrichment_bounded(8, Some(std::time::Duration::ZERO))?;
+    assert_eq!(outcome.state, "enriched", "{:?}", outcome.error);
+    let report = outcome.report.unwrap();
+    assert_eq!(report.semantic_readiness.unwrap().completed_artifacts, 32);
+    assert!(report.publish_us > 0);
+    assert!(report.indexed_vectors.unwrap() > 0);
+    assert!(report.maintenance_error.is_none());
+    assert!(
+        !early_sweep.load(std::sync::atomic::Ordering::Acquire),
+        "sweep must wait for the drain boundary"
+    );
+    assert!(!orphan.exists());
+    let read = kernel.current_reader()?;
+    let work = read_work(&read, &kernel.store)?.unwrap();
+    assert!(
+        !work
+            .pending
+            .iter()
+            .any(|pending| matches!(pending.path.as_str(), "README.md" | "z_recent.txt"))
+    );
+    work.validate()?;
+    drop(read);
+    let queue = airk_store::scheduler::Queue::new(&kernel.data_root);
+    let owner = kernel.root_id();
+    let paused = kernel.clone().with_index_progress(move |event| {
+        if event.phase == "enrichment_committed" {
+            queue.pause("default", &owner, true).unwrap();
+        }
+    });
+    let outcome =
+        paused.run_scheduled_enrichment_bounded(8, Some(std::time::Duration::from_secs(60)))?;
+    assert_eq!(
+        outcome
+            .report
+            .unwrap()
+            .semantic_readiness
+            .unwrap()
+            .completed_artifacts,
+        64
+    );
+    assert_eq!(kernel.run_scheduled_enrichment()?.state, "paused");
+    kernel.schedule_pause(false)?;
+    let outcome =
+        kernel.run_scheduled_enrichment_bounded(8, Some(std::time::Duration::from_secs(60)))?;
+    assert_eq!(
+        outcome.report.unwrap().semantic_readiness.unwrap().state,
+        SemanticState::Ready
+    );
+    Ok(())
+}
+
+#[test]
 fn secondary_gate_contention_preserves_primary_permission_and_corruption_errors() -> Result<()> {
     let (_directory, kernel) = pending_fixture()?;
     let read = kernel.current_reader()?;
@@ -111,6 +198,7 @@ fn drain_validation_failure_is_not_replaced_by_failure_recording_contention() ->
             &selection,
             &mut EmbeddingCacheStats::default(),
             1,
+            None,
             None,
         )
         .unwrap_err();

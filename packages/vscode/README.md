@@ -4,7 +4,24 @@
 
 Everything runs on your machine. There is no cloud service, API key, Docker, Rust or Python to install: the native helper is bundled in the extension.
 
-> **Version 1.2.4.** Packages support Windows x64, Linux x64 and macOS (Intel and Apple Silicon). AIRK 1.2 starts a fresh current index; existing 1.1 indexes and settings remain untouched. See [the 1.2.4 diagnosis and recovery notes](https://github.com/iokaio/airk/blob/main/docs/release-1.2.4.md), [the 1.2.3 Agent Lean default and indexing fix](https://github.com/iokaio/airk/blob/main/docs/release-1.2.3.md), [the 1.2.2 semantic indexing fix](https://github.com/iokaio/airk/blob/main/docs/release-1.2.2.md), [the 1.2 behavior notes](https://github.com/iokaio/airk/blob/main/docs/release-1.2.0.md), and [Known limits](#known-limits).
+> **Version 1.3.0.** Platform packages target Windows x64, Linux x64 and macOS (Intel and Apple Silicon); CI and release workflow records identify verified builds and publication status. AIRK 1.2 starts a fresh current index; existing 1.1 indexes and settings remain untouched. See [the 1.3.0 release notes](https://github.com/iokaio/airk/blob/main/docs/release-1.3.0.md), [the 1.2.4 diagnosis and recovery notes](https://github.com/iokaio/airk/blob/main/docs/release-1.2.4.md), [the 1.2.3 Agent Lean default and indexing fix](https://github.com/iokaio/airk/blob/main/docs/release-1.2.3.md), [the 1.2.2 semantic indexing fix](https://github.com/iokaio/airk/blob/main/docs/release-1.2.2.md), [the 1.2 behavior notes](https://github.com/iokaio/airk/blob/main/docs/release-1.2.0.md), and [Known limits](#known-limits).
+
+## What's new in 1.3.0
+
+AIRK makes committed code and document evidence available during a source scan, then completes local vector work in bounded background batches. Saved-path edits avoid a full source walk when the change is known; a periodic inventory remains the coverage backstop. Search results still disclose the indexed revision and incomplete readiness. The [release notes](https://github.com/iokaio/airk/blob/main/docs/release-1.3.0.md#release-summary) summarize the upgrade and MCP changes.
+
+Rebuild requests now queue while a scan owns the writer. Reopening a collection clears stale queued waits, and waits return the report for their own completed revision. Diagnostics recognize late completion even with progress lines in native stderr. Coverage invalidated by edits or indexing says **Coverage pending rescan** until the next five-minute inventory or explicit refresh; repeated failed reconciliation is suppressed for the same published revision. A bounded lexical snapshot cache reduces repeated verification in long-running processes; [the follow-up review](https://github.com/iokaio/airk/blob/main/docs/indexing-follow-up-2026-10-21.md) explains its guards, expiry and integrity limits. Explicit integrity diagnostics always perform full lexical verification.
+
+Lexical retrieval now uses SQLite FTS5 alongside the existing DiskANN vector engine. **An older 1.2 index requires a full rebuild.** On Index Now or automatic indexing, AIRK detects a recognized older format, replaces its derived index and rebuilds from saved source files. The collection ID, saved settings and source files are preserved; a notification explains the upgrade. CLI users run `airk index --full`. See the [upgrade instructions](https://github.com/iokaio/airk/blob/main/docs/current-index-runtime.md#upgrading-a-tantivy-collection) and [rationale and tradeoffs](https://github.com/iokaio/airk/blob/main/docs/index-sharding-review.md#decision-replace-tantivy-with-sqlite-fts5). No indexing-speed or storage-reduction claim has been established for this replacement.
+
+MCP can start while indexing continues. Source scans publish searchable lexical evidence and facts before semantic inference runs through the existing background queue. The first batch stays small; subsequent batches adapt to publication cost to reduce repeated transaction overhead in large repositories. The dashboard shows committed progress and elapsed time, with bounded termination for stalled work. Waiting for a shared indexing worker continues the same queued request instead of failing after four minutes. Diagnostics recognize a native request that completed after an earlier editor wait failure, while keeping incomplete retained-data verification explicit. Semantic coverage remains explicit; these changes do not claim a measured speedup. See the [candidate notes](https://github.com/iokaio/airk/blob/main/docs/release-1.3.0.md) for compact replies, focused snippets, validated hashes and removal of the unsupported history tool.
+Semantic indexing also shows a completed-file progress bar, a continuous working indicator, a live batch timer and preparation/computation stages. The completed count moves only after a batch is published; search remains available while the next batch runs.
+
+The Collections row and status bar show committed source-file counts during a source scan and published semantic percentage during enrichment. Saved-file coverage remains a separate measured inventory and becomes pending after source-index completion until its next scan.
+
+Automatic edits submit known changed paths, with full reconciliation for global changes and periodic coverage checks. A settled event avoids the second native debounce; the default minimum interval is 1 s. Coverage observations run explicitly and periodically rather than before and after each edit. Semantic calls reuse the local model across up to eight durable batches with a 60 s soft budget, yielding at commit boundaries for source work or pause. AIRK output retains native timing measurements. See the [indexing feedback review](https://github.com/iokaio/airk/blob/main/docs/indexing-speed-review-2026-10-21.md) for qualification and remaining costs.
+
+New model setup uses the native helper's CPU capability report and pinned model catalog. Automatic selection keeps the current FP32 MiniLM model, and existing/custom models are preserved. `airk model-catalog` inspects the choice offline. CPU-specific INT8 selection remains [documented future work](https://github.com/iokaio/airk/blob/main/docs/onnx-models.md#capabilities-and-qualified-model-catalog).
 
 ## What's new in 1.2.4
 
@@ -24,7 +41,7 @@ Automatic scheduling rechecks what is due when a timer fires. An early timer cal
 
 ## What's new in 1.2.3
 
-New collections start with **Agent Lean**: selected declarations, imports and document facts with compact MCP replies. Start lean and fast, then choose Rich Structure for broader structural facts and declaration tracking, Detailed for call occurrences or document-unit tracking, or Search Only for text and citations. Existing collections retain their saved or published detail level. Rich Structure, Search Only and Detailed remain selectable. Semantic search stays enabled; the default Agent Lean vector policy excludes reviewed lockfiles and minified JS/CSS while retaining their lexical evidence.
+New collections start with **Agent Lean**: selected declarations, imports and document facts with compact MCP replies. Start lean and fast, then choose Rich Structure for broader structural facts and declaration tracking, Detailed for document-unit tracking, or Search Only for text and citations. From 1.3.0, Agent Lean and Rich Structure both retain supported call occurrences as unresolved syntax candidates. Existing collections retain their saved or published detail level. Rich Structure, Search Only and Detailed remain selectable. Semantic search stays enabled; the default Agent Lean vector policy excludes reviewed lockfiles and minified JS/CSS while retaining their lexical evidence.
 
 Progressive indexing also keeps newly captured and reusable objects alive across intermediate batches. This fixes the `retained object missing` failure that could stop a fresh scan; update and retry **Index now** without wiping the collection.
 
@@ -75,7 +92,7 @@ Read the [1.2 release notes](https://github.com/iokaio/airk/blob/main/docs/relea
 | "What response-time limit does this design require?" | Requirement candidates from Markdown, PDF, DOCX, XLSX or PPTX with the original page, paragraph, table row, worksheet cell or slide | You can open the exact source and check the wording. A requirement cue is evidence, not an inferred obligation. |
 | "Is this answer based on current code?" | The indexed revision and source hashes, current evidence validation, and saved-file coverage in the status bar | You can check indexed freshness and reindex when saved files change. AIRK does not retain historical search. |
 
-AIRK gives each agent **sixteen read-only MCP tools**:
+Version 1.3.0 gives each agent **fifteen read-only MCP tools**. The former `airk_history` endpoint was retired because AIRK 1.2 retains only one current index; it could return only an unsupported error. Older 1.2.4 helpers still list it among sixteen tools.
 
 | Tool | Purpose |
 |---|---|
@@ -87,10 +104,11 @@ AIRK gives each agent **sixteen read-only MCP tools**:
 | `airk_code_facts`, `airk_relationships` | Scopes, signatures and caller/callee/dependency candidates |
 | `airk_document_facts` | Requirements, dates, quantities and design/decision candidates from documents |
 | `airk_changes` | Current remembered-evidence validation and independent freshness; historical baselines unavailable |
-| `airk_history` | Compatibility endpoint that reports history as unsupported in 1.2 |
 | `airk_status`, `airk_capabilities` | Collection revision and counts; supported formats and their limits |
 
 Every response is size-bounded. The tools cannot write files, run commands, switch collections or reach the network. Full reference: [MCP tools](https://github.com/iokaio/airk/blob/main/docs/mcp.md).
+
+In the 1.3.0 source, search returns focused snippets; request `full_chunks: true` for complete indexed chunks. Set `AIRK_MCP_RESPONSE_MODE=terse` on a manually configured MCP worker to shorten repeated envelope metadata while keeping tokens, citations, hashes and coverage state. The helper check expects fifteen tools. See the [1.3.0 release notes](https://github.com/iokaio/airk/blob/main/docs/release-1.3.0.md); no release or Marketplace publication has occurred.
 
 ## Supported content
 
@@ -210,11 +228,13 @@ Legacy Cascade uses `mcpServers` in its own `mcp_config.json`; Devin Local uses 
 
 ### Verify the agent connection
 
-Each collection’s **AIRK helper check** section shows Not checked, Preparing collection, Checking MCP, Verified with a tool count, or Verification failed with an error. **Check AIRK helper** updates that collection’s index before checking the native handshake, tool inventory and status. The result and last-check time stay in the panel for this editor session; **View details** opens the cached diagnostic result. This verifies the helper, not an agent’s live connection.
+Each collection’s **AIRK helper check** section shows Not checked, Checking MCP, Verified with a tool count, or Verification failed with an error. **Check AIRK helper** verifies the native handshake and tools without waiting for indexing. It reports indexing pending before the first publication; that result does not claim search evidence is ready. The result and last-check time stay in the panel for this editor session; **View details** opens the cached diagnostic result. This verifies the helper, not an agent’s live connection.
+
+During initial indexing, the collection card shows elapsed time, processed and committed files, and when published evidence is available to MCP. A scan with no progress for ten minutes stops with a recoverable error; scheduled semantic batches have a twenty-minute cap. Open **Diagnose & Repair** to inspect the result and retry or Resume after correcting the cause. Search remains unavailable until the first publication and discloses incomplete discovery while scanning continues.
 
 Under **Agent connections**, the **VS Code registration** switch controls automatic AIRK server definitions on this extension host (`airk.mcp.registrationEnabled`, a machine-scoped user setting). Turning it off prevents new provider resolutions; it does not pause indexing, remove manual server entries or disable external agents. **Connect coding agent…** (also available through **Manage Agent Connections**) first asks which agent to configure. **VS Code / Copilot MCP controls** opens only VS Code’s server controls. Codex, Claude Code and other coding agents use their own configurations. The guide never labels an agent connected just because configuration was copied/created or its helper check passed.
 
-Run **AIRK: Check AIRK MCP Helper** for the intended folder. A successful result confirms AIRK's stdio handshake, sixteen-tool inventory and collection status. It does not prove the selected coding agent has loaded or approved the entry.
+Run **AIRK: Check AIRK MCP Helper** for the intended folder. A successful result confirms AIRK's stdio handshake, fifteen-tool inventory in 1.3.0 and collection status. It does not prove the selected coding agent has loaded or approved the entry.
 
 In that agent, explicitly request `airk_status` and `airk_capabilities` from the configured AIRK server. Confirm the collection, then request a lexical `airk_search` for a known indexed phrase and check its source path and original location. Use **AIRK: Index Now** after edits if automatic indexing is paused or set to Manual; MCP retrieval does not initiate reindexing.
 
@@ -234,13 +254,13 @@ Choose the indexing mode, pause/resume automatic work, choose storage, set up co
 
 ### Storage budgets and current cleanup
 
-**Storage limits…** edits the selected collection and shared root quotas, defaulting to 100 GiB and 500 GiB. **Reclaim Unreferenced Index Objects** runs bounded cleanup of objects no longer owned by current evidence or durable pending work. Active requests, corruption or incomplete ownership checks prevent deletion. Source files remain untouched.
+**Storage limits…** edits the selected collection and shared root quotas, defaulting to 256 GiB and 500 GiB. **Reclaim Unreferenced Index Objects** runs bounded cleanup of objects no longer owned by current evidence or durable pending work. Active requests, corruption or incomplete ownership checks prevent deletion. Source files remain untouched.
 
 The 1.2 namespace starts fresh settings and leaves old state on disk. Historical generation counts, checkpoints, retention policies and rollback are unavailable. Capacity failures stop automatic retries until Resume or Index now; resolving a failure does not imply that every file is current.
 
 ### Choose indexing detail
 
-The AIRK sidebar offers **Search Only**, **Agent Lean** (the default for new collections), **Rich Structure**, and **Detailed**. Search Only keeps searchable text and exact citations. Agent Lean keeps selected declarations, imports and useful document facts with compact MCP replies. Rich Structure adds broader structural facts and declaration tracking. Detailed also retains individual calls and document-unit tracking. Existing saved detail choices keep their meanings.
+The AIRK sidebar offers **Search Only**, **Agent Lean** (the default for new collections), **Rich Structure**, and **Detailed**. Search Only keeps searchable text and exact citations. Agent Lean keeps selected declarations, imports, call occurrences and useful document facts with compact MCP replies. Rich Structure adds broader structural facts and declaration tracking while also retaining call occurrences. Detailed adds document-unit tracking. Existing saved detail choices keep their meanings.
 
 The panel shows the configured and published levels separately. Changing a level rebuilds evidence; preparation keeps the current head readable, and Applying requires completion or recovery before reads resume. Storage quotas, current-object cleanup and vector search are separate controls. Native fact and relationship responses explicitly report omitted detail. See [ingestion limits and index detail](https://github.com/iokaio/airk/blob/main/docs/ingestion-limits.md) for limits and CLI equivalents.
 
@@ -295,7 +315,7 @@ Reports open as formatted panels; **Open as JSON** shows the full native output.
 | `airk.index.quietMs` | `2000` | How long file changes must be quiet before an automatic batch starts. |
 | `airk.index.idleMs` | `10000` | *When idle* mode: how long the editor must also be free of typing and selection changes. |
 | `airk.index.maxDelayMs` | `30000` | *After edits settle* and *On save*: the longest continuous changes can postpone a batch. |
-| `airk.index.minIntervalMs` | `5000` | Minimum gap between automatic jobs. |
+| `airk.index.minIntervalMs` | `1000` | Minimum gap between automatic jobs; the edit quiet period still applies. |
 | `airk.storage.path` | per-user storage | Machine-scoped index folder. Read from user settings only. |
 | `airk.storage.maxBytes` | `0` (off) | Soft budget for index data in the storage folder. At the limit automatic indexing stops; Index Now can still exceed it; nothing is deleted automatically. |
 
@@ -314,7 +334,7 @@ What happens after AIRK returns evidence is up to the agent you connected. That 
 
 ## Known limits
 
-- **Size.** Automatic limits allow up to 256 MiB per source file, 32 MiB extracted text per file and 100,000 files. Eligible source uses one eighth of detected machine memory, capped at 2 GiB (512 MiB when detection is unavailable); extracted text gets twice that allowance. Existing saved policies remain unchanged. UTF-8 files above 4 MiB retain searchable text with partial text-only status, without structural facts. Disk quotas and format limits still apply; larger permitted workloads are not performance-qualified. Use **AIRK: Show Ingestion Limits** to inspect effective limits, memory detection, the storage path, quota and cached coverage totals/largest files. Use **AIRK: Show Collection Status and Coverage** for fresh measurements and **AIRK: Configure Ingestion Limits…** to restore automatic sizing or review/import a six-field limits JSON. When indexing hits a collection budget, **Review larger limit** lets you enter a larger allowance up to the displayed hard ceiling. **Save limit and retry** explains that larger limits may increase indexing time, memory and disk usage, then saves the approved budget and retries once. Cancellation preserves the existing limits; per-file extraction bounds and disk quotas remain enforced. See [ingestion limits](https://github.com/iokaio/airk/blob/main/docs/ingestion-limits.md) for the JSON format, CLI commands and independent extraction/storage limits.
+- **Size.** Automatic limits allow up to 256 MiB per source file, 32 MiB extracted text per file and 100,000 files. Eligible source uses one eighth of detected machine memory, capped at 4 GiB (512 MiB when detection is unavailable); extracted text gets twice that allowance. Existing saved policies remain unchanged. UTF-8 files above 4 MiB retain searchable text with partial text-only status, without structural facts. Disk quotas and format limits still apply; larger permitted workloads are not performance-qualified. Use **AIRK: Show Ingestion Limits** to inspect effective limits, memory detection, the storage path, quota and cached coverage totals/largest files. Use **AIRK: Show Collection Status and Coverage** for fresh measurements and **AIRK: Configure Ingestion Limits…** to restore automatic sizing or review/import a six-field limits JSON. When indexing hits a collection budget, **Review larger limit** lets you enter a larger allowance up to the displayed hard ceiling. **Save limit and retry** explains that larger limits may increase indexing time, memory and disk usage, then saves the approved budget and retries once. Cancellation preserves the existing limits; per-file extraction bounds and disk quotas remain enforced. See [ingestion limits](https://github.com/iokaio/airk/blob/main/docs/ingestion-limits.md) for the JSON format, CLI commands and independent extraction/storage limits.
 - **Code facts are syntax, not semantics.** Definitions, imports, references and relationships come from grammar parsing and are labeled as candidates. Resolved references require an optional SCIP import or a local LSP run through the CLI. Textual references include matches in strings and comments.
 - **Vector search defaults on and can be disabled in the panel.** Model setup needs network access once, or pre-provisioned local assets. CPU, index storage and relevance depend on the corpus; broad real-codebase quality has not been established.
 - **Not extracted:** scanned or image-only PDFs, encrypted documents, legacy DOC/PPT/XLS, DOCX headers, footers and comments, PPTX notes, and XLSX charts and pivot caches. OCR is available through the CLI for selected pages; the extension does not run it.
@@ -327,7 +347,8 @@ More detail: [extension behavior and limits](https://github.com/iokaio/airk/blob
 | You see | Likely cause | What to do |
 |---|---|---|
 | **AIRK: Trust required** | The workspace is not trusted | Run **Workspaces: Manage Workspace Trust** and trust the folder. |
-| **AIRK: Coverage unknown** | A scan has not finished, or files changed since the last scan | Wait a few seconds, or run **Index Now**. |
+| **AIRK: Coverage pending rescan** | No inventory yet, or files changed since the measurement | Wait for the five-minute inventory, or explicitly refresh status/coverage. |
+| **AIRK: Coverage unknown** | The inventory failed or was incomplete | Inspect status/coverage for limits or errors and retry the refresh. |
 | **AIRK: Not indexed** | The folder has no published index yet | Run **Index Now**. |
 | **AIRK: Storage budget** | `airk.storage.maxBytes` was reached | Reclaim unreferenced objects, remove unused collections or raise the budget, then **Resume Auto-indexing**. |
 | **AIRK: Paused** | Auto-indexing is paused | Run **Resume Auto-indexing**, or use **Index Now**. |
@@ -341,3 +362,5 @@ More detail: [extension behavior and limits](https://github.com/iokaio/airk/blob
 - [Report a bug](https://github.com/iokaio/airk/issues) · [Support](https://github.com/iokaio/airk/blob/main/SUPPORT.md) · [Security policy](https://github.com/iokaio/airk/blob/main/SECURITY.md)
 
 AIRK stands for Artifact Indexing and Retrieval Kernel. Licensed under Apache-2.0; bundled dependency notices in THIRD_PARTY_NOTICES.md retain their respective terms.
+
+Version 1.3.0 scopes progress to each collection and yields long queue waits as **still queued**, allowing other collections to run. It resumes the same durable request and honors Pause between joins. A format upgrade performs a full rebuild, including retained source copies, extraction payloads and captured model objects; original files and saved settings are preserved. Search snippets are focused before their response budget is charged.

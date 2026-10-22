@@ -586,6 +586,7 @@ pub fn remove_collection(data_root: &Path, id: &str) -> Result<CollectionUsage> 
     );
     drop(read);
     let _current_gate = store.current_deletion_gate(&lock)?;
+    current::release_lexical_cache();
     let (disk_bytes, files) = directory_usage(&resolved)?;
     scheduler.forget_locked(&worker, id, &stored_root)?;
     // The lock remains held while snapshot and derived artifacts are removed.

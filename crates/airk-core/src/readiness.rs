@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct IndexProgress {
+    pub collection: String,
     pub phase: &'static str,
     pub revision: Option<String>,
     pub processed_artifacts: u64,

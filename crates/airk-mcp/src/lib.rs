@@ -46,23 +46,6 @@ impl EvidenceArgs {
 }
 
 #[derive(Deserialize, Serialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct HistoryArgs {
-    pub revision: Option<String>,
-    pub cursor: Option<String>,
-    #[serde(default = "history_limit")]
-    pub limit: usize,
-    #[serde(default = "history_bytes")]
-    pub max_bytes: usize,
-}
-fn history_limit() -> usize {
-    64
-}
-fn history_bytes() -> usize {
-    65536
-}
-
-#[derive(Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SelectorArgs {
     Path { path: String },
@@ -118,6 +101,9 @@ pub struct SearchArgs {
     pub limit: usize,
     #[serde(default = "default_budget")]
     pub max_bytes: usize,
+    /// Return complete indexed chunks instead of focused snippets.
+    #[serde(default)]
+    pub full_chunks: bool,
 }
 
 #[derive(Clone, Copy, Deserialize, schemars::JsonSchema)]
@@ -418,7 +404,7 @@ impl AirkServer {
 
     #[tool(
         name = "airk_relationships",
-        description = "Investigate callers, implementations, dependencies or candidate impact through incoming/outgoing edges, scoped paths and 1..3 hops. Syntax call targets are exact written expressions and remain candidates; optional SCIP references/implements are producer assertions, never automatically calls. Use IDs from code facts. Results have provenance, coverage and count/byte/time limits; absence is not proof of no impact.",
+        description = "Investigate available structural links and candidate impact through incoming/outgoing edges, scoped paths and 1..3 hops. Agent Lean and Rich Structure retain supported call occurrences, but written syntax targets remain unresolved candidates; SCIP assertions are not calls. Check coverage; absent edges do not prove no impact.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -445,7 +431,7 @@ impl AirkServer {
 
     #[tool(
         name = "airk_search",
-        description = "Find code or documentation. Omitted mode uses hybrid (lexical plus DiskANN rank fusion), or lexical when the collection has opted out in the panel. Explicit lexical uses AND terms; vector uses local embeddings. Vector/hybrid require an indexed local model; missing assets fail explicitly, with no network inference. semantic=true is a compatibility alias for vector; omit mode with that alias. Returns bounded indexed evidence, paths, locations and hashes.",
+        description = "Find code or documents. Use path_prefix when the question concerns one project or component; a relevant document does not prove application behavior. Omitted mode uses hybrid, or lexical after vector opt-out. Lexical uses AND terms; vector/hybrid need an indexed local model. semantic=true aliases vector. Results default to focused snippets with exact citations; full_chunks requests complete indexed chunks.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -464,13 +450,15 @@ impl AirkServer {
                 limit: args.limit,
                 max_bytes: args.max_bytes,
             };
-            match args.mode {
-                Some(SearchMode::Lexical) => kernel.search(&query),
-                Some(SearchMode::Vector) => kernel.semantic_search(&query),
-                Some(SearchMode::Hybrid) => kernel.hybrid_search(&query),
-                None if args.semantic => kernel.semantic_search(&query),
-                None => kernel.default_search(&query),
-            }
+            use airk_kernel::current::CurrentSearchMode;
+            let mode = match args.mode {
+                Some(SearchMode::Lexical) => CurrentSearchMode::Lexical,
+                Some(SearchMode::Vector) => CurrentSearchMode::Vector,
+                Some(SearchMode::Hybrid) => CurrentSearchMode::Hybrid,
+                None if args.semantic => CurrentSearchMode::Vector,
+                None => CurrentSearchMode::Default,
+            };
+            kernel.search_response(&query, mode, (!args.full_chunks).then_some(768))
         })
         .await
     }
@@ -668,7 +656,7 @@ impl AirkServer {
 
     #[tool(
         name = "airk_references",
-        description = "Locate possible usages of a code identifier as bounded exact-case whole-identifier textual occurrences. Includes definitions, strings and comments; these are NOT resolved semantic references. Confirm refactoring impacts with the agent's language tools and current source.",
+        description = "Locate exact-case whole-identifier textual occurrences using indexed lexical candidates verified against retained source, including CamelCase. Includes definitions, strings and comments, never resolved semantic references. Check truncation before impact analysis and verify live source.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -717,27 +705,6 @@ impl AirkServer {
     async fn changes(&self, Parameters(args): Parameters<ChangesArgs>) -> CallToolResult {
         self.execute(UsageOperation::Changes, move |kernel| {
             kernel.changes(&args.request()?)
-        })
-        .await
-    }
-
-    #[tool(
-        name = "airk_history",
-        description = "Unsupported in AIRK 1.2. Only the current index is retained; historical availability and reads have been removed.",
-        annotations(
-            read_only_hint = true,
-            destructive_hint = false,
-            open_world_hint = false
-        )
-    )]
-    async fn history(&self, Parameters(args): Parameters<HistoryArgs>) -> CallToolResult {
-        self.execute(UsageOperation::Status, move |kernel| {
-            kernel.history_availability(&airk_kernel::HistoryAvailabilityRequest {
-                revision: args.revision.as_deref().map(str::parse).transpose()?,
-                cursor: args.cursor,
-                limit: args.limit,
-                max_bytes: args.max_bytes,
-            })
         })
         .await
     }
@@ -837,8 +804,14 @@ fn render<T: Serialize>(
     {
         object.insert("request_id".into(), id.into());
     }
+    let mut display = logical.clone();
+    if let Some(object) = display.as_mut().and_then(serde_json::Value::as_object_mut)
+        && std::env::var("AIRK_MCP_RESPONSE_MODE").as_deref() == Ok("terse")
+    {
+        terse_envelope(object);
+    }
     let rendered = match result {
-        Ok(value) => match logical
+        Ok(value) => match display
             .as_ref()
             .map_or_else(|| serde_json::to_string(&value), serde_json::to_string)
         {
@@ -856,6 +829,44 @@ fn render<T: Serialize>(
         ResponseRepresentation::McpToolResultJson,
     );
     rendered
+}
+
+fn terse_envelope(object: &mut serde_json::Map<String, serde_json::Value>) {
+    if object.contains_key("execution")
+        || object.contains_key("adapters")
+        || object.contains_key("baseline_status")
+    {
+        return;
+    }
+    let mut coverage = serde_json::Map::new();
+    for (field, label) in [
+        ("discovery_readiness", "discovery"),
+        ("semantic_readiness", "semantic"),
+    ] {
+        if let Some(state) = object
+            .remove(field)
+            .and_then(|value| value.get("state").cloned())
+        {
+            coverage.insert(label.into(), state);
+        }
+    }
+    if let Some(detail) = object
+        .remove("indexing")
+        .and_then(|value| value.get("level").cloned())
+    {
+        coverage.insert("indexed_detail".into(), detail);
+    }
+    if !coverage.is_empty() {
+        coverage.insert("live_source_verified".into(), false.into());
+        object.insert("coverage".into(), coverage.into());
+    }
+    object.remove("freshness");
+    object.remove("generation");
+    if let Some(publication) = object.get_mut("publication")
+        && let Some(token) = publication.get("token").cloned()
+    {
+        *publication = serde_json::json!({"token": token});
+    }
 }
 
 #[tool_handler(router = self.tool_router)]
@@ -880,6 +891,67 @@ pub async fn serve(kernel: Kernel) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn terse_envelope_keeps_identity_citations_and_omission_state() {
+        let mut response = serde_json::json!({
+            "publication": {"token":"exact-token", "generation":7, "revision":"digest"},
+            "generation": 7,
+            "collection": "project-a",
+            "hits": [{"citation":{"path":"src/a.cs","content_hash":"hash"}}],
+            "truncated": true,
+            "freshness": {"live_source_verified":false},
+            "discovery_readiness": {"state":"ready"},
+            "semantic_readiness": {"state":"partial"},
+            "indexing": {"level":"agent_lean", "note":"long explanation"}
+        });
+        terse_envelope(response.as_object_mut().unwrap());
+        assert_eq!(response["publication"]["token"], "exact-token");
+        assert_eq!(response["hits"][0]["citation"]["path"], "src/a.cs");
+        assert_eq!(response["truncated"], true);
+        assert_eq!(response["coverage"]["semantic"], "partial");
+        assert_eq!(response["coverage"]["indexed_detail"], "agent_lean");
+        assert_eq!(response["coverage"]["live_source_verified"], false);
+        assert!(response.get("freshness").is_none());
+    }
+
+    #[tokio::test]
+    async fn search_snippets_spend_budget_after_focusing_and_full_chunks_remains_available()
+    -> anyhow::Result<()> {
+        let root = tempfile::tempdir()?;
+        let data = tempfile::tempdir()?;
+        let text = format!("{} ConfigureAuthentication()\n", "unrelated ".repeat(700));
+        for i in 0..10 {
+            std::fs::write(root.path().join(format!("file{i}.txt")), &text)?;
+        }
+        let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+        kernel.configure_vectors(false)?;
+        kernel.index()?;
+        let server = AirkServer::new(kernel);
+        for full in [false, true] {
+            let args = serde_json::from_value(
+                serde_json::json!({ "query": "ConfigureAuthentication", "mode": "lexical",
+                "limit": if full { 2 } else { 10 }, "max_bytes": if full { 16384 } else { 4096 }, "full_chunks": full }),
+            )?;
+            let result = server.search(Parameters(args)).await;
+            assert!(!result.is_error.unwrap_or(false), "{result:?}");
+            let body: serde_json::Value =
+                serde_json::from_str(&result.content[0].as_text().unwrap().text)?;
+            let hits = body["hits"].as_array().unwrap();
+            assert_eq!(hits.len(), if full { 2 } else { 10 });
+            for hit in hits {
+                let excerpt = hit["text"].as_str().unwrap();
+                assert!(excerpt.contains("ConfigureAuthentication"));
+                if full {
+                    assert_eq!(excerpt, text);
+                } else {
+                    assert!(excerpt.len() <= 768);
+                }
+                assert_eq!(hit["citation"]["start_line"], 1);
+            }
+        }
+        Ok(())
+    }
 
     #[tokio::test]
     async fn agent_lean_defaults_to_useful_compact_facts_and_allows_rich_reads()

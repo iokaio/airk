@@ -4,6 +4,208 @@ use super::*;
 type CaptureFault = Box<dyn FnMut(&airk_store::FileStore, &Artifact) -> Result<()>>;
 
 #[test]
+fn direct_path_update_does_not_run_another_collections_queued_scan() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let foreign_root = tempfile::tempdir()?;
+    let data = tempfile::tempdir()?;
+    std::fs::write(root.path().join("edited.rs"), "pub fn original() {}\n")?;
+    std::fs::write(
+        foreign_root.path().join("foreign.rs"),
+        "pub fn foreign_original() {}\n",
+    )?;
+    let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    let foreign =
+        Kernel::open_collection(foreign_root.path(), Some(data.path().into()), "foreign")?;
+    kernel.configure_vectors(false)?;
+    foreign.configure_vectors(false)?;
+    kernel.index()?;
+    foreign.index()?;
+    let foreign_head = foreign.status()?.publication;
+    std::fs::write(root.path().join("edited.rs"), "pub fn current() {}\n")?;
+    std::fs::write(
+        foreign_root.path().join("foreign.rs"),
+        "pub fn foreign_unobserved() {}\n",
+    )?;
+    let queued = airk_store::scheduler::Queue::new(data.path()).enqueue(
+        "foreign",
+        &foreign.root_id(),
+        false,
+        true,
+        false,
+        1,
+    )?;
+    let report = kernel.index_paths(&["edited.rs".into()])?;
+    assert!(report.path_scoped);
+    assert_eq!(report.indexed, 1);
+    assert_eq!(foreign.status()?.publication, foreign_head);
+    let pending = foreign.schedule_status()?.unwrap();
+    assert_eq!(pending.requested_revision, queued.requested_revision);
+    assert!(pending.completed_revision < pending.requested_revision);
+    assert!(
+        kernel.schedule_status()?.is_none(),
+        "a direct source command does not register an automatic worker"
+    );
+    Ok(())
+}
+
+#[test]
+fn hinted_updates_hash_only_requested_paths_and_preserve_inventory_and_scope() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let alias = tempfile::tempdir()?;
+    let data = tempfile::tempdir()?;
+    std::fs::write(root.path().join("edited.rs"), "pub fn original_edit() {}\n")?;
+    std::fs::write(
+        root.path().join("neighbor.rs"),
+        "pub fn original_neighbor() {}\n",
+    )?;
+    std::fs::write(
+        alias.path().join("external.rs"),
+        "pub fn original_external() {}\n",
+    )?;
+    let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    kernel.configure_vectors(false)?;
+    kernel.add_root("other", alias.path())?;
+    kernel.scheduled_index(false, false)?;
+    let original = kernel.load_optional()?.unwrap();
+    let inventory_time = kernel.status()?.freshness.last_inventory_unix_ms;
+    std::fs::write(root.path().join("edited.rs"), "pub fn current_edit() {}\n")?;
+    std::fs::write(
+        root.path().join("neighbor.rs"),
+        "pub fn unobserved_neighbor() {}\n",
+    )?;
+    std::fs::write(
+        alias.path().join("external.rs"),
+        "pub fn current_external() {}\n",
+    )?;
+    let report = kernel.scheduled_index_selected(
+        false,
+        false,
+        Some(&["edited.rs".into(), "@other/external.rs".into()]),
+        true,
+    )?;
+    assert!(report.path_scoped);
+    assert_eq!((report.indexed, report.reused, report.removed), (2, 0, 0));
+    let indexed = kernel.load_optional()?.unwrap();
+    assert_eq!(
+        indexed.artifacts["neighbor.rs"].content_hash,
+        original.artifacts["neighbor.rs"].content_hash
+    );
+    assert_ne!(
+        indexed.artifacts["edited.rs"].content_hash,
+        original.artifacts["edited.rs"].content_hash
+    );
+    assert_ne!(
+        indexed.artifacts["@other/external.rs"].content_hash,
+        original.artifacts["@other/external.rs"].content_hash
+    );
+    let status = kernel.status()?;
+    assert!(!status.freshness.live_source_verified);
+    assert!(status.freshness.last_index.unwrap().path_scoped);
+    assert_eq!(status.freshness.last_inventory_unix_ms, inventory_time);
+    std::fs::remove_file(root.path().join("edited.rs"))?;
+    assert_eq!(kernel.index_paths(&["edited.rs".into()])?.removed, 1);
+    assert!(
+        !kernel
+            .load_optional()?
+            .unwrap()
+            .artifacts
+            .contains_key("edited.rs")
+    );
+    assert_eq!(
+        kernel.status()?.discovery_readiness.total_artifacts,
+        Some(2)
+    );
+    assert_eq!(
+        kernel.status()?.freshness.last_inventory_unix_ms,
+        inventory_time
+    );
+    assert!(kernel.index_paths(&["../outside.rs".into()]).is_err());
+    // A complete reconciliation still hashes and refreshes the unhinted edit.
+    assert_eq!(kernel.scheduled_index(false, false)?.indexed, 1);
+    assert_ne!(
+        kernel.load_optional()?.unwrap().artifacts["neighbor.rs"].content_hash,
+        original.artifacts["neighbor.rs"].content_hash
+    );
+    Ok(())
+}
+
+#[test]
+fn ignore_and_directory_hints_force_complete_reconciliation() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let data = tempfile::tempdir()?;
+    std::fs::create_dir(root.path().join("nested"))?;
+    std::fs::write(root.path().join("nested/inside.rs"), "pub fn inside() {}\n")?;
+    let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    kernel.configure_vectors(false)?;
+    assert!(
+        !kernel
+            .index_paths(&["nested/inside.rs".into()])?
+            .path_scoped
+    );
+    std::fs::write(root.path().join(".airkignore"), "nested/\n")?;
+    let report = kernel.index_paths(&[".airkignore".into()])?;
+    assert!(!report.path_scoped);
+    assert!(
+        !kernel
+            .load_optional()?
+            .unwrap()
+            .artifacts
+            .contains_key("nested/inside.rs")
+    );
+    std::fs::remove_file(root.path().join(".airkignore"))?;
+    assert!(!kernel.index_paths(&["nested".into()])?.path_scoped);
+    assert!(
+        kernel
+            .load_optional()?
+            .unwrap()
+            .artifacts
+            .contains_key("nested/inside.rs")
+    );
+    std::fs::remove_dir_all(root.path().join("nested"))?;
+    let report = kernel.index_paths(&["nested".into()])?;
+    assert!(!report.path_scoped);
+    assert_eq!(report.removed, 1);
+    Ok(())
+}
+
+#[test]
+fn reuse_presence_check_defers_same_size_corruption_to_authenticated_reads() -> Result<()> {
+    for kind in ["sources", "artifacts"] {
+        let root = tempfile::tempdir()?;
+        let data = tempfile::tempdir()?;
+        std::fs::write(
+            root.path().join("fixture.txt"),
+            "original verification evidence\n",
+        )?;
+        let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+        kernel.configure_vectors(false)?;
+        kernel.scheduled_index(false, false)?;
+        let original = kernel.load_optional()?.unwrap();
+        let artifact = &original.artifacts["fixture.txt"];
+        let object = retained_object_path(&kernel.store, artifact, kind);
+        let mut corrupt = std::fs::read(&object)?;
+        corrupt[0] ^= 1;
+        std::fs::write(&object, &corrupt)?;
+        let report = kernel.scheduled_index(false, false)?;
+        assert_eq!(
+            (
+                report.indexed,
+                report.reused,
+                report.repaired_retained_artifacts
+            ),
+            (0, 1, 0)
+        );
+        assert_eq!(std::fs::read(&object)?, corrupt);
+        assert!(kernel.read_file("fixture.txt", 1, 1, 4096).is_err());
+        assert_eq!(
+            kernel.load_optional()?.unwrap().artifacts["fixture.txt"].content_hash,
+            artifact.content_hash
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn retained_repair_admission_waits_for_readers_and_bounds_contention() -> Result<()> {
     let root = tempfile::tempdir()?;
     let data = tempfile::tempdir()?;
@@ -725,7 +927,7 @@ fn retire_missing_prior_extraction(deleted: bool) -> Result<()> {
 }
 
 #[test]
-fn slow_semantic_publication_does_not_consume_the_next_source_batch_interval() -> Result<()> {
+fn source_batches_defer_semantics_and_preserve_the_next_scan_interval() -> Result<()> {
     use std::sync::{
         Mutex,
         atomic::{AtomicBool, Ordering},
@@ -751,10 +953,8 @@ fn slow_semantic_publication_does_not_consume_the_next_source_batch_interval() -
                     .unwrap()
                     .push(event.committed_artifacts);
             }
-            if event.phase == "enrichment_committed" && !observed_delay.swap(true, Ordering::AcqRel)
-            {
-                // Slow neural inference/publication occupies the same synchronous
-                // flush interval. It must not age the following source batch.
+            if event.phase == "base_committed" && !observed_delay.swap(true, Ordering::AcqRel) {
+                // A slow publication must not age the following source batch.
                 std::thread::sleep(std::time::Duration::from_millis(2100));
             }
         });
@@ -763,12 +963,12 @@ fn slow_semantic_publication_does_not_consume_the_next_source_batch_interval() -
     assert_eq!(
         *base_commits.lock().unwrap(),
         vec![32],
-        "remaining files should share the final source batch after slow enrichment"
+        "remaining files should share the final source batch after slow publication"
     );
     let status = kernel.status()?;
     assert_eq!(status.files, 35);
     assert_eq!(status.discovery_readiness.committed_artifacts, 35);
-    assert_eq!(status.semantic_readiness.completed_artifacts, 8);
+    assert_eq!(status.semantic_readiness.completed_artifacts, 0);
     assert_eq!(status.semantic_readiness.selected_artifacts, 35);
     for file in [0, 31, 32, 34] {
         let evidence = kernel.read_file(&format!("file_{file:02}.txt"), 1, 1, 4096)?;
@@ -797,14 +997,15 @@ fn many_progressive_publications_do_not_spend_the_capture_reservation() -> Resul
     drop(read);
     let quota = Quota::open(&kernel.data_root)?;
     let writer = kernel.store.lock()?;
-    // Stand in for the scan's still-live capture allowance. Temporary graph
-    // capacities must not accumulate here as small publications complete.
+    // Retain actual inputs with the scan allowance, then publish each batch.
     let capture = quota.reserve(kernel.collection(), 1 << 20)?;
+    let failure = quota.reserve(kernel.collection(), 1 << 20)?;
+    let _captured_objects = writer.capture_objects();
     let selection = kernel.vector_selection()?;
-    let execution = kernel.execution_status()?;
     let mut stats = EmbeddingCacheStats::default();
     let mut progressive = ProgressiveBase {
         kernel: &kernel,
+        failure_reservation: &failure,
         quota: &quota,
         writer: &writer,
         scope: &scope,
@@ -813,42 +1014,69 @@ fn many_progressive_publications_do_not_spend_the_capture_reservation() -> Resul
         objects: None,
         selection: &selection,
         stats: &mut stats,
-        execution: &execution,
         previous: &previous,
         snapshot: previous.clone(),
         semantic_work: None,
-        semantic_failed: false,
         scan_work: progress::ScanWork::start()?,
         batch: Default::default(),
         batch_bytes: 0,
         last_flush: std::time::Instant::now(),
+        flush_interval: std::time::Duration::from_secs(2),
         last_pause_check: std::time::Instant::now(),
         next_batch: 1,
         processed: 0,
         committed: 0,
         current: Default::default(),
         first_ready_us: None,
-        first_vector_us: None,
         started: std::time::Instant::now(),
     };
     for artifact in previous.artifacts.values() {
+        let full = kernel.store.load_retained(artifact)?;
+        let payload = kernel.store.load_extraction_payload(artifact)?;
+        let source = kernel.store.read_retained_source(artifact)?;
+        let profile = artifact
+            .retained
+            .as_ref()
+            .unwrap()
+            .profile
+            .as_ref()
+            .unwrap();
+        std::fs::remove_file(retained_object_path(&kernel.store, artifact, "sources"))?;
+        std::fs::remove_file(retained_object_path(&kernel.store, artifact, "artifacts"))?;
+        let retained = kernel.store.retain_payload_with_budget(
+            &full,
+            &payload,
+            profile,
+            Some(&source),
+            Some(&capture),
+        )?;
+        let capture_bytes = capture.charged();
+        assert!(capture_bytes > 0);
         progressive.processed += 1;
         progressive.batch.insert(
             artifact.path.clone(),
-            ArtifactChange::Upsert(Box::new(CapturedInput {
-                artifact: artifact.clone(),
-            })),
+            ArtifactChange::Upsert(Box::new(CapturedInput { artifact: retained })),
         );
         progressive.flush()?;
+        assert_eq!(
+            capture.charged(),
+            capture_bytes,
+            "publication must not consume capture allowance"
+        );
     }
     assert_eq!(progressive.committed, 40);
-    assert_eq!(capture.charged(), 0);
+    assert!(capture.charged() > 0 && capture.remaining() > 0);
     assert_eq!(kernel.status()?.files, 40);
     assert!(
         kernel.read_file("file_39.txt", 1, 1, 4096)?.hits[0]
             .text
             .contains("fixture 39")
     );
+    // Even failure-record admission cannot replace the original Pause type.
+    failure.charge(failure.remaining())?;
+    let paused = record_scan_failure(Some(&mut progressive), crate::scheduler::ScanPaused.into());
+    assert!(paused.is::<crate::scheduler::ScanPaused>());
+    assert!(format!("{paused:#}").contains("could not publish scan failure status"));
     Ok(())
 }
 
@@ -885,10 +1113,10 @@ fn progressive_flush_preserves_the_next_captured_input() -> Result<()> {
         let captured_objects = writer.capture_objects();
         let reservation = quota.reserve(kernel.collection(), 16 << 20)?;
         let selection = kernel.vector_selection()?;
-        let execution = kernel.execution_status()?;
         let mut stats = EmbeddingCacheStats::default();
         let mut progressive = ProgressiveBase {
             kernel: &kernel,
+            failure_reservation: &reservation,
             quota: &quota,
             writer: &writer,
             scope: &scope,
@@ -897,22 +1125,20 @@ fn progressive_flush_preserves_the_next_captured_input() -> Result<()> {
             objects: None,
             selection: &selection,
             stats: &mut stats,
-            execution: &execution,
             previous: &previous,
             snapshot: previous.clone(),
             semantic_work: None,
-            semantic_failed: false,
             scan_work: progress::ScanWork::start()?,
             batch: Default::default(),
             batch_bytes: 0,
             last_flush: std::time::Instant::now(),
+            flush_interval: std::time::Duration::from_secs(2),
             last_pause_check: std::time::Instant::now(),
             next_batch: 32,
             processed: 0,
             committed: 0,
             current: Default::default(),
             first_ready_us: None,
-            first_vector_us: None,
             started: std::time::Instant::now(),
         };
 
@@ -985,4 +1211,16 @@ fn progressive_flush_preserves_the_next_captured_input() -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[test]
+fn publication_cadence_amortizes_cost_with_bounded_delay() {
+    use std::time::Duration;
+    for (cost_ms, interval_ms) in [(0, 2000), (100, 2000), (1500, 6000), (9000, 30000)] {
+        assert_eq!(
+            publication_interval(Duration::from_millis(cost_ms)),
+            Duration::from_millis(interval_ms)
+        );
+    }
+    assert_eq!(publication_interval(Duration::MAX), Duration::from_secs(30));
 }
