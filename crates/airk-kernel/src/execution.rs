@@ -7,6 +7,15 @@ use std::{
     path::Path,
 };
 
+#[derive(Debug)]
+pub(crate) struct CapacityBusy;
+impl std::fmt::Display for CapacityBusy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("waiting for indexing capacity")
+    }
+}
+impl std::error::Error for CapacityBusy {}
+
 pub(crate) struct ExecutionLease {
     pub plan: ExecutionPlan,
     _files: Vec<File>,
@@ -126,7 +135,7 @@ pub(crate) fn acquire(root: &Path) -> Result<ExecutionLease> {
         }
     }
     if files.is_empty() {
-        return Err(std::fs::TryLockError::WouldBlock.into());
+        return Err(CapacityBusy.into());
     }
     Ok(ExecutionLease {
         plan: plan(files.len())?,

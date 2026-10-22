@@ -93,7 +93,7 @@ impl Kernel {
             error,
             maintenance: None,
         };
-        let Some(worker) = queue.worker_lock()? else {
+        let Some(worker) = queue.worker_lock(&self.collection)? else {
             return Ok(outcome("busy", None));
         };
         let Some(job) = queue.status(&self.collection, &self.root_id())? else {
@@ -167,10 +167,11 @@ impl Kernel {
                     maintenance: None,
                 },
                 Err(error)
-                    if matches!(
-                        error.downcast_ref::<std::fs::TryLockError>(),
-                        Some(std::fs::TryLockError::WouldBlock)
-                    ) =>
+                    if error.is::<crate::execution::CapacityBusy>()
+                        || matches!(
+                            error.downcast_ref::<std::fs::TryLockError>(),
+                            Some(std::fs::TryLockError::WouldBlock)
+                        ) =>
                 {
                     RunOutcome {
                         state: "busy",
@@ -246,24 +247,31 @@ impl Kernel {
     /// one bounded inventory per call and once per five minutes for each root.
     pub fn reconcile_scheduled_once(&self) -> Result<ReconcileOutcome> {
         let queue = self.queue()?;
-        let Some(worker) = queue.worker_lock()? else {
-            return Ok(ReconcileOutcome {
-                state: "busy",
-                collection: None,
-                inventory_revision: None,
-                requested_revision: None,
-                error: None,
-            });
-        };
-        let Some(job) = queue.claim_scan(&worker, now()?, 300000)? else {
-            return Ok(ReconcileOutcome {
-                state: "idle",
-                collection: None,
-                inventory_revision: None,
-                requested_revision: None,
-                error: None,
-            });
-        };
+        let mut jobs = queue.list()?;
+        jobs.sort_by_key(|job| job.scan_started_unix_ms);
+        for candidate in jobs {
+            let Some(worker) = queue.worker_lock(&candidate.collection)? else {
+                continue;
+            };
+            if let Some(job) = queue.claim_scan(&worker, now()?, 300000)? {
+                return self.reconcile_claimed(&queue, &worker, job);
+            }
+        }
+        Ok(ReconcileOutcome {
+            state: "idle",
+            collection: None,
+            inventory_revision: None,
+            requested_revision: None,
+            error: None,
+        })
+    }
+
+    fn reconcile_claimed(
+        &self,
+        queue: &Queue,
+        worker: &WorkerLock,
+        job: ScheduledJob,
+    ) -> Result<ReconcileOutcome> {
         let measured = Kernel::open_collection_with_recovery(
             &job.root,
             Some(queue.data_dir().into()),
@@ -286,7 +294,7 @@ impl Kernel {
                     || report.source_configuration_pending;
                 let partial = (!report.scan_complete || report.extraction_failed > 0 || report.capacity_blocked > 0)
                     .then_some("coverage inventory incomplete or eligible files failed/blocked; inspect airk coverage");
-                queue.finish_scan(&worker, &job, now()?, partial)?;
+                queue.finish_scan(worker, &job, now()?, partial)?;
                 // Pause may have arrived during the scan. Enqueue is harmless,
                 // but leaving policy untouched ensures no automatic write follows.
                 let requested = if changed {
@@ -314,7 +322,7 @@ impl Kernel {
             }
             Err(error) => {
                 let error = format!("{error:#}");
-                queue.finish_scan(&worker, &job, now()?, Some(&error))?;
+                queue.finish_scan(worker, &job, now()?, Some(&error))?;
                 Ok(ReconcileOutcome {
                     state: "failed",
                     collection: Some(job.collection),
@@ -326,58 +334,85 @@ impl Kernel {
         }
     }
 
-    /// Run at most one due collection under one machine/data-root worker lock.
-    /// No thread, service, network or source traversal is started by a read call.
+    /// Run one due collection, skipping collection workers held by other processes.
     pub fn run_scheduled_once(&self) -> Result<RunOutcome> {
         let queue = self.queue()?;
-        let Some(worker) = queue.worker_lock()? else {
-            return Ok(RunOutcome {
-                state: "busy",
-                collection: None,
-                revision: None,
-                report: None,
-                error: None,
-                maintenance: None,
-            });
-        };
-        let Some(job) = queue.claim(&worker, now()?)? else {
-            if let Some(outcome) =
-                self.continue_semantic(&queue, &worker, &queue.list()?, 1, None)?
-            {
+        let mut jobs = queue.list()?;
+        jobs.sort_by_key(|job| (job.first_pending_unix_ms, job.collection.clone()));
+        let mut busy = false;
+        for candidate in &jobs {
+            let Some(worker) = queue.worker_lock(&candidate.collection)? else {
+                busy = true;
+                continue;
+            };
+            if let Some(job) = queue.claim(&worker, now()?)? {
+                let outcome = self.run_claimed(&queue, &worker, job)?;
+                if matches!(outcome.state, "busy" | "capacity_busy") {
+                    busy = true;
+                    continue;
+                }
                 return Ok(outcome);
             }
-            match self.continue_retention(&queue.list()?) {
-                Ok(Some((collection, maintenance))) => {
-                    return Ok(RunOutcome {
-                        state: "maintained",
-                        collection: Some(collection),
-                        revision: None,
-                        report: None,
-                        error: maintenance.receipt.error.clone(),
-                        maintenance: Some(maintenance),
-                    });
+        }
+        for candidate in jobs {
+            let Some(worker) = queue.worker_lock(&candidate.collection)? else {
+                busy = true;
+                continue;
+            };
+            let Some(job) = queue.status(&candidate.collection, &candidate.root)? else {
+                continue;
+            };
+            if let Some(outcome) =
+                self.continue_semantic(&queue, &worker, std::slice::from_ref(&job), 1, None)?
+            {
+                if outcome.state == "busy" {
+                    busy = true;
+                    continue;
                 }
-                Err(error) => {
-                    return Ok(RunOutcome {
-                        state: "maintenance_failed",
-                        collection: None,
-                        revision: None,
-                        report: None,
-                        error: Some(format!("{error:#}").chars().take(4096).collect()),
-                        maintenance: None,
-                    });
-                }
-                Ok(None) => {}
+                return Ok(outcome);
             }
-            return Ok(RunOutcome {
-                state: "idle",
-                collection: None,
-                revision: None,
-                report: None,
-                error: None,
-                maintenance: None,
-            });
+            if let Some((collection, maintenance)) = self.continue_retention(&[job])? {
+                return Ok(RunOutcome {
+                    state: "maintained",
+                    collection: Some(collection),
+                    revision: None,
+                    report: None,
+                    error: maintenance.receipt.error.clone(),
+                    maintenance: Some(maintenance),
+                });
+            }
+        }
+        Ok(Self::worker_outcome(if busy { "busy" } else { "idle" }))
+    }
+
+    fn worker_outcome(state: &'static str) -> RunOutcome {
+        RunOutcome {
+            state,
+            collection: None,
+            revision: None,
+            report: None,
+            error: None,
+            maintenance: None,
+        }
+    }
+
+    fn run_selected_source(&self) -> Result<RunOutcome> {
+        let queue = self.queue()?;
+        let Some(worker) = queue.worker_lock(&self.collection)? else {
+            return Ok(Self::worker_outcome("busy"));
         };
+        let Some(job) = queue.claim(&worker, now()?)? else {
+            return Ok(Self::worker_outcome("idle"));
+        };
+        self.run_claimed(&queue, &worker, job)
+    }
+
+    fn run_claimed(
+        &self,
+        queue: &Queue,
+        worker: &WorkerLock,
+        job: ScheduledJob,
+    ) -> Result<RunOutcome> {
         let result = Kernel::open_collection_with_recovery(
             &job.root,
             Some(queue.data_dir().into()),
@@ -404,10 +439,11 @@ impl Kernel {
                 kernel.index_current(job.full, true)
             };
             if result.as_ref().is_err_and(|error| {
-                matches!(
-                    error.downcast_ref::<std::fs::TryLockError>(),
-                    Some(std::fs::TryLockError::WouldBlock)
-                )
+                error.is::<crate::execution::CapacityBusy>()
+                    || matches!(
+                        error.downcast_ref::<std::fs::TryLockError>(),
+                        Some(std::fs::TryLockError::WouldBlock)
+                    )
             }) {
                 // A deferred claim did no indexing work. Do not count
                 // each contention retry as a failed usage observation.
@@ -434,7 +470,7 @@ impl Kernel {
         });
         let outcome = match result {
             Ok(report) => {
-                queue.finish(&worker, &job, now()?, Ok(&serde_json::to_string(&report)?))?;
+                queue.finish(worker, &job, now()?, Ok(&serde_json::to_string(&report)?))?;
                 RunOutcome {
                     state: "indexed",
                     collection: Some(job.collection),
@@ -445,7 +481,7 @@ impl Kernel {
                 }
             }
             Err(error) if error.is::<ScanPaused>() => {
-                queue.defer(&worker, &job)?;
+                queue.defer(worker, &job)?;
                 RunOutcome {
                     state: "paused",
                     collection: Some(job.collection),
@@ -456,14 +492,19 @@ impl Kernel {
                 }
             }
             Err(error)
-                if matches!(
-                    error.downcast_ref::<std::fs::TryLockError>(),
-                    Some(std::fs::TryLockError::WouldBlock)
-                ) =>
+                if error.is::<crate::execution::CapacityBusy>()
+                    || matches!(
+                        error.downcast_ref::<std::fs::TryLockError>(),
+                        Some(std::fs::TryLockError::WouldBlock)
+                    ) =>
             {
-                queue.defer(&worker, &job)?;
+                queue.defer(worker, &job)?;
                 RunOutcome {
-                    state: "busy",
+                    state: if error.is::<crate::execution::CapacityBusy>() {
+                        "capacity_busy"
+                    } else {
+                        "busy"
+                    },
                     collection: Some(job.collection),
                     revision: Some(job.requested_revision),
                     report: None,
@@ -473,7 +514,7 @@ impl Kernel {
             }
             Err(error) => {
                 let error = format!("{error:#}");
-                queue.finish(&worker, &job, now()?, Err(&error))?;
+                queue.finish(worker, &job, now()?, Err(&error))?;
                 RunOutcome {
                     state: "failed",
                     collection: Some(job.collection),
@@ -487,7 +528,7 @@ impl Kernel {
         Ok(outcome)
     }
 
-    /// Persist first, then join one serialized worker. A killed extension/helper
+    /// Persist first, then join only this collection worker. A killed extension/helper
     /// leaves the unfinished revision available to another host or CLI worker.
     pub fn scheduled_index(&self, full: bool, automatic: bool) -> Result<IndexReport> {
         self.scheduled_index_selected(full, automatic, None, false)
@@ -531,6 +572,7 @@ impl Kernel {
         ensure!(revision > 0, "scheduled revision must be positive");
         let queue = self.queue()?;
         let start = Instant::now();
+        let mut waiting_phase = None;
         loop {
             let job = queue
                 .status(&self.collection, &self.root_id())?
@@ -557,7 +599,19 @@ impl Kernel {
             if start.elapsed() >= budget {
                 return Err(ScheduledIndexPending { revision }.into());
             }
-            let outcome = self.run_scheduled_once()?;
+            let outcome = self.run_selected_source()?;
+            let phase = if outcome.state == "capacity_busy" {
+                "waiting_capacity"
+            } else {
+                "waiting_collection"
+            };
+            if matches!(outcome.state, "busy" | "capacity_busy") && waiting_phase != Some(phase) {
+                self.emit_progress(airk_core::readiness::IndexProgress {
+                    phase,
+                    ..Default::default()
+                });
+                waiting_phase = Some(phase);
+            }
             if outcome.collection.as_deref() == Some(&self.collection) && outcome.state == "indexed"
             {
                 // Re-read the revision-bound durable result. Another pass may
@@ -572,6 +626,56 @@ impl Kernel {
 #[cfg(test)]
 mod join_tests {
     use super::*;
+
+    #[test]
+    fn exhausted_capacity_preserves_request_and_reports_the_reason() -> Result<()> {
+        use std::fs::OpenOptions;
+        use std::sync::{Arc, Mutex};
+        let root = tempfile::tempdir()?;
+        let data = tempfile::tempdir()?;
+        std::fs::write(root.path().join("fixture.txt"), "capacity fixture")?;
+        let phases = Arc::new(Mutex::new(Vec::new()));
+        let observed = phases.clone();
+        let kernel = Kernel::open(root.path(), Some(data.path().into()))?.with_index_progress(
+            move |event| {
+                observed.lock().unwrap().push(event.phase);
+            },
+        );
+        kernel.configure_vectors(false)?;
+        let mut slots = Vec::new();
+        for slot in 0..4 {
+            let file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(data.path().join(format!("execution-1.2-{slot}.lock")))?;
+            file.try_lock()?;
+            slots.push(file);
+        }
+        let requested =
+            kernel
+                .queue()?
+                .enqueue("default", &kernel.root_id(), true, true, false, now()?)?;
+        let error = kernel
+            .wait_scheduled_index_with_budget(requested.requested_revision, Duration::from_secs(2))
+            .unwrap_err();
+        assert!(error.is::<ScheduledIndexPending>());
+        let pending = kernel.schedule_status()?.unwrap();
+        assert!(!pending.blocked);
+        assert!(pending.full);
+        assert_eq!(pending.running_revision, 0);
+        assert_eq!(pending.completed_revision, 0);
+        assert_eq!(*phases.lock().unwrap(), vec!["waiting_capacity"]);
+        drop(slots);
+        assert_eq!(
+            kernel
+                .wait_scheduled_index(requested.requested_revision)?
+                .indexed,
+            1
+        );
+        Ok(())
+    }
 
     #[test]
     fn full_request_is_durable_while_the_collection_writer_is_locked() -> Result<()> {

@@ -42,7 +42,9 @@ pub struct Queue {
 }
 pub struct WorkerLock {
     _file: File,
+    _compatibility: File,
     directory: PathBuf,
+    collection: String,
     _lifecycle: File,
 }
 
@@ -414,21 +416,53 @@ impl Queue {
 
     /// Stable advisory lock file is never unlinked, preventing lock-inode races.
     /// The operating system releases ownership when the worker exits or crashes.
-    pub fn worker_lock(&self) -> Result<Option<WorkerLock>> {
+    pub fn worker_lock(&self, collection: &str) -> Result<Option<WorkerLock>> {
+        crate::validate_collection(collection)?;
         crate::quota::ensure_current_root(&self.directory)?;
         fs::create_dir_all(&self.directory)?;
         let lifecycle = crate::quota::lifecycle_lease(&self.directory, false)?;
         crate::quota::ensure_current_root(&self.directory)?;
-        let file = OpenOptions::new()
+        // Old helpers hold this file exclusively for their whole worker turn.
+        // Shared ownership admits new collection workers but excludes old claim
+        // logic, which resets all running rows. Keep it for the entire turn.
+        let compatibility = OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
             .truncate(false)
             .open(self.directory.join("scheduler-1.2-worker.lock"))?;
+        match compatibility.try_lock_shared() {
+            Ok(()) => {}
+            Err(std::fs::TryLockError::WouldBlock) => anyhow::bail!(
+                "An older AIRK indexing worker is active. Close or restart older AIRK editor/watch workers, then retry with AIRK 1.3.1 or newer."
+            ),
+            Err(error) => return Err(error.into()),
+        }
+        let locks = self.directory.join("scheduler-1.3-workers");
+        fs::create_dir_all(&locks)?;
+        ensure!(
+            !fs::symlink_metadata(&locks)?.file_type().is_symlink(),
+            "linked scheduler lock directory"
+        );
+        let path = locks.join(format!("{collection}.lock"));
+        if let Ok(metadata) = fs::symlink_metadata(&path) {
+            ensure!(
+                metadata.is_file() && !metadata.file_type().is_symlink(),
+                "linked scheduler worker lock"
+            );
+        }
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(path)?;
         match file.try_lock() {
             Ok(()) => Ok(Some(WorkerLock {
                 _file: file,
+                _compatibility: compatibility,
                 directory: self.directory.clone(),
+                collection: collection.into(),
                 _lifecycle: lifecycle,
             })),
             Err(std::fs::TryLockError::WouldBlock) => Ok(None),
@@ -444,11 +478,16 @@ impl Queue {
         );
         let mut db = self.open()?;
         let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        // Owning the OS lock proves every persisted running claim is abandoned.
-        tx.execute("UPDATE jobs SET running=0 WHERE running<>0", [])?;
-        let mut query = tx.prepare("SELECT * FROM jobs WHERE revision>completed AND blocked=0 ORDER BY first_pending,collection")?;
+        // Only this collection's OS lock proves its running claim abandoned.
+        tx.execute(
+            "UPDATE jobs SET running=0 WHERE collection=?1 AND running<>0",
+            [&lock.collection],
+        )?;
+        let mut query = tx.prepare(
+            "SELECT * FROM jobs WHERE collection=?1 AND revision>completed AND blocked=0",
+        )?;
         let jobs: Vec<ScheduledJob> = query
-            .query_map([], decode)?
+            .query_map([&lock.collection], decode)?
             .collect::<rusqlite::Result<_>>()?;
         drop(query);
         let selected = jobs.into_iter().find(|job| {
@@ -482,7 +521,7 @@ impl Queue {
         report: Result<&str, &str>,
     ) -> Result<()> {
         ensure!(
-            lock.directory == self.directory,
+            lock.directory == self.directory && lock.collection == job.collection,
             "scheduler worker belongs to another data root"
         );
         let (completed, error, encoded) = match report {
@@ -553,7 +592,7 @@ impl Queue {
     /// contention as an indexing failure or completing the queued revision.
     pub fn defer(&self, lock: &WorkerLock, job: &ScheduledJob) -> Result<()> {
         ensure!(
-            lock.directory == self.directory,
+            lock.directory == self.directory && lock.collection == job.collection,
             "scheduler worker belongs to another data root"
         );
         let changed = self.open()?.execute(
@@ -572,7 +611,7 @@ impl Queue {
     /// request or Resume clears this block without losing committed evidence.
     pub fn block_semantic(&self, lock: &WorkerLock, job: &ScheduledJob, error: &str) -> Result<()> {
         ensure!(
-            lock.directory == self.directory,
+            lock.directory == self.directory && lock.collection == job.collection,
             "scheduler worker belongs to another data root"
         );
         let mut end = error.len().min(4096);
@@ -592,8 +631,8 @@ impl Queue {
 
     pub fn forget(&self, collection: &str, root: &str) -> Result<()> {
         let lock = self
-            .worker_lock()?
-            .context("scheduler worker active; cannot forget collection")?;
+            .worker_lock(collection)?
+            .context("this collection is already indexing; cannot forget collection")?;
         self.forget_locked(&lock, collection, root)
     }
 
@@ -613,9 +652,9 @@ impl Queue {
         let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let job = tx
             .query_row(
-                "SELECT * FROM jobs WHERE paused=0 AND blocked=0 AND revision=completed
+                "SELECT * FROM jobs WHERE collection=?3 AND paused=0 AND blocked=0 AND revision=completed
             AND (scan_started=0 OR scan_started<=?1 OR scan_started>?2) ORDER BY scan_started,collection LIMIT 1",
-                params![i64::try_from(now.saturating_sub(interval_ms))?, i64::try_from(now)?],
+                params![i64::try_from(now.saturating_sub(interval_ms))?, i64::try_from(now)?, &lock.collection],
                 decode,
             )
             .optional()?;
@@ -637,7 +676,7 @@ impl Queue {
         error: Option<&str>,
     ) -> Result<()> {
         ensure!(
-            lock.directory == self.directory,
+            lock.directory == self.directory && lock.collection == job.collection,
             "scheduler worker belongs to another data root"
         );
         let error = error.map(|error| error.chars().take(1000).collect::<String>());
@@ -649,7 +688,7 @@ impl Queue {
     }
     pub fn forget_locked(&self, lock: &WorkerLock, collection: &str, root: &str) -> Result<()> {
         ensure!(
-            lock.directory == self.directory,
+            lock.directory == self.directory && lock.collection == collection,
             "scheduler worker belongs to another data root"
         );
         self.status(collection, root)?;

@@ -549,8 +549,8 @@ pub fn remove_collection(data_root: &Path, id: &str) -> Result<CollectionUsage> 
     validate_collection(id)?;
     let scheduler = scheduler::Queue::new(data_root);
     let worker = scheduler
-        .worker_lock()?
-        .context("scheduler worker active; wait before removing collections")?;
+        .worker_lock(id)?
+        .context("this collection is already indexing; wait before removing it")?;
     let base = data_root
         .join("collections-1.2")
         .canonicalize()

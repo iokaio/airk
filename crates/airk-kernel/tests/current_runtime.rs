@@ -438,14 +438,13 @@ fn editor_semantic_batches_resume_after_reopen_and_preserve_scope_and_pause() ->
     );
     kernel.schedule_pause(false)?;
     let queue = airk_store::scheduler::Queue::new(data.path());
-    let worker = queue.worker_lock()?.expect("fixture worker lock");
+    let worker = queue.worker_lock("default")?.expect("fixture worker lock");
     assert_eq!(kernel.run_scheduled_enrichment()?.state, "busy");
     drop(worker);
     drop(kernel);
 
-    // Local setup joins the root-wide source worker, which may legitimately
-    // service another due collection. Queue the handoff fixture only after
-    // setup, before invoking collection-scoped semantic drains.
+    // Foreign source work stays queued while this collection drains its own
+    // semantic batches. No cross-project source handoff is required.
     let foreign_head = other.status()?.publication;
     std::fs::write(
         foreign.path().join("foreign.txt"),
@@ -470,10 +469,10 @@ fn editor_semantic_batches_resume_after_reopen_and_preserve_scope_and_pause() ->
             .run_scheduled_enrichment_bounded(8, Some(std::time::Duration::from_secs(60)))?;
         assert_eq!(outcome.state, "enriched");
         assert!(
-            outcome.report.unwrap().yield_to_source,
-            "a foreign source request gets the next worker opportunity"
+            !outcome.report.unwrap().yield_to_source,
+            "foreign requests do not interrupt this collection"
         );
-        completed = (completed + 32).min(65);
+        completed = 65;
         assert_eq!(
             reopened.status()?.semantic_readiness.completed_artifacts,
             completed
@@ -497,6 +496,37 @@ fn editor_semantic_batches_resume_after_reopen_and_preserve_scope_and_pause() ->
     );
     assert_eq!(reopened.run_scheduled_enrichment()?.state, "idle");
     assert_eq!(other.status()?.publication, foreign_head);
+    Ok(())
+}
+
+#[test]
+fn semantic_capacity_wait_does_not_record_a_failure() -> Result<()> {
+    use std::fs::OpenOptions;
+    let root = unlinked_tempdir()?;
+    let data = unlinked_tempdir()?;
+    model(&data.path().join("models/local"), 2)?;
+    std::fs::write(root.path().join("a.txt"), "authenticate\n")?;
+    let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    kernel.scheduled_index(false, false)?;
+    let before = kernel.status()?.publication;
+    let mut slots = Vec::new();
+    for slot in 0..4 {
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(data.path().join(format!("execution-1.2-{slot}.lock")))?;
+        file.try_lock()?;
+        slots.push(file);
+    }
+    assert_eq!(kernel.run_scheduled_enrichment()?.state, "busy");
+    let status = kernel.status()?;
+    assert_eq!(status.publication, before);
+    assert!(status.semantic_readiness.failure.is_none());
+    assert!(!kernel.schedule_status()?.unwrap().blocked);
+    drop(slots);
+    assert_eq!(kernel.run_scheduled_enrichment()?.state, "enriched");
     Ok(())
 }
 

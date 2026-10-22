@@ -1,6 +1,6 @@
 # AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents
 
-**Version 1.3.0.** See the [1.3.0 release notes](docs/release-1.3.0.md) and [1.2.4 diagnosis and recovery notes](docs/release-1.2.4.md). Download available [native ZIPs and platform VSIX packages](https://github.com/iokaio/airk/releases); publication is verified separately by the release workflows.
+**Version 1.3.1.** See the [1.3.1 release notes](docs/release-1.3.1.md), [1.3.0 format changes](docs/release-1.3.0.md), and [1.2.4 diagnosis and recovery notes](docs/release-1.2.4.md). Download available [native ZIPs and platform VSIX packages](https://github.com/iokaio/airk/releases); publication is verified separately by the release workflows.
 
 **Give Claude Code, Codex, Gemini CLI/Antigravity, GitHub Copilot and other MCP-capable agents a shared, local index of your workspace.** AIRK indexes files and returns bounded facts and passages with source paths, hashes and original locations. The agent supplies the reasoning. Runtime storage uses memory and local disk.
 
@@ -8,7 +8,11 @@
 
 This is an independent, runnable open-source project. Munarium, VCP and local reference files inform the design; their implementations are not dependencies. SQLite FTS5 lexical retrieval, authenticated SQLite records and mutable Microsoft DiskANN publish one coherent current revision. Vector indexing and hybrid retrieval are enabled by default. The trusted panel prepares the pinned [local CPU embedding model](docs/onnx-models.md) on first use (about 91 MB); turn **Vector search** off per collection to opt out. Inference and source data stay local. Model quality must be evaluated for the intended corpus.
 
-[Code facts and relationships](docs/code-facts-and-relationships.md) add scopes, signatures, written types, call/framework candidates and optional source/build-bound SCIP imports. The 1.3.0 source has fifteen read-only MCP tools; the published 1.2.4 helper has sixteen. Both expose bounded evidence with explicit syntax versus producer provenance. Native indexing needs no external compiler/indexer installation.
+[Code facts and relationships](docs/code-facts-and-relationships.md) add scopes, signatures, written types, call/framework candidates and optional source/build-bound SCIP imports. The 1.3.1 source has fifteen read-only MCP tools; the published 1.2.4 helper has sixteen. Both expose bounded evidence with explicit syntax versus producer provenance. Native indexing needs no external compiler/indexer installation.
+
+## What's new in 1.3.1
+
+Different projects sharing one storage root can index concurrently. Each collection has its own native worker lock; two windows on the same project still share one worker. Editor indexing requests advance only their selected collection, and foreign source requests no longer interrupt semantic batches. The existing four execution slots retain CPU/memory budgets and report capacity waits separately from a busy project. An active older global worker requires restarting older AIRK workers before retrying. See [scheduling and upgrade details](docs/native-scheduler.md).
 
 ## What's new in 1.3.0
 
@@ -56,7 +60,7 @@ The extension's Details/Marketplace description and repository documentation now
 
 **Agent Lean** keeps useful code declarations, signatures, imports and document facts with compact MCP replies. **Rich Structure** and **Search Only** name the existing Balanced and Essential policies; in 1.2.0–1.2.2 new collections used Rich Structure; 1.2.3 defaults to Agent Lean. Progressive indexing publishes bounded exact-evidence and semantic batches, preserves committed work when paused, and reports discovery and semantic readiness separately. Optional lossless retained-object compression starts off.
 
-Version 1.3.0 uses one authenticated current SQLite FTS5/DiskANN index. When the extension indexes a recognized older 1.2 collection, it replaces the obsolete derived index and starts a full rebuild using the existing ID. Source files and saved settings remain untouched. CLI users can run `airk index --full` for the same upgrade. The earlier 1.1 layout still requires fresh 1.2 state. See [current-index operation and recovery](docs/current-index-runtime.md) and the [current qualification notes](docs/release-1.3.0.md#qualification-status).
+Version 1.3.1 uses one authenticated current SQLite FTS5/DiskANN index. When the extension indexes a recognized older 1.2 collection, it replaces the obsolete derived index and starts a full rebuild using the existing ID. Source files and saved settings remain untouched. CLI users can run `airk index --full` for the same upgrade. The earlier 1.1 layout still requires fresh 1.2 state. See [current-index operation and recovery](docs/current-index-runtime.md) and the [current qualification notes](docs/release-1.3.1.md#validation).
 
 ## What's new in 1.1.4
 
@@ -143,7 +147,7 @@ Configure each workspace's agent with its own root and collection, using [the Do
 
 ## Implemented retrieval
 
-The 1.3.0 source provides fifteen read-only MCP tools for search, file listing, bounded reads, file metadata, context, outlines, native syntax definitions/imports, structured document facts, code facts/relationships, textual identifier occurrences, indexed changes, status and capability inspection. The retired `airk_history` endpoint belonged to an earlier history design; the published 1.2.4 helper still lists it but returns only an unsupported error. Results describe published evidence; freshness requires indexing, and counts alone do not prove live workspace coverage.
+The 1.3.1 source provides fifteen read-only MCP tools for search, file listing, bounded reads, file metadata, context, outlines, native syntax definitions/imports, structured document facts, code facts/relationships, textual identifier occurrences, indexed changes, status and capability inspection. The retired `airk_history` endpoint belonged to an earlier history design; the published 1.2.4 helper still lists it but returns only an unsupported error. Results describe published evidence; freshness requires indexing, and counts alone do not prove live workspace coverage.
 
 Native grammar profiles cover Rust, Python, JavaScript/JSX, TypeScript/TSX, Go, Java, C/C++, C#, Ruby, PHP, Bash, PowerShell, Lua, Swift, Kotlin and SQL. Structured adapters cover Markdown, JSON/YAML/TOML, HTML/CSS, XML/SVG, CSV/TSV, INI-style configuration and Dockerfiles. Native extraction supports text-layer PDF, DOCX paragraphs and structured tables, XLSX stored worksheet rows/cells, and PPTX slide text in presentation order. Spreadsheet formulas are retained with any stored result; AIRK does not calculate formulas. Other UTF-8 files retain lexical retrieval without an extension allowlist.
 

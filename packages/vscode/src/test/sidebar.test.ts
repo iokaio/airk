@@ -100,8 +100,12 @@ test('initial indexing shows committed MCP evidence and a quiet scan warning', (
     assert.match(sidebarContent(sample), /MCP can start; search awaits the first publication/);
     assert.match(sidebarContent(sample), /indexing pending/);
     sample.collections[0].indexActivity.phase = 'waiting';
-    assert.match(sidebarContent(sample), /Waiting for the shared indexing worker/);
+    assert.match(sidebarContent(sample), /Waiting for this project’s indexing request/);
     assert.doesNotMatch(sidebarContent(sample), /No new progress|Published evidence remains available/);
+    sample.collections[0].indexActivity.phase = 'waiting_capacity';
+    assert.match(sidebarContent(sample), /Waiting for indexing capacity/);
+    sample.collections[0].indexActivity.phase = 'waiting_collection';
+    assert.match(sidebarContent(sample), /This project is already indexing in another window or process/);
 });
 
 test('CLI getting-started note reports setup failures and keeps repair behind workspace trust', () => {

@@ -4,13 +4,78 @@ use rusqlite::Connection;
 use std::fs;
 
 #[test]
+fn collection_workers_preserve_foreign_claims_and_reject_foreign_mutations() -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let queue = Queue::new(directory.path());
+    queue.enqueue("a", "root-a", false, true, false, 1)?;
+    queue.enqueue("b", "root-b", false, true, false, 2)?;
+    let a = queue.worker_lock("a")?.unwrap();
+    let running_a = queue.claim(&a, 3)?.unwrap();
+    assert!(queue.worker_lock("a")?.is_none());
+    let b = queue.worker_lock("b")?.unwrap();
+    let running_b = queue.claim(&b, 3)?.unwrap();
+    assert_eq!(running_b.collection, "b");
+    assert_eq!(queue.status("a", "root-a")?.unwrap().running_revision, 1);
+    assert!(queue.finish(&b, &running_a, 4, Ok("{}")).is_err());
+    assert!(queue.defer(&b, &running_a).is_err());
+    assert!(queue.block_semantic(&b, &running_a, "foreign").is_err());
+    assert!(queue.finish_scan(&b, &running_a, 4, None).is_err());
+    assert!(queue.forget_locked(&b, "a", "root-a").is_err());
+    queue.pause("a", "root-a", true)?;
+    queue.finish(&b, &running_b, 4, Ok("{}"))?;
+    drop(a); // Simulate an abandoned claim; only A may recover it.
+    let a = queue.worker_lock("a")?.unwrap();
+    assert!(queue.claim(&a, 5)?.is_none());
+    assert_eq!(queue.status("a", "root-a")?.unwrap().running_revision, 0);
+    assert_eq!(queue.status("b", "root-b")?.unwrap().completed_revision, 1);
+    queue.pause("a", "root-a", false)?;
+    assert_eq!(queue.claim(&a, 10000)?.unwrap().collection, "a");
+    assert!(queue.worker_lock("../escape").is_err());
+    Ok(())
+}
+
+#[test]
+fn legacy_worker_and_collection_workers_exclude_each_other() -> anyhow::Result<()> {
+    use std::fs::OpenOptions;
+    let directory = tempfile::tempdir()?;
+    let queue = Queue::new(directory.path());
+    let old = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(directory.path().join("scheduler-1.2-worker.lock"))?;
+    old.try_lock()?;
+    let error = queue
+        .worker_lock("a")
+        .err()
+        .expect("old worker excludes new workers");
+    assert!(error.to_string().contains("older AIRK indexing worker"));
+    old.unlock()?;
+    let a = queue.worker_lock("a")?.unwrap();
+    let b = queue.worker_lock("b")?.unwrap();
+    assert!(matches!(
+        old.try_lock(),
+        Err(std::fs::TryLockError::WouldBlock)
+    ));
+    drop(a);
+    assert!(matches!(
+        old.try_lock(),
+        Err(std::fs::TryLockError::WouldBlock)
+    ));
+    drop(b);
+    old.try_lock()?;
+    Ok(())
+}
+
+#[test]
 fn completion_history_binds_coalesced_revisions_and_expires_without_misreporting()
 -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let queue = Queue::new(directory.path());
     let first = queue.enqueue("fixture", "workspace", true, true, false, 1)?;
     let second = queue.enqueue("fixture", "workspace", false, true, false, 2)?;
-    let worker = queue.worker_lock()?.unwrap();
+    let worker = queue.worker_lock("fixture")?.unwrap();
     let full = queue.claim(&worker, 2)?.unwrap();
     assert!(full.full);
     queue.finish(&worker, &full, 3, Ok(r#"{"path_scoped":false}"#))?;
@@ -94,7 +159,7 @@ fn hinted_queue_preserves_concurrent_events_and_bypasses_only_settled_debounce()
         true,
     )?;
     assert_eq!(first.paths, Some(vec!["a.rs".into()]));
-    let worker = queue.worker_lock()?.unwrap();
+    let worker = queue.worker_lock("fixture")?.unwrap();
     let running = queue
         .claim(&worker, 10)?
         .expect("settled request is immediately due");
@@ -257,7 +322,7 @@ fn retired_root_rejects_queue_access_even_without_a_database() -> anyhow::Result
             .enqueue("fixture", "workspace", false, true, false, 1)
             .is_err()
     );
-    assert!(queue.worker_lock().is_err());
+    assert!(queue.worker_lock("fixture").is_err());
     Ok(())
 }
 
@@ -276,7 +341,7 @@ fn manual_inventory_during_a_running_hint_pass_cannot_complete_with_that_pass() 
         Some(&["one.rs".into()]),
         true,
     )?;
-    let worker = queue.worker_lock()?.unwrap();
+    let worker = queue.worker_lock("fixture")?.unwrap();
     let running = queue.claim(&worker, 1)?.unwrap();
     let requested =
         queue.enqueue_selected("fixture", "workspace", false, true, true, 2, None, true)?;

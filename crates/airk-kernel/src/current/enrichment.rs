@@ -389,9 +389,10 @@ impl Kernel {
     }
 
     fn semantic_failure(&self, error: anyhow::Error) -> anyhow::Error {
-        if error
-            .downcast_ref::<crate::CurrentGateContention>()
-            .is_some()
+        if error.is::<crate::execution::CapacityBusy>()
+            || error
+                .downcast_ref::<crate::CurrentGateContention>()
+                .is_some()
         {
             // A reader may release its gate before this handler runs. Temporary
             // publication exclusion must not become durable semantic failure.
@@ -537,8 +538,13 @@ impl Kernel {
             .map_err(|error| self.semantic_failure(error))?;
         let read = self.store.current_read(&scope)?;
         let mut report = self.semantic_report(&read, &stats, started)?;
-        report.yield_to_source =
-            airk_store::scheduler::Queue::new(&self.data_root).has_pending_source()?;
+        report.yield_to_source = airk_store::scheduler::Queue::new(&self.data_root)
+            .status(&self.collection, &self.root_id())?
+            .is_some_and(|job| {
+                job.requested_revision > job.completed_revision
+                    && !job.blocked
+                    && (!job.paused || job.manual)
+            });
         report.current = Some(current_work);
         report.maintenance_error = result.maintenance_error;
         Ok((result.generation, report))
@@ -588,10 +594,9 @@ impl Kernel {
             let job = airk_store::scheduler::Queue::new(&self.data_root)
                 .status(&self.collection, &self.root_id())?;
             if max_batches <= 8
-                && (job.as_ref().is_some_and(|job| {
+                && job.as_ref().is_some_and(|job| {
                     job.paused || job.blocked || job.requested_revision > job.completed_revision
-                }) || (batch > 0
-                    && airk_store::scheduler::Queue::new(&self.data_root).has_pending_source()?))
+                })
             {
                 break;
             }

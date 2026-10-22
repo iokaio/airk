@@ -18,10 +18,14 @@ export class IndexProgressTracker {
         const event = parseIndexProgress(line);
         if (!event || event.collection !== this.collection) { return false; }
         this.start();
+        if (event.phase.startsWith('waiting_')) {
+            this.observation = { ...this.observation!, event: { ...this.observation!.event, phase: event.phase } };
+            this.publish(this.observation); return true;
+        }
         this.observation = { event, started: this.observation!.started, updated: this.now() };
         this.publish(this.observation); return true;
     }
     waiting(): void {
-        if (this.observation) { this.observation = { ...this.observation, event: { ...this.observation.event, phase: 'waiting' } }; this.publish(this.observation); }
+        if (this.observation && !this.observation.event.phase.startsWith('waiting_')) { this.observation = { ...this.observation, event: { ...this.observation.event, phase: 'waiting' } }; this.publish(this.observation); }
     }
 }
