@@ -23,6 +23,8 @@ export interface SidebarCollection {
     indexActivity?: { phase: string; revision: string | null; processed_artifacts: number; committed_artifacts: number;
         selected_artifacts: number | null; completed_artifacts: number | null; elapsedSeconds: number; quietSeconds: number };
     semanticElapsedSeconds?: number;
+    semanticStartedAt?: number;
+    semanticProgress?: { phase: string; selected_artifacts: number | null; completed_artifacts: number | null };
     usage?: { calls: number; reduction?: string; compared: number; checkedAt: number; disabled: boolean };
 }
 export interface SidebarState {
@@ -99,11 +101,25 @@ export function sidebarContent(state: SidebarState): string {
             <p class="muted">Changing detail rebuilds evidence. The published index remains available until success. Vector selection is configured separately.</p></div>`;
         const semantic = item.vectors?.semantic_readiness;
         const discovery = item.vectors?.discovery_readiness;
+        const semanticRunning = item.semanticElapsedSeconds !== undefined;
+        const semanticTotal = item.semanticProgress?.selected_artifacts ?? semantic?.selected_artifacts;
+        const semanticDone = item.semanticProgress?.phase === 'enrichment_committed'
+            ? item.semanticProgress.completed_artifacts ?? semantic?.completed_artifacts
+            : semantic?.completed_artifacts;
+        const semanticRemaining = semanticTotal !== undefined && semanticDone !== undefined
+            ? Math.max(0, semanticTotal - semanticDone) : undefined;
+        const semanticPercent = semanticTotal && semanticDone !== undefined
+            ? Math.min(semantic?.state === 'ready' ? 100 : 99, Math.round(100 * semanticDone / semanticTotal)) : undefined;
+        const semanticStage = item.semanticProgress?.phase === 'enrichment_started'
+            ? `Preparing up to ${Math.min(32, semanticRemaining ?? 32)} files`
+            : item.semanticProgress?.phase === 'enrichment_prepared' ? 'Computing vectors and publishing this batch'
+            : item.semanticProgress?.phase === 'enrichment_committed' ? 'Batch published; preparing the next batch'
+            : 'Starting the next semantic batch';
         const discoveryLabel = discovery?.state === 'pending' || discovery?.state === 'partial'
             ? `Discovery ${discovery.state}: ${discovery.committed_artifacts} files committed; total still unknown`
             : discovery?.state === 'failed' ? `Discovery stopped after ${discovery.committed_artifacts} committed files` : '';
         const semanticLabel = semantic?.state === 'pending' || semantic?.state === 'partial'
-            ? `Semantic ${semantic.state}: ${semantic.completed_artifacts} of ${semantic.selected_artifacts} selected files complete`
+            ? `Semantic indexing${semanticPercent !== undefined ? ` ${semanticPercent}%` : ''}: ${semanticDone} of ${semanticTotal} selected files complete${semanticRemaining !== undefined ? `; ${semanticRemaining} remaining` : ''}`
             : semantic?.state === 'failed' ? `Semantic enrichment failed: ${semantic.completed_artifacts} of ${semantic.selected_artifacts} selected files complete`
             : semantic?.state === 'ready' ? (discovery && discovery.state !== 'ready'
                 ? 'Semantic evidence ready for committed files; discovery incomplete' : 'Semantic evidence ready') : '';
@@ -111,8 +127,9 @@ export function sidebarContent(state: SidebarState): string {
             <label class="toggle"><input id="${escape(item.collection)}-vectors" type="checkbox" role="switch" ${attributes} data-vectors="true"${item.vectors?.enabled !== false ? ' checked' : ''}${disabled || !item.vectors || indexing || state.changingStorage ? ' disabled' : ''}> Include meaning-based matches</label>
             <p class="muted">On by default. Combines local vector search with keyword results. First setup downloads about 91 MB of model files; your source files stay on this machine. Uses CPU and additional index storage.</p>
             <p role="status">${escape(item.vectorProgress ?? (!item.vectors ? 'Loading vector setting...' : !item.vectors.enabled ? 'Off: keyword search' : item.vectors.pending_reindex ? 'On: waiting for model setup and indexing' : `On: ${item.vectors.indexed_vectors} indexed vectors`))}</p>
-            ${semanticLabel ? `<p class="muted" role="status">${escape(semanticLabel)}</p>` : ''}
-            ${item.semanticElapsedSeconds !== undefined ? `<p class="muted" role="status">Semantic batch running for ${escape(Math.floor(item.semanticElapsedSeconds / 60))}m ${escape(item.semanticElapsedSeconds % 60)}s. Published evidence remains available while this batch runs; a batch stops after twenty minutes.</p>` : ''}
+            ${semanticLabel ? `<p class="semantic-summary" role="status">${escape(semanticLabel)}</p>` : ''}
+            ${semanticPercent !== undefined && (semantic?.state === 'pending' || semantic?.state === 'partial') ? `<progress class="semantic-progress" max="${escape(semanticTotal!)}" value="${escape(semanticDone!)}" aria-label="Published semantic indexing progress">${escape(semanticPercent)}%</progress>` : ''}
+            ${semanticRunning ? `<p class="semantic-running" role="status">${escape(semanticStage)} <span class="semantic-elapsed" aria-live="off"${item.semanticStartedAt !== undefined ? ` data-semantic-started="${escape(item.semanticStartedAt)}"` : ''}>${escape(Math.floor(item.semanticElapsedSeconds! / 60))}m ${escape(item.semanticElapsedSeconds! % 60)}s</span></p><p class="muted">Published evidence remains available while this batch runs.</p>${item.semanticElapsedSeconds! >= 180 ? '<p class="muted">This batch has taken longer than usual. It stops after twenty minutes; check Diagnose &amp; Repair if it fails.</p>' : ''}` : ''}
             ${discoveryLabel ? `<p class="muted" role="status">${escape(discoveryLabel)}</p>` : ''}
             ${discovery?.failure ? `<p class="error">${escape(discovery.failure.slice(0, 300))}</p>` : ''}
             ${semantic?.failure ? `<p class="error">${escape(semantic.failure.slice(0, 300))}</p>` : ''}
@@ -177,6 +194,7 @@ export function renderSidebar(state: SidebarState): string {
     *{box-sizing:border-box}body{margin:0;padding:12px;font-family:var(--vscode-font-family);font-size:var(--vscode-font-size);color:var(--vscode-foreground);background:var(--vscode-sideBar-background);line-height:1.45}
     header{margin:0 0 16px}h1{font-size:18px;margin:0}h2,h3{font-size:13px;margin:0 0 6px;font-weight:600}.mcp{margin-top:14px;padding-top:12px;border-top:1px solid var(--vscode-panel-border)}.mcp p{margin:6px 0}.toggle{display:flex;align-items:center;gap:6px}.toggle input{accent-color:var(--vscode-button-background)}section,details{margin:0 0 12px;padding:12px;border:1px solid var(--vscode-widget-border,var(--vscode-panel-border));border-radius:5px}section details{padding:0;border:0;margin:12px 0 0}
     .heading{display:flex;flex-wrap:wrap;gap:6px;justify-content:space-between}.badge{font-size:11px;color:var(--vscode-descriptionForeground)}.working{color:var(--vscode-progressBar-background)}.working::before{content:'●';margin-right:4px}
+    .semantic-summary{font-weight:600}.semantic-progress{height:8px}.semantic-running::before{content:'';display:inline-block;width:10px;height:10px;margin-right:7px;border:2px solid var(--vscode-progressBar-background);border-right-color:transparent;border-radius:50%;vertical-align:-1px;animation:semantic-spin .7s linear infinite}@keyframes semantic-spin{to{transform:rotate(360deg)}}@media(prefers-reduced-motion:reduce){.semantic-running::before{animation:none;border-right-color:var(--vscode-progressBar-background)}}
     .path{overflow-wrap:anywhere;color:var(--vscode-descriptionForeground);font-size:11px;margin:4px 0 12px}.muted{color:var(--vscode-descriptionForeground);font-size:11px;margin:6px 0}.coverage{display:flex;align-items:baseline;gap:7px;flex-wrap:wrap}.coverage strong{font-size:18px}.coverage span{font-size:11px;color:var(--vscode-descriptionForeground)}progress{width:100%;height:5px;accent-color:var(--vscode-progressBar-background)}
     .metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin:12px 0}.metric strong,.metric span{display:block}.metric strong{font-size:16px}.metric span{font-size:11px;color:var(--vscode-descriptionForeground)}.row,.actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}.actions button{flex:1}.row select{flex:1;min-width:100px}button,select{font:inherit;font-size:12px;border:1px solid transparent;border-radius:2px;padding:6px 9px;min-height:28px}button{cursor:pointer;background:var(--vscode-button-background);color:var(--vscode-button-foreground)}button.secondary{background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground)}button:hover{filter:brightness(1.12)}button:disabled{opacity:.5;cursor:default}button:focus-visible,select:focus-visible,summary:focus-visible{outline:1px solid var(--vscode-focusBorder);outline-offset:2px}select{background:var(--vscode-dropdown-background);color:var(--vscode-dropdown-foreground);border-color:var(--vscode-dropdown-border)}
     summary{cursor:pointer;font-weight:600}.control{margin-top:12px}.control button{text-align:left;width:100%}.notice{padding:8px;border-left:2px solid var(--vscode-focusBorder);background:var(--vscode-textBlockQuote-background)}.error{color:var(--vscode-errorForeground);overflow-wrap:anywhere}dl{margin:8px 0}dt{font-size:11px;color:var(--vscode-descriptionForeground)}dd{margin:0 0 6px;overflow-wrap:anywhere}@media(max-width:240px){body{padding:6px}section,details{padding:8px}.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}
@@ -185,6 +203,7 @@ export function renderSidebar(state: SidebarState): string {
     function remember(){const details={};document.querySelectorAll('details').forEach(d=>details[d.id]=d.open);vscode.setState({details,scroll:window.scrollY});}
     function restore(state){if(!state)return;Object.entries(state.details||{}).forEach(([id,open])=>{const el=document.getElementById(id);if(el)el.open=open;});window.scrollTo(0,state.scroll||0);}
     restore(vscode.getState());
+    setInterval(()=>{document.querySelectorAll('[data-semantic-started]').forEach(el=>{const started=Number(el.getAttribute('data-semantic-started'));if(!Number.isFinite(started))return;const seconds=Math.max(0,Math.floor((Date.now()-started)/1000));el.textContent=Math.floor(seconds/60)+'m '+seconds%60+'s';});},1000);
     dashboard.addEventListener('toggle',remember,true);window.addEventListener('scroll',remember);
     dashboard.addEventListener('click',event=>{const button=event.target.closest('button');if(!button||button.disabled)return;if(button.dataset.action){vscode.postMessage({type:'collection',action:button.dataset.action,collection:button.dataset.collection,dataDir:button.dataset.storage});}else if(button.dataset.command){vscode.postMessage({type:'command',command:button.dataset.command});}});
     dashboard.addEventListener('change',event=>{if(event.target.dataset.vectors)vscode.postMessage({type:'vectors',collection:event.target.dataset.collection,dataDir:event.target.dataset.storage,enabled:event.target.checked});if(event.target.dataset.detail)vscode.postMessage({type:'detail',collection:event.target.dataset.collection,dataDir:event.target.dataset.storage,level:event.target.value});if(event.target.id==='mode')vscode.postMessage({type:'mode',value:event.target.value});if(event.target.id==='registration')vscode.postMessage({type:'registration',enabled:event.target.checked});});

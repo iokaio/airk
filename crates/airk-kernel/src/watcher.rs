@@ -36,10 +36,12 @@ pub struct WatchReport {
 struct Binding {
     owner: String,
     roots: Vec<PathBuf>,
+    prefixes: BTreeMap<PathBuf, String>,
 }
 struct Dirty {
     first: Instant,
     last: Instant,
+    paths: Option<BTreeSet<String>>,
 }
 
 pub struct NativeWatcher {
@@ -144,11 +146,33 @@ impl NativeWatcher {
     fn dirty(&mut self, collection: &str, at: Instant) {
         self.dirty
             .entry(collection.into())
-            .and_modify(|dirty| dirty.last = at)
+            .and_modify(|dirty| {
+                dirty.last = at;
+                dirty.paths = None;
+            })
             .or_insert(Dirty {
                 first: at,
                 last: at,
+                paths: None,
             });
+    }
+
+    fn hint(&mut self, collection: &str, paths: Vec<String>, at: Instant) {
+        let dirty = self
+            .dirty
+            .entry(collection.into())
+            .or_insert_with(|| Dirty {
+                first: at,
+                last: at,
+                paths: Some(BTreeSet::new()),
+            });
+        dirty.last = at;
+        if let Some(selected) = dirty.paths.as_mut() {
+            selected.extend(paths);
+            if selected.len() > 1024 || selected.iter().map(String::len).sum::<usize>() > 1 << 20 {
+                dirty.paths = None;
+            }
+        }
     }
 
     /// Call before each worker tick. No source bytes are read or written here.
@@ -179,10 +203,17 @@ impl NativeWatcher {
                         "registered workspace root identity changed"
                     );
                     let mut roots = vec![kernel.root().to_path_buf()];
-                    roots.extend(kernel.configured_roots()?.values().map(PathBuf::from));
+                    let mut prefixes =
+                        BTreeMap::from([(kernel.root().to_path_buf(), String::new())]);
+                    for (alias, root) in kernel.configured_roots()? {
+                        let root = PathBuf::from(root);
+                        roots.push(root.clone());
+                        prefixes.insert(root, format!("@{alias}/"));
+                    }
                     Ok(Binding {
                         owner: job.root.clone(),
                         roots,
+                        prefixes,
                     })
                 })();
                 match binding {
@@ -259,10 +290,26 @@ impl NativeWatcher {
                             .any(|root| relevant(path, root, &self.managed_path))
                     })
                 })
-                .map(|(collection, _)| collection.clone())
+                .map(|(collection, binding)| {
+                    let selected = paths
+                        .iter()
+                        .filter(|path| {
+                            binding
+                                .roots
+                                .iter()
+                                .any(|root| relevant(path, root, &self.managed_path))
+                        })
+                        .map(|path| logical_hint(path, binding))
+                        .collect::<Option<Vec<_>>>();
+                    (collection.clone(), selected)
+                })
                 .collect();
-            for collection in affected {
-                self.dirty(&collection, at);
+            for (collection, selected) in affected {
+                if let Some(selected) = selected {
+                    self.hint(&collection, selected, at);
+                } else {
+                    self.dirty(&collection, at);
+                }
             }
         }
         let recovering = self.overflow.swap(false, Ordering::AcqRel);
@@ -293,13 +340,19 @@ impl NativeWatcher {
                     "registered workspace root identity changed"
                 );
                 kernel.configured_roots()?; // Alias targets must retain their canonical binding.
-                queue.enqueue(
+                let paths = dirty
+                    .paths
+                    .as_ref()
+                    .map(|paths| paths.iter().cloned().collect::<Vec<_>>());
+                queue.enqueue_selected(
                     &job.collection,
                     &job.root,
                     false,
                     false,
                     true,
                     u64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis())?,
+                    paths.as_deref(),
+                    true,
                 )?;
                 Ok(())
             })();
@@ -324,6 +377,22 @@ impl NativeWatcher {
             errors,
         })
     }
+}
+
+fn logical_hint(path: &Path, binding: &Binding) -> Option<String> {
+    let path = PathBuf::from(path.to_str()?.trim_start_matches(r"\\?\"));
+    for (root, prefix) in &binding.prefixes {
+        let root = PathBuf::from(root.to_str()?.trim_start_matches(r"\\?\"));
+        if !comparison_path(&path).starts_with(comparison_path(&root)) {
+            continue;
+        }
+        let relative: PathBuf = path.components().skip(root.components().count()).collect();
+        if relative.as_os_str().is_empty() {
+            return None;
+        }
+        return Some(format!("{prefix}{}", relative.to_str()?.replace('\\', "/")));
+    }
+    None
 }
 
 fn push_error(errors: &mut Vec<String>, error: String) {

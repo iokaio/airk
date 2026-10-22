@@ -49,7 +49,7 @@ async function waitForFixture<T>(pending: Promise<T>, label: string, details: ()
 }
 
 test('extension continues semantic work without a service, survives transient publication contention and blocks real failures', { timeout: 20000 }, async () => {
-    for (const scenario of ['index', 'reopen', 'close', 'native-busy', 'helper-busy', 'post-busy', 'permission', 'post-permission', 'integrity', 'untyped-busy']) {
+    for (const scenario of ['index', 'reopen', 'manual-edit', 'reported', 'close', 'native-busy', 'helper-busy', 'post-busy', 'permission', 'post-permission', 'integrity', 'untyped-busy']) {
         const reopen = scenario !== 'index';
         const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'airk-semantic-editor-'));
         const root = path.join(directory, 'Project'), storage = path.join(directory, 'Host');
@@ -58,6 +58,9 @@ test('extension continues semantic work without a service, survives transient pu
         const disposable = { dispose() {} }, event = () => disposable;
         let dashboard: any, completed = reopen ? 32 : 65, scans = 0, batches = 0, attempts = 0;
         let statusBusy = false, readFailureInjected = false, statusReadsWhileBusy = 0;
+        let statusReadsAfterBatch = 0;
+        let coverageReads = 0;
+        let sourceNotifications = 0;
         const errors: string[] = [], output: string[] = [];
         const stub = {
             workspace: { isTrusted: true, workspaceFolders: [{ name: 'Project', uri: { scheme: 'file', fsPath: root } }],
@@ -85,7 +88,9 @@ test('extension continues semantic work without a service, survives transient pu
                 return new native.NativeProcessError('/fixture/airk', Object.assign(new Error('Command failed'), { code: 1 }), untyped ? message :
                     JSON.stringify({ airk_error: 1, code: permission ? 'operation_failed' : 'current_gate_busy', retryable: !permission, message }), 20, 300000);
             };
+            if (command === 'collections' && extra[0] === 'prepare-rebuild') { return false; }
             if (command === 'collections' && extra[0] === 'vectors') {
+                if (batches) { statusReadsAfterBatch++; }
                 if (statusBusy) { statusReadsWhileBusy++; throw gateFailure(false); }
                 if (batches === 1 && !readFailureInjected && ['post-busy', 'post-permission', 'integrity'].includes(scenario)) {
                     readFailureInjected = true;
@@ -98,18 +103,32 @@ test('extension continues semantic work without a service, survives transient pu
                         selected_artifacts: 65, completed_units: completed, selected_units: 65, failure: null } };
             }
             if (command === 'index') {
-                assert.deepEqual(extra, ['--progress', '--scheduled']); scans++; completed = 32;
+                if (scenario === 'reported') {
+                    assert.deepEqual(extra, ['--progress', '--scheduled', '--coalesced', '--automatic', '--paths', 'edited.rs']);
+                    scans++;
+                    return { generation: 3, indexed: 1, reused: 0, removed: 0, skipped: [], path_scoped: true };
+                }
+                assert.deepEqual(extra, ['--progress', '--scheduled', '--coalesced']); scans++; completed = 32;
                 return { generation: 1, indexed: 65, reused: 0, removed: 0, skipped: [] };
             }
             if (command === 'semantic') {
-                assert.deepEqual(extra, ['run', '--scheduled']); attempts++;
+                assert.deepEqual(extra, ['run', '--scheduled', '--progress']); attempts++;
                 if (scenario === 'native-busy' && attempts === 1) { statusBusy = true; return { state: 'busy', error: null }; }
                 if (attempts === 1 && ['helper-busy', 'permission', 'untyped-busy'].includes(scenario)) { throw gateFailure(scenario === 'permission', scenario === 'untyped-busy'); }
                 statusBusy = false;
                 batches++; completed = Math.min(65, completed + 32);
+                if (scenario === 'manual-edit' && attempts === 1) { dashboard.controller.changed({ fsPath: path.join(root, 'changed.txt') }, true); }
+                if (scenario === 'reported') {
+                    return { state: 'enriched', report: { generation: batches, indexed: 0, reused: 0, removed: 0, skipped: [],
+                        publish_us: 1000, embedding_inference_us: 400, indexed_vectors: completed,
+                        semantic_readiness: { state: completed < 65 ? 'partial' : 'ready', completed_artifacts: completed,
+                            selected_artifacts: 65, completed_units: completed, selected_units: 65, failure: null } } };
+                }
                 return { state: 'enriched', error: null };
             }
             assert.notEqual(command, 'service', 'The extension must not install a background service');
+            if (command === 'schedule') { sourceNotifications++; }
+            if (command === 'coverage') { coverageReads++; }
             return { scan_complete: true, eligible: 65, current: 65, indexed: true };
         });
         const loader = Module as unknown as { _load: (...args: any[]) => any }, original = loader._load;
@@ -164,6 +183,21 @@ test('extension continues semantic work without a service, survives transient pu
             assert.equal(batches, 2); assert.equal(scans, reopen ? 0 : 1);
             assert.equal(attempts, ['native-busy', 'helper-busy'].includes(scenario) ? 3 : 2);
             assert.equal(statusReadsWhileBusy, 0, 'A native busy outcome must yield before another status read');
+            if (scenario === 'manual-edit') { assert.equal(sourceNotifications, 0, 'Manual-mode edits cannot create native automatic source jobs or strand existing semantic work'); }
+            if (scenario === 'reported') {
+                assert.equal(statusReadsAfterBatch, 0, 'Returned readiness avoids another helper process');
+                assert.ok(output.some(line => /publication\/drain 1\.0 ms.*inference 0\.4 ms/.test(line)));
+                const inventories = coverageReads;
+                dashboard.controller.scheduler.configure({ mode: 'debounced', quietMs: 0, idleMs: 0, maxDelayMs: 0, minIntervalMs: 0 });
+                await fs.writeFile(path.join(root, 'edited.rs'), 'pub fn edited() {}');
+                dashboard.controller.changed({ fsPath: path.join(root, 'edited.rs') }, true);
+                const sourceDeadline = Date.now() + 2000;
+                while (scans !== 1) {
+                    assert.ok(Date.now() < sourceDeadline, 'The changed path was not submitted');
+                    await new Promise(resolve => setTimeout(resolve, 10));
+                }
+                assert.equal(coverageReads, inventories, 'An edit must not launch either of the redundant coverage inventories');
+            }
             assert.equal(readFailureInjected, scenario === 'post-busy');
             assert.equal(dashboard.controller.sidebarState().collections[0].vectors.semantic_readiness.completed_artifacts, 65);
             assert.deepEqual(errors, []);
@@ -228,6 +262,7 @@ test('storage picker holds startup indexing, waits for active writes, and restor
         const native = require('../native'), priorPrepare = native.prepareHelper, priorRun = native.runJson;
         native.prepareHelper = async () => '/fixture/airk';
         native.runJson = async (spec: { dataDir: string }, command: string, extra: string[] = []) => {
+            if (command === 'collections' && extra[0] === 'prepare-rebuild') { return false; }
             if (command === 'collections' && extra[0] === 'vectors') { return { enabled: false, published: false, indexed_vectors: 0, pending_reindex: false, default_search_mode: 'lexical' }; }
             if (command === 'index') {
                 indexed.push(spec.dataDir); indexStarted();
@@ -372,6 +407,7 @@ test('trusted MCP definitions ignore workspace storage overrides and reconnect w
     const calls: string[] = [];
     native.prepareHelper = async () => '/fixture/airk';
     native.runJson = async (_spec: unknown, command: string, extra: string[] = []) => {
+        if (command === 'collections' && extra[0] === 'prepare-rebuild') { return false; }
         if (command === 'collections' && extra[0] === 'vectors') {
             return { enabled: false, published: false, indexed_vectors: 0, pending_reindex: false, default_search_mode: 'lexical' };
         }
@@ -441,7 +477,8 @@ test('multi-root Index Now selects the active folder and coverage refresh never 
     roots.push(path.join(roots[1], 'Nested')); await fs.mkdir(roots[2]);
     const commands = new Map<string, () => Promise<unknown>>(); const state = new Map<string, unknown>();
     const disposable = { dispose() {} }, event = () => disposable;
-    let notifications = 0, choices = 0, emitters = 0, mode = 'manual', registration = true;
+    let notifications = 0, choices = 0, emitters = 0, mode = 'manual', registration = true, upgradeNext = false;
+    const upgradeMessages: string[] = [];
     let dashboard: any;
     let saved!: (document: { uri: { fsPath: string } }) => void, changed!: (uri: { fsPath: string }) => void;
     let availableMcpCommands = ['workbench.mcp.listServer'];
@@ -462,7 +499,8 @@ test('multi-root Index Now selects the active folder and coverage refresh never 
         createStatusBarItem: () => status, onDidChangeTextEditorSelection: event, onDidChangeActiveTextEditor: event,
         showQuickPick: async (items: unknown[]) => { choices++; return items[0]; },
         withProgress: async (_options: unknown, run: () => Promise<unknown>) => run(),
-        showTextDocument: async () => undefined, showErrorMessage: (error: string) => { throw new Error(error); } };
+        showTextDocument: async () => undefined, showInformationMessage: (message: string) => { upgradeMessages.push(message); },
+        showErrorMessage: (error: string) => { throw new Error(error); } };
     const stub = {
         workspace: { isTrusted: true, workspaceFolders: roots.map((root, index) => ({ name: String(index), uri: { scheme: 'file', fsPath: root } })),
             textDocuments: [path.join(roots[1], 'dirty.ts'), managedFile, path.join(roots[1], '.env'), path.join(roots[1] + '-outside', 'other.ts')]
@@ -484,6 +522,9 @@ test('multi-root Index Now selects the active folder and coverage refresh never 
     const native = require('../native'), priorPrepare = native.prepareHelper, priorRun = native.runJson, priorProbe = native.probeMcp;
     native.prepareHelper = async () => '/fixture/airk';
     native.runJson = async (spec: { root: string }, command: string, extra: string[] = []) => {
+        if (command === 'collections' && extra[0] === 'prepare-rebuild') {
+            const upgraded = upgradeNext; upgradeNext = false; return upgraded;
+        }
         if (command === 'collections' && extra[0] === 'vectors') { return { enabled: false, published: false, indexed_vectors: 0, pending_reindex: false, default_search_mode: 'lexical' }; }
         calls.push({ spec, command, extra });
         return command === 'index' ? { generation: 1, indexed: 1, reused: 0, removed: 0, skipped: [] }
@@ -561,6 +602,11 @@ test('multi-root Index Now selects the active folder and coverage refresh never 
         assert.equal(calls.filter(call => call.command === 'index').at(-1)!.spec.root, await fs.realpath(roots[0]),
             'The dashboard button targets its card, not the different active editor folder');
         assert.equal(choices, beforeChoice, 'Indexing from a card does not open a collection picker');
+        upgradeNext = true;
+        await receive({ type: 'collection', action: 'index', collection, dataDir });
+        assert.ok(calls.filter(call => call.command === 'index').at(-1)!.extra.includes('--full'),
+            'An incremental Index Now becomes a full pass after format replacement');
+        assert.match(upgradeMessages.at(-1)!, /older collection format detected; rebuilding/);
         await assert.rejects(receive({ type: 'collection', action: 'index', collection, dataDir: '/old/storage' }), /storage changed/);
         const beforeInvalid = calls.length;
         await receive({ type: 'command', command: 'workbench.action.terminal.sendSequence' });
@@ -662,6 +708,7 @@ test('Manage Agent Connections selects Codex, creates only on request, and refus
     const native = require('../native'), priorPrepare = native.prepareHelper, priorRun = native.runJson, priorProbe = native.probeMcp;
     native.prepareHelper = async () => '/fixture/airk';
     native.runJson = async (_spec: unknown, command: string, extra: string[] = []) => {
+        if (command === 'collections' && extra[0] === 'prepare-rebuild') { return false; }
         if (command === 'collections' && extra[0] === 'vectors') { return { enabled: false, published: false, indexed_vectors: 0, pending_reindex: false, default_search_mode: 'lexical' }; }
         if (command === 'index') { indexes++; return { generation: 1, indexed: 1, reused: 0, removed: 0, skipped: [] }; }
         return { scan_complete: true, eligible: 1, current: 1, indexed: true };
@@ -783,6 +830,7 @@ test('coverage and indexing share native writer exclusion and command failures r
     vectorModel.prepareVectorModel = async () => { assert.equal(vectorsEnabled, true); preparations++; };
     native.prepareHelper = async () => '/fixture/airk';
     native.runJson = async (_spec: unknown, command: string, extra: string[] = []) => {
+        if (command === 'collections' && extra[0] === 'prepare-rebuild') { return false; }
         if (command === 'collections' && extra[0] === 'vectors') {
             if (extra[1] === 'set') { vectorsEnabled = extra[3] === 'true'; }
             return { enabled: vectorsEnabled, published: vectorsEnabled, indexed_vectors: vectorsEnabled ? 1 : 0, pending_reindex: false, default_search_mode: vectorsEnabled ? 'hybrid' : 'lexical' };

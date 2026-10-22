@@ -2,16 +2,11 @@
 //! Materialization of current-index candidates against retained exact evidence.
 //! Runtime routing and capability responses remain separate S8 work.
 use airk_core::{Hit, SearchQuery};
-use airk_retrieval::{
-    bounded::Charge,
-    current_lexical::{
-        CurrentLexicalCandidates, LexicalManifest, VerifiedCurrentLexical, stable_id,
-    },
-    terms, truncate_utf8,
-};
+use airk_retrieval::{terms, truncate_utf8};
 use airk_store::{
     FileStore,
-    current::{CurrentHead, CurrentRead, CurrentScope, CurrentToken, TransactionPhase},
+    current::lexical::{CurrentLexicalCandidates, stable_id},
+    current::{CurrentRead, CurrentScope, CurrentToken, TransactionPhase},
     quota::Quota,
 };
 use anyhow::{Context, Result, ensure};
@@ -45,14 +40,6 @@ pub struct CurrentRecovery {
     pub maintenance_error: Option<String>,
 }
 
-fn verify_physical_lexical(store: &FileStore, head: &CurrentHead, bytes: &[u8]) -> Result<()> {
-    let manifest = LexicalManifest::decode(bytes, head.lexical_commit)?;
-    manifest.verify(
-        &store.directory().join(head.lexical_directory_name()?),
-        head.lexical_commit,
-    )
-}
-
 /// Resolve Ready, Prepared or Applying after a writer restart. Prepared may be
 /// abandoned only while its original current files still verify; Applying is
 /// replayed or left unavailable on failure. No live source is consulted.
@@ -67,7 +54,7 @@ pub fn recover_current(
     match writer.phase()? {
         TransactionPhase::Ready => {
             let head = writer.head()?;
-            verify_physical_lexical(store, &head, &writer.committed_lexical_manifest()?)?;
+            writer.verify_current_lexical()?;
             writer.release_orphan_grants()?;
             Ok(CurrentRecovery {
                 token: head.token()?,
@@ -80,17 +67,11 @@ pub fn recover_current(
             let pending = writer
                 .pending()?
                 .context("current transaction descriptor missing")?;
-            let target = (|| {
-                let bytes = match writer.pending_lexical_manifest(&pending)? {
-                    Some(bytes) => bytes,
-                    None => writer.committed_lexical_manifest()?,
-                };
-                verify_physical_lexical(store, &pending.target, &bytes)
-            })();
+            let target = writer.verify_pending_fts(&pending);
             if let Err(error) = target {
                 if phase == TransactionPhase::Prepared {
                     let base = writer.head()?;
-                    verify_physical_lexical(store, &base, &writer.committed_lexical_manifest()?)?;
+                    writer.verify_current_lexical()?;
                     writer.abort_prepared(&pending)?;
                     return Ok(CurrentRecovery {
                         token: base.token()?,
@@ -104,7 +85,7 @@ pub fn recover_current(
             if let Err(error) = writer.mark_applying(&pending) {
                 if writer.phase()? == TransactionPhase::Prepared {
                     let base = writer.head()?;
-                    verify_physical_lexical(store, &base, &writer.committed_lexical_manifest()?)?;
+                    writer.verify_current_lexical()?;
                     writer.abort_prepared(&pending)?;
                     return Ok(CurrentRecovery {
                         token: base.token()?,
@@ -126,24 +107,26 @@ pub fn recover_current(
     }
 }
 
-/// Open only the physical Tantivy directory selected by the exact read head.
-/// The `CurrentRead` keeps the shared collection gate through subsequent
-/// search and materialization; no idle lexical handle is retained.
-pub fn open_selected_lexical(
+/// Request-scoped FTS5 reader; the current gate spans candidate materialization.
+pub struct VerifiedCurrentLexical<'a> {
+    read: &'a CurrentRead,
+}
+impl VerifiedCurrentLexical<'_> {
+    pub fn search(&self, query: &SearchQuery) -> Result<CurrentLexicalCandidates> {
+        self.read.lexical_search(query)
+    }
+}
+pub fn open_selected_lexical<'a>(
     store: &FileStore,
-    read: &CurrentRead,
-    charge: Charge,
-) -> Result<VerifiedCurrentLexical> {
+    read: &'a CurrentRead,
+) -> Result<VerifiedCurrentLexical<'a>> {
     ensure!(
         store.directory().file_name().and_then(|name| name.to_str())
             == Some(read.head().scope.collection.as_str()),
         "foreign selected current lexical collection"
     );
-    let path = store
-        .directory()
-        .join(read.head().lexical_directory_name()?);
-    let bytes = read.lexical_manifest()?;
-    VerifiedCurrentLexical::open(&path, charge, &bytes, read.head().lexical_commit)
+    read.verify_lexical()?;
+    Ok(VerifiedCurrentLexical { read })
 }
 
 pub struct CurrentLexicalEvidence {
@@ -153,7 +136,7 @@ pub struct CurrentLexicalEvidence {
     pub truncated: bool,
 }
 
-/// Verify every selected Tantivy candidate against the authenticated current
+/// Verify every selected FTS5 candidate against the authenticated current
 /// catalog, its immutable retained extraction and original source bytes. The
 /// caller must hold this read handle and its collection gate for the full call.
 pub fn materialize_lexical(
@@ -176,7 +159,7 @@ pub fn materialize_lexical(
     let mut hits = Vec::with_capacity(candidates.values.len());
     let mut truncated = candidates.incomplete;
     for candidate in candidates.values {
-        let path = &candidate.hit.citation.path;
+        let path = &candidate.citation.path;
         ensure!(
             query
                 .path_prefix
@@ -216,12 +199,10 @@ pub fn materialize_lexical(
             .get(usize::try_from(candidate.local)?)
             .context("current lexical candidate local chunk missing")?;
         ensure!(
-            artifact.content_hash == candidate.hit.citation.content_hash
-                && chunk.start_line == candidate.hit.citation.start_line
-                && chunk.end_line == candidate.hit.citation.end_line
-                && chunk.location == candidate.hit.citation.location
-                && chunk.text == candidate.hit.text
-                && !candidate.hit.truncated,
+            artifact.content_hash == candidate.citation.content_hash
+                && chunk.start_line == candidate.citation.start_line
+                && chunk.end_line == candidate.citation.end_line
+                && chunk.location == candidate.citation.location,
             "current lexical candidate differs from retained evidence"
         );
         let indexed_terms = terms(&format!("{path} {}", chunk.text));
@@ -237,7 +218,7 @@ pub fn materialize_lexical(
         remaining -= text.len();
         truncated |= cut;
         hits.push(Hit {
-            citation: candidate.hit.citation,
+            citation: candidate.citation,
             text,
             truncated: cut,
         });

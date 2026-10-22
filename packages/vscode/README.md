@@ -8,7 +8,12 @@ Everything runs on your machine. There is no cloud service, API key, Docker, Rus
 
 ## What's new in 1.2.5 (not released)
 
+Lexical retrieval now uses SQLite FTS5 alongside the existing DiskANN vector engine. **An older 1.2 index requires a full rebuild.** On Index Now or automatic indexing, AIRK detects a recognized older format, replaces its derived index and rebuilds from saved source files. The collection ID, saved settings and source files are preserved; a notification explains the upgrade. CLI users run `airk index --full`. See the [upgrade instructions](https://github.com/iokaio/airk/blob/main/docs/current-index-runtime.md#upgrading-a-tantivy-collection) and [rationale and tradeoffs](https://github.com/iokaio/airk/blob/main/docs/index-sharding-review.md#decision-replace-tantivy-with-sqlite-fts5). No indexing-speed or storage-reduction claim has been established for this replacement.
+
 MCP can start while indexing continues. Source scans publish searchable lexical evidence and facts before semantic inference runs through the existing background queue. The first batch stays small; subsequent batches adapt to publication cost to reduce repeated transaction overhead in large repositories. The dashboard shows committed progress and elapsed time, with bounded termination for stalled work. Waiting for a shared indexing worker continues the same queued request instead of failing after four minutes. Diagnostics recognize a native request that completed after an earlier editor wait failure, while keeping incomplete retained-data verification explicit. Semantic coverage remains explicit; these changes do not claim a measured speedup. See the [candidate notes](https://github.com/iokaio/airk/blob/main/docs/release-1.2.5.md) for compact replies, focused snippets, validated hashes and removal of the unsupported history tool.
+Semantic indexing also shows a completed-file progress bar, a continuous working indicator, a live batch timer and preparation/computation stages. The completed count moves only after a batch is published; search remains available while the next batch runs.
+
+Automatic edits submit known changed paths, with full reconciliation for global changes and periodic coverage checks. A settled event avoids the second native debounce; the default minimum interval is 1 s. Coverage observations run explicitly and periodically rather than before and after each edit. Semantic calls reuse the local model across up to eight durable batches with a 60 s soft budget, yielding at commit boundaries for source work or pause. AIRK output retains native timing measurements. See the [indexing feedback review](https://github.com/iokaio/airk/blob/main/docs/indexing-speed-review-2026-10-21.md) for qualification and remaining costs.
 
 ## What's new in 1.2.4
 
@@ -302,7 +307,7 @@ Reports open as formatted panels; **Open as JSON** shows the full native output.
 | `airk.index.quietMs` | `2000` | How long file changes must be quiet before an automatic batch starts. |
 | `airk.index.idleMs` | `10000` | *When idle* mode: how long the editor must also be free of typing and selection changes. |
 | `airk.index.maxDelayMs` | `30000` | *After edits settle* and *On save*: the longest continuous changes can postpone a batch. |
-| `airk.index.minIntervalMs` | `5000` | Minimum gap between automatic jobs. |
+| `airk.index.minIntervalMs` | `1000` | Minimum gap between automatic jobs; the edit quiet period still applies. |
 | `airk.storage.path` | per-user storage | Machine-scoped index folder. Read from user settings only. |
 | `airk.storage.maxBytes` | `0` (off) | Soft budget for index data in the storage folder. At the limit automatic indexing stops; Index Now can still exceed it; nothing is deleted automatically. |
 
@@ -348,3 +353,5 @@ More detail: [extension behavior and limits](https://github.com/iokaio/airk/blob
 - [Report a bug](https://github.com/iokaio/airk/issues) · [Support](https://github.com/iokaio/airk/blob/main/SUPPORT.md) · [Security policy](https://github.com/iokaio/airk/blob/main/SECURITY.md)
 
 AIRK stands for Artifact Indexing and Retrieval Kernel. Licensed under Apache-2.0; bundled dependency notices in THIRD_PARTY_NOTICES.md retain their respective terms.
+
+The 1.2.5 review candidate scopes progress to each collection and yields long queue waits as **still queued**, allowing other collections to run. It resumes the same durable request and honors Pause between joins. A format upgrade performs a full rebuild, including retained source copies, extraction payloads and captured model objects; original files and saved settings are preserved. Search snippets are focused before their response budget is charged.

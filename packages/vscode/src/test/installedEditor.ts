@@ -195,7 +195,7 @@ export async function run(): Promise<void> {
             } finally { client.close(); }
             assert.equal((await probeMcp(spec)).tools.length, 15);
         }
-        checks.push('16-tool handshake', 'MCP positive/negative retrieval', 'citation path/hash matches source', 'collection override rejected', 'path traversal rejected');
+        checks.push('15-tool handshake', 'MCP positive/negative retrieval', 'citation path/hash matches source', 'collection override rejected', 'path traversal rejected');
         if (scenario === 'same' || scenario === 'different') {
             const count = (await fs.readdir(path.join(folder, 'storage', 'collections'))).filter(name => name.startsWith('project-')).length;
             assert.equal(count, scenario === 'same' ? 1 : 2);

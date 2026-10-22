@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { NativeProcessError, NativeWriteQueue, joinScheduledIndex, parseIndexProgress, prepareHelper, probeMcp, runJson, runText } from '../native';
+import { NativeProcessError, NativeWriteQueue, joinScheduledIndex, ScheduledIndexStillQueued, parseIndexProgress, prepareHelper, probeMcp, runJson, runText } from '../native';
 import { IndexReport, LaunchSpec, collectionId } from '../model';
 import { Coverage } from '../coverage';
 
@@ -24,12 +24,12 @@ test('only a structured gate outcome with an ordinary exit authorizes contention
         committed_artifacts: 0, selected_artifacts: null, completed_artifacts: null });
     assert.equal(failure(`${progress}\n${JSON.stringify(busy)}`).retryableGateContention, true,
         'Validated index progress may precede a structured native failure');
-    assert.equal(failure(`untrusted stderr\n${JSON.stringify(busy)}`).retryableGateContention, false);
+    assert.equal(failure(`usage warning\n${JSON.stringify(busy)}`).retryableGateContention, true);
     for (const stderr of [
         'Error: current index is busy applying an update\nCaused by:\n    lock acquisition failed because the operation would block',
         JSON.stringify({ ...busy, airk_error: 2 }), JSON.stringify({ ...busy, retryable: false }),
         JSON.stringify({ ...busy, code: 'operation_failed' }), JSON.stringify({ ...busy, message: null }),
-        JSON.stringify(busy) + '\nstack backtrace:\n1: fixture', '[]', 'null', '{'
+        JSON.stringify(busy) + '\n' + JSON.stringify({airk_error: 1, retryable: 'invalid'}), '[]', 'null', '{'
     ]) { assert.equal(failure(stderr).retryableGateContention, false); }
     for (const properties of [{ code: 7 }, { code: 1, killed: true }, { code: 1, signal: 'SIGTERM' }]) {
         assert.equal(failure(JSON.stringify(busy), properties).retryableGateContention, false);
@@ -93,9 +93,11 @@ test('native process timeout identifies the limit and termination without stderr
 });
 
 test('index progress is validated and a silent native scan is stopped', async () => {
-    const event = { phase: 'base_committed', revision: 'airk-r1:fixture', processed_artifacts: 32,
+    const event = { collection: 'fixture', phase: 'base_committed', revision: 'airk-r1:fixture', processed_artifacts: 32,
         committed_artifacts: 32, selected_artifacts: 10, completed_artifacts: 4 };
     assert.deepEqual(parseIndexProgress(JSON.stringify(event)), event);
+    assert.deepEqual(parseIndexProgress(JSON.stringify({ ...event, phase: 'enrichment_prepared', revision: null })),
+        { ...event, phase: 'enrichment_prepared', revision: null });
     assert.equal(parseIndexProgress(JSON.stringify({ ...event, processed_artifacts: -1 })), undefined);
     assert.equal(parseIndexProgress('{'), undefined);
     await assert.rejects(runText(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], undefined, 5000,
@@ -178,14 +180,17 @@ test('native semantic adapter finishes bounded batches and honors saved pause wi
         const paused = await runJson<Ready>(spec, 'semantic', ['status']);
         assert.equal(paused.state, status.state); assert.equal(paused.completed_artifacts, status.completed_artifacts);
         await runJson(spec, 'schedule', ['resume']);
-        let passes = 0;
-        while (status.state !== 'ready') {
-            assert.ok(++passes <= 3, 'Semantic indexing stopped advancing');
-            assert.equal((await runJson<{state: string}>(spec, 'semantic', ['run', '--scheduled'])).state, 'enriched');
-            const next = await runJson<Ready>(spec, 'semantic', ['status']);
-            assert.equal(next.completed_artifacts, Math.min(65, status.completed_artifacts + 32));
-            status = next;
-        }
+        const committed: number[] = [];
+        const outcome = await runJson<{state: string; report: IndexReport}>(spec, 'semantic', ['run', '--scheduled', '--progress'], line => {
+            const event = parseIndexProgress(line);
+            if (event?.phase === 'enrichment_committed' && event.completed_artifacts !== null) { committed.push(event.completed_artifacts); }
+            return !!event;
+        });
+        assert.equal(outcome.state, 'enriched');
+        assert.deepEqual(committed, [32, 64, 65], 'One helper reuses its model across durable batches');
+        assert.equal(outcome.report.semantic_readiness?.state, 'ready');
+        assert.equal(typeof outcome.report.embedding_model_load_us, 'number');
+        status = await runJson<Ready>(spec, 'semantic', ['status']);
         assert.equal(status.completed_artifacts, 65);
         assert.equal((await runJson<{state: string}>(spec, 'semantic', ['run', '--scheduled'])).state, 'idle');
         assert.equal(await fs.readFile(path.join(root, 'file_64.txt'), 'utf8'), 'authenticate\n');
@@ -381,4 +386,21 @@ test('native queue waits resume the same request and reject untyped or invalid c
     let attempt = 0;
     await assert.rejects(joinScheduledIndex([], async () => { throw failure({ ...pending, requested_revision: ++attempt }); }, () => {}), /different request revision/);
     await assert.rejects(joinScheduledIndex([], async () => { throw new Error('permission denied'); }, () => { assert.fail(); }), /permission denied/);
+});
+
+
+test('queue joins yield after a bounded number and Pause prevents another join', async () => {
+    const pending = new NativeProcessError('airk', Object.assign(new Error('pending'), { code: 1 }),
+        'usage warning\n' + JSON.stringify({ airk_error: 1, code: 'scheduled_index_pending', retryable: true, requested_revision: 7, message: 'queued' }), 240000, 3600000);
+    let calls = 0;
+    await assert.rejects(joinScheduledIndex([], async () => { calls++; throw pending; }, () => {}), error => {
+        assert.ok(error instanceof ScheduledIndexStillQueued); assert.equal(error.revision, 7); return true;
+    });
+    assert.equal(calls, 3); calls = 0;
+    await assert.rejects(joinScheduledIndex([], async (command, args) => {
+        calls++; assert.equal(command, 'schedule'); assert.equal(args[1], '7'); throw pending;
+    }, () => false, 7), error => {
+        assert.ok(error instanceof ScheduledIndexStillQueued); assert.equal(error.paused, true); return true;
+    });
+    assert.equal(calls, 1);
 });

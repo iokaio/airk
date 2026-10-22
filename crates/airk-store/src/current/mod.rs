@@ -7,11 +7,13 @@ pub mod discovery;
 mod gate;
 pub mod graph;
 mod journal;
+pub mod lexical;
 pub mod maintenance;
 pub mod map;
 pub mod metadata;
 pub mod postings;
 mod read;
+mod rebuild;
 pub mod relationships;
 pub mod resources;
 pub mod vector_map;
@@ -84,7 +86,7 @@ pub struct CurrentHead {
     pub sequence: u64,
     /// Authentication root for per-artifact and keyed current mappings.
     pub artifact_root: Sha256Digest,
-    /// Sequence whose immutable Tantivy directory is selected by this head.
+    /// Sequence whose authenticated lexical state is selected by this head.
     /// Graph-only commits retain the prior lexical sequence.
     pub lexical_sequence: u64,
     pub lexical_commit: Sha256Digest,
@@ -115,10 +117,6 @@ impl CurrentHead {
             );
         }
         Ok(())
-    }
-    pub fn lexical_directory_name(&self) -> Result<String> {
-        self.validate()?;
-        Ok(format!("lexical-{}", self.lexical_sequence))
     }
     pub fn canonical_bytes(&self) -> Result<Vec<u8>> {
         self.validate()?;
@@ -209,6 +207,10 @@ impl crate::FileStore {
     /// A missing owner is empty only if no current database/bootstrap exists;
     /// malformed or interrupted ownership is never silently reset.
     pub fn current_scope(&self, root: &str, collection: &str) -> Result<Option<CurrentScope>> {
+        ensure!(
+            !self.directory().join(rebuild::MARKER).try_exists()?,
+            "FTS5 rebuild was interrupted; run airk index --full to resume"
+        );
         crate::validate_collection(collection)?;
         ensure!(
             self.directory().file_name().and_then(|name| name.to_str()) == Some(collection),

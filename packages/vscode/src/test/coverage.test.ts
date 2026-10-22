@@ -59,3 +59,16 @@ test('closing and reopening a folder discards scans for its previous storage bin
     assert.equal(coverageLabel(queue.get(spec.collection)), 'Coverage unknown');
     assert.ok(queue.get(spec.collection)?.pending); queue.dispose();
 });
+
+test('edit invalidation launches no inventory and rejects a scan that predates the edit', async () => {
+    const clock = new FakeClock(); let calls = 0; let release!: (value: Coverage) => void;
+    const queue = new CoverageQueue(async () => { calls++; return new Promise(resolve => { release = resolve; }); }, () => {}, clock);
+    queue.request(spec, true); await clock.advance(0);
+    for (let index = 0; index < 100; index++) { queue.invalidate(spec); }
+    release(report); await flush(); await clock.advance(30000);
+    assert.equal(calls, 1);
+    assert.equal(coverageLabel(queue.get(spec.collection)), 'Coverage unknown');
+    queue.request(spec, true); await clock.advance(0); release(report); await flush();
+    assert.equal(coverageLabel(queue.get(spec.collection)), '99%');
+    queue.dispose();
+});

@@ -9,7 +9,7 @@ flowchart LR
   W[Workspace files] --> I[Native ingestion and format facts]
   I --> K[Collection-scoped kernel]
   K --> S[Collection disk state]
-  S --> R[Tantivy lexical and authenticated fact retrieval]
+  S --> R[SQLite FTS5 lexical and authenticated fact retrieval]
   V[Default local embeddings and disk-backed DiskANN] --> R
   C[CLI or optional extension] --> K
   A[Coding agent] --> M[Read-only stdio MCP]
@@ -24,15 +24,17 @@ flowchart LR
 |---|---|---|
 | airk-core | Artifact/query/fact/citation contracts; storage and embedding traits | None |
 | airk-ingest | Ignore-aware discovery, hashing, native grammars, document extraction/chunking | core |
-| airk-store | Content-addressed sources/extractions, authenticated SQLite catalogs/postings/graph records, usage ledgers, durable intents, locks, quotas, relocation and current-object cleanup | core |
-| airk-retrieval | Persistent Tantivy, local word-vector/ONNX inference, mutable DiskANN algorithms, rank fusion and response budgets | core |
-| airk-kernel | Collection-scoped publication, retrieval, coverage, scheduling, usage and maintenance services | core, ingest, store, retrieval |
+| airk-store | Content-addressed sources/extractions, authenticated SQLite catalogs/FTS5/postings/graph records, usage ledgers, durable intents, locks, quotas, relocation and current-object cleanup | core |
+| airk-retrieval | Local word-vector/ONNX inference, mutable DiskANN algorithms and retrieval primitives | core |
+| airk-kernel | Collection-scoped publication, retrieval/rank fusion, response budgets, coverage, scheduling, usage and maintenance services | core, ingest, store, retrieval |
 | airk-mcp | Schemas, official SDK transport and result conversion | core, kernel |
 | airk-cli | Commands, native client setup and lifecycle | core, kernel, mcp |
 
-Core must remain free of parser, filesystem, inference and transport implementations. Adapters call kernel services rather than bypassing validation or collection scope. MemoryStore is an available in-memory snapshot adapter; the CLI kernel uses FileStore with the current SQLite/DiskANN store and head-bound Tantivy segments.
+Core must remain free of parser, filesystem, inference and transport implementations. Adapters call kernel services rather than bypassing validation or collection scope. MemoryStore is an available in-memory snapshot adapter; the CLI kernel uses FileStore with current SQLite FTS5/DiskANN storage.
 
 The [single-current-index foundation](current-index-foundation.md) provides neutral authenticated graph contracts in core, a mutable DiskANN provider in retrieval and owner-scoped journal, gate and quota support in store. S8 integrates it into normal indexing and request routing at the 1.2 rebuild-only boundary. Production routes use current publication and recovery, with no old-format reader or migration.
+
+The 1.2.5 lexical replacement rationale and tradeoffs are recorded in the [FTS5 decision](index-sharding-review.md#decision-replace-tantivy-with-sqlite-fts5). Database format 126 requires a full rebuild of older Tantivy indexes. Extension indexing detects recognized older formats and requests that rebuild automatically; CLI users request `index --full`. The rebuild keeps the collection ID and saved settings, discards only owned derived state under the writer/request gates, and resumes interrupted deletion from a durable marker.
 
 The [1.2 current-index contract](current-index-runtime.md) is authoritative for production storage, publication and request lifetimes. The v2 publication/history documents describe retired 1.1 implementations; store-level tests retain those primitive contracts, but the kernel does not use them as compatibility readers.
 
@@ -40,9 +42,11 @@ The [1.2 current-index contract](current-index-runtime.md) is authoritative for 
 
 Each canonical owner root and collection selects an isolated current store. Explicit additional roots retain their citation aliases in authenticated applied configuration. Scanning uses shared discovery/source/extraction budgets, hashes saved sources and selects a complete extraction profile before reuse. Bounded workers perform pure extraction on captured inputs. The coordinator binds path-free payloads and retains source/extraction objects. Full reindexing bypasses extraction reuse.
 
+The 1.2.5 scoped-update path hashes only admitted hinted files and retains other committed bindings. It applies ordinary ignores, protected reads, extraction policy and merged-corpus budgets. Missing exact hinted paths can be retired after reconciliation; directory/global-policy hints, changed applied configuration and incomplete discovery require a complete scan. Durable queue hint revisions preserve concurrent events and overflow promotes to full reconciliation. Complete periodic reconciliation remains authoritative for unhinted changes. Discovery prioritizes documentation/instructions and manifests; semantic selection also favors recent durable hints, without excluding lower-priority evidence.
+
 Search Only (`essential`), Agent Lean (`agent_lean`), Rich Structure (`balanced`) and Detailed extraction remain separate from semantic vector inputs. New collections default to Agent Lean from 1.2.3; existing collections retain saved or published detail. Native structured queries disclose deliberate omissions. Imported producer assertions keep explicit source/build/provenance binding and conservative invalidation. Original document locations, mapped source coordinates, partial extraction and read byte limits remain part of every evidence contract.
 
-The current SQLite map authenticates scoped artifact, continuity, posting, model/resource and graph bindings. DiskANN remains the selected disk-backed vector engine. Indexing applies only changed artifact/posting/lexical/graph records unless a policy or model rebuild requires broader replacement. Tantivy forks immutable segment files and changes affected path documents; the current journal captures the selected manifest and exact afterimages. Empty-policy transactions and no-op scans have explicit semantics. Scheduled indexing first commits lexical and fact evidence with incompatible vectors retired, then commits bounded semantic batches with a source-bound pending manifest. Each batch uses the same current publication journal and advances the exact revision.
+The current SQLite map authenticates scoped artifact, continuity, posting, model/resource and graph bindings. DiskANN remains the selected disk-backed vector engine. Indexing applies only changed artifact/posting/lexical/graph records unless a policy or model rebuild requires broader replacement. FTS5 changes affected path documents inside the current SQLite database. Preparation applies captured changes in an admitted transaction, flushes and seals the FTS5 shadow rows, then rolls back. Prepared retains only bounded captured metadata. Applying repeats the captured updates and verifies the sealed digest before committing lexical, map, graph and head rows atomically. This does incremental work twice to preserve an exact predeclared target without copying the complete index; performance remains to be measured. Empty-policy transactions and no-op scans have explicit semantics. Scheduled indexing first commits lexical and fact evidence with incompatible vectors retired, then commits bounded semantic batches with a source-bound pending manifest. Each batch uses the same current publication journal and advances the exact revision.
 
 From 1.2.5, progressive source batches do not run semantic inference inline; the existing scheduler drains the durable semantic queue after source discovery. The first source batch targets 32 changed files or two seconds of scan time. Later count targets double up to 4,096 files, with the existing 64 MiB source-byte trigger; the scan interval adapts to four times the preceding publication duration, bounded to 2-30 seconds. Publication time itself is additional. The scheduler owns automatic retries, pause and failure blocking; reads disclose committed semantic coverage without launching work.
 
@@ -60,13 +64,13 @@ All missing prior paths in one publication share that traversal. Healthy changes
 
 ## Scheduling, cleanup and scale
 
-The 1.2.2 extension drives one native semantic batch per active trusted collection at a time after indexing and on reopen. These calls share the existing scheduler worker lock and native pause/failure policy, but do not select work from other collections. The editor queue yields between batches and refreshes readiness independently of source coverage; no service installation is required.
+The 1.2.5 extension drives bounded native semantic drains for active trusted collections after indexing and on reopen. A call reuses one model for up to eight 32-file batches with a 60 s soft budget checked between commits. These calls share the existing scheduler worker lock and native pause/failure policy without selecting another collection's jobs. New source work or pause causes a yield between batches. Capture guards defer ownership sweeps until the drain boundary; quota grants and byte authentication still apply per publication. The editor rotates ready collections without a fixed successful-drain sleep and uses returned readiness and timings; no service installation is required. The root-wide scheduler retains one semantic batch per worker turn.
 
 The native scheduler serializes submitted work and persists revisions, pause, explicit requests and blocked failures in the 1.2 namespace. Coverage remains an independent observation of saved source files. A bounded scheduler join returns a typed pending revision; adapters resume that same request without enqueueing or clearing state. The extension manages collection-scoped controls and coalesced requests; it neither implements indexing nor claims live editor buffers are indexed.
 
 The extension rechecks pending work and deadlines when its timer fires. An early callback reschedules rather than dispatching unrequested semantic work. This preserves source requests, semantic retry intervals, pause and storage-selection holds independently of wall-clock timing.
 
-Quota-admitted database growth reserves the larger SQLite bound and rollback allowance before publication. Postcommit cleanup proves current ownership before removing bounded unreferenced objects and lexical forks. `collections maintain` repeats cleanup without publishing. Active requests block destructive collection operations; idle connections do not. Fresh 1.2 collection/settings ownership isolates old indexes rather than migrating them. See [collections](collections.md), [recovery](operations.md#recovery) and [quota limits](storage-quotas.md).
+Quota-admitted database growth reserves the larger SQLite bound and rollback allowance before publication. Postcommit cleanup proves current ownership before removing bounded unreferenced objects. `collections maintain` repeats cleanup without publishing. Active requests block destructive collection operations; idle connections do not. Fresh 1.2 collection/settings ownership isolates old indexes rather than migrating them. See [collections](collections.md), [recovery](operations.md#recovery) and [quota limits](storage-quotas.md).
 
 Failed preparation retains its durable allowance until rollback/recovery is proven. Ready recovery and component preparation retire orphan allowances only under the writer and exclusive request gates with no pending journal; all candidate incarnations must validate before release. Windows writer admission separately checks for SQLite's silent read-only fallback and permits bounded reopening only for verified sharing denial. These paths preserve pending-journal capacity and never change source or filesystem permissions.
 

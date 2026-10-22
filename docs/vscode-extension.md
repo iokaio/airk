@@ -53,10 +53,10 @@ Implemented settings and commands:
 | airk.index.mode | debounced; choices manual, onSave, debounced, idle |
 | airk.index.quietMs | 2000 ms after the latest eligible change |
 | airk.index.maxDelayMs | 30000 ms before offering/beginning a queued bounded batch |
-| airk.index.minIntervalMs | Avoid repeated rebuilds during bursts |
+| airk.index.minIntervalMs | 1000 ms minimum gap between automatic jobs; the quiet period still applies |
 | airk.index.idleMs | 10000 ms without editor activity in idle mode |
 | airk.storage.maxBytes | User-selected soft total budget; never silently deletes active evidence |
-| Index Now / Reindex Collection | Immediate queued incremental update / deliberate full rebuild |
+| Index Now / Reindex Collection | Immediate queued incremental update, automatically promoted to a full rebuild for a recognized older index format / deliberate full rebuild |
 | Diagnose & Repair | Inspect the selected helper, collection readiness, queue and recent failures; verify retained data, retry, resume window indexing or confirm a rebuild |
 | Pause Auto-index / Resume | Persist native pause state and retain pending revisions; explicit indexing remains available |
 | Manage Collections / Trim | Preview usage and reclaim plan; remove selected derived state |
@@ -64,6 +64,8 @@ Implemented settings and commands:
 | Show Extraction Policy / Configure Extraction Policy | Inspect configured versus published selection; validate a bounded JSON policy and confirm saving it for the next successful index |
 
 The indexing-mode Quick Pick offers Manual, After edits settle, On save and When idle. Advanced timings remain separate settings. The footer shows active-folder coverage or scanning/indexing/failure/storage-budget state; the tooltip explains queued work and automatic pause. **AIRK: Usage & Savings** opens collection-scoped aggregate reports with explicit counterfactual-estimate labels.
+
+The 1.2.5 candidate accumulates changed paths and submits them to the native scoped-update path after the editor quiet period. It marks prior coverage out of date without launching a coverage inventory for each event or completed index. Explicit and five-minute inventories remain; a complete accepted observation of stale/missing/removed sources queues a full pass, respecting mode and pause. A scoped pass does not prove complete live coverage. Returned readiness updates the vector display, and stage timings remain in AIRK output. Bounded semantic drains reuse a model for up to eight batches and a 60 s soft budget; pause or new source work is checked between commits. An edit during a drain sends one durable queue notification so source work can take the next turn.
 
 Coverage and usage commands open themed report panels with selected metrics as cards and tables. **Open as JSON** preserves the full native diagnostic output. Panels load no workspace resources. Coverage accepts only the fixed JSON-open message. Usage & Savings additionally accepts validated fixed actions for refresh, 7/30-day selection, exports, recording, clearing, feedback, explicit imports and cost scenarios. Mutations recheck trust and captured collection/storage identity; clearing requires confirmation.
 
@@ -78,6 +80,8 @@ The managed `cli/bin` copy is recognized by a matching SHA-256 digest against th
 Each collection’s **AIRK helper check** section shows Not checked, Checking MCP, Verified with a tool count, or Verification failed with an error. **Check AIRK helper** checks the native handshake and tool inventory without waiting for indexing. If no index has been published, the check reports indexing pending; it does not claim search evidence is ready. The result and last-check time stay in the panel for this editor session; **View details** opens the cached diagnostic result. This verifies the helper, not an agent’s live connection.
 
 The collection card shows elapsed initial indexing time and native progress observations: processed files, committed files, and whether a committed publication is available to MCP. A long quiet interval is shown as a warning, not a definitive stuck diagnosis. The editor stops an index process after ten minutes with no progress event, while the one-hour total process cap still applies. Scheduled semantic batches have a twenty-minute cap. Earlier committed evidence remains available; inspect **Diagnose & Repair**, then retry or Resume after correcting a failure. MCP definition resolution no longer waits for indexing to complete. Search cannot return indexed evidence before the first publication, and incomplete discovery remains explicit in its results.
+
+While semantic indexing runs, the Vector search section shows a determinate bar and completed/remaining selected-file counts from the last committed batch. A continuously animated working indicator and updating elapsed time show that the current batch is active; native batch-stage observations distinguish preparation from vector computation and publication. The completed count advances only after a durable commit, so the bar does not invent per-file publication. The twenty-minute batch limit is surfaced there only after a batch has run for three minutes. Reduced-motion settings stop the animation without hiding the working label.
 
 Under **Agent connections**, the **VS Code registration** switch controls automatic AIRK server definitions on this extension host (`airk.mcp.registrationEnabled`, a machine-scoped user setting). Turning it off prevents new provider resolutions; it does not pause indexing, remove manual server entries or disable external agents. **Connect coding agent…** and **Manage Agent Connections** open the agent picker and setup guide. The separate **VS Code / Copilot MCP controls** button only manages VS Code connections; other agents use their own configuration.
 

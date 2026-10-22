@@ -60,6 +60,14 @@ export class CoverageQueue {
     get(collection: string): CoverageView | undefined { return this.views.get(collection); }
     configure(quietMs: number, idleMs: number): void { this.quietMs = quietMs; this.idleMs = idleMs; this.schedule(); }
     activity(): void { this.lastActivity = this.timing.now(); if (this.idleMs) { this.schedule(); } }
+    /** An edit invalidates coverage without launching a separate source inventory. */
+    invalidate(spec: LaunchSpec): void {
+        if (this.stopped) { return; }
+        this.revisions.set(spec.collection, ++this.sequence);
+        const prior = this.views.get(spec.collection);
+        this.views.set(spec.collection, { ...prior, scanning: prior?.scanning ?? false, pending: true });
+        this.changed();
+    }
     request(spec: LaunchSpec, immediate = false): void {
         if (this.stopped) { return; }
         const revision = ++this.sequence;

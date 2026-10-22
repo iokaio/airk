@@ -27,61 +27,26 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
     io::{Read, Write},
-    path::{Path, PathBuf},
+    path::Path,
 };
+
+#[path = "journal_lexical.rs"]
+mod fts;
+
+// Generic graph-journal primitives also accept opaque manifests in storage
+// contract fixtures. Production callers always use prepare_artifacts_with_fts.
+fn is_fts_manifest(bytes: &[u8]) -> Result<bool> {
+    Ok(serde_json::from_slice::<serde_json::Value>(bytes)?
+        .get("engine")
+        .and_then(|value| value.as_str())
+        == Some(super::lexical::ENGINE))
+}
 
 const MAX_DESCRIPTOR_BYTES: usize = 196_608;
 const MAX_CAPTURED_OBJECT_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 const MAX_PENDING_MAP_CHANGES: u64 = super::MAX_PENDING_MAP_CHANGES as u64;
 const MAX_PENDING_MAP_BYTES: u64 = super::MAX_PENDING_MAP_BYTES as u64;
 const BOOTSTRAP_FILE: &str = "current-bootstrap.json";
-const MAX_LEXICAL_GC_ROOT_ENTRIES: usize = 16_384;
-const MAX_LEXICAL_GC_DIRECTORIES: usize = 4_096;
-const MAX_LEXICAL_GC_FILES: usize = 32_768;
-
-fn lexical_gc_candidate(name: &str) -> Result<bool> {
-    if let Some(sequence) = name.strip_prefix("lexical-") {
-        let number: u64 = sequence
-            .parse()
-            .context("invalid lexical directory sequence")?;
-        ensure!(
-            name == format!("lexical-{number}"),
-            "noncanonical lexical directory name"
-        );
-        Ok(true)
-    } else {
-        Ok(name.starts_with(".current-lexical-"))
-    }
-}
-
-fn validate_flat_lexical_directory(path: &Path, parent: &Path) -> Result<()> {
-    let metadata = fs::symlink_metadata(path)?;
-    ensure!(
-        metadata.is_dir() && !metadata.file_type().is_symlink(),
-        "lexical candidate is not an owned directory"
-    );
-    ensure!(
-        path.canonicalize()?.parent() == Some(parent),
-        "lexical candidate leaves the owned collection directory"
-    );
-    let mut count = 0usize;
-    for entry in fs::read_dir(path)? {
-        count = count
-            .checked_add(1)
-            .context("lexical file count overflow")?;
-        ensure!(
-            count <= MAX_LEXICAL_GC_FILES,
-            "lexical file count limit exceeded"
-        );
-        let metadata = fs::symlink_metadata(entry?.path())?;
-        ensure!(
-            metadata.is_file() && !metadata.file_type().is_symlink(),
-            "lexical directory contains an unowned or nested entry"
-        );
-    }
-    Ok(())
-}
-
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Bootstrap {
@@ -380,6 +345,7 @@ fn create(connection: &Connection) -> Result<()> {
         CREATE TABLE current_pending_map(key BLOB PRIMARY KEY CHECK(typeof(key)='blob' AND length(key)=32),value BLOB CHECK(value IS NULL OR (typeof(value)='blob' AND length(value)<=262144))) WITHOUT ROWID;
         CREATE TABLE current_lexical_manifest(id INTEGER PRIMARY KEY CHECK(id=1),content BLOB NOT NULL CHECK(typeof(content)='blob' AND length(content) BETWEEN 1 AND 1048576));
         CREATE TABLE current_pending_lexical(id INTEGER PRIMARY KEY CHECK(id=1),content BLOB NOT NULL CHECK(typeof(content)='blob' AND length(content) BETWEEN 1 AND 1048576));")?;
+    super::lexical::create(connection)?;
     graph::create(connection)?;
     super::map::create(connection)
 }
@@ -645,6 +611,8 @@ pub struct CurrentWriter<'a> {
     scope: CurrentScope,
     capacity: u64,
     _gate: Gate,
+    lexical_base:
+        std::cell::RefCell<Option<(Sha256Digest, std::sync::Arc<super::lexical::Snapshot>)>>,
 }
 
 impl CurrentWriter<'_> {
@@ -656,6 +624,7 @@ impl CurrentWriter<'_> {
 struct ComponentChanges<'a> {
     map: &'a [map::MapChange],
     lexical_manifest: Option<&'a [u8]>,
+    fts: Option<&'a fts::Updates>,
 }
 
 impl FileStore {
@@ -739,6 +708,7 @@ impl FileStore {
             scope: scope.clone(),
             capacity: database_capacity_bytes,
             _gate: gate,
+            lexical_base: std::cell::RefCell::new(None),
         };
         if let Some(bootstrap) = pending_bootstrap {
             ensure!(
@@ -868,51 +838,6 @@ impl CurrentWriter<'_> {
         pending_lexical(self.connection()?, pending)
     }
 
-    /// Remove only unselected, flat lexical fork directories while the
-    /// exclusive current gate has drained readers. This is maintenance after
-    /// a Ready commit; failure does not undo an already committed head.
-    pub fn reclaim_lexical_candidates(&mut self) -> Result<usize> {
-        ensure!(
-            self.phase()? == TransactionPhase::Ready && self.pending()?.is_none(),
-            "lexical reclamation requires a ready current head"
-        );
-        let head = self.head()?;
-        committed_lexical_manifest(self.connection()?, &head)?;
-        let directory = self.store.directory();
-        let parent = directory.canonicalize()?;
-        let selected = head.lexical_directory_name()?;
-        validate_flat_lexical_directory(&directory.join(&selected), &parent)?;
-        let mut root_entries = 0usize;
-        let mut obsolete: Vec<PathBuf> = Vec::new();
-        for entry in fs::read_dir(directory)? {
-            root_entries = root_entries
-                .checked_add(1)
-                .context("collection entry count overflow")?;
-            ensure!(
-                root_entries <= MAX_LEXICAL_GC_ROOT_ENTRIES,
-                "collection entry count exceeds lexical maintenance bound"
-            );
-            let entry = entry?;
-            let name = entry.file_name();
-            let name = name.to_str().context("non-UTF-8 collection entry")?;
-            if name == selected || !lexical_gc_candidate(name)? {
-                continue;
-            }
-            ensure!(
-                obsolete.len() < MAX_LEXICAL_GC_DIRECTORIES,
-                "too many obsolete lexical directories"
-            );
-            validate_flat_lexical_directory(&entry.path(), &parent)?;
-            obsolete.push(entry.path());
-        }
-        for path in &obsolete {
-            fs::remove_dir_all(path)?;
-        }
-        if !obsolete.is_empty() {
-            crate::maintenance::sync_parent(directory)?;
-        }
-        Ok(obsolete.len())
-    }
     pub fn pending(&self) -> Result<Option<PendingTransaction>> {
         let pending = pending(self.connection()?, &self.scope)?;
         if let Some(pending) = &pending {
@@ -1039,8 +964,8 @@ impl CurrentWriter<'_> {
         grant.release(self.writer)
     }
 
-    /// Complete a fresh sequence-zero index after the verified empty Tantivy
-    /// component has been synced. A restart can retry the exact same manifest;
+    /// Complete a fresh sequence-zero index after the verified empty lexical
+    /// component has been initialized. A restart can retry the exact same manifest;
     /// readers requiring lexical evidence fail until the row exists.
     pub fn install_initial_lexical_manifest(
         &mut self,
@@ -1327,13 +1252,14 @@ impl CurrentWriter<'_> {
             inputs,
             model,
             ComponentChanges {
+                fts: None,
                 map: &[],
                 lexical_manifest: Some(lexical_manifest),
             },
         )
     }
 
-    /// Prepare changed artifact rows and a verified private Tantivy candidate
+    /// Prepare changed artifact rows and a verified lexical candidate
     /// in one durable intent. The caller supplies the sealed graph target;
     /// this method derives the exact catalog root and lexical digest. The
     /// caller must verify the physical lexical candidate before this call and
@@ -1411,6 +1337,57 @@ impl CurrentWriter<'_> {
     pub fn prepare_artifacts_with_resources(
         &mut self,
         expected: &CurrentToken,
+        target: CurrentHead,
+        graph_delta: &dyn PreparedGraphDelta,
+        update: ArtifactVectorChanges<'_>,
+        model: Option<ModelObjectSet>,
+        lexical_manifest: &[u8],
+        metadata: &[super::metadata::FileMetadataRef],
+        resources: &[super::resources::ResourceChange],
+    ) -> Result<PendingTransaction> {
+        self.prepare_artifacts_inner(
+            expected,
+            target,
+            graph_delta,
+            update,
+            model,
+            lexical_manifest,
+            metadata,
+            resources,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_artifacts_with_fts(
+        &mut self,
+        expected: &CurrentToken,
+        target: CurrentHead,
+        graph_delta: &dyn PreparedGraphDelta,
+        update: ArtifactVectorChanges<'_>,
+        model: Option<ModelObjectSet>,
+        metadata: &[super::metadata::FileMetadataRef],
+        resources: &[super::resources::ResourceChange],
+    ) -> Result<(PendingTransaction, super::lexical::LexicalWork)> {
+        let prepared = self.prepare_fts(expected, update.artifacts)?;
+        let pending = self.prepare_artifacts_inner(
+            expected,
+            target,
+            graph_delta,
+            update,
+            model,
+            &prepared.manifest,
+            metadata,
+            resources,
+            Some(&prepared.updates),
+        )?;
+        Ok((pending, prepared.work))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn prepare_artifacts_inner(
+        &mut self,
+        expected: &CurrentToken,
         mut target: CurrentHead,
         graph_delta: &dyn PreparedGraphDelta,
         update: ArtifactVectorChanges<'_>,
@@ -1418,6 +1395,7 @@ impl CurrentWriter<'_> {
         lexical_manifest: &[u8],
         metadata: &[super::metadata::FileMetadataRef],
         resources: &[super::resources::ResourceChange],
+        fts_updates: Option<&fts::Updates>,
     ) -> Result<PendingTransaction> {
         let changes = update.artifacts;
         let vector_inputs = update.vector_inputs;
@@ -1629,6 +1607,7 @@ impl CurrentWriter<'_> {
             &inputs,
             model,
             ComponentChanges {
+                fts: fts_updates,
                 map: &map_changes,
                 lexical_manifest: Some(lexical_manifest),
             },
@@ -1749,6 +1728,7 @@ impl CurrentWriter<'_> {
             inputs,
             model,
             ComponentChanges {
+                fts: None,
                 map: map_changes,
                 lexical_manifest: None,
             },
@@ -1850,6 +1830,9 @@ impl CurrentWriter<'_> {
                 "INSERT OR ROLLBACK INTO current_pending_lexical(id,content) VALUES(1,?1)",
                 [bytes],
             )?;
+        }
+        if let Some(updates) = changes.fts {
+            fts::stage(&transaction, updates)?;
         }
         let pending = PendingTransaction {
             version: 3,
@@ -1955,7 +1938,13 @@ impl CurrentWriter<'_> {
         let already_applying = self.phase()? == TransactionPhase::Applying;
         self.visit_captured(pending, &mut |_| Ok(()))?;
         visit_pending_map(self.connection()?, pending, &mut |_, _| Ok(()))?;
-        pending_lexical(self.connection()?, pending)?;
+        if let Some(bytes) = pending_lexical(self.connection()?, pending)?
+            && is_fts_manifest(&bytes)?
+        {
+            let manifest =
+                super::lexical::LexicalManifest::decode(&bytes, pending.target.lexical_commit)?;
+            fts::captured(self.connection()?, &manifest)?;
+        }
         let mut grant = self.grant(pending)?;
         let connection = self
             .connection
@@ -1992,6 +1981,13 @@ impl CurrentWriter<'_> {
             lexical_commit == pending.target.lexical_commit,
             "external lexical commit does not match captured target"
         );
+        let fts_base = if let Some(bytes) = self.pending_lexical_manifest(pending)?
+            && is_fts_manifest(&bytes)?
+        {
+            Some(self.lexical_snapshot()?)
+        } else {
+            None
+        };
         let mut grant = self.grant(pending)?;
         let connection = self
             .connection
@@ -2016,6 +2012,17 @@ impl CurrentWriter<'_> {
             "replayed current map root differs from prepared target"
         );
         if let Some(bytes) = lexical_manifest {
+            if is_fts_manifest(&bytes)? {
+                fts::replay(
+                    &transaction,
+                    &self.store,
+                    &bytes,
+                    pending.target.lexical_commit,
+                    fts_base
+                        .as_deref()
+                        .context("FTS5 base verification missing")?,
+                )?;
+            }
             transaction.execute(
                 "INSERT INTO current_lexical_manifest(id,content) VALUES(1,?1) ON CONFLICT(id) DO UPDATE SET content=excluded.content",
                 [bytes],
@@ -2025,6 +2032,7 @@ impl CurrentWriter<'_> {
         transaction.execute("DELETE FROM current_pending_inputs", [])?;
         transaction.execute("DELETE FROM current_pending_map", [])?;
         transaction.execute("DELETE FROM current_pending_lexical", [])?;
+        transaction.execute("DELETE FROM current_pending_fts", [])?;
         transaction.execute("DELETE FROM current_pending WHERE id=1", [])?;
         transaction.execute(
             "UPDATE OR ROLLBACK current_state SET phase='ready',head=?1 WHERE id=1",
@@ -2060,6 +2068,7 @@ impl CurrentWriter<'_> {
         transaction.execute("DELETE FROM current_pending_inputs", [])?;
         transaction.execute("DELETE FROM current_pending_map", [])?;
         transaction.execute("DELETE FROM current_pending_lexical", [])?;
+        transaction.execute("DELETE FROM current_pending_fts", [])?;
         transaction.execute("DELETE FROM current_pending", [])?;
         transaction.execute(
             "UPDATE OR ROLLBACK current_state SET phase='ready' WHERE id=1",

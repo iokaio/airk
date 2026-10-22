@@ -9,7 +9,6 @@ use airk_core::{
     model_objects::ModelObjectSet,
 };
 use airk_retrieval::{
-    current_lexical::CurrentLexical,
     model::{EmbeddingCacheContext, EmbeddingCacheStats, EmbeddingModel},
     vector::mutable,
 };
@@ -22,6 +21,7 @@ use airk_store::{
     quota::Quota,
 };
 use anyhow::{Context, Result, ensure};
+#[cfg(test)]
 use std::sync::Arc;
 
 #[cfg(test)]
@@ -49,9 +49,29 @@ fn publication_interval(elapsed: std::time::Duration) -> std::time::Duration {
     )
 }
 
+fn same_artifact(old: &Artifact, new: &Artifact) -> Result<bool> {
+    if old.retained.is_some()
+        && new.retained.is_some()
+        && old.chunks.is_empty()
+        && new.chunks.is_empty()
+        && old.facts.is_empty()
+        && new.facts.is_empty()
+    {
+        return Ok(old.path == new.path
+            && old.content_hash == new.content_hash
+            && old.bytes == new.bytes
+            && old.language == new.language
+            && old.extraction_method == new.extraction_method
+            && old.parse_status == new.parse_status
+            && old.retained == new.retained);
+    }
+    Ok(serde_json::to_vec(old)? == serde_json::to_vec(new)?)
+}
+
 struct ProgressiveBase<'a> {
     kernel: &'a Kernel,
     quota: &'a Quota,
+    failure_reservation: &'a airk_store::quota::Reservation,
     writer: &'a WriterLock,
     scope: &'a CurrentScope,
     configuration: &'a CollectionConfiguration,
@@ -88,7 +108,7 @@ impl ProgressiveBase<'_> {
         Ok(())
     }
     fn observe(&mut self, artifact: &Artifact) -> Result<()> {
-        if self.last_pause_check.elapsed() >= std::time::Duration::from_millis(250) {
+        if self.last_pause_check.elapsed() >= std::time::Duration::from_secs(2) {
             self.check_pause()?;
         }
         self.processed += 1;
@@ -99,9 +119,9 @@ impl ProgressiveBase<'_> {
             .previous
             .artifacts
             .get(&artifact.path)
-            .map(serde_json::to_vec)
+            .map(|old| same_artifact(old, artifact))
             .transpose()?
-            == Some(serde_json::to_vec(artifact)?);
+            .unwrap_or(false);
         if !same {
             // A large captured input must not make a pending publication grow
             // without bound. Charge its logical source size conservatively.
@@ -233,15 +253,12 @@ impl ProgressiveBase<'_> {
             .current
             .graph_proof_cache_evictions
             .saturating_add(result.graph.base_proof_cache_evictions);
-        self.current.linked_lexical_bytes = self
-            .current
-            .linked_lexical_bytes
-            .saturating_add(result.lexical.hardlinked_bytes);
         self.first_ready_us.get_or_insert_with(|| {
             u64::try_from(self.started.elapsed().as_micros()).unwrap_or(u64::MAX)
         });
         self.kernel
             .emit_progress(airk_core::readiness::IndexProgress {
+                collection: String::new(),
                 phase: "base_committed",
                 revision: Some(super::runtime::revision(result.commit.token).to_string()),
                 processed_artifacts: self.processed,
@@ -264,15 +281,13 @@ impl ProgressiveBase<'_> {
     fn fail(&mut self, error: &anyhow::Error) -> Result<()> {
         self.scan_work.advanced(self.processed, self.committed)?;
         self.scan_work.fail(error);
-        let reservation = self
-            .kernel
-            .publication_reservation_with_limit(MAX_INDEX_RESERVATION_BYTES)?;
+        let reservation = self.failure_reservation;
         CurrentUpdater {
             store: &self.kernel.store,
             quota: self.quota,
             scope: self.scope,
             writer: self.writer,
-            reservation: &reservation,
+            reservation,
             configuration: None,
         }
         .apply_with_resources(
@@ -280,17 +295,32 @@ impl ProgressiveBase<'_> {
             None,
             &[self
                 .scan_work
-                .resource_change(&self.kernel.store, &reservation)?],
+                .resource_change(&self.kernel.store, reservation)?],
         )?;
         Ok(())
     }
+}
+
+fn record_scan_failure(
+    progressive: Option<&mut ProgressiveBase<'_>>,
+    error: anyhow::Error,
+) -> anyhow::Error {
+    if let Some(progressive) = progressive
+        && let Err(recording) = progressive.fail(&error)
+    {
+        // Context preserves the original typed cause (especially ScanPaused).
+        return error.context(format!(
+            "could not publish scan failure status: {recording:#}"
+        ));
+    }
+    error
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RuntimeBootstrap {
     head: CurrentHead,
-    manifest: airk_retrieval::current_lexical::LexicalManifest,
+    manifest: airk_store::current::lexical::LexicalManifest,
     configuration: CollectionConfiguration,
 }
 
@@ -317,10 +347,6 @@ impl Kernel {
             self.store.finish_runtime_bootstrap(&lock)?;
             return Ok(());
         }
-        recipe.manifest.verify(
-            &self.store.directory().join("lexical-0"),
-            recipe.head.lexical_commit,
-        )?;
         let token = recipe.head.token()?;
         current.initialize(recipe.head)?;
         current.install_initial_lexical_manifest(&token, &recipe.manifest.canonical_bytes()?)?;
@@ -401,42 +427,7 @@ impl Kernel {
             )?,
             record_bytes: mutable::record_bytes(dimensions)?,
         };
-        let initial = self.store.directory().join("lexical-0");
-        if initial.try_exists()? {
-            // A process can exit after creating Tantivy but before saving its
-            // bootstrap recipe. No owner/head exists in this branch.
-            ensure!(
-                self.current_scope()?.is_none() && self.store.runtime_bootstrap()?.is_none(),
-                "cannot replace an owned lexical bootstrap"
-            );
-            let parent = self.store.directory().canonicalize()?;
-            let metadata = std::fs::symlink_metadata(&initial)?;
-            ensure!(
-                metadata.is_dir()
-                    && !metadata.file_type().is_symlink()
-                    && initial.canonicalize()?.parent() == Some(parent.as_path()),
-                "linked lexical bootstrap"
-            );
-            let files = std::fs::read_dir(&initial)?.collect::<std::io::Result<Vec<_>>>()?;
-            ensure!(
-                files.len() <= 4096,
-                "lexical bootstrap entry bound exceeded"
-            );
-            for file in &files {
-                let m = std::fs::symlink_metadata(file.path())?;
-                ensure!(
-                    m.is_file() && !m.file_type().is_symlink(),
-                    "invalid lexical bootstrap entry"
-                );
-            }
-            std::fs::remove_dir_all(&initial)?;
-        }
-        let charged = reservation.clone();
-        let lexical = CurrentLexical::create(
-            &self.store.directory().join("lexical-0"),
-            Arc::new(move |bytes| charged.charge(bytes)),
-        )?;
-        let manifest = lexical.capture_manifest(None)?;
+        let manifest = airk_store::current::lexical::LexicalManifest::empty()?;
         let head = CurrentHead {
             version: 2,
             scope: scope.clone(),
@@ -446,7 +437,6 @@ impl Kernel {
             lexical_commit: manifest.digest()?,
             graph_head: GraphHead::empty(graph_scope)?,
         };
-        drop(lexical);
         let recipe = serde_json::to_vec(&RuntimeBootstrap {
             head: head.clone(),
             manifest: manifest.clone(),
@@ -468,7 +458,49 @@ impl Kernel {
         full: bool,
         defer_completion: bool,
     ) -> Result<airk_ingest::IndexReport> {
-        match self.index_current_once(full, defer_completion) {
+        self.index_current_selected(full, defer_completion, None)
+    }
+
+    /// Refresh saved logical paths; untouched bindings retain their indexed revision.
+    pub fn index_paths(&self, paths: &[String]) -> Result<airk_ingest::IndexReport> {
+        self.index_current_paths(paths, true)
+    }
+
+    pub(crate) fn index_current_paths(
+        &self,
+        paths: &[String],
+        defer_completion: bool,
+    ) -> Result<airk_ingest::IndexReport> {
+        ensure!(
+            !paths.is_empty()
+                && paths.len() <= 1024
+                && paths.iter().map(String::len).sum::<usize>() <= 1 << 20,
+            "path hints exceed admission limits"
+        );
+        let paths = paths
+            .iter()
+            .map(|path| {
+                let path = path.replace('\\', "/");
+                airk_ingest::adapters::profile::validate_relative_path(&path)?;
+                Ok(path)
+            })
+            .collect::<Result<std::collections::BTreeSet<_>>>()?;
+        self.index_current_selected(false, defer_completion, Some(&paths))
+    }
+
+    fn index_current_selected(
+        &self,
+        full: bool,
+        defer_completion: bool,
+        paths: Option<&std::collections::BTreeSet<String>>,
+    ) -> Result<airk_ingest::IndexReport> {
+        let mut repaired_retained_artifacts = 0;
+        match self.index_current_once(
+            full,
+            defer_completion,
+            &mut repaired_retained_artifacts,
+            paths,
+        ) {
             Ok(report) => Ok(report),
             Err(error)
                 if error
@@ -492,7 +524,7 @@ impl Kernel {
                         "automatic retained-object repair could not verify an idle index: {admission:#}"
                     ))),
                 }
-                let mut report = self.index_current_once(full, defer_completion).context(
+                let mut report = self.index_current_once(full, defer_completion, &mut repaired_retained_artifacts, paths).context(
                     "automatic retained-object repair failed after one fresh scan; indexing stopped without further retries; run AIRK: Diagnose & Repair to inspect the remaining failure"
                 )?;
                 report.retained_repair_retries = 1;
@@ -551,14 +583,32 @@ impl Kernel {
         )
     }
 
+    /// Discard obsolete derived index state, including retained copies, before model setup.
+    /// Current-format collections are unchanged; explicit full indexing follows.
+    pub fn prepare_full_rebuild(&self) -> Result<bool> {
+        let writer = self.store.lock()?;
+        self.store.rebuild_obsolete_index(
+            &writer,
+            &Quota::open(&self.data_root)?,
+            &self.root_id(),
+            &self.collection,
+        )
+    }
+
     fn index_current_once(
         &self,
         full: bool,
         defer_completion: bool,
+        repaired_retained_artifacts: &mut usize,
+        paths: Option<&std::collections::BTreeSet<String>>,
     ) -> Result<airk_ingest::IndexReport> {
+        if full {
+            self.prepare_full_rebuild()?;
+        }
         let index_started = std::time::Instant::now();
         let execution_lease = crate::execution::acquire(&self.data_root)?;
         self.emit_progress(airk_core::readiness::IndexProgress {
+            collection: String::new(),
             phase: "scan_started",
             ..Default::default()
         });
@@ -590,6 +640,9 @@ impl Kernel {
         let compression = self.store.compression_mode(&self.root_id())?;
         let roots = self.configured_roots()?;
         let selection = self.vector_selection()?;
+        // Keep a small independent allowance alive before capture/publication
+        // can exhaust quota. Failure reporting must not require a fresh grant.
+        let failure_reservation = self.publication_reservation_with_limit(2 << 20)?;
         // Do not reserve all remaining capacity: durable SQL growth/replay owns
         // an independent grant while preparation is still alive.
         let available = quota.status()?;
@@ -655,8 +708,40 @@ impl Kernel {
         if full {
             previous.extractor_version.clear();
         }
+        // A hint cannot establish a new inventory or apply global policy changes.
+        // Directory and ignore/configuration hints conservatively reconcile all paths.
+        let paths = paths.filter(|paths| {
+            existing.is_some()
+                && !configuration_changed
+                && previous.extractor_version == airk_core::EXTRACTOR_VERSION
+                && prior_scan_work.as_ref().is_none_or(|work| work.complete())
+                && !paths.iter().any(|path| {
+                    let name = path.rsplit('/').next().unwrap_or(path);
+                    matches!(
+                        name,
+                        ".gitignore" | ".airkignore" | ".gitmodules" | "compile_commands.json"
+                    ) || policy
+                        .declared_configurations()
+                        .iter()
+                        .any(|configuration| configuration == path)
+                        || previous.artifacts.keys().any(|old| {
+                            old.strip_prefix(path)
+                                .is_some_and(|tail| tail.starts_with('/'))
+                        })
+                        || airk_store::roots::source_location(&previous.root, &previous.roots, path)
+                            .and_then(|location| {
+                                Ok(std::fs::symlink_metadata(
+                                    std::path::Path::new(&location.root)
+                                        .join(&location.relative_path),
+                                )?
+                                .is_dir())
+                            })
+                            .unwrap_or(false)
+                })
+        });
         let progressive_enabled = defer_completion
             && !full
+            && paths.is_none()
             && (existing.is_none()
                 || (!configuration_changed
                     && (!previous.artifacts.is_empty()
@@ -706,6 +791,7 @@ impl Kernel {
             Some(ProgressiveBase {
                 kernel: self,
                 quota: &quota,
+                failure_reservation: &failure_reservation,
                 writer: &writer,
                 scope,
                 configuration: &configuration,
@@ -748,8 +834,7 @@ impl Kernel {
                 .or_insert(artifact);
         }
         let scan_started = std::time::Instant::now();
-        let mut repaired_retained_artifacts = 0usize;
-        let scan_result = airk_ingest::scan_payloads_with_execution(
+        let scan_result = airk_ingest::scan_payloads_with_execution_paths(
             &self.root,
             &self.data_root,
             &previous,
@@ -758,6 +843,7 @@ impl Kernel {
             &policy,
             full,
             execution.execution,
+            paths,
             |request| {
                 let same = previous
                     .artifacts
@@ -787,21 +873,17 @@ impl Kernel {
                 }) else {
                     return Ok(None);
                 };
-                if let Err(error) = self
-                    .store
-                    .load_retained(old)
-                    .and_then(|_| self.store.verify_retained_source(old))
-                {
+                if let Err(error) = self.store.check_retained_present(old) {
                     if error
                         .downcast_ref::<airk_store::blobs::MissingRetainedObject>()
                         .is_some()
                     {
                         // The scanner already captured and hashed the live source
                         // before lookup. Reextract those bytes under its selected
-                        // profile to restore missing derived objects. Integrity and
-                        // permission failures still stop indexing; reads and journal
-                        // recovery never reconstruct from live sources.
-                        repaired_retained_artifacts += 1;
+                        // profile to restore missing derived objects. Permission
+                        // failures still stop indexing; reads that consume retained
+                        // bytes and journal recovery authenticate those bytes.
+                        *repaired_retained_artifacts += 1;
                         return Ok(None);
                     }
                     return Err(error);
@@ -842,18 +924,16 @@ impl Kernel {
                 Ok(retained)
             },
         );
-        if let Err(error) = &scan_result
-            && let Some(progressive) = progressive.as_mut()
-        {
-            let _ = progressive.fail(error);
-        }
-        let (snapshot, mut report, observation) = scan_result?;
-        report.repaired_retained_artifacts = repaired_retained_artifacts;
+        let (snapshot, mut report, observation) = match scan_result {
+            Ok(value) => value,
+            Err(error) => return Err(record_scan_failure(progressive.as_mut(), error)),
+        };
+        report.repaired_retained_artifacts = *repaired_retained_artifacts;
+        report.path_scoped = paths.is_some();
         if let Some(progressive) = progressive.as_mut()
             && let Err(error) = progressive.check_pause()
         {
-            progressive.fail(&error)?;
-            return Err(error);
+            return Err(record_scan_failure(Some(progressive), error));
         }
         let progressive_first_ready_us = progressive.as_ref().and_then(|p| p.first_ready_us);
         let progressive_current = progressive.as_ref().map(|p| p.current.clone());
@@ -867,7 +947,11 @@ impl Kernel {
         report.execution = Some(execution_lease.plan.clone());
         report.scan_extract_us =
             u64::try_from(scan_started.elapsed().as_micros()).unwrap_or(u64::MAX);
-        let committed_previous = if progressive_enabled {
+        let committed_previous = if progressive_enabled
+            && progressive_current
+                .as_ref()
+                .is_some_and(|work| work.changed_artifacts > 0)
+        {
             self.load_optional()?
                 .context("progressive current state missing")?
         } else {
@@ -878,9 +962,9 @@ impl Kernel {
             let same = committed_previous
                 .artifacts
                 .get(path)
-                .map(serde_json::to_vec)
+                .map(|old| same_artifact(old, artifact))
                 .transpose()?
-                == Some(serde_json::to_vec(artifact)?);
+                .unwrap_or(false);
             if full || (configuration_changed && !progressive_enabled) || !same {
                 changes.insert(
                     path.clone(),
@@ -906,7 +990,8 @@ impl Kernel {
         {
             final_scan_work = None;
         }
-        if final_scan_work.is_none()
+        if paths.is_none()
+            && final_scan_work.is_none()
             && (!changes.is_empty()
                 || prior_scan_work
                     .as_ref()
@@ -914,6 +999,14 @@ impl Kernel {
         {
             let mut work = progress::ScanWork::start()?;
             work.finish(snapshot.artifacts.len() as u64)?;
+            final_scan_work = Some(work);
+        }
+        if paths.is_some()
+            && !changes.is_empty()
+            && let Some(prior) = &prior_scan_work
+        {
+            let mut work = prior.clone();
+            work.adjust_complete_inventory(snapshot.artifacts.len() as u64)?;
             final_scan_work = Some(work);
         }
         let semantic_work = objects
@@ -929,7 +1022,11 @@ impl Kernel {
                 )
             })
             .transpose()?;
-        let moves = compatible_moves(&self.store, &previous, &snapshot, &observation)?;
+        let moves = if observation.complete {
+            compatible_moves(&self.store, &previous, &snapshot, &observation)?
+        } else {
+            Default::default()
+        };
         // Every remaining input is now bound to the final publication. Its
         // normal cleanup can reclaim unused captures and superseded objects.
         drop(captured_objects);
@@ -1043,23 +1140,30 @@ impl Kernel {
             work.graph_proof_cache_evictions = work
                 .graph_proof_cache_evictions
                 .saturating_add(result.graph.base_proof_cache_evictions);
-            work.linked_lexical_bytes = work
-                .linked_lexical_bytes
-                .saturating_add(result.lexical.hardlinked_bytes);
             report.current = Some(work);
+            let observed = if paths.is_some() {
+                report.indexed + report.reused
+            } else {
+                snapshot.artifacts.len()
+            } as u64;
             self.emit_progress(airk_core::readiness::IndexProgress {
-                phase: "base_coverage_complete",
+                collection: String::new(),
+                phase: if paths.is_some() {
+                    "base_committed"
+                } else {
+                    "base_coverage_complete"
+                },
                 revision: Some(super::runtime::revision(result.commit.token).to_string()),
-                processed_artifacts: snapshot.artifacts.len() as u64,
-                committed_artifacts: snapshot.artifacts.len() as u64,
-                total_artifacts: Some(snapshot.artifacts.len() as u64),
+                processed_artifacts: observed,
+                committed_artifacts: observed,
+                total_artifacts: paths.is_none().then_some(snapshot.artifacts.len() as u64),
                 selected_artifacts: semantic_work.as_ref().map(|w| w.selected_artifacts),
                 completed_artifacts: semantic_work.as_ref().map(|w| w.completed_artifacts),
                 completed_units: semantic_work.as_ref().map(|w| w.completed_units),
             });
         } else {
             let read = self.store.current_read(&scope)?;
-            super::open_selected_lexical(&self.store, &read, Arc::new(|_| Ok(())))?;
+            super::open_selected_lexical(&self.store, &read)?;
             report.generation = read.head().sequence;
             report.current = Some(progressive_current.unwrap_or_default());
         }
@@ -1077,6 +1181,7 @@ impl Kernel {
                 &mut stats,
                 usize::MAX,
                 report.current.as_mut(),
+                None,
             )?
         {
             report.generation = generation;
@@ -1090,54 +1195,64 @@ impl Kernel {
                 Some(u64::try_from(index_started.elapsed().as_micros()).unwrap_or(u64::MAX));
         }
         report.publish_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
-        report.vector_eligible_artifacts = stats.vector_eligible_artifacts;
-        report.vector_excluded_artifacts = stats.vector_excluded_artifacts;
-        report.vector_reused_inputs = stats.vector_reused_inputs;
-        report.vector_graph_nodes = stats.vector_graph_nodes;
-        report.vector_registry_rows = stats.vector_registry_rows;
-        report.vector_registry_bytes = stats.vector_registry_bytes;
-        report.embedding_cache_file_opens = stats.cache_file_opens;
-        report.embedding_cache_read_bytes = stats.cache_read_bytes;
-        report.embedding_cache_written_bytes = stats.cache_written_bytes;
-        report.embedding_cache_record_verification_bytes = stats.cache_record_verification_bytes;
-        report.embedding_cache_index_verification_bytes = stats.cache_index_verification_bytes;
-        report.embedding_cache_full_pack_verification_bytes =
-            stats.cache_full_pack_verification_bytes;
-        report.embedding_cache_syncs = stats.cache_syncs;
-        report.embedding_cache_index_hits = stats.cache_index_hits;
-        report.embedding_cache_index_peak_bytes = stats.cache_index_peak_bytes;
-        report.embedding_cache_packs_written = stats.cache_packs_written;
-        report.embedding_cache_packs_reused = stats.cache_packs_reused;
-        report.embedding_cache_compacted_records = stats.cache_compacted_records;
-        report.embedding_cache_finalize_us = stats.cache_finalize_us;
-        report.vector_units = stats.vector_units;
-        report.vector_body_bytes = stats.vector_body_bytes;
-        report.vector_planning_us = stats.vector_planning_us;
-        report.embedding_inputs = stats.inputs;
-        report.embedding_blank_inputs = stats.blank_inputs;
-        report.embedding_duplicate_inputs = stats.duplicate_inputs;
-        report.embedding_actual_forwards = stats.actual_forwards;
-        report.embedding_tokenized_inputs = stats.tokenized_inputs;
-        report.embedding_input_tokens = stats.input_tokens;
-        report.embedding_embedded_tokens = stats.embedded_tokens;
-        report.embedding_padding_tokens = stats.padding_tokens;
-        report.embedding_truncated_inputs = stats.truncated_inputs;
-        report.embedding_plan_compilations = stats.plan_compilations;
-        report.embedding_plan_compile_us = stats.plan_compile_us;
-        report.embedding_plan_cache_peak_bytes = stats.plan_cache_peak_bytes;
-        report.embedding_cache_hits = stats.hits;
-        report.embedding_cache_misses = stats.misses;
-        report.embedding_inferences = stats.inferences;
-        report.embedding_no_vector = stats.no_vector;
-        report.embedding_cache_lookup_us = stats.cache_lookup_us;
-        report.embedding_cache_store_us = stats.cache_store_us;
-        report.embedding_inference_us = stats.inference_us;
-        report.vector_graph_insert_us = stats.graph_insert_us;
-        report.embedding_model_load_us = stats.model_load_us;
-        report.embedding_workers = stats.workers;
-        report.embedding_batches = stats.batches;
+        record_embedding_stats(&mut report, &stats);
+        let read = self.store.current_read(&scope)?;
+        report.semantic_readiness = Some(enrichment::readiness(&read, &self.store)?);
+        report.discovery_readiness = Some(progress::readiness(&read, &self.store)?);
+        report.indexed_vectors = Some(read.head().graph_head.live_nodes);
         Ok(report)
     }
+}
+
+pub(super) fn record_embedding_stats(
+    report: &mut airk_ingest::IndexReport,
+    stats: &EmbeddingCacheStats,
+) {
+    report.vector_eligible_artifacts = stats.vector_eligible_artifacts;
+    report.vector_excluded_artifacts = stats.vector_excluded_artifacts;
+    report.vector_reused_inputs = stats.vector_reused_inputs;
+    report.vector_graph_nodes = stats.vector_graph_nodes;
+    report.vector_registry_rows = stats.vector_registry_rows;
+    report.vector_registry_bytes = stats.vector_registry_bytes;
+    report.embedding_cache_file_opens = stats.cache_file_opens;
+    report.embedding_cache_read_bytes = stats.cache_read_bytes;
+    report.embedding_cache_written_bytes = stats.cache_written_bytes;
+    report.embedding_cache_record_verification_bytes = stats.cache_record_verification_bytes;
+    report.embedding_cache_index_verification_bytes = stats.cache_index_verification_bytes;
+    report.embedding_cache_full_pack_verification_bytes = stats.cache_full_pack_verification_bytes;
+    report.embedding_cache_syncs = stats.cache_syncs;
+    report.embedding_cache_index_hits = stats.cache_index_hits;
+    report.embedding_cache_index_peak_bytes = stats.cache_index_peak_bytes;
+    report.embedding_cache_packs_written = stats.cache_packs_written;
+    report.embedding_cache_packs_reused = stats.cache_packs_reused;
+    report.embedding_cache_compacted_records = stats.cache_compacted_records;
+    report.embedding_cache_finalize_us = stats.cache_finalize_us;
+    report.vector_units = stats.vector_units;
+    report.vector_body_bytes = stats.vector_body_bytes;
+    report.vector_planning_us = stats.vector_planning_us;
+    report.embedding_inputs = stats.inputs;
+    report.embedding_blank_inputs = stats.blank_inputs;
+    report.embedding_duplicate_inputs = stats.duplicate_inputs;
+    report.embedding_actual_forwards = stats.actual_forwards;
+    report.embedding_tokenized_inputs = stats.tokenized_inputs;
+    report.embedding_input_tokens = stats.input_tokens;
+    report.embedding_embedded_tokens = stats.embedded_tokens;
+    report.embedding_padding_tokens = stats.padding_tokens;
+    report.embedding_truncated_inputs = stats.truncated_inputs;
+    report.embedding_plan_compilations = stats.plan_compilations;
+    report.embedding_plan_compile_us = stats.plan_compile_us;
+    report.embedding_plan_cache_peak_bytes = stats.plan_cache_peak_bytes;
+    report.embedding_cache_hits = stats.hits;
+    report.embedding_cache_misses = stats.misses;
+    report.embedding_inferences = stats.inferences;
+    report.embedding_no_vector = stats.no_vector;
+    report.embedding_cache_lookup_us = stats.cache_lookup_us;
+    report.embedding_cache_store_us = stats.cache_store_us;
+    report.embedding_inference_us = stats.inference_us;
+    report.vector_graph_insert_us = stats.graph_insert_us;
+    report.embedding_model_load_us = stats.model_load_us;
+    report.embedding_workers = stats.workers;
+    report.embedding_batches = stats.batches;
 }
 
 fn compatible_moves(

@@ -450,17 +450,15 @@ impl AirkServer {
                 limit: args.limit,
                 max_bytes: args.max_bytes,
             };
-            let mut result = match args.mode {
-                Some(SearchMode::Lexical) => kernel.search(&query),
-                Some(SearchMode::Vector) => kernel.semantic_search(&query),
-                Some(SearchMode::Hybrid) => kernel.hybrid_search(&query),
-                None if args.semantic => kernel.semantic_search(&query),
-                None => kernel.default_search(&query),
-            }?;
-            if !args.full_chunks {
-                focus_search_hits(&mut result, &query.text, 768);
-            }
-            Ok(result)
+            use airk_kernel::current::CurrentSearchMode;
+            let mode = match args.mode {
+                Some(SearchMode::Lexical) => CurrentSearchMode::Lexical,
+                Some(SearchMode::Vector) => CurrentSearchMode::Vector,
+                Some(SearchMode::Hybrid) => CurrentSearchMode::Hybrid,
+                None if args.semantic => CurrentSearchMode::Vector,
+                None => CurrentSearchMode::Default,
+            };
+            kernel.search_response(&query, mode, (!args.full_chunks).then_some(768))
         })
         .await
     }
@@ -759,70 +757,6 @@ impl AirkServer {
     }
 }
 
-fn focus_search_hits(response: &mut airk_core::SearchResponse, query: &str, limit: usize) {
-    let words: Vec<String> = query
-        .split(|c: char| !c.is_alphanumeric() && c != '_')
-        .filter(|word| word.len() > 2)
-        .map(str::to_lowercase)
-        .collect();
-    for hit in &mut response.hits {
-        if hit.text.len() <= limit {
-            continue;
-        }
-        let mut best = (0usize, 0usize);
-        let mut offset = 0usize;
-        for line in hit.text.split_inclusive('\n') {
-            let lower = line.to_lowercase();
-            let score = words
-                .iter()
-                .filter(|word| lower.contains(word.as_str()))
-                .count();
-            if score > best.1 {
-                let within = if line.is_ascii() {
-                    words
-                        .iter()
-                        .filter_map(|word| lower.find(word))
-                        .min()
-                        .unwrap_or(0)
-                } else {
-                    0
-                };
-                best = (offset + within.saturating_sub(limit / 4), score);
-            }
-            offset += line.len();
-        }
-        let mut start = best.0;
-        while !hit.text.is_char_boundary(start) {
-            start -= 1;
-        }
-        let mut end = hit.text.len().min(start + limit);
-        while !hit.text.is_char_boundary(end) {
-            end -= 1;
-        }
-        let first =
-            hit.citation.start_line + hit.text[..start].bytes().filter(|b| *b == b'\n').count();
-        let last = first
-            + hit.text.as_bytes()[start..end.saturating_sub(1)]
-                .iter()
-                .filter(|b| **b == b'\n')
-                .count();
-        hit.citation.start_line = first;
-        hit.citation.end_line = last;
-        if matches!(
-            hit.citation.location,
-            airk_core::DocumentLocation::Lines { .. }
-        ) {
-            hit.citation.location = airk_core::DocumentLocation::Lines {
-                start: first,
-                end: last,
-            };
-        }
-        hit.text = hit.text[start..end].to_owned();
-        hit.truncated = true;
-        response.truncated = true;
-    }
-}
-
 fn render<T: Serialize>(
     kernel: &Kernel,
     span: airk_kernel::usage::RequestSpan,
@@ -866,17 +800,18 @@ fn render<T: Serialize>(
         }
     }
     if let Some(object) = logical.as_mut().and_then(serde_json::Value::as_object_mut)
-        && std::env::var("AIRK_MCP_RESPONSE_MODE").as_deref() == Ok("terse")
-    {
-        terse_envelope(object);
-    }
-    if let Some(object) = logical.as_mut().and_then(serde_json::Value::as_object_mut)
         && let Some(id) = span.request_id()
     {
         object.insert("request_id".into(), id.into());
     }
+    let mut display = logical.clone();
+    if let Some(object) = display.as_mut().and_then(serde_json::Value::as_object_mut)
+        && std::env::var("AIRK_MCP_RESPONSE_MODE").as_deref() == Ok("terse")
+    {
+        terse_envelope(object);
+    }
     let rendered = match result {
-        Ok(value) => match logical
+        Ok(value) => match display
             .as_ref()
             .map_or_else(|| serde_json::to_string(&value), serde_json::to_string)
         {
@@ -980,35 +915,42 @@ mod tests {
         assert!(response.get("freshness").is_none());
     }
 
-    #[test]
-    fn focused_search_keeps_matching_line_and_exact_source_coordinates() {
-        let mut response = airk_core::SearchResponse {
-            publication: None,
-            semantic_readiness: None,
-            discovery_readiness: None,
-            generation: 1,
-            collection: "fixture".into(),
-            hits: vec![airk_core::Hit {
-                text: format!("{}\nConfigureAuthentication()\n", "unrelated\n".repeat(100)),
-                truncated: false,
-                citation: airk_core::Citation {
-                    path: "src/Auth.cs".into(),
-                    content_hash: "hash".into(),
-                    start_line: 10,
-                    end_line: 111,
-                    location: airk_core::DocumentLocation::Lines {
-                        start: 10,
-                        end: 111,
-                    },
-                },
-            }],
-            truncated: false,
-        };
-        focus_search_hits(&mut response, "ConfigureAuthentication", 128);
-        assert!(response.hits[0].text.contains("ConfigureAuthentication"));
-        assert!(response.hits[0].text.len() <= 128);
-        assert_eq!(response.hits[0].citation.start_line, 111);
-        assert!(response.hits[0].truncated && response.truncated);
+    #[tokio::test]
+    async fn search_snippets_spend_budget_after_focusing_and_full_chunks_remains_available()
+    -> anyhow::Result<()> {
+        let root = tempfile::tempdir()?;
+        let data = tempfile::tempdir()?;
+        let text = format!("{} ConfigureAuthentication()\n", "unrelated ".repeat(700));
+        for i in 0..10 {
+            std::fs::write(root.path().join(format!("file{i}.txt")), &text)?;
+        }
+        let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+        kernel.configure_vectors(false)?;
+        kernel.index()?;
+        let server = AirkServer::new(kernel);
+        for full in [false, true] {
+            let args = serde_json::from_value(
+                serde_json::json!({ "query": "ConfigureAuthentication", "mode": "lexical",
+                "limit": if full { 2 } else { 10 }, "max_bytes": if full { 16384 } else { 4096 }, "full_chunks": full }),
+            )?;
+            let result = server.search(Parameters(args)).await;
+            assert!(!result.is_error.unwrap_or(false), "{result:?}");
+            let body: serde_json::Value =
+                serde_json::from_str(&result.content[0].as_text().unwrap().text)?;
+            let hits = body["hits"].as_array().unwrap();
+            assert_eq!(hits.len(), if full { 2 } else { 10 });
+            for hit in hits {
+                let excerpt = hit["text"].as_str().unwrap();
+                assert!(excerpt.contains("ConfigureAuthentication"));
+                if full {
+                    assert_eq!(excerpt, text);
+                } else {
+                    assert!(excerpt.len() <= 768);
+                }
+                assert_eq!(hit["citation"]["start_line"], 1);
+            }
+        }
+        Ok(())
     }
 
     #[tokio::test]

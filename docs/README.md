@@ -4,7 +4,7 @@
 
 Start with the [unreleased 1.2.5 candidate notes](release-1.2.5.md), [published 1.2.4 diagnosis and recovery notes](release-1.2.4.md), [1.2.3 Agent Lean default and indexing fix](release-1.2.3.md), [1.2.2 semantic indexing fix](release-1.2.2.md) and [1.2.0 behavior and upgrade notes](release-1.2.0.md) for current defaults, upgrade steps and qualification limits. For setup, use [coding-agent integration](agent-integration.md) and [extension controls](vscode-extension.md); for indexing and disk use, use [ingestion limits and detail](ingestion-limits.md), [storage quotas](storage-quotas.md), [current-index operation](current-index-runtime.md) and [current-object cleanup](retention.md). The 1.1 release notes and v2 design records below are historical.
 
-The [1.2.5 candidate](release-1.2.5.md) includes the [MCP tool retirement](unreleased-mcp-tool-retirement.md), early MCP availability during initial indexing, deferred semantic inference during source discovery, adaptive publication batches, resumable scheduler waits, corrected late-completion diagnosis, progress display and bounded recovery. No release is attached to these source changes yet.
+The [1.2.5 candidate](release-1.2.5.md) includes the [MCP tool retirement](unreleased-mcp-tool-retirement.md), early MCP availability during initial indexing, deferred semantic inference during source discovery, adaptive publication batches, resumable scheduler waits, corrected late-completion diagnosis, progress display, bounded recovery and SQLite FTS5 lexical storage. The extension detects recognized older 1.2 formats during indexing and starts the required full rebuild automatically, preserving collection IDs and saved settings; CLI upgrades use `index --full`. No release is attached to these source changes yet.
 
 - [Architecture and code boundaries](architecture.md)
 - [Historical architecture v2 implementation plan](architecture-v2.md)
@@ -15,8 +15,9 @@ The [1.2.5 candidate](release-1.2.5.md) includes the [MCP tool retirement](unrel
 - [Ingestion limits, machine sizing and index detail](ingestion-limits.md)
 - [Per-collection extraction policy](extraction-policy.md)
 - [Measured scale and performance qualification](scale-qualification.md)
-- [1.2 indexing optimization and qualification record](indexingenhancements.md)
-- [Current-index sharding review and measurement gate](index-sharding-review.md)
+- [October 21 indexing feedback review, implementation and measurement](indexing-speed-review-2026-10-21.md)
+- [Historical 1.2 indexing optimization and qualification record](indexingenhancements.md)
+- [Current-index sharding, Tantivy-to-FTS5 rationale and storage alternatives](index-sharding-review.md)
 - [Document requirements, dates and design indexing](document-indexing.md)
 - [Code-indexing recommendations and optional semantic-provider review](code-indexing-options.md)
 - [Implemented SQLite code facts, relationships and SCIP imports](code-facts-and-relationships.md)

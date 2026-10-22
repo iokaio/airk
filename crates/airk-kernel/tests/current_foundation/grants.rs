@@ -31,9 +31,14 @@ fn ready_recovery_releases_failed_prepare_allowance_only_after_lexical_verificat
     assert_eq!(fixture.quota.current_grants(&writer)?.len(), 1);
     drop(current);
     drop(writer);
-    let lexical_meta = fixture.store.directory().join("lexical-0/meta.json");
-    let original = std::fs::read(&lexical_meta)?;
-    std::fs::write(&lexical_meta, b"damaged fixture metadata")?;
+    let db = fixture.store.directory().join("current.sqlite3");
+    let connection = rusqlite::Connection::open(&db)?;
+    let original: Vec<u8> =
+        connection.query_row("SELECT block FROM current_fts_data WHERE id=1", [], |r| {
+            r.get(0)
+        })?;
+    connection.execute("UPDATE current_fts_data SET block=x'01' WHERE id=1", [])?;
+    drop(connection);
     assert!(
         airk_kernel::current::recover_current(&fixture.store, &fixture.quota, &fixture.scope)
             .is_err()
@@ -41,7 +46,12 @@ fn ready_recovery_releases_failed_prepare_allowance_only_after_lexical_verificat
     let writer = fixture.store.lock()?;
     assert_eq!(fixture.quota.current_grants(&writer)?.len(), 1);
     drop(writer);
-    std::fs::write(&lexical_meta, original)?;
+    let connection = rusqlite::Connection::open(&db)?;
+    connection.execute(
+        "UPDATE current_fts_data SET block=?1 WHERE id=1",
+        [original],
+    )?;
+    drop(connection);
     let recovered =
         airk_kernel::current::recover_current(&fixture.store, &fixture.quota, &fixture.scope)?;
     assert_eq!(

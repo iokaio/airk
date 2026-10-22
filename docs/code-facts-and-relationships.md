@@ -1,6 +1,6 @@
 # Code facts, relationships and SQLite
 
-AIRK uses bundled embedded SQLite for collection revisions, exact facts and relationships. Runtime installation still requires only the native helper. SQLite complements persistent Tantivy lexical retrieval and DiskANN vector retrieval through AIRK's portable disk provider. Vector/hybrid search additionally requires deliberately provisioned local model assets; see [local models](local-models.md).
+AIRK uses bundled embedded SQLite for collection revisions, exact facts and relationships. Runtime installation still requires only the native helper. SQLite also owns FTS5 lexical retrieval and the storage used by DiskANN vector retrieval through AIRK's portable disk provider. Vector/hybrid search additionally requires deliberately provisioned local model assets; see [local models](local-models.md).
 
 ## Native evidence
 
@@ -24,7 +24,7 @@ Use actual `code.symbol_id` values returned by facts for identity lookup. Syntax
 
 The MCP tools `airk_code_facts` and `airk_relationships` are part of the unreleased fifteen-tool read-only inventory, which also includes [airk_changes](changes.md). Exact facts accept names, qualified names or IDs plus kind/language/path filters. Incoming call edges find syntax caller candidates; incoming implements edges find optional producer assertions; outgoing edges inspect dependencies/containment. Exploration allows 1–3 hops, 100 visited symbols, 100 results and 65536 payload bytes. Traversal/SQLite instructions have a 250 ms deadline; instruction interruption returns an error, while traversal/result/byte bounds set truncation. Missing edges do not prove absence of impact. `airk_references` remains explicitly textual.
 
-Fact budgets count names, paths and document/code details; citation/envelope framing is additional. Relationship budgets count each serialized edge including its citation. Authenticated path postings select exact facts and incoming/outgoing edges without loading the complete corpus. Lexical search uses the head-bound Tantivy manifest; exact reads verify individual retained source objects.
+Fact budgets count names, paths and document/code details; citation/envelope framing is additional. Relationship budgets count each serialized edge including its citation. Authenticated path postings select exact facts and incoming/outgoing edges without loading the complete corpus. Lexical search uses the head-bound SQLite FTS5 seal; exact reads verify individual retained source objects.
 
 ## Optional SCIP import
 

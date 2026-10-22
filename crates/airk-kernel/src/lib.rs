@@ -249,7 +249,7 @@ impl Kernel {
     pub fn root(&self) -> &Path {
         &self.root
     }
-    /// Observers receive committed boundaries and must not reenter the writer.
+    /// Observers receive stage updates and committed boundaries and must not reenter the writer.
     pub fn with_index_progress(
         mut self,
         observer: impl Fn(&airk_core::readiness::IndexProgress) + Send + Sync + 'static,
@@ -257,7 +257,8 @@ impl Kernel {
         self.progress = Some(Arc::new(observer));
         self
     }
-    pub(crate) fn emit_progress(&self, progress: airk_core::readiness::IndexProgress) {
+    pub(crate) fn emit_progress(&self, mut progress: airk_core::readiness::IndexProgress) {
+        progress.collection = self.collection.clone();
         if let Some(observer) = &self.progress {
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| observer(&progress)));
         }
@@ -697,40 +698,48 @@ impl Kernel {
             truncated: false,
         };
         let mut remaining = max_bytes;
-        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(250);
         let mut read_bytes = 0usize;
-        let lexical =
-            current::open_selected_lexical(&self.store, &read, std::sync::Arc::new(|_| Ok(())))?;
+        let mut artifacts = std::collections::BTreeMap::new();
+        let lexical = current::open_selected_lexical(&self.store, &read)?;
         let candidates = lexical.search(&SearchQuery {
             text: name.into(),
             path_prefix: Some(path_prefix.into()),
             limit: 100,
             max_bytes: 65536,
         })?;
+        // Bound retained candidate scanning independently of authenticated index selection.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(250);
         evidence.truncated |= candidates.incomplete;
         'files: for candidate in candidates.values {
-            let path = &candidate.hit.citation.path;
+            let path = &candidate.citation.path;
             let entry = snapshot
                 .artifacts
                 .get(path)
                 .context("reference candidate missing from current index")?;
-            read_bytes = read_bytes.saturating_add(entry.extracted_bytes());
-            if read_bytes > 16_777_216 || std::time::Instant::now() >= deadline {
+            if std::time::Instant::now() >= deadline {
                 evidence.truncated = true;
                 break;
             }
-            let a = self.current_artifact(&read, path, false)?;
+            if !artifacts.contains_key(path) {
+                read_bytes = read_bytes.saturating_add(entry.extracted_bytes());
+                if read_bytes > 16_777_216 {
+                    evidence.truncated = true;
+                    break;
+                }
+                artifacts.insert(path.clone(), self.current_artifact(&read, path, false)?);
+            }
+            let a = &artifacts[path];
             let chunk = a
                 .chunks
                 .get(usize::try_from(candidate.local)?)
                 .context("reference candidate chunk missing")?;
             ensure!(
                 candidate.stable_id
-                    == airk_retrieval::current_lexical::stable_id(path, candidate.local)?
-                    && candidate.hit.citation.content_hash == a.content_hash
-                    && candidate.hit.citation.start_line == chunk.start_line
-                    && candidate.hit.citation.end_line == chunk.end_line
-                    && candidate.hit.text == chunk.text,
+                    == airk_store::current::lexical::stable_id(path, candidate.local)?
+                    && candidate.citation.content_hash == a.content_hash
+                    && candidate.citation.start_line == chunk.start_line
+                    && candidate.citation.end_line == chunk.end_line
+                    && candidate.citation.location == chunk.location,
                 "reference candidate differs from retained evidence"
             );
             for (offset, line) in chunk.text.split_inclusive('\n').enumerate() {

@@ -18,6 +18,7 @@ use std::sync::{Arc, Mutex};
 pub struct CurrentRead {
     connection: Mutex<Connection>,
     head: CurrentHead,
+    pub(super) lexical_verified: std::sync::OnceLock<()>,
     _gate: Gate,
 }
 
@@ -84,7 +85,7 @@ impl CurrentRead {
     }
 
     /// Exact manifest bytes bound to this request's current head. Retrieval
-    /// must also verify the physical Tantivy files before trusting candidates.
+    /// must also verify the FTS5 shadow rows before trusting candidates.
     pub fn lexical_manifest(&self) -> Result<Vec<u8>> {
         self.with_connection(|connection| committed_lexical_manifest(connection, &self.head))
     }
@@ -276,6 +277,7 @@ impl FileStore {
         Ok(Arc::new(CurrentRead {
             connection: Mutex::new(connection),
             head,
+            lexical_verified: std::sync::OnceLock::new(),
             _gate: gate,
         }))
     }

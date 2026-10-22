@@ -6,7 +6,7 @@ import * as path from 'node:path';
 import { LaunchSpec, launchArgs } from './model';
 
 export interface IndexProgress {
-    phase: string; revision: string | null; processed_artifacts: number; committed_artifacts: number;
+    collection: string; phase: string; revision: string | null; processed_artifacts: number; committed_artifacts: number;
     selected_artifacts: number | null; completed_artifacts: number | null;
 }
 
@@ -17,7 +17,8 @@ export function parseIndexProgress(line: string): IndexProgress | undefined {
         if (!value || typeof value !== 'object' || Array.isArray(value)) { return undefined; }
         const event = value as Record<string, unknown>;
         const count = (field: string) => Number.isSafeInteger(event[field]) && Number(event[field]) >= 0;
-        if (!['scan_started', 'base_committed', 'enrichment_committed', 'base_coverage_complete'].includes(String(event.phase))
+        if (typeof event.collection !== 'string' || !event.collection || event.collection.length > 256
+            || !['scan_started', 'base_committed', 'enrichment_started', 'enrichment_prepared', 'enrichment_committed', 'base_coverage_complete'].includes(String(event.phase))
             || !count('processed_artifacts') || !count('committed_artifacts')
             || (event.revision !== null && (typeof event.revision !== 'string' || event.revision.length > 256))
             || (event.selected_artifacts !== null && !count('selected_artifacts'))
@@ -93,27 +94,33 @@ export class NativeProcessError extends Error {
     readonly retryableGateContention: boolean;
     readonly nativeMessage?: string;
     readonly pendingIndexRevision?: number;
+    readonly scanPaused: boolean;
     constructor(command: string, error: ExecFileException, stderr: string, readonly elapsedMs: number, readonly timeoutMs: number) {
-        let nativeMessage: string | undefined, retryableGateContention = false, pendingIndexRevision: number | undefined;
+        let nativeMessage: string | undefined, retryableGateContention = false, scanPaused = false, pendingIndexRevision: number | undefined;
         if (error.code === 1 && !error.killed && !error.signal) {
             try {
                 // execFile already bounds captured output. Parse before applying
                 // the diagnostic display limit: JSON escaping can expand a valid
                 // 4,096-character native message beyond that limit.
-                const lines = stderr.trim().split(/\r?\n/);
-                const structured = lines.length === 1 || lines.slice(0, -1).every(line => parseIndexProgress(line));
-                const outcome: unknown = structured ? JSON.parse(lines.at(-1)!) : undefined;
-                if (outcome && typeof outcome === 'object' && !Array.isArray(outcome)) {
+                for (const line of stderr.trim().split(/\r?\n/).reverse()) {
+                    let outcome: unknown;
+                    try { outcome = JSON.parse(line); } catch { continue; }
+                    if (!outcome || typeof outcome !== 'object' || Array.isArray(outcome)) { continue; }
                     const fields = outcome as Record<string, unknown>;
+                    if (!Object.hasOwn(fields, 'airk_error')) { continue; }
+                    // The last error envelope is authoritative. Malformed fields
+                    // never authorize retry using an earlier, unrelated error.
                     if (fields.airk_error === 1 && typeof fields.code === 'string'
                         && typeof fields.retryable === 'boolean' && typeof fields.message === 'string') {
                         nativeMessage = boundedDiagnostic(fields.message);
                         retryableGateContention = fields.code === 'current_gate_busy' && fields.retryable;
+                        scanPaused = fields.code === 'scheduled_index_paused' && fields.retryable;
                         if (fields.code === 'scheduled_index_pending' && fields.retryable
                             && Number.isSafeInteger(fields.requested_revision) && Number(fields.requested_revision) > 0) {
                             pendingIndexRevision = Number(fields.requested_revision);
                         }
                     }
+                    break;
                 }
             } catch { /* Unstructured stderr never authorizes a retry. */ }
         }
@@ -132,7 +139,7 @@ export class NativeProcessError extends Error {
         this.stderr = boundedDiagnostic(stderr.trim());
         this.nativeMessage = nativeMessage;
         this.retryableGateContention = retryableGateContention;
-        this.pendingIndexRevision = pendingIndexRevision;
+        this.pendingIndexRevision = pendingIndexRevision; this.scanPaused = scanPaused;
     }
 }
 
@@ -144,7 +151,7 @@ export function runText(command: string, args: string[], cwd?: string, timeout =
         let idleTimer: NodeJS.Timeout | undefined;
         const child = execFile(command, args, { cwd, env: { ...process.env, AIRK_CLIENT: 'vscode', AIRK_ERROR_FORMAT: 'json' }, windowsHide: true, maxBuffer: 16 * 1024 * 1024, timeout }, (error, stdout, stderr) => {
             if (idleTimer) { clearTimeout(idleTimer); }
-            if (idleExpired) { reject(new Error(`AIRK index stopped after ${idleTimeout} ms without progress. Committed evidence remains available; use Diagnose & Repair, then retry indexing.`)); return; }
+            if (idleExpired && error) { reject(new Error(`AIRK index stopped after ${idleTimeout} ms without progress. Committed evidence remains available; use Diagnose & Repair, then retry indexing.`)); return; }
             if (error) { reject(new NativeProcessError(command, error, stderr, Math.round(performance.now() - started), timeout)); }
             else { resolve(stdout); }
         });
@@ -179,11 +186,17 @@ export async function runJson<T>(spec: LaunchSpec, command: string, extra: strin
         onStderrLine, indexing && onStderrLine ? 600000 : 0)) as T;
 }
 
+export class ScheduledIndexStillQueued extends Error {
+    constructor(readonly revision: number, readonly paused = false) {
+        super(`AIRK indexing request ${revision} is ${paused ? 'paused' : 'still queued'}. Committed evidence remains available.`);
+    }
+}
+
 /** Continue the same durable request after a bounded native join expires. */
 export async function joinScheduledIndex<T>(initialArgs: string[],
-    run: (command: string, args: string[]) => Promise<T>, onPending: () => void): Promise<T> {
-    let revision: number | undefined;
-    for (;;) {
+    run: (command: string, args: string[]) => Promise<T>, onPending: () => boolean | void, initialRevision?: number): Promise<T> {
+    let revision = initialRevision;
+    for (let joins = 0; ; joins++) {
         try { return await run(revision === undefined ? 'index' : 'schedule',
             revision === undefined ? initialArgs : ['wait', String(revision), '--progress']); }
         catch (error) {
@@ -191,7 +204,8 @@ export async function joinScheduledIndex<T>(initialArgs: string[],
             if (revision !== undefined && error.pendingIndexRevision !== revision) { throw new Error('Native indexing wait returned a different request revision.'); }
             revision = error.pendingIndexRevision;
             // The caller rechecks trust, shutdown and collection binding between joins.
-            onPending();
+            const paused = onPending() === false;
+            if (paused || joins >= 2) { throw new ScheduledIndexStillQueued(revision, paused); }
         }
     }
 }

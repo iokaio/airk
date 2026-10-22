@@ -12,7 +12,6 @@ publish.workspace = true
 [dependencies]
 airk-core.workspace = true
 anyhow.workspace = true
-tantivy.workspace = true
 diskann.workspace = true
 diskann-vector.workspace = true
 futures.workspace = true

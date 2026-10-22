@@ -1003,6 +1003,55 @@ impl FileStore {
     pub fn load_retained(&self, entry: &Artifact) -> Result<Artifact> {
         self.load_retained_bounded(entry, MAX_ARTIFACT_BYTES)
     }
+    /// Check that reusable objects are present without decoding them during a
+    /// source scan. Reads that consume an object still authenticate its bytes.
+    pub fn check_retained_present(&self, entry: &Artifact) -> Result<()> {
+        let reference = entry
+            .retained
+            .as_ref()
+            .context("retained reference missing")?;
+        ensure!(reference.raw_source, "retained source unavailable");
+        for (kind, logical, stored, expected) in [
+            (
+                "artifacts",
+                reference.object.as_str(),
+                reference
+                    .payload_encoding
+                    .as_ref()
+                    .map_or(reference.object.as_str(), |e| e.stored_digest.as_str()),
+                reference
+                    .payload_encoding
+                    .as_ref()
+                    .map_or(reference.object_bytes as u64, |e| e.stored_bytes),
+            ),
+            (
+                "sources",
+                entry.content_hash.as_str(),
+                reference
+                    .source_encoding
+                    .as_ref()
+                    .map_or(entry.content_hash.as_str(), |e| e.stored_digest.as_str()),
+                reference
+                    .source_encoding
+                    .as_ref()
+                    .map_or(entry.bytes as u64, |e| e.stored_bytes),
+            ),
+        ] {
+            let path = object_path(self.directory(), kind, stored)?;
+            let metadata = retained_read_context(
+                fs::metadata(&path).map_err(Into::into),
+                kind,
+                &path,
+                logical,
+            )?;
+            ensure!(
+                metadata.is_file() && metadata.len() == expected,
+                "retained {kind} object length mismatch for indexed path {:?}",
+                entry.path
+            );
+        }
+        Ok(())
+    }
     /// One authenticated decode supplies both the evidence projection and the
     /// extraction coordinates needed by semantic-unit planning.
     pub fn load_retrieval_artifact(

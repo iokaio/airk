@@ -165,6 +165,8 @@ function completedQueueWait(probes: DiagnosticReport['probes'], editor: Diagnost
     const queue = probes.schedule.value;
     const latest = [...events].reverse().find(event => event.kind === 'index_failed' || event.kind === 'semantic_failed' || event.kind === 'index_completed');
     if (latest?.kind !== 'index_failed' || !latest.error || latest.error.code !== 1 || latest.error.killed || latest.error.signal || latest.error.timedOut) { return false; }
+    // Keep the exact legacy message for already-saved local 1.2.5 diagnostic reports.
+    // It never authorizes a native retry; live retries require the typed revision.
     let awaitedRevision: number | undefined;
     try {
         const failure = JSON.parse(latest.error.stderr ?? '');

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { ScheduledIndexStillQueued } from './native';
 import { IndexMode, IndexReport, LaunchSpec } from './model';
 
 export interface Options { mode: IndexMode; quietMs: number; idleMs: number; maxDelayMs: number; minIntervalMs: number }
@@ -6,13 +7,14 @@ export interface Clock { now(): number; set(fn: () => void, ms: number): unknown
 const systemClock: Clock = { now: () => Date.now(), set: (fn, ms) => setTimeout(fn, ms), clear: timer => clearTimeout(timer as NodeJS.Timeout) };
 export class CapacityError extends Error {}
 export class PausedError extends Error {}
-export type SemanticResult = 'pending' | 'busy' | 'ready' | 'paused';
+export type SemanticResult = 'pending' | 'busy' | 'ready' | 'paused' | 'yield';
 type State = 'queued' | 'indexing' | 'enriching' | 'semantic-pending' | 'current' | 'partial' | 'failed' | 'capacity-limited' | 'paused';
 interface Waiter { revision: number; resolve(): void; reject(error: unknown): void }
 interface Job {
     spec: LaunchSpec; revision: number; completed: number; first: number; last: number;
     ended: number; manual: boolean; full: boolean; blocked: boolean; state: State; waiters: Waiter[];
-    runningRevision?: number; runningFull?: boolean;
+    deferredRevision?: number; deferredUntil?: number; runningRevision?: number; runningFull?: boolean;
+    runningAutomatic?: boolean;
     semanticPending: boolean; semanticAt: number; baseState: 'current' | 'partial';
     semanticBusyDelay: number; semanticResetRevision: number;
 }
@@ -89,10 +91,14 @@ export class Scheduler {
         }
         // Repeated explicit clicks share the existing up-to-date pass. Filesystem
         // events still advance the revision, including while a write is running.
-        const coalesced = manual && job.revision > job.completed && (!full || job.full || job.runningFull);
+        const coalesced = manual && job.revision > job.completed && (!full || job.full || job.runningFull)
+            && !(job.runningRevision === job.revision && job.runningAutomatic);
         if (job.revision === job.completed) { job.first = now; }
         job.spec = spec;
-        if (manual) { this.resetSemanticBackoff(job); }
+        if (manual) {
+            this.resetSemanticBackoff(job);
+            if (this.paused) { job.deferredRevision = undefined; job.deferredUntil = undefined; }
+        }
         if (!coalesced) { job.revision++; job.last = now; }
         const capacityBlocked = job.blocked && job.state === 'capacity-limited' && !manual;
         if (!capacityBlocked) { job.blocked = false; }
@@ -132,6 +138,7 @@ export class Scheduler {
         return this.enrich && job.semanticPending && !this.paused && !job.blocked ? job.semanticAt : Infinity;
     }
     private due(job: Job): number {
+        if (job.deferredUntil !== undefined) { return this.paused || job.blocked ? Infinity : Math.max(this.clock.now(), job.deferredUntil); }
         if (job.manual) { return this.clock.now(); }
         if (this.paused || this.options.mode === 'manual' || job.blocked) { return Infinity; }
         const quiet = job.last + this.options.quietMs;
@@ -164,7 +171,7 @@ export class Scheduler {
         if (this.stopped || !this.enrich) { return; }
         const resumeRevision = this.resumeRevision;
         const resetRevision = job.semanticResetRevision;
-        let delay = 1000;
+        let delay = 0;
         this.busy = true; job.state = 'enriching'; this.changed();
         try {
             const result = await this.enrich(job.spec);
@@ -173,6 +180,7 @@ export class Scheduler {
                 delay = job.semanticBusyDelay;
             } else {
                 job.semanticBusyDelay = 0;
+                if (result === 'yield') { delay = 1000; }
                 if (resetRevision !== job.semanticResetRevision) { delay = 0; }
             }
             job.semanticPending = result !== 'ready';
@@ -183,6 +191,9 @@ export class Scheduler {
             job.blocked = true; job.state = 'failed'; this.failed(job.spec, error);
         } finally {
             this.busy = false; job.semanticAt = this.clock.now() + delay;
+            // Rotate equal-deadline jobs so a ready collection gets the next turn
+            // without forcing a one-second gap between successful native drains.
+            if (this.jobs.get(job.spec.collection) === job) { this.jobs.delete(job.spec.collection); this.jobs.set(job.spec.collection, job); }
             for (const ready of this.idleWaiters) { ready(); }
             this.idleWaiters.clear(); this.schedule();
         }
@@ -193,25 +204,34 @@ export class Scheduler {
     private async execute(job: Job): Promise<void> {
         if (this.stopped) { return; }
         this.busy = true;
-        const revision = job.revision, full = job.full, automatic = !job.manual;
-        job.runningRevision = revision; job.runningFull = full;
-        job.manual = false; job.full = false; job.state = 'indexing'; this.changed();
+        const continuing = job.deferredRevision !== undefined;
+        const revision = job.deferredRevision ?? job.revision, full = !continuing && job.full, automatic = continuing || !job.manual;
+        job.runningRevision = revision; job.runningFull = full; job.runningAutomatic = automatic;
+        if (!continuing) { job.manual = false; job.full = false; }
+        job.state = 'indexing'; this.changed();
         try {
             const report = await this.run(job.spec, full, automatic);
             this.resetSemanticBackoff(job);
-            job.completed = revision;
+            job.completed = revision; job.deferredUntil = undefined; job.deferredRevision = undefined;
             job.baseState = report.skipped.length ? 'partial' : 'current';
             job.state = job.revision > revision ? 'queued' : job.semanticPending ? 'semantic-pending' : job.baseState;
             for (const waiter of job.waiters.filter(w => w.revision <= revision)) { waiter.resolve(); }
             job.waiters = job.waiters.filter(w => w.revision > revision);
             if (job.revision > revision) { job.first = job.last; }
         } catch (error) {
-            job.blocked = true; job.state = error instanceof CapacityError ? 'capacity-limited' : error instanceof PausedError ? 'paused' : 'failed';
-            for (const waiter of job.waiters.filter(w => w.revision <= revision)) { waiter.reject(error); }
+            if (error instanceof ScheduledIndexStillQueued) {
+                job.blocked = error.paused; job.state = error.paused ? 'paused' : 'queued';
+                job.deferredRevision = revision; job.deferredUntil = this.clock.now() + 30000;
+                for (const waiter of job.waiters.filter(w => w.revision <= revision)) { waiter.resolve(); }
+            } else {
+                job.deferredRevision = undefined; job.deferredUntil = undefined;
+                job.blocked = true; job.state = error instanceof CapacityError ? 'capacity-limited' : error instanceof PausedError ? 'paused' : 'failed';
+                for (const waiter of job.waiters.filter(w => w.revision <= revision)) { waiter.reject(error); }
+                if (!(error instanceof PausedError)) { this.failed(job.spec, error); }
+            }
             job.waiters = job.waiters.filter(w => w.revision > revision);
-            this.failed(job.spec, error);
         } finally {
-            this.busy = false; job.runningRevision = undefined; job.runningFull = undefined; job.ended = this.clock.now();
+            this.busy = false; job.runningRevision = undefined; job.runningFull = undefined; job.runningAutomatic = undefined; job.ended = this.clock.now();
             for (const ready of this.idleWaiters) { ready(); }
             this.idleWaiters.clear(); this.schedule();
         }

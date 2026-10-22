@@ -37,7 +37,7 @@ fn now() -> Result<u64> {
 }
 
 #[derive(Debug)]
-pub(crate) struct ScanPaused;
+pub struct ScanPaused;
 impl std::fmt::Display for ScanPaused {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("scan paused; committed batches remain available")
@@ -66,6 +66,24 @@ impl Kernel {
     /// this after base indexing and on reopen, without installing a service or
     /// executing queued source scans for other workspace roots.
     pub fn run_scheduled_enrichment(&self) -> Result<RunOutcome> {
+        self.run_scheduled_enrichment_bounded(1, None)
+    }
+
+    /// Reuse one model and worker for several durable batches, yielding after
+    /// the time budget so other collections can acquire the scheduler worker.
+    pub fn run_scheduled_enrichment_bounded(
+        &self,
+        max_batches: usize,
+        budget: Option<std::time::Duration>,
+    ) -> Result<RunOutcome> {
+        ensure!(
+            (1..=8).contains(&max_batches),
+            "semantic batch limit exceeded"
+        );
+        ensure!(
+            budget.is_none_or(|duration| duration <= Duration::from_secs(120)),
+            "semantic time budget exceeded"
+        );
         let queue = self.queue()?;
         let outcome = |state, error| RunOutcome {
             state,
@@ -87,11 +105,14 @@ impl Kernel {
         if job.blocked {
             return Ok(outcome("blocked", job.error));
         }
+        if job.requested_revision > job.completed_revision {
+            return Ok(outcome("busy", None));
+        }
         // Unlike a root-wide worker searching for eligible collections, an
         // editor request must surface a failure to read its selected index.
         self.status()?;
         Ok(self
-            .continue_semantic(&queue, &worker, &[job])?
+            .continue_semantic(&queue, &worker, &[job], max_batches, budget)?
             .unwrap_or_else(|| outcome("idle", None)))
     }
 
@@ -100,11 +121,16 @@ impl Kernel {
         queue: &Queue,
         worker: &WorkerLock,
         jobs: &[ScheduledJob],
+        max_batches: usize,
+        budget: Option<std::time::Duration>,
     ) -> Result<Option<RunOutcome>> {
         use airk_core::readiness::SemanticState;
-        for job in jobs.iter().filter(|job| !job.paused && !job.blocked) {
-            let kernel =
+        for job in jobs.iter().filter(|job| {
+            !job.paused && !job.blocked && job.requested_revision == job.completed_revision
+        }) {
+            let mut kernel =
                 Kernel::open_collection(&job.root, Some(self.data_root.clone()), &job.collection)?;
+            kernel.progress = self.progress.clone();
             let Ok(status) = kernel.status() else {
                 continue;
             };
@@ -114,12 +140,29 @@ impl Kernel {
             ) {
                 continue;
             }
-            return Ok(Some(match kernel.resume_current_enrichment_batches(1) {
-                Ok(generation) => RunOutcome {
+            let span = kernel.usage_span(UsageOperation::Index, ClientFamily::NativeScheduler);
+            let result = kernel.resume_current_enrichment_batches_bounded(max_batches, budget);
+            let logical = result
+                .as_ref()
+                .ok()
+                .and_then(|(_, report)| serde_json::to_value(report).ok());
+            let bytes = logical
+                .as_ref()
+                .and_then(|value| serde_json::to_vec(value).ok())
+                .map_or(0, |bytes| bytes.len());
+            kernel.finish_usage(
+                span,
+                logical.as_ref(),
+                bytes,
+                result.is_err(),
+                ResponseRepresentation::LogicalResultJson,
+            );
+            return Ok(Some(match result {
+                Ok((generation, report)) => RunOutcome {
                     state: "enriched",
                     collection: Some(job.collection.clone()),
                     revision: generation,
-                    report: None,
+                    report: Some(report),
                     error: None,
                     maintenance: None,
                 },
@@ -168,13 +211,27 @@ impl Kernel {
     }
 
     pub fn schedule_enqueue(&self, full: bool) -> Result<ScheduledJob> {
-        self.queue()?.enqueue(
+        self.schedule_enqueue_selected(full, None, false)
+    }
+
+    pub fn schedule_enqueue_selected(
+        &self,
+        full: bool,
+        paths: Option<&[String]>,
+        coalesced: bool,
+    ) -> Result<ScheduledJob> {
+        if full {
+            self.prepare_full_rebuild()?;
+        }
+        self.queue()?.enqueue_selected(
             &self.collection,
             &self.root_id(),
             full,
             false,
             false,
             now()?,
+            paths,
+            coalesced,
         )
     }
     pub fn schedule_status(&self) -> Result<Option<ScheduledJob>> {
@@ -210,15 +267,19 @@ impl Kernel {
                 error: None,
             });
         };
-        let measured =
-            Kernel::open_collection(&job.root, Some(queue.data_dir().into()), &job.collection)
-                .and_then(|kernel| {
-                    ensure!(
-                        kernel.root_id() == job.root,
-                        "registered workspace root identity changed"
-                    );
-                    kernel.coverage(true)
-                });
+        let measured = Kernel::open_collection_with_recovery(
+            &job.root,
+            Some(queue.data_dir().into()),
+            &job.collection,
+            !job.full,
+        )
+        .and_then(|kernel| {
+            ensure!(
+                kernel.root_id() == job.root,
+                "registered workspace root identity changed"
+            );
+            kernel.coverage(true)
+        });
         match measured {
             Ok(report) => {
                 let changed = !report.indexed
@@ -283,7 +344,9 @@ impl Kernel {
             });
         };
         let Some(job) = queue.claim(&worker, now()?)? else {
-            if let Some(outcome) = self.continue_semantic(&queue, &worker, &queue.list()?)? {
+            if let Some(outcome) =
+                self.continue_semantic(&queue, &worker, &queue.list()?, 1, None)?
+            {
                 return Ok(outcome);
             }
             match self.continue_retention(&queue.list()?) {
@@ -318,52 +381,60 @@ impl Kernel {
                 maintenance: None,
             });
         };
-        let result =
-            Kernel::open_collection(&job.root, Some(queue.data_dir().into()), &job.collection)
-                .and_then(|mut kernel| {
-                    kernel.progress = self.progress.clone();
-                    ensure!(
-                        kernel.root_id() == job.root,
-                        "registered workspace root identity changed"
-                    );
-                    let span = kernel.usage_span(
-                        if job.full {
-                            UsageOperation::Reindex
-                        } else {
-                            UsageOperation::Index
-                        },
-                        ClientFamily::NativeScheduler,
-                    );
-                    let result = kernel.index_current(job.full, true);
-                    if result.as_ref().is_err_and(|error| {
-                        matches!(
-                            error.downcast_ref::<std::fs::TryLockError>(),
-                            Some(std::fs::TryLockError::WouldBlock)
-                        )
-                    }) {
-                        // A deferred claim did no indexing work. Do not count
-                        // each contention retry as a failed usage observation.
-                        return result;
-                    }
-                    // Background jobs have a logical index-report JSON representation;
-                    // queue/watch envelopes and waiting CLI callers are not extra index work.
-                    let logical = result
-                        .as_ref()
-                        .ok()
-                        .and_then(|report| serde_json::to_value(report).ok());
-                    let bytes = logical
-                        .as_ref()
-                        .and_then(|value| serde_json::to_vec(value).ok())
-                        .map_or(0, |json| json.len());
-                    kernel.finish_usage(
-                        span,
-                        logical.as_ref(),
-                        bytes,
-                        result.is_err(),
-                        ResponseRepresentation::LogicalResultJson,
-                    );
-                    result
-                });
+        let result = Kernel::open_collection_with_recovery(
+            &job.root,
+            Some(queue.data_dir().into()),
+            &job.collection,
+            !job.full,
+        )
+        .and_then(|mut kernel| {
+            kernel.progress = self.progress.clone();
+            ensure!(
+                kernel.root_id() == job.root,
+                "registered workspace root identity changed"
+            );
+            let span = kernel.usage_span(
+                if job.full {
+                    UsageOperation::Reindex
+                } else {
+                    UsageOperation::Index
+                },
+                ClientFamily::NativeScheduler,
+            );
+            let result = if let Some(paths) = &job.paths {
+                kernel.index_current_paths(paths, true)
+            } else {
+                kernel.index_current(job.full, true)
+            };
+            if result.as_ref().is_err_and(|error| {
+                matches!(
+                    error.downcast_ref::<std::fs::TryLockError>(),
+                    Some(std::fs::TryLockError::WouldBlock)
+                )
+            }) {
+                // A deferred claim did no indexing work. Do not count
+                // each contention retry as a failed usage observation.
+                return result;
+            }
+            // Background jobs have a logical index-report JSON representation;
+            // queue/watch envelopes and waiting CLI callers are not extra index work.
+            let logical = result
+                .as_ref()
+                .ok()
+                .and_then(|report| serde_json::to_value(report).ok());
+            let bytes = logical
+                .as_ref()
+                .and_then(|value| serde_json::to_vec(value).ok())
+                .map_or(0, |json| json.len());
+            kernel.finish_usage(
+                span,
+                logical.as_ref(),
+                bytes,
+                result.is_err(),
+                ResponseRepresentation::LogicalResultJson,
+            );
+            result
+        });
         let outcome = match result {
             Ok(report) => {
                 queue.finish(&worker, &job, now()?, Ok(&serde_json::to_string(&report)?))?;
@@ -422,14 +493,29 @@ impl Kernel {
     /// Persist first, then join one serialized worker. A killed extension/helper
     /// leaves the unfinished revision available to another host or CLI worker.
     pub fn scheduled_index(&self, full: bool, automatic: bool) -> Result<IndexReport> {
+        self.scheduled_index_selected(full, automatic, None, false)
+    }
+
+    pub fn scheduled_index_selected(
+        &self,
+        full: bool,
+        automatic: bool,
+        paths: Option<&[String]>,
+        coalesced: bool,
+    ) -> Result<IndexReport> {
+        if full {
+            self.prepare_full_rebuild()?;
+        }
         let queue = self.queue()?;
-        let requested = queue.enqueue(
+        let requested = queue.enqueue_selected(
             &self.collection,
             &self.root_id(),
             full,
             !automatic,
             true,
             now()?,
+            paths,
+            coalesced,
         )?;
         ensure!(
             !automatic || !requested.paused,

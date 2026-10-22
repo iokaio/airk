@@ -1,5 +1,7 @@
 # ADR 001: focused local retrieval kernel
 
+**Partial supersession, 2026-10-21 (1.2.5 candidate):** The Tantivy choice below is historical. SQLite FTS5 now owns lexical retrieval inside the current database; DiskANN remains the vector engine. See the [replacement rationale](../index-sharding-review.md#decision-replace-tantivy-with-sqlite-fts5) and [current runtime](../current-index-runtime.md).
+
 Status: accepted for the scaffold and intended architecture.
 
 ## Context

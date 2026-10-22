@@ -43,7 +43,7 @@ fn obsolete_conditional_reads_require_rebuild_without_evidence_fallback() -> Res
         components.join("manifest.json"),
         serde_json::to_vec(&serde_json::json!({
             "schema": 4,
-            "engine": airk_retrieval::persistent::retrieval_specification(),
+            "engine": "tantivy-0.26.2/retired-v2-fixture",
         }))?,
     )?;
     drop(_writer);

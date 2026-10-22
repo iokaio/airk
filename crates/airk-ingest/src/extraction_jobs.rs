@@ -5,7 +5,7 @@ use airk_core::{
     extraction::{ExtractionPayload, ExtractionProfile},
     identity::Sha256Digest,
 };
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 pub(crate) struct CapturedExtraction {
     pub path: String,
@@ -31,12 +31,20 @@ pub(crate) enum ExtractionFailure {
 
 pub(crate) struct FreshExtraction {
     pub captured: CapturedExtraction,
-    pub payload: std::result::Result<ExtractionPayload, ExtractionFailure>,
+    pub prepared: PreparedExtraction,
+}
+
+pub(crate) enum PreparedExtraction {
+    Fresh(Box<std::result::Result<ExtractionPayload, ExtractionFailure>>),
+    Reused(Box<crate::observations::VerifiedReuse>),
 }
 
 pub(crate) fn extract(captured: CapturedExtraction) -> FreshExtraction {
     let payload = prepare(&captured);
-    FreshExtraction { captured, payload }
+    FreshExtraction {
+        captured,
+        prepared: PreparedExtraction::Fresh(Box::new(payload)),
+    }
 }
 
 fn prepare(
@@ -191,7 +199,37 @@ where
         observation: &mut crate::observations::ScanObservation,
     ) -> Result<()> {
         report.extraction_work_us = report.extraction_work_us.saturating_add(completed.work_us);
-        let FreshExtraction { captured, payload } = completed.result?;
+        let FreshExtraction { captured, prepared } = completed.result?;
+        let payload = match prepared {
+            PreparedExtraction::Fresh(payload) => *payload,
+            PreparedExtraction::Reused(reused) => {
+                let old = reused.artifact;
+                anyhow::ensure!(
+                    old.path == captured.path
+                        && old.content_hash == captured.hash.to_string()
+                        && old.bytes == captured.bytes.len()
+                        && old.language == captured.profile.language,
+                    "cache returned incompatible artifact binding"
+                );
+                anyhow::ensure!(
+                    old.retained
+                        .as_ref()
+                        .and_then(|reference| reference.profile.as_ref())
+                        .is_none_or(|profile| profile == &captured.profile),
+                    "cache returned incompatible extraction profile"
+                );
+                report.reused += 1;
+                match reused.basis {
+                    crate::observations::ReuseBasis::SamePath => {
+                        observation.usage.same_path_hits += 1
+                    }
+                    crate::observations::ReuseBasis::PriorContent => {
+                        observation.usage.prior_content_hits += 1
+                    }
+                }
+                return self.retain(&captured, &old, None);
+            }
+        };
         let outcome = payload.and_then(|payload| {
             bind(&captured, &payload)
                 .map(|artifact| (payload, artifact))
@@ -246,5 +284,18 @@ where
             self.finish(completed, report, observation)?;
         }
         Ok(())
+    }
+
+    pub fn finish_next(
+        &mut self,
+        pool: &mut crate::extraction_pool::OrderedPool<CapturedExtraction, FreshExtraction>,
+        report: &mut crate::IndexReport,
+        observation: &mut crate::observations::ScanObservation,
+    ) -> Result<()> {
+        let completed = pool
+            .next()
+            .inspect_err(|_| self.failed = true)?
+            .context("extraction admission has no pending result")?;
+        self.finish(completed, report, observation)
     }
 }

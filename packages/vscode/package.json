@@ -446,7 +446,7 @@
           },
           "airk.index.minIntervalMs": {
             "type": "number",
-            "default": 5000,
+            "default": 1000,
             "minimum": 0,
             "maximum": 300000,
             "scope": "window",

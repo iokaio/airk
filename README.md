@@ -6,11 +6,13 @@
 
 [Document indexing](docs/document-indexing.md) specializes headings, dates, requirements, numeric bounds/units, qualitative cues and design/architecture/feature/decision language for Markdown, text and extracted documents. DOCX tables and XLSX worksheets retain row/cell evidence and original locations. These are cited evidence candidates, with category-filtered retrieval through MCP and the CLI.
 
-This is an independent, runnable open-source project. Munarium, VCP and local reference files inform the design; their implementations are not dependencies. Tantivy lexical indexes, authenticated SQLite records and mutable Microsoft DiskANN publish one coherent current revision. Vector indexing and hybrid retrieval are enabled by default. The trusted panel prepares the pinned [local CPU embedding model](docs/onnx-models.md) on first use (about 91 MB); turn **Vector search** off per collection to opt out. Inference and source data stay local. Model quality must be evaluated for the intended corpus.
+This is an independent, runnable open-source project. Munarium, VCP and local reference files inform the design; their implementations are not dependencies. SQLite FTS5 lexical retrieval, authenticated SQLite records and mutable Microsoft DiskANN publish one coherent current revision. Vector indexing and hybrid retrieval are enabled by default. The trusted panel prepares the pinned [local CPU embedding model](docs/onnx-models.md) on first use (about 91 MB); turn **Vector search** off per collection to opt out. Inference and source data stay local. Model quality must be evaluated for the intended corpus.
 
 [Code facts and relationships](docs/code-facts-and-relationships.md) add scopes, signatures, written types, call/framework candidates and optional source/build-bound SCIP imports. The 1.2.5 source has fifteen read-only MCP tools; the published 1.2.4 helper has sixteen. Both expose bounded evidence with explicit syntax versus producer provenance. Native indexing needs no external compiler/indexer installation.
 
 ## 1.2.5 candidate changes (unreleased)
+
+Saved-path updates are available through `airk index --paths src/retry.rs tests/retry.rs`; the editor and native watcher submit known changed paths too. They preserve unrelated indexed bindings and leave semantic work queued after lexical/fact publication. Complete reconciliation remains the backstop. Scheduled semantic calls reuse a model across bounded batches, and status exposes scheduled source-pass timings and inventory age. See the [indexing feedback review](docs/indexing-speed-review-2026-10-21.md) for implementation decisions, integrity limits and measurements.
 
 The unsupported `airk_history` MCP tool is removed. Search returns focused snippets by default, with `full_chunks: true` for complete indexed chunks. `AIRK_MCP_RESPONSE_MODE=terse` shortens repeated response metadata while retaining the exact token, citations, hashes and coverage state. MCP requests can wait briefly in a bounded queue; `known_hash` mismatches fail explicitly; textual references select indexed candidates before exact source verification. The editor can verify and start MCP while initial indexing continues, shows committed file progress, and stops a scan that makes no progress for ten minutes. Progressive scans now defer semantic inference until source discovery completes and adapt batch cadence to publication cost, keeping the first batch small and later work bounded. A bounded scheduler wait now resumes the same queued request; diagnostics distinguish a completed native request from an earlier editor wait failure. [Candidate notes](docs/release-1.2.5.md) describe the limits. No 1.2.5 release or Marketplace publication has occurred.
 
@@ -48,7 +50,7 @@ The extension's Details/Marketplace description and repository documentation now
 
 **Agent Lean** keeps useful code declarations, signatures, imports and document facts with compact MCP replies. **Rich Structure** and **Search Only** name the existing Balanced and Essential policies; in 1.2.0–1.2.2 new collections used Rich Structure; 1.2.3 defaults to Agent Lean. Progressive indexing publishes bounded exact-evidence and semantic batches, preserves committed work when paused, and reports discovery and semantic readiness separately. Optional lossless retained-object compression starts off.
 
-Version 1.2 uses one authenticated current index and incremental Tantivy/DiskANN publication. Create a fresh derived collection when upgrading from 1.1; source files remain untouched. See [current-index operation and recovery](docs/current-index-runtime.md) and the [qualification ledger](docs/indexingenhancements.md).
+Version 1.2.5 uses one authenticated current SQLite FTS5/DiskANN index. When the extension indexes a recognized older 1.2 collection, it replaces the obsolete derived index and starts a full rebuild using the existing ID. Source files and saved settings remain untouched. CLI users can run `airk index --full` for the same upgrade. The earlier 1.1 layout still requires fresh 1.2 state. See [current-index operation and recovery](docs/current-index-runtime.md) and the [current qualification notes](docs/release-1.2.5.md#qualification-status).
 
 ## What's new in 1.1.4
 
@@ -162,7 +164,7 @@ On Windows use a path such as D:/indexes/airk. Pruning previews obsolete immutab
 
 Default [storage quotas](docs/storage-quotas.md) are **100 GiB per collection** within **500 GiB per data root**. These are ceilings, not preallocated space. AIRK 1.2 starts fresh collection/settings ownership and leaves 1.1 state untouched. Current cleanup proves ownership before removing unreferenced objects. See the [current-index contract](docs/current-index-runtime.md) for token expiry, busy states and recovery.
 
-Indexing streams one artifact at a time into content-addressed source/extraction storage. Authenticated current catalog/postings, a head-bound Tantivy manifest and mutable DiskANN records preserve exact revision identity without loading all source text for each request. [Source aliases](docs/source-roots.md) add independent folders to one collection; their original locations are pinned with each revision. Shared logical-byte quotas cover participating writers, including temporary builds and durable recovery allowances. Explicit relocation copies and verifies a data root before activating it, retaining the old managed state.
+Indexing streams one artifact at a time into content-addressed source/extraction storage. Authenticated current catalog/postings, head-bound FTS5 content and posting digests and mutable DiskANN records preserve exact revision identity without loading all source text for each request. [Source aliases](docs/source-roots.md) add independent folders to one collection; their original locations are pinned with each revision. Shared logical-byte quotas cover participating writers, including temporary builds and durable recovery allowances. Explicit relocation copies and verifies a data root before activating it, retaining the old managed state.
 
 Automatic [ingestion limits](docs/ingestion-limits.md) allow up to 256 MiB per source file, 32 MiB extracted text per file and 100,000 files. Eligible source is sized to one eighth of detected machine memory, capped at 2 GiB, with twice that allowance for extracted text. Unknown memory uses a 512 MiB source allowance; saved policies remain unchanged. Collection policies explicitly permit larger workloads within validated ceilings and storage quotas; [scale qualification](docs/scale-qualification.md) records measured profiles. Ignore rules and common secret/build exclusions apply; indexes themselves contain source text. Read [SECURITY.md](SECURITY.md).
 
@@ -173,8 +175,8 @@ crates/
   airk-core/       Artifact, fact, query, citation and provider contracts
   airk-ingest/     Discovery, hashing, native grammars and document adapters
   airk-store/      SQLite state, durable queues/usage, locks and current-object cleanup
-  airk-retrieval/  Persistent Tantivy, disk-backed DiskANN, local vectors and budgets
-  airk-kernel/     Shared collection-scoped application services
+  airk-retrieval/  Disk-backed DiskANN, local vectors and retrieval primitives
+  airk-kernel/     Collection-scoped services, rank fusion and response budgets
   airk-mcp/        Read-only schemas and official SDK stdio transport
   airk-cli/        Binary, client setup and collection operations
 docs/             Architecture, decisions, roadmap and extension research

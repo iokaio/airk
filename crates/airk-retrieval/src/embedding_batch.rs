@@ -121,12 +121,23 @@ pub(crate) fn parallel_map<T: Sync, R: Send>(
     if workers == 1 {
         return items.iter().map(work).collect();
     }
+    ensure!(workers > 0, "embedding worker count must be positive");
+    let workers = workers.min(items.len());
     let results = std::thread::scope(|scope| {
-        let handles: Vec<_> = items
-            .chunks(items.len().div_ceil(workers))
-            .map(|part| {
+        // Length-sorted shape groups must share their expensive tail across
+        // workers. Scatter round-robin, then restore the original result order.
+        let handles: Vec<_> = (0..workers)
+            .map(|worker| {
                 let work = &work;
-                scope.spawn(move || part.iter().map(work).collect::<Result<Vec<_>>>())
+                scope.spawn(move || {
+                    items
+                        .iter()
+                        .enumerate()
+                        .skip(worker)
+                        .step_by(workers)
+                        .map(|(index, item)| Ok((index, work(item)?)))
+                        .collect::<Result<Vec<_>>>()
+                })
             })
             .collect();
         handles
@@ -139,12 +150,14 @@ pub(crate) fn parallel_map<T: Sync, R: Send>(
             })
             .collect::<Vec<_>>()
     });
-    Ok(results
+    let mut results = results
         .into_iter()
         .collect::<Result<Vec<_>>>()?
         .into_iter()
         .flatten()
-        .collect())
+        .collect::<Vec<_>>();
+    results.sort_unstable_by_key(|(index, _)| *index);
+    Ok(results.into_iter().map(|(_, result)| result).collect())
 }
 
 #[allow(clippy::too_many_arguments)]

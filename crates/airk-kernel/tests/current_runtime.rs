@@ -412,6 +412,7 @@ fn semantic_batches_disclose_partial_coverage() -> Result<()> {
 
 #[test]
 fn editor_semantic_batches_resume_after_reopen_and_preserve_scope_and_pause() -> Result<()> {
+    use std::sync::{Arc, Mutex};
     let root = unlinked_tempdir()?;
     let foreign = unlinked_tempdir()?;
     let data = unlinked_tempdir()?;
@@ -449,9 +450,24 @@ fn editor_semantic_batches_resume_after_reopen_and_preserve_scope_and_pause() ->
     drop(worker);
     drop(kernel);
 
+    let progress = Arc::new(Mutex::new(Vec::new()));
     while completed < 65 {
-        let reopened = Kernel::open(root.path(), Some(data.path().into()))?;
-        assert_eq!(reopened.run_scheduled_enrichment()?.state, "enriched");
+        let events = progress.clone();
+        let reopened = Kernel::open(root.path(), Some(data.path().into()))?.with_index_progress(
+            move |event| {
+                events
+                    .lock()
+                    .expect("progress observer lock")
+                    .push((event.phase.to_string(), event.completed_artifacts));
+            },
+        );
+        let outcome = reopened
+            .run_scheduled_enrichment_bounded(8, Some(std::time::Duration::from_secs(60)))?;
+        assert_eq!(outcome.state, "enriched");
+        assert!(
+            outcome.report.unwrap().yield_to_source,
+            "a foreign source request gets the next worker opportunity"
+        );
         completed = (completed + 32).min(65);
         assert_eq!(
             reopened.status()?.semantic_readiness.completed_artifacts,
@@ -459,6 +475,16 @@ fn editor_semantic_batches_resume_after_reopen_and_preserve_scope_and_pause() ->
         );
         assert_eq!(other.status()?.publication, foreign_head);
     }
+    let events = progress.lock().expect("progress observer lock");
+    assert_eq!(events.len(), 9);
+    for phases in events.as_chunks::<3>().0 {
+        assert_eq!(phases[0].0, "enrichment_started");
+        assert_eq!(phases[1].0, "enrichment_prepared");
+        assert_eq!(phases[2].0, "enrichment_committed");
+        assert_eq!(phases[0].1, phases[1].1);
+        assert!(phases[2].1 > phases[1].1);
+    }
+    drop(events);
     let reopened = Kernel::open(root.path(), Some(data.path().into()))?;
     assert_eq!(
         reopened.status()?.semantic_readiness.state,
@@ -744,7 +770,7 @@ fn interrupted_runtime_bootstrap_completes_before_any_source_scan() -> Result<()
     #[derive(serde::Serialize)]
     struct Recipe {
         head: airk_store::current::CurrentHead,
-        manifest: airk_retrieval::current_lexical::LexicalManifest,
+        manifest: airk_store::current::lexical::LexicalManifest,
         configuration: airk_store::current::collection::CollectionConfiguration,
     }
     let root = unlinked_tempdir()?;
@@ -762,7 +788,7 @@ fn interrupted_runtime_bootstrap_completes_before_any_source_scan() -> Result<()
     let scope = serde_json::from_value(owner["scope"].clone())?;
     let read = store.current_read(&scope)?;
     let mut head = read.head().clone();
-    let manifest = airk_retrieval::current_lexical::LexicalManifest::decode(
+    let manifest = airk_store::current::lexical::LexicalManifest::decode(
         &read.lexical_manifest()?,
         head.lexical_commit,
     )?;

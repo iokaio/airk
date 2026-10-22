@@ -157,6 +157,33 @@ impl AirkServer {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn queue_overflow_timeout_and_cancellation_release_admission_slots() {
+        let admission = Admission::default();
+        let _held = admission
+            .0
+            .evidence
+            .clone()
+            .acquire_many_owned(EVIDENCE_WORKERS)
+            .await
+            .unwrap();
+        let mut waiting = Vec::new();
+        for _ in 0..MAX_QUEUED_REQUESTS {
+            let request = admission.clone();
+            waiting.push(tokio::spawn(async move { request.admit(false).await }));
+        }
+        tokio::task::yield_now().await;
+        assert_eq!(admission.status()["queued_requests"], MAX_QUEUED_REQUESTS);
+        assert!(admission.admit(false).await.is_err());
+        waiting.pop().unwrap().abort();
+        tokio::task::yield_now().await;
+        for task in waiting {
+            assert!(task.await.unwrap().is_err());
+        }
+        assert_eq!(admission.status()["queued_requests"], 0);
+        assert_eq!(admission.status()["rejected_requests"], MAX_QUEUED_REQUESTS);
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn complete_pipeline_records_success_failure_and_panic_once() -> anyhow::Result<()> {
         let temporary = tempfile::tempdir()?;

@@ -220,6 +220,12 @@ enum Command {
         /// Re-extract every eligible file while preserving the prior index on failure.
         #[arg(long)]
         full: bool,
+        /// Refresh only these logical saved paths; repeat or supply several paths.
+        #[arg(long, num_args = 1.., conflicts_with = "full")]
+        paths: Vec<String>,
+        /// The submitter already waited for edits to settle.
+        #[arg(long, requires = "scheduled")]
+        coalesced: bool,
     },
     /// Show the active snapshot and counts.
     Status,
@@ -363,6 +369,10 @@ enum ScheduleCommand {
     Enqueue {
         #[arg(long)]
         full: bool,
+        #[arg(long, num_args = 1.., conflicts_with = "full")]
+        paths: Vec<String>,
+        #[arg(long)]
+        coalesced: bool,
     },
     Status,
     /// Join an existing request without enqueueing another scan.
@@ -390,6 +400,9 @@ enum SemanticCommand {
         /// Run one collection-scoped batch, honoring scheduler pause and failures.
         #[arg(long)]
         scheduled: bool,
+        /// Emit JSON progress observations to stderr; final JSON stays on stdout.
+        #[arg(long)]
+        progress: bool,
     },
     Policy {
         #[arg(value_parser = ["partial_hybrid", "lexical_while_pending", "require_complete"])]
@@ -512,6 +525,12 @@ impl Command {
             // The native worker records the actual job once, including joined callers.
             Self::Index {
                 scheduled: true, ..
+            } => return None,
+            Self::Semantic {
+                action:
+                    SemanticCommand::Run {
+                        scheduled: true, ..
+                    },
             } => return None,
             Self::Coverage { .. } => UsageOperation::Coverage,
             Self::Analysis { .. } | Self::Ocr { .. } | Self::Collections { .. } | Self::Init => {
@@ -688,6 +707,9 @@ fn vector_selection_input(
 
 #[derive(Subcommand)]
 enum CollectionCommand {
+    /// Prepare an explicit full rebuild by discarding an obsolete pre-FTS5 index.
+    /// Preserves collection identity, source files and saved settings.
+    PrepareRebuild,
     /// Verify one bounded, revision-bound page of retained source and extraction inputs.
     Diagnose {
         #[arg(long)]
@@ -1045,28 +1067,41 @@ fn client_config(kernel: &Kernel, client: SetupClient) -> anyhow::Result<String>
     Ok(serde_json::to_string(&config)?)
 }
 
+fn error_envelope(error: &anyhow::Error) -> serde_json::Value {
+    let busy = error.is::<airk_kernel::CurrentGateContention>();
+    let paused = error.is::<airk_kernel::scheduler::ScanPaused>();
+    let pending = error.downcast_ref::<airk_kernel::scheduler::ScheduledIndexPending>();
+    let message: String = format!("{error:#}").chars().take(4096).collect();
+    serde_json::json!({ "airk_error": 1,
+        "code": if busy { "current_gate_busy" } else if pending.is_some() { "scheduled_index_pending" } else if paused { "scheduled_index_paused" } else { "operation_failed" },
+        "retryable": busy || pending.is_some() || paused,
+        "requested_revision": pending.map(|pending| pending.revision), "message": message })
+}
+
+#[test]
+fn scheduled_outcomes_preserve_typed_retry_and_revision_fields() {
+    let pending = anyhow::Error::new(airk_kernel::scheduler::ScheduledIndexPending { revision: 7 })
+        .context("waiting");
+    let envelope = error_envelope(&pending);
+    assert_eq!(envelope["airk_error"], 1);
+    assert_eq!(envelope["code"], "scheduled_index_pending");
+    assert_eq!(envelope["retryable"], true);
+    assert_eq!(envelope["requested_revision"], 7);
+    let paused = error_envelope(&airk_kernel::scheduler::ScanPaused.into());
+    assert_eq!(paused["code"], "scheduled_index_paused");
+    assert_eq!(paused["retryable"], true);
+    assert_eq!(
+        error_envelope(&anyhow::anyhow!("scheduled_index_pending"))["retryable"],
+        false
+    );
+}
+
 fn main() -> std::process::ExitCode {
     match run_cli() {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => {
             if std::env::var("AIRK_ERROR_FORMAT").as_deref() == Ok("json") {
-                let busy = error
-                    .downcast_ref::<airk_kernel::CurrentGateContention>()
-                    .is_some();
-                let pending = error.downcast_ref::<airk_kernel::scheduler::ScheduledIndexPending>();
-                // Display the cause chain without anyhow's environment-dependent
-                // Debug backtrace. Retry admission depends only on the typed error.
-                let message: String = format!("{error:#}").chars().take(4096).collect();
-                eprintln!(
-                    "{}",
-                    serde_json::json!({
-                        "airk_error": 1,
-                        "code": if busy { "current_gate_busy" } else if pending.is_some() { "scheduled_index_pending" } else { "operation_failed" },
-                        "retryable": busy || pending.is_some(),
-                        "requested_revision": pending.map(|pending| pending.revision),
-                        "message": message,
-                    })
-                );
+                eprintln!("{}", error_envelope(&error));
             } else {
                 eprintln!("Error: {error:?}");
             }
@@ -1127,8 +1162,9 @@ async fn main_async() -> anyhow::Result<()> {
     let kernel = if matches!(
         &cli.command,
         Command::Collections {
-            action: CollectionCommand::Diagnose { .. }
-        }
+            action: CollectionCommand::Diagnose { .. } | CollectionCommand::PrepareRebuild
+        } | Command::Index { full: true, .. }
+            | Command::Schedule { .. }
     ) {
         Kernel::open_collection_for_diagnostics(root, cli.data_dir, &cli.collection)?
     } else {
@@ -1160,7 +1196,7 @@ async fn main_async() -> anyhow::Result<()> {
             }
         },
         Command::Schedule { action } => match action {
-            ScheduleCommand::Enqueue { full } => print_json(&kernel.schedule_enqueue(full)?),
+            ScheduleCommand::Enqueue { full, paths, coalesced } => print_json(&kernel.schedule_enqueue_selected(full, (!paths.is_empty()).then_some(paths.as_slice()), coalesced)?),
             ScheduleCommand::Status => print_json(&kernel.schedule_status()?),
             ScheduleCommand::Wait { revision, progress } => {
                 let worker = if progress { kernel.clone().with_index_progress(|event| {
@@ -1306,6 +1342,7 @@ async fn main_async() -> anyhow::Result<()> {
             max_bytes,
         })?),
         Command::Collections { action } => match action {
+            CollectionCommand::PrepareRebuild => recorder.print(&kernel.prepare_full_rebuild()?),
             CollectionCommand::Diagnose { revision, after, max_files, max_bytes } => {
                 recorder.print(&kernel.diagnose_current(revision, after.as_deref(), max_files, max_bytes)?)
             }
@@ -1446,14 +1483,16 @@ async fn main_async() -> anyhow::Result<()> {
             Ok(())
         }
         Command::Init => recorder.print(&kernel.initialize()?),
-        Command::Index { full, scheduled, automatic, progress, .. } => {
+        Command::Index { full, scheduled, automatic, progress, paths, coalesced, .. } => {
             let kernel = if progress { kernel.clone().with_index_progress(|event| {
                 if let Ok(json) = serde_json::to_string(event) { eprintln!("{json}"); }
             }) } else { kernel.clone() };
             recorder.print(&if scheduled {
-            kernel.scheduled_index(full, automatic)?
+            kernel.scheduled_index_selected(full, automatic, (!paths.is_empty()).then_some(paths.as_slice()), coalesced)?
         } else if full {
             kernel.reindex()?
+        } else if !paths.is_empty() {
+            kernel.index_paths(&paths)?
         } else {
             kernel.index()?
         }) },
@@ -1466,10 +1505,18 @@ async fn main_async() -> anyhow::Result<()> {
         },
         Command::Semantic { action } => match action {
             SemanticCommand::Status => recorder.print(&kernel.status()?.semantic_readiness),
-            SemanticCommand::Run { scheduled: true } => recorder.print(&kernel.run_scheduled_enrichment()?),
-            SemanticCommand::Run { scheduled: false } => {
-                kernel.resume_current_enrichment()?;
-                recorder.print(&kernel.status()?.semantic_readiness)
+            SemanticCommand::Run { scheduled: true, progress } => {
+                let worker = if progress { kernel.clone().with_index_progress(|event| {
+                    if let Ok(json) = serde_json::to_string(event) { eprintln!("{json}"); }
+                }) } else { kernel.clone() };
+                recorder.print(&worker.run_scheduled_enrichment_bounded(8, Some(std::time::Duration::from_secs(60)))?)
+            },
+            SemanticCommand::Run { scheduled: false, progress } => {
+                let worker = if progress { kernel.clone().with_index_progress(|event| {
+                    if let Ok(json) = serde_json::to_string(event) { eprintln!("{json}"); }
+                }) } else { kernel.clone() };
+                worker.resume_current_enrichment()?;
+                recorder.print(&worker.status()?.semantic_readiness)
             }
             SemanticCommand::Policy { mode } => {
                 let policy = match mode.as_str() {
