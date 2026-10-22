@@ -32,7 +32,7 @@ Scans run serially at startup, every five minutes and on explicit refresh. Edits
 
 Within one extension host, coverage, indexing and pruning share a writer queue for each data directory and collection. A manual index waits for an active coverage write. Native locks still arbitrate other editor/CLI processes; contention fails explicitly, retains pending indexing work and permits a later retry. Awaited commands report failures to their callers as well as showing a notification. Read-only requests and separate collections do not share this local queue.
 
-The [native scheduler](native-scheduler.md) persists batches and serializes indexing across hosts sharing a data root. Editor notifications are coalesced in the editor before the batch reaches native scheduling; startup inventory reconciles notifications lost when the editor was closed.
+The [native scheduler](native-scheduler.md) persists batches and serializes indexing per collection across hosts. Different project collections sharing a data root can index concurrently within the native execution slots and CPU/memory budgets. Editor notifications are coalesced in the editor before the batch reaches native scheduling; startup inventory reconciles notifications lost when the editor was closed.
 
 ## Delivery and checks
 
