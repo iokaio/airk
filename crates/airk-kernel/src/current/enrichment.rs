@@ -24,6 +24,12 @@ pub(super) struct DrainOutcome {
     maintenance_error: Option<String>,
 }
 
+/// Keep model loading and inference under the same admitted resource lease.
+pub(super) struct DrainAdmission<'a> {
+    pub(super) execution: &'a crate::execution::ExecutionLease,
+    pub(super) deadline: Option<std::time::Instant>,
+}
+
 pub(super) fn now_unix_ms() -> Result<u64> {
     Ok(u64::try_from(
         std::time::SystemTime::now()
@@ -415,7 +421,7 @@ impl Kernel {
         stats: &mut EmbeddingCacheStats,
         max_batches: usize,
         current_work: Option<&mut airk_ingest::CurrentIndexWork>,
-        deadline: Option<std::time::Instant>,
+        admission: DrainAdmission<'_>,
     ) -> Result<Option<u64>> {
         match self.drain_current_enrichment(
             model,
@@ -423,7 +429,7 @@ impl Kernel {
             stats,
             max_batches,
             current_work,
-            deadline,
+            admission,
         ) {
             Ok(result) => Ok(result.generation),
             Err(error) => Err(self.semantic_failure(error)),
@@ -443,6 +449,13 @@ impl Kernel {
         if work.pending.is_empty() {
             return Ok(Some(read.head().sequence));
         }
+        let execution = match crate::execution::acquire(&self.data_root) {
+            Ok(execution) => execution,
+            Err(error) => {
+                drop(read);
+                return Err(self.semantic_failure(error));
+            }
+        };
         let configuration = read
             .collection_state()?
             .context("current configuration missing")?
@@ -470,7 +483,10 @@ impl Kernel {
             &mut EmbeddingCacheStats::default(),
             usize::MAX,
             None,
-            None,
+            DrainAdmission {
+                execution: &execution,
+                deadline: None,
+            },
         )
     }
 
@@ -504,6 +520,13 @@ impl Kernel {
             let report = self.semantic_report(&read, &EmbeddingCacheStats::default(), started)?;
             return Ok((Some(read.head().sequence), report));
         }
+        let execution = match crate::execution::acquire(&self.data_root) {
+            Ok(execution) => execution,
+            Err(error) => {
+                drop(read);
+                return Err(self.semantic_failure(error));
+            }
+        };
         let configuration = read
             .collection_state()?
             .context("current configuration missing")?
@@ -533,7 +556,10 @@ impl Kernel {
                 &mut stats,
                 max_batches,
                 Some(&mut current_work),
-                budget.map(|duration| started + duration),
+                DrainAdmission {
+                    execution: &execution,
+                    deadline: budget.map(|duration| started + duration),
+                },
             )
             .map_err(|error| self.semantic_failure(error))?;
         let read = self.store.current_read(&scope)?;
@@ -579,10 +605,11 @@ impl Kernel {
         stats: &mut EmbeddingCacheStats,
         max_batches: usize,
         mut current_work: Option<&mut airk_ingest::CurrentIndexWork>,
-        deadline: Option<std::time::Instant>,
+        admission: DrainAdmission<'_>,
     ) -> Result<DrainOutcome> {
         let scope = self.current_scope()?.context("workspace is not indexed")?;
-        let execution = crate::execution::acquire(&self.data_root)?;
+        let execution = admission.execution;
+        let deadline = admission.deadline;
         let writer = self.store.lock()?;
         let quota = Quota::open(&self.data_root)?;
         let captures = writer.capture_objects();

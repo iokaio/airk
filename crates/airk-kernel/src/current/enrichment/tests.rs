@@ -178,6 +178,7 @@ fn secondary_gate_contention_preserves_primary_permission_and_corruption_errors(
 #[test]
 fn drain_validation_failure_is_not_replaced_by_failure_recording_contention() -> Result<()> {
     let (_directory, kernel) = pending_fixture()?;
+    let execution = crate::execution::acquire(&kernel.data_root)?;
     let read = kernel.current_reader()?;
     let configuration = read.collection_state()?.unwrap().configuration;
     let model = EmbeddingModel::open_objects(
@@ -199,7 +200,10 @@ fn drain_validation_failure_is_not_replaced_by_failure_recording_contention() ->
             &mut EmbeddingCacheStats::default(),
             1,
             None,
-            None,
+            DrainAdmission {
+                execution: &execution,
+                deadline: None,
+            },
         )
         .unwrap_err();
     assert!(
