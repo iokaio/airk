@@ -58,6 +58,32 @@ pub struct VectorSelectionPreview {
 }
 
 impl Kernel {
+    /// Install an offline default once; never overwrite an existing/custom model.
+    pub fn install_default_vector_model(&self, source: &std::path::Path) -> Result<VectorStatus> {
+        let _writer = self.store.lock()?;
+        anyhow::ensure!(
+            self.vectors_enabled()?,
+            "vector search is disabled for this collection"
+        );
+        let quota = airk_store::quota::Quota::open(&self.data_root)?;
+        anyhow::ensure!(
+            !self.root.starts_with(quota.root()),
+            "index storage must not contain its source root"
+        );
+        let set = airk_retrieval::model::inspect_object_plan(source)?;
+        let installed = airk_store::model_objects::install_input_model_if_missing(
+            source,
+            &set,
+            &quota,
+            &self.collection,
+        )?;
+        if !installed {
+            // Preserved assets must be complete and valid, not merely present.
+            airk_retrieval::model::inspect_object_plan(&self.data_root.join("models/local"))?;
+        }
+        self.vector_status()
+    }
+
     pub fn install_vector_model(&self, source: &std::path::Path) -> Result<VectorStatus> {
         let _writer = self.store.lock()?;
         anyhow::ensure!(

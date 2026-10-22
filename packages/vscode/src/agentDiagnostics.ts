@@ -178,7 +178,7 @@ async function readCandidate(candidate: Candidate): Promise<string | undefined> 
 const sameFile = (left: Stats, right: Stats) => left.dev === right.dev && left.ino === right.ino && left.size === right.size
     && left.mtimeMs === right.mtimeMs && left.ctimeMs === right.ctimeMs;
 const checkExecutable = (info: Stats) => {
-    if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1 || info.size < 1 || info.size > 256 * 1024 * 1024) {
+    if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1 || info.size < 1 || info.size > 512 * 1024 * 1024) {
         throw new Error('Executable comparison requires a bounded regular file.');
     }
 };

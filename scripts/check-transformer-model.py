@@ -12,7 +12,7 @@ import tempfile
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, required=True)
-    parser.add_argument("--model-dir", type=Path, required=True)
+    parser.add_argument("--model-dir", type=Path, help="optional custom/provisioned model; defaults to the embedded offline model")
     parser.add_argument("--report", type=Path, help="retain direct process resource measurements for successful CLI calls")
     args = parser.parse_args()
     binary = args.binary.resolve(strict=True)
@@ -47,7 +47,10 @@ def main():
         policy = run("collections", "vectors", "show")
         if not policy["enabled"] or policy["default_search_mode"] != "hybrid":
             raise AssertionError("fresh collection did not default to hybrid")
-        run("collections", "vectors", "install", str(args.model_dir.resolve()))
+        if args.model_dir:
+            run("collections", "vectors", "install", str(args.model_dir.resolve()))
+        else:
+            run("collections", "vectors", "install-bundled")
         indexed = run("index")
         status = run("status")
         if not status["local_model_ready"] or status["indexed_vectors"] != 2 or "diskann" not in status["vector_backend"]:

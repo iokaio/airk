@@ -111,8 +111,13 @@ def main():
     if capture(str(smoke / executable), "--version") != "airk " + version:
         raise SystemExit("Archived executable version differs")
     capture(str(smoke / executable), "--help")
+    model_report = json.loads(capture(str(smoke / executable), "model-catalog"))
+    catalog = json.loads((ROOT / "crates/airk-retrieval/src/model_catalog.json").read_text(encoding="utf-8"))
+    if model_report.get("bundled_model", {}).get("manifest") != catalog["profiles"][0]["manifest"]:
+        raise SystemExit("Archived helper's embedded model differs from the source catalog")
     receipt = {
         "schema": "airk-native-candidate/1", "version": version,
+        "bundled_model": model_report["bundled_model"],
         "target": args.target, "vsix_target": TARGETS[args.target],
         "commit": capture("git", "rev-parse", "HEAD"),
         "dirty_checkout": bool(capture("git", "status", "--porcelain")),

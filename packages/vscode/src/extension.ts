@@ -365,10 +365,10 @@ class Controller implements vscode.Disposable {
                 await prepareVectorModel(spec.dataDir, message => {
                     this.vectorProgress.set(this.mcpKey(spec), message);
                     this.output.appendLine(message); this.sidebar.refresh();
-                }, async source => {
+                }, async () => {
                     this.trusted();
                     if (this.specs.get(spec.collection)?.dataDir !== spec.dataDir) { throw new Error('Collection storage changed.'); }
-                    await this.writeNative(spec, 'collections', ['vectors', 'install', source]);
+                    await this.writeNative(spec, 'collections', ['vectors', 'install-bundled']);
                 }, () => {
                     this.trusted();
                     return runJson(spec, 'model-catalog');

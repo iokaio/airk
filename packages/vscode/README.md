@@ -8,6 +8,8 @@ Everything runs on your machine. There is no cloud service, API key, Docker, Rus
 
 ## What's new in 1.3.1
 
+The native helper embeds the FP32 MiniLM model, tokenizer, manifest and license. First-use vector setup installs these verified assets locally, with no Hugging Face or other runtime download. Existing custom models are preserved.
+
 Different project collections sharing storage can index concurrently within bounded CPU/memory execution slots. Native admission covers model loading and inference. Windows on the same project share one worker. Source requests advance only the selected project, and foreign source work no longer interrupts semantic batches. The dashboard distinguishes a busy project from a capacity wait. Close or restart active older AIRK workers before retrying an upgrade. See [1.3.1 details and qualification limits](https://github.com/iokaio/airk/blob/main/docs/release-1.3.1.md).
 
 ## What's new in 1.3.0
@@ -325,7 +327,7 @@ Reports open as formatted panels; **Open as JSON** shows the full native output.
 
 ## Privacy and network
 
-AIRK has no telemetry or remote inference service. Indexes, source text and usage aggregates stay on this machine. Vector search is on by default: first indexing downloads about 91 MB of pinned Apache-2.0 MiniLM assets over HTTPS, verifies their sizes and SHA-256 digests, then runs inference locally on CPU. Existing custom models are preserved. Turn **Vector search** off on a collection card to opt out; the saved setting applies to every agent using that collection. Download failures are shown and do not silently turn vectors off.
+AIRK has no telemetry or remote inference service. Indexes, source text and usage aggregates stay on this machine. Vector search is on by default: first indexing installs about 91 MB of pinned Apache-2.0 MiniLM assets embedded in the helper, verifies their sizes and SHA-256 digests, then runs inference locally on CPU. Model setup makes no network requests. Existing custom models are preserved. Turn **Vector search** off on a collection card to opt out; the saved setting applies to every agent using that collection. Model installation failures are shown and do not silently turn vectors off.
 
 What happens after AIRK returns evidence is up to the agent you connected. That agent decides whether to send retrieved text to its model provider, under its own settings. AIRK cannot see or control that.
 

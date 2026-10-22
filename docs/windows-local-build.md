@@ -1,5 +1,7 @@
 # Build and review the Windows app and VS Code extension
 
+Native builds embed the pinned FP32 MiniLM assets. Before Cargo checks/builds, run `python scripts/provision-local-model.py --destination target/local-vector-model --download`, or supply verified offline assets there (or through `AIRK_BUNDLED_MODEL_DIR`). Cargo never downloads model assets. See [model provisioning](onnx-models.md).
+
 From the repository root in PowerShell 7:
 
 ```powershell
@@ -8,7 +10,7 @@ pwsh -NoProfile -File scripts/build-windows.ps1
 
 This builds the Windows x64 release executable and a matching platform VSIX. It runs Rust formatting, clippy and workspace tests, archive tests, repository checks, TypeScript compilation, extension tests and a real native MCP-adapter test. Both archives are verified against allowlisted payload hashes. No signing or Marketplace credentials are needed, and nothing is published or deployed.
 
-Every build also prepares the pinned MiniLM model in ignored `target/local-vector-model/` (about 91 MB downloaded on first use) and tests the built executable with real embeddings and DiskANN retrieval. Repeat builds verify and reuse those assets. This gate covers native model installation, default hybrid and explicit vector queries, opt-out/re-enable, and invalid-model rollback; a failure stops the build. Weights are not included in the VSIX. On first indexing in a trusted workspace, the extension prepares its local model and builds the collection's DiskANN index automatically; existing opt-out, pause and manual-indexing choices remain in effect.
+Every build also prepares the pinned MiniLM model in ignored `target/local-vector-model/` (about 91 MB downloaded on first use) and tests the built executable with real embeddings and DiskANN retrieval. Repeat builds verify and reuse those assets. This gate covers native model installation, default hybrid and explicit vector queries, opt-out/re-enable, and invalid-model rollback; a failure stops the build. The verified weights, tokenizer, manifest and license are embedded in the VSIX's native helper. On first indexing in a trusted workspace, the extension prepares its local model and builds the collection's DiskANN index automatically; existing opt-out, pause and manual-indexing choices remain in effect.
 
 ## Developer prerequisites
 

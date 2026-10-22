@@ -135,7 +135,7 @@ export function sidebarContent(state: SidebarState): string {
                 ? 'Semantic evidence ready for committed files; discovery incomplete' : 'Semantic evidence ready') : '';
         const vectors = `<div class="mcp"><h3>Vector search</h3>
             <label class="toggle"><input id="${escape(item.collection)}-vectors" type="checkbox" role="switch" ${attributes} data-vectors="true"${item.vectors?.enabled !== false ? ' checked' : ''}${disabled || !item.vectors || indexing || state.changingStorage ? ' disabled' : ''}> Include meaning-based matches</label>
-            <p class="muted">On by default. Combines local vector search with keyword results. First setup downloads about 91 MB of model files; your source files stay on this machine. Uses CPU and additional index storage.</p>
+            <p class="muted">On by default. Combines local vector search with keyword results. First setup installs the bundled model offline; your source files stay on this machine. Uses CPU and additional index storage.</p>
             <p role="status">${escape(item.vectorProgress ?? (!item.vectors ? 'Loading vector setting...' : !item.vectors.enabled ? 'Off: keyword search' : item.vectors.pending_reindex ? 'On: waiting for model setup and indexing' : `On: ${item.vectors.indexed_vectors} indexed vectors`))}</p>
             ${semanticLabel ? `<p class="semantic-summary" role="status">${escape(semanticLabel)}</p>` : ''}
             ${semanticPercent !== undefined && (semantic?.state === 'pending' || semantic?.state === 'partial') ? `<progress class="semantic-progress" max="${escape(semanticTotal!)}" value="${escape(semanticDone!)}" aria-label="Published semantic indexing progress">${escape(semanticPercent)}%</progress>` : ''}

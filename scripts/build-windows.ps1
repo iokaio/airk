@@ -27,6 +27,11 @@ try {
     Invoke-AirkTool rustup @('show')
     Invoke-AirkTool node @('--version')
     Invoke-AirkTool npm.cmd @('ci', '--ignore-scripts', '--no-audit', '--no-fund', '--prefix', 'packages/vscode')
+    if ($env:AIRK_BUNDLED_MODEL_DIR) {
+        Invoke-AirkTool $airkPython @('scripts/provision-local-model.py', '--destination', $env:AIRK_BUNDLED_MODEL_DIR)
+    } else {
+        Invoke-AirkTool $airkPython @('scripts/provision-local-model.py', '--destination', (Join-Path $airkRoot 'target/local-vector-model'), '--download')
+    }
     if (-not $SkipChecks) {
         Invoke-AirkTool cargo @('fmt', '--all', '--check')
         Invoke-AirkTool cargo @('clippy', '--workspace', '--all-targets', '--locked', '--target', $airkTarget, '--', '-D', 'warnings')
@@ -38,10 +43,8 @@ try {
     Invoke-AirkTool cargo @('build', '--release', '--locked', '-p', 'airk-cli', '--target', $airkTarget)
     $env:AIRK_TEST_BINARY = Join-Path $airkRoot "target/$airkTarget/release/airk.exe"
     # Default retrieval is hybrid: even a quick build must prove the real model/graph works.
-    $airkModel = Join-Path $airkRoot 'target/local-vector-model'
     $airkVectorReport = Join-Path $airkOutput 'vector-check.json'
-    Invoke-AirkTool $airkPython @('scripts/provision-local-model.py', '--destination', $airkModel, '--download')
-    Invoke-AirkTool $airkPython @('scripts/check-transformer-model.py', '--binary', $env:AIRK_TEST_BINARY, '--model-dir', $airkModel, '--report', $airkVectorReport)
+    Invoke-AirkTool $airkPython @('scripts/check-transformer-model.py', '--binary', $env:AIRK_TEST_BINARY, '--report', $airkVectorReport)
     if (-not $SkipChecks) {
         Invoke-AirkTool $airkPython @('scripts/benchmark-code.py', '--binary', $env:AIRK_TEST_BINARY, '--files', '64', '--output', (Join-Path $airkOutput 'code-benchmark.json'))
         Invoke-AirkTool $airkPython @('scripts/check-document-tables.py', '--binary', $env:AIRK_TEST_BINARY)

@@ -1,5 +1,7 @@
 # GitHub CI, native artifacts and spending controls
 
+Native builds embed the pinned FP32 MiniLM assets. Before Cargo checks/builds, run `python scripts/provision-local-model.py --destination target/local-vector-model --download`, or supply verified offline assets there (or through `AIRK_BUNDLED_MODEL_DIR`). Cargo never downloads model assets. See [model provisioning](onnx-models.md).
+
 The [CI workflow](../.github/workflows/ci.yml) uses standard GitHub-hosted runners. No self-hosted machine, Docker account, Azure account, Apple account, custom repository secret or repository variable is needed for the current builds. GitHub supplies the job token and artifact-upload authorization automatically. Repository Actions must be enabled and permitted to use the SHA-pinned actions, including rust-cache, install-action and the Docker cache-mount adapter.
 
 Main requires PRs and the stable `Required checks` / `signed-off` gates. Use **Actions → CI** for manual builds and **Extension release** to promote a successful main candidate into the chosen Marketplace channel. The [release workflow guide](release-workflow.md) describes artifact verification and external Entra identity/publisher membership prerequisites. Publishing jobs are separate from read-only builds.

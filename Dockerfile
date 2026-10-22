@@ -20,7 +20,10 @@ COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates ./crates
 COPY .config/nextest.toml ./.config/nextest.toml
 COPY scripts/ci-metrics.py scripts/ci-prune-target.py ./scripts/
-COPY scripts/license-notices.py ./scripts/license-notices.py
+COPY scripts/license-notices.py scripts/provision-local-model.py ./scripts/
+COPY third_party/models ./third_party/models
+RUN python3 scripts/provision-local-model.py --destination /build/model-assets --download
+ENV AIRK_BUNDLED_MODEL_DIR=/build/model-assets
 COPY third_party/licenses ./third_party/licenses
 
 FROM source AS test
