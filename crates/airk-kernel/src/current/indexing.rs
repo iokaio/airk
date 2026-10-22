@@ -1172,7 +1172,6 @@ impl Kernel {
         });
         drop(writer);
         drop(reservation);
-        drop(execution_lease);
         if !defer_completion
             && let Some(model) = &model
             && let Some(generation) = self.drain_with_failure_record(
@@ -1181,7 +1180,10 @@ impl Kernel {
                 &mut stats,
                 usize::MAX,
                 report.current.as_mut(),
-                None,
+                super::enrichment::DrainAdmission {
+                    execution: &execution_lease,
+                    deadline: None,
+                },
             )?
         {
             report.generation = generation;

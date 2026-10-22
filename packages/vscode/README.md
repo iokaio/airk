@@ -8,7 +8,7 @@ Everything runs on your machine. There is no cloud service, API key, Docker, Rus
 
 ## What's new in 1.3.1
 
-Different project collections sharing storage can index concurrently within bounded CPU/memory execution slots. Windows on the same project share one worker. Source requests advance only the selected project, and foreign source work no longer interrupts semantic batches. The dashboard distinguishes a busy project from a capacity wait. Close or restart active older AIRK workers before retrying an upgrade. See [1.3.1 details and qualification limits](https://github.com/iokaio/airk/blob/main/docs/release-1.3.1.md).
+Different project collections sharing storage can index concurrently within bounded CPU/memory execution slots. Native admission covers model loading and inference. Windows on the same project share one worker. Source requests advance only the selected project, and foreign source work no longer interrupts semantic batches. The dashboard distinguishes a busy project from a capacity wait. Close or restart active older AIRK workers before retrying an upgrade. See [1.3.1 details and qualification limits](https://github.com/iokaio/airk/blob/main/docs/release-1.3.1.md).
 
 ## What's new in 1.3.0
 

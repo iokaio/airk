@@ -509,6 +509,12 @@ fn semantic_capacity_wait_does_not_record_a_failure() -> Result<()> {
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
     kernel.scheduled_index(false, false)?;
     let before = kernel.status()?.publication;
+    let object = std::fs::read_dir(data.path().join("collections-1.2/default/objects/models"))?
+        .next()
+        .expect("model object")?
+        .path();
+    let original = std::fs::read(&object)?;
+    std::fs::write(&object, b"model must not be parsed before admission")?;
     let mut slots = Vec::new();
     for slot in 0..4 {
         let file = OpenOptions::new()
@@ -525,7 +531,10 @@ fn semantic_capacity_wait_does_not_record_a_failure() -> Result<()> {
     assert_eq!(status.publication, before);
     assert!(status.semantic_readiness.failure.is_none());
     assert!(!kernel.schedule_status()?.unwrap().blocked);
-    drop(slots);
+    std::fs::write(&object, original)?;
+    // One available slot must cover both loading and inference, without a
+    // second admission that would defer a worker already holding its slot.
+    drop(slots.pop());
     assert_eq!(kernel.run_scheduled_enrichment()?.state, "enriched");
     Ok(())
 }

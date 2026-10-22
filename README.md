@@ -12,7 +12,7 @@ This is an independent, runnable open-source project. Munarium, VCP and local re
 
 ## What's new in 1.3.1
 
-Different projects sharing one storage root can index concurrently. Each collection has its own native worker lock; two windows on the same project still share one worker. Editor indexing requests advance only their selected collection, and foreign source requests no longer interrupt semantic batches. The existing four execution slots retain CPU/memory budgets and report capacity waits separately from a busy project. An active older global worker requires restarting older AIRK workers before retrying. See [scheduling and upgrade details](docs/native-scheduler.md).
+Different projects sharing one storage root can index concurrently. Each collection has its own native worker lock; two windows on the same project still share one worker. Editor indexing requests advance only their selected collection, and foreign source requests no longer interrupt semantic batches. The existing four execution slots retain CPU/memory budgets, admit model loading before it starts, and report capacity waits separately from a busy project. An active older global worker requires restarting older AIRK workers before retrying. See [scheduling and upgrade details](docs/native-scheduler.md).
 
 ## What's new in 1.3.0
 
