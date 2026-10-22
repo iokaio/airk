@@ -148,3 +148,7 @@ Claude Code (`.mcp.json`), Gemini CLI (`.gemini/settings.json`) and Google Antig
 The **Usage & Savings** button on each collection opens that collection directly. Plain-language estimates lead the report; developer counters are expandable. Daily activity, comparison coverage, longer-term native totals, session/task evidence and cost assumptions remain distinct. See [measuring AIRK's value](usage-evaluation.md).
 
 From 1.2.3, the bundled helper protects active scan captures from cleanup between progressive batches, fixing the `retained object missing` failure on fresh or incremental scans. Retry **Index now** after updating; no wipe is needed for this failure. The dashboard qualifies semantic readiness as applying to committed files while discovery remains incomplete.
+
+## Independent project workers (1.3.1)
+
+Different project collections in the same storage root can index concurrently within the four native execution slots and their CPU/memory budgets. Windows opening the same collection share its worker. Source joins advance only the selected collection; foreign source work does not interrupt semantic drains. The dashboard distinguishes a busy project from exhausted indexing capacity. Active older global workers require restarting older AIRK editor/watch workers before retrying. See [native scheduling](native-scheduler.md) and [1.3.1 release notes](release-1.3.1.md).

@@ -291,7 +291,9 @@ fn excluded(relative: &Path) -> bool {
     if value.starts_with(".quota-1.2/") {
         return value != ".quota-1.2/policy.json";
     }
-    if value.starts_with("collections-1.2/.writer-locks")
+    if value == "scheduler-1.3-workers"
+        || value.starts_with("scheduler-1.3-workers/")
+        || value.starts_with("collections-1.2/.writer-locks")
         || value.starts_with("collections-1.2/.reader-locks")
         || value.starts_with("collections-1.2/.current-gates")
     {
@@ -771,6 +773,28 @@ mod tests {
         store.save(&snapshot)?;
         Ok(root)
     }
+    #[test]
+    fn collection_workers_block_relocation_and_lock_files_are_not_copied() -> Result<()> {
+        let base = tempfile::tempdir()?;
+        let workspace = tempfile::tempdir()?;
+        let source = fixture(base.path(), workspace.path())?;
+        let destination = base.path().join("moved");
+        let queue = crate::scheduler::Queue::new(&source);
+        let a = queue.worker_lock("default")?.unwrap();
+        let b = queue.worker_lock("other")?.unwrap();
+        assert!(relocate(&source, &destination).is_err());
+        assert!(!source.join(PROGRESS).exists());
+        drop(a);
+        assert!(relocate(&source, &destination).is_err());
+        drop(b);
+        let preview = plan(&source, &destination)?;
+        assert!(preview.files > 0);
+        relocate(&source, &destination)?;
+        assert!(!destination.join("scheduler-1.3-workers").exists());
+        assert!(source.join("scheduler-1.3-workers/default.lock").exists());
+        Ok(())
+    }
+
     #[test]
     fn relocation_preserves_evidence_sources_and_newer_destination_state() -> Result<()> {
         let base = tempfile::tempdir()?;

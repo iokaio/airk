@@ -47,3 +47,4 @@ node_modules/
 # Local reference material is inspiration only, never part of a release.
 /temp/
 .codex/config.toml
+.mcp.json

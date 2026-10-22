@@ -18,7 +18,7 @@ export function parseIndexProgress(line: string): IndexProgress | undefined {
         const event = value as Record<string, unknown>;
         const count = (field: string) => Number.isSafeInteger(event[field]) && Number(event[field]) >= 0;
         if (typeof event.collection !== 'string' || !event.collection || event.collection.length > 256
-            || !['scan_started', 'base_committed', 'enrichment_started', 'enrichment_prepared', 'enrichment_committed', 'base_coverage_complete'].includes(String(event.phase))
+            || !['waiting_collection', 'waiting_capacity', 'scan_started', 'base_committed', 'enrichment_started', 'enrichment_prepared', 'enrichment_committed', 'base_coverage_complete'].includes(String(event.phase))
             || !count('processed_artifacts') || !count('committed_artifacts')
             || (event.revision !== null && (typeof event.revision !== 'string' || event.revision.length > 256))
             || (event.selected_artifacts !== null && !count('selected_artifacts'))

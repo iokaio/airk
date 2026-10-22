@@ -602,11 +602,11 @@ impl Kernel {
         repaired_retained_artifacts: &mut usize,
         paths: Option<&std::collections::BTreeSet<String>>,
     ) -> Result<airk_ingest::IndexReport> {
+        let execution_lease = crate::execution::acquire(&self.data_root)?;
         if full {
             self.prepare_full_rebuild()?;
         }
         let index_started = std::time::Instant::now();
-        let execution_lease = crate::execution::acquire(&self.data_root)?;
         self.emit_progress(airk_core::readiness::IndexProgress {
             collection: String::new(),
             phase: "scan_started",
