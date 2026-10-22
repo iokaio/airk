@@ -23,7 +23,8 @@ def main():
         measurement = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(measurement)
     with tempfile.TemporaryDirectory(prefix="airk-transformer-public-") as directory:
-        base = Path(directory)
+        # macOS aliases /var to /private/var; managed model paths reject linked ancestors.
+        base = Path(directory).resolve(strict=True)
         root, data = base / "workspace", base / "data"
         root.mkdir()
         local = data / "models" / "local"
