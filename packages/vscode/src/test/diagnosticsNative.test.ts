@@ -223,6 +223,17 @@ test('Diagnose & Repair uses the real helper to recover retained data, resume, r
         assert.ok((corrupted.probes.integrity.value?.failures as { component: string; kind: string }[])
             .some(failure => failure.component === 'source' && failure.kind === 'invalid'));
         assert.equal(await fs.readFile(path.join(source, 'login.txt'), 'utf8'), sourceText);
+        // An obsolete owner must reach rebuild before vector/model preflight.
+        const ownerPath = path.join(collectionRoot, 'current-owner.json');
+        const owner = await fs.readFile(ownerPath, 'utf8');
+        assert.ok(owner.includes('"version":126'));
+        await fs.writeFile(ownerPath, owner.replace('"version":126', '"version":120'));
+        await assert.rejects(native.runJson(primary, 'collections', ['vectors', 'show']), /index --full/);
+        await controller.index(primary, true, false); await settle();
+        assert.equal((await status(primary)).files, files);
+        assert.equal((await status(secondary)).publication.token, untouched.publication.token);
+        assert.equal(await fs.readFile(path.join(source, 'login.txt'), 'utf8'), sourceText);
+        assert.equal(JSON.parse(await fs.readFile(ownerPath, 'utf8')).version, 126);
     } finally {
         panels.forEach(panel => panel.dispose());
         await Promise.all(contexts.flatMap(context => context.subscriptions.map(item => item.dispose())));

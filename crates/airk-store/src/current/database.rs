@@ -12,7 +12,7 @@ use std::{fs, path::Path, time::Duration};
 #[cfg(all(test, windows))]
 mod tests;
 
-pub const DATABASE_VERSION: u32 = 120;
+pub const DATABASE_VERSION: u32 = 126;
 pub const PAGE_BYTES: u64 = 4096;
 const APPLICATION_ID: i32 = 0x4149_524b;
 pub const MAX_DATABASE_BYTES: u64 = 16 * 1024 * 1024 * 1024 * 1024;
@@ -69,7 +69,28 @@ pub(crate) fn owned_scope(directory: &Path) -> Result<CurrentScope> {
     Ok(read_owner(directory)?.scope)
 }
 
+pub(super) fn obsolete_lexical_scope(directory: &Path) -> Result<Option<CurrentScope>> {
+    if !directory.join(OWNER_FILE).try_exists()? {
+        return Ok(None);
+    }
+    let owner = read_owner_any(directory)?;
+    ensure!(
+        matches!(owner.version, 120 | 125 | DATABASE_VERSION),
+        "unrecognized collection format; refusing rebuild"
+    );
+    Ok((owner.version != DATABASE_VERSION).then_some(owner.scope))
+}
+
 fn read_owner(directory: &Path) -> Result<Owner> {
+    let owner = read_owner_any(directory)?;
+    ensure!(
+        owner.version == DATABASE_VERSION,
+        "incompatible collection format; run airk index --full (or Rebuild in the extension) to rebuild for SQLite FTS5 in 1.3.0"
+    );
+    Ok(owner)
+}
+
+fn read_owner_any(directory: &Path) -> Result<Owner> {
     let path = directory.join(OWNER_FILE);
     let metadata = fs::symlink_metadata(&path)
         .context("current ownership header missing; run airk index --full")?;
@@ -87,7 +108,7 @@ fn read_owner(directory: &Path) -> Result<Owner> {
     validate_capacity(owner.capacity)?;
     owner.scope.validate()?;
     ensure!(
-        owner.version == DATABASE_VERSION && serde_json::to_vec(&owner)? == bytes,
+        serde_json::to_vec(&owner)? == bytes,
         "foreign current ownership header"
     );
     Ok(owner)
@@ -186,7 +207,7 @@ pub(crate) fn require_version(connection: &Connection) -> Result<()> {
     let application: i32 = connection.pragma_query_value(None, "application_id", |r| r.get(0))?;
     ensure!(
         version == DATABASE_VERSION && application == APPLICATION_ID,
-        "obsolete current index format; run airk index --full"
+        "obsolete current index format; run airk index --full to rebuild for SQLite FTS5"
     );
     let page: i64 = connection.pragma_query_value(None, "page_size", |r| r.get(0))?;
     ensure!(
@@ -207,6 +228,7 @@ pub(crate) fn open_reader(path: &Path) -> Result<Connection> {
         path,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )?;
+    connection.set_limit(rusqlite::limits::Limit::SQLITE_LIMIT_LENGTH, 64 << 20)?;
     connection.busy_timeout(Duration::ZERO)?;
     connection.execute_batch("PRAGMA query_only=ON; PRAGMA trusted_schema=OFF; PRAGMA temp_store=MEMORY; PRAGMA cache_size=-4096; BEGIN;")?;
     require_version(&connection)?;
@@ -238,6 +260,7 @@ fn open_writer_mode(
         flags |= OpenFlags::SQLITE_OPEN_CREATE;
     }
     let connection = open_writer_connection(path, flags)?;
+    connection.set_limit(rusqlite::limits::Limit::SQLITE_LIMIT_LENGTH, 64 << 20)?;
     connection.busy_timeout(Duration::ZERO)?;
     if create {
         connection.pragma_update(None, "page_size", PAGE_BYTES as i64)?;

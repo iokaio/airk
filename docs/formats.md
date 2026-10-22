@@ -132,7 +132,7 @@ OOXML entries are read in memory, not unpacked to the filesystem. External slide
 ## Current safety limits
 
 - Source file: configurable up to 256 MiB; extracted text/XML part: 32 MiB. UTF-8 sources above 4 MiB retain exact text with partial text-only status, without structural facts or continuity.
-- Automatic corpus: one eighth of detected memory, capped at 2 GiB eligible source (512 MiB if unknown), twice that for extracted text and 100,000 files. [Persisted collection limits](ingestion-limits.md) permit explicit larger profiles within validated ceilings.
+- Automatic corpus: one eighth of detected memory, capped at 4 GiB eligible source (512 MiB if unknown), twice that for extracted text and 100,000 files. [Persisted collection limits](ingestion-limits.md) permit explicit larger profiles within validated ceilings.
 - Default index scan: 1,000,000 visited non-ignored entries (including directories) and four times the automatic eligible-source allowance for source reads, including unsupported files. Known oversized files are skipped before reading. Exhausting configured pass budgets preserves the previous generation.
 - PDF/PPTX: 512 pages/slides; OOXML archive: 10,000 entries/paragraphs.
 - Native syntax: 500,000 visited nodes and 10,000 facts per file.

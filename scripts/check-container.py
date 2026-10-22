@@ -47,7 +47,14 @@ def check_stdio(name):
         assert receive(1)["result"]["serverInfo"]["name"] == "airk"
         send({"jsonrpc": "2.0", "method": "notifications/initialized"})
         send({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
-        assert len(receive(2)["result"]["tools"]) == 16
+        tools = receive(2)["result"]["tools"]
+        expected = {
+            "airk_capabilities", "airk_changes", "airk_code_facts", "airk_context",
+            "airk_document_facts", "airk_file_info", "airk_imports", "airk_list_files",
+            "airk_outline", "airk_read_file", "airk_references", "airk_relationships",
+            "airk_search", "airk_status", "airk_symbols",
+        }
+        assert len(tools) == len(expected) and {tool["name"] for tool in tools} == expected
         send({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
             "name": "airk_symbols", "arguments": {"name": "authenticate"}}})
         result = receive(3)["result"]

@@ -120,7 +120,7 @@ fn agent_lean_skips_fingerprint_work_but_keeps_private_signatures() -> anyhow::R
             .contains("secret: &str")
     );
     assert!(definition.code.as_ref().unwrap().fingerprints.is_none());
-    assert!(!selected.analysis.facts.iter().any(|f| f.kind == "call"));
+    assert!(selected.analysis.facts.iter().any(|f| f.kind == "call"));
     Ok(())
 }
 
@@ -213,7 +213,7 @@ fn common_grammar_selected_payloads_match_full_reference_including_ids_and_locat
 }
 
 #[test]
-fn essential_avoids_rich_evidence_and_balanced_only_builds_selected_calls() -> anyhow::Result<()> {
+fn structured_modes_retain_calls_and_essential_avoids_rich_evidence() -> anyhow::Result<()> {
     let text =
         "function run() { ordinary(); another(); db.query(); }\nrouter.get('/x', handler);\n";
     let (full, detailed_work) = measured(|| {
@@ -226,19 +226,13 @@ fn essential_avoids_rich_evidence_and_balanced_only_builds_selected_calls() -> a
         analyze_selected_with_detail("sample.ts", text, "typescript", IndexDetail::Essential)
     })?;
     assert_eq!(detailed_work, (5, 1));
-    assert_eq!(balanced_work, (3, 1));
+    assert_eq!(balanced_work, detailed_work);
     assert_eq!(essential_work, (0, 0));
     assert!(essential.analysis.facts.is_empty());
     assert_eq!(essential.seeds.as_ref().unwrap().len(), 1);
-    let retained: Vec<_> = full
-        .analysis
-        .facts
-        .into_iter()
-        .filter(|fact| fact.kind != "call")
-        .collect();
     assert_eq!(
         serde_json::to_value(balanced.analysis.facts)?,
-        serde_json::to_value(retained)?
+        serde_json::to_value(full.analysis.facts)?
     );
     Ok(())
 }

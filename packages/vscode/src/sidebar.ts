@@ -7,6 +7,7 @@ import { VectorStatus } from './vectorModel';
 export interface ControlGroup { label: string; commands: [string, string, string][] }
 export interface McpVerification {
     phase: 'preparing' | 'checking' | 'verified' | 'failed'; checkedAt?: number; tools?: string[]; error?: string;
+    indexState?: 'not_indexed' | 'published';
 }
 export type IndexDetail = 'agent_lean' | 'essential' | 'balanced' | 'detailed';
 export function detailLabel(level: IndexDetail): string {
@@ -19,6 +20,11 @@ export interface SidebarCollection {
     collection: string; name: string; root: string; dataDir: string; state: string;
     coverage?: CoverageView; diskBytes?: number; lastIndexed?: string; error?: string;
     mcp?: McpVerification; detail?: DetailStatus; vectors?: VectorStatus; vectorProgress?: string;
+    indexActivity?: { phase: string; revision: string | null; processed_artifacts: number; committed_artifacts: number;
+        selected_artifacts: number | null; completed_artifacts: number | null; elapsedSeconds: number; quietSeconds: number };
+    semanticElapsedSeconds?: number;
+    semanticStartedAt?: number;
+    semanticProgress?: { phase: string; selected_artifacts: number | null; completed_artifacts: number | null };
     usage?: { calls: number; reduction?: string; compared: number; checkedAt: number; disabled: boolean };
 }
 export interface SidebarState {
@@ -26,6 +32,18 @@ export interface SidebarState {
     collections: SidebarCollection[]; groups: ControlGroup[];
     registrationEnabled?: boolean;
     cliStatus?: 'ready' | 'failed' | 'disabled';
+}
+export function semanticCompletion(vectors?: VectorStatus, progress?: SidebarCollection['semanticProgress']):
+    { completed: number; total: number; percent: number } | undefined {
+    const readiness = vectors?.semantic_readiness;
+    const total = progress?.selected_artifacts ?? readiness?.selected_artifacts;
+    const completed = progress?.phase === 'enrichment_committed'
+        ? progress.completed_artifacts ?? readiness?.completed_artifacts : readiness?.completed_artifacts;
+    if (typeof total !== 'number' || typeof completed !== 'number'
+        || !Number.isSafeInteger(total) || !Number.isSafeInteger(completed) || total <= 0
+        || completed < 0 || completed > total) { return undefined; }
+    return { completed, total, percent: Math.min(readiness?.state === 'ready' ? 100 : 99,
+        Math.round(100 * completed / total)) };
 }
 export type SidebarAction = { type: 'vectors'; collection: string; dataDir: string; enabled: boolean } | { type: 'detail'; collection: string; dataDir: string; level: IndexDetail } | { type: 'ready' } | { type: 'mode'; value: IndexMode }
     | { type: 'registration'; enabled: boolean }
@@ -72,7 +90,7 @@ export function sidebarContent(state: SidebarState): string {
     const modes: [IndexMode, string][] = [['debounced', 'After edits settle'], ['idle', 'When idle'], ['onSave', 'On save'], ['manual', 'Manual']];
     const mode = `<label for="mode">Automatic indexing</label><div class="row"><select id="mode"${disabled ? ' disabled' : ''}>${modes.map(([value, label]) => `<option value="${value}"${state.mode === value ? ' selected' : ''}>${label}</option>`).join('')}</select>${button(state.paused || capacityBlocked ? 'Resume' : 'Pause', state.paused || capacityBlocked ? 'airk.resume' : 'airk.pause', disabled)}</div>`;
     const collections = state.collections.map(item => {
-        const view = item.coverage, report = view?.report, label = coverageLabel(view);
+        const view = item.coverage, report = view?.report, label = coverageLabel(view, item.lastIndexed);
         const indexing = item.state === 'indexing' || item.state === 'enriching';
         const status = item.state === 'enriching' ? 'Building semantic index'
             : item.state === 'indexing' ? 'Indexing saved files' : state.paused ? 'Auto-indexing paused'
@@ -90,16 +108,28 @@ export function sidebarContent(state: SidebarState): string {
         const detail = `<div class="mcp"><h3>Index detail</h3><label for="${escape(item.collection)}-detail">Evidence to retain</label>
             <select id="${escape(item.collection)}-detail" ${attributes} data-detail="true"${disabled || !item.detail || indexing || state.changingStorage ? ' disabled' : ''}>
             ${!item.detail ? '<option>Loading current setting…</option>' : (['agent_lean', 'balanced', 'essential', 'detailed'] as const).map(level => `<option value="${level}"${item.detail?.configured_detail === level ? ' selected' : ''}>${detailLabel(level)}</option>`).join('')}</select>
-            <p class="muted">Agent Lean: selected coding and document evidence. Rich Structure: broader facts and declaration tracking. Search Only: text and citations. Vectors are configured separately. Detailed adds call occurrences and document tracking.</p>
+            <p class="muted">Agent Lean: selected coding and document evidence, including call occurrences. Rich Structure: broader facts and declaration tracking, also including calls. Search Only: text and citations. Vectors are configured separately. Detailed adds document tracking.</p>
             ${item.detail ? `<p role="status">Published: <strong>${escape(item.detail.published_detail ? detailLabel(item.detail.published_detail) : 'Not indexed')}</strong>${item.detail.pending_reindex ? ' · Change pending indexing' : ''}</p>` : '<p class="muted">Current detail is not available yet.</p>'}
             <p class="muted">Changing detail rebuilds evidence. The published index remains available until success. Vector selection is configured separately.</p></div>`;
         const semantic = item.vectors?.semantic_readiness;
         const discovery = item.vectors?.discovery_readiness;
+        const semanticRunning = item.semanticElapsedSeconds !== undefined;
+        const completion = semanticCompletion(item.vectors, item.semanticProgress);
+        const semanticTotal = completion?.total ?? item.semanticProgress?.selected_artifacts ?? semantic?.selected_artifacts;
+        const semanticDone = completion?.completed ?? semantic?.completed_artifacts;
+        const semanticRemaining = semanticTotal !== undefined && semanticDone !== undefined
+            ? Math.max(0, semanticTotal - semanticDone) : undefined;
+        const semanticPercent = completion?.percent;
+        const semanticStage = item.semanticProgress?.phase === 'enrichment_started'
+            ? `Preparing up to ${Math.min(32, semanticRemaining ?? 32)} files`
+            : item.semanticProgress?.phase === 'enrichment_prepared' ? 'Computing vectors and publishing this batch'
+            : item.semanticProgress?.phase === 'enrichment_committed' ? 'Batch published; preparing the next batch'
+            : 'Starting the next semantic batch';
         const discoveryLabel = discovery?.state === 'pending' || discovery?.state === 'partial'
             ? `Discovery ${discovery.state}: ${discovery.committed_artifacts} files committed; total still unknown`
             : discovery?.state === 'failed' ? `Discovery stopped after ${discovery.committed_artifacts} committed files` : '';
         const semanticLabel = semantic?.state === 'pending' || semantic?.state === 'partial'
-            ? `Semantic ${semantic.state}: ${semantic.completed_artifacts} of ${semantic.selected_artifacts} selected files complete`
+            ? `Semantic indexing${semanticPercent !== undefined ? ` ${semanticPercent}%` : ''}: ${semanticDone} of ${semanticTotal} selected files complete${semanticRemaining !== undefined ? `; ${semanticRemaining} remaining` : ''}`
             : semantic?.state === 'failed' ? `Semantic enrichment failed: ${semantic.completed_artifacts} of ${semantic.selected_artifacts} selected files complete`
             : semantic?.state === 'ready' ? (discovery && discovery.state !== 'ready'
                 ? 'Semantic evidence ready for committed files; discovery incomplete' : 'Semantic evidence ready') : '';
@@ -107,31 +137,37 @@ export function sidebarContent(state: SidebarState): string {
             <label class="toggle"><input id="${escape(item.collection)}-vectors" type="checkbox" role="switch" ${attributes} data-vectors="true"${item.vectors?.enabled !== false ? ' checked' : ''}${disabled || !item.vectors || indexing || state.changingStorage ? ' disabled' : ''}> Include meaning-based matches</label>
             <p class="muted">On by default. Combines local vector search with keyword results. First setup downloads about 91 MB of model files; your source files stay on this machine. Uses CPU and additional index storage.</p>
             <p role="status">${escape(item.vectorProgress ?? (!item.vectors ? 'Loading vector setting...' : !item.vectors.enabled ? 'Off: keyword search' : item.vectors.pending_reindex ? 'On: waiting for model setup and indexing' : `On: ${item.vectors.indexed_vectors} indexed vectors`))}</p>
-            ${semanticLabel ? `<p class="muted" role="status">${escape(semanticLabel)}</p>` : ''}
+            ${semanticLabel ? `<p class="semantic-summary" role="status">${escape(semanticLabel)}</p>` : ''}
+            ${semanticPercent !== undefined && (semantic?.state === 'pending' || semantic?.state === 'partial') ? `<progress class="semantic-progress" max="${escape(semanticTotal!)}" value="${escape(semanticDone!)}" aria-label="Published semantic indexing progress">${escape(semanticPercent)}%</progress>` : ''}
+            ${semanticRunning ? `<p class="semantic-running" role="status">${escape(semanticStage)} <span class="semantic-elapsed" aria-live="off"${item.semanticStartedAt !== undefined ? ` data-semantic-started="${escape(item.semanticStartedAt)}"` : ''}>${escape(Math.floor(item.semanticElapsedSeconds! / 60))}m ${escape(item.semanticElapsedSeconds! % 60)}s</span></p><p class="muted">Published evidence remains available while this batch runs.</p>${item.semanticElapsedSeconds! >= 180 ? '<p class="muted">This batch has taken longer than usual. It stops after twenty minutes; check Diagnose &amp; Repair if it fails.</p>' : ''}` : ''}
             ${discoveryLabel ? `<p class="muted" role="status">${escape(discoveryLabel)}</p>` : ''}
             ${discovery?.failure ? `<p class="error">${escape(discovery.failure.slice(0, 300))}</p>` : ''}
             ${semantic?.failure ? `<p class="error">${escape(semantic.failure.slice(0, 300))}</p>` : ''}
             ${item.vectors?.pending_reindex ? '<p class="muted">Index now to apply the setting. Previous index data remains until a successful rebuild and normal cleanup.</p>' : ''}</div>`;
         const percentage = /^\d+%$/.test(label) ? Number(label.slice(0, -1)) : undefined;
         const progress = percentage === undefined ? '' : `<progress max="100" value="${percentage}" aria-label="Measured index coverage">${percentage}%</progress>`;
+        const activity = item.indexActivity;
+        const elapsed = activity ? `${Math.floor(activity.elapsedSeconds / 60)}m ${activity.elapsedSeconds % 60}s` : '';
+        const published = !!(activity?.revision || item.vectors?.published || item.detail?.published_detail);
+        const activeIndex = activity?.phase === 'waiting' ? `<p class="muted" role="status">Waiting for the shared indexing worker (${escape(elapsed)}). The request remains queued. ${published ? 'Published evidence remains available.' : 'MCP can start; search awaits the first publication.'}</p>` : activity ? `<p class="muted" role="status">Indexing for ${escape(elapsed)}: ${escape(activity.committed_artifacts)} files committed, ${escape(activity.processed_artifacts)} processed. ${published ? 'Published evidence is available to MCP now; discovery remains incomplete.' : 'MCP can start; search awaits the first publication.'}</p>${activity.quietSeconds >= 120 ? `<p class="notice" role="status">No new progress for ${escape(Math.floor(activity.quietSeconds / 60))} minutes. Open Diagnose &amp; Repair if this persists; a stalled scan stops after ten minutes without progress.</p>` : ''}` : '';
         const last = item.lastIndexed ? new Date(item.lastIndexed).toLocaleString() : 'Not indexed in this editor yet';
         const error = item.error || view?.error;
         const mcp = item.mcp, checking = mcp?.phase === 'checking' || mcp?.phase === 'preparing';
         const mcpLabel = !mcp ? 'Not checked' : mcp.phase === 'preparing' ? 'Preparing collection…' : mcp.phase === 'checking' ? 'Checking MCP…'
-            : mcp.phase === 'verified' ? `Verified · ${mcp.tools?.length ?? 0} tools available` : 'Verification failed';
+            : mcp.phase === 'verified' ? `Verified · ${mcp.tools?.length ?? 0} tools available${mcp.indexState === 'not_indexed' ? '; indexing pending' : ''}` : 'Verification failed';
         const connection = `<div class="mcp"><h3>AIRK helper check</h3><p role="status" aria-live="polite">Helper: <strong>${escape(mcpLabel)}</strong></p>
             ${mcp?.checkedAt ? `<p class="muted">Last checked: ${escape(new Date(mcp.checkedAt).toLocaleString())}</p>` : ''}
             ${mcp?.error ? `<p class="error">${escape(mcp.error.slice(0, 600))}</p>` : ''}
             <div class="actions"><button id="${escape(item.collection)}-verify" ${attributes} data-action="verify"${disabled || checking || state.changingStorage ? ' disabled' : ''}>Check AIRK helper</button>
             <button id="${escape(item.collection)}-mcpDetails" class="secondary" ${attributes} data-action="mcpDetails"${disabled || !mcp || checking ? ' disabled' : ''}>View details</button></div>
-            <p class="muted">Checks this collection’s helper, not whether an agent is connected. Verification updates the index first.</p>
+            <p class="muted">Checks this collection’s helper without waiting for indexing, not whether an agent is connected.</p>
             <button id="${escape(item.collection)}-tools" class="secondary" ${attributes} data-action="tools"${disabled || state.changingStorage ? ' disabled' : ''}>Open AIRK Tools</button>
             <p class="muted">Call tools directly in the Terminal panel. Includes help, examples and JSON results for this collection.</p></div>`;
         return `<section class="collection"><div class="heading"><h2>${escape(item.name)}</h2><span class="badge${indexing ? ' working' : ''}">${escape(status)}</span></div>
             <p class="path" title="${escape(item.root)}">${escape(item.root)}</p>
-            <div class="coverage"><strong>${escape(label)}</strong><span>saved-file coverage</span></div>${progress}
+            <div class="coverage"><strong>${escape(label)}</strong><span>saved-file coverage</span></div>${progress}${activeIndex}
             <div class="metrics">${metric('Current', report?.current)}${metric('Eligible', report?.eligible)}${metric('Stale', report?.stale)}${metric('Missing', report?.missing)}</div>
-            ${report ? `<p class="muted">${escape(report.extraction_failed)} extraction failures · ${escape(report.unsupported)} unsupported · ${escape(report.capacity_blocked)} capacity blocked</p>` : '<p class="muted">Coverage appears after the first inventory scan.</p>'}
+            ${report ? `<p class="muted">${escape(report.extraction_failed)} extraction failures · ${escape(report.unsupported)} unsupported · ${escape(report.capacity_blocked)} capacity blocked</p>` : '<p class="muted">Coverage pending rescan. Inventories refresh every five minutes or on explicit refresh.</p>'}
             ${view?.pending && report ? '<p class="muted">Files changed; these counts are from the previous scan.</p>' : ''}
             ${error ? `<p class="error" role="status">${escape(error.slice(0, 600))}</p>` : ''}${actions}
             <div class="actions"><button class="secondary" data-action="diagnose" ${attributes}${disabled || state.changingStorage ? ' disabled' : ''}>Diagnose &amp; Repair</button></div>
@@ -158,7 +194,7 @@ export function sidebarContent(state: SidebarState): string {
         ${button('Connect coding agent…', 'airk.manageMcp', disabled, false)}
         ${button('VS Code / Copilot MCP controls', 'airk.manageVscodeMcp', disabled)}
         <p class="muted">Choose Codex, Claude Code or another agent to configure it. VS Code / Copilot controls only manage VS Code connections.</p></section>
-        <section><h2>Index storage</h2><p class="muted">Choose a drive for new indexes. Existing indexes stay where they are.</p>${button('Choose storage folder…', 'airk.chooseStorage', disabled || state.changingStorage)}<div class="actions">${button('Storage limits…', 'airk.storageLimits', disabled)}</div><div class="actions">${button('Reclaim unreferenced objects…', 'airk.currentMaintenance', disabled)}</div><p class="muted">Defaults: 100 GiB per collection, 500 GiB total; one current index per collection. Pending updates and cleanup can temporarily use additional space.</p></section>${groups}`;
+        <section><h2>Index storage</h2><p class="muted">Choose a drive for new indexes. Existing indexes stay where they are.</p>${button('Choose storage folder…', 'airk.chooseStorage', disabled || state.changingStorage)}<div class="actions">${button('Storage limits…', 'airk.storageLimits', disabled)}</div><div class="actions">${button('Reclaim unreferenced objects…', 'airk.currentMaintenance', disabled)}</div><p class="muted">Defaults: 256 GiB per collection, 500 GiB total; one current index per collection. Pending updates and cleanup can temporarily use additional space.</p></section>${groups}`;
 }
 
 export function renderSidebar(state: SidebarState): string {
@@ -168,6 +204,7 @@ export function renderSidebar(state: SidebarState): string {
     *{box-sizing:border-box}body{margin:0;padding:12px;font-family:var(--vscode-font-family);font-size:var(--vscode-font-size);color:var(--vscode-foreground);background:var(--vscode-sideBar-background);line-height:1.45}
     header{margin:0 0 16px}h1{font-size:18px;margin:0}h2,h3{font-size:13px;margin:0 0 6px;font-weight:600}.mcp{margin-top:14px;padding-top:12px;border-top:1px solid var(--vscode-panel-border)}.mcp p{margin:6px 0}.toggle{display:flex;align-items:center;gap:6px}.toggle input{accent-color:var(--vscode-button-background)}section,details{margin:0 0 12px;padding:12px;border:1px solid var(--vscode-widget-border,var(--vscode-panel-border));border-radius:5px}section details{padding:0;border:0;margin:12px 0 0}
     .heading{display:flex;flex-wrap:wrap;gap:6px;justify-content:space-between}.badge{font-size:11px;color:var(--vscode-descriptionForeground)}.working{color:var(--vscode-progressBar-background)}.working::before{content:'●';margin-right:4px}
+    .semantic-summary{font-weight:600}.semantic-progress{height:8px}.semantic-running::before{content:'';display:inline-block;width:10px;height:10px;margin-right:7px;border:2px solid var(--vscode-progressBar-background);border-right-color:transparent;border-radius:50%;vertical-align:-1px;animation:semantic-spin .7s linear infinite}@keyframes semantic-spin{to{transform:rotate(360deg)}}@media(prefers-reduced-motion:reduce){.semantic-running::before{animation:none;border-right-color:var(--vscode-progressBar-background)}}
     .path{overflow-wrap:anywhere;color:var(--vscode-descriptionForeground);font-size:11px;margin:4px 0 12px}.muted{color:var(--vscode-descriptionForeground);font-size:11px;margin:6px 0}.coverage{display:flex;align-items:baseline;gap:7px;flex-wrap:wrap}.coverage strong{font-size:18px}.coverage span{font-size:11px;color:var(--vscode-descriptionForeground)}progress{width:100%;height:5px;accent-color:var(--vscode-progressBar-background)}
     .metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin:12px 0}.metric strong,.metric span{display:block}.metric strong{font-size:16px}.metric span{font-size:11px;color:var(--vscode-descriptionForeground)}.row,.actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}.actions button{flex:1}.row select{flex:1;min-width:100px}button,select{font:inherit;font-size:12px;border:1px solid transparent;border-radius:2px;padding:6px 9px;min-height:28px}button{cursor:pointer;background:var(--vscode-button-background);color:var(--vscode-button-foreground)}button.secondary{background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground)}button:hover{filter:brightness(1.12)}button:disabled{opacity:.5;cursor:default}button:focus-visible,select:focus-visible,summary:focus-visible{outline:1px solid var(--vscode-focusBorder);outline-offset:2px}select{background:var(--vscode-dropdown-background);color:var(--vscode-dropdown-foreground);border-color:var(--vscode-dropdown-border)}
     summary{cursor:pointer;font-weight:600}.control{margin-top:12px}.control button{text-align:left;width:100%}.notice{padding:8px;border-left:2px solid var(--vscode-focusBorder);background:var(--vscode-textBlockQuote-background)}.error{color:var(--vscode-errorForeground);overflow-wrap:anywhere}dl{margin:8px 0}dt{font-size:11px;color:var(--vscode-descriptionForeground)}dd{margin:0 0 6px;overflow-wrap:anywhere}@media(max-width:240px){body{padding:6px}section,details{padding:8px}.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}
@@ -176,6 +213,7 @@ export function renderSidebar(state: SidebarState): string {
     function remember(){const details={};document.querySelectorAll('details').forEach(d=>details[d.id]=d.open);vscode.setState({details,scroll:window.scrollY});}
     function restore(state){if(!state)return;Object.entries(state.details||{}).forEach(([id,open])=>{const el=document.getElementById(id);if(el)el.open=open;});window.scrollTo(0,state.scroll||0);}
     restore(vscode.getState());
+    setInterval(()=>{document.querySelectorAll('[data-semantic-started]').forEach(el=>{const started=Number(el.getAttribute('data-semantic-started'));if(!Number.isFinite(started))return;const seconds=Math.max(0,Math.floor((Date.now()-started)/1000));el.textContent=Math.floor(seconds/60)+'m '+seconds%60+'s';});},1000);
     dashboard.addEventListener('toggle',remember,true);window.addEventListener('scroll',remember);
     dashboard.addEventListener('click',event=>{const button=event.target.closest('button');if(!button||button.disabled)return;if(button.dataset.action){vscode.postMessage({type:'collection',action:button.dataset.action,collection:button.dataset.collection,dataDir:button.dataset.storage});}else if(button.dataset.command){vscode.postMessage({type:'command',command:button.dataset.command});}});
     dashboard.addEventListener('change',event=>{if(event.target.dataset.vectors)vscode.postMessage({type:'vectors',collection:event.target.dataset.collection,dataDir:event.target.dataset.storage,enabled:event.target.checked});if(event.target.dataset.detail)vscode.postMessage({type:'detail',collection:event.target.dataset.collection,dataDir:event.target.dataset.storage,level:event.target.value});if(event.target.id==='mode')vscode.postMessage({type:'mode',value:event.target.value});if(event.target.id==='registration')vscode.postMessage({type:'registration',enabled:event.target.checked});});

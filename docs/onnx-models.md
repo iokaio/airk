@@ -25,6 +25,41 @@ The manifest contains schema `2`, `name`, `license`, `source`, `revision`, the t
 
 The identity hashes the complete canonical manifest plus AIRK's runtime specification. Tokenizer, context, provenance/license or weight changes therefore create a new revision. Inputs are int64 `[batch, tokens]`; output must be float32 `[batch, tokens, dimensions]`. Queries use batch size one. Indexing uses complete four-input tensors only for the pinned MiniLM weight/tokenizer digests on Windows x64 when all four inputs fit the 32-token bucket; remainders, longer inputs, other models and other platforms use batch size one. The pipeline descriptor binds this policy and platform. Padding is masked during pooling. Retained model assets are authenticated against their publication and charged to storage quota. Readers lazily cache verified inference plans; lexical operations do not initialize transformer execution.
 
+## Capabilities and qualified model catalog
+
+```console
+airk model-catalog
+```
+
+This local, read-only CLI command reports native OS/architecture, available logical parallelism, OS-usable instruction features, runtime identity, the embedded catalog and default selection for new model setup. It does not describe an existing collection's published/custom model. It works without a valid workspace or existing data directory and does not read source/model bytes, create collection/usage state, download assets or compile inference plans. It is not an additional MCP tool. Probe the machine running the helper, including a remote extension host/container, rather than the desktop displaying its UI.
+
+x86 probes report SSE2, FMA, AVX2, AVX-512 F/BW/VL/VNNI and AVX-VNNI independently. ARM64 probes report NEON, integer dot product, FP16 and i8mm. Other architectures report feature detection unavailable and an empty instruction list; an empty list is not a claim that the hardware has no acceleration. Available parallelism is the standard library's scheduling observation, not a physical-core inventory. CPU instruction support does not prove compiled kernel availability, actual dispatch or a speedup under tract.
+
+The catalog is maintained in `crates/airk-retrieval/src/model_catalog.json` and embedded in the native binary. Each entry binds an ID, precision, exact backend identity, qualification evidence/scope, canonical model manifest and asset names, sizes, SHA-256 digests and pinned URLs. The extension requests it only when model setup is needed; the Python provisioning script reads that same catalog. Existing/custom model directories bypass selection. Invalid catalog responses fail before download, and normal native validation/quota-managed installation still applies.
+
+There is one automatic entry: **`minilm-l6-v2-fp32-v1`**, the existing `all-MiniLM-L6-v2` export, tokenizer, context and pooling. Its current verification evidence covers Windows x64 and original small execution/retrieval fixtures. Other platforms receive the portable FP32 fallback with `selection.platform_qualified: false`; this preserves their existing default without claiming completed platform qualification. The report discloses the existing short-input batch size (4 on the qualified Windows x64 policy, otherwise 1), not a new batching policy. Capability/catalog reporting changes neither existing model bytes/manifests nor vector/cache identity. No existing semantic index needs rebuilding for this feature alone.
+
+### Future option: automatic INT8 selection (not implemented)
+
+CPU-specific INT8 downloads are not registered selectable profiles. `automatic_int8` is false, including on VNNI/ARM dot-product machines. The [upstream MiniLM exports](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/tree/main/onnx) identify candidates for a later controlled qualification:
+
+| Hardware candidate | Export to evaluate |
+|---|---|
+| x64 AVX2 without VNNI | `model_quint8_avx2.onnx` |
+| x64 AVX-512 without VNNI | `model_qint8_avx512.onnx` |
+| x64 VNNI with a matching available kernel | `model_qint8_avx512_vnni.onnx` |
+| ARM64 with a matching integer kernel | `model_qint8_arm64.onnx` |
+
+These suffixes describe quantization recipes, not instruction code embedded in ONNX. Generic FP32 remains the fallback. Different backend/kernel builds and OS environments require their own evidence; AVX-VNNI and AVX-512-VNNI must not be treated as the same flag. The current graph/type profile does not accept these quantized exports, and merely changing the download URL is insufficient.
+
+Before promotion, add bounded INT8/UINT8 constant validation and the exact required operators, prove native execution/ORT agreement with rounding and zero-range edge cases, and measure release-build loading, inference, end-to-end indexing, query latency, memory and model bytes. Compare against today's actual B1/B4 FP32 policy across representative input lengths. Require judged code/document recall and ranking checks, including final hybrid results. Quantizing weights does not establish a fourfold reduction of stored vector/index bytes.
+
+Dynamic per-tensor activation quantization can make a row depend on its batch companions. AIRK's cache keys bind individual text and pipeline identity; accepting approximate B1/B4 agreement alone would weaken that contract. Begin qualification with B1 or establish a separately reviewed row-independent policy. Any future accepted precision/export must receive its own pipeline identity and regenerated semantic vectors, with indexing/query execution bound to that same pipeline. Existing collections/custom models must not silently switch on a capability or extension update. Model fallback must preserve the published pipeline until an explicit replacement succeeds.
+
+Selection should eventually combine a qualified platform/backend catalog with native feature detection, while allowing an explicit user override and a bounded local performance comparison. A CPU flag alone must never promote an unqualified profile. This is future design guidance; this release enables no INT8 inference or automatic precision switch.
+
+## Runtime identity
+
 The bucketed runtime is `tract-cpu-onnx/0.23.8/airk-buckets-2`. Its runtime and preprocessing identities intentionally differ from the fixed-shape adapter. Rebuild an existing transformer index with `airk --data-dir /path/to/state index --full` before querying it with this runtime. Old vectors are not silently interpreted using the new execution policy; source files and saved collection configuration remain the rebuild inputs.
 
 ## Bounds and supported profile
@@ -70,7 +105,7 @@ Python packages are qualification tools only. The oracle uses [ONNX Runtime CPU 
 
 The local Windows x64 debug run retrieved the expected passage for all six fixed queries from eight original documents. Fourteen embeddings matched ONNX Runtime 1.23.2: maximum component difference `2.2665e-7`, minimum cosine similarity `0.999999995`. Initial plan loading took 8.3 seconds; the six following query embeddings took 0.92–1.19 seconds each. These debug timings describe one machine and are not release-performance targets. The small fixture establishes numerical adapter correctness and limited retrieval behavior, not production-corpus semantic quality.
 
-Set `AIRK_TEST_ONNX` to the provisioned directory and run `cargo test -p airk-retrieval --test onnx_model -- --ignored` for the deliberate persistent Tantivy/DiskANN integration test. Ordinary tests validate asset identities, bounds, external-data rejection and graph shape/operator limits without fetching weights.
+Use `python scripts/check-transformer-model.py --binary <airk> --model-dir <assets>` with the built native helper and explicitly provisioned model assets for current SQLite FTS5/DiskANN integration qualification. The retired 1.1 generation-based `onnx_model` integration target was removed with Tantivy in 1.2.5; it no longer qualifies the supported runtime. Ordinary tests validate asset identities, bounds, external-data rejection and graph shape/operator limits without fetching weights.
 
 Set `AIRK_TEST_MODEL_DIR` to the provisioned directory and run `cargo test --release -p airk-retrieval --lib real_model -- --ignored --nocapture` for exact cache/parallel checks and native shape qualification. The shape test compares tokenizer IDs/masks with the previous fixed-context preprocessing, measures fixed-256 versus bucketed B1 and real B4/B8 tensors with warm plans, checks row/order/padded-tail invariance, and exercises plan reuse, bounded eviction and workspace failures. Compilation is reported separately. These fixtures and timings qualify the selected native policy locally; they do not establish production retrieval quality or cross-platform performance.
 

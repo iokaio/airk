@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { ScheduledIndexStillQueued } from '../native';
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { CapacityError, Clock, Options, Scheduler, SemanticResult } from '../scheduler';
@@ -29,7 +30,7 @@ class FakeClock implements Clock {
     }
 }
 
-test('semantic contention backs off to a bounded delay while successful pending batches keep their cadence', async () => {
+test('semantic contention backs off while successful pending drains continue without an artificial gap', async () => {
     const clock = new FakeClock(), times: number[] = [];
     const results: SemanticResult[] = [...Array<SemanticResult>(7).fill('busy'), 'pending', 'busy', 'ready'];
     const scheduler = new Scheduler({ ...options, mode: 'manual' }, async () => report, () => {}, error => assert.fail(String(error)), clock,
@@ -37,7 +38,7 @@ test('semantic contention backs off to a bounded delay while successful pending 
     try {
         scheduler.observeSemantic(spec, true);
         await clock.advance(94000);
-        assert.deepEqual(times, [0, 1000, 3000, 7000, 15000, 31000, 61000, 91000, 92000, 93000]);
+        assert.deepEqual(times, [0, 1000, 3000, 7000, 15000, 31000, 61000, 91000, 91000, 92000]);
         assert.equal(scheduler.states()[0].pending, false);
     } finally { scheduler.dispose(); }
 });
@@ -63,6 +64,20 @@ test('explicit retry and resume clear contention backoff, including an older bus
             await clock.advance(1); assert.equal(times.at(-1), 4000, 'The next busy response starts at the initial delay');
         } finally { scheduler.dispose(); }
     }
+});
+
+test('a native source-work yield leaves an opportunity for another worker without slowing ordinary drains', async () => {
+    const clock = new FakeClock(), times: number[] = [];
+    const outcomes: SemanticResult[] = ['yield', 'pending', 'ready'];
+    const scheduler = new Scheduler({ ...options, mode: 'manual' }, async () => report, () => {}, () => {}, clock,
+        async () => { times.push(clock.now()); return outcomes.shift()!; });
+    try {
+        scheduler.observeSemantic(spec, true); await clock.advance(999);
+        assert.deepEqual(times, [0]);
+        await clock.advance(1);
+        assert.deepEqual(times, [0, 1000, 1000]);
+        assert.equal(scheduler.states()[0].pending, false);
+    } finally { scheduler.dispose(); }
 });
 
 test('an early source timer preserves its deadline without starting unrequested semantic work', async () => {
@@ -97,7 +112,7 @@ test('an early semantic timer keeps its retry deadline and yields to due source 
         ran.push({ kind: 'source', collection: current.collection, at: clock.now() }); return report;
     }, () => {}, () => {}, clock, async current => {
         ran.push({ kind: 'semantic', collection: current.collection, at: clock.now() });
-        return ++batches === 1 ? 'pending' : 'ready';
+        return ++batches === 1 ? 'busy' : 'ready';
     });
     try {
         scheduler.observeSemantic(spec, true); await clock.advance(0);
@@ -119,16 +134,20 @@ test('an early semantic timer keeps its retry deadline and yields to due source 
 
 test('semantic batches finish after Index Now without another source edit or background service', async () => {
     const clock = new FakeClock(); let scans = 0, batches = 0;
+    let release!: (result: SemanticResult) => void;
     const scheduler = new Scheduler({ ...options, mode: 'manual' }, async () => {
         scans++; scheduler.observeSemantic(spec, true); return report;
-    }, () => {}, () => {}, clock, async () => ++batches < 3 ? 'pending' : 'ready');
+    }, () => {}, () => {}, clock, async () => {
+        if (++batches === 1) { return new Promise(resolve => { release = resolve; }); }
+        return batches < 3 ? 'pending' : 'ready';
+    });
     const indexed = scheduler.request(spec, true);
     await clock.advance(0); await indexed;
     assert.equal(scans, 1); assert.equal(batches, 1);
-    assert.equal(scheduler.states()[0].state, 'semantic-pending');
+    assert.equal(scheduler.states()[0].state, 'enriching');
     // Manual-mode edits must not strand the already requested semantic build.
     await scheduler.request(spec);
-    await clock.advance(2000);
+    release('pending'); await flush(); await clock.advance(0);
     assert.equal(batches, 3); assert.equal(scans, 1);
     assert.equal(scheduler.states()[0].pending, true, 'The manual source edit still awaits Index Now');
     await clock.advance(10000); assert.equal(batches, 3);
@@ -139,7 +158,11 @@ test('reopened semantic jobs run in manual mode, yield between collections, and 
     const clock = new FakeClock(), ran: string[] = [];
     const other = { ...spec, collection: 'second', root: '/fixture/second' };
     const scheduler = new Scheduler({ ...options, mode: 'manual' }, async () => { throw new Error('Unexpected source scan'); },
-        () => {}, () => {}, clock, async current => { ran.push(current.collection); return ran.length < 4 ? 'pending' : 'ready'; });
+        () => {}, () => {}, clock, async current => {
+            ran.push(current.collection);
+            if (ran.length === 2) { scheduler.pause(); }
+            return ran.length < 4 ? 'pending' : 'ready';
+        });
     scheduler.pause(); scheduler.observeSemantic(spec, true); scheduler.observeSemantic(other, true);
     await clock.advance(5000); assert.equal(ran.length, 0);
     scheduler.resume(); await clock.advance(0);
@@ -351,4 +374,68 @@ test('a full rebuild requested during an incremental pass remains a distinct pas
     const first = scheduler.request(spec, true); await clock.advance(0);
     const full = scheduler.request(spec, true, true); release(report); await flush(); await first;
     await clock.advance(0); assert.deepEqual(modes, [false, true]); release(report); await flush(); await full; scheduler.dispose();
+});
+
+test('Index Now during an automatic path pass retains a separate complete source pass', async () => {
+    const clock = new FakeClock(), modes: boolean[] = []; let release!: (value: IndexReport) => void;
+    const scheduler = new Scheduler(options, async (_spec, _full, automatic) => {
+        modes.push(automatic); return new Promise(resolve => { release = resolve; });
+    }, () => {}, () => {}, clock);
+    await scheduler.request(spec); await clock.advance(100);
+    const manual = scheduler.request(spec, true);
+    release(report); await flush(); await clock.advance(0);
+    assert.deepEqual(modes, [true, false]);
+    release(report); await flush(); await manual; scheduler.dispose();
+});
+
+
+test('queued native work releases busy so another collection can run, then resumes', async () => {
+    const clock = new FakeClock(), calls: string[] = [];
+    let first = true;
+    const scheduler = new Scheduler(options, async target => {
+        calls.push(target.collection);
+        if (target.collection === spec.collection && first) { first = false; throw new ScheduledIndexStillQueued(7); }
+        return report;
+    }, () => {}, (_, error) => assert.fail(String(error)), clock);
+    try {
+        const waiting = scheduler.request(spec, true);
+        const other = scheduler.request({ ...spec, collection: 'other' }, true);
+        await clock.advance(0); await waiting; await other;
+        assert.deepEqual(calls, [spec.collection, 'other']); assert.equal(scheduler.isBusy, false);
+        assert.equal(scheduler.states().find(s => s.collection === spec.collection)?.state, 'queued');
+        await clock.advance(30000);
+        assert.deepEqual(calls, [spec.collection, 'other', spec.collection]);
+    } finally { scheduler.dispose(); }
+});
+
+
+test('a newer full request is not swallowed by continuation of an older native revision', async () => {
+    const clock = new FakeClock(), runs: boolean[] = [];
+    const scheduler = new Scheduler(options, async (_, full) => {
+        runs.push(full); if (runs.length === 1) { throw new ScheduledIndexStillQueued(7); } return report;
+    }, () => {}, (_, error) => assert.fail(String(error)), clock);
+    try {
+        const first = scheduler.request(spec, true); await clock.advance(0); await first;
+        const rebuild = scheduler.request(spec, true, true);
+        await clock.advance(30000); await rebuild;
+        assert.deepEqual(runs, [false, false, true]);
+        assert.equal(scheduler.states()[0].pending, false);
+    } finally { scheduler.dispose(); }
+});
+
+
+test('a hard failure during continuation lets an explicit retry reset the native request', async () => {
+    const clock = new FakeClock(), automatic: boolean[] = [];
+    const scheduler = new Scheduler(options, async (_, __, auto) => {
+        automatic.push(auto);
+        if (automatic.length === 1) { throw new ScheduledIndexStillQueued(7); }
+        if (automatic.length === 2) { throw new Error('native request failed'); }
+        return report;
+    }, () => {}, () => {}, clock);
+    try {
+        const first = scheduler.request(spec, true); await clock.advance(0); await first;
+        await clock.advance(30000); assert.equal(scheduler.states()[0].state, 'failed');
+        const retry = scheduler.request(spec, true); await clock.advance(0); await retry;
+        assert.deepEqual(automatic, [false, true, false]);
+    } finally { scheduler.dispose(); }
 });

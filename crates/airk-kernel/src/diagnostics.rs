@@ -75,6 +75,7 @@ impl Kernel {
             "continuing retained integrity verification requires its exact revision"
         );
         let read = self.current_reader()?;
+        read.verify_lexical_integrity()?;
         let publication = crate::current::runtime::envelope(&read)?;
         ensure!(
             revision.is_none_or(|expected| expected == publication.token),

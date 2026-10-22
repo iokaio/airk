@@ -45,7 +45,7 @@ fn persistent_lexical_and_real_disk_vector_candidates_keep_revision_identity() -
     model(data.path())?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
     kernel.index()?;
-    assert_eq!(kernel.status()?.lexical_backend, "tantivy-current");
+    assert_eq!(kernel.status()?.lexical_backend, "sqlite-fts5-current");
     assert!(kernel.status()?.local_model_ready);
     assert_eq!(kernel.status()?.indexed_vectors, 2);
     assert!(kernel.search(&query("login"))?.hits.is_empty());
@@ -129,19 +129,28 @@ fn missing_model_and_missing_persistent_generation_fail_explicitly() -> Result<(
     assert!(!kernel.status()?.local_model_ready);
     assert!(kernel.semantic_search(&query("needle")).is_err());
     let directory = data.path().join("collections-1.2/default");
-    let store = airk_store::FileStore::new(&directory);
-    let read = read_current(&store)?;
-    let lexical = directory.join(read.head().lexical_directory_name()?);
-    drop(read);
-    let meta = lexical.join("meta.json");
-    let saved = fs::read(&meta)?;
-    fs::remove_file(&meta)?;
+    let db = rusqlite::Connection::open(directory.join("current.sqlite3"))?;
+    let (id, block): (i64, Vec<u8>) = db.query_row(
+        "SELECT id,block FROM current_fts_data ORDER BY id DESC LIMIT 1",
+        [],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    db.execute("DELETE FROM current_fts_data WHERE id=?1", [id])?;
     assert!(kernel.search(&query("needle")).is_err());
-    fs::write(&meta, saved)?;
+    assert!(
+        kernel.search(&query("absent")).is_err(),
+        "missing postings cannot report a clean empty answer"
+    );
+    assert!(
+        Kernel::open(root.path(), Some(data.path().into()))
+            .and_then(|reopened| reopened.search(&query("needle")))
+            .is_err()
+    );
+    db.execute(
+        "INSERT INTO current_fts_data(id,block) VALUES(?1,?2)",
+        rusqlite::params![id, block],
+    )?;
     assert!(!kernel.search(&query("needle"))?.hits.is_empty());
-    fs::rename(lexical, directory.join("hidden-fixture-lexical"))?;
-    let reopened = Kernel::open(root.path(), Some(data.path().into()))?;
-    assert!(reopened.search(&query("needle")).is_err());
     Ok(())
 }
 
@@ -184,16 +193,12 @@ fn warm_and_fresh_queries_reject_changed_authenticated_components() -> Result<()
             .sha256
             .to_string(),
     );
-    let lexical = store
-        .directory()
-        .join(read.head().lexical_directory_name()?)
-        .join("meta.json");
     let source = store
         .directory()
         .join("objects/sources")
         .join(&read.artifact("a.txt")?.unwrap().content_hash);
     drop(read);
-    for path in [&weights, &lexical, &source] {
+    for path in [&weights, &source] {
         let saved = fs::read(path)?;
         let mut damaged = saved.clone();
         damaged[0] ^= 1;
@@ -212,6 +217,31 @@ fn warm_and_fresh_queries_reject_changed_authenticated_components() -> Result<()
         );
     }
     let db = rusqlite::Connection::open(store.directory().join("current.sqlite3"))?;
+    let (id, payload): (i64, String) = db.query_row(
+        "SELECT id,payload FROM current_lexical_docs ORDER BY id LIMIT 1",
+        [],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    db.execute(
+        "UPDATE current_lexical_docs SET payload='{}' WHERE id=?1",
+        [id],
+    )?;
+    assert!(kernel.hybrid_search(&query("authenticate")).is_err());
+    assert!(
+        Kernel::open(root.path(), Some(data.path().into()))
+            .and_then(|reopened| reopened.hybrid_search(&query("authenticate")))
+            .is_err()
+    );
+    db.execute(
+        "UPDATE current_lexical_docs SET payload=?1 WHERE id=?2",
+        rusqlite::params![payload, id],
+    )?;
+    assert!(
+        !kernel
+            .hybrid_search(&query("authenticate"))?
+            .hits
+            .is_empty()
+    );
     let record: Vec<u8> = db.query_row("SELECT record FROM graph_records WHERE id=1", [], |r| {
         r.get(0)
     })?;

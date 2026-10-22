@@ -10,6 +10,7 @@ export interface DiagnosticError {
     kind: 'native_process' | 'invalid_response' | 'error'; message: string;
     code?: string | number | null; signal?: string | null; killed?: boolean; timedOut?: boolean;
     elapsedMs?: number; timeoutMs?: number; stderr?: string;
+    nativeMessage?: string; pendingIndexRevision?: number;
 }
 export interface DiagnosticProbe {
     state: 'ok' | 'busy' | 'failed' | 'unknown'; checkedAt: string; durationMs: number;
@@ -58,6 +59,8 @@ export function diagnosticError(error: unknown): DiagnosticError {
     if (error instanceof NativeProcessError) {
         result.code = error.code; result.signal = error.signal; result.killed = error.killed; result.timedOut = error.timedOut;
         result.elapsedMs = error.elapsedMs; result.timeoutMs = error.timeoutMs; result.stderr = bounded(error.stderr, 2048);
+        result.nativeMessage = error.nativeMessage === undefined ? undefined : bounded(error.nativeMessage, 4096);
+        result.pendingIndexRevision = error.pendingIndexRevision;
     }
     return result;
 }
@@ -159,12 +162,33 @@ function selectProbe(name: keyof DiagnosticReport['probes'], value: unknown, spe
     return fields(input, ['configured_detail', 'published_detail', 'pending_reindex', 'origin']);
 }
 
-function assess(probes: DiagnosticReport['probes'], editor?: DiagnosticEditorState): DiagnosticReport['assessment'] {
+/** Only a confirmed late completion can supersede this specific editor wait failure. */
+function completedQueueWait(probes: DiagnosticReport['probes'], editor: DiagnosticEditorState | undefined, events: DiagnosticEvent[]): boolean {
+    if (editor?.state !== 'failed' || editor.busy || probes.schedule.state !== 'ok') { return false; }
+    const queue = probes.schedule.value;
+    const latest = [...events].reverse().find(event => event.kind === 'index_failed' || event.kind === 'semantic_failed' || event.kind === 'index_completed');
+    if (latest?.kind !== 'index_failed' || latest.error?.kind !== 'native_process' || latest.error.code !== 1 || latest.error.killed || latest.error.signal || latest.error.timedOut) { return false; }
+    // Older helper envelopes without revisions retain their exact parsed message.
+    // This never authorizes a native retry; live retries require the typed revision.
+    const awaitedRevision = latest.error.pendingIndexRevision;
+    if (awaitedRevision !== undefined) {
+        if (!Number.isSafeInteger(awaitedRevision) || awaitedRevision <= 0) { return false; }
+    } else if (latest.error.kind !== 'native_process'
+        || latest.error.nativeMessage !== 'scheduled indexing wait exceeded 240 seconds; request remains queued') { return false; }
+    const requested = queue?.requested_revision, completed = queue?.completed_revision, ended = queue?.last_completed_unix_ms;
+    return Number.isSafeInteger(requested) && Number(requested) > 0 && Number.isSafeInteger(completed) && Number(completed) >= Number(requested)
+        && (awaitedRevision === undefined || Number(completed) >= awaitedRevision)
+        && queue?.running_revision === 0 && queue?.blocked === false && !queue?.error && !queue?.scan_error
+        && Number.isSafeInteger(ended) && Number(ended) >= Date.parse(latest.at);
+}
+
+function assess(probes: DiagnosticReport['probes'], editor?: DiagnosticEditorState, events: DiagnosticEvent[] = []): DiagnosticReport['assessment'] {
     const status = probes.status.value, schedule = probes.schedule.value;
+    const completedWait = completedQueueWait(probes, editor, events);
     // Only status binds readiness to the publication verified by the integrity
     // probe. The independent vectors observation carries no revision token.
     const semantic = object(status?.semantic_readiness), discovery = object(status?.discovery_readiness);
-    const set = (state: DiagnosticReport['assessment']['state'], recommendedAction: DiagnosticReport['assessment']['recommendedAction'], summary: string) => ({ state, recommendedAction, summary });
+    const set = (state: DiagnosticReport['assessment']['state'], recommendedAction: DiagnosticReport['assessment']['recommendedAction'], summary: string) => ({ state, recommendedAction, summary: (completedWait ? 'The queued request completed after the editor stopped waiting. ' : '') + summary });
     if (probes.helper.state !== 'ok' || probes.helper.value?.matchesExtension === false) { return set(probes.helper.state === 'unknown' ? 'unknown' : 'failed', 'review', 'The configured helper could not be verified. Review its version and installation before indexing.'); }
     const integrity = probes.integrity.value;
     if (probes.integrity.state === 'ok' && typeof integrity?.failed_objects === 'number' && integrity.failed_objects > 0) {
@@ -183,7 +207,7 @@ function assess(probes: DiagnosticReport['probes'], editor?: DiagnosticEditorSta
         return set(state, 'retry', 'A current indexing or diagnostic operation failed. Review its details, then retry; no state has been deleted.');
     }
     if (schedule?.paused || discovery?.state === 'paused' || editor?.paused || editor?.state === 'paused') { return set('paused', 'resume', 'Indexing is paused. Resume allows already requested work to continue.'); }
-    if (editor?.state === 'failed' || editor?.state === 'capacity-limited') { return set('blocked', editor.state === 'capacity-limited' ? 'review' : 'retry', 'The editor stopped its current indexing request. Review its recorded error before retrying.'); }
+    if (!completedWait && (editor?.state === 'failed' || editor?.state === 'capacity-limited')) { return set('blocked', editor.state === 'capacity-limited' ? 'review' : 'retry', 'The editor stopped its current indexing request. Review its recorded error before retrying.'); }
     if (Object.values(probes).some(probe => probe.state === 'busy')) { return set('busy', 'wait', 'Another native reader or publication is holding the index gate. Refresh after the current operation finishes.'); }
     if (probes.status.reason === 'not_indexed') { return set('not_indexed', 'retry', 'This collection has no published index yet. Index now starts it.'); }
     if (probes.status.state !== 'ok') { return set('unknown', 'review', 'Current index state could not be established. Historical errors do not establish a current failure.'); }
@@ -193,7 +217,7 @@ function assess(probes: DiagnosticReport['probes'], editor?: DiagnosticEditorSta
     if (probes.vectors.value?.pending_reindex || probes.extraction.value?.pending_reindex) {
         return set('building', 'retry', 'A saved vector or evidence-detail change is awaiting publication. Index now applies it.');
     }
-    if (editor?.busy || editor?.pending || ['pending', 'partial'].includes(String(discovery?.state)) || ['pending', 'partial'].includes(String(semantic?.state))) {
+    if (editor?.busy || editor?.pending && !completedWait || ['pending', 'partial'].includes(String(discovery?.state)) || ['pending', 'partial'].includes(String(semantic?.state))) {
         return set('building', 'wait', 'Committed indexing work is incomplete with no current reported failure. One observation cannot establish whether a helper is advancing.');
     }
     if (Object.values(probes).some(probe => probe.state === 'unknown')) { return set('unknown', 'review', 'Some current diagnostic observations are unavailable. Review the individual results.'); }
@@ -248,7 +272,7 @@ export async function collectDiagnostics(spec: LaunchSpec, options: DiagnosticOp
             && probes.helper.state === 'ok' && probes.helper.value?.matchesExtension !== false });
     return { schemaVersion: 1, capturedAt, binding: { helperPath: bounded(spec.command, 32768), root: bounded(spec.root, 32768),
         dataDir: bounded(spec.dataDir, 32768), collection: bounded(spec.collection, 256), name: bounded(spec.name, 512) },
-        probes, assessment: assess(probes, options.editor), recentEvents: sanitizeEvents(options.events ?? []), agentConfiguration,
+        probes, assessment: assess(probes, options.editor, sanitizeEvents(options.events ?? [])), recentEvents: sanitizeEvents(options.events ?? []), agentConfiguration,
         ...(options.historyError === undefined ? {} : { historyError: diagnosticError(options.historyError) }), ...(options.editor ? { editor: {
             paused: !!options.editor.paused, busy: !!options.editor.busy, ...(typeof options.editor.state === 'string' ? { state: bounded(options.editor.state, 64) } : {}),
             ...(typeof options.editor.pending === 'boolean' ? { pending: options.editor.pending } : {}) } } : {}) };
@@ -268,7 +292,7 @@ export async function verifyDiagnosticIntegrity(spec: LaunchSpec, prior: Diagnos
         && typeof prior.probes.integrity.value.next_after === 'string' ? { ...prior.probes.integrity.value } : undefined;
     const update = async (probe: DiagnosticProbe) => {
         const probes = { ...report.probes, integrity: probe };
-        report = { ...report, capturedAt: new Date().toISOString(), probes, assessment: assess(probes, report.editor) };
+        report = { ...report, capturedAt: new Date().toISOString(), probes, assessment: assess(probes, report.editor, report.recentEvents) };
         await options.onProgress?.(report);
     };
     const stop = async (reason: string) => {
@@ -331,6 +355,8 @@ function sanitizeEvents(values: unknown): DiagnosticEvent[] {
             else if (typeof error.code === 'string') { clean.error.code = bounded(error.code, 256); }
             else if (error.code === null) { clean.error.code = null; }
             if (typeof error.stderr === 'string') { clean.error.stderr = bounded(error.stderr, 2048); }
+            if (typeof error.nativeMessage === 'string') { clean.error.nativeMessage = bounded(error.nativeMessage, 4096); }
+            if (Number.isSafeInteger(error.pendingIndexRevision) && Number(error.pendingIndexRevision) > 0) { clean.error.pendingIndexRevision = Number(error.pendingIndexRevision); }
         }
         return [clean];
     });

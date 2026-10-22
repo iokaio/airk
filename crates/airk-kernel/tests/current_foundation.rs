@@ -5,13 +5,10 @@ use airk_core::{
     graph_storage::{GraphHead, GraphRecordReader, GraphScope, PreparedGraphDelta},
     identity::{Incarnation, Sha256Digest, framed_digest},
 };
-use airk_retrieval::{
-    bounded::Charge,
-    current_lexical::{CurrentLexical, LexicalChange, LexicalManifest},
-    vector::mutable::{self, MutableDiskIndex, SearchLimits},
-};
+use airk_retrieval::vector::mutable::{self, MutableDiskIndex, SearchLimits};
 use airk_store::{
     FileStore,
+    current::lexical::LexicalManifest,
     current::{
         ArtifactChange, CapturedInput, CurrentHead, CurrentScope, PendingTransaction,
         graph::{GraphOverlay, GraphOverlayLimits, SealedGraph},
@@ -99,10 +96,7 @@ impl Fixture {
             specification: mutable::specification(DIMENSIONS, embedding_pipeline)?,
             record_bytes: mutable::record_bytes(DIMENSIONS)?,
         };
-        let lexical_path = store.directory().join("lexical-0");
-        let charge: Charge = Arc::new(|_| Ok(()));
-        let lexical = CurrentLexical::create(&lexical_path, charge)?;
-        let manifest = lexical.capture_manifest(None)?;
+        let manifest = LexicalManifest::empty()?;
         let manifest_bytes = manifest.canonical_bytes()?;
         let head = CurrentHead {
             version: 2,
@@ -119,7 +113,6 @@ impl Fixture {
         current.initialize(head)?;
         current.install_initial_lexical_manifest(&initial_token, &manifest_bytes)?;
         drop(current);
-        drop(lexical);
         drop(lock);
         Ok(Self {
             _directory: directory,
@@ -264,37 +257,15 @@ fn unlinked_tempdir() -> Result<tempfile::TempDir> {
 }
 
 #[test]
-fn current_store_commits_verified_lexical_fork_with_graph_in_one_head() -> Result<()> {
+fn current_store_commits_verified_fts_with_graph_in_one_head() -> Result<()> {
     let fixture = Fixture::new()?;
-    let base_path = fixture.store.directory().join("lexical-0");
-    let target_path = fixture.store.directory().join("lexical-1");
     let before = fixture.store.current_read(&fixture.scope)?;
     let old_head = before.head().clone();
-    assert_eq!(
-        base_path,
-        fixture
-            .store
-            .directory()
-            .join(old_head.lexical_directory_name()?)
-    );
     let old_bytes = before.lexical_manifest()?;
-    let old_manifest = LexicalManifest::decode(&old_bytes, old_head.lexical_commit)?;
-    let verified = old_manifest.verify_owned(&base_path, old_head.lexical_commit)?;
+    before.verify_lexical()?;
     drop(before);
-
     let (artifact, compact) =
         retained_lexical_artifact(&fixture, "docs/a.md", "new searchable evidence")?;
-    let (private_lexical, replacement, _) = CurrentLexical::fork_changed(
-        &verified,
-        &target_path,
-        Arc::new(|_| Ok(())),
-        &[LexicalChange {
-            path: &artifact.path,
-            artifact: Some(&artifact),
-        }],
-    )?;
-    let replacement_bytes = replacement.manifest().canonical_bytes()?;
-    drop(private_lexical);
     let (_reservation, head, overlay) = fixture.candidate()?;
     assert_eq!(head, old_head);
     let mut graph = MutableDiskIndex::create(overlay.clone(), DIMENSIONS, pipeline())?;
@@ -304,21 +275,25 @@ fn current_store_commits_verified_lexical_fork_with_graph_in_one_head() -> Resul
     let mut target = head.clone();
     target.sequence += 1;
     target.graph_head = sealed.descriptor().target.clone();
-    target.lexical_commit = replacement.digest();
     let lock = fixture.store.lock()?;
     let mut current =
         fixture
             .store
             .current_write(&lock, &fixture.quota, &fixture.scope, CAPACITY)?;
-    let pending = current.prepare_artifacts(
+    let (pending, _) = current.prepare_artifacts_with_fts(
         &head.token()?,
         target,
         &sealed,
-        &[ArtifactChange::Upsert(Box::new(compact))],
+        airk_store::current::ArtifactVectorChanges {
+            artifacts: &[ArtifactChange::Upsert(Box::new(compact))],
+            vector_inputs: None,
+            occurrences: &[],
+            configuration: None,
+        },
         None,
-        &replacement_bytes,
+        &[],
+        &[],
     )?;
-    assert!(current.reclaim_lexical_candidates().is_err());
     drop(current);
     drop(lock);
     assert_eq!(
@@ -343,20 +318,10 @@ fn current_store_commits_verified_lexical_fork_with_graph_in_one_head() -> Resul
 
     let read = fixture.store.current_read(&fixture.scope)?;
     assert_eq!(read.head(), &pending.target);
-    assert_eq!(
-        target_path,
-        fixture
-            .store
-            .directory()
-            .join(read.head().lexical_directory_name()?)
-    );
     assert_eq!(read.read(1)?.embedding_key, Some(key(1)));
-    let committed_bytes = read.lexical_manifest()?;
-    let committed = LexicalManifest::decode(&committed_bytes, read.head().lexical_commit)?;
-    committed.verify(&target_path, read.head().lexical_commit)?;
-    assert_eq!(committed_bytes, replacement_bytes);
-    let lexical =
-        airk_kernel::current::open_selected_lexical(&fixture.store, &read, Arc::new(|_| Ok(())))?;
+    read.verify_lexical()?;
+    assert_ne!(read.lexical_manifest()?, old_bytes);
+    let lexical = airk_kernel::current::open_selected_lexical(&fixture.store, &read)?;
     let candidates = lexical.search(&SearchQuery {
         text: "searchable evidence".into(),
         path_prefix: Some("docs/".into()),
@@ -365,7 +330,7 @@ fn current_store_commits_verified_lexical_fork_with_graph_in_one_head() -> Resul
     })?;
     assert_eq!(candidates.values.len(), 1);
     assert_eq!(
-        candidates.values[0].hit.citation.content_hash,
+        candidates.values[0].citation.content_hash,
         artifact.content_hash
     );
     assert!(!candidates.incomplete);
@@ -386,7 +351,7 @@ fn current_store_commits_verified_lexical_fork_with_graph_in_one_head() -> Resul
         .is_err()
     );
     let mut changed_payload = candidates.clone();
-    changed_payload.values[0].hit.text.push_str(" changed");
+    changed_payload.values[0].citation.start_line += 1;
     assert!(
         airk_kernel::current::materialize_lexical(
             &fixture.store,
@@ -434,121 +399,72 @@ fn current_store_commits_verified_lexical_fork_with_graph_in_one_head() -> Resul
     )?;
     assert_eq!(short.hits[0].text, "new");
     assert!(short.truncated && short.hits[0].truncated);
-    old_manifest.verify(&base_path, old_head.lexical_commit)?;
-    drop(lexical);
     drop(read);
-
-    let missing_path = fixture.store.directory().join("missing-selected");
-    std::fs::rename(&target_path, &missing_path)?;
-    let lock = fixture.store.lock()?;
-    let mut current =
-        fixture
-            .store
-            .current_write(&lock, &fixture.quota, &fixture.scope, CAPACITY)?;
-    assert!(current.reclaim_lexical_candidates().is_err());
-    assert!(base_path.exists());
-    drop(current);
-    drop(lock);
-    std::fs::rename(&missing_path, &target_path)?;
-
-    let orphan = fixture.store.directory().join("lexical-99");
-    drop(CurrentLexical::create(&orphan, Arc::new(|_| Ok(())))?);
-    let nested = orphan.join("unexpected-nested");
-    std::fs::create_dir(&nested)?;
-    let lock = fixture.store.lock()?;
-    let mut current =
-        fixture
-            .store
-            .current_write(&lock, &fixture.quota, &fixture.scope, CAPACITY)?;
-    assert!(current.reclaim_lexical_candidates().is_err());
-    assert!(base_path.exists() && orphan.exists());
-    drop(current);
-    drop(lock);
-    std::fs::remove_dir(nested)?;
-    let interrupted = fixture
-        .store
-        .directory()
-        .join(".current-lexical-interrupted");
-    std::fs::create_dir(&interrupted)?;
-    std::fs::write(interrupted.join("partial"), b"staged")?;
-    let lock = fixture.store.lock()?;
-    let mut current =
-        fixture
-            .store
-            .current_write(&lock, &fixture.quota, &fixture.scope, CAPACITY)?;
-    assert_eq!(current.reclaim_lexical_candidates()?, 3);
-    drop(current);
-    drop(lock);
-    assert!(!base_path.exists() && !orphan.exists() && !interrupted.exists());
-    assert!(target_path.exists());
+    assert!(!fixture.store.directory().join("lexical-0").exists());
+    assert!(!fixture.store.directory().join("lexical-1").exists());
+    let connection = rusqlite::Connection::open(fixture.store.directory().join("current.sqlite3"))?;
+    connection.execute("UPDATE current_fts_data SET block=zeroblob(length(block)) WHERE id=(SELECT max(id) FROM current_fts_data)", [])?;
+    drop(connection);
     let read = fixture.store.current_read(&fixture.scope)?;
-    let lexical =
-        airk_kernel::current::open_selected_lexical(&fixture.store, &read, Arc::new(|_| Ok(())))?;
-    assert_eq!(
-        lexical
-            .search(&SearchQuery {
-                text: "searchable evidence".into(),
-                path_prefix: None,
-                limit: 2,
-                max_bytes: 1024,
-            })?
-            .values
-            .len(),
-        1
+    assert!(
+        read.lexical_search(&SearchQuery {
+            text: "absent".into(),
+            path_prefix: None,
+            limit: 2,
+            max_bytes: 1024
+        })
+        .is_err(),
+        "corruption cannot become an empty answer"
     );
     Ok(())
 }
 
 #[test]
-fn restart_verifies_private_lexical_candidate_before_replay_or_prepared_abort() -> Result<()> {
+fn restart_verifies_captured_fts_before_replay_or_prepared_abort() -> Result<()> {
     for (applying, remove_target) in [(false, true), (true, false), (true, true)] {
         let fixture = Fixture::new()?;
-        let base_path = fixture.store.directory().join("lexical-0");
-        let target_path = fixture.store.directory().join("lexical-1");
         let read = fixture.store.current_read(&fixture.scope)?;
         let head = read.head().clone();
         let base_bytes = read.lexical_manifest()?;
-        let base = LexicalManifest::decode(&base_bytes, head.lexical_commit)?;
-        let verified = base.verify_owned(&base_path, head.lexical_commit)?;
+        read.verify_lexical()?;
         drop(read);
-        let (private, replacement, _) = CurrentLexical::fork_changed(
-            &verified,
-            &target_path,
-            Arc::new(|_| Ok(())),
-            &[LexicalChange {
-                path: "docs/absent.md",
-                artifact: None,
-            }],
-        )?;
-        drop(private);
-        let replacement_bytes = replacement.manifest().canonical_bytes()?;
+        let (_, captured) =
+            retained_lexical_artifact(&fixture, "docs/next.md", "captured replacement")?;
         let (_reservation, candidate_head, overlay) = fixture.candidate()?;
         assert_eq!(candidate_head, head);
         let sealed = Fixture::seal(overlay)?;
         let mut target = head.clone();
         target.sequence += 1;
         target.graph_head = sealed.descriptor().target.clone();
-        target.lexical_commit = replacement.digest();
         let lock = fixture.store.lock()?;
         let mut current =
             fixture
                 .store
                 .current_write(&lock, &fixture.quota, &fixture.scope, CAPACITY)?;
-        let pending = current.prepare_lexical(
+        let (pending, _) = current.prepare_artifacts_with_fts(
             &head.token()?,
             target,
             &sealed,
-            &[],
+            airk_store::current::ArtifactVectorChanges {
+                artifacts: &[ArtifactChange::Upsert(Box::new(captured))],
+                vector_inputs: None,
+                occurrences: &[],
+                configuration: None,
+            },
             None,
-            &replacement_bytes,
+            &[],
+            &[],
         )?;
+        let replacement_bytes = current.pending_lexical_manifest(&pending)?.unwrap();
         if applying {
             current.mark_applying(&pending)?;
         }
         drop(current);
         drop(lock);
         if remove_target {
-            std::fs::remove_dir_all(&target_path)?;
+            let connection =
+                rusqlite::Connection::open(fixture.store.directory().join("current.sqlite3"))?;
+            connection.execute("DELETE FROM current_pending_fts", [])?;
         }
         let recovered =
             airk_kernel::current::recover_current(&fixture.store, &fixture.quota, &fixture.scope);

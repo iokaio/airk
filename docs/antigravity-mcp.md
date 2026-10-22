@@ -50,7 +50,7 @@ If using global configuration, assign unique names per collection and enable onl
 
 ## Verify and maintain
 
-1. Confirm the server connects and exposes AIRK's sixteen [read-only MCP tools](mcp.md).
+1. Confirm a helper built from the unreleased 1.3.0 source connects and exposes AIRK's fifteen [read-only MCP tools](mcp.md).
 2. Ask the agent to call `airk_status` and `airk_capabilities` through the configured server. Check the collection and reported capabilities.
 3. Request a lexical `airk_search` for a known indexed phrase. Check its source path and original location against the intended workspace.
 4. After source edits, update the same collection from a terminal:

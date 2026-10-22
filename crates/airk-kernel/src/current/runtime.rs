@@ -36,7 +36,6 @@ impl Kernel {
         let mut current = self
             .store
             .current_write(&writer, &quota, &scope, capacity)?;
-        current.reclaim_lexical_candidates()?;
         current.reclaim_objects(&plan)
     }
 
@@ -132,7 +131,7 @@ impl Kernel {
             source_bytes: usize::try_from(state.counts.source_bytes)?,
             extractor_version: c.extractor_version.clone(),
             exact_fact_backend: "sqlite",
-            lexical_backend: "tantivy-current",
+            lexical_backend: "sqlite-fts5-current",
             vector_backend: "microsoft-diskann-0.59.0/airk-current-provider",
             local_model_ready: c.model.is_some(),
             vectors_enabled: self.vectors_enabled()?,
@@ -151,11 +150,43 @@ impl Kernel {
         query: &SearchQuery,
         mode: super::CurrentSearchMode,
     ) -> Result<SearchResponse> {
+        self.search_response(query, mode, None)
+    }
+
+    /// Search with an optional per-hit snippet allowance applied before the total budget.
+    pub fn search_response(
+        &self,
+        query: &SearchQuery,
+        mode: super::CurrentSearchMode,
+        snippet_bytes: Option<usize>,
+    ) -> Result<SearchResponse> {
+        if matches!(
+            mode,
+            super::CurrentSearchMode::Vector | super::CurrentSearchMode::Hybrid
+        ) {
+            anyhow::ensure!(
+                self.vectors_enabled()?,
+                "vector search is disabled for this collection"
+            );
+        }
+        let mode =
+            if matches!(mode, super::CurrentSearchMode::Default) && !self.vectors_enabled()? {
+                super::CurrentSearchMode::Lexical
+            } else {
+                mode
+            };
         let scope = self
             .current_scope()?
             .context("workspace is not indexed; run airk index first")?;
-        let evidence =
-            super::search_current(&self.store, &scope, None, mode, query, Arc::new(|_| Ok(())))?;
+        let evidence = super::search::search_current_with_snippets(
+            &self.store,
+            &scope,
+            None,
+            mode,
+            query,
+            Arc::new(|_| Ok(())),
+            snippet_bytes,
+        )?;
         Ok(SearchResponse {
             publication: Some(RevisionEnvelope::new(
                 self.collection.clone(),

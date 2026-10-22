@@ -45,7 +45,7 @@ Live SHA-256 values matched AIRK citations for the inspected retrieval, kernel, 
 
 | Evidence | Source SHA-256 / read validator |
 |---|---|
-| [persistent.rs](../crates/airk-retrieval/src/persistent.rs), read lines 1146–1291 | Source `0f1f18f255e05ed68ea86aaf5320482317d39a88544af590fbfaebb6cf71344e`; validator `d2f27c0732091665688f42106e1f6097512c8e2d655ff17418062dd8176d5b6e` |
+| [persistent.rs](https://github.com/iokaio/airk/blob/f9aa5168829dc8794d241644fb8483715c2dd58a/crates/airk-retrieval/src/persistent.rs), read lines 1146–1291 | Source `0f1f18f255e05ed68ea86aaf5320482317d39a88544af590fbfaebb6cf71344e`; validator `d2f27c0732091665688f42106e1f6097512c8e2d655ff17418062dd8176d5b6e` |
 | [kernel lib.rs](../crates/airk-kernel/src/lib.rs), read lines 661–824 | Source `9d185281f08c5ac8b3c05f4857e29eb3bfba1e2950ccaf4a44783699379b034c`; validator `1959dfdcce9fd662d5a7e297aa0e6cc28817395e36b39dfc7cf5880bc8443476` |
 | [sqlite.rs](../crates/airk-store/src/sqlite.rs), read lines 288–363 | Source `fd12c33153fb9411de58343a38db9d9ee44880190b1c0b48792834dca7bb34d5`; validator `20776cf1866c9f9002945b6e705776d87690a6be4111c19f94dd6c92ca4320a3` |
 
@@ -57,7 +57,7 @@ P1 means fix before the next candidate release. P2 means correctness, reliabilit
 
 ### F01 — P1: Bind warm vector reads to the authenticated generation
 
-**Reproduced.** [Kernel cache reuse](../crates/airk-kernel/src/lib.rs#L729) returns an existing `PersistentIndex` when the header identity matches. [Warm verification](../crates/airk-retrieval/src/persistent.rs#L1295) authenticates the manifest, while [vector search](../crates/airk-retrieval/src/persistent.rs#L1223) reopens `vectors.bin`. It does not rebind those newly opened bytes to the manifest's component digest. [Per-record checksums](../crates/airk-retrieval/src/vector.rs#L309) detect damaged records but do not bind a valid record to its original slot or publication.
+**Reproduced.** [Kernel cache reuse](../crates/airk-kernel/src/lib.rs#L729) returns an existing `PersistentIndex` when the header identity matches. [Warm verification](https://github.com/iokaio/airk/blob/f9aa5168829dc8794d241644fb8483715c2dd58a/crates/airk-retrieval/src/persistent.rs#L1295) authenticates the manifest, while [vector search](https://github.com/iokaio/airk/blob/f9aa5168829dc8794d241644fb8483715c2dd58a/crates/airk-retrieval/src/persistent.rs#L1223) reopens `vectors.bin`. It does not rebind those newly opened bytes to the manifest's component digest. [Per-record checksums](../crates/airk-retrieval/src/vector.rs#L309) detect damaged records but do not bind a valid record to its original slot or publication.
 
 Experiment: index `a.txt = authenticate` and `b.txt = banana` with an original two-dimensional word-vector model; warm an MCP vector query for `login`; exchange complete graph records 1 and 2 without changing their valid checksums or the file length; repeat in the same connection. The top result changed from `a.txt` to `b.txt`, `isError` remained false, and the publication token was identical. A fresh CLI search exited 1 with `v2 generation component checksum mismatch`.
 
@@ -69,7 +69,7 @@ Experiment: index `a.txt = authenticate` and `b.txt = banana` with an original t
 
 ### F02 — P2: Fuse candidate identities before applying text budgets
 
-**Reproduced.** [Hybrid search](../crates/airk-retrieval/src/persistent.rs#L1252) asks each public branch for up to 100 hits but caps each branch at 65,536 text bytes before reciprocal-rank fusion. Eight 8 KiB chunks can exhaust a branch before a better combined candidate reaches the merger.
+**Reproduced.** [Hybrid search](https://github.com/iokaio/airk/blob/f9aa5168829dc8794d241644fb8483715c2dd58a/crates/airk-retrieval/src/persistent.rs#L1252) asks each public branch for up to 100 hits but caps each branch at 65,536 text bytes before reciprocal-rank fusion. Eight 8 KiB chunks can exhaust a branch before a better combined candidate reaches the merger.
 
 Experiment: eight long lexical matches, eight long vector-only matches, a short document matching both branches, and 100 lower-ranked vector distractors. Removing only trailing spaces from the long files changed the hybrid top result from `a0.txt` to `m.txt`. Lexical terms and normalized word vectors were unchanged. Response payload length was changing the candidate set used for ranking.
 
@@ -79,7 +79,7 @@ Experiment: eight long lexical matches, eight long vector-only matches, a short 
 
 ### F03 — P2: Do not identify chunks solely by path and line range
 
-**Reproduced.** The [hybrid merge key](../crates/airk-retrieval/src/persistent.rs#L1263) is `(path, start_line, end_line)`. [Byte-bounded chunking](../crates/airk-ingest/src/chunking.rs#L50) can create multiple chunks on the same source line, so that tuple is not unique.
+**Reproduced.** The [hybrid merge key](https://github.com/iokaio/airk/blob/f9aa5168829dc8794d241644fb8483715c2dd58a/crates/airk-retrieval/src/persistent.rs#L1263) is `(path, start_line, end_line)`. [Byte-bounded chunking](../crates/airk-ingest/src/chunking.rs#L50) can create multiple chunks on the same source line, so that tuple is not unique.
 
 Experiment: one text file containing `needle FIRST`, padded to 8,192 bytes, followed by `needle SECOND`, without a newline. Lexical search returned two hits. Hybrid search returned one, omitted `SECOND`, and reported `truncated: false`. The merger also adds scores from distinct chunks as if they were duplicate retrievals of one chunk.
 
@@ -91,7 +91,7 @@ Experiment: one text file containing `needle FIRST`, padded to 8,192 bytes, foll
 
 ### F04 — P2: Improve vector recall inside a path prefix
 
-**Reproduced limitation.** [Vector search](../crates/airk-retrieval/src/persistent.rs#L1224) obtains a global candidate set of `(limit * 4).clamp(64, 1000)` and filters paths afterward. A narrow prefix can return no evidence even though it contains a searchable vector.
+**Reproduced limitation.** [Vector search](https://github.com/iokaio/airk/blob/f9aa5168829dc8794d241644fb8483715c2dd58a/crates/airk-retrieval/src/persistent.rs#L1224) obtains a global candidate set of `(limit * 4).clamp(64, 1000)` and filters paths afterward. A narrow prefix can return no evidence even though it contains a searchable vector.
 
 Experiment: 200 distinct nearby out-of-scope vectors and one more distant document under `wanted/`; querying with `mode: vector`, `path_prefix: wanted/`, and `limit: 1` returned zero hits. The response did set `truncated: true`, so it did not claim exhaustive absence.
 

@@ -74,7 +74,7 @@ impl Default for QuotaPolicy {
     fn default() -> Self {
         Self {
             root_bytes: 500 * 1024 * 1024 * 1024,
-            default_collection_bytes: 100 * 1024 * 1024 * 1024,
+            default_collection_bytes: 256 * 1024 * 1024 * 1024,
             collections: BTreeMap::new(),
         }
     }
@@ -209,6 +209,7 @@ fn acquire_lifecycle(root: &Path, exclusive: bool, retry_readers: bool) -> Resul
                 }
             }
         }
+        crate::current::release_lexical_cache();
     } else {
         file.try_lock_shared()
             .context("data root relocation in progress")?;

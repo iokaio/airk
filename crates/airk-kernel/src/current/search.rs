@@ -3,12 +3,9 @@
 use super::{MAX_LEXICAL_VALIDATION_BYTES, open_selected_lexical};
 use airk_core::{Hit, SearchQuery, identity::Sha256Digest};
 use airk_retrieval::{
-    bounded::Charge,
-    current_lexical::{CurrentLexicalCandidate, stable_id},
-    model::EmbeddingModel,
-    terms, truncate_utf8,
-    vector::mutable::MutableDiskIndex,
+    bounded::Charge, model::EmbeddingModel, terms, truncate_utf8, vector::mutable::MutableDiskIndex,
 };
+use airk_store::current::lexical::{CurrentLexicalCandidate, stable_id};
 use airk_store::{
     FileStore,
     current::{
@@ -95,6 +92,18 @@ pub fn search_current(
     query: &SearchQuery,
     charge: Charge,
 ) -> Result<CurrentSearchEvidence> {
+    search_current_with_snippets(store, scope, expected, mode, query, charge, None)
+}
+
+pub(crate) fn search_current_with_snippets(
+    store: &FileStore,
+    scope: &CurrentScope,
+    expected: Option<&CurrentToken>,
+    mode: CurrentSearchMode,
+    query: &SearchQuery,
+    _charge: Charge,
+    snippet_bytes: Option<usize>,
+) -> Result<CurrentSearchEvidence> {
     query.validate()?;
     let read = store.current_read(scope)?;
     if let Some(expected) = expected {
@@ -133,7 +142,7 @@ pub fn search_current(
     };
     let mut branches = Vec::new();
     if matches!(mode, CurrentSearchMode::Lexical | CurrentSearchMode::Hybrid) {
-        let lexical = open_selected_lexical(store, &read, charge)?;
+        let lexical = open_selected_lexical(store, &read)?;
         let mut selection = query.clone();
         selection.limit = if matches!(mode, CurrentSearchMode::Hybrid) {
             BRANCH_CANDIDATES
@@ -201,31 +210,9 @@ pub fn search_current(
         }
         let semantic = matches!(candidate, Candidate::Vector(_));
         let mut hit = materialize(store, &read, query, candidate, &mut read_bytes)?;
-        if semantic && hit.text.len() > remaining {
-            let span = airk_retrieval::focus_span(&hit.text, &query.text, remaining);
-            if matches!(
-                hit.citation.location,
-                airk_core::DocumentLocation::Lines { .. }
-            ) {
-                let first = hit.citation.start_line
-                    + hit.text[..span.start]
-                        .bytes()
-                        .filter(|b| *b == b'\n')
-                        .count();
-                let last = first
-                    + hit.text.as_bytes()[span.start..span.end.saturating_sub(1)]
-                        .iter()
-                        .filter(|b| **b == b'\n')
-                        .count();
-                hit.citation.start_line = first;
-                hit.citation.end_line = last;
-                hit.citation.location = airk_core::DocumentLocation::Lines {
-                    start: first,
-                    end: last,
-                };
-            }
-            hit.text = hit.text[span.start..span.end].to_owned();
-            hit.truncated = true;
+        let allowance = snippet_bytes.unwrap_or(remaining).min(remaining);
+        if snippet_bytes.is_some() || semantic {
+            focus_hit(&mut hit, &query.text, allowance);
         }
         let (text, cut) = truncate_utf8(&hit.text, remaining);
         remaining -= text.len();
@@ -366,7 +353,7 @@ fn materialize(
     read_bytes: &mut u64,
 ) -> Result<Hit> {
     let path = match &candidate {
-        Candidate::Lexical(c) => &c.hit.citation.path,
+        Candidate::Lexical(c) => &c.citation.path,
         Candidate::Vector(p) => &p.path,
     };
     ensure!(
@@ -407,12 +394,10 @@ fn materialize(
                 .get(usize::try_from(candidate.local)?)
                 .context("current lexical local chunk missing")?;
             ensure!(
-                full.content_hash == candidate.hit.citation.content_hash
-                    && chunk.start_line == candidate.hit.citation.start_line
-                    && chunk.end_line == candidate.hit.citation.end_line
-                    && chunk.location == candidate.hit.citation.location
-                    && chunk.text == candidate.hit.text
-                    && !candidate.hit.truncated,
+                full.content_hash == candidate.citation.content_hash
+                    && chunk.start_line == candidate.citation.start_line
+                    && chunk.end_line == candidate.citation.end_line
+                    && chunk.location == candidate.citation.location,
                 "current lexical candidate differs from retained evidence"
             );
             let wanted = terms(&query.text);
@@ -421,7 +406,42 @@ fn materialize(
                     && wanted.is_subset(&terms(&format!("{} {}", full.path, chunk.text))),
                 "current lexical candidate does not match query"
             );
-            Ok(candidate.hit)
+            Ok(Hit {
+                citation: candidate.citation,
+                text: chunk.text.clone(),
+                truncated: false,
+            })
         }
     }
+}
+
+/// Focus before response budget accounting, preserving original document locations.
+pub(crate) fn focus_hit(hit: &mut Hit, query: &str, allowance: usize) {
+    if hit.text.len() <= allowance {
+        return;
+    }
+    let span = airk_retrieval::focus_span(&hit.text, query, allowance);
+    let first = hit.citation.start_line
+        + hit.text[..span.start]
+            .bytes()
+            .filter(|b| *b == b'\n')
+            .count();
+    let last = first
+        + hit.text.as_bytes()[span.start..span.end.saturating_sub(1).max(span.start)]
+            .iter()
+            .filter(|b| **b == b'\n')
+            .count();
+    hit.citation.start_line = first;
+    hit.citation.end_line = last;
+    if matches!(
+        hit.citation.location,
+        airk_core::DocumentLocation::Lines { .. }
+    ) {
+        hit.citation.location = airk_core::DocumentLocation::Lines {
+            start: first,
+            end: last,
+        };
+    }
+    hit.text = hit.text[span.start..span.end].to_owned();
+    hit.truncated = true;
 }

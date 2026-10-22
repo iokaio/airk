@@ -152,6 +152,25 @@ pub struct FreshnessObservation {
     pub last_success_unix_ms: Option<u64>,
     pub error: Option<String>,
     pub live_source_verified: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_inventory_unix_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_index: Option<IndexTimingObservation>,
+}
+
+/// Latest completed source pass, independent of live source freshness.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct IndexTimingObservation {
+    #[serde(default)]
+    pub completed_unix_ms: u64,
+    #[serde(default)]
+    pub path_scoped: bool,
+    #[serde(default)]
+    pub scan_extract_us: u64,
+    #[serde(default)]
+    pub publish_us: u64,
+    pub first_ready_us: Option<u64>,
+    pub fully_ready_us: Option<u64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

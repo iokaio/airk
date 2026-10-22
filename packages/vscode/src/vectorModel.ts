@@ -20,19 +20,39 @@ export interface VectorStatus {
     };
 }
 export interface ModelAsset { name: string; url: string; bytes: number; sha256: string }
-const source = 'https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2';
-const revision = '10dbd2f06a8baf40ad285b037edda610c1b9a57c';
-export const modelAssets: readonly ModelAsset[] = [
-    { name: 'model.onnx', url: `${source}/resolve/${revision}/onnx/model.onnx`, bytes: 90405214, sha256: '6fd5d72fe4589f189f8ebc006442dbb529bb7ce38f8082112682524616046452' },
-    { name: 'tokenizer.json', url: `${source}/resolve/${revision}/tokenizer.json`, bytes: 466247, sha256: 'be50c3628f2bf5bb5e3a7f17b1f74611b2561a3a27eeab05e5aa30f411572037' },
-    { name: 'LICENSE', url: 'https://www.apache.org/licenses/LICENSE-2.0.txt', bytes: 11358, sha256: 'cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30' }
-];
-export const modelManifest = {
-    schema: 2, name: 'sentence-transformers/all-MiniLM-L6-v2', license: 'Apache-2.0', source, revision,
-    model_sha256: modelAssets[0].sha256, tokenizer_sha256: modelAssets[1].sha256, license_sha256: modelAssets[2].sha256,
-    dimensions: 384, max_tokens: 256, pooling: 'attention-mask-mean-l2', input_ids: 'input_ids',
-    attention_mask: 'attention_mask', token_type_ids: 'token_type_ids', output: 'last_hidden_state'
-};
+interface CatalogProfile { id: string; precision: 'fp32'; assets: ModelAsset[]; manifest: Record<string, unknown> }
+
+/** Fail before downloading if the verified helper's catalog protocol is incompatible. */
+export function modelProfileFromCatalog(value: unknown): CatalogProfile {
+    const object = (item: unknown): Record<string, unknown> => item !== null && typeof item === 'object' && !Array.isArray(item) ? item as Record<string, unknown> : {};
+    const report = object(value), catalog = object(report.catalog), selection = object(report.selection);
+    const profiles = catalog.profiles;
+    if (report.schema !== 1 || catalog.schema !== 1 || report.automatic_int8 !== false
+        || !Array.isArray(profiles) || profiles.length !== 1 || typeof selection.profile_id !== 'string'
+        || selection.profile_id !== catalog.default_profile) { throw new Error('AIRK helper returned an unsupported model catalog.'); }
+    const profile = object(profiles[0]), manifest = object(profile.manifest);
+    if (profile.id !== selection.profile_id || profile.precision !== 'fp32'
+        || typeof profile.runtime !== 'string' || profile.runtime !== object(report.capabilities).runtime
+        || manifest.schema !== 2 || manifest.dimensions !== 384 || manifest.max_tokens !== 256
+        || manifest.source !== 'https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2'
+        || typeof manifest.revision !== 'string' || !/^[0-9a-f]{40}$/.test(manifest.revision)
+        || !Array.isArray(profile.assets) || profile.assets.length !== 3) { throw new Error('AIRK helper selected an unsupported model profile.'); }
+    const names = new Set<string>();
+    const assets = profile.assets.map(item => {
+        const asset = object(item), name = asset.name;
+        const field = name === 'model.onnx' ? 'model_sha256' : name === 'tokenizer.json' ? 'tokenizer_sha256' : name === 'LICENSE' ? 'license_sha256' : undefined;
+        const maximum = name === 'model.onnx' ? 268435456 : name === 'tokenizer.json' ? 4194304 : 262144;
+        const url = name === 'LICENSE' ? 'https://www.apache.org/licenses/LICENSE-2.0.txt'
+            : `${manifest.source}/resolve/${manifest.revision}/${name === 'model.onnx' ? 'onnx/model.onnx' : 'tokenizer.json'}`;
+        if (typeof name !== 'string' || !field || names.has(name) || !Number.isSafeInteger(asset.bytes)
+            || Number(asset.bytes) <= 0 || Number(asset.bytes) > maximum || asset.url !== url
+            || typeof asset.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(asset.sha256)
+            || asset.sha256 !== manifest[field]) { throw new Error('AIRK helper returned an invalid model asset binding.'); }
+        names.add(name);
+        return asset as unknown as ModelAsset;
+    });
+    return { id: String(profile.id), precision: 'fp32', assets, manifest };
+}
 
 /** A bounded stream keeps downloads out of memory; hashes cover the exact file bytes. */
 export async function writeModelAsset(file: string, asset: ModelAsset, chunks: AsyncIterable<Uint8Array>): Promise<void> {
@@ -91,26 +111,34 @@ async function* download(url: string): AsyncGenerator<Uint8Array> {
 
 const pending = new Map<string, Promise<void>>();
 /** Trusted extension setup only. MCP/native reads never download or run inference remotely. */
-export function prepareVectorModel(dataDir: string, progress: (message: string) => void, install: (source: string) => Promise<void>): Promise<void> {
+export function prepareVectorModel(dataDir: string, progress: (message: string) => void, install: (source: string) => Promise<void>,
+    select: () => Promise<unknown>): Promise<void> {
     const key = path.resolve(dataDir);
     const previous = pending.get(key);
     if (previous) { return previous; }
     const job = (async () => {
-        if (await existingModel(path.join(key, 'models', 'local'))) { return; }
-        const scratch = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'airk-vector-download-'));
-        const source = path.join(scratch, 'models', 'local');
+        let scratch: string | undefined, source: string | undefined;
+        let assets: ModelAsset[] = [];
         try {
-            await installModelAssets(scratch, modelAssets, modelManifest, download, progress);
+            if (await existingModel(path.join(key, 'models', 'local'))) { return; }
+            const profile = modelProfileFromCatalog(await select());
+            assets = profile.assets;
+            progress(`Selected local model: ${profile.manifest.name} (${profile.precision.toUpperCase()})`);
+            scratch = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'airk-vector-download-'));
+            source = path.join(scratch, 'models', 'local');
+            await installModelAssets(scratch, profile.assets, profile.manifest, download, progress);
             progress('Installing verified model files');
             await install(source);
         } catch (error) {
             throw new Error(`Vector model setup failed: ${error instanceof Error ? error.message : String(error)}. Retry Index now, or turn Vector search off in the panel.`);
         } finally {
-            for (const name of [...modelAssets.map(asset => asset.name), 'model.json']) {
-                await fs.unlink(path.join(source, name)).catch(error => { if (error.code !== 'ENOENT') { throw error; } });
-            }
-            for (const directory of [source, path.dirname(source), scratch]) {
-                await fs.rmdir(directory).catch(error => { if (error.code !== 'ENOENT') { throw error; } });
+            if (source && scratch) {
+                for (const name of [...assets.map(asset => asset.name), 'model.json']) {
+                    await fs.unlink(path.join(source, name)).catch(error => { if (error.code !== 'ENOENT') { throw error; } });
+                }
+                for (const directory of [source, path.dirname(source), scratch]) {
+                    await fs.rmdir(directory).catch(error => { if (error.code !== 'ENOENT') { throw error; } });
+                }
             }
         }
     })().finally(() => { pending.delete(key); });
@@ -132,7 +160,8 @@ export async function installModelAssets(dataDir: string, assets: readonly Model
     const staging = await fs.mkdtemp(path.join(parent, '.minilm-'));
     try {
         for (const asset of assets) {
-            progress(`Preparing local vector model: ${asset.name} (about 91 MB total)`);
+            const megabytes = Math.ceil(assets.reduce((total, item) => total + item.bytes, 0) / 1000000);
+            progress(`Preparing local vector model: ${asset.name} (about ${megabytes} MB total)`);
             await writeModelAsset(path.join(staging, asset.name), asset, fetchAsset(asset.url));
         }
         await fs.writeFile(path.join(staging, 'model.json'), JSON.stringify(manifest, null, 2) + '\n', { flag: 'wx', mode: 0o600 });

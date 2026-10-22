@@ -37,7 +37,7 @@ fn now() -> Result<u64> {
 }
 
 #[derive(Debug)]
-pub(crate) struct ScanPaused;
+pub struct ScanPaused;
 impl std::fmt::Display for ScanPaused {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("scan paused; committed batches remain available")
@@ -45,11 +45,45 @@ impl std::fmt::Display for ScanPaused {
 }
 impl std::error::Error for ScanPaused {}
 
+/// The caller exhausted its join budget; durable indexing has not failed.
+#[derive(Debug)]
+pub struct ScheduledIndexPending {
+    pub revision: u64,
+}
+impl std::fmt::Display for ScheduledIndexPending {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "scheduled indexing wait ended; request {} remains queued; resume with schedule wait {}",
+            self.revision, self.revision
+        )
+    }
+}
+impl std::error::Error for ScheduledIndexPending {}
+
 impl Kernel {
     /// Advance one semantic batch for this collection only. Editor hosts use
     /// this after base indexing and on reopen, without installing a service or
     /// executing queued source scans for other workspace roots.
     pub fn run_scheduled_enrichment(&self) -> Result<RunOutcome> {
+        self.run_scheduled_enrichment_bounded(1, None)
+    }
+
+    /// Reuse one model and worker for several durable batches, yielding after
+    /// the time budget so other collections can acquire the scheduler worker.
+    pub fn run_scheduled_enrichment_bounded(
+        &self,
+        max_batches: usize,
+        budget: Option<std::time::Duration>,
+    ) -> Result<RunOutcome> {
+        ensure!(
+            (1..=8).contains(&max_batches),
+            "semantic batch limit exceeded"
+        );
+        ensure!(
+            budget.is_none_or(|duration| duration <= Duration::from_secs(120)),
+            "semantic time budget exceeded"
+        );
         let queue = self.queue()?;
         let outcome = |state, error| RunOutcome {
             state,
@@ -71,11 +105,14 @@ impl Kernel {
         if job.blocked {
             return Ok(outcome("blocked", job.error));
         }
+        if job.requested_revision > job.completed_revision {
+            return Ok(outcome("busy", None));
+        }
         // Unlike a root-wide worker searching for eligible collections, an
         // editor request must surface a failure to read its selected index.
         self.status()?;
         Ok(self
-            .continue_semantic(&queue, &worker, &[job])?
+            .continue_semantic(&queue, &worker, &[job], max_batches, budget)?
             .unwrap_or_else(|| outcome("idle", None)))
     }
 
@@ -84,11 +121,16 @@ impl Kernel {
         queue: &Queue,
         worker: &WorkerLock,
         jobs: &[ScheduledJob],
+        max_batches: usize,
+        budget: Option<std::time::Duration>,
     ) -> Result<Option<RunOutcome>> {
         use airk_core::readiness::SemanticState;
-        for job in jobs.iter().filter(|job| !job.paused && !job.blocked) {
-            let kernel =
+        for job in jobs.iter().filter(|job| {
+            !job.paused && !job.blocked && job.requested_revision == job.completed_revision
+        }) {
+            let mut kernel =
                 Kernel::open_collection(&job.root, Some(self.data_root.clone()), &job.collection)?;
+            kernel.progress = self.progress.clone();
             let Ok(status) = kernel.status() else {
                 continue;
             };
@@ -98,12 +140,29 @@ impl Kernel {
             ) {
                 continue;
             }
-            return Ok(Some(match kernel.resume_current_enrichment_batches(1) {
-                Ok(generation) => RunOutcome {
+            let span = kernel.usage_span(UsageOperation::Index, ClientFamily::NativeScheduler);
+            let result = kernel.resume_current_enrichment_batches_bounded(max_batches, budget);
+            let logical = result
+                .as_ref()
+                .ok()
+                .and_then(|(_, report)| serde_json::to_value(report).ok());
+            let bytes = logical
+                .as_ref()
+                .and_then(|value| serde_json::to_vec(value).ok())
+                .map_or(0, |bytes| bytes.len());
+            kernel.finish_usage(
+                span,
+                logical.as_ref(),
+                bytes,
+                result.is_err(),
+                ResponseRepresentation::LogicalResultJson,
+            );
+            return Ok(Some(match result {
+                Ok((generation, report)) => RunOutcome {
                     state: "enriched",
                     collection: Some(job.collection.clone()),
                     revision: generation,
-                    report: None,
+                    report: Some(report),
                     error: None,
                     maintenance: None,
                 },
@@ -145,20 +204,31 @@ impl Kernel {
             !self.root.starts_with(self.data_root.canonicalize()?),
             "data directory must not contain the workspace root"
         );
-        if self.current_scope()?.is_none() {
-            self.load_optional()?;
-        }
+        // Queue intents do not read current evidence or acquire its request
+        // gate. The claimed worker validates ownership before touching state;
+        // this also permits full requests for obsolete/interrupted indexes.
         Ok(Queue::new(&self.data_root))
     }
 
     pub fn schedule_enqueue(&self, full: bool) -> Result<ScheduledJob> {
-        self.queue()?.enqueue(
+        self.schedule_enqueue_selected(full, None, false)
+    }
+
+    pub fn schedule_enqueue_selected(
+        &self,
+        full: bool,
+        paths: Option<&[String]>,
+        coalesced: bool,
+    ) -> Result<ScheduledJob> {
+        self.queue()?.enqueue_selected(
             &self.collection,
             &self.root_id(),
             full,
             false,
             false,
             now()?,
+            paths,
+            coalesced,
         )
     }
     pub fn schedule_status(&self) -> Result<Option<ScheduledJob>> {
@@ -194,15 +264,19 @@ impl Kernel {
                 error: None,
             });
         };
-        let measured =
-            Kernel::open_collection(&job.root, Some(queue.data_dir().into()), &job.collection)
-                .and_then(|kernel| {
-                    ensure!(
-                        kernel.root_id() == job.root,
-                        "registered workspace root identity changed"
-                    );
-                    kernel.coverage(true)
-                });
+        let measured = Kernel::open_collection_with_recovery(
+            &job.root,
+            Some(queue.data_dir().into()),
+            &job.collection,
+            !job.full,
+        )
+        .and_then(|kernel| {
+            ensure!(
+                kernel.root_id() == job.root,
+                "registered workspace root identity changed"
+            );
+            kernel.coverage(true)
+        });
         match measured {
             Ok(report) => {
                 let changed = !report.indexed
@@ -267,7 +341,9 @@ impl Kernel {
             });
         };
         let Some(job) = queue.claim(&worker, now()?)? else {
-            if let Some(outcome) = self.continue_semantic(&queue, &worker, &queue.list()?)? {
+            if let Some(outcome) =
+                self.continue_semantic(&queue, &worker, &queue.list()?, 1, None)?
+            {
                 return Ok(outcome);
             }
             match self.continue_retention(&queue.list()?) {
@@ -302,52 +378,60 @@ impl Kernel {
                 maintenance: None,
             });
         };
-        let result =
-            Kernel::open_collection(&job.root, Some(queue.data_dir().into()), &job.collection)
-                .and_then(|mut kernel| {
-                    kernel.progress = self.progress.clone();
-                    ensure!(
-                        kernel.root_id() == job.root,
-                        "registered workspace root identity changed"
-                    );
-                    let span = kernel.usage_span(
-                        if job.full {
-                            UsageOperation::Reindex
-                        } else {
-                            UsageOperation::Index
-                        },
-                        ClientFamily::NativeScheduler,
-                    );
-                    let result = kernel.index_current(job.full, true);
-                    if result.as_ref().is_err_and(|error| {
-                        matches!(
-                            error.downcast_ref::<std::fs::TryLockError>(),
-                            Some(std::fs::TryLockError::WouldBlock)
-                        )
-                    }) {
-                        // A deferred claim did no indexing work. Do not count
-                        // each contention retry as a failed usage observation.
-                        return result;
-                    }
-                    // Background jobs have a logical index-report JSON representation;
-                    // queue/watch envelopes and waiting CLI callers are not extra index work.
-                    let logical = result
-                        .as_ref()
-                        .ok()
-                        .and_then(|report| serde_json::to_value(report).ok());
-                    let bytes = logical
-                        .as_ref()
-                        .and_then(|value| serde_json::to_vec(value).ok())
-                        .map_or(0, |json| json.len());
-                    kernel.finish_usage(
-                        span,
-                        logical.as_ref(),
-                        bytes,
-                        result.is_err(),
-                        ResponseRepresentation::LogicalResultJson,
-                    );
-                    result
-                });
+        let result = Kernel::open_collection_with_recovery(
+            &job.root,
+            Some(queue.data_dir().into()),
+            &job.collection,
+            !job.full,
+        )
+        .and_then(|mut kernel| {
+            kernel.progress = self.progress.clone();
+            ensure!(
+                kernel.root_id() == job.root,
+                "registered workspace root identity changed"
+            );
+            let span = kernel.usage_span(
+                if job.full {
+                    UsageOperation::Reindex
+                } else {
+                    UsageOperation::Index
+                },
+                ClientFamily::NativeScheduler,
+            );
+            let result = if let Some(paths) = &job.paths {
+                kernel.index_current_paths(paths, true)
+            } else {
+                kernel.index_current(job.full, true)
+            };
+            if result.as_ref().is_err_and(|error| {
+                matches!(
+                    error.downcast_ref::<std::fs::TryLockError>(),
+                    Some(std::fs::TryLockError::WouldBlock)
+                )
+            }) {
+                // A deferred claim did no indexing work. Do not count
+                // each contention retry as a failed usage observation.
+                return result;
+            }
+            // Background jobs have a logical index-report JSON representation;
+            // queue/watch envelopes and waiting CLI callers are not extra index work.
+            let logical = result
+                .as_ref()
+                .ok()
+                .and_then(|report| serde_json::to_value(report).ok());
+            let bytes = logical
+                .as_ref()
+                .and_then(|value| serde_json::to_vec(value).ok())
+                .map_or(0, |json| json.len());
+            kernel.finish_usage(
+                span,
+                logical.as_ref(),
+                bytes,
+                result.is_err(),
+                ResponseRepresentation::LogicalResultJson,
+            );
+            result
+        });
         let outcome = match result {
             Ok(report) => {
                 queue.finish(&worker, &job, now()?, Ok(&serde_json::to_string(&report)?))?;
@@ -406,31 +490,60 @@ impl Kernel {
     /// Persist first, then join one serialized worker. A killed extension/helper
     /// leaves the unfinished revision available to another host or CLI worker.
     pub fn scheduled_index(&self, full: bool, automatic: bool) -> Result<IndexReport> {
+        self.scheduled_index_selected(full, automatic, None, false)
+    }
+
+    pub fn scheduled_index_selected(
+        &self,
+        full: bool,
+        automatic: bool,
+        paths: Option<&[String]>,
+        coalesced: bool,
+    ) -> Result<IndexReport> {
         let queue = self.queue()?;
-        let requested = queue.enqueue(
+        let requested = queue.enqueue_selected(
             &self.collection,
             &self.root_id(),
             full,
             !automatic,
             true,
             now()?,
+            paths,
+            coalesced,
         )?;
         ensure!(
             !automatic || !requested.paused,
             "native automatic scheduling is paused; request remains queued"
         );
+        self.wait_scheduled_index(requested.requested_revision)
+    }
+
+    /// Join an existing durable request without enqueueing or clearing failures.
+    pub fn wait_scheduled_index(&self, revision: u64) -> Result<IndexReport> {
+        self.wait_scheduled_index_with_budget(revision, Duration::from_secs(240))
+    }
+
+    fn wait_scheduled_index_with_budget(
+        &self,
+        revision: u64,
+        budget: Duration,
+    ) -> Result<IndexReport> {
+        ensure!(revision > 0, "scheduled revision must be positive");
+        let queue = self.queue()?;
         let start = Instant::now();
         loop {
             let job = queue
                 .status(&self.collection, &self.root_id())?
                 .context("scheduled collection was removed")?;
-            if job.completed_revision >= requested.requested_revision {
-                return serde_json::from_str(
-                    job.last_report
-                        .as_deref()
-                        .context("scheduled report missing")?,
-                )
-                .context("invalid scheduled report");
+            ensure!(
+                revision <= job.requested_revision,
+                "scheduled revision was not requested"
+            );
+            if job.completed_revision >= revision {
+                let report = queue.completed_report(&self.collection, &self.root_id(), revision)?
+                    .or_else(|| (job.completed_revision == revision).then_some(job.last_report).flatten())
+                    .with_context(|| format!("scheduled report for revision {revision} was superseded by a later pass and is no longer retained; inspect schedule status"))?;
+                return serde_json::from_str(&report).context("invalid scheduled report");
             }
             if job.blocked {
                 bail!(
@@ -441,22 +554,129 @@ impl Kernel {
             if job.paused && !job.manual {
                 return Err(ScanPaused.into());
             }
-            let outcome = self.run_scheduled_once()?;
-            if outcome.collection.as_deref() == Some(&self.collection)
-                && outcome.state == "indexed"
-                && outcome
-                    .revision
-                    .is_some_and(|revision| revision >= requested.requested_revision)
-            {
-                return outcome
-                    .report
-                    .context("successful scheduled report missing");
+            if start.elapsed() >= budget {
+                return Err(ScheduledIndexPending { revision }.into());
             }
-            ensure!(
-                start.elapsed() < Duration::from_secs(240),
-                "scheduled indexing wait exceeded 240 seconds; request remains queued"
-            );
+            let outcome = self.run_scheduled_once()?;
+            if outcome.collection.as_deref() == Some(&self.collection) && outcome.state == "indexed"
+            {
+                // Re-read the revision-bound durable result. Another pass may
+                // have completed while this waiter was joining the worker.
+                continue;
+            }
             thread::sleep(Duration::from_millis(100));
         }
+    }
+}
+
+#[cfg(test)]
+mod join_tests {
+    use super::*;
+
+    #[test]
+    fn full_request_is_durable_while_the_collection_writer_is_locked() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let data = tempfile::tempdir()?;
+        let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+        kernel.configure_vectors(false)?;
+        kernel.index()?;
+        let writer = kernel.store.lock()?;
+        let quota = airk_store::quota::Quota::open(data.path())?;
+        let scope = kernel.current_scope()?.unwrap();
+        let capacity = kernel.store.current_database_capacity(&scope)?;
+        let current = kernel
+            .store
+            .current_write(&writer, &quota, &scope, capacity)?;
+        let request = kernel.schedule_enqueue(true)?;
+        let reopened = Kernel::open_collection_for_diagnostics(
+            root.path(),
+            Some(data.path().into()),
+            "default",
+        )?;
+        let pending = reopened.schedule_status()?.unwrap();
+        assert!(pending.full);
+        assert_eq!(pending.requested_revision, request.requested_revision);
+        assert_eq!(pending.completed_revision, 0);
+        drop(current);
+        drop(writer);
+        Ok(())
+    }
+
+    #[test]
+    fn joining_an_earlier_full_pass_does_not_return_a_later_scoped_report() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let data = tempfile::tempdir()?;
+        std::fs::write(root.path().join("fixture.txt"), "original queued evidence")?;
+        let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+        kernel.configure_vectors(false)?;
+        let full = kernel.scheduled_index(true, false)?;
+        let revision = kernel.schedule_status()?.unwrap().completed_revision;
+        std::fs::write(root.path().join("fixture.txt"), "changed queued evidence")?;
+        let scoped =
+            kernel.scheduled_index_selected(false, false, Some(&["fixture.txt".into()]), true)?;
+        assert!(scoped.path_scoped);
+        assert!(!full.path_scoped);
+        assert!(scoped.generation > full.generation);
+        let reopened = Kernel::open(root.path(), Some(data.path().into()))?;
+        let joined = reopened.wait_scheduled_index_with_budget(revision, Duration::ZERO)?;
+        assert_eq!(serde_json::to_value(joined)?, serde_json::to_value(full)?);
+        for _ in 0..3 {
+            reopened.scheduled_index_selected(false, false, Some(&["fixture.txt".into()]), true)?;
+        }
+        let error = reopened
+            .wait_scheduled_index_with_budget(revision, Duration::ZERO)
+            .unwrap_err();
+        assert!(error.to_string().contains("superseded by a later pass"));
+        Ok(())
+    }
+
+    #[test]
+    fn expired_join_can_resume_the_same_revision_without_new_work() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let data = tempfile::tempdir()?;
+        std::fs::write(root.path().join("fixture.txt"), "original queued evidence")?;
+        let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+        kernel.configure_vectors(false)?;
+        let request = kernel.schedule_enqueue(false)?;
+        let revision = request.requested_revision;
+        let error = kernel
+            .wait_scheduled_index_with_budget(revision, Duration::ZERO)
+            .unwrap_err();
+        assert_eq!(
+            error
+                .downcast_ref::<ScheduledIndexPending>()
+                .unwrap()
+                .revision,
+            revision
+        );
+        let pending = kernel.schedule_status()?.unwrap();
+        assert!(!pending.blocked);
+        assert_eq!(pending.requested_revision, revision);
+        let report = kernel.wait_scheduled_index(revision)?;
+        let completed = kernel.schedule_status()?.unwrap();
+        assert_eq!(completed.requested_revision, revision);
+        assert_eq!(completed.completed_revision, revision);
+        // Check completion before the wait budget, including late completions.
+        assert_eq!(
+            kernel
+                .wait_scheduled_index_with_budget(revision, Duration::ZERO)?
+                .generation,
+            report.generation
+        );
+        assert!(kernel.wait_scheduled_index(0).is_err());
+        assert!(kernel.wait_scheduled_index(revision + 1).is_err());
+        let next = kernel.schedule_enqueue(false)?;
+        kernel.schedule_pause(true)?;
+        assert!(
+            kernel
+                .wait_scheduled_index(next.requested_revision)
+                .unwrap_err()
+                .is::<ScanPaused>()
+        );
+        assert_eq!(
+            kernel.schedule_status()?.unwrap().requested_revision,
+            next.requested_revision
+        );
+        Ok(())
     }
 }

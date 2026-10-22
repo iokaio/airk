@@ -55,7 +55,7 @@ MCP `airk_file_info`, `airk_read_file`, `airk_outline` and `airk_context`, and C
 |---|---|
 | `if_evidence` / `--if-evidence` | Representation validator returned by the same operation and selected span/options |
 | `follow_moves` / `--follow-moves` | Opt into following an exact current artifact handle with matching source hash; false by default |
-| `known_hash` / `--known-hash` | Remembered source-byte identity, including the source of a requested redirect |
+| `known_hash` / `--known-hash` | Remembered source-byte identity; a present file with a different indexed hash returns an explicit mismatch error, including after a requested redirect |
 | `artifact_id` / `--artifact-id` | Remembered artifact identity |
 
 Normal responses keep their existing fields and add `read` with `publication`, `status`, `requested_path`, `resolved_path`, `validator`, `basis` and `reason`. Matching `if_evidence` returns `not_modified` without retransmitting the ordinary payload, while still returning the served publication. Absent current evidence returns unknown. Storage corruption and invalid arguments remain errors.

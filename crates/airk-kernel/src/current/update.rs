@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! One changed-path publication across retained evidence, Tantivy and DiskANN.
+//! One changed-path publication across retained evidence, SQLite FTS5 and DiskANN.
 use airk_core::{
     embedding::{EmbeddingDescriptor, embedding_key},
     graph_storage::{GraphRecordOverlay, PreparedGraphDelta},
@@ -8,8 +8,6 @@ use airk_core::{
     vector_selection::VectorSelectionPolicy,
 };
 use airk_retrieval::{
-    bounded::Charge,
-    current_lexical::{CurrentLexical, LexicalForkWork, LexicalManifest},
     embedding_batch::MAX_BATCH_CHUNKS,
     model::{EmbeddingCacheContext, EmbeddingModel},
     vector::mutable::MutableDiskIndex,
@@ -19,7 +17,7 @@ use airk_store::{
     FileStore, WriterLock,
     current::{
         ArtifactChange, ArtifactVectorChanges, CapturedInput, CurrentCommit, CurrentRead,
-        CurrentScope, MAX_PENDING_INPUTS, MAX_PENDING_VECTOR_INPUTS, TransactionPhase,
+        CurrentScope, MAX_PENDING_INPUTS, MAX_PENDING_VECTOR_INPUTS,
         graph::{GraphOverlay, GraphOverlayLimits, GraphStatistics},
         map::MapDomain,
         vector_map::{OccurrencePointer, PathOccurrences, PreparedOccurrence},
@@ -31,6 +29,28 @@ use std::{collections::BTreeMap, sync::Arc};
 
 const MAX_CAPTURED_BYTES: usize = 8 * 1024 * 1024 * 1024;
 
+pub(super) fn reclaim_current_objects(
+    store: &FileStore,
+    quota: &Quota,
+    scope: &CurrentScope,
+    writer: &WriterLock,
+) -> Result<()> {
+    if writer.has_object_captures() {
+        return Ok(());
+    }
+    let read = store.current_read(scope)?;
+    if read.collection_state()?.is_none() {
+        return Ok(());
+    }
+    let plan = read.reclamation_plan(store)?;
+    drop(read);
+    let capacity = store.current_database_capacity(scope)?;
+    store
+        .current_write(writer, quota, scope, capacity)?
+        .reclaim_objects(&plan)?;
+    Ok(())
+}
+
 pub struct SemanticUpdate<'a> {
     pub model: &'a EmbeddingModel,
     pub objects: ModelObjectSet,
@@ -40,9 +60,13 @@ pub struct SemanticUpdate<'a> {
     pub defer: bool,
 }
 
+pub struct LexicalPublicationWork {
+    pub changed: airk_store::current::lexical::LexicalWork,
+}
+
 pub struct CurrentUpdateResult {
     pub commit: CurrentCommit,
-    pub lexical: LexicalForkWork,
+    pub lexical: LexicalPublicationWork,
     pub graph: GraphStatistics,
     pub occurrences: usize,
 }
@@ -399,19 +423,6 @@ impl CurrentUpdater<'_> {
             "invalid current semantic-only input batch"
         );
         let capacity = self.store.current_database_capacity(self.scope)?;
-        {
-            let mut writer = self
-                .store
-                .current_write(self.writer, self.quota, self.scope, capacity)
-                .context("open current writer for cleanup")?;
-            ensure!(
-                writer.phase()? == TransactionPhase::Ready && writer.pending()?.is_none(),
-                "current update requires recovery first"
-            );
-            writer
-                .reclaim_lexical_candidates()
-                .context("reclaim prior lexical candidates")?;
-        }
         let read = self
             .store
             .current_read(self.scope)
@@ -485,13 +496,6 @@ impl CurrentUpdater<'_> {
                     .all(|change| matches!(change, ArtifactChange::Delete(_))),
             "current semantic model is required for changed artifacts"
         );
-        let manifest = LexicalManifest::decode(&read.lexical_manifest()?, base.lexical_commit)?;
-        let verified = manifest
-            .verify_owned(
-                &self.store.directory().join(base.lexical_directory_name()?),
-                base.lexical_commit,
-            )
-            .context("verify current lexical base")?;
         let replacing = semantic
             .as_ref()
             .map(|s| -> Result<bool> {
@@ -805,35 +809,11 @@ impl CurrentUpdater<'_> {
             .context("current sequence overflow")?;
         target.lexical_sequence = target.sequence;
         target.graph_head = sealed.descriptor().target.clone();
-        let paths = changes.iter().map(path).collect::<Vec<_>>();
-        let mut inputs = changes.iter();
-        let reservation = self.reservation.clone();
-        let charge: Charge = Arc::new(move |bytes| reservation.charge(bytes));
-        let (lexical, ticket, lexical_work) = CurrentLexical::fork_loaded(
-            &verified,
-            &self
-                .store
-                .directory()
-                .join(target.lexical_directory_name()?),
-            charge,
-            &paths,
-            &mut |_| match inputs.next().context("current lexical input missing")? {
-                ArtifactChange::Upsert(input) => Ok(Some(
-                    self.store
-                        .load_retrieval_artifact(&input.artifact)?
-                        .artifact,
-                )),
-                ArtifactChange::Delete(_) => Ok(None),
-            },
-        )
-        .context("fork current lexical component")?;
-        drop(lexical);
-        let manifest_bytes = ticket.manifest().canonical_bytes()?;
         let mut writer = self
             .store
             .current_write(self.writer, self.quota, self.scope, capacity)?;
-        let pending = writer
-            .prepare_artifacts_with_resources(
+        let (pending, lexical_work) = writer
+            .prepare_artifacts_with_fts(
                 &base.token()?,
                 target,
                 &sealed,
@@ -844,7 +824,6 @@ impl CurrentUpdater<'_> {
                     configuration: self.configuration,
                 },
                 captured_model,
-                &manifest_bytes,
                 &metadata,
                 &resources,
             )
@@ -858,30 +837,8 @@ impl CurrentUpdater<'_> {
             .commit(&pending, pending.target.lexical_commit)
             .context("commit current journal")?;
         observer(CurrentUpdateStage::Committed);
-        if let Err(error) = writer.reclaim_lexical_candidates() {
-            let message = format!("current lexical cleanup: {error:#}");
-            committed.maintenance_error = Some(match committed.maintenance_error {
-                Some(previous) => format!("{previous}; {message}"),
-                None => message,
-            });
-        }
         drop(writer);
-        let cleanup = (|| -> Result<()> {
-            if self.writer.has_object_captures() {
-                return Ok(());
-            }
-            let read = self.store.current_read(self.scope)?;
-            if read.collection_state()?.is_none() {
-                return Ok(());
-            }
-            let plan = read.reclamation_plan(self.store)?;
-            drop(read);
-            let capacity = self.store.current_database_capacity(self.scope)?;
-            self.store
-                .current_write(self.writer, self.quota, self.scope, capacity)?
-                .reclaim_objects(&plan)?;
-            Ok(())
-        })();
+        let cleanup = reclaim_current_objects(self.store, self.quota, self.scope, self.writer);
         if let Err(error) = cleanup {
             let message = format!("current object cleanup: {error:#}");
             committed.maintenance_error = Some(match committed.maintenance_error {
@@ -891,7 +848,9 @@ impl CurrentUpdater<'_> {
         }
         Ok(CurrentUpdateResult {
             commit: committed,
-            lexical: lexical_work,
+            lexical: LexicalPublicationWork {
+                changed: lexical_work,
+            },
             graph: sealed.statistics().clone(),
             occurrences: occurrences.len(),
         })
