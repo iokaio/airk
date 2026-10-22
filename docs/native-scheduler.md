@@ -83,6 +83,8 @@ Coverage refresh and maintenance in another editor can briefly hold a collection
 
 Native tests exercise reopening pending state, revision coalescing, full-rebuild escalation, pause/manual behavior, blocked failures, root binding, exclusive worker ownership and an actual child-process exit without destructors while holding both locks. Separate tests modify saved source with no editor and verify native events and periodic reconciliation queue the change. Filesystem-specific power-loss durability and login/reboot recovery remain outside that test evidence.
 
+Collection-scoped semantic handoff tests enqueue a foreign source request only after local source-index setup finishes. Joining a source request runs the root-wide worker, which may legitimately complete another due collection first; queuing the foreign fixture before that join made its pending-state assertion depend on machine speed. The handoff regression still requires a yield after every batch, unchanged foreign publication, exact committed progress, pause and worker exclusion.
+
 
 ## Resuming a queued request (1.3.0)
 

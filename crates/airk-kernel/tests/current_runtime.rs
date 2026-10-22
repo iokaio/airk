@@ -426,13 +426,6 @@ fn editor_semantic_batches_resume_after_reopen_and_preserve_scope_and_pause() ->
     std::fs::write(foreign.path().join("foreign.txt"), "authenticate\n")?;
     let other = Kernel::open_collection(foreign.path(), Some(data.path().into()), "foreign")?;
     other.scheduled_index(false, false)?;
-    let foreign_head = other.status()?.publication;
-    std::fs::write(
-        foreign.path().join("foreign.txt"),
-        "changed outside workspace\n",
-    )?;
-    other.schedule_enqueue(false)?;
-
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
     kernel.scheduled_index(false, false)?;
     let mut completed = kernel.status()?.semantic_readiness.completed_artifacts;
@@ -449,6 +442,18 @@ fn editor_semantic_batches_resume_after_reopen_and_preserve_scope_and_pause() ->
     assert_eq!(kernel.run_scheduled_enrichment()?.state, "busy");
     drop(worker);
     drop(kernel);
+
+    // Local setup joins the root-wide source worker, which may legitimately
+    // service another due collection. Queue the handoff fixture only after
+    // setup, before invoking collection-scoped semantic drains.
+    let foreign_head = other.status()?.publication;
+    std::fs::write(
+        foreign.path().join("foreign.txt"),
+        "changed outside workspace\n",
+    )?;
+    let pending = other.schedule_enqueue(false)?;
+    assert!(pending.requested_revision > pending.completed_revision);
+    assert!(queue.has_pending_source()?);
 
     let progress = Arc::new(Mutex::new(Vec::new()));
     while completed < 65 {
