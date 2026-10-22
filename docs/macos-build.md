@@ -1,5 +1,7 @@
 # Building AIRK for macOS
 
+Native builds embed the pinned FP32 MiniLM assets. Before Cargo checks/builds, run `python scripts/provision-local-model.py --destination target/local-vector-model --download`, or supply verified offline assets there (or through `AIRK_BUNDLED_MODEL_DIR`). Cargo never downloads model assets. See [model provisioning](onnx-models.md).
+
 Build the native Rust executable on a Mac or macOS CI runner. Docker is optional and is not needed for this workflow. Local Apple Silicon build/tests and signing/notarization were observed on 14 October 2026; see the [validation record](validation.md) for exact scope and remaining qualification.
 
 ## Prerequisites

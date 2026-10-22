@@ -1,5 +1,7 @@
 # Contributing to AIRK
 
+Native builds embed the pinned FP32 MiniLM assets. Before Cargo checks/builds, run `python scripts/provision-local-model.py --destination target/local-vector-model --download`, or supply verified offline assets there (or through `AIRK_BUNDLED_MODEL_DIR`). Cargo never downloads model assets. See [model provisioning](docs/onnx-models.md).
+
 Contributions to code, extraction fixtures, retrieval quality and documentation are welcome. Read the [architecture](docs/architecture.md) and [roadmap](docs/roadmap.md) before choosing a change. Small focused pull requests are easiest to review; discuss changes to collection identity, index formats, MCP contracts and default dependencies in an issue first.
 
 ## Development

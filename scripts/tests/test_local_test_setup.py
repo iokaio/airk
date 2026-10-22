@@ -129,12 +129,12 @@ class LocalSetupTests(unittest.TestCase):
         with mock.patch.object(setup.subprocess, 'check_output', return_value='{"enabled": true}'), \
                 mock.patch.object(setup.subprocess, 'run') as execute:
             setup.prepare_vectors(server, self.root)
-            self.assertEqual(execute.call_count, 2)
-            self.assertIn('--download', execute.call_args_list[0].args[0])
-            self.assertEqual(execute.call_args_list[1].args[0][-4:-1], ['collections', 'vectors', 'install'])
+            self.assertEqual(execute.call_count, 1)
+            self.assertEqual(execute.call_args.args[0][-3:], ['collections', 'vectors', 'install-bundled'])
+            self.assertNotIn('--download', execute.call_args.args[0])
             execute.reset_mock()
             execute.side_effect = subprocess.CalledProcessError(1, 'provision')
-            with self.assertRaisesRegex(RuntimeError, 'Model download and validation failed'):
+            with self.assertRaisesRegex(RuntimeError, 'Native bundled model installation failed'):
                 setup.prepare_vectors(server, self.root)
             self.assertEqual(execute.call_count, 1)
 

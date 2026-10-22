@@ -229,12 +229,8 @@ def prepare_vectors(server, root):
         regular(local / 'model.json')
         require((local / 'model.json').is_file(), 'Existing local model is incomplete; repair it before retrying')
         return
-    cache = root / 'target' / 'local-vector-model'
-    print('Preparing the default local vector model (about 91 MB on first setup)...', flush=True)
-    run_setup_step('Model download and validation',
-                   [sys.executable, str(Path(__file__).with_name('provision-local-model.py')),
-                    '--destination', str(cache), '--download'], timeout=600, **options)
-    run_setup_step('Native model installation', [*command, 'collections', 'vectors', 'install', str(cache)],
+    print('Installing the embedded local vector model offline...', flush=True)
+    run_setup_step('Native bundled model installation', [*command, 'collections', 'vectors', 'install-bundled'],
                    timeout=300, wait_for_writer=True, **options)
 
 

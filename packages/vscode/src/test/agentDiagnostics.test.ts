@@ -132,7 +132,7 @@ test('installed CLI digest checks fail closed for redirected, oversized, or canc
     await write(path.join(spec.root, '.vscode', 'mcp.json'), configFor('vscode', { ...spec, command: installedCliPath }));
     const options = { codexHome, installedCliPath, verifiedHelper: true };
     const file = await fs.open(installedCliPath, 'r+');
-    try { await file.truncate(256 * 1024 * 1024 + 1); } finally { await file.close(); }
+    try { await file.truncate(512 * 1024 * 1024 + 1); } finally { await file.close(); }
     assert.equal((await inspectAgentConfiguration(spec, options)).entries[0].status, 'unresolved');
     await fs.unlink(installedCliPath);
     const outside = path.join(directory, 'outside'); await fs.mkdir(outside);

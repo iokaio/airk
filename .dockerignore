@@ -6,6 +6,7 @@
 !crates/
 !crates/**
 !scripts/
+!scripts/provision-local-model.py
 !scripts/license-notices.py
 !scripts/ci-metrics.py
 !scripts/ci-prune-target.py
@@ -16,6 +17,8 @@
 !THIRD_PARTY_NOTICES.md
 !Dockerfile
 !third_party/
+!third_party/models/
+!third_party/models/**
 !third_party/licenses/
 !third_party/licenses/**
 # Explicit defense for local references and source/index residue.

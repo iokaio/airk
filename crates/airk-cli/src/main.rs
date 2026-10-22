@@ -6,6 +6,7 @@ use airk_kernel::{FactQuery, Kernel};
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
+mod bundled_model;
 mod tools;
 
 #[derive(clap::Args, Default)]
@@ -647,6 +648,8 @@ enum AnalysisCommand {
 #[derive(Subcommand)]
 enum VectorCommand {
     Show,
+    /// Install the embedded FP32 MiniLM model offline, preserving existing models.
+    InstallBundled,
     /// Inspect or save explicit vector-only exclusions; lexical evidence is retained.
     Selection {
         #[command(subcommand)]
@@ -1131,7 +1134,9 @@ fn run_cli() -> anyhow::Result<()> {
 async fn main_async() -> anyhow::Result<()> {
     let cli = Cli::parse();
     if matches!(cli.command, Command::ModelCatalog) {
-        return print_json(&airk_kernel::inspect_model_catalog()?);
+        let mut report = serde_json::to_value(airk_kernel::inspect_model_catalog()?)?;
+        report["bundled_model"] = serde_json::json!({ "manifest": bundled_model::manifest()? });
+        return print_json(&report);
     }
     if let Command::Tools { action } = &cli.command
         && tools::inspect(action)?
@@ -1354,6 +1359,7 @@ async fn main_async() -> anyhow::Result<()> {
             }
             CollectionCommand::Vectors { action } => match action {
                 VectorCommand::Show => recorder.print(&kernel.vector_status()?),
+                VectorCommand::InstallBundled => recorder.print(&bundled_model::install(&kernel)?),
                 VectorCommand::Install { source } => recorder.print(&kernel.install_vector_model(&source)?),
                 VectorCommand::Set { enabled } => recorder.print(&kernel.configure_vectors(enabled)?),
                 VectorCommand::Selection { action } => match action {

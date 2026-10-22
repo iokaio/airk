@@ -180,7 +180,7 @@ impl ModelObjects {
 }
 
 /// Install verified input assets once, under native quota/lifecycle ownership.
-/// Source is a private download directory outside managed state. Existing input
+/// Source is a private provisioning directory outside managed state. Existing input
 /// models are never replaced; collection publication retains its own copies.
 pub fn install_input_model(
     source: &Path,
@@ -188,12 +188,31 @@ pub fn install_input_model(
     quota: &crate::quota::Quota,
     collection: &str,
 ) -> Result<()> {
+    install_input_model_inner(source, set, quota, collection, false).map(|_| ())
+}
+
+/// Idempotent default setup. The caller validates preserved custom inputs.
+pub fn install_input_model_if_missing(
+    source: &Path,
+    set: &ModelObjectSet,
+    quota: &crate::quota::Quota,
+    collection: &str,
+) -> Result<bool> {
+    install_input_model_inner(source, set, quota, collection, true)
+}
+
+fn install_input_model_inner(
+    source: &Path,
+    set: &ModelObjectSet,
+    quota: &crate::quota::Quota,
+    collection: &str,
+    preserve_existing: bool,
+) -> Result<bool> {
     set.validate()?;
     directory_ancestors(source, false)?;
     let parent = quota.root().join("models");
     directory_ancestors(&parent, true)?;
     let bytes = set.assets.values().map(|reference| reference.bytes).sum();
-    let reservation = quota.reserve(collection, bytes)?;
     fs::create_dir_all(&parent)?;
     directory_ancestors(&parent, false)?;
     let lock_path = parent.join("install.lock");
@@ -209,13 +228,31 @@ pub fn install_input_model(
         .create(true)
         .truncate(false)
         .open(lock_path)?;
-    lock.try_lock()
-        .context("another AIRK process is installing model assets; retry indexing")?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        match lock.try_lock() {
+            Ok(()) => break,
+            Err(std::fs::TryLockError::WouldBlock)
+                if preserve_existing && std::time::Instant::now() < deadline =>
+            {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(error) => {
+                return Err(error)
+                    .context("another AIRK process is installing model assets; retry indexing");
+            }
+        }
+    }
     let destination = parent.join("local");
+    if preserve_existing && fs::symlink_metadata(&destination).is_ok() {
+        directory_ancestors(&destination, false)?;
+        return Ok(false);
+    }
     ensure!(
         !destination.try_exists()?,
         "local model already exists; preserving existing assets"
     );
+    let reservation = quota.reserve(collection, bytes)?;
     let staging = tempfile::tempdir_in(reservation.staging_directory()?)?;
     for (name, reference) in &set.assets {
         let input_path = source.join(name.filename());
@@ -239,7 +276,7 @@ pub fn install_input_model(
     fs::rename(staging.path(), &destination)?;
     #[cfg(unix)]
     File::open(parent)?.sync_all()?;
-    Ok(())
+    Ok(true)
 }
 
 fn directory_ancestors(path: &Path, missing_allowed: bool) -> Result<()> {

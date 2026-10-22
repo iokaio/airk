@@ -46,6 +46,8 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.11'
+      - name: Prepare pinned bundled model build inputs
+        run: python scripts/provision-local-model.py --destination target/local-vector-model --download
       - run: cargo build --release --locked -p airk-cli
       - name: Fixed corpus scale and optional pinned public repository
         shell: pwsh

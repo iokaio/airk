@@ -100,6 +100,15 @@ def main():
             declaration.update(declaration_provenance(source, pinned_records.get((package["name"], package["version"]))))
             (destination / "UPSTREAM-LICENSE-DECLARATION.json").write_text(json.dumps(declaration, indent=2) + "\n", encoding="utf-8")
             print("Release review needed for license declaration without separate text: " + package["name"])
+    catalog = json.loads(Path("crates/airk-retrieval/src/model_catalog.json").read_text(encoding="utf-8"))
+    profile = catalog["profiles"][0]
+    model_notices = args.output / "all-MiniLM-L6-v2"
+    model_notices.mkdir(exist_ok=True)
+    license_bytes = Path("third_party/models/minilm-LICENSE.txt").read_bytes()
+    if hashlib.sha256(license_bytes).hexdigest() != profile["manifest"]["license_sha256"]:
+        raise SystemExit("Bundled model license digest mismatch")
+    (model_notices / "LICENSE").write_bytes(license_bytes)
+    (model_notices / "provenance.json").write_text(json.dumps(profile, indent=2) + "\n", encoding="utf-8")
     (args.output / "inventory.json").write_text(json.dumps(inventory, indent=2) + "\n", encoding="utf-8")
     (args.output / "bom.cdx.json").write_text(json.dumps(software_bill_of_materials(metadata), indent=2) + "\n", encoding="utf-8")
     if missing:
