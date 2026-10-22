@@ -43,7 +43,7 @@ fn copied_executable_installs_offline_and_preserves_custom_inputs() -> Result<()
     assert!(!data.exists(), "catalog reads must not install the model");
     // Independent projects can perform first-use setup together. Only the
     // atomic input-model installation is shared; the second preserves it.
-    std::thread::scope(|scope| -> Result<()> {
+    let (first, second) = std::thread::scope(|scope| {
         let first = scope.spawn(|| {
             run(
                 &binary,
@@ -62,10 +62,31 @@ fn copied_executable_installs_offline_and_preserves_custom_inputs() -> Result<()
                 &["collections", "vectors", "install-bundled"],
             )
         });
-        first.join().unwrap()?;
-        second.join().unwrap()?;
-        Ok(())
-    })?;
+        (first.join().unwrap(), second.join().unwrap())
+    });
+    ensure!(
+        first.is_ok() || second.is_ok(),
+        "neither concurrent installer completed: {first:?}; {second:?}"
+    );
+    for (collection, result) in [("one", first), ("two", second)] {
+        if let Err(error) = result {
+            // A slow peer may outlast the bounded native installation wait.
+            // Only explicit contention can retry after both peers have exited.
+            ensure!(
+                error
+                    .to_string()
+                    .contains("another AIRK process is installing model assets; retry indexing"),
+                "unexpected concurrent installer failure: {error}"
+            );
+            run(
+                &binary,
+                &root,
+                &data,
+                collection,
+                &["collections", "vectors", "install-bundled"],
+            )?;
+        }
+    }
     let local = data.join("models/local");
     for asset in profile["assets"].as_array().unwrap() {
         let bytes = fs::read(local.join(asset["name"].as_str().unwrap()))?;
