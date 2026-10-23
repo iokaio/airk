@@ -4,8 +4,9 @@ use super::*;
 
 pub async fn run(command: &RuntimeCommand) -> Result<()> {
     let output = match command {
-        RuntimeCommand::Location => {
-            serde_json::json!({"install_dir":default_install_root()?,"os":std::env::consts::OS,"arch":std::env::consts::ARCH,"channel":"stable","protocol":1})
+        RuntimeCommand::Location { channel } => {
+            let paths = crate::user_paths::UserPaths::discover(*channel)?;
+            serde_json::json!({"install_dir":paths.install,"os":std::env::consts::OS,"arch":std::env::consts::ARCH,"channel":channel,"protocol":1,"user_paths":paths})
         }
         RuntimeCommand::Login {
             install_dir,

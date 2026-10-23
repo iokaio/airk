@@ -28,6 +28,7 @@ mod staging;
 const MAX_MANIFEST: u64 = 512 * 1024;
 const MAX_FILES: usize = 2048;
 const MAX_PAYLOAD: u64 = 4 * 1024 * 1024 * 1024;
+pub use crate::user_paths::Channel as RuntimeChannel;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
 #[serde(rename_all = "snake_case")]
@@ -39,7 +40,10 @@ pub enum VerificationBasis {
 #[derive(Subcommand)]
 pub enum RuntimeCommand {
     /// Resolve the native user's stable-channel install location; no workspace settings or writes.
-    Location,
+    Location {
+        #[arg(long, value_enum, default_value = "stable")]
+        channel: RuntimeChannel,
+    },
     /// Optional login registration; never required by on-demand operation.
     Login {
         #[arg(long)]
@@ -136,25 +140,7 @@ pub enum RuntimeCommand {
 }
 
 pub fn default_install_root() -> Result<PathBuf> {
-    let variable = if cfg!(windows) {
-        "LOCALAPPDATA"
-    } else {
-        "HOME"
-    };
-    let home = PathBuf::from(
-        std::env::var_os(variable).with_context(|| format!("{variable} unavailable"))?,
-    );
-    ensure!(
-        home.is_absolute(),
-        "native user install base must be absolute"
-    );
-    Ok(if cfg!(windows) {
-        home.join("AIRK/service-1.4")
-    } else if cfg!(target_os = "macos") {
-        home.join("Library/Application Support/AIRK/service-1.4")
-    } else {
-        home.join(".local/lib/airk/service-1.4")
-    })
+    Ok(crate::user_paths::UserPaths::discover(RuntimeChannel::Stable)?.install)
 }
 
 #[derive(Subcommand)]

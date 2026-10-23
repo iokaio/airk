@@ -30,3 +30,4 @@ pub mod source_protocol;
 pub mod source_worker;
 
 mod source_supervisor;
+mod user_paths;

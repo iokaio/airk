@@ -161,20 +161,8 @@ impl ServiceManager {
             Sha256::digest(format!("{principal}\0{data}").as_bytes())
         );
         let id = id[..prefix.len() + 32].to_owned();
-        let home = if platform == Platform::Windows {
-            env_path("APPDATA")?
-        } else {
-            env_path("HOME")?
-        };
-        let config = if platform == Platform::Windows {
-            home.join("AIRK")
-        } else if platform == Platform::Linux {
-            std::env::var_os("XDG_CONFIG_HOME")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| home.join(".config"))
-        } else {
-            home.join("Library/Application Support/AIRK")
-        };
+        let home = crate::user_paths::home()?;
+        let config = crate::user_paths::configuration_base()?;
         ensure!(
             config.is_absolute(),
             "per-user configuration directory must be absolute"
@@ -670,12 +658,6 @@ fn parse_status(platform: Platform, output: &Output) -> (Option<bool>, Option<bo
     }
 }
 
-fn env_path(name: &str) -> Result<PathBuf> {
-    let path =
-        PathBuf::from(std::env::var_os(name).with_context(|| format!("{name} is unavailable"))?);
-    ensure!(path.is_absolute(), "{name} must be absolute");
-    Ok(path)
-}
 #[cfg(windows)]
 fn windows_tool(name: &str) -> Result<PathBuf> {
     use std::os::windows::ffi::OsStringExt;
