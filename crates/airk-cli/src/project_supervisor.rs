@@ -292,6 +292,14 @@ struct WorkerAdmission<'a> {
     resources: &'a mut airk_kernel::service_resources::Resources,
 }
 
+fn settle_failed_start(root: &Path, instance: Incarnation, project: ProjectBinding) {
+    if let Ok(lease) = ProjectLease::acquire(root, project)
+        && let Ok(mut registry) = ServiceRegistry::open(root, instance)
+    {
+        let _ = registry.fail_pending_start(&lease, "worker_start_failed");
+    }
+}
+
 fn start_worker(
     workers: &mut BTreeMap<ProjectBinding, ChildWorker>,
     root: &Path,
@@ -326,6 +334,7 @@ fn start_worker(
                 project,
                 (Instant::now() + Duration::from_secs(1 << attempt), attempt),
             );
+            settle_failed_start(root, instance, project);
             return Err(error);
         }
     };
@@ -367,6 +376,7 @@ fn start_worker(
             project,
             (Instant::now() + Duration::from_secs(1 << attempt), attempt),
         );
+        settle_failed_start(root, instance, project);
         return Err(error);
     }
     workers.insert(project, worker);
@@ -374,7 +384,13 @@ fn start_worker(
 }
 
 impl Supervisor {
-    pub fn start(root: PathBuf, instance: Incarnation, policy: Arc<Mutex<Broker>>) -> Result<Self> {
+    pub fn start(
+        root: PathBuf,
+        instance: Incarnation,
+        policy: Arc<Mutex<Broker>>,
+        source_pid: Arc<std::sync::atomic::AtomicU32>,
+        source_telemetry: Arc<std::sync::atomic::AtomicBool>,
+    ) -> Result<Self> {
         let (sender, receiver) = mpsc::sync_channel::<Envelope>(32);
         let loaded = crate::service_resource_policy::load(&root);
         let configuration_error = loaded.is_err();
@@ -403,14 +419,20 @@ impl Supervisor {
                 let mut resources = initial;
                 let mut configuration_error = configuration_error;
                 let mut pending_after = None;
+                let mut source_after = None;
                 let mut endpoints_ready = false;
                 loop {
                     let observations = std::iter::once(std::process::id())
                         .chain(workers.values().map(|worker| worker.child.id()))
                         .chain(pool.as_ref().map(Pool::process_id))
+                        .chain(
+                            std::iter::once(source_pid.load(std::sync::atomic::Ordering::Acquire))
+                                .filter(|pid| *pid != 0),
+                        )
                         .map(airk_kernel::service_resource_observations::rss)
                         .collect::<Vec<_>>();
-                    let complete = observations.iter().all(Option::is_some);
+                    let complete = observations.iter().all(Option::is_some)
+                        && source_telemetry.load(std::sync::atomic::Ordering::Acquire);
                     let rss = observations
                         .into_iter()
                         .flatten()
@@ -427,6 +449,9 @@ impl Supervisor {
                                 registry
                                     .pending_projects(1)
                                     .is_ok_and(|page| page.is_empty())
+                                    && registry
+                                        .due_source_projects(None, i64::MAX as u64, 1)
+                                        .is_ok_and(|page| page.is_empty())
                             });
                     }
                     if pool.as_mut().is_some_and(Pool::exited) {
@@ -639,6 +664,17 @@ impl Supervisor {
                         let now_ms = std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
                             .map_or(0, |time| time.as_millis().min(u64::MAX as u128) as u64);
+                        if let Ok(due) = registry.due_source_projects(source_after, now_ms, 32) {
+                            source_after = due.last().map(|(project, _)| *project);
+                            for (project, revision) in due {
+                                let Ok(nonce) = new_instance_id() else {
+                                    continue;
+                                };
+                                let _ = registry.enqueue_source_reconcile(
+                                    project, instance, nonce, revision, now_ms,
+                                );
+                            }
+                        }
                         if let Ok(due) = registry.due_maintenance(now_ms) {
                             for project in due {
                                 if resources.running(project).is_none() {

@@ -53,6 +53,17 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
                 retrying: registry.maintenance_retrying(project)?,
             }
         }
+        ControlMethod::Watch { project } => ControlResponse::Watch {
+            project,
+            observation: registry.watch(project)?.observation,
+        },
+        ControlMethod::ConfigureWatch { project, enabled } => {
+            registry.configure_watch(project, enabled)?;
+            ControlResponse::Watch {
+                project,
+                observation: registry.watch(project)?.observation,
+            }
+        }
         ControlMethod::RequestEpoch => {
             let (namespace, epoch) = registry.request_epoch()?;
             ControlResponse::RequestEpoch { namespace, epoch }
@@ -84,6 +95,7 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
         | ControlMethod::Shutdown
         | ControlMethod::Connect { .. }
         | ControlMethod::EmbeddingStatus
+        | ControlMethod::SourceStatus
         | ControlMethod::Resources
         | ControlMethod::ConfigureResources { .. } => {
             anyhow::bail!("not a registry method")

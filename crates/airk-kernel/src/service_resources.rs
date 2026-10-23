@@ -14,7 +14,8 @@ use std::{
 // Include the resident baseline and its one admitted bounded query materialization.
 const RESIDENT_BYTES: u64 = 512 << 20;
 const MODEL_BYTES: u64 = 512 << 20;
-const SERVICE_BYTES: u64 = 32 << 20;
+// Main service baseline plus the bounded, independently killable source watcher.
+const SERVICE_BYTES: u64 = (32 + 128) << 20;
 const WORK_BYTES: u64 = 768 << 20;
 const EXTRA_EXTRACTOR_BYTES: u64 = (2 * airk_ingest::ExtractionExecution::MAX_RESULT_BYTES
     + airk_ingest::ExtractionExecution::MAX_PARALLEL_SOURCE_BYTES

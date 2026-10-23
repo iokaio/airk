@@ -10,6 +10,174 @@ use std::{
 };
 
 struct Children(Vec<Child>);
+
+#[test]
+fn service_watcher_owns_nested_changes_pause_and_restart_without_editor_events() -> Result<()> {
+    use airk_core::service::{ControlMethod as Method, ControlResponse as Response};
+    let owner = tempfile::tempdir()?;
+    let root = owner.path().join("runtime");
+    let source = owner.path().join("source");
+    let data = owner.path().join("state");
+    fs::create_dir_all(source.join("nested"))?;
+    fs::create_dir(&data)?;
+    let file = source.join("nested/original.txt");
+    fs::write(&file, b"Initial native watcher fixture.\n")?;
+    let project = airk_kernel::service_projects::registration(&source, &data, "watch-fixture")?;
+    let mut children = Children(vec![start(&root)?]);
+    wait_ready(&root)?;
+    tokio::runtime::Runtime::new()?.block_on(async {
+        let request = |method| airk_cli::service_runtime::request(&root, method);
+        ensure!(
+            matches!(
+                request(Method::Register {
+                    project: project.clone()
+                })
+                .await?,
+                Response::Registered { .. }
+            ),
+            "watch registration failed"
+        );
+        ensure!(
+            matches!(
+                request(Method::ConfigureWatch {
+                    project: project.binding,
+                    enabled: true
+                })
+                .await?,
+                Response::Watch { .. }
+            ),
+            "watch configuration failed"
+        );
+        let until = tokio::time::Instant::now() + Duration::from_secs(60);
+        let baseline = loop {
+            if let Response::Watch { observation, .. } = request(Method::Watch {
+                project: project.binding,
+            })
+            .await?
+                && observation.backend == airk_core::service_watch::WatchBackend::Native
+                && observation.completed_revision > 0
+                && observation.completed_revision == observation.requested_revision
+            {
+                break observation.completed_revision;
+            }
+            ensure!(
+                tokio::time::Instant::now() < until,
+                "initial automatic reconciliation/native watch did not become current"
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        };
+        let Response::SourceStatus {
+            available: true,
+            process_id: Some(_),
+            watched_directories: Some(directories),
+            ..
+        } = request(Method::SourceStatus).await?
+        else {
+            anyhow::bail!("source process was not independently supervised");
+        };
+        ensure!(
+            (2..=512).contains(&directories),
+            "nested directory watch count is invalid"
+        );
+        request(Method::Pause {
+            project: project.binding,
+            paused: true,
+        })
+        .await?;
+        let changed = b"Paused saved source contains a copper lighthouse.\n";
+        fs::write(&file, changed)?;
+        let until = tokio::time::Instant::now() + Duration::from_secs(20);
+        let desired = loop {
+            if let Response::Watch { observation, .. } = request(Method::Watch {
+                project: project.binding,
+            })
+            .await?
+                && observation.requested_revision > baseline
+            {
+                ensure!(
+                    observation.completed_revision == baseline,
+                    "paused source work was claimed"
+                );
+                break observation.requested_revision;
+            }
+            ensure!(
+                tokio::time::Instant::now() < until,
+                "nested change was not retained while paused"
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        };
+        request(Method::Pause {
+            project: project.binding,
+            paused: false,
+        })
+        .await?;
+        let until = tokio::time::Instant::now() + Duration::from_secs(30);
+        loop {
+            if let Response::Watch { observation, .. } = request(Method::Watch {
+                project: project.binding,
+            })
+            .await?
+                && observation.completed_revision >= desired
+                && observation.completed_revision == observation.requested_revision
+            {
+                break;
+            }
+            ensure!(
+                tokio::time::Instant::now() < until,
+                "resumed native source work did not settle"
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        let mut connection =
+            airk_cli::project_client::Connection::connect(&root, project.binding).await?;
+        let evidence = connection
+            .call(
+                "airk_search".into(),
+                serde_json::json!({"query":"copper lighthouse","mode":"lexical","max_bytes":4096})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            )
+            .await?;
+        ensure!(
+            evidence.to_string().contains("original.txt"),
+            "native watch lost direct lexical citations"
+        );
+        ensure!(
+            fs::read(&file)? == changed,
+            "native watcher changed source bytes"
+        );
+        request(Method::Shutdown).await?;
+        Ok::<_, anyhow::Error>(())
+    })?;
+    ensure!(
+        wait_exit(&mut children.0[0])?,
+        "service watcher did not drain"
+    );
+    drop(airk_store::service::SourceWatchLease::acquire(&root)?);
+    let offline = b"Saved while the service was stopped: lavender signal.\n";
+    fs::write(&file, offline)?;
+    children.0.push(start(&root)?);
+    wait_ready(&root)?;
+    tokio::runtime::Runtime::new()?.block_on(async {
+        let until = tokio::time::Instant::now() + Duration::from_secs(60);
+        loop {
+            let mut connection = airk_cli::project_client::Connection::connect(&root, project.binding).await?;
+            let evidence = connection.call("airk_search".into(), serde_json::json!({"query":"lavender signal","mode":"lexical","max_bytes":4096}).as_object().unwrap().clone()).await?;
+            if evidence.to_string().contains("original.txt") { break; }
+            ensure!(tokio::time::Instant::now() < until, "restart did not reconcile changes saved without an editor");
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        airk_cli::service_runtime::request(&root, Method::Shutdown).await?;
+        Ok::<_, anyhow::Error>(())
+    })?;
+    ensure!(
+        wait_exit(children.0.last_mut().unwrap())?,
+        "restarted watcher did not drain"
+    );
+    ensure!(fs::read(file)? == offline, "restart changed source bytes");
+    Ok(())
+}
 impl Drop for Children {
     fn drop(&mut self) {
         for child in &mut self.0 {

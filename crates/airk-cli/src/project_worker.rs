@@ -48,6 +48,18 @@ struct WorkState {
     finished: Option<airk_core::identity::Incarnation>,
     maintenance: Option<airk_core::service::MaintenanceObservation>,
 }
+fn record_watch_roots(kernel: &Kernel, registry: &mut ServiceRegistry, lease: &ProjectLease) {
+    let roots = kernel
+        .refresh_service_snapshot()
+        .and_then(|selected| selected.configured_roots());
+    let recorded = roots.and_then(|roots| {
+        registry.record_watch_roots(lease, &roots.into_values().collect::<Vec<_>>())
+    });
+    if recorded.is_err() {
+        let _ = registry.invalidate_watch_roots(lease);
+    }
+}
+
 fn observe_maintenance(kernel: &Kernel) -> airk_core::service::MaintenanceObservation {
     let result = kernel.maintain_service_collection();
     airk_core::service::MaintenanceObservation {
@@ -252,6 +264,7 @@ pub async fn run() -> Result<()> {
     airk_kernel::service_execution::install(Path::new(&registration.data_root), identity)?;
     let receipt = kernel.service_rebuild_receipt()?;
     registry.recover_jobs_with_rebuild_receipt(&lease, receipt.as_ref())?;
+    record_watch_roots(&kernel, &mut registry, &lease);
     // Recovery is durable desired work, admitted by the service rather than an
     // unaccounted startup replay. Failed recovery leaves the owner reachable.
     if kernel.service_recovery_required().unwrap_or(false) {
@@ -363,7 +376,16 @@ pub async fn run() -> Result<()> {
                         }
                     }
                 });
-                registry.complete_job(&job_lease, job.id, outcome)?;
+                record_watch_roots(&kernel, &mut registry, &job_lease);
+                registry.complete_job_at(
+                    &job_lease,
+                    job.id,
+                    outcome,
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)?
+                        .as_millis()
+                        .try_into()?,
+                )?;
             }
             {
                 let mut status = job_status

@@ -77,6 +77,18 @@ pub struct ServiceLease {
 pub struct EmbeddingLease {
     _file: File,
 }
+/// Directory notifications live outside project owners and may drain after service exit.
+pub struct SourceWatchLease {
+    _file: File,
+}
+impl SourceWatchLease {
+    pub fn acquire(root: &Path) -> Result<Self> {
+        Ok(Self {
+            _file: acquire_file(&root.canonicalize()?, "source-watch-1.4.lock")?,
+        })
+    }
+}
+
 impl EmbeddingLease {
     pub fn acquire(root: &Path) -> Result<Self> {
         Ok(Self {

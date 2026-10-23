@@ -23,6 +23,9 @@ pub const MAX_PROJECTS: usize = 1024;
 
 #[path = "service_jobs.rs"]
 mod jobs;
+#[path = "service_watch.rs"]
+mod watch;
+pub use watch::WatchProject;
 
 pub struct ServiceRegistry {
     root: PathBuf,
@@ -212,6 +215,7 @@ impl ServiceRegistry {
             "service registry identity disagrees with owner"
         );
         registry.connection.execute_batch(jobs::SCHEMA)?;
+        registry.connection.execute_batch(watch::SCHEMA)?;
         Ok(registry)
     }
 

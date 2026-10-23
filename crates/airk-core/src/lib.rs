@@ -23,6 +23,7 @@ pub mod publication;
 pub mod readiness;
 pub mod service;
 pub mod service_resources;
+pub mod service_watch;
 pub mod usage;
 pub mod vector_evidence;
 pub mod vector_selection;

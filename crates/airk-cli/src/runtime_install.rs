@@ -992,6 +992,7 @@ struct Quiescence {
     _service: airk_store::service::ServiceLease,
     _projects: Vec<airk_store::service::ProjectLease>,
     _embedding: airk_store::service::EmbeddingLease,
+    _source_watch: airk_store::service::SourceWatchLease,
 }
 
 fn quiescent(root: &Path) -> Result<Quiescence> {
@@ -1011,6 +1012,7 @@ fn quiescent(root: &Path) -> Result<Quiescence> {
         _service: service,
         _projects: projects,
         _embedding: embedding,
+        _source_watch: airk_store::service::SourceWatchLease::acquire(&control)?,
     })
 }
 

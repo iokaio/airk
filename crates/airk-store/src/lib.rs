@@ -647,6 +647,33 @@ pub fn remove_collection(data_root: &Path, id: &str) -> Result<CollectionUsage> 
 impl Drop for WriterLock {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.path);
+        // A concurrent fork can temporarily inherit this open file description
+        // until exec. Release logical ownership explicitly rather than letting
+        // the inherited descriptor extend it beyond this guard's lifetime.
+        let _ = self._file.unlock();
+    }
+}
+
+#[cfg(all(test, unix))]
+mod writer_lock_tests {
+    use super::*;
+
+    #[test]
+    fn writer_release_is_not_extended_by_an_inherited_open_file_description() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let store = FileStore::new(root.path().join("collection"));
+        let writer = store.lock()?;
+        // dup shares the same open file description as a descriptor inherited
+        // through fork, without introducing a fork into the threaded test host.
+        let inherited = writer._file.try_clone()?;
+        assert!(store.lock().is_err());
+        drop(writer);
+        let replacement = store.lock()?;
+        drop(inherited);
+        assert!(store.lock().is_err());
+        drop(replacement);
+        drop(store.lock()?);
+        Ok(())
     }
 }
 

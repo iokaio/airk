@@ -36,6 +36,7 @@ pub mod service_projects;
 mod service_publication;
 pub mod service_resource_observations;
 pub mod service_resources;
+pub mod source_watch;
 pub mod storage;
 #[cfg(feature = "local-inference")]
 mod tokenization;

@@ -25,6 +25,13 @@ pub enum ControlMethod {
     Maintenance {
         project: ProjectBinding,
     },
+    Watch {
+        project: ProjectBinding,
+    },
+    ConfigureWatch {
+        project: ProjectBinding,
+        enabled: bool,
+    },
     Enqueue {
         project: ProjectBinding,
         caller: Incarnation,
@@ -48,6 +55,7 @@ pub enum ControlMethod {
         project: ProjectBinding,
     },
     EmbeddingStatus,
+    SourceStatus,
     Resources,
     ConfigureResources {
         configuration: crate::service_resources::ResourceConfiguration,
@@ -91,6 +99,20 @@ pub enum ControlResponse {
         project: ProjectBinding,
         observation: Option<MaintenanceObservation>,
         retrying: bool,
+    },
+    Watch {
+        project: ProjectBinding,
+        observation: crate::service_watch::WatchObservation,
+    },
+    SourceStatus {
+        available: bool,
+        process_id: Option<u32>,
+        watched_directories: Option<u16>,
+        projects: Option<u16>,
+        pending_events: Option<u16>,
+        observation_age_ms: Option<u64>,
+        blocked: bool,
+        predecessor_draining: bool,
     },
     Stopping,
     Incompatible {

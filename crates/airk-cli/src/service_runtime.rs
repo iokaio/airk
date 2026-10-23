@@ -26,6 +26,7 @@ struct State {
     shutdown: Notify,
     management: crate::service_management::Management,
     supervisor: crate::project_supervisor::Supervisor,
+    sources: crate::source_supervisor::SourceSupervisor,
 }
 
 async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
@@ -72,6 +73,7 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
             ControlMethod::Shutdown => ControlResponse::Stopping,
             ControlMethod::Connect { project } => state.supervisor.connect(project).await,
             ControlMethod::EmbeddingStatus => state.supervisor.embedding_status().await,
+            ControlMethod::SourceStatus => state.sources.status(),
             ControlMethod::Resources => state.supervisor.resource_status(),
             ControlMethod::ConfigureResources { configuration } => {
                 state.supervisor.configure_resources(configuration).await
@@ -99,6 +101,8 @@ pub async fn serve_with_idle(root: &Path, idle_grace: Option<Duration>) -> Resul
     let mut listener = Listener::bind(&address)?;
     let instance = new_instance_id()?;
     let policy = Arc::new(Mutex::new(Broker::new(instance, BrokerLimits::default())?));
+    let sources =
+        crate::source_supervisor::SourceSupervisor::start(root.canonicalize()?, instance)?;
     let state = Arc::new(State {
         policy: policy.clone(),
         started: Instant::now(),
@@ -112,7 +116,10 @@ pub async fn serve_with_idle(root: &Path, idle_grace: Option<Duration>) -> Resul
             root.canonicalize()?,
             instance,
             policy,
+            sources.process_id.clone(),
+            sources.telemetry_complete.clone(),
         )?,
+        sources,
     });
     let admission = Arc::new(Semaphore::new(64));
     let mut connections = JoinSet::new();
@@ -133,7 +140,11 @@ pub async fn serve_with_idle(root: &Path, idle_grace: Option<Duration>) -> Resul
             },
             _ = state.shutdown.notified() => break,
             _ = idle_tick.tick(), if idle_grace.is_some() => {
-                if state.supervisor.can_idle_exit() && connections.is_empty()
+                if !state.supervisor.can_idle_exit() || !state.sources.can_idle_exit() {
+                    if let Ok(mut activity)=state.last_client_activity.lock() { *activity=Instant::now(); }
+                    continue;
+                }
+                if state.supervisor.can_idle_exit() && state.sources.can_idle_exit() && connections.is_empty()
                     && state.last_client_activity.lock().is_ok_and(|activity| activity.elapsed() >= idle_grace.unwrap_or(Duration::MAX)) {
                     break;
                 }

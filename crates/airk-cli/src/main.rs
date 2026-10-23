@@ -95,6 +95,8 @@ enum Command {
     },
     #[command(hide = true)]
     ProjectWorker,
+    #[command(hide = true)]
+    SourceWorker,
     /// Read-only MCP bridge to an already registered service project.
     Bridge {
         #[arg(long)]
@@ -569,6 +571,7 @@ impl Command {
             | Self::Serve { .. }
             | Self::Runtime { .. }
             | Self::ProjectWorker
+            | Self::SourceWorker
             | Self::Bridge { .. }
             | Self::Storage { .. } => return None,
             Self::Collections {
@@ -1181,6 +1184,9 @@ fn run_cli() -> anyhow::Result<()> {
 #[tokio::main]
 async fn main_async() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    if matches!(cli.command, Command::SourceWorker) {
+        return airk_cli::source_worker::run();
+    }
     if matches!(cli.command, Command::ProjectWorker) {
         return airk_cli::project_worker::run().await;
     }
@@ -1310,7 +1316,7 @@ async fn main_async() -> anyhow::Result<()> {
     };
     let result = async { match cli.command {
         Command::Tools { action } => tools::run(action, kernel.clone()).await,
-        Command::Storage { .. } | Command::Runtime { .. } | Command::ModelCatalog | Command::Serve { .. } | Command::ProjectWorker | Command::Bridge { .. } => unreachable!("handled before opening kernel"),
+        Command::Storage { .. } | Command::Runtime { .. } | Command::ModelCatalog | Command::Serve { .. } | Command::ProjectWorker | Command::SourceWorker | Command::Bridge { .. } => unreachable!("handled before opening kernel"),
         Command::Service { action } => {
             let manager = airk_cli::service_manager::ServiceManager::for_kernel(&kernel)?;
             match action {

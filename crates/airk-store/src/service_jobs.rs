@@ -78,7 +78,7 @@ fn record(connection: &Connection, id: Sha256Digest) -> Result<JobRecord> {
     })
 }
 
-fn worker_epoch(
+pub(super) fn worker_epoch(
     connection: &Connection,
     root: &std::path::Path,
     lease: &ProjectLease,
@@ -189,7 +189,7 @@ impl ServiceRegistry {
         key: &RequestKey,
         kind: JobKind,
     ) -> Result<JobRecord> {
-        self.enqueue_impl(project, caller, key, kind, None)
+        self.enqueue_impl(project, caller, key, kind, None, None)
     }
 
     fn enqueue_impl(
@@ -199,6 +199,7 @@ impl ServiceRegistry {
         key: &RequestKey,
         kind: JobKind,
         maintenance_now_ms: Option<u64>,
+        source_request: Option<(u64, u64)>,
     ) -> Result<JobRecord> {
         let epoch = i64::try_from(key.epoch).map_err(|_| JobError::KeyExpired)?;
         // Accepted keys remain readable even when every queue slot is occupied.
@@ -259,7 +260,7 @@ impl ServiceRegistry {
             |row| row.get(0),
         )?;
         ensure!(registered, "service project is not registered");
-        if maintenance_now_ms.is_some() {
+        if maintenance_now_ms.is_some() || source_request.is_some() {
             let busy: bool = transaction.query_row(
                 "SELECT EXISTS(SELECT 1 FROM service_jobs WHERE project=?1 AND state IN('pending','running'))",
                 [project.to_string()], |row| row.get(0))?;
@@ -327,6 +328,25 @@ impl ServiceRegistry {
                 "UPDATE service_maintenance SET retries=retries+1,next_ms=?1 WHERE project=?2",
                 params![i64::try_from(next)?, project.to_string()],
             )?;
+        }
+        if matches!(kind, JobKind::Index | JobKind::Reconcile | JobKind::Rebuild) {
+            super::watch::ensure_row(&transaction, project)?;
+            if let Some((revision, now_ms)) = source_request {
+                let attempts:u32=transaction.query_row("SELECT w.attempts FROM service_watch w JOIN projects p ON p.binding=w.project
+                    WHERE w.project=?1 AND w.enabled=1 AND p.paused=0 AND w.requested=?2 AND w.requested>w.indexed
+                    AND w.attempts<3 AND (w.blocked_revision IS NULL OR w.blocked_revision<w.requested) AND w.next_ms<=?3",
+                    params![project.to_string(),i64::try_from(revision)?,i64::try_from(now_ms)?],|row|row.get(0))
+                    .context("source reconciliation is no longer eligible")?;
+                let next = now_ms
+                    .checked_add((1u64 << (attempts + 1)) * 1000)
+                    .context("source retry deadline exhausted")?;
+                transaction.execute(
+                    "UPDATE service_watch SET attempts=attempts+1,next_ms=?1 WHERE project=?2",
+                    params![i64::try_from(next)?, project.to_string()],
+                )?;
+            }
+            transaction.execute("INSERT INTO service_job_source(job,revision) SELECT ?1,requested FROM service_watch WHERE project=?2
+                ON CONFLICT(job) DO UPDATE SET revision=max(service_job_source.revision,excluded.revision)",params![id.to_string(),project.to_string()])?;
         }
         let accepted = record(&transaction, id)?;
         transaction.commit()?;
@@ -402,8 +422,34 @@ impl ServiceRegistry {
             },
             JobKind::Maintain,
             Some(now_ms),
+            None,
         )
     }
+    /// Automatic source work captures the exact requested revision and debits its
+    /// retry request atomically with durable acceptance. Exact key replay never debits again.
+    pub fn enqueue_source_reconcile(
+        &mut self,
+        project: ProjectBinding,
+        caller: Incarnation,
+        nonce: Incarnation,
+        revision: u64,
+        now_ms: u64,
+    ) -> Result<JobRecord> {
+        let (namespace, epoch) = self.request_epoch()?;
+        self.enqueue_impl(
+            project,
+            caller,
+            &RequestKey {
+                namespace,
+                epoch,
+                nonce,
+            },
+            JobKind::Reconcile,
+            None,
+            Some((revision, now_ms)),
+        )
+    }
+
     /// Internal desired-state requests use the same bounded durable receipts and
     /// pending-kind joining as trusted control clients; this never claims work.
     pub fn enqueue_internal(
@@ -523,6 +569,59 @@ impl ServiceRegistry {
         id: Sha256Digest,
         outcome: JobOutcome,
     ) -> Result<JobRecord> {
+        self.complete_job_observed(lease, id, outcome, None)
+    }
+
+    pub fn complete_job_at(
+        &mut self,
+        lease: &ProjectLease,
+        id: Sha256Digest,
+        outcome: JobOutcome,
+        now_ms: u64,
+    ) -> Result<JobRecord> {
+        self.complete_job_observed(lease, id, outcome, Some(now_ms))
+    }
+
+    /// The supervisor may settle work that never started only while an exclusive
+    /// unadmitted project lease proves that no project owner survives.
+    pub fn fail_pending_start(&mut self, lease: &ProjectLease, code: &str) -> Result<usize> {
+        ensure!(
+            lease.root == self.root && lease.epoch.is_none(),
+            "startup failure requires unadmitted project ownership"
+        );
+        ensure!(
+            !code.is_empty()
+                && code.len() <= 128
+                && code
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_'),
+            "invalid startup failure code"
+        );
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let running: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM service_jobs WHERE project=?1 AND state='running')",
+            [lease.binding.to_string()],
+            |row| row.get(0),
+        )?;
+        ensure!(
+            !running,
+            "interrupted running work requires fenced recovery before startup failure settlement"
+        );
+        let bytes = serde_json::to_vec(&JobOutcome::Failed { code: code.into() })?;
+        let failed=tx.execute("UPDATE service_jobs SET state='failed',outcome=?1 WHERE project=?2 AND state='pending'",params![bytes,lease.binding.to_string()])?;
+        tx.commit()?;
+        Ok(failed)
+    }
+
+    fn complete_job_observed(
+        &mut self,
+        lease: &ProjectLease,
+        id: Sha256Digest,
+        outcome: JobOutcome,
+        now_ms: Option<u64>,
+    ) -> Result<JobRecord> {
         if let JobOutcome::Failed { code } = &outcome {
             ensure!(
                 !code.is_empty()
@@ -555,6 +654,25 @@ impl ServiceRegistry {
             "UPDATE service_jobs SET state=?1,outcome=?2 WHERE id=?3",
             params![state, bytes, id.to_string()],
         )?;
+        let source_revision: Option<i64> = transaction
+            .query_row(
+                "SELECT revision FROM service_job_source WHERE job=?1",
+                [id.to_string()],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if let Some(revision) = source_revision {
+            match &outcome {
+                JobOutcome::Succeeded { .. } => {
+                    ensure!(transaction.execute("UPDATE service_watch SET indexed=max(indexed,?1),last_reconciled_ms=coalesce(?2,last_reconciled_ms)
+                        WHERE project=?3 AND requested>=?1",params![revision,now_ms.map(i64::try_from).transpose()?,lease.binding.to_string()])?==1,"source completion revision exceeds desired state");
+                }
+                JobOutcome::Canceled => {
+                    super::watch::block_source_retry(&transaction, id)?;
+                }
+                JobOutcome::Failed { .. } => {}
+            }
+        }
         let completed = record(&transaction, id)?;
         transaction.commit()?;
         Ok(completed)
@@ -573,6 +691,9 @@ impl ServiceRegistry {
                 "UPDATE service_maintenance SET retries=7 WHERE project=?1",
                 [current.project.to_string()],
             )?;
+        }
+        if matches!(current.state, JobState::Pending | JobState::Running) {
+            super::watch::block_source_retry(&transaction, id)?;
         }
         match current.state {
             JobState::Pending => {
@@ -621,6 +742,9 @@ impl ServiceRegistry {
             params![serde_json::to_vec(&JobOutcome::Canceled)?, id.to_string()],
         )?;
         let canceled = record(&transaction, id)?;
+        if current.state == JobState::Pending {
+            super::watch::block_source_retry(&transaction, id)?;
+        }
         transaction.commit()?;
         Ok(canceled)
     }
