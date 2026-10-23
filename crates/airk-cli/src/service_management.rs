@@ -77,6 +77,13 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
             let (namespace, epoch) = registry.request_epoch()?;
             ControlResponse::RequestEpoch { namespace, epoch }
         }
+        ControlMethod::Events {
+            project,
+            cursor,
+            limit,
+        } => ControlResponse::Events {
+            page: registry.events(project, cursor.as_ref(), limit)?,
+        },
         ControlMethod::Enqueue {
             project,
             caller,
@@ -87,6 +94,9 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
         },
         ControlMethod::Job { id } => ControlResponse::Job {
             job: registry.job(id)?,
+        },
+        ControlMethod::Retry { id, caller, key } => ControlResponse::Job {
+            job: registry.retry_job(id, caller, &key)?,
         },
         ControlMethod::Pause { project, paused } => {
             registry.pause(project, paused)?;
@@ -137,6 +147,11 @@ impl Management {
                             let code = error
                                 .downcast_ref::<JobError>()
                                 .map(|code| format!("{code:?}"))
+                                .or_else(|| {
+                                    error
+                                        .downcast_ref::<airk_core::service_events::EventError>()
+                                        .map(ToString::to_string)
+                                })
                                 .unwrap_or_else(|| "invalid_registry_request".into());
                             ControlResponse::Failure { code }
                         }),

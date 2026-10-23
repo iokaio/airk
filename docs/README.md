@@ -14,6 +14,7 @@ The [1.3.0 release](release-1.3.0.md) retires the former `airk_history` MCP endp
 - [Service publication, disk admission and bounded readers](service-publication.md)
 - [Service worker ownership and durable job storage contract](service-jobs.md)
 - [Service job progress, phase timing and stall handling](service-progress.md)
+- [Retained service events, bounded paging and explicit retry](service-events.md)
 - [Native service brokerage and direct query protocol](service-protocol.md)
 - [Service resource admission, presets and observations](service-resources.md)
 - [Service-owned saved-source watching and reconciliation](service-source-watching.md)

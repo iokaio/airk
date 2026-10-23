@@ -20,6 +20,39 @@ use std::{
 
 const MAX_METADATA: usize = 16384;
 const MAX_RETIRED: usize = 8;
+
+#[derive(Clone, Copy, Debug)]
+pub struct SelectionContention;
+impl SelectionContention {
+    pub const RETRY_AFTER_MS: u32 = 25;
+}
+impl std::fmt::Display for SelectionContention {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("service incarnation selection is busy; retry after 25 ms")
+    }
+}
+impl std::error::Error for SelectionContention {}
+
+fn manifest_lock(directory: &Path) -> Result<super::OwnershipFile> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(100);
+    loop {
+        match acquire_file(directory, "manifest.lock") {
+            Ok(lease) => return Ok(lease),
+            Err(error)
+                if matches!(
+                    error.downcast_ref::<std::fs::TryLockError>(),
+                    Some(std::fs::TryLockError::WouldBlock)
+                ) =>
+            {
+                if std::time::Instant::now() >= deadline {
+                    return Err(error.context(SelectionContention));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Owner {
@@ -74,7 +107,7 @@ pub struct Selection {
 pub struct Replacement {
     collection: Collection,
     intent: Intent,
-    _lease: File,
+    _lease: super::OwnershipFile,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -286,7 +319,7 @@ impl Collection {
     pub fn retire(&self) -> Result<RetirementReport> {
         let _lease = acquire_file(&self.directory, "replacement.lock")?;
         let snapshot = {
-            let _lock = acquire_file(&self.directory, "manifest.lock")?;
+            let _lock = manifest_lock(&self.directory)?;
             self.manifest()?
         };
         let mut report = RetirementReport {
@@ -341,7 +374,7 @@ impl Collection {
             }
             // The receipt remains until removal is proven, so interrupted cleanup
             // resumes without adopting an arbitrary surviving directory.
-            let _lock = acquire_file(&self.directory, "manifest.lock")?;
+            let _lock = manifest_lock(&self.directory)?;
             let mut manifest = self.manifest()?;
             ensure!(manifest.active != retired.slot, "active retirement target");
             manifest.retired.retain(|entry| entry.slot != retired.slot);
@@ -387,7 +420,7 @@ impl Collection {
             directory,
             owner,
         };
-        let _lock = acquire_file(&selected.directory, "manifest.lock")?;
+        let _lock = manifest_lock(&selected.directory)?;
         let owner_path = selected.directory.join("service-owner.json");
         if owner_path.try_exists()? {
             let existing: Owner = json(&owner_path)?;
@@ -506,7 +539,7 @@ impl Collection {
     /// The OS object lease is acquired while manifest replacement is excluded.
     /// Keep it through the whole request, not in an idle kernel/session cache.
     pub fn select(&self) -> Result<Selection> {
-        let _lock = acquire_file(&self.directory, "manifest.lock")?;
+        let _lock = manifest_lock(&self.directory)?;
         let manifest = self.manifest()?;
         let store = FileStore::new(self.slot(manifest.active));
         let gate = Gate::shared(&store)?;
@@ -516,19 +549,19 @@ impl Collection {
         Ok(self.select()?.store)
     }
     pub fn completed_rebuild(&self, job: Sha256Digest) -> Result<bool> {
-        let _lock = acquire_file(&self.directory, "manifest.lock")?;
+        let _lock = manifest_lock(&self.directory)?;
         Ok(self
             .manifest()?
             .last_rebuild
             .is_some_and(|receipt| receipt.job == job))
     }
     pub fn last_rebuild_receipt(&self) -> Result<Option<RebuildReceipt>> {
-        let _lock = acquire_file(&self.directory, "manifest.lock")?;
+        let _lock = manifest_lock(&self.directory)?;
         Ok(self.manifest()?.last_rebuild)
     }
     pub fn begin_replacement(&self, slot: Incarnation, job: Sha256Digest) -> Result<Replacement> {
         let lease = acquire_file(&self.directory, "replacement.lock")?;
-        let _lock = acquire_file(&self.directory, "manifest.lock")?;
+        let _lock = manifest_lock(&self.directory)?;
         ensure!(
             !self.directory.join("replacement.json").try_exists()?,
             "interrupted replacement requires owned recovery"
@@ -562,11 +595,12 @@ impl Collection {
     /// An available replacement lock proves the old build owner no longer runs.
     /// Selection remains usable even when classification/cleanup needs a retry.
     pub fn pending_retirements(&self) -> Result<usize> {
+        let _lock = manifest_lock(&self.directory)?;
         Ok(self.manifest()?.retired.len())
     }
     pub fn recover_abandoned_replacement(&self) -> Result<()> {
         let _lease = acquire_file(&self.directory, "replacement.lock")?;
-        let _lock = acquire_file(&self.directory, "manifest.lock")?;
+        let _lock = manifest_lock(&self.directory)?;
         self.sweep_metadata_scratch()?;
         let path = self.directory.join("replacement.json");
         if !path.try_exists()? {
@@ -700,7 +734,7 @@ impl Replacement {
         // excluding new request selection. Only the pointer replacement is gated.
         let prepared = prepare(&self.collection, &manifest)?;
         observer(HandoffStage::BeforeSwitch)?;
-        let _lock = acquire_file(&self.collection.directory, "manifest.lock")?;
+        let _lock = manifest_lock(&self.collection.directory)?;
         ensure!(
             digest(&self.collection.manifest()?)? == self.intent.expected,
             "replacement selection changed before handoff"

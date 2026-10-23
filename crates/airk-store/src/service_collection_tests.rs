@@ -7,6 +7,40 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[test]
+fn selection_waits_for_short_metadata_handoffs_and_marks_only_real_lock_contention() -> Result<()> {
+    let owner = tempfile::tempdir()?;
+    let lease = acquire_file(owner.path(), "manifest.lock")?;
+    let releaser = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(20));
+        drop(lease);
+    });
+    let selected = manifest_lock(owner.path())?;
+    releaser.join().unwrap();
+    let began = Instant::now();
+    let error = manifest_lock(owner.path())
+        .err()
+        .context("live metadata owner was ignored")?;
+    assert!(error.downcast_ref::<SelectionContention>().is_some());
+    assert!(
+        began.elapsed() >= Duration::from_millis(100) && began.elapsed() < Duration::from_secs(2)
+    );
+    drop(selected);
+    fs::write(
+        owner.path().join("manifest.lock"),
+        b"unknown original bytes",
+    )?;
+    let error = manifest_lock(owner.path())
+        .err()
+        .context("invalid lock was accepted")?;
+    assert!(error.downcast_ref::<SelectionContention>().is_none());
+    assert_eq!(
+        fs::read(owner.path().join("manifest.lock"))?,
+        b"unknown original bytes"
+    );
+    Ok(())
+}
+
 fn initialize(store: &FileStore, root: &str, slot: Incarnation) -> Result<CurrentToken> {
     let scope = CurrentScope {
         root: root.into(),

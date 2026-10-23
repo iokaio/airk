@@ -22,6 +22,11 @@ pub enum ControlMethod {
         limit: usize,
     },
     RequestEpoch,
+    Events {
+        project: Option<ProjectBinding>,
+        cursor: Option<crate::service_events::EventCursor>,
+        limit: usize,
+    },
     Maintenance {
         project: ProjectBinding,
     },
@@ -43,6 +48,11 @@ pub enum ControlMethod {
     },
     Job {
         id: Sha256Digest,
+    },
+    Retry {
+        id: Sha256Digest,
+        caller: Incarnation,
+        key: RequestKey,
     },
     Pause {
         project: ProjectBinding,
@@ -134,6 +144,9 @@ pub enum ControlResponse {
     RequestEpoch {
         namespace: Incarnation,
         epoch: u64,
+    },
+    Events {
+        page: crate::service_events::EventPage,
     },
     Job {
         job: JobRecord,
@@ -314,6 +327,7 @@ pub enum JobError {
     Capacity,
     UnknownJob,
     StaleWorker,
+    NotRetryable,
 }
 impl std::fmt::Display for JobError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

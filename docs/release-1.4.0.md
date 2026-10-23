@@ -19,3 +19,5 @@ Native activation now records resumable drain/launcher/probe/restoration intent,
 Windows worker and extraction cleanup now share bounded native Job Object ownership and confirm descendant exit before returning capacity. Native manager commands also apply their deadline to input and output completion and reject oversized diagnostic output. Unix descendant containment remains an implementation gate; the cross-platform command and existing extraction regressions continue to run separately.
 
 Stage commits remain local and human DCO-signed. No push, publication or service VSIX is authorized before the user's implementation, test and review gate is satisfied. Final versions and packaging receipts will be recorded here at cutover.
+
+The native management path now keeps a bounded transactional event log with restart-stable snapshot paging, explicit retention gaps and content-free failure codes. Explicit retry preserves the failed/canceled receipt and resets the applicable finite automatic policy only once per accepted key. The trusted console still needs to present these operations.

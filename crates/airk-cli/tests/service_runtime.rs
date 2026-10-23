@@ -176,6 +176,88 @@ fn missing_registered_source_still_brokers_retained_evidence_and_reports_a_typed
             );
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
+        request(Method::Pause {
+            project: project.binding,
+            paused: true,
+        })
+        .await?;
+        let retry_key = RequestKey {
+            namespace,
+            epoch,
+            nonce: airk_kernel::service_broker::new_instance_id()?,
+        };
+        let retry_caller = airk_kernel::service_broker::new_instance_id()?;
+        let Response::Job { job: retry } = request(Method::Retry {
+            id: job.id,
+            caller: retry_caller,
+            key: retry_key.clone(),
+        })
+        .await?
+        else {
+            anyhow::bail!("explicit failed-job retry was not accepted")
+        };
+        ensure!(
+            retry.id != job.id && retry.attempts == 0,
+            "retry erased the original failure"
+        );
+        request(Method::CancelPending { id: retry.id }).await?;
+        let Response::Job { job: replayed } = request(Method::Retry {
+            id: job.id,
+            caller: retry_caller,
+            key: retry_key,
+        })
+        .await?
+        else {
+            anyhow::bail!("accepted retry receipt was lost")
+        };
+        ensure!(
+            replayed.id == retry.id && replayed.state == airk_core::service::JobState::Canceled,
+            "retry replay restarted canceled work"
+        );
+        let mut cursor = None;
+        let mut found_failure = false;
+        let mut found_retry = false;
+        loop {
+            let Response::Events { page } = request(Method::Events {
+                project: Some(project.binding),
+                cursor,
+                limit: 1,
+            })
+            .await?
+            else {
+                anyhow::bail!("durable event page unavailable")
+            };
+            ensure!(
+                page.events.len() <= 1 && serde_json::to_vec(&page)?.len() <= 48 * 1024,
+                "event response exceeded requested bounds"
+            );
+            for event in &page.events {
+                ensure!(
+                    event.project == project.binding,
+                    "foreign event entered project page"
+                );
+                if event.job == Some(job.id) && event.code.as_deref() == Some("source_unavailable")
+                {
+                    found_failure = true;
+                }
+                if event.job == Some(retry.id)
+                    && event.kind == airk_core::service_events::EventKind::JobRetryRequested
+                {
+                    found_retry = true;
+                }
+            }
+            cursor = page.next;
+            if cursor.is_none() {
+                break;
+            }
+        }
+        ensure!(
+            found_failure,
+            "failed scan lost its content-free durable event"
+        );
+        ensure!(found_retry, "explicit retry lost its durable event");
+        ensure!(matches!(request(Method::Events { project: Some(project.binding),cursor:None,limit:0 }).await?,
+            Response::Failure { code } if code=="invalid_event_page_limit"),"event page rejection lost its typed reason");
         ensure!(
             kernel
                 .status()?

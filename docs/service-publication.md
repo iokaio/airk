@@ -2,6 +2,12 @@
 
 The opt-in service worker uses `collections-1.4/<collection>/incarnations/<identity>` and SQLite format 140. An owned manifest selects its active incarnation. Default 1.3.x clients continue to select their existing namespace. The separate owner/header version makes new state incompatible with older readers even if they are pointed at its directory. This is a rebuild boundary, not migration.
 
+Manifest ownership now permits a bounded 100 ms wait for a short metadata handoff. Only actual OS lock contention is retried; a longer wait returns the typed `SelectionContention` marker with a 25 ms retry interval. I/O failures and invalid/aliased ownership files remain failures. Replacement-build ownership stays nonblocking, and reads do not wait for the duration of a build. Structured MCP retry-hint serialization remains part of Phase 7 cutover.
+
+Service, project and manifest ownership guards explicitly unlock before closing. On Unix this prevents a descriptor inherited by a concurrent fork from extending a released owner's lock until that child executes. The regression duplicates the open-file description, proves the replacement can acquire after guard release while the duplicate remains open, and proves closing the old duplicate cannot release the replacement's lock. Lock names and unknown files remain in place.
+
+October 23 follow-up: an initial Linux native run reported intermittent manifest/resource contention. The explicit-release regression, bounded selection-handoff regression and alias-preservation checks now pass; the complete non-root Linux native suite passed after these changes. Windows passed the corresponding thirty-six service-store and twelve native process regressions plus five service-publication regressions. This does not resolve every remaining workload/installed-platform qualification gate.
+
 ## Ordinary publication
 
 The collection's OS writer lock permits one publication coordinator. Its request gate is shared while it prepares and replays bounded captured changes. SQLite WAL provides committed snapshots to concurrent readers; lexical rows and their physical seal, authenticated map records, DiskANN graph rows and the new head commit in one transaction. Preparation still computes a target seal, rolls back and captures replay inputs. Moving that work outside reader exclusion does not remove its cost or establish a latency result.

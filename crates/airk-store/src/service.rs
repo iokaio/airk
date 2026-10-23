@@ -13,7 +13,16 @@ pub mod model_files;
 #[path = "service_registry.rs"]
 pub mod registry;
 
-fn acquire_file(root: &Path, name: &str) -> Result<File> {
+struct OwnershipFile(File);
+impl Drop for OwnershipFile {
+    fn drop(&mut self) {
+        // Release this owner's lock before close: a concurrent Unix fork may
+        // briefly retain the open-file description until its CLOEXEC processing.
+        let _ = self.0.unlock();
+    }
+}
+
+fn acquire_file(root: &Path, name: &str) -> Result<OwnershipFile> {
     let path = root.join(name);
     if let Ok(metadata) = fs::symlink_metadata(&path) {
         ensure!(
@@ -33,7 +42,8 @@ fn acquire_file(root: &Path, name: &str) -> Result<File> {
         use std::os::windows::fs::OpenOptionsExt;
         options.custom_flags(0x00200000);
     }
-    let file = options.open(path)?;
+    let file = options.open(&path)?;
+    crate::managed_collection::reject_file_aliases(&path, &file.metadata()?)?;
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;
@@ -42,13 +52,17 @@ fn acquire_file(root: &Path, name: &str) -> Result<File> {
             "redirected service ownership file"
         );
     }
-    file.try_lock()
-        .context("another AIRK process owns this service resource")?;
-    Ok(file)
+    file.try_lock().with_context(|| {
+        format!(
+            "another AIRK process owns service resource: {}",
+            path.display()
+        )
+    })?;
+    Ok(OwnershipFile(file))
 }
 
 pub struct ProjectLease {
-    _file: File,
+    _file: OwnershipFile,
     root: PathBuf,
     binding: airk_core::service::ProjectBinding,
     epoch: Option<u64>,
@@ -71,17 +85,17 @@ impl ProjectLease {
 }
 
 pub struct ServiceLease {
-    _file: File,
+    _file: OwnershipFile,
     root: PathBuf,
 }
 
 /// Pooled inference can outlive its service/last project briefly while draining.
 pub struct EmbeddingLease {
-    _file: File,
+    _file: OwnershipFile,
 }
 /// Directory notifications live outside project owners and may drain after service exit.
 pub struct SourceWatchLease {
-    _file: File,
+    _file: OwnershipFile,
 }
 impl SourceWatchLease {
     pub fn acquire(root: &Path) -> Result<Self> {
@@ -144,6 +158,35 @@ impl ServiceLease {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    #[test]
+    fn service_and_manifest_ownership_release_before_inherited_descriptor_close() -> Result<()> {
+        let owner = tempfile::tempdir()?;
+        for name in ["instance-1.4.lock", "manifest.lock", "replacement.lock"] {
+            let lease = acquire_file(owner.path(), name)?;
+            // dup retains the same open-file description as fork, without
+            // invoking non-async-safe Rust code in a threaded post-fork child.
+            let inherited = lease.0.try_clone()?;
+            assert!(acquire_file(owner.path(), name).is_err());
+            drop(lease);
+            let replacement = acquire_file(owner.path(), name)?;
+            drop(inherited);
+            assert!(acquire_file(owner.path(), name).is_err());
+            drop(replacement);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn aliased_service_ownership_files_are_preserved_and_refused() -> Result<()> {
+        let owner = tempfile::tempdir()?;
+        let path = owner.path().join("manifest.lock");
+        fs::write(&path, [])?;
+        fs::hard_link(&path, owner.path().join("foreign-alias"))?;
+        assert!(acquire_file(owner.path(), "manifest.lock").is_err());
+        assert!(path.is_file() && owner.path().join("foreign-alias").is_file());
+        Ok(())
+    }
     #[test]
     fn ownership_lives_until_handle_release_and_never_removes_foreign_control_files() -> Result<()>
     {

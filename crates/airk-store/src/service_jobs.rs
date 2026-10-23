@@ -27,10 +27,34 @@ pub(super) const SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS service_requests(
         namespace TEXT NOT NULL, epoch INTEGER NOT NULL CHECK(epoch>=0), nonce TEXT NOT NULL,
         caller TEXT NOT NULL, job TEXT NOT NULL REFERENCES service_jobs(id) ON DELETE CASCADE,
-        PRIMARY KEY(namespace,epoch,nonce,caller)) WITHOUT ROWID;";
+        PRIMARY KEY(namespace,epoch,nonce,caller)) WITHOUT ROWID;
+    CREATE TABLE IF NOT EXISTS service_retry_requests(
+        namespace TEXT NOT NULL,epoch INTEGER NOT NULL,nonce TEXT NOT NULL,caller TEXT NOT NULL,
+        source_job TEXT NOT NULL CHECK(length(source_job)=64),
+        PRIMARY KEY(namespace,epoch,nonce,caller),
+        FOREIGN KEY(namespace,epoch,nonce,caller) REFERENCES service_requests(namespace,epoch,nonce,caller) ON DELETE CASCADE) WITHOUT ROWID;";
 
 const MAX_JOBS: i64 = 1024;
 const MAX_REQUESTS: i64 = 4096;
+
+#[derive(Default)]
+struct EnqueueOptions {
+    maintenance_now_ms: Option<u64>,
+    source_request: Option<(u64, u64)>,
+    manual_retry: Option<Sha256Digest>,
+}
+
+fn retry_origin(
+    connection: &Connection,
+    caller: Incarnation,
+    key: &RequestKey,
+) -> Result<Option<Sha256Digest>> {
+    let source: Option<String> = connection.query_row(
+        "SELECT source_job FROM service_retry_requests WHERE namespace=?1 AND epoch=?2 AND nonce=?3 AND caller=?4",
+        params![key.namespace.to_string(),i64::try_from(key.epoch).map_err(|_|JobError::KeyExpired)?,key.nonce.to_string(),caller.to_string()],
+        |row|row.get(0)).optional()?;
+    source.map(|id| id.parse()).transpose()
+}
 
 pub(super) fn record(connection: &Connection, id: Sha256Digest) -> Result<JobRecord> {
     let fields = connection
@@ -142,7 +166,11 @@ impl ServiceRegistry {
     }
     /// Rotate the request epoch when terminal receipts are retired, so an old unknown key
     /// always expires rather than accidentally replaying its former mutation.
-    fn prune_job_receipts(&mut self, needs_job: bool) -> Result<()> {
+    fn prune_job_receipts(
+        &mut self,
+        needs_job: bool,
+        protected: Option<Sha256Digest>,
+    ) -> Result<()> {
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -154,7 +182,7 @@ impl ServiceRegistry {
             })?;
         if (needs_job && jobs >= MAX_JOBS) || requests >= MAX_REQUESTS {
             let deleted = transaction.execute("DELETE FROM service_jobs WHERE seq IN(
-                SELECT seq FROM service_jobs WHERE state IN('succeeded','failed','canceled') ORDER BY seq LIMIT 64)", [])?;
+                SELECT seq FROM service_jobs WHERE state IN('succeeded','failed','canceled') AND (?1 IS NULL OR id<>?1) ORDER BY seq LIMIT 64)", [protected.map(|id|id.to_string())])?;
             ensure!(deleted > 0, JobError::Capacity);
             let epoch: i64 = transaction.query_row(
                 "SELECT request_epoch FROM service_meta WHERE id=1",
@@ -173,7 +201,7 @@ impl ServiceRegistry {
     }
 
     pub fn request_epoch(&mut self) -> Result<(Incarnation, u64)> {
-        self.prune_job_receipts(false)?;
+        self.prune_job_receipts(false, None)?;
         let epoch: i64 = self.connection.query_row(
             "SELECT request_epoch FROM service_meta WHERE id=1",
             [],
@@ -189,7 +217,52 @@ impl ServiceRegistry {
         key: &RequestKey,
         kind: JobKind,
     ) -> Result<JobRecord> {
-        self.enqueue_impl(project, caller, key, kind, None, None)
+        self.enqueue_impl(project, caller, key, kind, EnqueueOptions::default())
+    }
+
+    /// A deliberate new request preserves the terminal job, joins existing pending
+    /// work or creates a fresh bounded job. Its key also binds the original job.
+    pub fn retry_job(
+        &mut self,
+        id: Sha256Digest,
+        caller: Incarnation,
+        key: &RequestKey,
+    ) -> Result<JobRecord> {
+        let accepted: Option<String> = self.connection.query_row(
+            "SELECT job FROM service_requests WHERE namespace=?1 AND epoch=?2 AND nonce=?3 AND caller=?4",
+            params![key.namespace.to_string(),i64::try_from(key.epoch).map_err(|_|JobError::KeyExpired)?,key.nonce.to_string(),caller.to_string()],
+            |row|row.get(0)).optional()?;
+        if let Some(accepted) = accepted {
+            ensure!(
+                retry_origin(&self.connection, caller, key)? == Some(id),
+                JobError::KeyConflict
+            );
+            return record(&self.connection, accepted.parse()?);
+        }
+        let current_epoch: i64 = self.connection.query_row(
+            "SELECT request_epoch FROM service_meta WHERE id=1",
+            [],
+            |row| row.get(0),
+        )?;
+        ensure!(
+            key.namespace == self.incarnation()? && key.epoch == u64::try_from(current_epoch)?,
+            JobError::KeyExpired
+        );
+        let original = record(&self.connection, id)?;
+        ensure!(
+            matches!(original.state, JobState::Failed | JobState::Canceled),
+            JobError::NotRetryable
+        );
+        self.enqueue_impl(
+            original.project,
+            caller,
+            key,
+            original.kind,
+            EnqueueOptions {
+                manual_retry: Some(id),
+                ..Default::default()
+            },
+        )
     }
 
     fn enqueue_impl(
@@ -198,9 +271,13 @@ impl ServiceRegistry {
         caller: Incarnation,
         key: &RequestKey,
         kind: JobKind,
-        maintenance_now_ms: Option<u64>,
-        source_request: Option<(u64, u64)>,
+        options: EnqueueOptions,
     ) -> Result<JobRecord> {
+        let EnqueueOptions {
+            maintenance_now_ms,
+            source_request,
+            manual_retry,
+        } = options;
         let epoch = i64::try_from(key.epoch).map_err(|_| JobError::KeyExpired)?;
         // Accepted keys remain readable even when every queue slot is occupied.
         let existing: Option<String> = self.connection.query_row(
@@ -209,6 +286,10 @@ impl ServiceRegistry {
             |row| row.get(0),
         ).optional()?;
         if let Some(id) = existing {
+            ensure!(
+                retry_origin(&self.connection, caller, key)? == manual_retry,
+                JobError::KeyConflict
+            );
             let existing = record(&self.connection, id.parse()?)?;
             ensure!(
                 existing.project == project && existing.kind == kind,
@@ -220,7 +301,7 @@ impl ServiceRegistry {
             "SELECT EXISTS(SELECT 1 FROM service_jobs WHERE project=?1 AND kind=?2 AND state='pending')",
             params![project.to_string(),kind.code()], |row| row.get(0),
         )?;
-        self.prune_job_receipts(!pending)?;
+        self.prune_job_receipts(!pending, manual_retry)?;
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -238,6 +319,10 @@ impl ServiceRegistry {
             )
             .optional()?;
         if let Some(id) = existing {
+            ensure!(
+                retry_origin(&transaction, caller, key)? == manual_retry,
+                JobError::KeyConflict
+            );
             let existing = record(&transaction, id.parse()?)?;
             ensure!(
                 existing.project == project && existing.kind == kind,
@@ -260,6 +345,15 @@ impl ServiceRegistry {
             |row| row.get(0),
         )?;
         ensure!(registered, "service project is not registered");
+        if let Some(source) = manual_retry {
+            let original = record(&transaction, source)?;
+            ensure!(
+                original.project == project
+                    && original.kind == kind
+                    && matches!(original.state, JobState::Failed | JobState::Canceled),
+                JobError::NotRetryable
+            );
+        }
         if maintenance_now_ms.is_some() || source_request.is_some() {
             let busy: bool = transaction.query_row(
                 "SELECT EXISTS(SELECT 1 FROM service_jobs WHERE project=?1 AND state IN('pending','running'))",
@@ -310,6 +404,24 @@ impl ServiceRegistry {
                 id.to_string()
             ],
         )?;
+        if let Some(source) = manual_retry {
+            transaction.execute(
+                "INSERT INTO service_retry_requests VALUES(?1,?2,?3,?4,?5)",
+                params![
+                    key.namespace.to_string(),
+                    epoch,
+                    key.nonce.to_string(),
+                    caller.to_string(),
+                    source.to_string()
+                ],
+            )?;
+            if kind == JobKind::Maintain {
+                transaction.execute(
+                    "UPDATE service_maintenance SET retries=0,next_ms=0 WHERE project=?1",
+                    [project.to_string()],
+                )?;
+            }
+        }
         if let Some(now_ms) = maintenance_now_ms {
             // Admission and retry debit share this transaction. Replaying an accepted
             // key returns above, without consuming another attempt after a crash.
@@ -331,6 +443,9 @@ impl ServiceRegistry {
         }
         if matches!(kind, JobKind::Index | JobKind::Reconcile | JobKind::Rebuild) {
             super::watch::ensure_row(&transaction, project)?;
+            if manual_retry.is_some() {
+                transaction.execute("UPDATE service_watch SET attempts=0,next_ms=0,blocked_revision=NULL WHERE project=?1",[project.to_string()])?;
+            }
             if let Some((revision, now_ms)) = source_request {
                 let attempts:u32=transaction.query_row("SELECT w.attempts FROM service_watch w JOIN projects p ON p.binding=w.project
                     WHERE w.project=?1 AND w.enabled=1 AND p.paused=0 AND w.requested=?2 AND w.requested>w.indexed
@@ -421,8 +536,10 @@ impl ServiceRegistry {
                 nonce,
             },
             JobKind::Maintain,
-            Some(now_ms),
-            None,
+            EnqueueOptions {
+                maintenance_now_ms: Some(now_ms),
+                ..Default::default()
+            },
         )
     }
     /// Automatic source work captures the exact requested revision and debits its
@@ -445,8 +562,10 @@ impl ServiceRegistry {
                 nonce,
             },
             JobKind::Reconcile,
-            None,
-            Some((revision, now_ms)),
+            EnqueueOptions {
+                source_request: Some((revision, now_ms)),
+                ..Default::default()
+            },
         )
     }
 
@@ -754,6 +873,257 @@ impl ServiceRegistry {
 mod tests {
     use super::*;
     use airk_core::service::ProjectRegistration;
+
+    #[test]
+    fn full_queue_rotation_protects_the_failure_named_by_a_new_retry() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let caller = Incarnation::from_bytes([6; 16]);
+        let mut registry = ServiceRegistry::open(root.path(), caller)?;
+        let project =
+            ProjectRegistration::new("/source".into(), "/state".into(), "fixture".into())?;
+        registry.register(&project)?;
+        let original = registry.enqueue_internal(
+            project.binding,
+            caller,
+            JobKind::Verify,
+            Incarnation::from_bytes([7; 16]),
+        )?;
+        let mut lease = ProjectLease::acquire(root.path(), project.binding)?;
+        registry.admit_worker(&mut lease)?;
+        registry.claim_job_id(&lease, original.id)?;
+        registry.complete_job(
+            &lease,
+            original.id,
+            JobOutcome::Failed {
+                code: "verification_failed".into(),
+            },
+        )?;
+        {
+            let tx = registry.connection.transaction()?;
+            let outcome = serde_json::to_vec(&JobOutcome::Succeeded { revision: None })?;
+            for number in 0..MAX_JOBS - 1 {
+                let id = framed_digest(b"fictional-capacity-fixture", &[&number.to_le_bytes()]);
+                tx.execute("INSERT INTO service_jobs(id,project,kind,state,epoch,attempts,outcome) VALUES(?1,?2,'verify','succeeded',0,0,?3)",
+                    params![id.to_string(),project.binding.to_string(),outcome])?;
+            }
+            tx.commit()?;
+        }
+        let (namespace, epoch) = registry.request_epoch()?;
+        let mut key = RequestKey {
+            namespace,
+            epoch,
+            nonce: Incarnation::from_bytes([8; 16]),
+        };
+        assert_eq!(
+            registry
+                .retry_job(original.id, caller, &key)
+                .unwrap_err()
+                .downcast_ref::<JobError>(),
+            Some(&JobError::KeyExpired)
+        );
+        assert_eq!(
+            registry.job(original.id)?.state,
+            JobState::Failed,
+            "rotation deleted the failure being retried"
+        );
+        key.epoch = registry.request_epoch()?.1;
+        let accepted = registry.retry_job(original.id, caller, &key)?;
+        assert_ne!(accepted.id, original.id);
+        assert_eq!(registry.job(original.id)?.state, JobState::Failed);
+        assert_eq!(
+            registry.retry_job(original.id, caller, &key)?.id,
+            accepted.id
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn manual_retry_preserves_failed_jobs_resets_source_policy_once_and_binds_the_original()
+    -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let caller = Incarnation::from_bytes([7; 16]);
+        let mut registry = ServiceRegistry::open(root.path(), caller)?;
+        let project =
+            ProjectRegistration::new("/source".into(), "/state".into(), "fixture".into())?;
+        registry.register(&project)?;
+        registry.configure_watch(project.binding, true)?;
+        let mut lease = ProjectLease::acquire(root.path(), project.binding)?;
+        registry.admit_worker(&mut lease)?;
+        let mut failures = Vec::new();
+        for attempt in 1..=3u8 {
+            let job = registry.enqueue_source_reconcile(
+                project.binding,
+                caller,
+                Incarnation::from_bytes([attempt; 16]),
+                1,
+                u64::from(attempt) * 1_000_000,
+            )?;
+            registry.claim_job_id(&lease, job.id)?;
+            registry.complete_job(
+                &lease,
+                job.id,
+                JobOutcome::Failed {
+                    code: "source_unavailable".into(),
+                },
+            )?;
+            failures.push(job.id);
+        }
+        assert!(
+            registry
+                .watch(project.binding)?
+                .observation
+                .automatic_retries_exhausted
+        );
+        registry.pause(project.binding, true)?;
+        let (namespace, epoch) = registry.request_epoch()?;
+        let key = RequestKey {
+            namespace,
+            epoch,
+            nonce: Incarnation::from_bytes([9; 16]),
+        };
+        let original = failures[2];
+        let retried = registry.retry_job(original, caller, &key)?;
+        assert_ne!(retried.id, original);
+        assert_eq!(retried.state, JobState::Pending);
+        assert_eq!(retried.attempts, 0);
+        assert_eq!(registry.job(original)?.state, JobState::Failed);
+        assert_eq!(
+            registry.job(original)?.outcome,
+            Some(JobOutcome::Failed {
+                code: "source_unavailable".into()
+            })
+        );
+        assert!(registry.get(project.binding)?.paused);
+        assert!(
+            !registry
+                .watch(project.binding)?
+                .observation
+                .automatic_retries_exhausted
+        );
+        let fresh = RequestKey {
+            nonce: Incarnation::from_bytes([10; 16]),
+            ..key.clone()
+        };
+        assert_eq!(
+            registry
+                .retry_job(retried.id, caller, &fresh)
+                .unwrap_err()
+                .downcast_ref::<JobError>(),
+            Some(&JobError::NotRetryable)
+        );
+        registry.cancel_pending(retried.id)?;
+        assert!(
+            registry
+                .watch(project.binding)?
+                .observation
+                .automatic_retry_canceled
+        );
+        assert_eq!(registry.retry_job(original, caller, &key)?.id, retried.id);
+        assert!(
+            registry
+                .watch(project.binding)?
+                .observation
+                .automatic_retry_canceled,
+            "replayed retry reset later cancellation"
+        );
+        assert_eq!(
+            registry
+                .retry_job(failures[0], caller, &key)
+                .unwrap_err()
+                .downcast_ref::<JobError>(),
+            Some(&JobError::KeyConflict)
+        );
+        assert_eq!(
+            registry
+                .enqueue(project.binding, caller, &key, JobKind::Reconcile)
+                .unwrap_err()
+                .downcast_ref::<JobError>(),
+            Some(&JobError::KeyConflict)
+        );
+        registry.connection.execute(
+            "DELETE FROM service_jobs WHERE id=?1",
+            [original.to_string()],
+        )?;
+        drop(registry);
+        let mut registry = ServiceRegistry::open(root.path(), caller)?;
+        assert_eq!(
+            registry.retry_job(original, caller, &key)?.id,
+            retried.id,
+            "accepted retry was lost when its original receipt rotated"
+        );
+        assert!(
+            registry
+                .watch(project.binding)?
+                .observation
+                .automatic_retry_canceled
+        );
+        let events = registry.events(None, None, 32)?;
+        assert_eq!(
+            events
+                .events
+                .iter()
+                .filter(|e| e.kind == airk_core::service_events::EventKind::JobRetryRequested)
+                .count(),
+            1
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn manual_retry_reopens_exhausted_maintenance_without_erasing_failure_or_replaying_reset()
+    -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let caller = Incarnation::from_bytes([3; 16]);
+        let mut registry = ServiceRegistry::open(root.path(), caller)?;
+        let project =
+            ProjectRegistration::new("/source".into(), "/state".into(), "fixture".into())?;
+        registry.register(&project)?;
+        let mut lease = ProjectLease::acquire(root.path(), project.binding)?;
+        registry.admit_worker(&mut lease)?;
+        registry.record_maintenance(
+            &lease,
+            &airk_core::service::MaintenanceObservation {
+                pending_incarnations: Some(1),
+                removed_files: 0,
+                failed: true,
+                observed_unix_ms: 1,
+            },
+        )?;
+        let mut last = None;
+        for attempt in 1..=3u8 {
+            let job = registry.enqueue_due_maintenance(
+                project.binding,
+                caller,
+                Incarnation::from_bytes([attempt; 16]),
+                u64::from(attempt) * 1_000_000,
+            )?;
+            registry.claim_job_id(&lease, job.id)?;
+            registry.complete_job(
+                &lease,
+                job.id,
+                JobOutcome::Failed {
+                    code: "retirement_failed".into(),
+                },
+            )?;
+            last = Some(job.id);
+        }
+        assert!(!registry.maintenance_retrying(project.binding)?);
+        let (namespace, epoch) = registry.request_epoch()?;
+        let key = RequestKey {
+            namespace,
+            epoch,
+            nonce: Incarnation::from_bytes([12; 16]),
+        };
+        let original = last.unwrap();
+        let retried = registry.retry_job(original, caller, &key)?;
+        assert!(registry.maintenance_retrying(project.binding)?);
+        assert_eq!(registry.job(original)?.state, JobState::Failed);
+        registry.cancel_pending(retried.id)?;
+        assert!(!registry.maintenance_retrying(project.binding)?);
+        registry.retry_job(original, caller, &key)?;
+        assert!(!registry.maintenance_retrying(project.binding)?);
+        Ok(())
+    }
 
     #[test]
     fn maintenance_backoff_is_durable_bounded_and_does_not_consume_paused_or_queued_attempts()
