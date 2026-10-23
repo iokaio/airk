@@ -57,6 +57,10 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
             project,
             observation: registry.watch(project)?.observation,
         },
+        ControlMethod::Progress { project } => ControlResponse::Progress {
+            project,
+            observation: registry.progress_observation(project)?.map(Box::new),
+        },
         ControlMethod::ConfigureWatch { project, enabled } => {
             registry.configure_watch(project, enabled)?;
             ControlResponse::Watch {

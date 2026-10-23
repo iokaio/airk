@@ -28,6 +28,9 @@ pub enum ControlMethod {
     Watch {
         project: ProjectBinding,
     },
+    Progress {
+        project: ProjectBinding,
+    },
     ConfigureWatch {
         project: ProjectBinding,
         enabled: bool,
@@ -103,6 +106,10 @@ pub enum ControlResponse {
     Watch {
         project: ProjectBinding,
         observation: crate::service_watch::WatchObservation,
+    },
+    Progress {
+        project: ProjectBinding,
+        observation: Option<Box<crate::service_progress::ProgressObservation>>,
     },
     SourceStatus {
         available: bool,

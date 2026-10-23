@@ -401,6 +401,7 @@ impl CurrentUpdater<'_> {
         semantic_work: Option<&mut super::enrichment::SemanticWork>,
         observer: &mut dyn FnMut(CurrentUpdateStage),
     ) -> Result<CurrentUpdateResult> {
+        crate::service_execution::progress_phase(airk_core::service_progress::WorkPhase::Preparing);
         ensure!(
             (!changes.is_empty()
                 || self.configuration.is_some()
@@ -828,7 +829,13 @@ impl CurrentUpdater<'_> {
                 &resources,
             )
             .context("prepare current journal")?;
+        crate::service_execution::progress_prepared(
+            semantic_inputs.map_or(changes.len(), |inputs| inputs.len()) as u64,
+        );
         observer(CurrentUpdateStage::Prepared);
+        crate::service_execution::progress_phase(
+            airk_core::service_progress::WorkPhase::Publishing,
+        );
         writer
             .mark_applying(&pending)
             .context("mark current journal applying")?;
@@ -836,6 +843,9 @@ impl CurrentUpdater<'_> {
         let mut committed = writer
             .commit(&pending, pending.target.lexical_commit)
             .context("commit current journal")?;
+        crate::service_execution::progress_committed(
+            semantic_inputs.map_or(changes.len(), |inputs| inputs.len()) as u64,
+        );
         observer(CurrentUpdateStage::Committed);
         drop(writer);
         let cleanup = reclaim_current_objects(self.store, self.quota, self.scope, self.writer);

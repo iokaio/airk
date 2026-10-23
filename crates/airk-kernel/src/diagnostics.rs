@@ -64,6 +64,7 @@ impl Kernel {
         max_files: usize,
         max_bytes: u64,
     ) -> Result<IntegrityReport> {
+        crate::service_execution::progress_phase(airk_core::service_progress::WorkPhase::Verifying);
         ensure!(
             (1..=128).contains(&max_files)
                 && (1..=512 * 1024 * 1024).contains(&max_bytes)
@@ -165,6 +166,9 @@ impl Kernel {
         if report.complete {
             report.next_after = None;
         }
+        crate::service_execution::progress_verified(
+            (report.verified_sources + report.verified_extractions) as u64,
+        );
         Ok(report)
     }
 }

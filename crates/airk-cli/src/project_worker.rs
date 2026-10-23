@@ -157,6 +157,14 @@ fn execute(
     kind: JobKind,
     job: airk_core::identity::Sha256Digest,
 ) -> Result<JobOutcome> {
+    use airk_core::service_progress::WorkPhase;
+    airk_kernel::service_execution::progress_phase(match kind {
+        JobKind::Index | JobKind::Reconcile | JobKind::Rebuild => WorkPhase::Discovering,
+        JobKind::Vectors => WorkPhase::Embedding,
+        JobKind::Verify => WorkPhase::Verifying,
+        JobKind::Recover => WorkPhase::Recovering,
+        JobKind::Maintain => WorkPhase::Retiring,
+    });
     if kind == JobKind::Recover {
         return Ok(JobOutcome::Succeeded {
             revision: kernel.recover_service_publication()?,
@@ -348,6 +356,9 @@ pub async fn run() -> Result<()> {
                 } else {
                     airk_kernel::service_execution::run(allowance.clone(), || {
                         let outcome = execute(&kernel, job.kind, job.id)?;
+                        airk_kernel::service_execution::progress_phase(
+                            airk_core::service_progress::WorkPhase::Retiring,
+                        );
                         let maintenance = observe_maintenance(&kernel);
                         let _ = registry.record_maintenance(&job_lease, &maintenance);
                         let failed = job.kind == JobKind::Maintain && maintenance.failed;
@@ -372,7 +383,12 @@ pub async fn run() -> Result<()> {
                         JobOutcome::Canceled
                     } else {
                         JobOutcome::Failed {
-                            code: "project_operation_failed".into(),
+                            code: if error.is::<airk_kernel::service_execution::WorkStalled>() {
+                                "work_stalled"
+                            } else {
+                                "project_operation_failed"
+                            }
+                            .into(),
                         }
                     }
                 });
@@ -386,6 +402,18 @@ pub async fn run() -> Result<()> {
                         .as_millis()
                         .try_into()?,
                 )?;
+                airk_kernel::service_execution::progress_phase(
+                    airk_core::service_progress::WorkPhase::Finished,
+                );
+                if let Some(progress) = airk_kernel::service_execution::progress() {
+                    let now_ms = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .ok()
+                        .and_then(|time| u64::try_from(time.as_millis()).ok());
+                    if let Some(now_ms) = now_ms {
+                        let _ = registry.observe_progress(identity, &progress, now_ms);
+                    }
+                }
             }
             {
                 let mut status = job_status
@@ -429,7 +457,7 @@ pub async fn run() -> Result<()> {
                         if expected==identity {maintenance_waiting.store(keep_for_maintenance,Ordering::Release);}
                         if expected==identity && let Some(control)=control {airk_kernel::service_execution::control(identity,control.grant,control.paused,control.canceled)?;}
                         let status=work_status.lock().map_err(|_|anyhow::anyhow!("work status unavailable"))?;
-                        let reply=if expected==identity{Reply::WorkStatus{observation:protocol::WorkObservation{active:status.active,finished:status.finished,maintenance:status.maintenance.clone()}}}else{Reply::Failed};
+                        let reply=if expected==identity{Reply::WorkStatus{observation:protocol::WorkObservation{active:status.active,finished:status.finished,maintenance:status.maintenance.clone(),progress:airk_kernel::service_execution::progress().map(Box::new)}}}else{Reply::Failed};
                         service_ipc::write_frame(&mut std::io::stdout().lock(), &reply)?;
                     },
                     Some(Command::Grant{caller})=>{
@@ -448,6 +476,12 @@ pub async fn run() -> Result<()> {
             _=activity.notified()=>{idle=Instant::now();},
             _=connections.join_next(),if !connections.is_empty()=>{idle=Instant::now();},
             _=tick.tick()=>{
+                if busy.load(Ordering::Acquire) && airk_kernel::service_execution::watchdog() {
+                    // A native call that never reaches a safe boundary cannot be
+                    // canceled by dropping its future. The parent retains the
+                    // work allowance until this process actually exits.
+                    std::process::exit(76);
+                }
                 if jobs.is_finished(){break;}
                 if busy.load(Ordering::Acquire)||maintenance_waiting.load(Ordering::Acquire){idle=Instant::now();}
                 if connections.is_empty()&&idle.elapsed()>Duration::from_secs(15){break;}

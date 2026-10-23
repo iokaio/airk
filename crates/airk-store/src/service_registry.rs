@@ -23,6 +23,8 @@ pub const MAX_PROJECTS: usize = 1024;
 
 #[path = "service_jobs.rs"]
 mod jobs;
+#[path = "service_progress.rs"]
+mod progress;
 #[path = "service_watch.rs"]
 mod watch;
 pub use watch::WatchProject;
@@ -216,6 +218,7 @@ impl ServiceRegistry {
         );
         registry.connection.execute_batch(jobs::SCHEMA)?;
         registry.connection.execute_batch(watch::SCHEMA)?;
+        registry.connection.execute_batch(progress::SCHEMA)?;
         Ok(registry)
     }
 

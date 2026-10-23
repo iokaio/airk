@@ -321,6 +321,7 @@ impl Kernel {
         self
     }
     pub(crate) fn emit_progress(&self, mut progress: airk_core::readiness::IndexProgress) {
+        crate::service_execution::progress_indexed(&progress);
         progress.collection = self.collection.clone();
         if let Some(observer) = &self.progress {
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| observer(&progress)));

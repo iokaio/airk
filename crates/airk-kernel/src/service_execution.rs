@@ -15,6 +15,8 @@ use std::{
     },
     time::{Duration, Instant},
 };
+#[path = "service_execution_progress.rs"]
+mod progress;
 struct Owner {
     root: PathBuf,
     identity: WorkerIdentity,
@@ -23,8 +25,48 @@ struct Owner {
     active: Mutex<Option<airk_core::identity::Incarnation>>,
     paused: AtomicBool,
     canceled: AtomicBool,
+    progress: Mutex<Option<progress::Tracker>>,
+    stalled: AtomicBool,
 }
 static OWNER: OnceLock<Owner> = OnceLock::new();
+fn observe(action: impl FnOnce(&mut progress::Tracker, Instant)) {
+    if let Some(owner) = OWNER.get()
+        && let Ok(mut progress) = owner.progress.lock()
+        && let Some(progress) = progress.as_mut()
+    {
+        action(progress, Instant::now());
+    }
+}
+pub fn progress() -> Option<airk_core::service_progress::WorkProgress> {
+    OWNER
+        .get()?
+        .progress
+        .lock()
+        .ok()?
+        .as_ref()
+        .map(|progress| progress.snapshot(Instant::now()))
+}
+pub fn progress_phase(phase: airk_core::service_progress::WorkPhase) {
+    observe(|progress, now| progress.phase(phase, now));
+}
+pub(crate) fn progress_capture() {
+    observe(|progress, now| progress.capture(now));
+}
+pub(crate) fn progress_extracted() {
+    observe(|progress, now| progress.extracted(now));
+}
+pub(crate) fn progress_prepared(changes: u64) {
+    observe(|progress, now| progress.prepared(changes, now));
+}
+pub(crate) fn progress_committed(changes: u64) {
+    observe(|progress, now| progress.committed(changes, now));
+}
+pub fn progress_verified(objects: u64) {
+    observe(|progress, now| progress.verified(objects, now));
+}
+pub(crate) fn progress_indexed(event: &airk_core::readiness::IndexProgress) {
+    observe(|progress, now| progress.indexed(event, now));
+}
 struct Work {
     grant: WorkAllowance,
     started: Instant,
@@ -42,7 +84,9 @@ pub fn install(root: &Path, identity: WorkerIdentity) -> Result<()> {
                 renewed: AtomicU64::new(0),
                 active: Mutex::new(None),
                 paused: AtomicBool::new(false),
-                canceled: AtomicBool::new(false)
+                canceled: AtomicBool::new(false),
+                progress: Mutex::new(None),
+                stalled: AtomicBool::new(false)
             })
             .is_ok(),
         "service execution already installed"
@@ -59,6 +103,12 @@ pub fn activate(grant: &WorkAllowance) -> Result<()> {
         .map_err(|_| anyhow::anyhow!("work control unavailable"))? = Some(grant.id);
     owner.paused.store(false, Ordering::Release);
     owner.canceled.store(false, Ordering::Release);
+    owner.stalled.store(false, Ordering::Release);
+    *owner
+        .progress
+        .lock()
+        .map_err(|_| anyhow::anyhow!("work observation unavailable"))? =
+        Some(progress::Tracker::new(grant, Instant::now()));
     renew(grant.identity)
 }
 pub fn renew(identity: WorkerIdentity) -> Result<()> {
@@ -87,6 +137,7 @@ pub fn control(
         "foreign work control"
     );
     owner.paused.store(paused, Ordering::Release);
+    observe(|progress, now| progress.pause(paused, now));
     // Cancel is monotonic for a grant; a later pulse cannot revoke it.
     if canceled {
         owner.canceled.store(true, Ordering::Release);
@@ -101,6 +152,26 @@ impl std::fmt::Display for Canceled {
     }
 }
 impl std::error::Error for Canceled {}
+#[derive(Debug)]
+pub struct WorkStalled;
+impl std::fmt::Display for WorkStalled {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("service job stopped advancing")
+    }
+}
+impl std::error::Error for WorkStalled {}
+/// True means the owned worker must exit after safe cancellation failed to drain.
+pub fn watchdog() -> bool {
+    let mut force = false;
+    observe(|progress, now| {
+        let (stalled, expired) = progress.watchdog(now);
+        force = expired;
+        if stalled && let Some(owner) = OWNER.get() {
+            owner.stalled.store(true, Ordering::Release);
+        }
+    });
+    force
+}
 pub fn checkpoint() -> Result<()> {
     let Some(owner) = OWNER.get() else {
         return Ok(());
@@ -109,6 +180,7 @@ pub fn checkpoint() -> Result<()> {
     let Some(ttl) = ttl else { return Ok(()) };
     loop {
         ensure!(!owner.canceled.load(Ordering::Acquire), Canceled);
+        ensure!(!owner.stalled.load(Ordering::Acquire), WorkStalled);
         let elapsed = owner.started.elapsed().as_millis().min(u64::MAX as u128) as u64;
         ensure!(
             elapsed.saturating_sub(owner.renewed.load(Ordering::Acquire)) < ttl,

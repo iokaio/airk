@@ -32,7 +32,7 @@ pub(super) const SCHEMA: &str = "
 const MAX_JOBS: i64 = 1024;
 const MAX_REQUESTS: i64 = 4096;
 
-fn record(connection: &Connection, id: Sha256Digest) -> Result<JobRecord> {
+pub(super) fn record(connection: &Connection, id: Sha256Digest) -> Result<JobRecord> {
     let fields = connection
         .query_row(
             "SELECT project,kind,state,epoch,attempts,substr(outcome,1,2049)

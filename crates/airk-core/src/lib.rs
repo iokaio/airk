@@ -22,6 +22,7 @@ pub mod model_objects;
 pub mod publication;
 pub mod readiness;
 pub mod service;
+pub mod service_progress;
 pub mod service_resources;
 pub mod service_watch;
 pub mod usage;

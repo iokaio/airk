@@ -747,18 +747,39 @@ impl Supervisor {
                             registry.maintenance_retrying(*project).unwrap_or(false)
                         });
                         match worker.work_status(control, keep_for_maintenance) {
-                            Ok(protocol::WorkObservation {
-                                finished: Some(finished),
-                                ..
-                            }) if resources
-                                .running(*project)
-                                .is_some_and(|grant| grant.id == finished) =>
-                            {
-                                if let Some(identity) = worker.identity {
+                            Ok(observation) => {
+                                if let Some(progress) = observation.progress.as_ref()
+                                    && let Some(grant) = resources.running(*project)
+                                {
+                                    if progress.grant != grant.id
+                                        || progress.job != grant.job
+                                        || progress.validate().is_err()
+                                    {
+                                        failed.push(*project);
+                                        continue;
+                                    }
+                                    if let Some(registry) = registry.as_mut()
+                                        && let Some(now_ms) = std::time::SystemTime::now()
+                                            .duration_since(std::time::UNIX_EPOCH)
+                                            .ok()
+                                            .and_then(|time| u64::try_from(time.as_millis()).ok())
+                                    {
+                                        let _ = registry.observe_progress(
+                                            grant.identity,
+                                            progress,
+                                            now_ms,
+                                        );
+                                    }
+                                }
+                                if let Some(finished) = observation.finished
+                                    && resources
+                                        .running(*project)
+                                        .is_some_and(|grant| grant.id == finished)
+                                    && let Some(identity) = worker.identity
+                                {
                                     let _ = resources.finished(identity, finished);
                                 }
                             }
-                            Ok(_) => {}
                             Err(_) => failed.push(*project),
                         }
                     }

@@ -31,4 +31,5 @@ RUN --mount=type=cache,id=airksvc-light-target,target=/build/target,uid=10001,gi
     --mount=type=cache,id=airksvc-light-git,target=/usr/local/cargo/git,uid=10001,gid=10001 \
     cargo test -p airk-kernel --no-default-features --lib service_publication --locked \
     && cargo test -p airk-kernel --no-default-features --lib service_resource --locked \
-    && cargo test -p airk-kernel --no-default-features --lib source_watch --locked
+    && cargo test -p airk-kernel --no-default-features --lib source_watch --locked \
+    && cargo test -p airk-kernel --no-default-features --lib service_execution::progress --locked

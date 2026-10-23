@@ -664,6 +664,37 @@ fn supervised_jobs_and_direct_queries_preserve_grants_and_stop_on_service_loss()
             ensure!(Instant::now() < deadline, "native job did not finish");
             tokio::time::sleep(Duration::from_millis(100)).await;
         };
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Response::Progress {
+                observation: Some(observation),
+                ..
+            } = request(Method::Progress {
+                project: project.binding,
+            })
+            .await?
+                && observation.progress.job == job.id
+                && observation.progress.phase == airk_core::service_progress::WorkPhase::Finished
+            {
+                observation.progress.validate()?;
+                ensure!(
+                    observation.progress.captured_files == 1
+                        && observation.progress.extracted_files == 1
+                        && observation.progress.committed_changes >= 1
+                        && observation.progress.publications >= 1
+                        && observation.progress.total_files == Some(1)
+                        && observation.progress.publication == Some(indexed_revision),
+                    "native progress did not describe actual durable indexing boundaries: {:?}",
+                    observation.progress
+                );
+                break;
+            }
+            ensure!(
+                Instant::now() < deadline,
+                "native progress was not retained"
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
         let Response::Connection { role, grant } = request(Method::Connect {
             project: project.binding,
         })

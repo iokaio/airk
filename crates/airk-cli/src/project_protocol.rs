@@ -93,4 +93,5 @@ pub struct WorkObservation {
     pub active: Option<Incarnation>,
     pub finished: Option<Incarnation>,
     pub maintenance: Option<airk_core::service::MaintenanceObservation>,
+    pub progress: Option<Box<airk_core::service_progress::WorkProgress>>,
 }

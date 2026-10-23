@@ -914,6 +914,13 @@ impl Kernel {
                 }))
             },
             |profile, artifact, bytes, payload| {
+                crate::service_execution::progress_capture();
+                if payload.is_some() {
+                    crate::service_execution::progress_extracted();
+                }
+                crate::service_execution::progress_phase(
+                    airk_core::service_progress::WorkPhase::Extracting,
+                );
                 let retained = if artifact
                     .retained
                     .as_ref()
