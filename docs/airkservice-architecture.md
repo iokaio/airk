@@ -1,16 +1,22 @@
 # Proposed AIRK local service architecture and implementation plan
 
-Status: proposed for review; not implemented or qualified. Written October 22, 2026.
+Status: implementation started with protocol/admission foundations; service runtime and platform deployment are not implemented or qualified. Written October 22, 2026.
 
-Target release: **1.4.0, a clean break from the 1.3.x process, storage and client lifecycle.** The service architecture and clean break are the chosen direction. Measurements guide implementation and qualify the result; they are not prerequisites for choosing this architecture. Release numbering remains a separate review item in section 1.1. This document does not change the checked-in implementation version or authorize publication. The [current architecture](architecture.md) remains the description of implemented behavior until this plan is implemented and qualified.
+Target release: **1.4.0, a clean break from the 1.3.x process, storage and client lifecycle.** The service architecture, clean break and release number are settled. The maintainer permits breaking minor releases during this pre-adoption stage. Measurements guide implementation and qualify the result; they are not prerequisites for choosing this architecture. This document does not change the checked-in implementation version or authorize publication. The [current architecture](architecture.md) remains the description of implemented behavior until this plan is implemented and qualified.
 
 Review the [chosen direction and remaining decisions](#11-chosen-direction-and-remaining-decisions), [publication contract](#6-publication-and-concurrent-reads), [installation lifecycle](#9-installation-and-lifecycle-without-administrator-access), [service console](#11-vs-code-service-console), and [implementation sequence](#15-implementation-sequence-and-exit-criteria). Platform details stay in this plan until implementation establishes contracts suitable for separate operating guides.
+
+Implemented foundation: [core service contracts](../crates/airk-core/src/service.rs), [kernel broker/admission reference policy](../crates/airk-kernel/src/service_broker.rs), and [CLI IPC framing](../crates/airk-cli/src/service_ipc.rs). The policy bounds workers, credentials, connections, aggregate query concurrency and reserved response bytes; binds single-use grants to caller/worker/project identities; and retains running-work charges through expiry/disconnect/service loss. The codec bounds serialized JSON and rejects oversized/truncated frames. These modules are not wired into production commands. They do not yet authenticate OS peers, persist fencing, acquire worker locks, distribute grants, supervise processes or implement storage changes. The two-executable split is also pending. During transport integration, move reference-policy query admission into each worker; do not turn its in-process API into per-query service RPCs. Existing 1.3.2 operation remains the active runtime.
+
+Local validation on October 22, 2026: locked workspace build, all-target Clippy with warnings denied, formatting, repository/link and whitespace checks passed on Windows. The workspace test run, including doctests, passed; that run began before the final content-free status and per-caller admission follow-ups, which passed the final seven broker tests, with four IPC codec tests also passing. Python contracts ran 128 tests with four skips, and license notices were generated without adding dependencies. Existing ignored native qualification tests remain ignored; no Mac/Linux execution, installed-service or two-executable packaging qualification is established by these results.
 
 ## 1. Decision and purpose
 
 Replace independently launched indexing helpers with one user-owned local AIRK service per execution environment and release channel. The service owns the project registry, durable work requests, resource admission and worker lifecycle. Separate project workers own independent project indexes. VS Code windows, CLI commands and coding-agent MCP connections become clients of that service. This is an architectural choice for explicit ownership, shared resource policy and a consistent client lifecycle, independent of whether incremental changes could improve 1.3.x performance.
 
 The service brokers authenticated, collection-scoped connections to project workers. Retrieval requests and evidence responses flow directly between clients and workers. Management, lifecycle, resource grants and status remain service responsibilities. Query traffic must not require a service forwarding hop.
+
+Deploy two native executables per target: `airk` for clients, the service and project workers, and `airk-embed` for embedding workers and the bundled MiniLM payload. Package and upgrade them together. Section 4.4 defines the dependency and installation boundary.
 
 The service must install and run from a platform VSIX under an ordinary user account. Administrator access, sudo, a Windows Service Control Manager registration, a system-wide launch daemon, a system-level systemd unit, Docker, a compiler, a package manager and runtime model downloads must not be prerequisites.
 
@@ -23,7 +29,7 @@ AIRK remains a local indexing and bounded retrieval kernel. It does not schedule
 The service architecture, fresh storage namespace, clean rebuild and explicit agent reconfiguration are settled for this plan. Implementation must resolve:
 
 1. Exact lifecycle and protocol contracts for on-demand startup, optional user login integration and shared discovery across editor profiles.
-2. Whether the storage namespace and client break warrant **2.0.0** under semantic versioning instead of the working target **1.4.0**. The 1.3.0 rebuild is precedent, not justification for this larger compatibility break; this numbering decision does not reopen the clean break.
+2. Keep native, extension and lockfile versions synchronized at the approved **1.4.0** cutover. Breaking minor releases are permitted during the project's pre-adoption stage; no 2.0.0 numbering decision is pending.
 3. The authenticated read/publication contract, bounded reader leases, replacement-build storage cost and revision invalidation; WAL is a candidate requiring proof.
 4. Continuation of requested jobs after the last editor closes, idle shutdown, resource priorities, the supported platform matrix and measurable release objectives.
 
@@ -136,6 +142,27 @@ Ownership handoff must retain an OS-backed exclusive collection lock through pub
 Keep lifecycle and IPC adapters in `airk-cli`, MCP adaptation in `airk-mcp`, scheduling/publication services in `airk-kernel`, and persistence, ownership locks and database adapters in `airk-store`. Extraction remains in `airk-ingest`; DiskANN algorithms and local inference remain in `airk-retrieval`; platform-neutral contracts belong in `airk-core`. Add modules in the owning crate before considering another crate. The extension calls native contracts rather than bypassing them.
 
 The `serve` entry point and OS process/IPC supervision adapters belong in `airk-cli`; worker ownership policy, fencing and pool admission belong in `airk-kernel`. Pool processes load sessions through `airk-retrieval` and cannot publish. Reuse and adapt the existing lifecycle code in [kernel service adapters](../crates/airk-kernel/src/service.rs), moving OS adapter code toward the CLI boundary as needed. A new crate requires an independent responsibility and a reviewed dependency direction; the service name alone is not one.
+
+The current dependency graph does not yet provide the executable split: `airk-kernel` depends on `airk-retrieval`, which includes inference and tokenizer dependencies. Implement optional inference modules/dependencies and an IPC embedding adapter within the owning crates so the main runtime retains DiskANN and retrieval without linking the inference implementation. Keep embedding contracts in core and pool admission in kernel. Review the final dependency direction against [architecture boundaries](architecture.md#dependency-boundaries) during implementation. Do not add a crate merely to obtain a second executable.
+
+### 4.4 Two-executable deployment
+
+Use the same separation on Windows x64, macOS arm64, macOS x64 and Linux x64; Windows payload filenames carry the `.exe` suffix.
+
+| Executable | Process roles and payload | Boundary |
+|---|---|---|
+| `airk` | Stable launcher/CLI, stdio MCP bridge, service and project-worker modes; discovery, extraction, lexical retrieval and DiskANN | No embedded MiniLM weights or local inference/tokenizer implementation; submits embedding work over authenticated IPC |
+| `airk-embed` | Admitted embedding-worker modes, local inference dependencies and embedded pinned MiniLM assets | Loads/reuses model sessions and returns source/model-bound vectors; cannot publish project revisions or provide service management |
+
+Multiple processes may run each executable. This is two executable payloads, not two total processes or one model session per project. Keep any required libraries, model manifests and legal notices in the verified package inventory. A stable launcher installation may use a managed copy of `airk`; it does not introduce a third executable implementation.
+
+The primary benefit is keeping inference dependencies and initialization out of clients, the broker and project workers. Embedded read-only asset bytes do not imply a full private RAM copy in every process. Loaded model sessions, execution plans, buffers and inference threads are separate costs controlled by the shared pool. Measure private/proportionally shared memory and cold/warm startup on each target; executable size or summed resident-set counts alone do not establish the saving.
+
+Place both binaries in one immutable version/digest runtime directory. The payload manifest binds their versions, target architecture, digests, model identity, dependencies and internal protocol compatibility. Verify both before selecting that runtime; launch `airk-embed` only by its verified absolute path from the selected payload. Reject missing, modified or incompatible helpers with a structured semantic-unavailable outcome. Preserve valid lexical retrieval with explicit semantic coverage/failure reporting; do not silently download a replacement or initialize inference inside `airk`.
+
+Move the existing embedded-asset build/provisioning path to `airk-embed`. Explicit trusted setup may request bounded asset extraction/provisioning from that helper; kernel/store validation, ownership and quota-reserved installation remain authoritative. Ordinary MCP reads never install models. Preserve custom models and offline first use. Embedding requests carry project/source/model identities and admitted budgets as already required for pool isolation.
+
+Build the lightweight and embedding artifacts with controlled feature sets, using separate build invocations where necessary to prevent Cargo feature unification from enabling inference in `airk`. Inspect the resolved dependency graphs and final artifacts to establish that only `airk-embed` contains the weights and inference implementation. Sign both executable payloads where required, including both Mac architectures, and qualify their actual VSIX extraction, helper launch, upgrade and uninstall paths. Stage and switch the pair together; never overwrite a running executable or mix helpers from different runtime directories.
 
 ## 5. Shared and independent state
 
@@ -268,7 +295,7 @@ All platform adapters share these policy boundaries: remain within current-user 
 
 ### 9.1 Common installation transaction
 
-The platform VSIX contains a verified native runtime, compatible launcher/MCP bridge, model assets, legal notices and a complete payload manifest. No runtime download is required. Additive network-based delivery may be considered later; it cannot be the only installation route.
+The platform VSIX contains the verified `airk` and `airk-embed` runtime pair, compatible launcher/MCP bridge modes, embedded model assets, legal notices and a complete payload manifest as specified in section 4.4. No runtime download is required. Additive network-based delivery may be considered later; it cannot be the only installation route.
 
 On first activation eligible under Workspace Trust:
 
@@ -430,7 +457,7 @@ Never delete source trees, saved user settings or unknown directories. Old index
 
 ## 13. Clean break and service transition
 
-The target release starts the service-backed family, with no optional 1.3 compatibility mode. No legacy direct-writer fallback, old scheduler participation, old index reader or in-place index conversion is required. Old helpers must not open service-owned state. Final version/namespace names follow the numbering decision in section 1.1.
+The target release starts the service-backed family, with no optional 1.3 compatibility mode. No legacy direct-writer fallback, old scheduler participation, old index reader or in-place index conversion is required. Old helpers must not open service-owned state. Use the approved 1.4 storage namespace and synchronized 1.4.0 runtime/extension versions at cutover.
 
 Use a new versioned storage namespace and explicit format marker. Do not imply that the existing `collections-1.2` layout or current database schema is accepted by 1.4. A new registry may accept user-confirmed roots and supported settings from a reviewed export, but every index is rebuilt from sources. Do not carry old journals, running jobs, locks, revision tokens or verification claims into the new store.
 
@@ -475,12 +502,12 @@ Each phase produces reviewable contracts and evidence. Do not publish 1.4.0 unti
 
 | Phase | Work | Required exit evidence |
 |---|---|---|
-| 0. Implementation contracts, baseline and storage spike | Instrument 1.3.2 writer/request/SQLite waits, preparation/replay costs and batching; prototype WAL authentication, reservations, bounded reader leases and replacement handoff in isolated state; define service protocol and lifecycle contracts | Exact artifact/workload baseline, including a new reproduction if a stall remains; bounded concurrent-reader/checkpoint and crash/tamper evidence to select storage mechanisms; written implementation contracts and release-number decision. Service architecture and clean break remain the chosen direction |
+| 0. Implementation contracts, baseline and storage spike | Instrument 1.3.2 writer/request/SQLite waits, preparation/replay costs and batching; prototype WAL authentication, reservations, bounded reader leases and replacement handoff in isolated state; define service protocol and lifecycle contracts | Exact artifact/workload baseline, including a new reproduction if a stall remains; bounded concurrent-reader/checkpoint and crash/tamper evidence to select storage mechanisms; written implementation contracts for the approved 1.4.0 release. Service architecture and clean break remain the chosen direction |
 | 1. Service skeleton | Native serve/client adapters, user singleton, authenticated broker/control IPC, direct worker endpoints, bounded handlers, discovery and reconnect | Many concurrent launchers elect one instance; scoped grants establish direct connections; status remains responsive with a blocked synthetic worker; unsafe endpoints rejected |
 | 2. Durable work and project ownership | New registry, idempotent enqueue/join, fencing, worker supervision, pause/cancel and recovery | Multi-window duplicate requests join; worker/service crashes never create two writers; unrelated projects remain usable |
 | 3. Storage/publication implementation | Implement the Phase 0-selected format and authenticated commit/read contract, bounded reader leases, replacement builds and cleanup | Fault-injected commit/switch/recovery tests, exact revision evidence, bounded reader/checkpoint behavior; no long preparation gate |
-| 4. Resource scheduler and embedding pool | Fair service-to-worker grants, local query admission, bounded queues, exact model-session reuse, budgets and pressure handling | Direct connections cannot exceed aggregate allowances; grant drain/reallocation preserves running-work accounting; scale tests across hardware classes, no internal-thread oversubscription or mixed-project embedding results |
-| 5. Platform installation and lifecycle | Offline VSIX payload, immutable install, user launcher, on-demand mode, optional platform startup adapters, managed runtime | Clean non-admin offline installation/upgrade/uninstall on every supported target; denied-persistence and policy-failure tests |
+| 4. Resource scheduler and embedding pool | Two-executable dependency split, fair service-to-worker grants, local query admission, bounded queues, exact model-session reuse, budgets and pressure handling | Lightweight artifact excludes weights/inference dependencies; direct connections cannot exceed aggregate allowances; grant drain/reallocation preserves running-work accounting; scale tests across hardware classes, no internal-thread oversubscription or mixed-project embedding results |
+| 5. Platform installation and lifecycle | Offline VSIX with verified runtime pair, immutable install, user launcher, on-demand mode, optional platform startup adapters, managed runtime | Both executables pass target signing/authenticity policy and paired-version verification; clean non-admin offline installation/upgrade/uninstall on every supported target; denied-persistence and policy-failure tests |
 | 6. Service console and maintenance | Service/project overview, subscriptions, down-service diagnostics, restart and resumable scoped/bulk repair | Installed-editor tests from two or more windows, closed-project repair, stale-plan rejection, partial-failure/cancellation receipts |
 | 7. MCP/CLI cutover and clean-break setup | Stable launcher, brokered read-only bridges, direct retrieval, explicit legacy configuration review, fresh indexing | Multiple actual agent clients share one project job; evidence bypasses service; worker replacement requires fresh brokerage; old helpers cannot open new state; no legacy writer or proxy fallback |
 | 8. Qualification and release | Signed/notarized target artifacts, full workload matrix, release documentation and controlled promotion | Exact artifact receipts, passing platform gates, documented limits and approved 1.4.0 release |
@@ -497,7 +524,7 @@ Keep these contracts as versioned repository documents owned by the affected com
 | Worker ownership and durable jobs | Kernel with store persistence/locks | Ownership epochs and lock handoff, atomic acceptance/idempotency receipts, join/cancel semantics, restart recovery and surviving-worker tests |
 | Publication, reads and reclamation | Store with kernel coordination | Authenticated snapshot/head, WAL or selected journal mode, witnesses, revision expiry, reader leases, crash/tamper tests and ownership-proven cleanup |
 | Resource and quota admission | Kernel policy, store reservations, retrieval execution | Finite queue/thread/memory/disk limits, query capacity, model identity/session reuse, checkpoint pressure and failed-work grant recovery |
-| Installation and transition | CLI platform adapters and extension | Offline authenticity basis, immutable runtime selection, old-registration handling, explicit agent configuration changes and installed-platform receipts |
+| Installation and transition | CLI platform adapters and extension | Offline authenticity basis, two-executable inventory/dependency separation, paired immutable runtime selection, helper protocol checks, old-registration handling, explicit agent configuration changes and installed-platform receipts |
 
 Numeric defaults must be recorded before workload qualification, together with overload behavior and the measurement used to select them. A receipt identifies the tested source and packaged artifact; successful mocked or generated-definition tests cannot stand in for installed-runtime evidence.
 
@@ -517,8 +544,9 @@ Numeric defaults must be recorded before workload qualification, together with o
 | Platform policy | Windows allowlisting/EDR denial; Mac quarantine/notarization/TCC; Linux noexec/SELinux/AppArmor denial; explicit actionable failure without bypass |
 | Control/security | Wrong user, unsafe endpoint/redirected directory, oversized frames, slow subscribers, unauthorized MCP management, untrusted workspace, malicious project paths, ambiguous retry after crash, conflicting/expired idempotency key |
 | Brokered retrieval | Wrong-worker/collection, replayed/expired grant, redirected endpoint, worker replacement, service loss during setup/query, slow direct reader, many connections exceeding one worker allowance, stale revision on retry, zero service payload forwarding |
+| Executable split | Main artifact excludes weights/inference dependencies; separate-build feature sets; offline helper/model provisioning; missing/tampered/wrong-architecture or protocol-mismatched helper; lexical availability on embedding failure; paired upgrade/rollback; per-role memory/startup measurements on every native target |
 | Maintenance | Single/selected/all registered projects; closed project; missing roots; stale plan; restart/resume; cancel during build; safe switch and cleanup |
 
 Run repository-required formatting, clippy, workspace tests, extension tests, packaging/license/repository checks and whitespace checks for implementation changes. Platform-installed tests and measured load tests are additional requirements, not replacements for those checks. Keep unexecuted platform checks and unsupported architectures explicit.
 
-No implementation, version bump, commit, PR, publication or release is performed by this proposal. Approval of the architecture should lead to phased implementation and evidence, not a claim that a service process alone fixes the observed indexing failures.
+Implementation progress is recorded at the start of this document. The plan itself does not authorize a version bump, commit, PR, publication or release. Each implemented phase needs its own validation evidence; a service process alone does not establish that indexing failures are fixed.

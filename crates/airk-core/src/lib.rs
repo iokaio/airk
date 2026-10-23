@@ -21,6 +21,7 @@ pub mod mapped_binding;
 pub mod model_objects;
 pub mod publication;
 pub mod readiness;
+pub mod service;
 pub mod usage;
 pub mod vector_evidence;
 pub mod vector_selection;

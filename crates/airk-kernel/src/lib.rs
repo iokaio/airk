@@ -31,6 +31,7 @@ mod resources;
 pub mod roots;
 pub mod scheduler;
 pub mod service;
+pub mod service_broker;
 pub mod storage;
 mod tokenization;
 pub mod usage;
