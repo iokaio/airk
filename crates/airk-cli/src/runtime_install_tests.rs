@@ -62,7 +62,7 @@ fn startup_circuit_retains_failed_attempts_across_reopen_and_backwards_clock() -
 
 #[test]
 fn native_self_test_binds_actual_version_capabilities_and_bounded_completion() -> Result<()> {
-    let result = serde_json::json!({"protocol":1,"version":"1.4.0","self_test":"passed","state_layout":1,"foreground_dispatch":1});
+    let result = serde_json::json!({"protocol":1,"version":"1.4.0","self_test":"passed","state_layout":1,"foreground_dispatch":1,"managed_reference":1});
     validate_self_test_result(&serde_json::to_vec(&result)?, "1.4.0")?;
     assert!(validate_self_test_result(&serde_json::to_vec(&result)?, "9.9.9").is_err());
     let mut changed = result.clone();

@@ -22,6 +22,9 @@ use std::{
 mod launcher_repair;
 #[path = "runtime_layout.rs"]
 mod layout;
+#[path = "runtime_managed.rs"]
+mod managed;
+pub use managed::ManagedLifecycle;
 #[path = "runtime_retirement.rs"]
 mod retirement;
 #[path = "runtime_staging.rs"]
@@ -78,6 +81,23 @@ pub enum RuntimeCommand {
     AbortLayout {
         #[arg(long)]
         install_dir: PathBuf,
+    },
+    /// Pin an approved organization-provided payload without copying or modifying it.
+    Managed {
+        #[arg(long)]
+        source: PathBuf,
+        #[arg(long)]
+        install_dir: PathBuf,
+        #[arg(long)]
+        approved_sha256: String,
+        #[arg(long, value_enum)]
+        verification_basis: VerificationBasis,
+        #[arg(long, value_enum, default_value = "external")]
+        lifecycle: ManagedLifecycle,
+        #[arg(long)]
+        state_dir: Option<PathBuf>,
+        #[arg(long, value_enum, default_value = "stable")]
+        channel: RuntimeChannel,
     },
     /// Drain the selected service and select a staged runtime only after native health succeeds.
     Activate {
@@ -667,6 +687,13 @@ pub fn verify_runtime(root: &Path, identity: &str) -> Result<(PathBuf, Approval)
     digest(identity)?;
     ensure!(root.is_dir(), "runtime installation is missing");
     local_ipc::prepare_root(root)?;
+    if let Some(policy) = managed::read(root)? {
+        ensure!(
+            policy.approval.manifest_sha256 == identity,
+            "managed runtime is pinned to another approved identity"
+        );
+        return policy.verify();
+    }
     let directory = root.join("runtimes").join(identity);
     ensure!(directory.is_dir(), "approved runtime is not staged");
     local_ipc::prepare_root(&directory)?;
@@ -790,8 +817,10 @@ fn validate_self_test_result(bytes: &[u8], version: &str) -> Result<()> {
         "native executable version does not match the approved payload"
     );
     ensure!(
-        result["state_layout"] == 1 && result["foreground_dispatch"] == 1,
-        "approved runtime lacks the required state-layout or foreground-dispatch capability"
+        result["state_layout"] == 1
+            && result["foreground_dispatch"] == 1
+            && result["managed_reference"] == 1,
+        "approved runtime lacks the required state-layout, foreground-dispatch or managed-reference capability"
     );
     Ok(())
 }
@@ -934,11 +963,19 @@ async fn start(
 pub async fn ensure_running(root: &Path) -> Result<ServiceHealth> {
     let _lock = install_lock(root)?;
     launcher_repair::require_settled(root)?;
+    if managed::read(root)?.is_some() {
+        return managed::ensure(root).await;
+    }
     let (_, main, approval) = selected(root)?;
     start(root, &approval, &main, true).await
 }
 
 async fn drain(root: &Path, main: &Path, approval: &Approval) -> Result<()> {
+    let expected_sha256 = runtime_pair::digest_file(main)?;
+    drain_identity(root, approval, &expected_sha256).await
+}
+
+async fn drain_identity(root: &Path, approval: &Approval, expected_sha256: &str) -> Result<()> {
     let control = layout::control(root)?;
     if !control.try_exists()? {
         return Ok(());
@@ -946,8 +983,7 @@ async fn drain(root: &Path, main: &Path, approval: &Approval) -> Result<()> {
     local_ipc::prepare_root(&control)?;
     if airk_store::service::ServiceLease::acquire(&control).is_err() {
         // Authenticate exact executable identity before requesting shutdown.
-        let expected_sha256 = runtime_pair::digest_file(main)?;
-        health(root, approval, &expected_sha256).await?;
+        health(root, approval, expected_sha256).await?;
         ensure!(
             matches!(
                 service_runtime::request_for_version(
@@ -984,6 +1020,7 @@ struct Quiescence {
 
 fn quiescent(root: &Path) -> Result<Quiescence> {
     let control = layout::control(root)?;
+    local_ipc::prepare_root(&control)?;
     let service = airk_store::service::ServiceLease::acquire(&control)?;
     let registry = airk_store::service::registry::ServiceRegistry::open(
         &control,
@@ -1005,6 +1042,7 @@ fn quiescent(root: &Path) -> Result<Quiescence> {
 
 pub async fn activate(root: &Path, identity: &str) -> Result<Selection> {
     let _lock = install_lock(root)?;
+    managed::require_unmanaged(root)?;
     launcher_repair::require_settled(root)?;
     ensure!(
         !root.join("uninstall.json").try_exists()?,

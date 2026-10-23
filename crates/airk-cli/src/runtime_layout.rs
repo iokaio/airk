@@ -200,6 +200,27 @@ impl Layout {
 }
 
 /// Call only while holding the installation lock, after approving the source payload.
+pub(super) fn planned_state(
+    root: &Path,
+    requested: Option<&Path>,
+    channel: RuntimeChannel,
+) -> Result<PathBuf> {
+    if let Some(requested) = requested {
+        return crate::user_paths::canonical_location(requested);
+    }
+    if let Some(existing) = Layout::read(root)? {
+        return Ok(existing.state);
+    }
+    let install = crate::user_paths::canonical_location(root)?;
+    let native = crate::user_paths::UserPaths::discover(channel)?;
+    if crate::user_paths::canonical_location(&native.install)? == install {
+        crate::user_paths::canonical_location(&native.state)
+    } else {
+        Ok(install)
+    }
+}
+
+/// Call only while holding the installation lock, after approving the source payload.
 pub(super) fn initialize(
     root: &Path,
     requested: Option<&Path>,
@@ -207,18 +228,7 @@ pub(super) fn initialize(
 ) -> Result<()> {
     let install = root.canonicalize()?;
     let existing = Layout::read(root)?;
-    let state = if let Some(requested) = requested {
-        crate::user_paths::canonical_location(requested)?
-    } else if let Some(existing) = &existing {
-        existing.state.clone()
-    } else {
-        let native = crate::user_paths::UserPaths::discover(channel)?;
-        if crate::user_paths::canonical_location(&native.install)? == install {
-            crate::user_paths::canonical_location(&native.state)?
-        } else {
-            install.clone()
-        }
-    };
+    let state = planned_state(root, requested, channel)?;
     ensure!(
         !state.starts_with(install.join("runtimes")),
         "service state must stay outside immutable runtime payloads"

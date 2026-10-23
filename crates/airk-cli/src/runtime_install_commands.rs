@@ -12,6 +12,7 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
             install_dir,
             action,
         } => {
+            managed::require_unmanaged(install_dir)?;
             let manager = crate::service_manager::ServiceManager::for_runtime(install_dir)?;
             let _lock = if matches!(action, LoginCommand::Plan | LoginCommand::Status) {
                 None
@@ -39,6 +40,12 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
             }
         }
         RuntimeCommand::Foreground { install_dir } => {
+            if let Some(policy) = managed::read(install_dir)? {
+                ensure!(
+                    policy.lifecycle == ManagedLifecycle::UserOnDemand,
+                    "organization supervisor owns this runtime; AIRK cannot start another foreground instance"
+                );
+            }
             launcher_repair::require_settled(install_dir)?;
             let (_, executable, _) = selected(install_dir)?;
             if std::env::current_exe()?.canonicalize()? != executable.canonicalize()? {
@@ -79,6 +86,26 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
             layout::abort(install_dir)?;
             serde_json::json!({"pending_layout_aborted":true,"state_preserved":true})
         }
+        RuntimeCommand::Managed {
+            source,
+            install_dir,
+            approved_sha256,
+            verification_basis,
+            lifecycle,
+            state_dir,
+            channel,
+        } => {
+            managed::configure(
+                source,
+                install_dir,
+                approved_sha256,
+                *verification_basis,
+                *lifecycle,
+                state_dir.as_deref(),
+                *channel,
+            )
+            .await?
+        }
         RuntimeCommand::Activate {
             install_dir,
             runtime_sha256,
@@ -88,17 +115,20 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
         }
         RuntimeCommand::Inspect { install_dir } => {
             let (selection, executable, approval) = selected(install_dir)?;
+            let policy = managed::read(install_dir)?;
+            let launcher = policy.is_none().then(|| launcher_path(install_dir));
             let control = layout::control(install_dir);
             let state_error = control
                 .as_ref()
                 .err()
                 .map(|error| error.to_string().chars().take(512).collect::<String>());
-            serde_json::json!({"selection":selection,"executable":executable,"approval":approval,"launcher":launcher_path(install_dir),"control_dir":control.ok(),"state_error":state_error})
+            serde_json::json!({"selection":selection,"executable":executable,"approval":approval,"launcher":launcher,"managed_policy":policy,"control_dir":control.ok(),"state_error":state_error})
         }
         RuntimeCommand::Remove {
             install_dir,
             runtime_sha256,
         } => {
+            managed::require_unmanaged(install_dir)?;
             let _lock = install_lock(install_dir)?;
             let (selection, _, _) = selected(install_dir)?;
             ensure!(
@@ -125,6 +155,7 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
             serde_json::json!({"aborted_stage":runtime_sha256,"promoted_runtime_preserved":install_dir.join("runtimes").join(runtime_sha256).try_exists()?})
         }
         RuntimeCommand::RepairLauncher { install_dir } => {
+            managed::require_unmanaged(install_dir)?;
             let _lock = install_lock(install_dir)?;
             crate::service_manager::ServiceManager::for_runtime(install_dir)?
                 .require_stopped_for_maintenance()?;
@@ -177,10 +208,21 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
                 .as_ref()
                 .err()
                 .map(|error| error.to_string().chars().take(512).collect::<String>());
-            serde_json::json!({"runtime":selection.ok(),"runtime_error":selection_error,"bootstrap":bootstrap.ok().flatten(),"bootstrap_error":bootstrap_error,"pending_stages":stages.ok(),"staging_error":stages_error,"pending_launcher_repair":repair.ok().flatten(),"launcher_repair_error":repair_error,"state_layout":state_layout.ok(),"layout_error":layout_error,"live_service_health":"not_checked"})
+            let policy = managed::read(install_dir);
+            let policy_error = policy
+                .as_ref()
+                .err()
+                .map(|error| error.to_string().chars().take(512).collect::<String>());
+            serde_json::json!({"runtime":selection.ok(),"runtime_error":selection_error,"bootstrap":bootstrap.ok().flatten(),"bootstrap_error":bootstrap_error,"pending_stages":stages.ok(),"staging_error":stages_error,"pending_launcher_repair":repair.ok().flatten(),"launcher_repair_error":repair_error,"state_layout":state_layout.ok(),"layout_error":layout_error,"managed_policy":policy.ok().flatten(),"managed_policy_error":policy_error,"live_service_health":"not_checked"})
         }
         RuntimeCommand::ResetStartup { install_dir } => {
             let _lock = install_lock(install_dir)?;
+            if let Some(policy) = managed::read(install_dir)? {
+                ensure!(
+                    policy.lifecycle == ManagedLifecycle::UserOnDemand,
+                    "organization supervisor owns startup recovery"
+                );
+            }
             let (_, _, approval) = selected(install_dir)?;
             replace_json(
                 install_dir,
@@ -190,6 +232,7 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
             serde_json::json!({"startup_circuit":"reset"})
         }
         RuntimeCommand::Rollback { install_dir } => {
+            managed::require_unmanaged(install_dir)?;
             let (selection, _, _) = selected(install_dir)?;
             let previous = selection
                 .previous
@@ -210,7 +253,7 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
                 &helper,
                 &format!("airk-embed {}", env!("CARGO_PKG_VERSION")),
             )?;
-            serde_json::json!({"protocol":1,"version":env!("CARGO_PKG_VERSION"),"self_test":"passed","state_layout":1,"foreground_dispatch":1})
+            serde_json::json!({"protocol":1,"version":env!("CARGO_PKG_VERSION"),"self_test":"passed","state_layout":1,"foreground_dispatch":1,"managed_reference":1})
         }
     };
     println!("{}", serde_json::to_string(&output)?);

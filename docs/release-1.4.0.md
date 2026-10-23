@@ -1,0 +1,9 @@
+# AIRK 1.4.0 development release record
+
+This is a draft for the approved 1.4.0 clean break, updated October 23, 2026. Native, extension and lockfile versions remain 1.3.2 during opt-in implementation. It is not an available release or a qualification receipt. The [complete plan](airkservice-architecture.md) and [completion checklist](service-implementation-checklist.md) track remaining work.
+
+Implemented native development paths include authenticated service brokerage, direct project retrieval, durable fenced work, shared inference, service-owned source watching, bounded publication and replacement storage, native user defaults, immutable offline installation, resumable launcher repair and separately bound writable state. Approved organization-managed read-only payloads now support external supervision or user-on-demand startup without copying provider executables. Detachment preserves provider files and durable state; externally supervised processes remain running.
+
+The default extension/CLI/container cutover, service console, bulk repair, remaining lifecycle/resource integration and final qualification are incomplete. Token-efficiency changes, including terse defaults, Full selection, compact facts and retained change baselines, remain Phase 7 requirements until their complete implementation and tests land. Development evidence is recorded in the affected operating guides. Historical 1.3.x release records continue to describe those versions.
+
+Stage commits remain local and human DCO-signed. No push, publication or service VSIX is authorized before the user's implementation, test and review gate is satisfied. Final versions and packaging receipts will be recorded here at cutover.

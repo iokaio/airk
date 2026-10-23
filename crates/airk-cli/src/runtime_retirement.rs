@@ -154,6 +154,9 @@ struct UninstallIntent {
 }
 
 pub(super) async fn uninstall(root: &Path) -> Result<serde_json::Value> {
+    if managed::is_configured(root)? {
+        return managed::detach(root).await;
+    }
     let intent_path = root.join("uninstall.json");
     let intent: UninstallIntent = if intent_path.try_exists()? {
         serde_json::from_slice(&read_bounded(&intent_path, 4096)?)?

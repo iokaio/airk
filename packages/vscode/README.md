@@ -8,6 +8,8 @@ Everything runs on your machine. There is no cloud service, API key, Docker, Rus
 
 ## What's new in 1.3.2
 
+Development branch: the 1.4.0 service implementation is in progress. Its opt-in native installer supports immutable offline payloads, separate writable state and approved organization-managed read-only payloads. The packaged extension remains 1.3.2 until default cutover, testing and review finish; no service VSIX has been built.
+
 Initialized empty indexes now publish progressive source batches, including empty full rebuilds and first-use configuration changes. The first batch targets 32 files, and completed batches are preserved at final publication. Source-scan status is clearer, with elapsed time and committed/processed counts beside the indexing buttons. The reported Windows two-project setup passed manual acceptance with the 1.3.2 VSIX; see [scope and qualification](https://github.com/iokaio/airk/blob/main/docs/release-1.3.2.md).
 
 ## What's new in 1.3.1

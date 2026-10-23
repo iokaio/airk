@@ -291,6 +291,7 @@ pub(super) fn stage_with_layout(
     channel: RuntimeChannel,
 ) -> Result<Approval> {
     let _lock = install_lock(root)?;
+    managed::require_unmanaged(root)?;
     ensure!(
         !root.join("uninstall.json").try_exists()?,
         "resume pending runtime uninstall before staging"
