@@ -120,10 +120,15 @@ pub(super) fn pending(root: &Path) -> Result<Option<String>> {
     Ok(Some(intent.runtime))
 }
 
+#[cfg(test)]
 fn begin(root: &Path, runtime: &str) -> Result<Intent> {
     let (main, _) = verify_runtime(root, runtime)?;
-    let target = runtime_pair::digest_file(&main)?;
-    let bytes = fs::metadata(&main)?.len();
+    begin_verified(root, runtime, &main)
+}
+
+fn begin_verified(root: &Path, runtime: &str, main: &Path) -> Result<Intent> {
+    let target = runtime_pair::digest_file(main)?;
+    let bytes = fs::metadata(main)?.len();
     ensure!(
         bytes > 0 && bytes <= MAX_IMAGE,
         "launcher image exceeds repair allowance"
@@ -232,17 +237,20 @@ fn finish(root: &Path, intent: &Intent) -> Result<()> {
 
 /// Caller owns the installer lock, stopped-manager proof and all process leases.
 pub(super) fn repair(root: &Path, runtime: &str) -> Result<()> {
+    // One complete payload verification belongs to this locked operation. A
+    // resumed intent revalidates exactly as a fresh one does; do not hash every
+    // embedding payload twice when creating the initial intent.
+    let (main, _) = verify_runtime(root, runtime)?;
     let intent = if exists(&root.join(INTENT))? {
         Intent::read(root)?
     } else {
-        begin(root, runtime)?
+        begin_verified(root, runtime, &main)?
     };
     ensure!(
         intent.runtime == runtime,
         "pending launcher repair targets another selected runtime; inspect or abort first"
     );
     intent.inspect_receipt(root)?;
-    let (main, _) = verify_runtime(root, runtime)?;
     ensure!(
         runtime_pair::digest_file(&main)? == intent.target
             && fs::metadata(&main)?.len() == intent.bytes,

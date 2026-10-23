@@ -19,6 +19,12 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
             } else {
                 Some(install_lock(install_dir)?)
             };
+            if !matches!(
+                action,
+                LoginCommand::Plan | LoginCommand::Status | LoginCommand::Stop
+            ) {
+                activation::require_settled(install_dir)?;
+            }
             match action {
                 LoginCommand::Plan => serde_json::to_value(manager.plan()?)?,
                 LoginCommand::Status => serde_json::to_value(manager.status()?)?,
@@ -47,10 +53,14 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
                 );
             }
             launcher_repair::require_settled(install_dir)?;
-            let (_, executable, _) = selected(install_dir)?;
-            if std::env::current_exe()?.canonicalize()? != executable.canonicalize()? {
-                // A stable launcher must use the selected runtime's lifecycle
-                // implementation, including its state layout and upgrade intent.
+            let (executable, _) = startup_selected(install_dir)?;
+            let current = std::env::current_exe()?.canonicalize()?;
+            if current != executable.canonicalize()?
+                && runtime_pair::digest_file(&current)? != runtime_pair::digest_file(&executable)?
+            {
+                // A different implementation must delegate lifecycle interpretation.
+                // An exact verified launcher copy already has that implementation
+                // and can dispatch serve without another complete payload scan.
                 let mut command = Command::new(executable);
                 command
                     .arg("runtime")
@@ -85,6 +95,12 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
             let _lock = install_lock(install_dir)?;
             layout::abort(install_dir)?;
             serde_json::json!({"pending_layout_aborted":true,"state_preserved":true})
+        }
+        RuntimeCommand::AbortActivation { install_dir } => {
+            let _lock = install_lock(install_dir)?;
+            managed::require_unmanaged(install_dir)?;
+            activation::abort(install_dir).await?;
+            serde_json::json!({"activation_aborted":true,"payloads_preserved":true})
         }
         RuntimeCommand::Managed {
             source,
@@ -130,6 +146,7 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
         } => {
             managed::require_unmanaged(install_dir)?;
             let _lock = install_lock(install_dir)?;
+            activation::require_settled(install_dir)?;
             match fs::symlink_metadata(install_dir.join("selected.json")) {
                 Ok(_) => {
                     let selection = selection_record(install_dir)?;
@@ -163,6 +180,7 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
         RuntimeCommand::RepairLauncher { install_dir } => {
             managed::require_unmanaged(install_dir)?;
             let _lock = install_lock(install_dir)?;
+            activation::require_settled(install_dir)?;
             crate::service_manager::ServiceManager::for_runtime(install_dir)?
                 .require_stopped_for_maintenance()?;
             let _quiescence = quiescent(install_dir).context(
@@ -174,6 +192,7 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
         }
         RuntimeCommand::AbortLauncherRepair { install_dir } => {
             let _lock = install_lock(install_dir)?;
+            activation::require_settled(install_dir)?;
             crate::service_manager::ServiceManager::for_runtime(install_dir)?
                 .require_stopped_for_maintenance()?;
             let _quiescence = quiescent(install_dir)?;
@@ -219,7 +238,17 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
                 .as_ref()
                 .err()
                 .map(|error| error.to_string().chars().take(512).collect::<String>());
-            serde_json::json!({"runtime":selection.ok(),"runtime_error":selection_error,"bootstrap":bootstrap.ok().flatten(),"bootstrap_error":bootstrap_error,"pending_stages":stages.ok(),"staging_error":stages_error,"pending_launcher_repair":repair.ok().flatten(),"launcher_repair_error":repair_error,"state_layout":state_layout.ok(),"layout_error":layout_error,"managed_policy":policy.ok().flatten(),"managed_policy_error":policy_error,"live_service_health":"not_checked"})
+            let activation = activation::pending(install_dir);
+            let activation_error = activation
+                .as_ref()
+                .err()
+                .map(|error| error.to_string().chars().take(512).collect::<String>());
+            let activation_result = activation::result(install_dir);
+            let activation_result_error = activation_result
+                .as_ref()
+                .err()
+                .map(|error| error.to_string().chars().take(512).collect::<String>());
+            serde_json::json!({"runtime":selection.ok(),"runtime_error":selection_error,"bootstrap":bootstrap.ok().flatten(),"bootstrap_error":bootstrap_error,"pending_stages":stages.ok(),"staging_error":stages_error,"pending_launcher_repair":repair.ok().flatten(),"launcher_repair_error":repair_error,"state_layout":state_layout.ok(),"layout_error":layout_error,"managed_policy":policy.ok().flatten(),"managed_policy_error":policy_error,"pending_activation":activation.ok().flatten(),"activation_error":activation_error,"activation_result":activation_result.ok().flatten(),"activation_result_error":activation_result_error,"live_service_health":"not_checked"})
         }
         RuntimeCommand::ResetStartup { install_dir } => {
             let _lock = install_lock(install_dir)?;
@@ -259,7 +288,7 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
                 &helper,
                 &format!("airk-embed {}", env!("CARGO_PKG_VERSION")),
             )?;
-            serde_json::json!({"protocol":1,"version":env!("CARGO_PKG_VERSION"),"self_test":"passed","state_layout":1,"foreground_dispatch":1,"managed_reference":1})
+            serde_json::json!({"protocol":1,"version":env!("CARGO_PKG_VERSION"),"self_test":"passed","state_layout":1,"foreground_dispatch":1,"managed_reference":1,"activation_resume":1})
         }
     };
     println!("{}", serde_json::to_string(&output)?);

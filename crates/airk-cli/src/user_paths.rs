@@ -222,6 +222,22 @@ pub(crate) fn configuration_base() -> Result<PathBuf> {
     }
 }
 
+#[cfg(any(target_os = "macos", test))]
+fn mac_directories(
+    home: &Path,
+    leaf: &str,
+) -> (PathBuf, PathBuf, PathBuf, PathBuf, PathBuf, PathBuf) {
+    let support = home.join("Library/Application Support/AIRK");
+    (
+        support.join(leaf),
+        support.join("configuration").join(leaf),
+        support.join("data").join(leaf),
+        support.join("state").join(leaf),
+        home.join("Library/Caches/AIRK").join(leaf),
+        home.join("Library/Logs/AIRK").join(leaf),
+    )
+}
+
 impl UserPaths {
     pub(crate) fn discover(channel: Channel) -> Result<Self> {
         #[cfg(unix)]
@@ -256,15 +272,7 @@ impl UserPaths {
             (install, configuration, data, state, cache, logs)
         };
         #[cfg(target_os = "macos")]
-        let (install, configuration, data, state, cache, logs) = {
-            let install = home.join("Library/Application Support/AIRK").join(leaf);
-            let configuration = install.join("configuration");
-            let data = install.join("data");
-            let state = install.join("state");
-            let cache = home.join("Library/Caches/AIRK").join(leaf);
-            let logs = home.join("Library/Logs/AIRK").join(leaf);
-            (install, configuration, data, state, cache, logs)
-        };
+        let (install, configuration, data, state, cache, logs) = mac_directories(&home, leaf);
         #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = leaf;
@@ -288,6 +296,22 @@ impl UserPaths {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn mac_defaults_keep_collection_data_outside_installer_and_control_ownership() -> Result<()> {
+        let owner = tempfile::tempdir()?;
+        let (install, configuration, data, state, cache, logs) =
+            mac_directories(owner.path(), "service-1.4");
+        for left in [&install, &configuration, &data, &state, &cache, &logs] {
+            assert!(!left.exists());
+            for right in [&install, &configuration, &data, &state, &cache, &logs] {
+                if left != right {
+                    assert!(!left.starts_with(right) && !right.starts_with(left));
+                }
+            }
+        }
+        assert!(data.starts_with(owner.path().join("Library/Application Support/AIRK/data")));
+        Ok(())
+    }
 
     #[test]
     fn xdg_absolute_policy_and_separate_channels_do_not_create_directories() -> Result<()> {

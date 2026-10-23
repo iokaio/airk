@@ -174,7 +174,13 @@ impl ServiceManager {
                 .join("Library/LaunchAgents")
                 .join(format!("{id}.plist")),
         };
-        let receipt = config.join("airk/services").join(format!("{id}.json"));
+        let receipt = if shared {
+            // On-demand startup must not require access to OS login configuration.
+            // Only a private install-side receipt opts into manager ownership.
+            Path::new(&data).join("startup-owner.json")
+        } else {
+            config.join("airk/services").join(format!("{id}.json"))
+        };
         for argument in args.iter().map(String::as_str).chain([executable
             .to_str()
             .context("service executable must be UTF-8")?])
@@ -305,6 +311,7 @@ impl ServiceManager {
 
     /// Explicit user action: register login startup and start immediately.
     pub fn install(&self) -> Result<ServiceStatus> {
+        self.require_registration_adapter()?;
         self.check_launchable()?;
         ensure!(
             !self.check_owned()?,
@@ -337,6 +344,7 @@ impl ServiceManager {
     }
 
     pub fn start(&self) -> Result<ServiceStatus> {
+        self.require_registration_adapter()?;
         self.check_launchable()?;
         ensure!(self.check_owned()?, "service is not installed");
         let status = self.status()?;
@@ -424,6 +432,32 @@ impl ServiceManager {
         self.check_owned()
     }
 
+    fn require_registration_adapter(&self) -> Result<()> {
+        ensure!(
+            !(self.id.starts_with("airksvc-") && self.platform == Platform::Macos),
+            "shared LaunchAgent configuration proof is unavailable; retain on-demand mode until the native adapter is implemented and qualified"
+        );
+        Ok(())
+    }
+
+    /// Establish actual restart ownership before an upgrade can save an intent.
+    /// Absent local receipts do not authorize altering an unrelated OS definition.
+    pub(crate) fn owns_restart(&self) -> Result<bool> {
+        if !self.check_owned()? {
+            return Ok(false);
+        }
+        self.require_registration_adapter()?;
+        let status = self.status()?;
+        ensure!(
+            status.loaded.is_some(),
+            "startup manager state is unavailable"
+        );
+        if status.loaded == Some(true) {
+            self.require_registered(&status)?;
+        }
+        Ok(true)
+    }
+
     pub(crate) fn require_stopped_for_maintenance(&self) -> Result<()> {
         if !self.check_owned()? {
             return Ok(());
@@ -447,7 +481,7 @@ impl ServiceManager {
         if self.id.starts_with("airksvc-") {
             let root = Path::new(&self.data);
             let launcher = crate::runtime_install::verified_launcher(root)?;
-            let (_, selected, _) = crate::runtime_install::selected(root)?;
+            let (selected, _) = crate::runtime_install::startup_selected(root)?;
             ensure!(
                 crate::runtime_pair::digest_file(&launcher)?
                     == crate::runtime_pair::digest_file(&selected)?,
@@ -710,7 +744,83 @@ fn absolute_existing_ancestor(path: &Path) -> Result<PathBuf> {
     }
     Ok(path)
 }
+fn config_directory(path: &Path, metadata: &fs::Metadata) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        // SAFETY: geteuid takes no pointers and observes this process's user identity.
+        let uid = unsafe { libc::geteuid() };
+        if metadata.file_type().is_symlink() {
+            ensure!(
+                metadata.uid() == 0,
+                "redirected user startup configuration directory"
+            );
+            return Ok(()); // Root-owned host aliases are checked again after canonicalization.
+        }
+        let mode = metadata.permissions().mode();
+        ensure!(
+            metadata.is_dir()
+                && (metadata.uid() == uid || metadata.uid() == 0)
+                && (mode & 0o022 == 0 || (metadata.uid() == 0 && mode & 0o1000 != 0)),
+            "unsafe startup configuration directory: {}",
+            path.display()
+        );
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        ensure!(
+            metadata.is_dir() && metadata.file_attributes() & 0x400 == 0,
+            "redirected startup configuration directory: {}",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+fn config_ancestry(path: &Path, create: bool) -> Result<()> {
+    let parent = path
+        .parent()
+        .context("service configuration has no parent")?;
+    ensure!(
+        parent.is_absolute(),
+        "service configuration requires an absolute parent"
+    );
+    let ancestors = parent
+        .ancestors()
+        .filter(|path| !path.as_os_str().is_empty())
+        .collect::<Vec<_>>();
+    let mut missing = Vec::new();
+    for directory in ancestors.iter().rev() {
+        match fs::symlink_metadata(directory) {
+            Ok(metadata) => config_directory(directory, &metadata)?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => missing.push(*directory),
+            Err(error) => return Err(error.into()),
+        }
+    }
+    // Resolve trusted host aliases, then check their actual target ancestry too.
+    if let Some(existing) = ancestors.iter().find(|directory| directory.exists()) {
+        for directory in existing.canonicalize()?.ancestors() {
+            config_directory(directory, &fs::symlink_metadata(directory)?)?;
+        }
+    }
+    if create {
+        for directory in missing {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::DirBuilderExt;
+                fs::DirBuilder::new().mode(0o700).create(directory)?;
+            }
+            #[cfg(windows)]
+            crate::local_ipc::prepare_root(directory)?;
+            config_directory(directory, &fs::symlink_metadata(directory)?)?;
+        }
+    }
+    Ok(())
+}
+
 fn read_config(path: &Path) -> Result<Option<Vec<u8>>> {
+    config_ancestry(path, false)?;
     let metadata = match fs::symlink_metadata(path) {
         Ok(value) => value,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -720,6 +830,7 @@ fn read_config(path: &Path) -> Result<Option<Vec<u8>>> {
         metadata.is_file() && !metadata.file_type().is_symlink() && metadata.len() <= MAX_CONFIG,
         "invalid, linked or oversized service configuration"
     );
+    crate::runtime_install::safe_file(path)?;
     let mut bytes = Vec::new();
     fs::File::open(path)?
         .take(MAX_CONFIG + 1)
@@ -735,7 +846,7 @@ fn write_new(path: &Path, bytes: &[u8]) -> Result<()> {
         bytes.len() as u64 <= MAX_CONFIG,
         "service configuration exceeds size limit"
     );
-    fs::create_dir_all(path.parent().context("service path has no parent")?)?;
+    config_ancestry(path, true)?;
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
@@ -895,6 +1006,78 @@ pub(crate) fn check_executable_identity(program: &Path, expected: &str) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn startup_configuration_preserves_aliases_and_creates_only_private_missing_parents()
+    -> Result<()> {
+        let owner = tempfile::tempdir()?;
+        let root = owner.path().canonicalize()?;
+        let path = root.join("new/configuration/fixture.conf");
+        write_new(&path, b"Owned configuration fixture.")?;
+        assert_eq!(
+            read_config(&path)?.unwrap(),
+            b"Owned configuration fixture."
+        );
+        let alias = root.join("alias.conf");
+        fs::hard_link(&path, &alias)?;
+        assert!(read_config(&alias).is_err());
+        assert!(write_new(&alias, b"Do not replace.").is_err());
+        assert_eq!(fs::read(&path)?, b"Owned configuration fixture.");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::{PermissionsExt, symlink};
+            assert_eq!(
+                fs::metadata(path.parent().unwrap())?.permissions().mode() & 0o777,
+                0o700
+            );
+            let existing = root.join("existing-user-units");
+            fs::create_dir(&existing)?;
+            fs::set_permissions(&existing, fs::Permissions::from_mode(0o755))?;
+            write_new(
+                &existing.join("unit.service"),
+                b"Owned existing-directory fixture.",
+            )?;
+            assert_eq!(fs::metadata(&existing)?.permissions().mode() & 0o777, 0o755);
+            // Ordinary users cannot redirect startup writes into another source.
+            if unsafe { libc::geteuid() } != 0 {
+                let redirected = root.join("redirected");
+                symlink(&existing, &redirected)?;
+                assert!(write_new(&redirected.join("nested/new.service"), b"Refused.").is_err());
+                assert!(!existing.join("nested").exists());
+            }
+            fs::set_permissions(&existing, fs::Permissions::from_mode(0o777))?;
+            assert!(write_new(&existing.join("refused.service"), b"Refused.").is_err());
+            assert!(!existing.join("refused.service").exists());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn shared_on_demand_ownership_is_read_from_the_private_installation() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let mut service = ServiceManager::for_runtime(root.path())?;
+        assert_eq!(
+            service.receipt,
+            root.path().canonicalize()?.join("startup-owner.json")
+        );
+        // An absent install-side opt-in must not inspect unavailable OS config.
+        service.definition = root.path().join("unavailable/definition");
+        fs::write(
+            root.path().join("unavailable"),
+            b"Not an accessible directory.",
+        )?;
+        assert!(!service.owns_restart()?);
+        Ok(())
+    }
+    #[test]
+    fn unavailable_shared_launchagent_proof_refuses_registration_before_any_write() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let mut service = fixture(Platform::Macos, root.path());
+        service.id = "airksvc-native-proof-fixture".into();
+        assert!(!service.owns_restart()?);
+        assert!(service.install().is_err());
+        assert!(!service.definition.exists() && !service.receipt.exists());
+        Ok(())
+    }
     pub(super) fn fixture(platform: Platform, root: &Path) -> ServiceManager {
         ServiceManager {
             platform,
@@ -1070,7 +1253,7 @@ mod tests {
         let fixture = r#"
 $airkFixtureNative = New-Object -ComObject 'Schedule.Service'
 $airkFixtureDefinition = $airkFixtureNative.NewTask(0)
-$airkFixtureDefinition.XmlText = $env:AIRK_FIXTURE_XML
+$airkFixtureDefinition.XmlText = $env:AIRK_FIXTURE_XML.Replace('__AIRK_CURRENT_ACCOUNT__', [System.Security.Principal.WindowsIdentity]::GetCurrent().Name)
 $airkFixtureTask = [pscustomobject]@{ State = [int] $env:AIRK_FIXTURE_STATE; Definition = $airkFixtureDefinition }
 $airkFixtureFolder = [pscustomobject]@{}
 $airkFixtureFolder | Add-Member ScriptMethod GetTask { param($name) return $script:airkFixtureTask }
@@ -1085,6 +1268,30 @@ $airkFixtureScheduler | Add-Member ScriptMethod NewTask { param($flags) return $
         );
         for (xml, matches, state, running) in [
             (expected.clone(), true, 3, Some(false)),
+            (
+                expected.replacen(
+                    &format!("<UserId>{}</UserId>", service.principal),
+                    "<UserId>__AIRK_CURRENT_ACCOUNT__</UserId>",
+                    1,
+                ),
+                true,
+                3,
+                Some(false),
+            ),
+            (
+                expected.replacen(
+                    &format!("<UserId>{}</UserId>", service.principal),
+                    if service.principal == "S-1-5-18" {
+                        "<UserId>S-1-5-19</UserId>"
+                    } else {
+                        "<UserId>S-1-5-18</UserId>"
+                    },
+                    1,
+                ),
+                false,
+                3,
+                Some(false),
+            ),
             (expected.clone(), true, 2, Some(true)),
             (expected.clone(), true, 0, None),
             (

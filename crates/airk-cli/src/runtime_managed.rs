@@ -207,6 +207,7 @@ pub(super) async fn configure(
     } else {
         ensure!(
             !exists(&root.join("selected.json"))?
+                && !exists(&root.join("startup-owner.json"))?
                 && !exists(&root.join("launcher.json"))?
                 && !exists(&launcher_path(root))?
                 && staging::pending(root)?.is_empty(),

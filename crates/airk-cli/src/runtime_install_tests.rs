@@ -209,10 +209,13 @@ async fn uninstall_empty_initialized_layout_without_a_runtime_directory_is_idemp
 
 #[test]
 fn native_self_test_binds_actual_version_capabilities_and_bounded_completion() -> Result<()> {
-    let result = serde_json::json!({"protocol":1,"version":"1.4.0","self_test":"passed","state_layout":1,"foreground_dispatch":1,"managed_reference":1});
+    let result = serde_json::json!({"protocol":1,"version":"1.4.0","self_test":"passed","state_layout":1,"foreground_dispatch":1,"managed_reference":1,"activation_resume":1});
     validate_self_test_result(&serde_json::to_vec(&result)?, "1.4.0")?;
     assert!(validate_self_test_result(&serde_json::to_vec(&result)?, "9.9.9").is_err());
     let mut changed = result.clone();
+    changed.as_object_mut().unwrap().remove("activation_resume");
+    assert!(validate_self_test_result(&serde_json::to_vec(&changed)?, "1.4.0").is_err());
+    changed = result.clone();
     changed.as_object_mut().unwrap().remove("state_layout");
     assert!(validate_self_test_result(&serde_json::to_vec(&changed)?, "1.4.0").is_err());
     changed = result;

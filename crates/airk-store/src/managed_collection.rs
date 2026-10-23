@@ -46,8 +46,12 @@ pub(crate) fn reject_file_aliases(path: &Path, metadata: &std::fs::Metadata) -> 
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        let _ = path;
-        ensure!(metadata.nlink() == 1, "hard-linked managed file");
+        ensure!(
+            metadata.nlink() == 1,
+            "hard-linked managed file (links={}, path={})",
+            metadata.nlink(),
+            path.display()
+        );
     }
     #[cfg(windows)]
     {
@@ -70,7 +74,12 @@ pub(crate) fn reject_file_aliases(path: &Path, metadata: &std::fs::Metadata) -> 
             "managed file identity inspection failed"
         );
         let information = unsafe { information.assume_init() };
-        ensure!(information.nNumberOfLinks == 1, "hard-linked managed file");
+        ensure!(
+            information.nNumberOfLinks == 1,
+            "hard-linked managed file (links={}, path={})",
+            information.nNumberOfLinks,
+            path.display()
+        );
     }
     Ok(())
 }

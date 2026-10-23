@@ -40,6 +40,20 @@ if ($null -ne $airkTask) {
                     [void] $airkNode.ParentNode.RemoveChild($airkNode)
                 }
             }
+            # Task Scheduler can export a logon trigger's SID as DOMAIN\name.
+            # Compare native identities, while retaining empty/foreign principals
+            # and every execution/trigger setting in the complete XML comparison.
+            foreach ($airkNode in @($airkDocument.SelectNodes('/t:Task/t:Triggers/t:LogonTrigger/t:UserId | /t:Task/t:Principals/t:Principal/t:UserId', $airkNamespaces))) {
+                if (-not [String]::IsNullOrEmpty($airkNode.InnerText)) {
+                    try {
+                        $airkIdentity = New-Object System.Security.Principal.SecurityIdentifier($airkNode.InnerText)
+                    } catch {
+                        $airkAccount = New-Object System.Security.Principal.NTAccount($airkNode.InnerText)
+                        $airkIdentity = $airkAccount.Translate([System.Security.Principal.SecurityIdentifier])
+                    }
+                    $airkNode.InnerText = $airkIdentity.Value
+                }
+            }
             return $airkDocument.OuterXml
         }
         $airkResult.definition_matches = ((Convert-AirkDefinition $airkExpectedTask.XmlText) -ceq (Convert-AirkDefinition $airkTask.Definition.XmlText))

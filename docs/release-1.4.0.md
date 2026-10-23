@@ -14,4 +14,6 @@ Source admission now rejects overlaps with service control, verified installer s
 
 Installed payloads now require complete inventoried topology before selection/execution. Unknown neighboring files block startup and are preserved during resumable retirement.
 
+Native activation now records resumable drain/launcher/probe/restoration intent, keeps public selection behind exact candidate and registry readiness, preserves OS restart ownership and supports explicit pre-commit abort. Windows on-demand and non-elevated Task Scheduler crash fixtures passed explicit abort, exact candidate recovery and owned cleanup; native LaunchAgent proof and broader installed-target qualification remain open.
+
 Stage commits remain local and human DCO-signed. No push, publication or service VSIX is authorized before the user's implementation, test and review gate is satisfied. Final versions and packaging receipts will be recorded here at cutover.

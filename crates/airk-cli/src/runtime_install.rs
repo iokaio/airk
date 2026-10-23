@@ -18,6 +18,8 @@ use std::{
     time::Duration,
 };
 
+#[path = "runtime_activation.rs"]
+mod activation;
 #[path = "runtime_launcher_repair.rs"]
 mod launcher_repair;
 #[path = "runtime_layout.rs"]
@@ -79,6 +81,11 @@ pub enum RuntimeCommand {
     },
     /// Abandon an unfinished state-layout claim; preserve all state directories and their contents.
     AbortLayout {
+        #[arg(long)]
+        install_dir: PathBuf,
+    },
+    /// Restore the preceding selection after an unfinished activation; preserve runtime payloads.
+    AbortActivation {
         #[arg(long)]
         install_dir: PathBuf,
     },
@@ -204,7 +211,7 @@ pub struct Approval {
     pub verification_basis: VerificationBasis,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Selection {
     schema: u32,
@@ -313,7 +320,7 @@ fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
-fn safe_file(path: &Path) -> Result<()> {
+pub(crate) fn safe_file(path: &Path) -> Result<()> {
     let metadata = fs::symlink_metadata(path)?;
     ensure!(
         metadata.is_file() && !metadata.file_type().is_symlink(),
@@ -842,8 +849,9 @@ fn validate_self_test_result(bytes: &[u8], version: &str) -> Result<()> {
     ensure!(
         result["state_layout"] == 1
             && result["foreground_dispatch"] == 1
-            && result["managed_reference"] == 1,
-        "approved runtime lacks the required state-layout, foreground-dispatch or managed-reference capability"
+            && result["managed_reference"] == 1
+            && result["activation_resume"] == 1,
+        "approved runtime lacks required state-layout, foreground-dispatch, managed-reference or activation-resume capability"
     );
     Ok(())
 }
@@ -985,12 +993,23 @@ async fn start(
 
 pub async fn ensure_running(root: &Path) -> Result<ServiceHealth> {
     let _lock = install_lock(root)?;
-    launcher_repair::require_settled(root)?;
     if managed::read(root)?.is_some() {
         return managed::ensure(root).await;
     }
+    if activation::pending(root)?.is_some() {
+        activation::resume(root).await?;
+    }
+    launcher_repair::require_settled(root)?;
     let (_, main, approval) = selected(root)?;
-    start(root, &approval, &main, true).await
+    activation::start_selected(root, &approval, &main, None).await
+}
+
+pub(crate) fn startup_selected(root: &Path) -> Result<(PathBuf, Approval)> {
+    if let Some(selected) = activation::startup(root)? {
+        return Ok(selected);
+    }
+    let (_, main, approval) = selected(root)?;
+    Ok((main, approval))
 }
 
 async fn drain(root: &Path, main: &Path, approval: &Approval) -> Result<()> {
@@ -1065,51 +1084,7 @@ fn quiescent(root: &Path) -> Result<Quiescence> {
 
 pub async fn activate(root: &Path, identity: &str) -> Result<Selection> {
     let _lock = install_lock(root)?;
-    managed::require_unmanaged(root)?;
-    launcher_repair::require_settled(root)?;
-    ensure!(
-        !root.join("uninstall.json").try_exists()?,
-        "resume the pending runtime uninstall before activation"
-    );
-    let (main, approval) = verify_runtime(root, identity)?;
-    let prior = if root.join("selected.json").try_exists()? {
-        Some(selected(root)?)
-    } else {
-        None
-    };
-    if let Some((selection, old_main, old_approval)) = &prior {
-        if selection.active == identity {
-            start(root, old_approval, old_main, true).await?;
-            return Ok(selection.clone());
-        }
-        drain(root, old_main, old_approval).await?;
-    }
-    match start(root, &approval, &main, true).await {
-        Ok(_) => {
-            let selection = Selection {
-                schema: 1,
-                active: identity.into(),
-                previous: prior
-                    .as_ref()
-                    .map(|(s, _, _)| s.active.clone())
-                    .filter(|s| s != identity),
-            };
-            if let Err(error) = replace_json(root, "selected.json", &selection) {
-                let _ = drain(root, &main, &approval).await;
-                if let Some((_, old_main, old_approval)) = &prior {
-                    let _ = start(root, old_approval, old_main, false).await;
-                }
-                return Err(error);
-            }
-            Ok(selection)
-        }
-        Err(error) => {
-            if let Some((_, old_main, old_approval)) = &prior {
-                start(root, old_approval, old_main, false).await.context("activation failed and preceding runtime could not restart; prior selection remains intact")?;
-            }
-            Err(error)
-        }
-    }
+    activation::begin(root, identity).await
 }
 
 #[path = "runtime_install_commands.rs"]
