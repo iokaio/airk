@@ -37,6 +37,7 @@ pub struct Access {
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum Control {
+    Renew { worker: Incarnation },
     Register { grant: Grant },
     Revoke { worker: Incarnation },
     Status,
@@ -46,6 +47,7 @@ pub enum Control {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Observation {
+    Renewed,
     Ready {
         pool: Incarnation,
         role: String,

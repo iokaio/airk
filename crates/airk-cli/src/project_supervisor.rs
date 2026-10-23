@@ -34,6 +34,8 @@ struct ChildWorker {
     identity: Option<WorkerIdentity>,
     role: String,
     started: Instant,
+    last_renewal: Instant,
+    pool_active: bool,
 }
 
 impl Drop for ChildWorker {
@@ -86,6 +88,8 @@ impl ChildWorker {
             identity: None,
             role: protocol::role(worker),
             started: Instant::now(),
+            last_renewal: Instant::now(),
+            pool_active: false,
         };
         process.reader = Some(
             std::thread::Builder::new()
@@ -160,6 +164,7 @@ impl ChildWorker {
         allowance: QueryAllowance,
         pool: Option<crate::embedding_pool_protocol::Access>,
     ) -> Result<()> {
+        let pool_active = pool.is_some();
         service_ipc::write_frame(
             self.input.as_mut().context("project input missing")?,
             &WorkerCommand::Activate {
@@ -175,6 +180,24 @@ impl ChildWorker {
             ),
             "project activation failed"
         );
+        self.pool_active = pool_active;
+        Ok(())
+    }
+
+    fn renew(&mut self) -> Result<()> {
+        let identity = self.identity.context("project identity missing")?;
+        service_ipc::write_frame(
+            self.input.as_mut().context("project input missing")?,
+            &WorkerCommand::Renew { identity },
+        )?;
+        ensure!(
+            matches!(
+                self.output.recv_timeout(Duration::from_secs(3))?,
+                Reply::Renewed
+            ),
+            "project allowance renewal failed"
+        );
+        self.last_renewal = Instant::now();
         Ok(())
     }
 }
@@ -345,6 +368,41 @@ impl Supervisor {
                             drop(policy);
                             if let Some(pool) = pool.as_mut() {
                                 let _ = pool.revoke(identity.worker);
+                            }
+                        }
+                    }
+                    let mut failed_renewals = Vec::new();
+                    for (project, worker) in &mut workers {
+                        if worker.last_renewal.elapsed() < Duration::from_secs(30) {
+                            continue;
+                        }
+                        let Some(identity) = worker.identity else {
+                            continue;
+                        };
+                        let renewed = worker.renew().and_then(|_| {
+                            policy
+                                .lock()
+                                .map_err(|_| anyhow::anyhow!("service policy unavailable"))?
+                                .renew(identity, Instant::now(), Duration::from_secs(300))
+                                .map_err(Into::into)
+                        });
+                        if renewed.is_err() {
+                            failed_renewals.push(*project);
+                            continue;
+                        }
+                        if worker.pool_active
+                            && let Some(pool) = pool.as_mut()
+                        {
+                            let _ = pool.renew(identity.worker);
+                        }
+                    }
+                    for project in failed_renewals {
+                        if let Some(worker) = workers.remove(&project) {
+                            let identity = worker.identity;
+                            // An ambiguous acknowledgement never releases live capacity.
+                            drop(worker);
+                            if let (Some(identity), Ok(mut policy)) = (identity, policy.lock()) {
+                                let _ = policy.process_exited(identity);
                             }
                         }
                     }

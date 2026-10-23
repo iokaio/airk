@@ -277,6 +277,10 @@ pub async fn run() -> Result<()> {
         tokio::select! {
             command=commands.recv()=>{
                 match command {
+                    Some(Command::Renew{identity:expected})=>{
+                        let renewed=expected==identity&&state.broker.lock().map_err(|_|anyhow::anyhow!("query policy unavailable"))?.renew(identity,Instant::now(),Duration::from_secs(300)).is_ok();
+                        service_ipc::write_frame(&mut std::io::stdout().lock(),&if renewed{Reply::Renewed}else{Reply::Failed})?;
+                    },
                     Some(Command::Grant{caller})=>{
                         let grant=state.broker.lock().map_err(|_|anyhow::anyhow!("query policy unavailable"))?.issue(identity,caller,Instant::now(),Duration::from_secs(15));
                         let reply=match grant{Ok(grant)=>Reply::Grant{grant},Err(_)=>Reply::Failed};

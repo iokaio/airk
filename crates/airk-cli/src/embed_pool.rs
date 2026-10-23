@@ -536,6 +536,11 @@ pub async fn run() -> Result<()> {
         tokio::select! {
             command=commands.recv()=>{
                 let observation=match command {
+                    Some(protocol::Control::Renew{worker})=>{
+                        let mut grants=state.grants.lock().map_err(|_|anyhow::anyhow!("pool authorization unavailable"))?;
+                        let authorization=grants.values_mut().find(|auth|auth.grant.worker==worker&&auth.alive.load(Ordering::Acquire)&&Instant::now()<auth.expires);
+                        if let Some(authorization)=authorization {authorization.expires=Instant::now()+Duration::from_secs(300);protocol::Observation::Renewed}else{protocol::Observation::Failed}
+                    },
                     Some(protocol::Control::Register{grant})=>{
                         let mut grants=state.grants.lock().map_err(|_|anyhow::anyhow!("pool authorization unavailable"))?;
                         grants.retain(|_,auth|{if auth.alive.load(Ordering::Acquire)&&Instant::now()<auth.expires{true}else{auth.alive.store(false,Ordering::Release);false}});

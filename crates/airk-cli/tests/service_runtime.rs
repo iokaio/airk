@@ -685,3 +685,103 @@ fn late_child_with_buffered_initialization_cannot_open_collection_without_activa
     );
     Ok(())
 }
+
+#[test]
+fn private_worker_channel_renews_only_the_live_scoped_generation() -> Result<()> {
+    use airk_cli::{
+        project_protocol::{self, Command as Control, Reply},
+        service_ipc,
+    };
+    use airk_store::service::registry::ServiceRegistry;
+    let owner = tempfile::tempdir()?;
+    let root = owner.path().join("runtime");
+    let source = owner.path().join("source");
+    let data = owner.path().join("state");
+    fs::create_dir(&source)?;
+    fs::create_dir(&data)?;
+    airk_cli::local_ipc::prepare_root(&root)?;
+    let service = airk_kernel::service_broker::new_instance_id()?;
+    let project = airk_kernel::service_projects::registration(&source, &data, "fixture")?;
+    ServiceRegistry::open(&root, service)?.register(&project)?;
+    let mut child = command()
+        .arg("project-worker")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()?;
+    let mut input = child.stdin.take().context("worker input missing")?;
+    let mut output = child.stdout.take().context("worker output missing")?;
+    let mut children = Children(vec![child]);
+    let (sender, receiver) = std::sync::mpsc::sync_channel(4);
+    let reader = std::thread::spawn(move || {
+        while let Ok(Some(reply)) = service_ipc::read_frame::<_, Reply>(&mut output) {
+            if sender.try_send(reply).is_err() {
+                break;
+            }
+        }
+    });
+    let result = (|| -> Result<()> {
+        service_ipc::write_frame(
+            &mut input,
+            &project_protocol::Init {
+                runtime: root.clone(),
+                project: project.binding,
+                service,
+                worker: airk_kernel::service_broker::new_instance_id()?,
+            },
+        )?;
+        let Reply::Ready { identity, .. } = receiver.recv_timeout(Duration::from_secs(10))? else {
+            anyhow::bail!("missing worker identity")
+        };
+        service_ipc::write_frame(
+            &mut input,
+            &Control::Activate {
+                identity,
+                allowance: airk_core::service::QueryAllowance {
+                    concurrent_queries: 4,
+                    response_bytes: 4 * airk_core::service::MAX_FRAME_BYTES,
+                },
+                pool: None,
+            },
+        )?;
+        ensure!(
+            matches!(
+                receiver.recv_timeout(Duration::from_secs(10))?,
+                Reply::Activated
+            ),
+            "worker activation failed"
+        );
+        service_ipc::write_frame(&mut input, &Control::Renew { identity })?;
+        ensure!(
+            matches!(
+                receiver.recv_timeout(Duration::from_secs(5))?,
+                Reply::Renewed
+            ),
+            "live worker did not renew"
+        );
+        let forged = airk_core::service::WorkerIdentity {
+            fencing_generation: identity.fencing_generation + 1,
+            ..identity
+        };
+        service_ipc::write_frame(&mut input, &Control::Renew { identity: forged })?;
+        ensure!(
+            matches!(
+                receiver.recv_timeout(Duration::from_secs(5))?,
+                Reply::Failed
+            ),
+            "worker accepted a foreign generation renewal"
+        );
+        Ok(())
+    })();
+    drop(input);
+    if result.is_err() {
+        let _ = children.0[0].kill();
+    }
+    let exited = wait_exit(&mut children.0[0])?;
+    reader
+        .join()
+        .map_err(|_| anyhow::anyhow!("private worker reader failed"))?;
+    result?;
+    ensure!(exited, "worker did not drain after control loss");
+    Ok(())
+}

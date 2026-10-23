@@ -19,6 +19,9 @@ pub struct Init {
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
+    Renew {
+        identity: WorkerIdentity,
+    },
     Activate {
         identity: WorkerIdentity,
         allowance: QueryAllowance,
@@ -33,6 +36,7 @@ pub enum Command {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Reply {
+    Renewed,
     Activated,
     Ready {
         identity: WorkerIdentity,

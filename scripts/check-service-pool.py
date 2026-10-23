@@ -119,7 +119,7 @@ def main():
                 original = f"# Copper beacon {number}\nOriginal copper beacon maintenance fixture {number}.\n"
                 document = source / "memo.md"
                 document.write_text(original, encoding="utf-8")
-                originals.append((document, original))
+                originals.append((document, document.read_bytes()))
                 base = ["--root", source, "--data-dir", data, "--collection", f"pool-fixture-{number}"]
                 run(*base, "collections", "vectors", "install-bundled")
                 response = run(*base, "service", "register", "--runtime-dir", runtime)
@@ -168,7 +168,7 @@ def main():
                 bridge.search("lexical")
             if run("service", "health", "--runtime-dir", runtime)["status"] != "health":
                 raise RuntimeError("Embedding failure blocked independent service health")
-            if any(document.read_text(encoding="utf-8") != original for document, original in originals):
+            if any(document.read_bytes() != original for document, original in originals):
                 raise RuntimeError("Native service changed an original source document")
             print("Embedding-process failure preserved lexical retrieval, service health and original source bytes.", flush=True)
         finally:

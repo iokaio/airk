@@ -171,6 +171,21 @@ impl Pool {
         self.pending_status = false;
         Ok(observation)
     }
+    pub fn renew(&mut self, worker: Incarnation) -> Result<()> {
+        self.finish_pending_status()?;
+        service_ipc::write_frame(
+            self.input.as_mut().context("pool input missing")?,
+            &protocol::Control::Renew { worker },
+        )?;
+        ensure!(
+            matches!(
+                self.output.recv_timeout(Duration::from_secs(3))?,
+                protocol::Observation::Renewed
+            ),
+            "pool allowance renewal failed"
+        );
+        Ok(())
+    }
     fn finish_pending_status(&mut self) -> Result<()> {
         if self.pending_status {
             ensure!(

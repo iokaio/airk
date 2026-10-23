@@ -231,6 +231,27 @@ impl Broker {
         Ok(worker)
     }
 
+    /// Extend an existing allowance only over the live supervisor channel. Renewal
+    /// never revives an expired/draining owner or changes running-work charges.
+    pub fn renew(
+        &mut self,
+        identity: WorkerIdentity,
+        now: Instant,
+        lifetime: Duration,
+    ) -> Result<()> {
+        if lifetime.is_zero() || lifetime > Duration::from_secs(300) {
+            return Err(Error::InvalidRequest);
+        }
+        self.worker(identity, now)?;
+        let expires = now.checked_add(lifetime).ok_or(Error::InvalidRequest)?;
+        let worker = self
+            .workers
+            .get_mut(&identity.project)
+            .ok_or(Error::UnknownWorker)?;
+        worker.expires = worker.expires.max(expires);
+        Ok(())
+    }
+
     /// Issues access only; does not enqueue indexing or allocate additional execution capacity.
     pub fn issue(
         &mut self,
@@ -504,6 +525,35 @@ mod tests {
         broker
             .redeem(&grant, id, caller, now, Duration::from_secs(30))
             .unwrap()
+    }
+
+    #[test]
+    fn renewal_preserves_running_charges_and_cannot_revive_expired_or_draining_owners() {
+        let (mut broker, id, now) = setup();
+        let session = connect(&mut broker, id, now);
+        let request = broker.begin_query(id, session, 768, now).unwrap();
+        let later = now + Duration::from_secs(50);
+        broker.renew(id, later, Duration::from_secs(120)).unwrap();
+        let observation = broker.status(now + Duration::from_secs(61));
+        assert_eq!(
+            (
+                observation.active_queries,
+                observation.reserved_response_bytes,
+                observation.draining_projects
+            ),
+            (1, 768, 0)
+        );
+        broker.finish_query(id, request).unwrap();
+        broker.drain(id).unwrap();
+        assert_eq!(
+            broker.renew(id, later, Duration::from_secs(120)),
+            Err(Error::Draining)
+        );
+        let (mut broker, id, now) = setup();
+        assert_eq!(
+            broker.renew(id, now + Duration::from_secs(61), Duration::from_secs(120)),
+            Err(Error::Expired)
+        );
     }
 
     #[test]
