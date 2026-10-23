@@ -9,6 +9,7 @@ import platform
 import shutil
 import subprocess
 import tempfile
+import time
 import tomllib
 
 
@@ -51,6 +52,20 @@ def digest(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
+def publish_staging(staging, destination):
+    # A just-executed Windows image can briefly retain a scan/share handle. Retry
+    # only this owned staging rename; persistent permission/policy failures stay errors.
+    deadline = time.monotonic() + 5
+    while True:
+        try:
+            os.rename(staging, destination)
+            return
+        except OSError as error:
+            if os.name != "nt" or error.winerror not in (5, 32, 33) or time.monotonic() >= deadline:
+                raise
+            time.sleep(0.1)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--destination", type=Path, required=True)
@@ -84,7 +99,7 @@ def main():
             if identity != f"{Path(executable).stem} {version}":
                 raise RuntimeError(f"Unexpected executable identity: {identity}")
         # The final directory is created only after both artifacts and identities verify.
-        os.rename(staging, destination)
+        publish_staging(staging, destination)
     print(f"Staged {version} runtime pair: {destination}")
 
 

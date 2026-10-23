@@ -67,6 +67,18 @@ pub async fn read_message<S: AsyncRead + Unpin, T: DeserializeOwned>(
     stream: &mut S,
     deadline: Duration,
 ) -> Result<Option<T>> {
+    read_message_limited(stream, deadline, airk_core::service::MAX_FRAME_BYTES).await
+}
+
+pub async fn read_message_limited<S: AsyncRead + Unpin, T: DeserializeOwned>(
+    stream: &mut S,
+    deadline: Duration,
+    limit: usize,
+) -> Result<Option<T>> {
+    ensure!(
+        (1..=4 * 1024 * 1024).contains(&limit),
+        "invalid native frame budget"
+    );
     tokio::time::timeout(deadline, async {
         let mut header = [0; 4];
         let count = stream.read(&mut header[..1]).await?;
@@ -75,10 +87,7 @@ pub async fn read_message<S: AsyncRead + Unpin, T: DeserializeOwned>(
         }
         stream.read_exact(&mut header[1..]).await?;
         let bytes = u32::from_be_bytes(header) as usize;
-        ensure!(
-            bytes > 0 && bytes <= airk_core::service::MAX_FRAME_BYTES,
-            "invalid native frame length"
-        );
+        ensure!(bytes > 0 && bytes <= limit, "invalid native frame length");
         let mut payload = vec![0; bytes];
         stream.read_exact(&mut payload).await?;
         Ok(Some(serde_json::from_slice(&payload)?))
@@ -92,8 +101,17 @@ pub async fn write_message<S: AsyncWrite + Unpin, T: Serialize>(
     value: &T,
     deadline: Duration,
 ) -> Result<()> {
+    write_message_limited(stream, value, deadline, airk_core::service::MAX_FRAME_BYTES).await
+}
+
+pub async fn write_message_limited<S: AsyncWrite + Unpin, T: Serialize>(
+    stream: &mut S,
+    value: &T,
+    deadline: Duration,
+    limit: usize,
+) -> Result<()> {
     let mut frame = Vec::new();
-    crate::service_ipc::write_frame(&mut frame, value)?;
+    crate::service_ipc::write_frame_limited(&mut frame, value, limit)?;
     tokio::time::timeout(deadline, async {
         stream.write_all(&frame).await?;
         stream.flush().await

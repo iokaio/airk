@@ -22,6 +22,7 @@ pub enum Command {
     Activate {
         identity: WorkerIdentity,
         allowance: QueryAllowance,
+        pool: Option<Box<crate::embedding_pool_protocol::Access>>,
     },
     Grant {
         caller: Incarnation,

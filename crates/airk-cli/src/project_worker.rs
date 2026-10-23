@@ -186,6 +186,7 @@ pub async fn run() -> Result<()> {
     let Some(Command::Activate {
         identity: accepted,
         allowance,
+        pool,
     }) = service_ipc::read_frame(&mut std::io::stdin().lock())?
     else {
         anyhow::bail!("project owner was not activated")
@@ -199,6 +200,10 @@ pub async fn run() -> Result<()> {
                 },
         "project activation identity or allowance mismatch"
     );
+    #[cfg(not(feature = "local-inference"))]
+    crate::embedding_pool_client::install(pool.map(|access| *access))?;
+    #[cfg(feature = "local-inference")]
+    let _ = pool;
     let kernel = Kernel::open_collection(
         Path::new(&registration.root),
         Some((&registration.data_root).into()),

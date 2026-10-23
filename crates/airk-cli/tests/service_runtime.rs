@@ -583,7 +583,7 @@ fn foreign_registry_state_is_preserved_and_does_not_disable_native_health() -> R
 #[test]
 fn restarted_service_defers_allocation_until_predecessor_ownership_releases() -> Result<()> {
     use airk_core::service::{ControlMethod as Method, ControlResponse as Response};
-    use airk_store::service::{ProjectLease, registry::ServiceRegistry};
+    use airk_store::service::{EmbeddingLease, ProjectLease, registry::ServiceRegistry};
     let owner = tempfile::tempdir()?;
     let root = owner.path().join("runtime");
     let source = owner.path().join("source");
@@ -597,6 +597,7 @@ fn restarted_service_defers_allocation_until_predecessor_ownership_releases() ->
     registry.register(&project)?;
     let mut predecessor = ProjectLease::acquire(&root, project.binding)?;
     registry.admit_worker(&mut predecessor)?;
+    let embedding_predecessor = EmbeddingLease::acquire(&root)?;
     drop(registry);
     let mut children = Children(vec![start(&root)?]);
     wait_ready(&root)?;
@@ -605,6 +606,10 @@ fn restarted_service_defers_allocation_until_predecessor_ownership_releases() ->
         ensure!(matches!(response,Response::Failure{code} if code=="previous_workers_draining"),"replacement ignored predecessor ownership");
         ensure!(matches!(airk_cli::service_runtime::request(&root,Method::Health).await?,Response::Health{..}),"predecessor drain blocked health");
         drop(predecessor);
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let response=airk_cli::service_runtime::request(&root,Method::Connect{project:project.binding}).await?;
+        ensure!(matches!(response,Response::Failure{code} if code=="previous_workers_draining"),"replacement ignored surviving inference ownership");
+        drop(embedding_predecessor);
         tokio::time::sleep(Duration::from_millis(500)).await;
         let response=airk_cli::service_runtime::request(&root,Method::Connect{project:project.binding}).await?;
         ensure!(matches!(response,Response::Connection{grant,..} if grant.identity.fencing_generation==2),"new worker was not admitted after predecessor exit");

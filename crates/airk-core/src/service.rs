@@ -41,6 +41,7 @@ pub enum ControlMethod {
     Connect {
         project: ProjectBinding,
     },
+    EmbeddingStatus,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -92,6 +93,13 @@ pub enum ControlResponse {
     Connection {
         role: String,
         grant: ConnectionGrant,
+    },
+    EmbeddingStatus {
+        available: bool,
+        process_id: Option<u32>,
+        loads: u64,
+        reuses: u64,
+        sessions: usize,
     },
 }
 

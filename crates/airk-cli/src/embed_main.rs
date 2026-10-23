@@ -8,6 +8,8 @@ use airk_retrieval::{
 use anyhow::{Context, Result, ensure};
 use std::io;
 
+mod embed_pool;
+
 fn handle(
     request: Request,
     model: &mut Option<EmbeddingModel>,
@@ -132,6 +134,9 @@ fn handle(
 }
 
 fn main() -> Result<()> {
+    if std::env::args().skip(1).eq(["pool"]) {
+        return tokio::runtime::Runtime::new()?.block_on(embed_pool::run());
+    }
     if std::env::args().skip(1).eq(["--version"]) {
         println!("airk-embed {}", env!("CARGO_PKG_VERSION"));
         return Ok(());

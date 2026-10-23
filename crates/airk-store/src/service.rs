@@ -71,6 +71,18 @@ pub struct ServiceLease {
     root: PathBuf,
 }
 
+/// Pooled inference can outlive its service/last project briefly while draining.
+pub struct EmbeddingLease {
+    _file: File,
+}
+impl EmbeddingLease {
+    pub fn acquire(root: &Path) -> Result<Self> {
+        Ok(Self {
+            _file: acquire_file(&root.canonicalize()?, "embedding-1.4.lock")?,
+        })
+    }
+}
+
 impl ServiceLease {
     /// Native adapter must first establish an owner-only runtime directory.
     pub fn acquire(root: &Path) -> Result<Self> {

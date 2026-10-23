@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Finite child supervision; allocation survives timeout until child exit is proven.
 use crate::{
+    embedding_pool_process::Pool,
     local_ipc,
     project_protocol::{self as protocol, Command as WorkerCommand, Reply},
     service_ipc,
@@ -10,7 +11,7 @@ use airk_core::{
     service::{ControlResponse, MAX_FRAME_BYTES, ProjectBinding, QueryAllowance, WorkerIdentity},
 };
 use airk_kernel::service_broker::{Broker, new_instance_id};
-use airk_store::service::{ProjectLease, registry::ServiceRegistry};
+use airk_store::service::{EmbeddingLease, ProjectLease, registry::ServiceRegistry};
 use anyhow::{Context, Result, ensure};
 use std::{
     collections::BTreeMap,
@@ -153,12 +154,18 @@ impl ChildWorker {
         }
     }
 
-    fn activate(&mut self, identity: WorkerIdentity, allowance: QueryAllowance) -> Result<()> {
+    fn activate(
+        &mut self,
+        identity: WorkerIdentity,
+        allowance: QueryAllowance,
+        pool: Option<crate::embedding_pool_protocol::Access>,
+    ) -> Result<()> {
         service_ipc::write_frame(
             self.input.as_mut().context("project input missing")?,
             &WorkerCommand::Activate {
                 identity,
                 allowance,
+                pool: pool.map(Box::new),
             },
         )?;
         ensure!(
@@ -172,7 +179,15 @@ impl ChildWorker {
     }
 }
 
-type Envelope = (ProjectBinding, oneshot::Sender<ControlResponse>);
+enum Envelope {
+    Connect {
+        project: ProjectBinding,
+        reply: oneshot::Sender<ControlResponse>,
+    },
+    EmbeddingStatus {
+        reply: oneshot::Sender<ControlResponse>,
+    },
+}
 pub struct Supervisor {
     sender: Option<SyncSender<Envelope>>,
     thread: Option<std::thread::JoinHandle<()>>,
@@ -189,11 +204,13 @@ impl Drop for Supervisor {
 fn start_worker(
     workers: &mut BTreeMap<ProjectBinding, ChildWorker>,
     root: &Path,
-    project: ProjectBinding,
+    registration: airk_core::service::ProjectRegistration,
     instance: Incarnation,
     policy: &Mutex<Broker>,
     backoff: &mut BTreeMap<ProjectBinding, (Instant, u32)>,
+    pool: &mut Option<Pool>,
 ) -> Result<()> {
+    let project = registration.binding;
     if workers.contains_key(&project) {
         return Ok(());
     }
@@ -231,8 +248,17 @@ fn start_worker(
             Instant::now(),
             Duration::from_secs(300),
         )?;
-    if let Err(error) = worker.activate(identity, allowance) {
+    if pool.is_none() {
+        *pool = Pool::start(root, instance).ok();
+    }
+    let access = pool
+        .as_mut()
+        .and_then(|pool| pool.access(identity.worker, registration).ok());
+    if let Err(error) = worker.activate(identity, allowance, access) {
         drop(worker);
+        if let Some(pool) = pool.as_mut() {
+            let _ = pool.revoke(identity.worker);
+        }
         policy
             .lock()
             .map_err(|_| anyhow::anyhow!("service policy unavailable"))?
@@ -257,16 +283,22 @@ impl Supervisor {
             .name("airk-project-supervisor".into())
             .spawn(move || {
                 let mut workers = BTreeMap::<ProjectBinding, ChildWorker>::new();
+                let mut pool: Option<Pool> = None;
                 let mut registry = None;
                 let mut backoff = BTreeMap::<ProjectBinding, (Instant, u32)>::new();
                 let mut predecessors: Option<Vec<ProjectBinding>> = None;
+                let mut predecessor_pool = None;
                 loop {
+                    if pool.as_mut().is_some_and(Pool::exited) {
+                        pool = None;
+                    }
                     if registry.is_none() {
                         registry = ServiceRegistry::open(&root, instance).ok();
                     }
                     if predecessors.is_none()
                         && let Some(registry) = registry.as_ref()
                     {
+                        predecessor_pool = Some(EmbeddingLease::acquire(&root).is_err());
                         predecessors = registry.bindings().ok().map(|bindings| {
                             bindings
                                 .into_iter()
@@ -274,13 +306,17 @@ impl Supervisor {
                                 .collect()
                         });
                     }
+                    if predecessor_pool == Some(true) {
+                        predecessor_pool = Some(EmbeddingLease::acquire(&root).is_err());
+                    }
                     if let Some(predecessors) = predecessors.as_mut() {
                         predecessors
                             .retain(|binding| ProjectLease::acquire(&root, *binding).is_err());
                     }
                     // A restarted service must not reassign unknown old query/model capacity.
                     // Parent EOF stops old admission, but only OS lock release proves drain.
-                    let may_allocate = predecessors.as_ref().is_some_and(Vec::is_empty);
+                    let may_allocate = predecessors.as_ref().is_some_and(Vec::is_empty)
+                        && predecessor_pool == Some(false);
                     let finished: Vec<_> = workers
                         .iter_mut()
                         .filter_map(|(project, worker)| {
@@ -306,23 +342,29 @@ impl Supervisor {
                                 (worker.identity, policy.lock())
                         {
                             let _ = policy.process_exited(identity);
+                            drop(policy);
+                            if let Some(pool) = pool.as_mut() {
+                                let _ = pool.revoke(identity.worker);
+                            }
                         }
                     }
                     match receiver.recv_timeout(Duration::from_millis(250)) {
-                        Ok((project, reply)) => {
+                        Ok(Envelope::Connect { project, reply }) => {
                             let response = (|| {
                                 ensure!(may_allocate, "previous project workers still draining");
-                                registry
+                                let registration = registry
                                     .as_ref()
                                     .context("service registry unavailable")?
-                                    .get(project)?;
+                                    .get(project)?
+                                    .registration;
                                 start_worker(
                                     &mut workers,
                                     &root,
-                                    project,
+                                    registration,
                                     instance,
                                     &policy,
                                     &mut backoff,
+                                    &mut pool,
                                 )?;
                                 workers
                                     .get_mut(&project)
@@ -339,6 +381,38 @@ impl Supervisor {
                             });
                             let _ = reply.send(response);
                         }
+                        Ok(Envelope::EmbeddingStatus { reply }) => {
+                            let response = match pool.as_mut().map(|pool| {
+                                let id = pool.process_id();
+                                pool.status().map(|status| (id, status))
+                            }) {
+                                Some(Ok((
+                                    id,
+                                    crate::embedding_pool_protocol::Observation::Status {
+                                        loads,
+                                        reuses,
+                                        sessions,
+                                    },
+                                ))) => ControlResponse::EmbeddingStatus {
+                                    available: true,
+                                    process_id: Some(id),
+                                    loads,
+                                    reuses,
+                                    sessions,
+                                },
+                                None => ControlResponse::EmbeddingStatus {
+                                    available: false,
+                                    process_id: None,
+                                    loads: 0,
+                                    reuses: 0,
+                                    sessions: 0,
+                                },
+                                _ => ControlResponse::Failure {
+                                    code: "embedding_observation_busy".into(),
+                                },
+                            };
+                            let _ = reply.send(response);
+                        }
                         Err(mpsc::RecvTimeoutError::Disconnected) => break,
                         Err(mpsc::RecvTimeoutError::Timeout) => {}
                     }
@@ -350,13 +424,19 @@ impl Supervisor {
                             if workers.len() >= MAX_WORKERS {
                                 break;
                             }
+                            let Ok(registration) =
+                                registry.get(project).map(|record| record.registration)
+                            else {
+                                continue;
+                            };
                             let _ = start_worker(
                                 &mut workers,
                                 &root,
-                                project,
+                                registration,
                                 instance,
                                 &policy,
                                 &mut backoff,
+                                &mut pool,
                             );
                         }
                     }
@@ -375,11 +455,14 @@ impl Supervisor {
 
     pub async fn connect(&self, project: ProjectBinding) -> ControlResponse {
         let (sender, receiver) = oneshot::channel();
-        if self
-            .sender
-            .as_ref()
-            .is_none_or(|queue| queue.try_send((project, sender)).is_err())
-        {
+        if self.sender.as_ref().is_none_or(|queue| {
+            queue
+                .try_send(Envelope::Connect {
+                    project,
+                    reply: sender,
+                })
+                .is_err()
+        }) {
             return ControlResponse::Failure {
                 code: "broker_busy".into(),
             };
@@ -388,6 +471,24 @@ impl Supervisor {
             Ok(Ok(response)) => response,
             _ => ControlResponse::Failure {
                 code: "project_starting_or_unavailable".into(),
+            },
+        }
+    }
+    pub async fn embedding_status(&self) -> ControlResponse {
+        let (reply, receiver) = oneshot::channel();
+        if self
+            .sender
+            .as_ref()
+            .is_none_or(|queue| queue.try_send(Envelope::EmbeddingStatus { reply }).is_err())
+        {
+            return ControlResponse::Failure {
+                code: "broker_busy".into(),
+            };
+        }
+        match tokio::time::timeout(Duration::from_secs(4), receiver).await {
+            Ok(Ok(response)) => response,
+            _ => ControlResponse::Failure {
+                code: "embedding_observation_busy".into(),
             },
         }
     }

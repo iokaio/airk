@@ -444,6 +444,11 @@ enum CompressionCommand {
 
 #[derive(Subcommand)]
 enum ServiceCommand {
+    /// Register canonical existing source/storage roots with the native service.
+    Register {
+        #[arg(long)]
+        runtime_dir: PathBuf,
+    },
     /// Submit one bounded native management request from a JSON file.
     Rpc {
         #[arg(long)]
@@ -1166,8 +1171,6 @@ fn run_cli() -> anyhow::Result<()> {
 
 #[tokio::main]
 async fn main_async() -> anyhow::Result<()> {
-    #[cfg(not(feature = "local-inference"))]
-    airk_cli::embedding_client::install()?;
     let cli = Cli::parse();
     if matches!(cli.command, Command::ProjectWorker) {
         return airk_cli::project_worker::run().await;
@@ -1179,10 +1182,26 @@ async fn main_async() -> anyhow::Result<()> {
     {
         return airk_cli::project_client::bridge(runtime_dir.clone(), *project).await;
     }
+    #[cfg(not(feature = "local-inference"))]
+    airk_cli::embedding_client::install()?;
     if let Command::Serve { runtime_dir } = &cli.command {
         return airk_cli::service_runtime::serve(runtime_dir).await;
     }
     if let Command::Service { action } = &cli.command {
+        if let ServiceCommand::Register { runtime_dir } = action {
+            let data = cli.data_dir.as_deref().ok_or_else(|| {
+                anyhow::anyhow!("service registration requires explicit --data-dir")
+            })?;
+            let project =
+                airk_kernel::service_projects::registration(&cli.root, data, &cli.collection)?;
+            return print_json(
+                &airk_cli::service_runtime::request(
+                    runtime_dir,
+                    airk_core::service::ControlMethod::Register { project },
+                )
+                .await?,
+            );
+        }
         if let ServiceCommand::Rpc {
             runtime_dir,
             request_file,
@@ -1284,7 +1303,7 @@ async fn main_async() -> anyhow::Result<()> {
                 ServiceCommand::Start => print_json(&manager.start()?),
                 ServiceCommand::Stop => print_json(&manager.stop()?),
                 ServiceCommand::Uninstall => print_json(&manager.uninstall()?),
-                ServiceCommand::Health { .. } | ServiceCommand::Shutdown { .. } | ServiceCommand::Rpc { .. } => unreachable!("handled before opening kernel"),
+                ServiceCommand::Health { .. } | ServiceCommand::Shutdown { .. } | ServiceCommand::Rpc { .. } | ServiceCommand::Register { .. } => unreachable!("handled before opening kernel"),
             }
         },
         Command::Schedule { action } => match action {

@@ -10,6 +10,7 @@ The [1.3.0 release](release-1.3.0.md) retires the former `airk_history` MCP endp
 - [Proposed AIRK 1.4.0 local service architecture and implementation plan](airkservice-architecture.md)
 - [Service worker ownership and durable job storage contract](service-jobs.md)
 - [Native service brokerage and direct query protocol](service-protocol.md)
+- [Shared embedding runtime and resource bounds](service-embedding.md)
 - [Historical architecture v2 implementation plan](architecture-v2.md)
 - [Proposed change tracing and bounded development indexes](change-tracing-plan.md)
 - [Decision 001: focused local retrieval](decisions/001-local-retrieval-kernel.md)

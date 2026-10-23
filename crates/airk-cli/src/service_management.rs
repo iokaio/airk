@@ -69,7 +69,10 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
         ControlMethod::CancelPending { id } => ControlResponse::Job {
             job: registry.cancel_pending(id)?,
         },
-        ControlMethod::Health | ControlMethod::Shutdown | ControlMethod::Connect { .. } => {
+        ControlMethod::Health
+        | ControlMethod::Shutdown
+        | ControlMethod::Connect { .. }
+        | ControlMethod::EmbeddingStatus => {
             anyhow::bail!("not a registry method")
         }
     })
