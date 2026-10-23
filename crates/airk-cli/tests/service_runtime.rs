@@ -310,6 +310,107 @@ fn on_demand_idle_exit_does_not_require_login_manager_and_health_does_not_extend
     Ok(())
 }
 
+#[test]
+fn enabled_background_watch_retains_idle_service_until_explicitly_disabled() -> Result<()> {
+    use airk_core::service::{ControlMethod as Method, ControlResponse as Response};
+    let owner = tempfile::tempdir()?;
+    let runtime = owner.path().join("runtime");
+    let source = owner.path().join("source");
+    let data = owner.path().join("state");
+    fs::create_dir(&source)?;
+    fs::create_dir(&data)?;
+    let project = airk_kernel::service_projects::registration(&source, &data, "idle-watch")?;
+    let child = command()
+        .arg("serve")
+        .arg("--runtime-dir")
+        .arg(&runtime)
+        .args(["--idle-exit-seconds", "3"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+    let mut children = Children(vec![child]);
+    wait_ready(&runtime)?;
+    tokio::runtime::Runtime::new()?.block_on(async {
+        let request = |method| airk_cli::service_runtime::request(&runtime, method);
+        ensure!(
+            matches!(
+                request(Method::Register {
+                    project: project.clone()
+                })
+                .await?,
+                Response::Registered { .. }
+            ),
+            "registration failed"
+        );
+        // Pause prevents automatic indexing from accidentally keeping the process
+        // alive. The watcher alone must retain ownership, even with no new events.
+        request(Method::Pause {
+            project: project.binding,
+            paused: true,
+        })
+        .await?;
+        request(Method::ConfigureWatch {
+            project: project.binding,
+            enabled: true,
+        })
+        .await?;
+        let until = tokio::time::Instant::now() + Duration::from_secs(20);
+        loop {
+            if matches!(
+                request(Method::SourceStatus).await?,
+                Response::SourceStatus {
+                    available: true,
+                    projects: Some(1),
+                    pending_events: Some(0),
+                    ..
+                }
+            ) {
+                break;
+            }
+            ensure!(
+                tokio::time::Instant::now() < until,
+                "quiet watcher did not become ready"
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        // No clients remain connected, no work is claimed and no health/status
+        // polling can explain survival beyond the configured idle grace.
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        ensure!(
+            children.0[0].try_wait()?.is_none(),
+            "idle shutdown discarded enabled background monitoring"
+        );
+        request(Method::ConfigureWatch {
+            project: project.binding,
+            enabled: false,
+        })
+        .await?;
+        let until = tokio::time::Instant::now() + Duration::from_secs(25);
+        loop {
+            if let Some(status) = children.0[0].try_wait()? {
+                ensure!(status.success(), "disabled watcher did not drain cleanly");
+                break;
+            }
+            ensure!(
+                tokio::time::Instant::now() < until,
+                "disabled background monitoring prevented idle exit"
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        Ok::<(), anyhow::Error>(())
+    })?;
+    ensure!(
+        airk_store::service::ServiceLease::acquire(&runtime).is_ok(),
+        "idle exit retained service ownership"
+    );
+    ensure!(
+        airk_store::service::SourceWatchLease::acquire(&runtime).is_ok(),
+        "idle exit retained watcher ownership"
+    );
+    Ok(())
+}
+
 fn probe_stdio_bridge(root: &Path, project: airk_core::service::ProjectBinding) -> Result<()> {
     use std::io::{BufRead, Read, Write};
     let mut child = command()

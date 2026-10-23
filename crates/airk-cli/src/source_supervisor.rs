@@ -16,12 +16,12 @@ use airk_store::service::{
 };
 use anyhow::{Context, Result, ensure};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
     process::{Child, Command as ProcessCommand, Stdio},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, AtomicU32, Ordering},
+        atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
         mpsc::{self, SyncSender},
     },
     time::{Duration, Instant},
@@ -276,6 +276,23 @@ struct Cache {
     observed: Option<Instant>,
     blocked: bool,
     predecessor: bool,
+    coordinated: Option<Instant>,
+    configuration_revision: u64,
+}
+#[derive(Clone)]
+pub(crate) struct SourceWake {
+    sender: SyncSender<()>,
+    revision: Arc<AtomicU64>,
+    idle: Arc<AtomicBool>,
+}
+impl SourceWake {
+    pub(crate) fn changed(&self) {
+        self.revision.fetch_add(1, Ordering::AcqRel);
+        self.idle.store(false, Ordering::Release);
+        // A queued wake already covers this revision. The coordinator also checks
+        // the revision when publishing an idle observation, closing the scan race.
+        let _ = self.sender.try_send(());
+    }
 }
 pub struct SourceSupervisor {
     sender: Option<SyncSender<()>>,
@@ -284,6 +301,7 @@ pub struct SourceSupervisor {
     pub telemetry_complete: Arc<AtomicBool>,
     cache: Arc<Mutex<Cache>>,
     idle_safe: Arc<AtomicBool>,
+    configuration_revision: Arc<AtomicU64>,
 }
 impl Drop for SourceSupervisor {
     fn drop(&mut self) {
@@ -304,6 +322,8 @@ impl SourceSupervisor {
         let state = cache.clone();
         let idle_safe = Arc::new(AtomicBool::new(false));
         let idle = idle_safe.clone();
+        let configuration_revision = Arc::new(AtomicU64::new(0));
+        let configuration = configuration_revision.clone();
         let thread = std::thread::Builder::new()
             .name("airk-source-coordinator".into())
             .spawn(move || {
@@ -312,14 +332,24 @@ impl SourceSupervisor {
                 let mut after = None;
                 let mut sent = BTreeMap::<ProjectBinding, (u64, Option<Sha256Digest>)>::new();
                 let mut periodic = BTreeMap::<ProjectBinding, Instant>::new();
+                let mut enabled = BTreeSet::new();
+                let mut seen = BTreeSet::new();
+                let mut scanned = false;
                 let mut next_page = Instant::now();
                 let mut attempts = 0u32;
                 let mut retry = Instant::now();
                 loop {
                     match receiver.recv_timeout(Duration::from_millis(100)) {
-                        Err(mpsc::RecvTimeoutError::Disconnected) | Ok(()) => break,
+                        Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                        Ok(()) => {
+                            after = None;
+                            seen.clear();
+                            scanned = false;
+                            next_page = Instant::now();
+                        }
                         Err(mpsc::RecvTimeoutError::Timeout) => {}
                     }
+                    let configuration_snapshot = configuration.load(Ordering::Acquire);
                     if child.is_none() {
                         let predecessor = SourceWatchLease::acquire(&root).is_err();
                         telemetry.store(!predecessor, Ordering::Release);
@@ -410,7 +440,9 @@ impl SourceSupervisor {
                             let mut complete = true;
                             for project in projects {
                                 let id = project.project.registration.binding;
+                                seen.insert(id);
                                 if project.observation.enabled {
+                                    enabled.insert(id);
                                     if periodic.get(&id).is_none_or(|time| {
                                         time.elapsed() >= Duration::from_secs(300)
                                     }) && ((!periodic.contains_key(&id)
@@ -448,6 +480,7 @@ impl SourceSupervisor {
                                         }
                                     }
                                 } else {
+                                    enabled.remove(&id);
                                     periodic.remove(&id);
                                 }
                                 if let Some(active) = child.as_ref() {
@@ -474,12 +507,19 @@ impl SourceSupervisor {
                                 .watch_projects(after, 1)
                                 .is_ok_and(|page| page.is_empty())
                             {
+                                enabled.retain(|id| seen.contains(id));
+                                periodic.retain(|id, _| seen.contains(id));
+                                seen.clear();
+                                scanned = true;
                                 after = None;
                                 next_page = Instant::now() + Duration::from_secs(10);
                             }
                         }
                     }
                     if let Ok(mut cache) = state.lock() {
+                        cache.coordinated = Some(Instant::now());
+                        cache.configuration_revision = configuration_snapshot;
+                        let no_background_intent = scanned && enabled.is_empty();
                         cache.blocked = attempts >= 3;
                         cache.available = false;
                         if let Some(active) = child.as_ref()
@@ -495,12 +535,14 @@ impl SourceSupervisor {
                             cache.pending = replies.pending;
                             cache.observed = replies.pulse;
                             idle.store(
-                                replies.events.is_empty() && replies.pending == Some(0),
+                                no_background_intent
+                                    && replies.events.is_empty()
+                                    && replies.pending == Some(0),
                                 Ordering::Release,
                             );
                         } else {
                             cache.process_id = None;
-                            idle.store(true, Ordering::Release);
+                            idle.store(no_background_intent, Ordering::Release);
                         }
                     }
                 }
@@ -514,10 +556,28 @@ impl SourceSupervisor {
             telemetry_complete,
             cache,
             idle_safe,
+            configuration_revision,
         })
     }
     pub fn can_idle_exit(&self) -> bool {
         self.idle_safe.load(Ordering::Acquire)
+            && self.cache.lock().is_ok_and(|cache| {
+                cache.configuration_revision == self.configuration_revision.load(Ordering::Acquire)
+                    && cache
+                        .coordinated
+                        .is_some_and(|time| time.elapsed() < Duration::from_secs(2))
+            })
+    }
+    pub(crate) fn wake_handle(&self) -> SourceWake {
+        SourceWake {
+            sender: self
+                .sender
+                .as_ref()
+                .expect("active source supervisor")
+                .clone(),
+            revision: self.configuration_revision.clone(),
+            idle: self.idle_safe.clone(),
+        }
     }
     pub fn status(&self) -> ControlResponse {
         match self.cache.lock() {

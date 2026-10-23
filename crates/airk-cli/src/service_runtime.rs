@@ -111,7 +111,11 @@ pub async fn serve_with_idle(root: &Path, idle_grace: Option<Duration>) -> Resul
         executable_sha256: crate::runtime_pair::digest_file(&std::env::current_exe()?)?,
         runtime_sha256: crate::runtime_install::installed_identity(&std::env::current_exe()?)?,
         shutdown: Notify::new(),
-        management: crate::service_management::Management::start(root.canonicalize()?, instance)?,
+        management: crate::service_management::Management::start(
+            root.canonicalize()?,
+            instance,
+            sources.wake_handle(),
+        )?,
         supervisor: crate::project_supervisor::Supervisor::start(
             root.canonicalize()?,
             instance,
@@ -140,11 +144,11 @@ pub async fn serve_with_idle(root: &Path, idle_grace: Option<Duration>) -> Resul
             },
             _ = state.shutdown.notified() => break,
             _ = idle_tick.tick(), if idle_grace.is_some() => {
-                if !state.supervisor.can_idle_exit() || !state.sources.can_idle_exit() {
+                if !state.management.can_idle_exit() || !state.supervisor.can_idle_exit() || !state.sources.can_idle_exit() {
                     if let Ok(mut activity)=state.last_client_activity.lock() { *activity=Instant::now(); }
                     continue;
                 }
-                if state.supervisor.can_idle_exit() && state.sources.can_idle_exit() && connections.is_empty()
+                if state.management.can_idle_exit() && state.supervisor.can_idle_exit() && state.sources.can_idle_exit() && connections.is_empty()
                     && state.last_client_activity.lock().is_ok_and(|activity| activity.elapsed() >= idle_grace.unwrap_or(Duration::MAX)) {
                     break;
                 }

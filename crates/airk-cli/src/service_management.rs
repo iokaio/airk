@@ -9,6 +9,10 @@ use anyhow::Result;
 use std::{
     path::PathBuf,
     sync::mpsc::{SyncSender, sync_channel},
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::Duration,
 };
 use tokio::sync::oneshot;
@@ -17,6 +21,7 @@ type Envelope = (ControlMethod, oneshot::Sender<ControlResponse>);
 pub struct Management {
     sender: Option<SyncSender<Envelope>>,
     thread: Option<std::thread::JoinHandle<()>>,
+    pending: Arc<AtomicUsize>,
 }
 
 impl Drop for Management {
@@ -108,8 +113,14 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
 }
 
 impl Management {
-    pub fn start(root: PathBuf, instance: Incarnation) -> Result<Self> {
+    pub fn start(
+        root: PathBuf,
+        instance: Incarnation,
+        source: crate::source_supervisor::SourceWake,
+    ) -> Result<Self> {
         let (sender, receiver) = sync_channel::<Envelope>(32);
+        let pending = Arc::new(AtomicUsize::new(0));
+        let active = pending.clone();
         let (ready, initialized) = sync_channel(1);
         let thread = std::thread::Builder::new()
             .name("airk-registry".into())
@@ -117,6 +128,10 @@ impl Management {
                 let mut registry = ServiceRegistry::open(&root, instance);
                 let _ = ready.send(());
                 while let Ok((method, reply)) = receiver.recv() {
+                    let source_changed = matches!(
+                        method,
+                        ControlMethod::ConfigureWatch { .. } | ControlMethod::Register { .. }
+                    );
                     let response = match registry.as_mut() {
                         Ok(registry) => execute(registry, method).unwrap_or_else(|error| {
                             let code = error
@@ -129,6 +144,12 @@ impl Management {
                             code: "registry_unavailable".into(),
                         },
                     };
+                    if source_changed {
+                        source.changed();
+                    }
+                    // A timed-out/disconnected caller cannot release this charge
+                    // while its accepted metadata operation can still commit.
+                    active.fetch_sub(1, Ordering::AcqRel);
                     let _ = reply.send(response);
                 }
             })?;
@@ -138,16 +159,19 @@ impl Management {
         Ok(Self {
             sender: Some(sender),
             thread: Some(thread),
+            pending,
         })
     }
 
     pub async fn request(&self, method: ControlMethod) -> ControlResponse {
         let (sender, receiver) = oneshot::channel();
+        self.pending.fetch_add(1, Ordering::AcqRel);
         if self
             .sender
             .as_ref()
             .is_none_or(|queue| queue.try_send((method, sender)).is_err())
         {
+            self.pending.fetch_sub(1, Ordering::AcqRel);
             return ControlResponse::Failure {
                 code: "registry_busy".into(),
             };
@@ -158,5 +182,8 @@ impl Management {
                 code: "registry_response_unknown_retry_with_key".into(),
             },
         }
+    }
+    pub fn can_idle_exit(&self) -> bool {
+        self.pending.load(Ordering::Acquire) == 0
     }
 }
