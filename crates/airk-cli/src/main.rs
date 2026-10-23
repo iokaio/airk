@@ -435,6 +435,13 @@ enum CompressionCommand {
 
 #[derive(Subcommand)]
 enum ServiceCommand {
+    /// Submit one bounded native management request from a JSON file.
+    Rpc {
+        #[arg(long)]
+        runtime_dir: PathBuf,
+        #[arg(long)]
+        request_file: PathBuf,
+    },
     /// Inspect the native service without opening a project database.
     Health {
         #[arg(long)]
@@ -1155,6 +1162,23 @@ async fn main_async() -> anyhow::Result<()> {
         return airk_cli::service_runtime::serve(runtime_dir).await;
     }
     if let Command::Service { action } = &cli.command {
+        if let ServiceCommand::Rpc {
+            runtime_dir,
+            request_file,
+        } = action
+        {
+            use std::io::Read;
+            let mut bytes = Vec::new();
+            std::fs::File::open(request_file)?
+                .take(airk_core::service::MAX_FRAME_BYTES as u64 + 1)
+                .read_to_end(&mut bytes)?;
+            anyhow::ensure!(
+                bytes.len() <= airk_core::service::MAX_FRAME_BYTES,
+                "native management request exceeds bound"
+            );
+            let method: airk_core::service::ControlMethod = serde_json::from_slice(&bytes)?;
+            return print_json(&airk_cli::service_runtime::request(runtime_dir, method).await?);
+        }
         let selected = match action {
             ServiceCommand::Health { runtime_dir } => {
                 Some((runtime_dir, airk_core::service::ControlMethod::Health))
@@ -1239,7 +1263,7 @@ async fn main_async() -> anyhow::Result<()> {
                 ServiceCommand::Start => print_json(&manager.start()?),
                 ServiceCommand::Stop => print_json(&manager.stop()?),
                 ServiceCommand::Uninstall => print_json(&manager.uninstall()?),
-                ServiceCommand::Health { .. } | ServiceCommand::Shutdown { .. } => unreachable!("handled before opening kernel"),
+                ServiceCommand::Health { .. } | ServiceCommand::Shutdown { .. } | ServiceCommand::Rpc { .. } => unreachable!("handled before opening kernel"),
             }
         },
         Command::Schedule { action } => match action {

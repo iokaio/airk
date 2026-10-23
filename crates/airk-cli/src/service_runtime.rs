@@ -22,6 +22,7 @@ struct State {
     user: String,
     executable_sha256: String,
     shutdown: Notify,
+    management: crate::service_management::Management,
 }
 
 async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
@@ -55,6 +56,7 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                 }
             }
             ControlMethod::Shutdown => ControlResponse::Stopping,
+            method => state.management.request(method).await,
         }
     };
     local_ipc::write_message(&mut stream, &response, Duration::from_secs(5)).await?;
@@ -70,12 +72,14 @@ pub async fn serve(root: &Path) -> Result<()> {
     _ownership.prepare_control_endpoint()?;
     let address = local_ipc::endpoint(root, "control")?;
     let mut listener = Listener::bind(&address)?;
+    let instance = new_instance_id()?;
     let state = Arc::new(State {
-        policy: Broker::new(new_instance_id()?, BrokerLimits::default())?,
+        policy: Broker::new(instance, BrokerLimits::default())?,
         started: Instant::now(),
         user: local_ipc::current_user()?,
         executable_sha256: crate::runtime_pair::digest_file(&std::env::current_exe()?)?,
         shutdown: Notify::new(),
+        management: crate::service_management::Management::start(root.canonicalize()?, instance)?,
     });
     let admission = Arc::new(Semaphore::new(64));
     let mut connections = JoinSet::new();

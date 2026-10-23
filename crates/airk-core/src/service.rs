@@ -8,11 +8,36 @@ pub const PROTOCOL_VERSION: u32 = 1;
 pub const MAX_FRAME_BYTES: usize = 65_536;
 pub const MAX_GRANT_TTL_MS: u64 = 30_000;
 
-#[derive(Clone, Copy, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ControlMethod {
     Health,
     Shutdown,
+    Register {
+        project: ProjectRegistration,
+    },
+    Projects {
+        after: Option<ProjectBinding>,
+        revision: Option<u64>,
+        limit: usize,
+    },
+    RequestEpoch,
+    Enqueue {
+        project: ProjectBinding,
+        caller: Incarnation,
+        key: RequestKey,
+        kind: JobKind,
+    },
+    Job {
+        id: Sha256Digest,
+    },
+    Pause {
+        project: ProjectBinding,
+        paused: bool,
+    },
+    CancelPending {
+        id: Sha256Digest,
+    },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -41,6 +66,11 @@ pub enum ControlResponse {
     Health { observation: Box<ServiceHealth> },
     Stopping,
     Incompatible { protocol: u32 },
+    Registered { project: RegisteredProject },
+    Projects { page: ProjectPage },
+    RequestEpoch { namespace: Incarnation, epoch: u64 },
+    Job { job: JobRecord },
+    Failure { code: String },
 }
 
 /// Digest of a canonical root/storage/collection registration, never a client path.

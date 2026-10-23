@@ -243,6 +243,14 @@ impl ServiceRegistry {
                 "service registration binding collision"
             );
         } else {
+            let collision: bool = transaction.query_row(
+                "SELECT EXISTS(SELECT 1 FROM projects WHERE json_extract(payload,'$.data_root')=?1 AND json_extract(payload,'$.collection')=?2)",
+                params![registration.data_root,registration.collection], |row| row.get(0),
+            )?;
+            ensure!(
+                !collision,
+                "collection storage is already registered to another source root"
+            );
             let count: i64 =
                 transaction.query_row("SELECT count(*) FROM projects", [], |row| row.get(0))?;
             ensure!(
