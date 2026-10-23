@@ -76,10 +76,14 @@ pub struct Broker {
     pending: BTreeMap<Sha256Digest, Pending>,
 }
 
-fn random_id() -> Result<Incarnation> {
+pub fn new_instance_id() -> Result<Incarnation> {
     let mut bytes = [0; 16];
     getrandom::fill(&mut bytes).map_err(|_| Error::InvalidRequest)?;
     Ok(Incarnation::from_bytes(bytes))
+}
+
+fn random_id() -> Result<Incarnation> {
+    new_instance_id()
 }
 
 impl Broker {

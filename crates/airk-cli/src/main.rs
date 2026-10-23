@@ -88,6 +88,11 @@ mod continuity_argument_tests {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Run the 1.4 foreground service control loop in an explicit private runtime directory.
+    Serve {
+        #[arg(long)]
+        runtime_dir: PathBuf,
+    },
     /// Inspect native CPU capabilities and the pinned automatic model selection.
     ModelCatalog,
     /// Inspect and call the read-only MCP tools, or open an interactive tools console.
@@ -430,6 +435,16 @@ enum CompressionCommand {
 
 #[derive(Subcommand)]
 enum ServiceCommand {
+    /// Inspect the native service without opening a project database.
+    Health {
+        #[arg(long)]
+        runtime_dir: PathBuf,
+    },
+    /// Gracefully stop the selected native service instance.
+    Shutdown {
+        #[arg(long)]
+        runtime_dir: PathBuf,
+    },
     Plan,
     Install,
     Status,
@@ -522,6 +537,7 @@ impl Command {
             | Self::Host
             | Self::Schedule { .. }
             | Self::Service { .. }
+            | Self::Serve { .. }
             | Self::Storage { .. } => return None,
             Self::Collections {
                 action: CollectionCommand::Quota { .. } | CollectionCommand::Diagnose { .. },
@@ -1135,6 +1151,23 @@ async fn main_async() -> anyhow::Result<()> {
     #[cfg(not(feature = "local-inference"))]
     airk_cli::embedding_client::install()?;
     let cli = Cli::parse();
+    if let Command::Serve { runtime_dir } = &cli.command {
+        return airk_cli::service_runtime::serve(runtime_dir).await;
+    }
+    if let Command::Service { action } = &cli.command {
+        let selected = match action {
+            ServiceCommand::Health { runtime_dir } => {
+                Some((runtime_dir, airk_core::service::ControlMethod::Health))
+            }
+            ServiceCommand::Shutdown { runtime_dir } => {
+                Some((runtime_dir, airk_core::service::ControlMethod::Shutdown))
+            }
+            _ => None,
+        };
+        if let Some((runtime_dir, method)) = selected {
+            return print_json(&airk_cli::service_runtime::request(runtime_dir, method).await?);
+        }
+    }
     if matches!(cli.command, Command::ModelCatalog) {
         let mut report = serde_json::to_value(airk_kernel::inspect_model_catalog()?)?;
         report["bundled_model"] = serde_json::json!({ "manifest": bundled_model::manifest()? });
@@ -1193,7 +1226,7 @@ async fn main_async() -> anyhow::Result<()> {
     };
     let result = async { match cli.command {
         Command::Tools { action } => tools::run(action, kernel.clone()).await,
-        Command::Storage { .. } | Command::ModelCatalog => unreachable!("handled before opening kernel"),
+        Command::Storage { .. } | Command::ModelCatalog | Command::Serve { .. } => unreachable!("handled before opening kernel"),
         Command::Service { action } => {
             let manager = airk_kernel::service::ServiceManager::for_kernel(&kernel)?;
             match action {
@@ -1206,6 +1239,7 @@ async fn main_async() -> anyhow::Result<()> {
                 ServiceCommand::Start => print_json(&manager.start()?),
                 ServiceCommand::Stop => print_json(&manager.stop()?),
                 ServiceCommand::Uninstall => print_json(&manager.uninstall()?),
+                ServiceCommand::Health { .. } | ServiceCommand::Shutdown { .. } => unreachable!("handled before opening kernel"),
             }
         },
         Command::Schedule { action } => match action {

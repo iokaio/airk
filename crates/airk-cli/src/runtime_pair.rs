@@ -10,6 +10,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
+// Unstripped Linux development executables include DWARF in the image itself.
+// Hashing is streamed; the same finite ceiling also bounds a concurrently growing file.
+const MAX_EXECUTABLE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimePair {
@@ -26,7 +30,7 @@ pub fn digest_file(path: &Path) -> Result<String> {
     ensure!(
         metadata.is_file()
             && !metadata.file_type().is_symlink()
-            && metadata.len() <= 512 * 1024 * 1024,
+            && metadata.len() <= MAX_EXECUTABLE_BYTES,
         "invalid runtime component"
     );
     #[cfg(windows)]
@@ -40,7 +44,7 @@ pub fn digest_file(path: &Path) -> Result<String> {
     let mut file = fs::File::open(path)?;
     let mut hash = Sha256::new();
     let mut buffer = [0; 64 * 1024];
-    let mut remaining = 512 * 1024 * 1024u64;
+    let mut remaining = MAX_EXECUTABLE_BYTES;
     loop {
         let count = file.read(&mut buffer)?;
         if count == 0 {

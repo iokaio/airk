@@ -30,6 +30,7 @@ pub use reset::IndexFormat;
 pub mod retention;
 pub mod roots;
 pub mod scheduler;
+pub mod service;
 mod sqlite;
 pub mod usage;
 pub mod vector_cache;
