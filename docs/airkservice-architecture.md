@@ -4,9 +4,13 @@ Status: proposed for review; not implemented or qualified. Written October 22, 2
 
 Target release: **1.4.0, a clean break from the 1.3.x process, storage and client lifecycle.** The service architecture and clean break are the chosen direction. Measurements guide implementation and qualify the result; they are not prerequisites for choosing this architecture. Release numbering remains a separate review item in section 1.1. This document does not change the checked-in implementation version or authorize publication. The [current architecture](architecture.md) remains the description of implemented behavior until this plan is implemented and qualified.
 
+Review the [chosen direction and remaining decisions](#11-chosen-direction-and-remaining-decisions), [publication contract](#6-publication-and-concurrent-reads), [installation lifecycle](#9-installation-and-lifecycle-without-administrator-access), [service console](#11-vs-code-service-console), and [implementation sequence](#15-implementation-sequence-and-exit-criteria). Platform details stay in this plan until implementation establishes contracts suitable for separate operating guides.
+
 ## 1. Decision and purpose
 
 Replace independently launched indexing helpers with one user-owned local AIRK service per execution environment and release channel. The service owns the project registry, durable work requests, resource admission and worker lifecycle. Separate project workers own independent project indexes. VS Code windows, CLI commands and coding-agent MCP connections become clients of that service. This is an architectural choice for explicit ownership, shared resource policy and a consistent client lifecycle, independent of whether incremental changes could improve 1.3.x performance.
+
+The service brokers authenticated, collection-scoped connections to project workers. Retrieval requests and evidence responses flow directly between clients and workers. Management, lifecycle, resource grants and status remain service responsibilities. Query traffic must not require a service forwarding hop.
 
 The service must install and run from a platform VSIX under an ordinary user account. Administrator access, sudo, a Windows Service Control Manager registration, a system-wide launch daemon, a system-level systemd unit, Docker, a compiler, a package manager and runtime model downloads must not be prerequisites.
 
@@ -45,6 +49,8 @@ Choose the service architecture to establish a coherent long-term ownership and 
 | Lease | Bounded ownership of a resource or admitted revision; expiry/disconnect/crash cleanup must release it without interrupting an atomic commit unsafely |
 | Trusted host-specific locator | Owner-verified runtime selection/discovery record on the execution host, outside workspace control |
 | Durable idempotency key | Persisted identifier bound to the caller, project and mutation payload; retries join the same operation, while conflicting reuse fails |
+| Connection grant | Short-lived authorization to establish a retrieval-only connection to one authenticated worker for one collection; grants no resource capacity by itself |
+| Resource grant | Service-issued, worker-bound allowance for finite execution capacity; workers enforce it across all their client connections |
 
 ## 2. Problems to address
 
@@ -52,7 +58,7 @@ The 1.3.x design has independent collection stores but coordinates processes thr
 
 Progressive file-count targets double up to 4,096 files, while publication cadence already adapts to the preceding publication cost with count/byte/time bounds; see [current indexing](architecture.md#current-indexing-and-retrieval). Cost-aware count selection remains worth measuring. An earlier review cited a gap at 992 committed files, but no versioned diagnostic receipt for that observation is linked here, so it is not a baseline or evidence of a 1.3.2 regression. The [1.3.2 release notes](release-1.3.2.md) record the reporter's October 22 confirmation that the Windows VSIX resolved the reported two-project indexing issue. Any remaining stall needs a new reproduction with exact artifact identity, workload, phase timings and wait owners before attributing a cause.
 
-An optional per-user scheduler service already supports `service plan/install/status/start/stop/uninstall` through Task Scheduler, systemd user units and LaunchAgents. It shares the existing queue and locks; the proposed service adds client routing, supervision and a shared resource/model pool rather than inventing user-level lifecycle support. See [native scheduler installation](native-scheduler.md#explicit-per-user-installation).
+An optional per-user scheduler service already supports `service plan/install/status/start/stop/uninstall` through Task Scheduler, systemd user units and LaunchAgents. It shares the existing queue and locks; the proposed service adds connection brokerage, supervision and a shared resource/model pool rather than inventing user-level lifecycle support. See [native scheduler installation](native-scheduler.md#explicit-per-user-installation).
 
 Moving the same blocking publication path into a daemon would retain the central problem. The redesign must address publication, observability and worker scheduling together. The service must never depend on successfully reading a busy project database to answer a health request.
 
@@ -78,14 +84,16 @@ Moving the same blocking publication path into a daemon would retain the central
 flowchart TD
     V[VS Code windows] --> C[User service control and event API]
     L[CLI client] --> C
-    M[Agent stdio MCP bridges] --> Q[Service query API]
+    M[Agent stdio MCP bridges] -. broker connection .-> C
     C --> S[Durable scheduler and resource manager]
     S --> A[Project A worker]
     S --> B[Project B worker]
     S --> N[Additional project workers]
-    Q --> A
-    Q --> B
-    Q --> N
+    M <-->|Direct bounded queries for selected collection| A
+    M <-->|Direct bounded queries for selected collection| B
+    M <-->|Direct bounded queries for selected collection| N
+    L <-->|Direct retrieval| A
+    V <-->|Direct retrieval| A
     A --> D1[Project A index and retained objects]
     B --> D2[Project B index and retained objects]
     N --> D3[Independent project stores]
@@ -93,6 +101,8 @@ flowchart TD
     B --> E
     N --> E
 ~~~
+
+Solid client-to-worker links carry retrieval requests/responses; the dotted bridge-to-service link performs connection setup. Each grant selects one collection and worker; the multiple links illustrate separate collection-bound clients. CLI and editor retrieval follow the same direct path. Service-to-worker links carry ownership, resource grants and supervision, not forwarded evidence.
 
 ### 4.1 Service identity
 
@@ -108,16 +118,18 @@ For unmanaged installations, the verified selected runtime owns the stable chann
 
 | Component | Responsibility | Must not do |
 |---|---|---|
-| Local service | Registry, client authentication, durable requests, subscriptions, admission, worker supervision, maintenance coordination | Parse files or perform inference on the control loop |
-| Project worker | Discovery, extraction coordination, project query execution, revision publication and recovery | Modify another project or create an independent resource policy |
+| Local service | Registry, client authentication, connection brokerage, durable requests, subscriptions, admission, worker supervision, maintenance coordination | Proxy retrieval payloads/responses, parse files or perform inference on the control loop |
+| Project worker | Authenticated direct query endpoint, local admission within service grants, discovery, extraction coordination, revision publication and recovery | Modify another project, exceed its service-issued grants or create an independent resource policy |
 | Embedding worker pool | Reuse verified model sessions, compute source-bound vectors under admitted budgets | Publish project revisions or choose a project's identity |
 | VS Code extension | Install/connect, render state, register trusted projects, submit user actions, collect diagnostics | Run its own indexing scheduler or infer success from a spinner |
-| MCP bridge | Preserve stdio MCP framing and route bounded collection-scoped read requests | Install models, repair indexes or gain service management authority |
+| MCP bridge | Preserve stdio MCP framing, obtain a scoped connection and exchange bounded read requests directly with its project worker | Install models, repair indexes or gain service management authority |
 | CLI | Scriptable service/client operations and explicit maintenance requests | Silently fall back to opening an index as a competing writer |
 
 Use one active project owner per collection, with concurrent bounded readers and parallel extraction inside admitted capacity. Spawn or retain workers according to activity; unload idle workers and model sessions under pressure. A worker crash should fail its in-flight requests and isolate its project while other workers continue.
 
-The service is a single coordination dependency. Its crash interrupts connections, even with isolated workers. Recovery must be automatic and bounded, but not described as zero downtime. If service ownership is lost, workers must stop admitting writes and terminate or surrender ownership before a replacement service grants it. Use process-lifetime handles and fencing generations, not heartbeats alone, to prevent surviving writers from overlapping new owners.
+The service is a single coordination dependency. Its crash interrupts control connections and invalidates admission even though query sockets connect directly to workers. Recovery must be automatic and bounded, but not described as zero downtime. On detected service ownership loss, workers stop admitting new queries and writes, cancel/drain admitted reads within their deadlines, and finish or preserve recoverable atomic publication before terminating or surrendering ownership. They cannot continue indefinitely on cached resource grants. A replacement service must establish prior ownership release before granting a new owner. Use process-lifetime handles and fencing generations, not heartbeats alone, to prevent surviving writers from overlapping new owners.
+
+Ownership handoff must retain an OS-backed exclusive collection lock through publication and recovery. A replacement service cannot grant a new writer until the prior owner's lock is released and pending publication is classified. Check the durable fencing generation at write admission and commit under that ownership. A counter stored only in the replacement service cannot fence a surviving process with an open database. If exit or lock release cannot be established within the deadline, mark that project unavailable and keep other projects running; a timeout does not authorize concurrent ownership.
 
 ### 4.3 Existing crate boundaries
 
@@ -143,7 +155,7 @@ Shared scheduler and quota mutations must be short. No extraction, inference, co
 
 Same-user workers are fault isolation, not a security sandbox against malicious code running as that user. In-memory embedding requests and results must carry project, source hash, model identity and cancellation identity so pooling cannot mix results between collections.
 
-[Local usage reporting](usage-reporting.md) remains store-backed and collection-scoped through kernel services. Bridge/service hops must not double-count requests. The service may route bounded reports but does not create a global content ledger or record source/query payloads; recording failures and partial estimates retain their existing disclosures.
+[Local usage reporting](usage-reporting.md) remains store-backed and collection-scoped through kernel services. The project worker records one observation per outer retrieval request using bridge-supplied framing metadata validated under the reporting contract; connection brokerage and internal worker/pool calls add no duplicate observations. Collection report retrieval uses the direct worker connection. Service-wide status may aggregate bounded content-free counters but does not create a global content ledger or forward source/query payloads; recording failures and partial estimates retain their existing disclosures.
 
 ## 6. Publication and concurrent reads
 
@@ -157,7 +169,7 @@ Same-user workers are fault isolation, not a security sandbox against malicious 
 6. Emit a committed revision event and release completed work grants.
 7. Reclaim unreferenced objects only after no live request/recovery record needs them.
 
-Evaluate SQLite WAL and separate bounded read connections in an isolated Phase 0 storage spike, before building the service skeleton. WAL is not admissible in the current store: [database validation](../crates/airk-store/src/current/database.rs) explicitly rejects WAL/SHM sidecars, and [component verification](../crates/airk-store/src/blobs.rs) rejects unlisted overlays. Current physical lexical verification and guarded cache witnesses rely on rollback-journal main-file bytes; [quota admission](storage-quotas.md) reserves database growth and rollback capacity. Enabling WAL is an integrity and accounting redesign, not a PRAGMA change.
+Evaluate SQLite WAL and separate bounded read connections in an isolated Phase 0 storage spike, alongside service-skeleton work and before integrating the new publication path. WAL is not admissible in the current store: [database validation](../crates/airk-store/src/current/database.rs) explicitly rejects WAL/SHM sidecars, and [component verification](../crates/airk-store/src/blobs.rs) rejects unlisted overlays. Current physical lexical verification and guarded cache witnesses rely on rollback-journal main-file bytes; [quota admission](storage-quotas.md) reserves database growth and rollback capacity. Enabling WAL is an integrity and accounting redesign, not a PRAGMA change.
 
 The spike must specify authentication of the SQLite snapshot actually read, including committed WAL content rather than only main-file bytes; cache invalidation/change witnesses across writer commits and checkpoints; head/digest coherence across lexical, graph and source rows; owner-verified sidecars and recovery; and reservations for WAL growth, checkpoint overlap, SHM and failed cleanup. Bound reader age, checkpoint backlog and retained objects together. Demonstrate that tampered/stale sidecars cannot overlay authenticated evidence and that crashes cannot release capacity still needed for recovery. If these properties cannot be proven within budgets, retain rollback journaling or evaluate another publication design before selecting a format.
 
@@ -172,6 +184,10 @@ The current implementation prepares and seals changes, rolls back, then repeats 
 The target is to let readers finish a bounded materialization against their admitted committed revision while updates proceed. Hold any required snapshot only through bounded request execution, not through a long-lived MCP session or cursor lifetime. Continue to expire tokens/cursors explicitly when their contract no longer permits use. This does not introduce historical search or indefinitely retained revisions.
 
 Retained-object reclamation must protect active reads, captured work, pending journals and replacement builds. A database snapshot alone does not protect external object files. Define request leases and ownership accounting together, including crash cleanup and finite lease lifetimes.
+
+Admit the revision snapshot and its external-object lease atomically with respect to publication and reclamation. Lease expiry requests cancellation; reclaim only after the reader releases its handles or its process exit is established. A timer alone cannot prove that an object is unused. Bound stalled readers through cancellation and, if necessary, termination of their owning worker, reporting the affected requests. Persist recovery ownership separately so a service restart cannot discard objects still required by a journal.
+
+A request admitted before a commit may finish against its leased revision. A later request must select the new head, and a supplied token or continuation for the superseded head expires explicitly. No cursor pins an old snapshot between calls. Each response, including conditional validation, binds all evidence to its admitted revision and original locations.
 
 ### 6.3 Full rebuild and repair publication
 
@@ -189,6 +205,8 @@ Expose user-level Balanced, Responsive and Throughput policies plus explicit CPU
 
 Use fair scheduling across projects and request classes. Interactive retrieval receives reserved admission capacity, while aging prevents permanent background starvation. A client cannot monopolize the service by opening more connections or raising its own priority. User-initiated indexing may receive a temporary boost, but other projects retain a minimum share. Paused or inaccessible projects must release unused grants.
 
+The service allocates finite query concurrency, memory and inference allowances to workers over the control channel. Each worker admits direct requests locally within its current grants, enforcing per-client and per-collection limits across connections. Idle allowances return to the service; grants expire or are revoked through an acknowledged drain that preserves accounting for work still running. Never reassign capacity solely because its timer expired while its prior consumer is unaccounted for. Requests queue within finite limits or receive a structured busy/retry outcome. Resource replenishment carries bounded counters and grant identities, not query text, vectors or evidence, and does not require a service RPC for every query. Query embedding calls use the shared pool directly under an admitted allowance.
+
 Allow expensive work in parallel across projects and within a project, but keep one project publication writer. Apply backpressure to bounded capture, extraction, embedding and publication queues. Parallel extraction must stop producing when the publication queue or memory budget fills.
 
 Choose publication batches using actual prepared bytes, retained memory, recent publication duration and cancellation responsiveness, with hard count/byte ceilings. Grow only when measured cost permits; shrink after slow commits. Batch targets are not deadlines: a storage operation can still overrun, so phase timing and stuck-worker recovery remain necessary.
@@ -201,6 +219,8 @@ Coalesce repeated file events, join identical requests and reconcile at a durabl
 
 Use an owner-restricted Windows named pipe or Unix-domain socket, with bounded framed messages. Do not expose a listening TCP port by default. Discovery is an owner-protected record under a user runtime directory, not a file in the workspace. It describes the authenticated instance, protocol and runtime endpoint; it contains no query/source content.
 
+The discoverable service endpoint supports control and connection brokerage. Each worker has a separate owner-restricted retrieval endpoint, returned only through authenticated brokerage. Apply the same peer/endpoint ownership checks to both hops. A workspace path, stale endpoint name or PID is never sufficient to select or authenticate a worker.
+
 Authenticate peer user identity using supported OS mechanisms, enforce endpoint permissions, and use an owner-only bootstrap credential where needed. Check endpoint ownership and symlink/reparse handling before connecting. Credentials must not appear in command arguments, workspace files or diagnostic exports. Authentication does not isolate AIRK from fully compromised same-user processes.
 
 On Windows set an explicit pipe ACL for the intended user, reject remote pipe clients, and validate peer/owner identities; do not rely on the default pipe descriptor. Microsoft documents that default pipe permissions are broader than this design requires. See [named-pipe security](https://learn.microsoft.com/en-us/windows/win32/ipc/named-pipe-security-and-access-rights).
@@ -209,25 +229,42 @@ On Windows set an explicit pipe ACL for the intended user, reject remote pipe cl
 
 Define protocol version negotiation, feature capabilities, maximum frame size, deadlines, cancellation, request IDs, structured errors and per-client outstanding-request limits. Service version, protocol version and index format version are separate identities. A compatible older 1.4-family client may connect only within the explicitly tested negotiated range; no 1.3 helper compatibility is implied.
 
-Proposed method groups, not existing commands:
+Proposed service method groups, not existing commands:
 
 - `service`: identity, health, capabilities, resource status, diagnostics, drain, restart intent.
 - `projects`: paged list, trusted registration, status, settings, unregister without deleting sources.
 - `jobs`: enqueue, join, inspect, cancel, pause/resume, and bounded event subscription.
-- `queries`: existing bounded retrieval semantics with collection and revision binding.
+- `connections`: obtain a retrieval-only worker connection grant for an already registered, authorized collection; no query payload or evidence response passes through this method.
 - `maintenance`: plan, validate, execute and inspect verify/recover/rebuild operations.
+
+Project-worker endpoints expose `queries` with the existing collection/revision-bound retrieval semantics, including collection-scoped usage reports. They expose no service management methods. Direct worker and service-control protocols negotiate capabilities separately within the tested runtime family.
 
 Control/status execution uses bounded independent handlers and a small state snapshot maintained by events. It never waits behind query work or a project's exclusive writer. Authoritative on-disk verification is a separate job; status must identify cached observations and their age.
 
 Slow subscribers receive a gap marker and resynchronize from a snapshot rather than consuming unlimited memory. Sequence events by service instance and monotonic sequence number. Persist job transitions and failures; coalesce high-frequency counters rather than journaling every file. Reconnection is retryable, but a client must not automatically replay an ambiguous mutating request without its durable idempotency key.
 
+Persist the idempotency binding and initial job transition in one transaction before acknowledging acceptance. The same key and payload return the same job/receipt across reconnects and service restarts; conflicting payloads fail. Define bounded receipt retention and an explicit expired-key outcome, so a late retry cannot silently repeat maintenance. Semantic request joining is separate: compatible requests from different clients may share a job while keeping their own receipts. Canceling a client's wait does not cancel that job; explicit job cancellation requires control authority and is visible to every joined client.
+
 ### 8.3 MCP and privilege separation
 
-Provide a stable user-installed `airk` launcher and a collection-bound stdio MCP bridge. The bridge connects to the service and can request on-demand startup, but receives retrieval capabilities only. Its connection must not expose restart, deletion, repair, project enumeration or registration tools to agents. Client disconnect cancels that client's requests, not a shared indexing job.
+Provide a stable user-installed `airk` launcher and a collection-bound stdio MCP bridge. The bridge can request on-demand service startup and a connection grant for its configured registered collection, then exchanges retrieval traffic directly with the worker. Brokerage can start an idle worker under service admission, but cannot register a new project, install a model or initiate indexing implicitly. The bridge receives retrieval capabilities only and exposes no restart, deletion, repair, project enumeration or registration tools to agents. Client disconnect cancels that client's requests, not a shared indexing job.
 
 Management requires a separately authenticated control connection and explicit trusted client context. Workspace configuration cannot choose the service executable, endpoint, credentials or another project's identity. Paths supplied by clients are not proof of ownership; resolve registered canonical roots, aliases and allowed operations inside the service.
 
+### 8.4 Brokered connection and reconnect contract
+
+1. The launcher verifies the selected service and negotiates the broker protocol. The service authenticates the caller and resolves its requested root/storage/collection binding against trusted registrations.
+2. The service locates or starts the single owned worker, establishes its resource allowance and returns a short-lived connection grant plus its authenticated endpoint and supported query protocol. Bind the grant to the service instance, worker instance/fencing generation, collection/root binding, caller connection identity, retrieval capabilities and expiry. Transfer credentials only over protected IPC; exclude them from logs, command arguments and diagnostic exports.
+3. The bridge verifies the endpoint and worker identity; the worker independently verifies the peer, grant and current service ownership. Redeem a grant once during connection establishment, rejecting replay, expiry, wrong collection and superseded identities. Bind the established connection to that authorization; subsequent requests cannot select another collection.
+4. The bridge sends requests directly to the worker. The worker validates request/response budgets, revision selectors and cancellation, executes under its service-issued resource allowance, and sends bounded evidence directly back. Each connection has finite outstanding requests and output buffering; a slow client cannot consume the worker's entire response budget or block service status.
+5. Connection-grant expiry bounds setup, not an admitted request's revision lease. Established connections have a separately bounded authorization lifetime and close/drain on revocation, worker replacement or service ownership loss. Worker unload waits for active requests to drain or cancel; an idle bridge may reconnect on its next request without keeping a model session resident.
+6. A broken connection fails pending requests explicitly. The bridge returns to the broker with capped backoff and obtains a fresh worker-bound grant; it never guesses a replacement endpoint or falls back to direct store access or service query forwarding. Read-only calls may retry within their original deadline, retaining any supplied revision/token. An interrupted read returns no partial success; discard incomplete output, and expire stale selectors rather than silently substituting a different revision.
+
+Connection grants authorize access; they are distinct from worker resource allowances and per-request revision leases. Direct IPC provides collection fault isolation and avoids central payload forwarding, while the existing same-user security limitation still applies. A service restart requires fresh brokerage; this design does not promise uninterrupted queries through loss of service ownership.
+
 ## 9. Installation and lifecycle without administrator access
+
+All platform adapters share these policy boundaries: remain within current-user authority, verify executable and endpoint ownership, preserve OS protections, and report denied installation/execution/persistence with an approved deployment path. Do not elevate, alter security policy or enable persistence merely to make a check pass. The platform sections add specific constraints to this common rule.
 
 ### 9.1 Common installation transaction
 
@@ -330,7 +367,7 @@ Place the native extension backend on the workspace host. Remote SSH installs th
 
 Show host/authority prominently on every service-wide action, especially Repair all and Restart service. Enumerate only projects registered in that service environment. Volumes and persistence follow the remote environment; explain when container deletion will remove indexes. Never mount a live SQLite index into independent hosts or containers as a substitute for IPC.
 
-Preserve the [one-container deployment](../README.md#one-container-per-user-and-machine): one container per user/machine hosts independent collections selected by workspace MCP root/data-directory/collection configuration. The service and its workers run inside that container. Each `docker exec` stdio bridge discovers the owner-restricted endpoint through the same container-local runtime locator and routes only its configured collection. A container entrypoint may supervise foreground `serve`, or bridges may elect the on-demand instance; neither requires systemd. Qualify consistent container-user identity, endpoint permissions and persistent data mounts. Do not route a container bridge to the desktop host's service or create one service per workspace.
+Preserve the [one-container deployment](../README.md#one-container-per-user-and-machine): one container per user/machine hosts independent collections selected by workspace MCP root/data-directory/collection configuration. The service and its workers run inside that container. Each `docker exec` stdio bridge discovers the broker through the same container-local runtime locator, obtains a grant for its configured collection, and connects directly to that worker's container-local endpoint. A container entrypoint may supervise foreground `serve`, or bridges may elect the on-demand instance; neither requires systemd. Qualify consistent container-user identity, permissions on both endpoints and persistent data mounts. Do not route a container bridge to the desktop host's service or create one service per workspace.
 
 Web-only VS Code without a native workspace extension host cannot install or run this service. Show unsupported native functionality clearly. Declare Workspace Trust and virtual-workspace capabilities explicitly. An untrusted workspace may display existing service health but cannot register roots, start indexing, install workspace-selected executables or invoke repair. See [Workspace Trust](https://code.visualstudio.com/api/extension-guides/workspace-trust).
 
@@ -416,15 +453,18 @@ Removing the extension does not delete project indexes. Provide separate Remove 
 
 Instrument control responsiveness, query queue/run time, source capture/extraction, prepared bytes, publication duration, model load/inference, watcher lag, disk admission, checkpoint time and recovery time. Report counts and timings without source/query content. Service health and real work progress have separate monotonic timestamps.
 
+Measure cold connection brokerage separately from warm direct-query latency, including worker startup, grant redemption, resource waits and reconnects. Worker metrics feed bounded asynchronous service snapshots; the service never needs to inspect query payloads to report their timing or resource use.
+
 Set separate control-plane deadlines, worker work-progress deadlines and shutdown grace periods. A missed worker deadline triggers diagnosis and bounded cancellation/restart, not repeated invisible retries. Preserve the committed head and captured recovery requirements. A query timeout releases its snapshot/lease; a dead client cannot pin old objects indefinitely.
 
-Initial qualification objectives, to measure and revise before approval:
+Initial qualification objectives, to measure and finalize before release:
 
 - Service health/status p95 below 250 ms on a responsive local host during sustained indexing; filesystem stalls must be reported separately.
 - No collection-wide reader exclusion for the duration of source extraction or embedding.
 - Interactive query p95 during background work within 2x the measured idle baseline for the declared workload, with explicit bounded admission rejection rather than unbounded queues.
 - Idle connected clients add no indexing worker or model session solely because they connected.
 - A worker crash or repair in one project does not prevent status or queries in another.
+- After connection setup, retrieval payloads and responses bypass the service; increasing response size does not grow service payload buffers. Saturated or slow direct clients leave service health/status within its declared objective.
 - No unbounded queue, WAL growth, diagnostic retention or replacement-index disk usage.
 
 These are proposed acceptance objectives, not measured guarantees. Publish exact hardware, artifact identities, corpus characteristics, configured budgets, sample sizes, errors and tail latency. High-core machines must be tested for useful increased throughput and responsiveness; merely creating more threads is not evidence of scale.
@@ -436,18 +476,32 @@ Each phase produces reviewable contracts and evidence. Do not publish 1.4.0 unti
 | Phase | Work | Required exit evidence |
 |---|---|---|
 | 0. Implementation contracts, baseline and storage spike | Instrument 1.3.2 writer/request/SQLite waits, preparation/replay costs and batching; prototype WAL authentication, reservations, bounded reader leases and replacement handoff in isolated state; define service protocol and lifecycle contracts | Exact artifact/workload baseline, including a new reproduction if a stall remains; bounded concurrent-reader/checkpoint and crash/tamper evidence to select storage mechanisms; written implementation contracts and release-number decision. Service architecture and clean break remain the chosen direction |
-| 1. Service skeleton | Native serve/client adapters, user singleton, authenticated IPC, bounded control handlers, discovery and reconnect | Many concurrent launchers elect one instance; status remains responsive with a blocked synthetic worker; unsafe endpoints rejected |
+| 1. Service skeleton | Native serve/client adapters, user singleton, authenticated broker/control IPC, direct worker endpoints, bounded handlers, discovery and reconnect | Many concurrent launchers elect one instance; scoped grants establish direct connections; status remains responsive with a blocked synthetic worker; unsafe endpoints rejected |
 | 2. Durable work and project ownership | New registry, idempotent enqueue/join, fencing, worker supervision, pause/cancel and recovery | Multi-window duplicate requests join; worker/service crashes never create two writers; unrelated projects remain usable |
 | 3. Storage/publication implementation | Implement the Phase 0-selected format and authenticated commit/read contract, bounded reader leases, replacement builds and cleanup | Fault-injected commit/switch/recovery tests, exact revision evidence, bounded reader/checkpoint behavior; no long preparation gate |
-| 4. Resource scheduler and embedding pool | Fair admission, bounded queues, exact model-session reuse, budgets and pressure handling | Scale tests across hardware classes, no internal-thread oversubscription or mixed-project embedding results |
+| 4. Resource scheduler and embedding pool | Fair service-to-worker grants, local query admission, bounded queues, exact model-session reuse, budgets and pressure handling | Direct connections cannot exceed aggregate allowances; grant drain/reallocation preserves running-work accounting; scale tests across hardware classes, no internal-thread oversubscription or mixed-project embedding results |
 | 5. Platform installation and lifecycle | Offline VSIX payload, immutable install, user launcher, on-demand mode, optional platform startup adapters, managed runtime | Clean non-admin offline installation/upgrade/uninstall on every supported target; denied-persistence and policy-failure tests |
 | 6. Service console and maintenance | Service/project overview, subscriptions, down-service diagnostics, restart and resumable scoped/bulk repair | Installed-editor tests from two or more windows, closed-project repair, stale-plan rejection, partial-failure/cancellation receipts |
-| 7. MCP/CLI cutover and clean-break setup | Stable launcher, read-only bridges, explicit legacy configuration review, fresh indexing | Multiple actual agent clients share one project job; old helpers cannot open new state; no legacy writer fallback |
+| 7. MCP/CLI cutover and clean-break setup | Stable launcher, brokered read-only bridges, direct retrieval, explicit legacy configuration review, fresh indexing | Multiple actual agent clients share one project job; evidence bypasses service; worker replacement requires fresh brokerage; old helpers cannot open new state; no legacy writer or proxy fallback |
 | 8. Qualification and release | Signed/notarized target artifacts, full workload matrix, release documentation and controlled promotion | Exact artifact receipts, passing platform gates, documented limits and approved 1.4.0 release |
 
-Phases 2-4 need iterative prototypes before committing to final schema and worker counts. Installation and UI can be developed against a stable mocked protocol, but mocks cannot satisfy native lifecycle, publication or installed-platform exit criteria.
+Phase numbers describe integration dependencies, not a requirement to serialize all development. Phase 1 can proceed alongside the Phase 0 storage spike; phases 2-4 need iterative prototypes before committing to final schema and worker counts. Storage integration waits for the authenticated publication/read contract. Installation and UI can be developed against a stable mocked protocol, but mocks cannot satisfy native lifecycle, publication or installed-platform exit criteria. Neither a missing stall reproduction nor an incremental performance improvement reopens the service or clean-break decision.
 
-### 15.1 Test matrix
+### 15.1 Required implementation contracts
+
+Keep these contracts as versioned repository documents owned by the affected component. Each must name its invariants, concrete limits, state transitions, failure outcomes and validating tests before its implementation is treated as complete.
+
+| Contract | Owner | Required decisions and evidence |
+|---|---|---|
+| Service protocol, brokerage and worker query endpoints | CLI/MCP adapters, kernel contracts | Separate control/query negotiation, authenticated worker identity, scoped single-use grants, direct framing/deadlines/backpressure, role restrictions, mixed-editor versions, revocation and reconnect |
+| Worker ownership and durable jobs | Kernel with store persistence/locks | Ownership epochs and lock handoff, atomic acceptance/idempotency receipts, join/cancel semantics, restart recovery and surviving-worker tests |
+| Publication, reads and reclamation | Store with kernel coordination | Authenticated snapshot/head, WAL or selected journal mode, witnesses, revision expiry, reader leases, crash/tamper tests and ownership-proven cleanup |
+| Resource and quota admission | Kernel policy, store reservations, retrieval execution | Finite queue/thread/memory/disk limits, query capacity, model identity/session reuse, checkpoint pressure and failed-work grant recovery |
+| Installation and transition | CLI platform adapters and extension | Offline authenticity basis, immutable runtime selection, old-registration handling, explicit agent configuration changes and installed-platform receipts |
+
+Numeric defaults must be recorded before workload qualification, together with overload behavior and the measurement used to select them. A receipt identifies the tested source and packaged artifact; successful mocked or generated-definition tests cannot stand in for installed-runtime evidence.
+
+### 15.2 Test matrix
 
 | Area | Required scenarios |
 |---|---|
@@ -456,12 +510,13 @@ Phases 2-4 need iterative prototypes before committing to final schema and worke
 | Hardware | Low-memory laptop, typical workstation, high-core/high-memory workstation; fast and slower local disks; constrained VM/container |
 | Client scale | 1, 4 and 10 active projects; 1, 10 and 50 concurrent agent/CLI clients; many windows on the same project; idle-client overhead |
 | Corpus/workload | Small and large repositories, heterogeneous file sizes, generated-file churn, source edits during rebuild, semantic opt-out, multiple model identities |
-| Failure isolation | Blocked extraction, worker crash, embedding crash, service crash, corrupt project DB, unavailable source volume, one failed project in bulk repair |
+| Failure isolation | Blocked extraction, worker crash, embedding crash, service crash with a surviving writer, corrupt project DB, unavailable source volume, one failed project in bulk repair |
 | Publication | Concurrent reads/writes, exact lexical/vector/source revision coherence, stale preparation, crash at each journal/manifest boundary, long reader, checkpoint pressure |
 | Resources | Memory pressure, full disk, insufficient replacement headroom, fair-share starvation tests, model-session reuse, library thread accounting |
-| Installation | Standard user, no network, approved read-only runtime, startup registration denied, path spaces/non-ASCII, racing windows, upgrade while busy, signature/manifest failure |
+| Installation | Standard user, no network, approved read-only runtime, startup registration denied, path spaces/non-ASCII, racing windows with different extension versions, upgrade while busy, old/modified scheduler registration, signature/manifest failure |
 | Platform policy | Windows allowlisting/EDR denial; Mac quarantine/notarization/TCC; Linux noexec/SELinux/AppArmor denial; explicit actionable failure without bypass |
-| Control/security | Wrong user, unsafe endpoint/redirected directory, oversized frames, slow subscribers, unauthorized MCP management, untrusted workspace, malicious project paths |
+| Control/security | Wrong user, unsafe endpoint/redirected directory, oversized frames, slow subscribers, unauthorized MCP management, untrusted workspace, malicious project paths, ambiguous retry after crash, conflicting/expired idempotency key |
+| Brokered retrieval | Wrong-worker/collection, replayed/expired grant, redirected endpoint, worker replacement, service loss during setup/query, slow direct reader, many connections exceeding one worker allowance, stale revision on retry, zero service payload forwarding |
 | Maintenance | Single/selected/all registered projects; closed project; missing roots; stale plan; restart/resume; cancel during build; safe switch and cleanup |
 
 Run repository-required formatting, clippy, workspace tests, extension tests, packaging/license/repository checks and whitespace checks for implementation changes. Platform-installed tests and measured load tests are additional requirements, not replacements for those checks. Keep unexecuted platform checks and unsupported architectures explicit.
