@@ -12,6 +12,8 @@ pub mod maintenance;
 pub mod map;
 pub mod metadata;
 pub mod postings;
+#[cfg(test)]
+mod publication_spike_tests;
 mod read;
 mod rebuild;
 pub mod relationships;

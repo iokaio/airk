@@ -202,6 +202,8 @@ Same-user workers are fault isolation, not a security sandbox against malicious 
 
 ## 6. Publication and concurrent reads
 
+The [October 22 mechanism spike](service-publication-spike.md) now exercises the real lexical seal against committed WAL snapshots and demonstrates pinned-reader WAL growth beyond main-file admission. These are isolated tests, with no runtime format/journal switch. Owner-verified sidecars, enforced WAL/SHM growth, recovery reservations, external-object leases and integrated replacement publication remain required before cutover.
+
 ### 6.1 Proposed normal update path
 
 1. Capture immutable source inputs and perform extraction outside the database writer transaction.
