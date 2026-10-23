@@ -12,6 +12,122 @@ use std::{
 struct Children(Vec<Child>);
 
 #[test]
+fn missing_registered_source_still_brokers_retained_evidence_and_reports_a_typed_job_failure()
+-> Result<()> {
+    use airk_core::service::{
+        ControlMethod as Method, ControlResponse as Response, JobKind, JobOutcome, RequestKey,
+    };
+    let owner = tempfile::tempdir()?;
+    let runtime = owner.path().join("runtime");
+    let source = owner.path().join("source");
+    let data = owner.path().join("data");
+    fs::create_dir(&source)?;
+    fs::create_dir(&data)?;
+    fs::write(
+        source.join("memo.md"),
+        "# Copper harbor\nRetained copper harbor fixture.\n",
+    )?;
+    let project = airk_kernel::service_projects::registration(&source, &data, "missing-source")?;
+    let kernel =
+        airk_kernel::Kernel::open_service_collection(&source, Some(data), "missing-source")?;
+    kernel.configure_vectors(false)?;
+    kernel.index()?;
+    let token = kernel
+        .status()?
+        .publication
+        .context("initial publication missing")?
+        .token;
+    let mut children = Children(vec![start(&runtime)?]);
+    wait_ready(&runtime)?;
+    tokio::runtime::Runtime::new()?.block_on(async {
+        let request = |method| airk_cli::service_runtime::request(&runtime, method);
+        ensure!(
+            matches!(
+                request(Method::Register {
+                    project: project.clone()
+                })
+                .await?,
+                Response::Registered { .. }
+            ),
+            "registration failed"
+        );
+        let moved = owner.path().join("temporarily offline");
+        fs::rename(&source, &moved)?;
+        // The first project owner starts after the registered root disappears.
+        let mut connection =
+            airk_cli::project_client::Connection::connect(&runtime, project.binding).await?;
+        let result = connection
+            .call(
+                "airk_search".into(),
+                serde_json::json!({"query":"copper harbor", "mode":"lexical"})
+                    .as_object()
+                    .context("fixture query missing")?
+                    .clone(),
+            )
+            .await?;
+        ensure!(
+            result.get("isError").and_then(Value::as_bool) != Some(true)
+                && result.to_string().contains("memo.md"),
+            "missing source blocked retained evidence: {result}"
+        );
+        let Response::RequestEpoch { namespace, epoch } = request(Method::RequestEpoch).await?
+        else {
+            anyhow::bail!("request epoch missing")
+        };
+        let Response::Job { job } = request(Method::Enqueue {
+            project: project.binding,
+            caller: airk_kernel::service_broker::new_instance_id()?,
+            key: RequestKey {
+                namespace,
+                epoch,
+                nonce: airk_kernel::service_broker::new_instance_id()?,
+            },
+            kind: JobKind::Index,
+        })
+        .await?
+        else {
+            anyhow::bail!("index request was not durably accepted")
+        };
+        let until = tokio::time::Instant::now() + Duration::from_secs(30);
+        loop {
+            let Response::Job { job: observed } = request(Method::Job { id: job.id }).await? else {
+                anyhow::bail!("job receipt missing")
+            };
+            if let Some(outcome) = observed.outcome {
+                ensure!(
+                    matches!(outcome, JobOutcome::Failed { code } if code == "source_unavailable"),
+                    "missing root did not report typed source failure"
+                );
+                break;
+            }
+            ensure!(
+                tokio::time::Instant::now() < until,
+                "missing-root job failed to settle"
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        ensure!(
+            kernel
+                .status()?
+                .publication
+                .context("retained publication missing")?
+                .token
+                == token,
+            "missing-root scan changed retained evidence"
+        );
+        ensure!(
+            fs::read_to_string(moved.join("memo.md"))?
+                == "# Copper harbor\nRetained copper harbor fixture.\n",
+            "source bytes changed"
+        );
+        request(Method::Shutdown).await?;
+        Ok::<_, anyhow::Error>(())
+    })?;
+    ensure!(wait_exit(&mut children.0[0])?, "service failed to drain");
+    Ok(())
+}
+
+#[test]
 fn service_watcher_owns_nested_changes_pause_and_restart_without_editor_events() -> Result<()> {
     use airk_core::service::{ControlMethod as Method, ControlResponse as Response};
     let owner = tempfile::tempdir()?;

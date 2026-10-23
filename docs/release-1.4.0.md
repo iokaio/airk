@@ -8,4 +8,6 @@ The default extension/CLI/container cutover, service console, bulk repair, remai
 
 Interrupted first installations can now be removed before activation, with exclusive owner checks. Retirement validates ancillary receipts before deletion and completes cleanup after the payload directory is already gone, preserving changed or unknown state.
 
+Registered projects with missing source roots can serve existing ownership-matched retained evidence. New scans and rebuilds fail explicitly without publishing root-wide deletions; status reports source availability independently of index identity and readiness.
+
 Stage commits remain local and human DCO-signed. No push, publication or service VSIX is authorized before the user's implementation, test and review gate is satisfied. Final versions and packaging receipts will be recorded here at cutover.

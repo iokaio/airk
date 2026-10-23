@@ -611,6 +611,7 @@ impl Kernel {
         repaired_retained_artifacts: &mut usize,
         paths: Option<&std::collections::BTreeSet<String>>,
     ) -> Result<airk_ingest::IndexReport> {
+        self.require_service_sources()?;
         let execution_lease = crate::execution::acquire(&self.data_root)?;
         if full {
             self.prepare_full_rebuild()?;
@@ -968,6 +969,9 @@ impl Kernel {
         report.execution = Some(execution_lease.plan.clone());
         report.scan_extract_us =
             u64::try_from(scan_started.elapsed().as_micros()).unwrap_or(u64::MAX);
+        // An unavailable root is not a complete inventory of zero files. Preserve
+        // committed evidence instead of constructing a root-wide deletion batch.
+        self.require_service_sources()?;
         let committed_previous = if progressive_enabled
             && progressive_current
                 .as_ref()

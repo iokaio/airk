@@ -88,6 +88,7 @@ impl Kernel {
         Ok(selected)
     }
     pub fn rebuild_service(&self, job: Sha256Digest) -> Result<RevisionToken> {
+        self.require_service_sources()?;
         let collection = self
             .service_collection
             .as_ref()
@@ -173,6 +174,7 @@ impl Kernel {
 mod tests {
     use super::*;
     use airk_core::SearchQuery;
+    use std::path::Path;
     fn query(text: &str) -> SearchQuery {
         SearchQuery {
             text: text.into(),
@@ -180,6 +182,113 @@ mod tests {
             limit: 5,
             max_bytes: 4096,
         }
+    }
+
+    #[test]
+    fn missing_source_keeps_retained_reads_and_rejects_scan_or_rebuild_without_deleting_evidence()
+    -> Result<()> {
+        let owner = tempfile::tempdir()?;
+        let source = owner.path().join("source");
+        let data = owner.path().join("data");
+        std::fs::create_dir(&source)?;
+        std::fs::create_dir(&data)?;
+        std::fs::write(
+            source.join("memo.md"),
+            "# Copper harbor\nRetained copper harbor fixture.\n",
+        )?;
+        let project = crate::service_projects::registration(&source, &data, "retained")?;
+        let kernel = Kernel::open_service_collection(&source, Some(data.clone()), "retained")?;
+        kernel.configure_vectors(false)?;
+        kernel.index()?;
+        let token = kernel
+            .status()?
+            .publication
+            .context("missing initial token")?
+            .token;
+        let saved = owner.path().join("source temporarily unavailable");
+        std::fs::rename(&source, &saved)?;
+        assert!(crate::service_projects::validate(&project).is_err());
+        crate::service_projects::validate_retained(&project)?;
+        let reopened = Kernel::open_service_collection_for_diagnostics(
+            Path::new(&project.root),
+            Some(data.clone()),
+            "retained",
+        )?;
+        assert!(!reopened.search(&query("copper"))?.hits.is_empty());
+        assert!(matches!(
+            reopened
+                .status()?
+                .source_availability
+                .context("source observation missing")?
+                .state,
+            crate::service_projects::SourceState::Unavailable
+        ));
+        for result in [
+            reopened.index().map(|_| ()),
+            reopened.index_paths(&["memo.md".into()]).map(|_| ()),
+            reopened
+                .rebuild_service(Sha256Digest::from_bytes([67; 32]))
+                .map(|_| ()),
+        ] {
+            assert!(
+                result
+                    .err()
+                    .context("missing source permitted indexing")?
+                    .is::<crate::service_projects::SourceUnavailable>()
+            );
+        }
+        assert_eq!(
+            reopened
+                .status()?
+                .publication
+                .context("lost publication")?
+                .token,
+            token
+        );
+        assert!(!reopened.search(&query("copper"))?.hits.is_empty());
+        std::fs::rename(saved, &source)?;
+        crate::service_projects::validate(&project)?;
+        reopened.index()?;
+        assert!(matches!(
+            reopened
+                .status()?
+                .source_availability
+                .context("source observation missing")?
+                .state,
+            crate::service_projects::SourceState::Available
+        ));
+        assert_eq!(
+            std::fs::read_to_string(source.join("memo.md"))?,
+            "# Copper harbor\nRetained copper harbor fixture.\n"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn missing_source_diagnostic_open_never_initializes_unbound_state() -> Result<()> {
+        let owner = tempfile::tempdir()?;
+        let root = owner.path().canonicalize()?.join("missing-source");
+        let data = owner.path().join("new-data");
+        assert!(
+            Kernel::open_service_collection_for_diagnostics(&root, Some(data.clone()), "retained")
+                .is_err()
+        );
+        assert!(!data.exists() && !root.exists());
+        std::fs::create_dir(&data)?;
+        assert!(
+            Kernel::open_service_collection_for_diagnostics(&root, Some(data.clone()), "retained")
+                .is_err()
+        );
+        assert_eq!(std::fs::read_dir(data)?.count(), 0);
+        assert!(
+            Kernel::open_service_collection_for_diagnostics(
+                root.join("../alias"),
+                Some(owner.path().into()),
+                "retained"
+            )
+            .is_err()
+        );
+        Ok(())
     }
 
     #[test]

@@ -225,7 +225,7 @@ pub async fn run() -> Result<()> {
     let mut lease = ProjectLease::acquire(&init.runtime, init.project)?;
     let mut registry = ServiceRegistry::open(&init.runtime, init.service)?;
     let registration = registry.get(init.project)?.registration;
-    airk_kernel::service_projects::validate(&registration)?;
+    airk_kernel::service_projects::validate_retained(&registration)?;
     let epoch = registry.admit_worker(&mut lease)?;
     let lease = Arc::new(lease);
     ensure!(
@@ -385,6 +385,9 @@ pub async fn run() -> Result<()> {
                         JobOutcome::Failed {
                             code: if error.is::<airk_kernel::service_execution::WorkStalled>() {
                                 "work_stalled"
+                            } else if error.is::<airk_kernel::service_projects::SourceUnavailable>()
+                            {
+                                "source_unavailable"
                             } else {
                                 "project_operation_failed"
                             }

@@ -102,6 +102,8 @@ fn managed_data_path(path: PathBuf) -> Result<PathBuf> {
 
 #[derive(Serialize)]
 pub struct Status {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_availability: Option<service_projects::SourceObservation>,
     pub execution: airk_core::execution::ExecutionPlan,
     pub indexing: airk_core::extraction::IndexCoverage,
     pub freshness: airk_core::changes::FreshnessObservation,
@@ -226,15 +228,24 @@ impl Kernel {
         service: bool,
     ) -> Result<Self> {
         airk_store::validate_collection(collection)?;
-        let root = root
-            .as_ref()
-            .canonicalize()
-            .context("resolve workspace root")?;
+        let (root, source_available) = if service && !recover {
+            service_projects::retained_root(root.as_ref())?
+        } else {
+            (
+                root.as_ref()
+                    .canonicalize()
+                    .context("resolve workspace root")?,
+                true,
+            )
+        };
         ensure!(
             root.to_str().is_some(),
             "non-UTF-8 workspace root is unsupported; collection identities must be lossless"
         );
-        ensure!(root.is_dir(), "workspace root must be a directory");
+        ensure!(
+            !source_available || root.is_dir(),
+            "workspace root must be a directory"
+        );
         let directory = data_dir.unwrap_or_else(|| root.join(".airk"));
         #[cfg(windows)]
         let directory = managed_data_path(directory)?;
@@ -250,14 +261,25 @@ impl Kernel {
             );
         }
         let service_collection = if service {
-            std::fs::create_dir_all(&directory)?;
-            let collection = airk_store::service::collection::Collection::initialize(
-                &directory,
-                root.to_str().context("non-UTF-8 workspace")?,
-                collection,
-                service_broker::new_instance_id()?,
-            )?;
-            collection.recover_abandoned_replacement()?;
+            let collection = if source_available {
+                std::fs::create_dir_all(&directory)?;
+                airk_store::service::collection::Collection::initialize(
+                    &directory,
+                    root.to_str().context("non-UTF-8 workspace")?,
+                    collection,
+                    service_broker::new_instance_id()?,
+                )?
+            } else {
+                airk_store::service::collection::Collection::existing(
+                    &directory,
+                    root.to_str().context("non-UTF-8 workspace")?,
+                    collection,
+                )
+                .context("source unavailable and no matching retained service collection exists")?
+            };
+            if source_available {
+                collection.recover_abandoned_replacement()?;
+            }
             Some(collection)
         } else {
             None
@@ -311,6 +333,34 @@ impl Kernel {
 
     pub fn root(&self) -> &Path {
         &self.root
+    }
+    pub(crate) fn require_service_sources(&self) -> Result<()> {
+        if self.service_collection.is_some() {
+            service_projects::require_source(&self.root)?;
+            let roots =
+                airk_store::roots::RootConfig::load(self.store.directory(), &self.root_id())?;
+            for root in roots.roots.values() {
+                service_projects::require_source(Path::new(root))?;
+            }
+        }
+        Ok(())
+    }
+    fn service_source_observation(&self) -> Option<service_projects::SourceObservation> {
+        self.service_collection.as_ref()?;
+        use service_projects::SourceState;
+        let state = match self.require_service_sources() {
+            Ok(()) => SourceState::Available,
+            Err(error) if error.is::<service_projects::SourceUnavailable>() => {
+                SourceState::Unavailable
+            }
+            Err(_) => SourceState::Unknown,
+        };
+        Some(service_projects::SourceObservation {
+            state,
+            observed_unix_ms: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |time| time.as_millis().min(u64::MAX as u128) as u64),
+        })
     }
     /// Observers receive stage updates and committed boundaries and must not reenter the writer.
     pub fn with_index_progress(
