@@ -2,6 +2,8 @@
 
 Status: opt-in native control, durable jobs, supervised workers, direct retrieval/MCP, shared inference, saved-source watching and ordinary/replacement publication implemented; complete maintenance integration, resource qualification and extension cutover remain in progress. Written October 22, 2026; implementation updated October 23.
 
+Implemented shared-model ownership: the [inference pool](service-embedding.md) now retains bounded verified immutable files under the private service root. Active sessions pin those files rather than retired collection incarnations; a real MiniLM smoke verifies retirement with one model still loaded. Per-project provisioning/calibration-file cutover remains pending.
+
 Implemented source-change ownership: [supervised directory notifications and durable reconciliation](service-source-watching.md) now preserve requested work, pause/cancellation and duplicate-event receipts across restart. The service reserves watcher capacity and reports native coverage independently of index freshness. Default editor integration and remaining lifecycle/console gates stay open.
 
 Target release: **1.4.0, a clean break from the 1.3.x process, storage and client lifecycle.** The service architecture, clean break and release number are settled. The maintainer permits breaking minor releases during this pre-adoption stage. Measurements guide implementation and qualify the result; they are not prerequisites for choosing this architecture. This document does not change the checked-in implementation version or authorize publication. The [current architecture](architecture.md) remains the description of implemented behavior until this plan is implemented and qualified.

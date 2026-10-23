@@ -8,6 +8,8 @@ use std::{
 
 #[path = "service_collection.rs"]
 pub mod collection;
+#[path = "service_model_files.rs"]
+pub mod model_files;
 #[path = "service_registry.rs"]
 pub mod registry;
 

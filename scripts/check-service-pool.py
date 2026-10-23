@@ -179,7 +179,21 @@ def main():
             observation = rpc("embedding_status")
             if not observation.get("available") or observation.get("loads") != 1:
                 raise RuntimeError("Replacement stopped compatible loaded-session reuse")
-            print("Replacement handoff preserved both direct clients and compatible MiniLM reuse.", flush=True)
+            deadline = time.monotonic() + 90
+            while True:
+                maintenance = rpc({"maintenance": {"project": projects[0]["binding"]}})
+                if (maintenance.get("observation") or {}).get("pending_incarnations") == 0:
+                    break
+                if time.monotonic() >= deadline:
+                    raise RuntimeError(f"Loaded model prevented old-incarnation retirement: {maintenance}")
+                time.sleep(0.2)
+            sets = [path for path in (runtime / "model-files-1.4" / "sets").iterdir()
+                    if len(path.name) == 64 and path.is_dir()]
+            if len(sets) != 1 or not (sets[0] / "model.onnx").is_file():
+                raise RuntimeError("Compatible projects did not share one immutable model-file set")
+            if rpc("embedding_status").get("loads") != 1:
+                raise RuntimeError("Retirement unnecessarily discarded the compatible loaded model")
+            print("Replacement preserved direct clients and one MiniLM load; old incarnation retired while shared files stayed pinned.", flush=True)
 
             # This PID comes from our private authenticated service's supervised helper.
             os.kill(observation["process_id"], signal.SIGTERM)

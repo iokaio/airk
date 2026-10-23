@@ -35,6 +35,7 @@ enum Binding {
         location: ModelLocation,
         identity: String,
         key: Sha256Digest,
+        files: Arc<airk_store::service::model_files::ModelFileLease>,
     },
     Tokenizer {
         path: PathBuf,
@@ -47,7 +48,8 @@ struct Engine {
     owners: BTreeMap<Incarnation, Weak<AtomicBool>>,
     sessions: BTreeMap<(Incarnation, Incarnation), Session>,
     model: Option<EmbeddingModel>,
-    model_lease: Option<airk_store::current::CurrentObjectLease>,
+    model_lease: Option<Arc<airk_store::service::model_files::ModelFileLease>>,
+    model_files: airk_store::service::model_files::ServiceModelFiles,
     model_key: Option<Sha256Digest>,
     tokenizer: Option<airk_kernel::usage::OfflineTokenizer>,
     tokenizer_path: Option<PathBuf>,
@@ -99,12 +101,13 @@ fn location_key(
 }
 
 impl Engine {
-    fn new() -> Self {
-        Self {
+    fn new(runtime: &Path) -> Result<Self> {
+        Ok(Self {
             owners: BTreeMap::new(),
             sessions: BTreeMap::new(),
             model: None,
             model_lease: None,
+            model_files: airk_store::service::model_files::ServiceModelFiles::open(runtime)?,
             model_key: None,
             tokenizer: None,
             tokenizer_path: None,
@@ -112,7 +115,7 @@ impl Engine {
             reuses: 0,
             used: Instant::now(),
             inference_threads: Arc::new(AtomicUsize::new(1)),
-        }
+        })
     }
 
     fn retire_disconnected(&mut self) {
@@ -137,6 +140,7 @@ impl Engine {
             location,
             identity,
             key,
+            files,
         } = binding
         else {
             anyhow::bail!("not a model session")
@@ -148,12 +152,6 @@ impl Engine {
         self.model = None;
         self.model_lease = None;
         self.model_key = None;
-        let lease = match location {
-            ModelLocation::Retained { collection, .. } => {
-                Some(airk_store::FileStore::new(collection).pin_service_objects()?)
-            }
-            ModelLocation::Directory { .. } => None,
-        };
         super::handle(
             Request::Open {
                 protocol: PROTOCOL,
@@ -165,7 +163,7 @@ impl Engine {
             &mut None,
         )?;
         self.model_key = Some(*key);
-        self.model_lease = lease;
+        self.model_lease = Some(files.clone());
         self.loads = self.loads.saturating_add(1);
         Ok(())
     }
@@ -213,10 +211,34 @@ impl Engine {
                     "pool session capacity or duplicate open"
                 );
                 let pipeline = location_key(&grant.project, &location, &identity)?;
+                let _source_pin = match &location {
+                    ModelLocation::Retained { collection, .. } => {
+                        Some(airk_store::FileStore::new(collection).pin_service_objects()?)
+                    }
+                    ModelLocation::Directory { .. } => None,
+                };
+                let set = match &location {
+                    ModelLocation::Retained { objects, .. } => objects.clone(),
+                    ModelLocation::Directory { path } => model::inspect_object_plan(path)?,
+                };
+                ensure!(
+                    set.pipeline_digest == pipeline,
+                    "model changed during shared-file planning"
+                );
+                let files = self.model_files.retain(&set, |name| match &location {
+                    ModelLocation::Directory { path } => path.join(name.filename()),
+                    ModelLocation::Retained { collection, .. } => collection
+                        .join("objects/models")
+                        .join(set.assets[&name].sha256.to_string()),
+                })?;
+                drop(_source_pin);
                 let binding = Binding::Model {
-                    location,
+                    location: ModelLocation::Directory {
+                        path: files.directory().into(),
+                    },
                     identity: identity.clone(),
                     key: pipeline,
+                    files,
                 };
                 if self.model_key == Some(pipeline) && self.model.is_some() {
                     self.reuses = self.reuses.saturating_add(1);
@@ -453,11 +475,12 @@ pub async fn run() -> Result<()> {
     let engine_threads = inference_threads.clone();
     let observation = Arc::new(Mutex::new((0u64, 0u64, 0usize, Instant::now())));
     let engine_observation = observation.clone();
+    let model_engine = Engine::new(&init.runtime)?;
     let engine = std::thread::Builder::new()
         .name("airk-pooled-inference".into())
         .stack_size(8 << 20)
         .spawn(move || {
-            let mut engine = Engine::new();
+            let mut engine = model_engine;
             engine.inference_threads = engine_threads;
             while let Some(work) = receiver.blocking_recv() {
                 match work {
@@ -618,6 +641,7 @@ mod tests {
         label: &str,
         name: &str,
     ) -> Result<(protocol::Grant, ModelLocation, String)> {
+        let root = root.canonicalize()?;
         let source = root.join(format!("source-{label}"));
         let data = root.join(format!("data-{label}"));
         let model = data.join("models/local");
@@ -666,7 +690,7 @@ mod tests {
         let (first, location, identity) = fixture(root.path(), "first", "original fixture")?;
         let (second, other, other_identity) = fixture(root.path(), "second", "original fixture")?;
         let session = Incarnation::from_bytes([4; 16]);
-        let mut engine = Engine::new();
+        let mut engine = Engine::new(root.path())?;
         engine.request(&first, session, open(location.clone(), identity.clone()))?;
         engine.request(&second, session, open(other.clone(), other_identity))?;
         assert_eq!((engine.loads, engine.reuses), (1, 1));
@@ -716,7 +740,7 @@ mod tests {
             fixture(root.path(), "second", "different provenance")?;
         assert_eq!(identity, other_identity);
         let session = Incarnation::from_bytes([4; 16]);
-        let mut engine = Engine::new();
+        let mut engine = Engine::new(root.path())?;
         engine.request(&first, session, open(location, identity))?;
         engine.request(&second, session, open(other, other_identity))?;
         assert_eq!((engine.loads, engine.reuses), (2, 0));
@@ -745,7 +769,7 @@ mod tests {
         std::fs::write(path.join("vocabulary.json"), vocabulary)?;
         std::fs::write(path.join("model.json"), serde_json::to_vec(&manifest)?)?;
         let session = Incarnation::from_bytes([4; 16]);
-        let mut engine = Engine::new();
+        let mut engine = Engine::new(root.path())?;
         engine.request(&first, session, open(location, identity))?;
         engine.request(&second, session, open(other, changed))?;
         let embed = || Request::Embed {
