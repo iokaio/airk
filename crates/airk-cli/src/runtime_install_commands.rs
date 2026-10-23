@@ -132,7 +132,7 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
             let _lock = install_lock(install_dir)?;
             match fs::symlink_metadata(install_dir.join("selected.json")) {
                 Ok(_) => {
-                    let (selection, _, _) = selected(install_dir)?;
+                    let selection = selection_record(install_dir)?;
                     ensure!(
                         selection.active != *runtime_sha256
                             && selection.previous.as_ref() != Some(runtime_sha256),

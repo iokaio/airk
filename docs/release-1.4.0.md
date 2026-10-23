@@ -12,4 +12,6 @@ Registered projects with missing source roots can serve existing ownership-match
 
 Source admission now rejects overlaps with service control, verified installer state/install directories and all registered project data roots. Transactional checks cover additional-root changes and registration races; native indexing rechecks pending configuration before capture.
 
+Installed payloads now require complete inventoried topology before selection/execution. Unknown neighboring files block startup and are preserved during resumable retirement.
+
 Stage commits remain local and human DCO-signed. No push, publication or service VSIX is authorized before the user's implementation, test and review gate is satisfied. Final versions and packaging receipts will be recorded here at cutover.

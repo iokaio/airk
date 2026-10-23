@@ -88,6 +88,40 @@ fn unselected_fixture() -> Result<(tempfile::TempDir, PathBuf, String)> {
     Ok((owner, root, identity))
 }
 
+#[tokio::test]
+async fn unlisted_installed_payload_files_block_execution_but_preserve_resumable_uninstall()
+-> Result<()> {
+    let (_owner, root, identity) = unselected_fixture()?;
+    verify_runtime(&root, &identity)?;
+    replace_json(
+        &root,
+        "selected.json",
+        &Selection {
+            schema: 1,
+            active: identity.clone(),
+            previous: None,
+        },
+    )?;
+    let directory = root.join("runtimes").join(&identity);
+    let unknown = directory.join("unlisted-library.dll");
+    fs::write(&unknown, b"Preserve unknown neighboring runtime content.")?;
+    assert!(verify_runtime(&root, &identity).is_err());
+    assert!(selected(&root).is_err());
+    let result = retirement::uninstall(&root).await?;
+    assert_eq!(result["uninstalled"], false);
+    assert_eq!(result["deferred_runtimes"][0], identity);
+    assert!(directory.join(main_name()).is_file());
+    assert_eq!(
+        fs::read(&unknown)?,
+        b"Preserve unknown neighboring runtime content."
+    );
+    assert!(root.join("uninstall.json").is_file());
+    fs::remove_file(unknown)?;
+    assert_eq!(retirement::uninstall(&root).await?["uninstalled"], true);
+    assert!(!directory.exists());
+    Ok(())
+}
+
 #[test]
 fn retirement_preflights_receipts_and_resumes_after_the_payload_directory_is_gone() -> Result<()> {
     let (_owner, root, identity) = unselected_fixture()?;

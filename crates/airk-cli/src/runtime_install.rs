@@ -694,6 +694,21 @@ pub fn verify_runtime(root: &Path, identity: &str) -> Result<(PathBuf, Approval)
         );
         return policy.verify();
     }
+    let (main, approval, inventory) = owned_inventory(root, identity)?;
+    managed::verify_topology(
+        main.parent().context("runtime parent missing")?,
+        &inventory,
+        true,
+    )?;
+    Ok((main, approval))
+}
+
+/// Ownership proof for bounded retirement. Unknown files still prevent execution,
+/// but do not prevent saving the inventory needed to resume their safe retirement.
+fn owned_inventory(root: &Path, identity: &str) -> Result<(PathBuf, Approval, InstallManifest)> {
+    digest(identity)?;
+    ensure!(root.is_dir(), "runtime installation is missing");
+    local_ipc::prepare_root(root)?;
     let directory = root.join("runtimes").join(identity);
     ensure!(directory.is_dir(), "approved runtime is not staged");
     local_ipc::prepare_root(&directory)?;
@@ -708,7 +723,7 @@ pub fn verify_runtime(root: &Path, identity: &str) -> Result<(PathBuf, Approval)
         manifest.version == approval.version,
         "runtime approval version mismatch"
     );
-    Ok((directory.join(main_name()), approval))
+    Ok((directory.join(main_name()), approval, manifest))
 }
 
 pub fn selected(root: &Path) -> Result<(Selection, PathBuf, Approval)> {
@@ -718,14 +733,22 @@ pub fn selected(root: &Path) -> Result<(Selection, PathBuf, Approval)> {
         !root.join("uninstall.json").try_exists()?,
         "runtime uninstall is in progress; resume uninstall before installing or launching"
     );
+    let selection = selection_record(root)?;
+    let (main, approval) = verify_runtime(root, &selection.active)?;
+    Ok((selection, main, approval))
+}
+
+/// A private selection record protects active/rollback identities during cleanup;
+/// execution additionally requires complete inventory and topology verification.
+fn selection_record(root: &Path) -> Result<Selection> {
     let selection: Selection =
         serde_json::from_slice(&read_bounded(&root.join("selected.json"), 4096)?)?;
     ensure!(selection.schema == 1, "unsupported runtime selection");
+    digest(&selection.active)?;
     if let Some(previous) = &selection.previous {
         digest(previous)?;
     }
-    let (main, approval) = verify_runtime(root, &selection.active)?;
-    Ok((selection, main, approval))
+    Ok(selection)
 }
 
 fn self_test(main: &Path) -> Result<()> {

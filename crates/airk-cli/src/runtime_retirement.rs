@@ -38,7 +38,7 @@ fn validated_inventory(root: &Path, identity: &str) -> Result<InstallManifest> {
     digest(identity)?;
     let intent = root.join(format!("retire-{identity}.json"));
     if !present(&intent)? {
-        let (main, _) = verify_runtime(root, identity)?;
+        let (main, _, _) = owned_inventory(root, identity)?;
         let directory = main.parent().context("runtime parent missing")?;
         let bytes = read_bounded(&directory.join("airk-install.json"), MAX_MANIFEST)?;
         let mut temporary = tempfile::NamedTempFile::new_in(root)?;
@@ -208,7 +208,8 @@ pub(super) async fn uninstall(root: &Path) -> Result<serde_json::Value> {
         serde_json::from_slice(&read_bounded(&intent_path, 4096)?)?
     } else {
         let unselected = if present(&root.join("selected.json"))? {
-            let (_, main, approval) = selected(root)?;
+            let selection = selection_record(root)?;
+            let (main, approval, _) = owned_inventory(root, &selection.active)?;
             drain(root, &main, &approval).await?;
             None
         } else {
@@ -238,7 +239,7 @@ pub(super) async fn uninstall(root: &Path) -> Result<serde_json::Value> {
                     .into_string()
                     .map_err(|_| anyhow::anyhow!("unknown runtime directory preserved"))?;
                 digest(&identity)?;
-                verify_runtime(root, &identity)?;
+                owned_inventory(root, &identity)?;
                 runtimes.push(identity);
             }
         }

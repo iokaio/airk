@@ -84,15 +84,22 @@ impl Managed {
                 && inventory.files[main_name()] == self.executable_sha256,
             "managed payload version or executable identity changed"
         );
-        verify_topology(&self.source, &inventory)?;
+        verify_topology(&self.source, &inventory, false)?;
         Ok((self.source.join(main_name()), self.approval.clone()))
     }
 }
 
-fn verify_topology(source: &Path, inventory: &InstallManifest) -> Result<()> {
+pub(super) fn verify_topology(
+    source: &Path,
+    inventory: &InstallManifest,
+    installed: bool,
+) -> Result<()> {
     use std::collections::BTreeSet;
     let mut files = inventory.files.keys().cloned().collect::<BTreeSet<_>>();
     files.insert("airk-install.json".into());
+    if installed {
+        files.insert("approval.json".into());
+    }
     let mut directories = BTreeSet::new();
     for file in &files {
         let mut parent = Path::new(file).parent();
@@ -172,7 +179,7 @@ pub(super) async fn configure(
         "finish pending runtime removal before configuring a managed payload"
     );
     let (_, inventory) = manifest(&source, approved)?;
-    verify_topology(&source, &inventory)?;
+    verify_topology(&source, &inventory, false)?;
     self_test(&source.join(main_name()))?;
     let policy = Managed {
         schema: 1,
