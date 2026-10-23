@@ -51,7 +51,7 @@ pub(crate) struct Process {
     #[cfg(target_os = "macos")]
     memory_limit: Option<usize>,
     #[cfg(windows)]
-    job: windows_sys::Win32::Foundation::HANDLE,
+    job: airk_process::ChildJob,
 }
 #[derive(Clone, Copy)]
 pub(crate) struct ProcessLimits {
@@ -125,26 +125,24 @@ impl Process {
             // No provider instruction can execute before job containment is installed.
             command.creation_flags(0x08000000 | 0x00000004); // CREATE_NO_WINDOW | CREATE_SUSPENDED
         }
+        #[cfg(windows)]
+        let job = airk_process::ChildJob::unassigned()?;
         let child = command
             .spawn()
             .context("start explicitly provisioned local provider")?;
         #[cfg(windows)]
         {
             use std::os::windows::io::AsRawHandle;
-            use windows_sys::Win32::{Foundation::CloseHandle, System::JobObjects::*};
+            use windows_sys::Win32::System::JobObjects::*;
             // SAFETY: all pointers reference initialized structs, and owned handles remain
             // valid until Drop. Closing this job terminates its descendant processes.
-            let job = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
             let mut process = Self { child, job };
-            if job.is_null() {
-                anyhow::bail!(
-                    "create provider process job: {}",
-                    std::io::Error::last_os_error()
-                );
-            }
+            let job = process.job.as_raw_handle();
             let mut job_limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION =
                 unsafe { std::mem::zeroed() };
-            job_limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            job_limits.BasicLimitInformation.LimitFlags =
+                JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_ACTIVE_PROCESS;
+            job_limits.BasicLimitInformation.ActiveProcessLimit = 32;
             if let Some(limits) = limits {
                 job_limits.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_PROCESS_MEMORY
                     | JOB_OBJECT_LIMIT_JOB_MEMORY
@@ -171,10 +169,6 @@ impl Process {
                 let error = std::io::Error::last_os_error();
                 let _ = process.child.kill();
                 let _ = process.child.wait();
-                unsafe {
-                    CloseHandle(job);
-                }
-                process.job = std::ptr::null_mut();
                 anyhow::bail!("contain provider process job: {error}");
             }
             resume_suspended(process.child.id()).context("resume contained provider")?;
@@ -280,12 +274,7 @@ fn resume_suspended(pid: u32) -> Result<()> {
 impl Drop for Process {
     fn drop(&mut self) {
         #[cfg(windows)]
-        if !self.job.is_null() {
-            // SAFETY: this is the unique owned job handle.
-            unsafe {
-                windows_sys::Win32::Foundation::CloseHandle(self.job);
-            }
-        }
+        self.job.drain();
         #[cfg(unix)]
         {
             // SAFETY: a negative child PID addresses the private process group created

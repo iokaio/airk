@@ -912,6 +912,9 @@ fn checked(invocation: &Invocation) -> Result<()> {
     Ok(())
 }
 fn execute(invocation: &Invocation) -> Result<Output> {
+    execute_with_timeout(invocation, Duration::from_secs(30))
+}
+fn execute_with_timeout(invocation: &Invocation, timeout: Duration) -> Result<Output> {
     ensure!(
         invocation
             .input
@@ -935,14 +938,19 @@ fn execute(invocation: &Invocation) -> Result<Output> {
         use std::os::windows::process::CommandExt;
         command.creation_flags(0x08000000);
     }
-    let mut child = crate::native_process::spawn(&mut command)
+    let deadline = Instant::now() + timeout;
+    let mut child = crate::native_process::ContainedChild::spawn(&mut command)
         .with_context(|| format!("start service manager {}", invocation.program.display()))?;
     let input = if let Some(bytes) = &invocation.input {
         let bytes = bytes.clone();
         let mut input = child.stdin.take().context("missing manager input")?;
-        Some(thread::spawn(move || {
-            let _ = input.write_all(&bytes);
-        }))
+        let (sender, completion) = mpsc::sync_channel(1);
+        thread::Builder::new()
+            .name("airk-manager-input".into())
+            .spawn(move || {
+                let _ = sender.send(input.write_all(&bytes));
+            })?;
+        Some(completion)
     } else {
         None
     };
@@ -952,43 +960,47 @@ fn execute(invocation: &Invocation) -> Result<Output> {
         Box::new(child.stderr.take().context("missing manager stderr")?),
     ] {
         let sender = sender.clone();
-        thread::spawn(move || {
-            let mut retained = Vec::new();
-            let mut block = [0; 4096];
-            while let Ok(read) = stream.read(&mut block) {
-                if read == 0 {
-                    break;
-                }
-                let remaining = 65536usize.saturating_sub(retained.len());
-                retained.extend_from_slice(&block[..read.min(remaining)]);
-            }
-            let _ = sender.send(retained);
-        });
+        thread::Builder::new()
+            .name("airk-manager-output".into())
+            .spawn(move || {
+                let mut retained = Vec::new();
+                let mut block = [0; 4096];
+                let result = loop {
+                    match stream.read(&mut block) {
+                        Ok(0) => break Ok(retained),
+                        Ok(read) if retained.len() + read <= 65536 => {
+                            retained.extend_from_slice(&block[..read])
+                        }
+                        Ok(_) => break Err(std::io::Error::other("manager output exceeds 64 KiB")),
+                        Err(error) => break Err(error),
+                    }
+                };
+                let _ = sender.send(result);
+            })?;
     }
     drop(sender);
-    let deadline = Instant::now() + Duration::from_secs(30);
     let success = loop {
         if let Some(status) = child.try_wait()? {
             break status.success();
         }
         if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            if let Some(input) = input {
-                let _ = input.join();
-            }
-            bail!("service manager exceeded 30 seconds; inspect OS service status before retrying");
+            bail!(
+                "service manager exceeded its command deadline; inspect OS service status before retrying"
+            );
         }
         thread::sleep(Duration::from_millis(20));
     };
     if let Some(input) = input {
-        let _ = input.join();
+        input
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .context("service manager input did not complete before its deadline")??;
     }
     let mut text = String::new();
     for _ in 0..2 {
-        if let Ok(bytes) = receiver.recv_timeout(Duration::from_secs(1)) {
-            text.push_str(&String::from_utf8_lossy(&bytes));
-        }
+        let bytes = receiver
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .context("service manager output did not close before its deadline")??;
+        text.push_str(&String::from_utf8_lossy(&bytes));
     }
     Ok(Output { success, text })
 }
@@ -1006,6 +1018,62 @@ pub(crate) fn check_executable_identity(program: &Path, expected: &str) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn manager_command_fixture() -> Result<()> {
+        let Ok(mode) = std::env::var("AIRK_MANAGER_COMMAND_FIXTURE") else {
+            return Ok(());
+        };
+        match mode.as_str() {
+            "blocked-input" => thread::sleep(Duration::from_secs(60)),
+            "oversized-output" => std::io::stdout().write_all(&vec![b'x'; 70 * 1024])?,
+            "echo" => {
+                let mut bytes = Vec::new();
+                std::io::stdin().read_to_end(&mut bytes)?;
+                ensure!(bytes == b"owned fixture input", "fixture input changed");
+                std::io::stdout().write_all(b"owned fixture output")?;
+            }
+            _ => bail!("unknown command fixture"),
+        }
+        Ok(())
+    }
+
+    fn command_fixture(mode: &str) -> Result<Invocation> {
+        let mut invocation = Invocation::new(
+            std::env::current_exe()?,
+            &[
+                "--exact",
+                "service_manager::tests::manager_command_fixture",
+                "--nocapture",
+            ],
+        );
+        invocation
+            .env
+            .insert("AIRK_MANAGER_COMMAND_FIXTURE".into(), mode.into());
+        Ok(invocation)
+    }
+
+    #[test]
+    fn manager_command_deadline_covers_blocked_stdin_and_output_is_not_silently_truncated()
+    -> Result<()> {
+        let mut blocked = command_fixture("blocked-input")?;
+        blocked.input = Some(vec![b'x'; MAX_CONFIG as usize]);
+        let began = Instant::now();
+        assert!(execute_with_timeout(&blocked, Duration::from_millis(250)).is_err());
+        assert!(began.elapsed() < Duration::from_secs(5));
+        assert!(
+            execute_with_timeout(
+                &command_fixture("oversized-output")?,
+                Duration::from_secs(5)
+            )
+            .is_err()
+        );
+        let mut echo = command_fixture("echo")?;
+        echo.input = Some(b"owned fixture input".to_vec());
+        let output = execute_with_timeout(&echo, Duration::from_secs(5))?;
+        assert!(output.success && output.text.contains("owned fixture output"));
+        Ok(())
+    }
+
     #[test]
     fn startup_configuration_preserves_aliases_and_creates_only_private_missing_parents()
     -> Result<()> {

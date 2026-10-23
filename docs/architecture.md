@@ -23,12 +23,13 @@ flowchart LR
 | Crate | Responsibility | AIRK dependencies |
 |---|---|---|
 | airk-core | Artifact/query/fact/citation contracts; storage and embedding traits | None |
-| airk-ingest | Ignore-aware discovery, hashing, native grammars, document extraction/chunking | core |
+| airk-process | Native owned-process containment and confirmed descendant cleanup; no indexing or service policy | None |
+| airk-ingest | Ignore-aware discovery, hashing, native grammars, document extraction/chunking | core, process |
 | airk-store | Content-addressed sources/extractions, authenticated SQLite catalogs/FTS5/postings/graph records, usage ledgers, durable intents, locks, quotas, relocation and current-object cleanup | core |
 | airk-retrieval | Local word-vector/ONNX inference, mutable DiskANN algorithms and retrieval primitives | core |
 | airk-kernel | Collection-scoped publication, retrieval/rank fusion, response budgets, coverage, scheduling, usage and maintenance services | core, ingest, store, retrieval |
 | airk-mcp | Schemas, official SDK transport and result conversion | core, kernel |
-| airk-cli | Commands, native client setup, lifecycle and process/IPC adapters | core, kernel, mcp, store, retrieval contracts |
+| airk-cli | Commands, native client setup, lifecycle and process/IPC adapters | core, process, kernel, mcp, store, retrieval contracts |
 
 Core must remain free of parser, filesystem, inference and transport implementations. Adapters call kernel services rather than bypassing validation or collection scope. MemoryStore is an available in-memory snapshot adapter; the CLI kernel uses FileStore with current SQLite FTS5/DiskANN storage.
 

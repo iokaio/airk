@@ -16,4 +16,6 @@ Installed payloads now require complete inventoried topology before selection/ex
 
 Native activation now records resumable drain/launcher/probe/restoration intent, keeps public selection behind exact candidate and registry readiness, preserves OS restart ownership and supports explicit pre-commit abort. Windows on-demand and non-elevated Task Scheduler crash fixtures passed explicit abort, exact candidate recovery and owned cleanup; native LaunchAgent proof and broader installed-target qualification remain open.
 
+Windows worker and extraction cleanup now share bounded native Job Object ownership and confirm descendant exit before returning capacity. Native manager commands also apply their deadline to input and output completion and reject oversized diagnostic output. Unix descendant containment remains an implementation gate; the cross-platform command and existing extraction regressions continue to run separately.
+
 Stage commits remain local and human DCO-signed. No push, publication or service VSIX is authorized before the user's implementation, test and review gate is satisfied. Final versions and packaging receipts will be recorded here at cutover.

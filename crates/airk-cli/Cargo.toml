@@ -26,6 +26,7 @@ required-features = ["embedding-worker"]
 
 [dependencies]
 airk-core.workspace = true
+airk-process.workspace = true
 airk-kernel.workspace = true
 airk-mcp.workspace = true
 airk-store.workspace = true

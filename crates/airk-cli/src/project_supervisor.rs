@@ -57,6 +57,7 @@ impl Drop for ChildWorker {
                 }
             }
         }
+        self._containment.drain();
         let _ = local_ipc::remove_exited_endpoint(&self.runtime, &self.role);
         if let Some(reader) = self.reader.take() {
             let _ = reader.join();
@@ -507,15 +508,18 @@ impl Supervisor {
                                 backoff.remove(&project);
                             }
                         }
-                        if let Some(worker) = workers.remove(&project)
-                            && let (Some(identity), Ok(mut policy)) =
-                                (worker.identity, policy.lock())
-                        {
-                            let _ = policy.process_exited(identity);
-                            let _ = resources.process_exited(identity);
-                            drop(policy);
-                            if let Some(pool) = pool.as_mut() {
-                                let _ = pool.revoke(identity.worker);
+                        if let Some(worker) = workers.remove(&project) {
+                            let identity = worker.identity;
+                            // ChildJob drop also proves Windows descendant exit.
+                            // Never return admission while an owned extractor lives.
+                            drop(worker);
+                            if let (Some(identity), Ok(mut policy)) = (identity, policy.lock()) {
+                                let _ = policy.process_exited(identity);
+                                let _ = resources.process_exited(identity);
+                                drop(policy);
+                                if let Some(pool) = pool.as_mut() {
+                                    let _ = pool.revoke(identity.worker);
+                                }
                             }
                         }
                     }

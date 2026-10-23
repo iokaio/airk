@@ -11,6 +11,7 @@ publish.workspace = true
 
 [dependencies]
 airk-core.workspace = true
+airk-process.workspace = true
 anyhow.workspace = true
 ignore.workspace = true
 sha2.workspace = true

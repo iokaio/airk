@@ -13,6 +13,7 @@ publish = false
 
 [workspace.dependencies]
 airk-core = { path = "crates/airk-core" }
+airk-process = { path = "crates/airk-process" }
 airk-ingest = { path = "crates/airk-ingest" }
 airk-store = { path = "crates/airk-store" }
 airk-retrieval = { path = "crates/airk-retrieval", default-features = false }

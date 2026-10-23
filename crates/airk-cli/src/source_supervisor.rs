@@ -64,7 +64,8 @@ impl Drop for WatchChild {
             let _ = self.process.kill();
             let _ = self.process.wait();
         }
-        // Killing a stuck reader also releases a writer blocked in a native pipe write.
+        self._containment.drain();
+        // Killing owned descendants also releases inherited pipe endpoints.
         if let Some(writer) = self.writer.take() {
             let _ = writer.join();
         }

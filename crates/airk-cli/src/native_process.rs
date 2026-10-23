@@ -9,6 +9,38 @@ pub(crate) fn spawn(command: &mut Command) -> io::Result<Child> {
     without_error_dialogs(|| command.spawn())
 }
 
+/// A short-lived native command is never left running by a pipe, parse or wait
+/// failure. Windows descendants are drained before the enclosing owner releases.
+pub(crate) struct ContainedChild {
+    child: Child,
+    containment: crate::child_job::ChildJob,
+}
+impl ContainedChild {
+    pub fn spawn(command: &mut Command) -> anyhow::Result<Self> {
+        let mut child = spawn(command)?;
+        let containment = crate::child_job::ChildJob::attach(&mut child)?;
+        Ok(Self { child, containment })
+    }
+}
+impl std::ops::Deref for ContainedChild {
+    type Target = Child;
+    fn deref(&self) -> &Child {
+        &self.child
+    }
+}
+impl std::ops::DerefMut for ContainedChild {
+    fn deref_mut(&mut self) -> &mut Child {
+        &mut self.child
+    }
+}
+impl Drop for ContainedChild {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        self.containment.drain();
+        let _ = self.child.wait();
+    }
+}
+
 pub(crate) fn without_error_dialogs<T>(action: impl FnOnce() -> io::Result<T>) -> io::Result<T> {
     #[cfg(windows)]
     {

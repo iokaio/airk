@@ -42,6 +42,7 @@ impl Drop for Pool {
                 }
             }
         }
+        self._containment.drain();
         let _ =
             crate::local_ipc::remove_exited_endpoint(&self.runtime, &protocol::role(self.instance));
         if let Some(reader) = self.reader.take() {
