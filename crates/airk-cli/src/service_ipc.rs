@@ -7,11 +7,11 @@ use airk_core::service::MAX_FRAME_BYTES;
 use serde::{Serialize, de::DeserializeOwned};
 use std::io::{self, Read, Write};
 
-struct BoundedBuffer(Vec<u8>);
+struct BoundedBuffer(Vec<u8>, usize);
 
 impl Write for BoundedBuffer {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        if bytes.len() > MAX_FRAME_BYTES.saturating_sub(self.0.len()) {
+        if bytes.len() > self.1.saturating_sub(self.0.len()) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "IPC frame exceeds byte limit",
@@ -28,7 +28,16 @@ impl Write for BoundedBuffer {
 
 /// Serialize under the limit before writing any bytes to the connection.
 pub fn write_frame<W: Write, T: Serialize>(writer: &mut W, value: &T) -> io::Result<()> {
-    let mut buffer = BoundedBuffer(Vec::new());
+    write_frame_limited(writer, value, MAX_FRAME_BYTES)
+}
+
+pub fn write_frame_limited<W: Write, T: Serialize>(
+    writer: &mut W,
+    value: &T,
+    limit: usize,
+) -> io::Result<()> {
+    check_limit(limit)?;
+    let mut buffer = BoundedBuffer(Vec::new(), limit);
     serde_json::to_writer(&mut buffer, value).map_err(|_| {
         io::Error::new(
             io::ErrorKind::InvalidData,
@@ -42,6 +51,24 @@ pub fn write_frame<W: Write, T: Serialize>(writer: &mut W, value: &T) -> io::Res
 
 /// Returns None only for clean EOF between frames. Truncation fails explicitly.
 pub fn read_frame<R: Read, T: DeserializeOwned>(reader: &mut R) -> io::Result<Option<T>> {
+    read_frame_limited(reader, MAX_FRAME_BYTES)
+}
+
+fn check_limit(limit: usize) -> io::Result<()> {
+    if limit == 0 || limit > 4 * 1024 * 1024 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid IPC codec budget",
+        ));
+    }
+    Ok(())
+}
+
+pub fn read_frame_limited<R: Read, T: DeserializeOwned>(
+    reader: &mut R,
+    limit: usize,
+) -> io::Result<Option<T>> {
+    check_limit(limit)?;
     let mut prefix = [0; 4];
     loop {
         match reader.read(&mut prefix[..1]) {
@@ -53,7 +80,7 @@ pub fn read_frame<R: Read, T: DeserializeOwned>(reader: &mut R) -> io::Result<Op
     }
     reader.read_exact(&mut prefix[1..])?;
     let length = u32::from_be_bytes(prefix) as usize;
-    if length == 0 || length > MAX_FRAME_BYTES {
+    if length == 0 || length > limit {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "invalid IPC frame length",

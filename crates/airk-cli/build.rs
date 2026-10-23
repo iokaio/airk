@@ -15,6 +15,15 @@ fn main() {
     assert_eq!(catalog["profiles"].as_array().unwrap().len(), 1);
     assert_eq!(profile["id"], catalog["default_profile"]);
     assert_eq!(profile["precision"], "fp32");
+    if env::var_os("CARGO_FEATURE_BUNDLED_MODEL").is_none() {
+        let output = PathBuf::from(env::var_os("OUT_DIR").unwrap());
+        fs::write(
+            output.join("model.json"),
+            serde_json::to_vec(&profile["manifest"]).unwrap(),
+        )
+        .unwrap();
+        return;
+    }
     let directory = env::var_os("AIRK_BUNDLED_MODEL_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| workspace.join("target/local-vector-model"));

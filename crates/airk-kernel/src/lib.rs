@@ -33,6 +33,10 @@ pub mod scheduler;
 pub mod service;
 pub mod service_broker;
 pub mod storage;
+#[cfg(feature = "local-inference")]
+mod tokenization;
+#[cfg(not(feature = "local-inference"))]
+#[path = "remote_tokenization.rs"]
 mod tokenization;
 pub mod usage;
 pub mod vectors;

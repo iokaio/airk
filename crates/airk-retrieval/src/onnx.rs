@@ -102,14 +102,7 @@ struct BatchTask {
     length: usize,
 }
 
-pub(crate) fn qualified_batch_four(manifest: &OnnxManifest) -> bool {
-    cfg!(all(target_os = "windows", target_arch = "x86_64"))
-        && manifest.model_sha256
-            == "6fd5d72fe4589f189f8ebc006442dbb529bb7ce38f8082112682524616046452"
-        && manifest.tokenizer_sha256
-            == "be50c3628f2bf5bb5e3a7f17b1f74611b2561a3a27eeab05e5aa30f411572037"
-        && manifest.dimensions == 384
-}
+use crate::model::qualified_batch_four;
 
 fn schedule_shapes(lengths: &[usize], use_batch_four: bool) -> Vec<BatchTask> {
     let mut groups = BTreeMap::<usize, Vec<usize>>::new();
@@ -383,6 +376,13 @@ fn workspace_bytes(model: &TypedModel) -> Result<usize> {
 }
 
 impl OnnxModel {
+    pub(crate) fn open_retained(
+        collection: &Path,
+        set: &airk_core::model_objects::ModelObjectSet,
+        bytes: &[u8],
+    ) -> Result<Self> {
+        Self::open_assets(&model::ObjectAssets { collection, set }, bytes)
+    }
     pub(crate) fn open(directory: &Path, manifest_bytes: &[u8]) -> Result<Self> {
         Self::open_assets(&model::DirectoryAssets(directory), manifest_bytes)
     }

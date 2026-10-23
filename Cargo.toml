@@ -15,8 +15,8 @@ publish = false
 airk-core = { path = "crates/airk-core" }
 airk-ingest = { path = "crates/airk-ingest" }
 airk-store = { path = "crates/airk-store" }
-airk-retrieval = { path = "crates/airk-retrieval" }
-airk-kernel = { path = "crates/airk-kernel" }
+airk-retrieval = { path = "crates/airk-retrieval", default-features = false }
+airk-kernel = { path = "crates/airk-kernel", default-features = false }
 airk-mcp = { path = "crates/airk-mcp" }
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }

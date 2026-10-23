@@ -58,6 +58,7 @@ dependencies = [
  "airk-core",
  "airk-kernel",
  "airk-mcp",
+ "airk-retrieval",
  "airk-store",
  "anyhow",
  "clap",

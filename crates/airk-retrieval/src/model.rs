@@ -23,9 +23,9 @@ impl ModelAssetSource for DirectoryAssets<'_> {
     }
 }
 
-struct ObjectAssets<'a> {
-    collection: &'a Path,
-    set: &'a ModelObjectSet,
+pub(crate) struct ObjectAssets<'a> {
+    pub(crate) collection: &'a Path,
+    pub(crate) set: &'a ModelObjectSet,
 }
 impl ModelAssetSource for ObjectAssets<'_> {
     fn read_asset(&self, name: ModelAssetName, maximum: u64) -> Result<Vec<u8>> {
@@ -118,18 +118,22 @@ pub enum EmbeddingModel {
 
 /// Untruncated token offsets for one bounded planning slice. Special tokens have
 /// no source span and are accounted for separately by the model adapter.
-pub(crate) struct PlanningTokens {
+#[derive(Serialize, Deserialize)]
+pub struct PlanningTokens {
     pub offsets: Vec<(usize, usize)>,
     pub special_tokens: usize,
 }
 
 impl PlanningTokens {
+    pub fn is_empty(&self) -> bool {
+        self.offsets.is_empty() && self.special_tokens == 0
+    }
     pub fn len(&self) -> usize {
         self.offsets.len() + self.special_tokens
     }
 }
 
-#[derive(Clone, Debug, Default, Serialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct EmbeddingCacheStats {
     /// Artifacts admitted by the applied vector policy, independent of model enablement.
     pub vector_eligible_artifacts: u64,
@@ -345,6 +349,15 @@ pub(crate) fn onnx_manifest(bytes: &[u8]) -> Result<(OnnxManifest, String)> {
     digest.update(ONNX_RUNTIME.as_bytes());
     digest.update(serde_json::to_vec(&manifest)?);
     Ok((manifest, format!("{:x}", digest.finalize())))
+}
+
+pub(crate) fn qualified_batch_four(manifest: &OnnxManifest) -> bool {
+    cfg!(all(target_os = "windows", target_arch = "x86_64"))
+        && manifest.model_sha256
+            == "6fd5d72fe4589f189f8ebc006442dbb529bb7ce38f8082112682524616046452"
+        && manifest.tokenizer_sha256
+            == "be50c3628f2bf5bb5e3a7f17b1f74611b2561a3a27eeab05e5aa30f411572037"
+        && manifest.dimensions == 384
 }
 
 enum VerifiedManifest {
@@ -569,7 +582,7 @@ impl EmbeddingModel {
         }
     }
 
-    pub(crate) fn planning_tokens(&self, text: &str) -> Result<PlanningTokens> {
+    pub fn planning_tokens(&self, text: &str) -> Result<PlanningTokens> {
         ensure!(
             text.len() <= MAX_INPUT_BYTES,
             "vector planning input exceeds byte bound"
@@ -604,7 +617,7 @@ impl EmbeddingModel {
         let value: serde_json::Value = serde_json::from_slice(&bytes)?;
         let model = match value["schema"].as_u64() {
             Some(1) => Self::WordVectors(LocalModel::open_assets(&source)?),
-            Some(2) => Self::Onnx(Box::new(OnnxModel::open_assets(&source, &bytes)?)),
+            Some(2) => Self::Onnx(Box::new(OnnxModel::open_retained(collection, set, &bytes)?)),
             _ => anyhow::bail!("unsupported local embedding model schema"),
         };
         ensure!(
@@ -681,7 +694,7 @@ impl EmbeddingModel {
         })
     }
 
-    pub(crate) fn plan_cache_peak_bytes(&self) -> Result<u64> {
+    pub fn plan_cache_peak_bytes(&self) -> Result<u64> {
         match self {
             Self::WordVectors(_) => Ok(0),
             Self::Onnx(model) => model.plan_cache_peak_bytes(),

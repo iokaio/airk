@@ -203,7 +203,7 @@ fn select_profile(catalog: &ModelCatalog, hardware: &ModelCapabilities) -> Resul
         },
         platform_qualified,
         short_input_batch_size: if platform_qualified
-            && crate::onnx::qualified_batch_four(&profile.manifest)
+            && crate::model::qualified_batch_four(&profile.manifest)
         {
             4
         } else {

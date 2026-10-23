@@ -9,18 +9,22 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[features]
+default = ["local-inference"]
+local-inference = ["airk-retrieval/local-inference", "dep:tokenizers"]
+
 [dependencies]
 airk-core.workspace = true
 airk-ingest.workspace = true
 airk-store.workspace = true
-airk-retrieval.workspace = true
+airk-retrieval = { workspace = true, default-features = false }
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 getrandom.workspace = true
 notify.workspace = true
-tokenizers.workspace = true
+tokenizers = { workspace = true, optional = true }
 tempfile.workspace = true
 
 [target.'cfg(unix)'.dependencies]

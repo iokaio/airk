@@ -1132,6 +1132,8 @@ fn run_cli() -> anyhow::Result<()> {
 
 #[tokio::main]
 async fn main_async() -> anyhow::Result<()> {
+    #[cfg(not(feature = "local-inference"))]
+    airk_cli::embedding_client::install()?;
     let cli = Cli::parse();
     if matches!(cli.command, Command::ModelCatalog) {
         let mut report = serde_json::to_value(airk_kernel::inspect_model_catalog()?)?;

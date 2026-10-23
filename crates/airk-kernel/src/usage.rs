@@ -831,6 +831,24 @@ pub(crate) struct LocalByteBpe {
     ranks: std::collections::BTreeMap<(Vec<u8>, Vec<u8>), usize>,
 }
 
+/// Opaque offline tokenizer adapter for the dedicated embedding executable.
+pub struct OfflineTokenizer(crate::tokenization::LocalTokenizer);
+
+impl OfflineTokenizer {
+    pub fn open(path: &std::path::Path) -> Result<Self> {
+        Ok(Self(crate::tokenization::LocalTokenizer::open(path)?))
+    }
+    pub fn identity(&self) -> &TokenizerIdentity {
+        self.0.identity()
+    }
+    pub fn count(&self, text: &str) -> Result<u64> {
+        self.0.count(text)
+    }
+    pub fn description(&self) -> Value {
+        self.0.description()
+    }
+}
+
 impl LocalByteBpe {
     pub(crate) fn parse(bytes: &[u8]) -> Result<Self> {
         let definition: ByteBpeDefinition = serde_json::from_slice(bytes)?;

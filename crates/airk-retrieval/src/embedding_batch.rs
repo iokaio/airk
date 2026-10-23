@@ -110,6 +110,7 @@ fn prepare_onnx_batch<'a>(
 }
 
 /// All joins complete before returning, including failure. Results retain input order.
+#[cfg(any(feature = "local-inference", test))]
 pub(crate) fn parallel_map<T: Sync, R: Send>(
     items: &[T],
     workers: usize,
@@ -416,7 +417,7 @@ mod tests {
         );
         let descriptor = model.cache_descriptor()?;
         let batch_four = match &model {
-            EmbeddingModel::Onnx(onnx) => crate::onnx::qualified_batch_four(&onnx.manifest),
+            EmbeddingModel::Onnx(onnx) => crate::model::qualified_batch_four(&onnx.manifest),
             _ => false,
         };
         let long = "A bounded original input with Unicode café. ".repeat(600);
