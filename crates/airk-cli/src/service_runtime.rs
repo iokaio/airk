@@ -63,6 +63,10 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
             ControlMethod::Shutdown => ControlResponse::Stopping,
             ControlMethod::Connect { project } => state.supervisor.connect(project).await,
             ControlMethod::EmbeddingStatus => state.supervisor.embedding_status().await,
+            ControlMethod::Resources => state.supervisor.resource_status(),
+            ControlMethod::ConfigureResources { configuration } => {
+                state.supervisor.configure_resources(configuration).await
+            }
             method => state.management.request(method).await,
         }
     };

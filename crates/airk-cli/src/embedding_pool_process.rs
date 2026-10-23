@@ -50,7 +50,7 @@ impl Pool {
     pub fn process_id(&self) -> u32 {
         self.child.id()
     }
-    pub fn start(root: &Path, service: Incarnation) -> Result<Self> {
+    pub fn start(root: &Path, service: Incarnation, inference_threads: u16) -> Result<Self> {
         let helper = runtime_pair::verify_helper(&std::env::current_exe()?.canonicalize()?)?;
         let instance = new_instance_id()?;
         let mut command = Command::new(helper);
@@ -95,6 +95,7 @@ impl Pool {
                 runtime: root.into(),
                 service,
                 pool: instance,
+                inference_threads,
             },
         )?;
         ensure!(
@@ -170,6 +171,21 @@ impl Pool {
         let observation = self.output.recv_timeout(Duration::from_secs(3))?;
         self.pending_status = false;
         Ok(observation)
+    }
+    pub fn configure_threads(&mut self, threads: u16) -> Result<()> {
+        self.finish_pending_status()?;
+        service_ipc::write_frame(
+            self.input.as_mut().context("pool input missing")?,
+            &protocol::Control::ConfigureThreads { threads },
+        )?;
+        ensure!(
+            matches!(
+                self.output.recv_timeout(Duration::from_secs(3))?,
+                protocol::Observation::Renewed
+            ),
+            "pool configuration outcome unknown"
+        );
+        Ok(())
     }
     pub fn renew(&mut self, worker: Incarnation) -> Result<()> {
         self.finish_pending_status()?;

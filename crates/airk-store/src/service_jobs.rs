@@ -17,6 +17,8 @@ pub(super) const SCHEMA: &str = "
         attempts INTEGER NOT NULL CHECK(attempts>=0 AND attempts<=3),
         outcome BLOB CHECK(outcome IS NULL OR length(outcome)<=2048));
     CREATE INDEX IF NOT EXISTS service_jobs_pending ON service_jobs(project,state,seq);
+    CREATE TABLE IF NOT EXISTS service_job_cancellation(
+        job TEXT PRIMARY KEY REFERENCES service_jobs(id) ON DELETE CASCADE) WITHOUT ROWID;
     CREATE TABLE IF NOT EXISTS service_requests(
         namespace TEXT NOT NULL, epoch INTEGER NOT NULL CHECK(epoch>=0), nonce TEXT NOT NULL,
         caller TEXT NOT NULL, job TEXT NOT NULL REFERENCES service_jobs(id) ON DELETE CASCADE,
@@ -98,6 +100,40 @@ impl ServiceRegistry {
             "SELECT j.project FROM service_jobs j JOIN projects p ON p.binding=j.project WHERE j.state='running' OR (j.state='pending' AND p.paused=0) GROUP BY j.project ORDER BY min(j.seq) LIMIT ?1")?;
         let rows = statement.query_map([limit as i64], |row| row.get::<_, String>(0))?;
         rows.map(|row| row?.parse()).collect()
+    }
+    /// Stable bounded cursor across all registered pending/running projects.
+    pub fn pending_project_page(
+        &self,
+        after: Option<ProjectBinding>,
+        limit: usize,
+    ) -> Result<Vec<ProjectBinding>> {
+        ensure!(
+            (1..=32).contains(&limit),
+            "invalid pending project page bound"
+        );
+        let mut statement = self.connection.prepare(
+            "SELECT DISTINCT j.project FROM service_jobs j JOIN projects p ON p.binding=j.project
+             WHERE (j.state='running' OR (j.state='pending' AND p.paused=0))
+             AND (?1 IS NULL OR j.project>?1) ORDER BY j.project LIMIT ?2",
+        )?;
+        let rows = statement.query_map(
+            params![after.map(|id| id.to_string()), limit as i64],
+            |row| row.get::<_, String>(0),
+        )?;
+        rows.map(|row| row?.parse()).collect()
+    }
+    pub fn next_pending_job(&self, project: ProjectBinding) -> Result<Option<JobRecord>> {
+        let id: Option<String> = self
+            .connection
+            .query_row(
+                "SELECT j.id FROM service_jobs j JOIN projects p ON p.binding=j.project
+             WHERE j.project=?1 AND j.state='pending' AND p.paused=0 ORDER BY j.seq LIMIT 1",
+                [project.to_string()],
+                |row| row.get(0),
+            )
+            .optional()?;
+        id.map(|id| record(&self.connection, id.parse()?))
+            .transpose()
     }
     /// Rotate the request epoch when terminal receipts are retired, so an old unknown key
     /// always expires rather than accidentally replaying its former mutation.
@@ -302,6 +338,21 @@ impl ServiceRegistry {
     }
 
     pub fn claim_job(&mut self, lease: &ProjectLease) -> Result<Option<JobRecord>> {
+        self.claim_selected_job(lease, None)
+    }
+    /// Claim only the exact service-granted job, without substituting another request.
+    pub fn claim_job_id(
+        &mut self,
+        lease: &ProjectLease,
+        id: Sha256Digest,
+    ) -> Result<Option<JobRecord>> {
+        self.claim_selected_job(lease, Some(id))
+    }
+    fn claim_selected_job(
+        &mut self,
+        lease: &ProjectLease,
+        selected: Option<Sha256Digest>,
+    ) -> Result<Option<JobRecord>> {
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -322,7 +373,7 @@ impl ServiceRegistry {
         if running {
             return Ok(None);
         }
-        let id: Option<String> = transaction.query_row("SELECT id FROM service_jobs WHERE project=?1 AND state='pending' ORDER BY seq LIMIT 1", [lease.binding.to_string()], |row| row.get(0)).optional()?;
+        let id: Option<String> = transaction.query_row("SELECT id FROM service_jobs WHERE project=?1 AND state='pending' AND (?2 IS NULL OR id=?2) ORDER BY seq LIMIT 1", params![lease.binding.to_string(), selected.map(|id|id.to_string())], |row| row.get(0)).optional()?;
         let Some(id) = id else {
             return Ok(None);
         };
@@ -376,6 +427,38 @@ impl ServiceRegistry {
         Ok(completed)
     }
 
+    /// Persist running cancellation intent; completion still requires the fenced owner.
+    pub fn request_cancellation(&mut self, id: Sha256Digest) -> Result<JobRecord> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let current = record(&transaction, id)?;
+        match current.state {
+            JobState::Pending => {
+                transaction.execute(
+                    "UPDATE service_jobs SET state='canceled',outcome=?1 WHERE id=?2",
+                    params![serde_json::to_vec(&JobOutcome::Canceled)?, id.to_string()],
+                )?;
+            }
+            JobState::Running => {
+                transaction.execute(
+                    "INSERT OR IGNORE INTO service_job_cancellation(job) VALUES(?1)",
+                    [id.to_string()],
+                )?;
+            }
+            _ => {}
+        }
+        let result = record(&transaction, id)?;
+        transaction.commit()?;
+        Ok(result)
+    }
+    pub fn cancellation_requested(&self, id: Sha256Digest) -> Result<bool> {
+        Ok(self.connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM service_job_cancellation WHERE job=?1)",
+            [id.to_string()],
+            |row| row.get(0),
+        )?)
+    }
     /// Cancel queued work only. Running work needs a worker cancellation acknowledgement.
     pub fn cancel_pending(&mut self, id: Sha256Digest) -> Result<JobRecord> {
         let transaction = self
@@ -401,6 +484,93 @@ mod tests {
     use super::*;
     use airk_core::service::ProjectRegistration;
 
+    #[test]
+    fn service_grants_claim_exact_jobs_and_cancellation_intent_survives_reopen() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let instance = Incarnation::from_bytes([7; 16]);
+        let mut registry = ServiceRegistry::open(root.path(), instance)?;
+        let project =
+            ProjectRegistration::new("/source".into(), "/state".into(), "fixture".into())?;
+        registry.register(&project)?;
+        let (namespace, epoch) = registry.request_epoch()?;
+        let first = registry.enqueue(
+            project.binding,
+            instance,
+            &RequestKey {
+                namespace,
+                epoch,
+                nonce: Incarnation::from_bytes([1; 16]),
+            },
+            JobKind::Index,
+        )?;
+        let second = registry.enqueue(
+            project.binding,
+            instance,
+            &RequestKey {
+                namespace,
+                epoch,
+                nonce: Incarnation::from_bytes([2; 16]),
+            },
+            JobKind::Verify,
+        )?;
+        let mut lease = ProjectLease::acquire(root.path(), project.binding)?;
+        registry.admit_worker(&mut lease)?;
+        assert!(
+            registry
+                .claim_job_id(&lease, Sha256Digest::from_bytes([0; 32]))?
+                .is_none()
+        );
+        assert_eq!(
+            registry.claim_job_id(&lease, second.id)?.unwrap().id,
+            second.id
+        );
+        assert_eq!(registry.job(first.id)?.state, JobState::Pending);
+        assert!(registry.claim_job_id(&lease, first.id)?.is_none());
+        registry.request_cancellation(second.id)?;
+        drop(registry);
+        let mut registry = ServiceRegistry::open(root.path(), instance)?;
+        assert!(registry.cancellation_requested(second.id)?);
+        assert_eq!(registry.job(second.id)?.state, JobState::Running);
+        registry.complete_job(&lease, second.id, JobOutcome::Canceled)?;
+        assert_eq!(
+            registry.claim_job_id(&lease, first.id)?.unwrap().id,
+            first.id
+        );
+        Ok(())
+    }
+    #[test]
+    fn pending_cursor_covers_projects_beyond_first_thirty_two() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let instance = Incarnation::from_bytes([7; 16]);
+        let mut registry = ServiceRegistry::open(root.path(), instance)?;
+        let (namespace, epoch) = registry.request_epoch()?;
+        for n in 1..=40u8 {
+            let project =
+                ProjectRegistration::new(format!("/source/{n}"), "/state".into(), format!("p{n}"))?;
+            registry.register(&project)?;
+            registry.enqueue(
+                project.binding,
+                instance,
+                &RequestKey {
+                    namespace,
+                    epoch,
+                    nonce: Incarnation::from_bytes([n; 16]),
+                },
+                JobKind::Verify,
+            )?;
+        }
+        let first = registry.pending_project_page(None, 32)?;
+        let second = registry.pending_project_page(first.last().copied(), 32)?;
+        assert_eq!(first.len(), 32);
+        assert_eq!(second.len(), 8);
+        assert!(first.iter().all(|id| !second.contains(id)));
+        assert!(
+            registry
+                .pending_project_page(second.last().copied(), 32)?
+                .is_empty()
+        );
+        Ok(())
+    }
     #[test]
     fn full_queue_preserves_receipts_and_aliases_then_expires_retired_keys() -> Result<()> {
         let root = tempfile::tempdir()?;

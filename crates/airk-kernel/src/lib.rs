@@ -32,8 +32,11 @@ pub mod roots;
 pub mod scheduler;
 pub mod service;
 pub mod service_broker;
+pub mod service_execution;
 pub mod service_projects;
 mod service_publication;
+pub mod service_resource_observations;
+pub mod service_resources;
 pub mod storage;
 #[cfg(feature = "local-inference")]
 mod tokenization;

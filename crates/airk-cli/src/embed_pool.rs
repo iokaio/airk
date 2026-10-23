@@ -19,7 +19,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex, OnceLock, Weak,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -54,6 +54,7 @@ struct Engine {
     loads: u64,
     reuses: u64,
     used: Instant,
+    inference_threads: Arc<AtomicUsize>,
 }
 
 fn location_key(
@@ -110,6 +111,7 @@ impl Engine {
             loads: 0,
             reuses: 0,
             used: Instant::now(),
+            inference_threads: Arc::new(AtomicUsize::new(1)),
         }
     }
 
@@ -286,12 +288,13 @@ impl Engine {
                             } => {
                                 ensure!(
                                     (1..=8).contains(&workers)
-                                        && (8 << 20..=1 << 30).contains(&memory_bytes),
+                                        && (8 << 20..=4 << 30).contains(&memory_bytes),
                                     "invalid pool inference budget"
                                 );
                                 Request::Embed {
                                     texts,
-                                    workers: workers.min(2),
+                                    workers: workers
+                                        .min(self.inference_threads.load(Ordering::Acquire)),
                                     memory_bytes: memory_bytes.min(512 << 20),
                                 }
                             }
@@ -323,9 +326,6 @@ enum Work {
     },
     Release {
         worker: Incarnation,
-    },
-    Status {
-        reply: oneshot::Sender<protocol::Observation>,
     },
 }
 struct Authorization {
@@ -433,6 +433,10 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
 pub async fn run() -> Result<()> {
     let init: protocol::Init = service_ipc::read_frame(&mut std::io::stdin().lock())?
         .context("pool initialization missing")?;
+    ensure!(
+        (1..=4).contains(&init.inference_threads),
+        "invalid pool inference allowance"
+    );
     local_ipc::prepare_root(&init.runtime)?;
     ensure!(
         PROCESS_LEASE
@@ -445,11 +449,16 @@ pub async fn run() -> Result<()> {
     let (sender, mut receiver) = mpsc::channel::<Work>(8);
     let closing = Arc::new(AtomicBool::new(false));
     let engine_closing = closing.clone();
+    let inference_threads = Arc::new(AtomicUsize::new(usize::from(init.inference_threads)));
+    let engine_threads = inference_threads.clone();
+    let observation = Arc::new(Mutex::new((0u64, 0u64, 0usize, Instant::now())));
+    let engine_observation = observation.clone();
     let engine = std::thread::Builder::new()
         .name("airk-pooled-inference".into())
         .stack_size(8 << 20)
         .spawn(move || {
             let mut engine = Engine::new();
+            engine.inference_threads = engine_threads;
             while let Some(work) = receiver.blocking_recv() {
                 match work {
                     Work::Sweep => {
@@ -505,13 +514,14 @@ pub async fn run() -> Result<()> {
                         engine.owners.remove(&worker);
                         engine.sessions.retain(|(owner, _), _| *owner != worker)
                     }
-                    Work::Status { reply } => {
-                        let _ = reply.send(protocol::Observation::Status {
-                            loads: engine.loads,
-                            reuses: engine.reuses,
-                            sessions: engine.sessions.len(),
-                        });
-                    }
+                }
+                if let Ok(mut observation) = engine_observation.lock() {
+                    *observation = (
+                        engine.loads,
+                        engine.reuses,
+                        engine.sessions.len(),
+                        Instant::now(),
+                    );
                 }
             }
         })?;
@@ -542,13 +552,16 @@ pub async fn run() -> Result<()> {
             }
             input_closing.store(true, Ordering::Release);
         })?;
-    let slots = Arc::new(Semaphore::new(8));
+    let slots = Arc::new(Semaphore::new(64));
     let mut connections = JoinSet::new();
     let mut tick = tokio::time::interval(Duration::from_secs(1));
     while !closing.load(Ordering::Acquire) {
         tokio::select! {
             command=commands.recv()=>{
                 let observation=match command {
+                    Some(protocol::Control::ConfigureThreads{threads})=>{
+                        if (1..=4).contains(&threads){inference_threads.store(usize::from(threads),Ordering::Release);protocol::Observation::Renewed}else{protocol::Observation::Failed}
+                    },
                     Some(protocol::Control::Renew{worker})=>{
                         let mut grants=state.grants.lock().map_err(|_|anyhow::anyhow!("pool authorization unavailable"))?;
                         let authorization=grants.values_mut().find(|auth|auth.grant.worker==worker&&auth.alive.load(Ordering::Acquire)&&Instant::now()<auth.expires);
@@ -557,7 +570,7 @@ pub async fn run() -> Result<()> {
                     Some(protocol::Control::Register{grant})=>{
                         let mut grants=state.grants.lock().map_err(|_|anyhow::anyhow!("pool authorization unavailable"))?;
                         grants.retain(|_,auth|{if auth.alive.load(Ordering::Acquire)&&Instant::now()<auth.expires{true}else{auth.alive.store(false,Ordering::Release);false}});
-                        if grant.service==state.service&&grant.pool==state.pool&&grant.project.validate().is_ok()&&grants.len()<4 {
+                        if grant.service==state.service&&grant.pool==state.pool&&grant.project.validate().is_ok()&&grants.len()<32 {
                             grants.insert(grant.token,Authorization{grant,used:false,expires:Instant::now()+Duration::from_secs(300),alive:Arc::new(AtomicBool::new(true))});
                             protocol::Observation::Registered
                         }else{protocol::Observation::Failed}
@@ -568,8 +581,7 @@ pub async fn run() -> Result<()> {
                         protocol::Observation::Revoked
                     },
                     Some(protocol::Control::Status)=>{
-                        let (reply,receiver)=oneshot::channel();
-                        if state.sender.try_send(Work::Status{reply}).is_ok(){receiver.await.unwrap_or(protocol::Observation::Failed)}else{protocol::Observation::Failed}
+                        match observation.lock(){Ok(observation)=>protocol::Observation::Status{loads:observation.0,reuses:observation.1,sessions:observation.2,age_ms:observation.3.elapsed().as_millis().min(u64::MAX as u128) as u64},Err(_)=>protocol::Observation::Failed}
                     },
                     Some(protocol::Control::Stop)|None=>break,
                 };

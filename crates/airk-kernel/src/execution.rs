@@ -105,6 +105,13 @@ pub(crate) fn acquire(root: &Path) -> Result<ExecutionLease> {
     std::fs::create_dir_all(root)?;
     let lifecycle = airk_store::quota::indexing_lifecycle_lease(root)?;
     airk_store::quota::ensure_current_root(root)?;
+    if let Some(plan) = crate::service_execution::plan(root)? {
+        return Ok(ExecutionLease {
+            plan,
+            _files: Vec::new(),
+            _lifecycle: lifecycle,
+        });
+    }
     let desired = if mode()? == ExecutionMode::Throughput {
         2
     } else {
@@ -146,6 +153,9 @@ pub(crate) fn acquire(root: &Path) -> Result<ExecutionLease> {
 
 impl crate::Kernel {
     pub fn execution_status(&self) -> Result<ExecutionPlan> {
+        if let Some(plan) = crate::service_execution::status(&self.data_root)? {
+            return Ok(plan);
+        }
         plan(if mode()? == ExecutionMode::Throughput {
             2
         } else {

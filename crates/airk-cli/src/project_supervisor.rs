@@ -25,7 +25,6 @@ use std::{
 };
 use tokio::sync::oneshot;
 
-const MAX_WORKERS: usize = 4;
 struct ChildWorker {
     child: Child,
     input: Option<ChildStdin>,
@@ -36,6 +35,7 @@ struct ChildWorker {
     started: Instant,
     last_renewal: Instant,
     pool_active: bool,
+    last_status: Instant,
 }
 
 impl Drop for ChildWorker {
@@ -90,6 +90,7 @@ impl ChildWorker {
             started: Instant::now(),
             last_renewal: Instant::now(),
             pool_active: false,
+            last_status: Instant::now(),
         };
         process.reader = Some(
             std::thread::Builder::new()
@@ -184,6 +185,42 @@ impl ChildWorker {
         Ok(())
     }
 
+    fn run_job(&mut self, allowance: airk_core::service_resources::WorkAllowance) -> Result<()> {
+        let identity = self.identity.context("project identity missing")?;
+        service_ipc::write_frame(
+            self.input.as_mut().context("project input missing")?,
+            &WorkerCommand::RunJob {
+                identity,
+                allowance,
+            },
+        )?;
+        ensure!(
+            matches!(
+                self.output.recv_timeout(Duration::from_secs(3))?,
+                Reply::WorkAccepted
+            ),
+            "project work admission failed"
+        );
+        Ok(())
+    }
+    fn work_status(
+        &mut self,
+        control: Option<protocol::WorkControl>,
+    ) -> Result<(Option<Incarnation>, Option<Incarnation>)> {
+        let identity = self.identity.context("project identity missing")?;
+        service_ipc::write_frame(
+            self.input.as_mut().context("project input missing")?,
+            &WorkerCommand::WorkStatus { identity, control },
+        )?;
+        let Reply::WorkStatus { active, finished } =
+            self.output.recv_timeout(Duration::from_secs(3))?
+        else {
+            anyhow::bail!("project work status failed")
+        };
+        self.last_status = Instant::now();
+        Ok((active, finished))
+    }
+
     fn renew(&mut self) -> Result<()> {
         let identity = self.identity.context("project identity missing")?;
         service_ipc::write_frame(
@@ -202,7 +239,16 @@ impl ChildWorker {
     }
 }
 
+struct ResourceCache {
+    snapshot: airk_core::service_resources::ResourceSnapshot,
+    observed: Instant,
+    configuration_error: bool,
+}
 enum Envelope {
+    ConfigureResources {
+        configuration: airk_core::service_resources::ResourceConfiguration,
+        reply: oneshot::Sender<ControlResponse>,
+    },
     Connect {
         project: ProjectBinding,
         reply: oneshot::Sender<ControlResponse>,
@@ -212,6 +258,7 @@ enum Envelope {
     },
 }
 pub struct Supervisor {
+    resources: Arc<Mutex<ResourceCache>>,
     sender: Option<SyncSender<Envelope>>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
@@ -224,20 +271,30 @@ impl Drop for Supervisor {
     }
 }
 
+struct WorkerAdmission<'a> {
+    policy: &'a Mutex<Broker>,
+    pool: &'a mut Option<Pool>,
+    resources: &'a mut airk_kernel::service_resources::Resources,
+}
+
 fn start_worker(
     workers: &mut BTreeMap<ProjectBinding, ChildWorker>,
     root: &Path,
     registration: airk_core::service::ProjectRegistration,
     instance: Incarnation,
-    policy: &Mutex<Broker>,
     backoff: &mut BTreeMap<ProjectBinding, (Instant, u32)>,
-    pool: &mut Option<Pool>,
+    admission: WorkerAdmission<'_>,
 ) -> Result<()> {
+    let WorkerAdmission {
+        policy,
+        pool,
+        resources,
+    } = admission;
     let project = registration.binding;
     if workers.contains_key(&project) {
         return Ok(());
     }
-    ensure!(workers.len() < MAX_WORKERS, "project capacity busy");
+    ensure!(resources.may_start_resident(), "project capacity busy");
     ensure!(
         backoff
             .get(&project)
@@ -259,8 +316,8 @@ fn start_worker(
     };
     let identity = worker.identity.context("missing worker identity")?;
     let allowance = QueryAllowance {
-        concurrent_queries: 4,
-        response_bytes: 4 * MAX_FRAME_BYTES,
+        concurrent_queries: 1,
+        response_bytes: MAX_FRAME_BYTES,
     };
     policy
         .lock()
@@ -271,14 +328,16 @@ fn start_worker(
             Instant::now(),
             Duration::from_secs(300),
         )?;
+    resources.resident_started(identity)?;
     if pool.is_none() {
-        *pool = Pool::start(root, instance).ok();
+        *pool = Pool::start(root, instance, resources.snapshot().inference_threads_limit).ok();
     }
     let access = pool
         .as_mut()
         .and_then(|pool| pool.access(identity.worker, registration).ok());
     if let Err(error) = worker.activate(identity, allowance, access) {
         drop(worker);
+        resources.process_exited(identity)?;
         if let Some(pool) = pool.as_mut() {
             let _ = pool.revoke(identity.worker);
         }
@@ -302,6 +361,20 @@ fn start_worker(
 impl Supervisor {
     pub fn start(root: PathBuf, instance: Incarnation, policy: Arc<Mutex<Broker>>) -> Result<Self> {
         let (sender, receiver) = mpsc::sync_channel::<Envelope>(32);
+        let loaded = crate::service_resource_policy::load(&root);
+        let configuration_error = loaded.is_err();
+        let mut initial =
+            airk_kernel::service_resources::Resources::detect(loaded.unwrap_or_default())?;
+        // Invalid persisted policy is visible and blocks new admission until explicitly corrected.
+        if configuration_error {
+            initial.block_admission(true);
+        }
+        let resources = Arc::new(Mutex::new(ResourceCache {
+            snapshot: initial.snapshot(),
+            observed: Instant::now(),
+            configuration_error,
+        }));
+        let resource_cache = resources.clone();
         let thread = std::thread::Builder::new()
             .name("airk-project-supervisor".into())
             .spawn(move || {
@@ -311,7 +384,28 @@ impl Supervisor {
                 let mut backoff = BTreeMap::<ProjectBinding, (Instant, u32)>::new();
                 let mut predecessors: Option<Vec<ProjectBinding>> = None;
                 let mut predecessor_pool = None;
+                let mut resources = initial;
+                let mut configuration_error = configuration_error;
+                let mut pending_after = None;
                 loop {
+                    let observations = std::iter::once(std::process::id())
+                        .chain(workers.values().map(|worker| worker.child.id()))
+                        .chain(pool.as_ref().map(Pool::process_id))
+                        .map(airk_kernel::service_resource_observations::rss)
+                        .collect::<Vec<_>>();
+                    let complete = observations.iter().all(Option::is_some);
+                    let rss = observations
+                        .into_iter()
+                        .flatten()
+                        .reduce(u64::saturating_add);
+                    let available = airk_kernel::service_resource_observations::available_memory();
+                    resources.block_admission(configuration_error);
+                    resources.observe(rss, available, complete && available.is_some());
+                    if let Ok(mut cache) = resource_cache.lock() {
+                        cache.snapshot = resources.snapshot();
+                        cache.observed = Instant::now();
+                        cache.configuration_error = configuration_error;
+                    }
                     if pool.as_mut().is_some_and(Pool::exited) {
                         pool = None;
                     }
@@ -365,6 +459,7 @@ impl Supervisor {
                                 (worker.identity, policy.lock())
                         {
                             let _ = policy.process_exited(identity);
+                            let _ = resources.process_exited(identity);
                             drop(policy);
                             if let Some(pool) = pool.as_mut() {
                                 let _ = pool.revoke(identity.worker);
@@ -403,10 +498,42 @@ impl Supervisor {
                             drop(worker);
                             if let (Some(identity), Ok(mut policy)) = (identity, policy.lock()) {
                                 let _ = policy.process_exited(identity);
+                                let _ = resources.process_exited(identity);
                             }
                         }
                     }
                     match receiver.recv_timeout(Duration::from_millis(250)) {
+                        Ok(Envelope::ConfigureResources {
+                            configuration,
+                            reply,
+                        }) => {
+                            let result = configuration
+                                .validate()
+                                .and_then(|_| {
+                                    crate::service_resource_policy::save(&root, &configuration)
+                                })
+                                .and_then(|_| resources.reconfigure(configuration));
+                            let result = result.and_then(|_| match pool.as_mut() {
+                                Some(pool) => pool.configure_threads(
+                                    resources.snapshot().inference_threads_limit,
+                                ),
+                                None => Ok(()),
+                            });
+                            let response = if result.is_ok() {
+                                configuration_error = false;
+                                ControlResponse::Resources {
+                                    observation: Box::new(resources.snapshot()),
+                                    age_ms: 0,
+                                    configuration_error: false,
+                                }
+                            } else {
+                                configuration_error = true;
+                                ControlResponse::Failure {
+                                    code: "resource_configuration_rejected".into(),
+                                }
+                            };
+                            let _ = reply.send(response);
+                        }
                         Ok(Envelope::Connect { project, reply }) => {
                             let response = (|| {
                                 ensure!(may_allocate, "previous project workers still draining");
@@ -420,9 +547,12 @@ impl Supervisor {
                                     &root,
                                     registration,
                                     instance,
-                                    &policy,
                                     &mut backoff,
-                                    &mut pool,
+                                    WorkerAdmission {
+                                        policy: &policy,
+                                        pool: &mut pool,
+                                        resources: &mut resources,
+                                    },
                                 )?;
                                 workers
                                     .get_mut(&project)
@@ -450,6 +580,7 @@ impl Supervisor {
                                         loads,
                                         reuses,
                                         sessions,
+                                        age_ms,
                                     },
                                 ))) => ControlResponse::EmbeddingStatus {
                                     available: true,
@@ -457,6 +588,7 @@ impl Supervisor {
                                     loads,
                                     reuses,
                                     sessions,
+                                    observation_age_ms: Some(age_ms),
                                 },
                                 None => ControlResponse::EmbeddingStatus {
                                     available: false,
@@ -464,6 +596,7 @@ impl Supervisor {
                                     loads: 0,
                                     reuses: 0,
                                     sessions: 0,
+                                    observation_age_ms: None,
                                 },
                                 _ => ControlResponse::Failure {
                                     code: "embedding_observation_busy".into(),
@@ -476,12 +609,10 @@ impl Supervisor {
                     }
                     if may_allocate
                         && let Some(registry) = registry.as_ref()
-                        && let Ok(pending) = registry.pending_projects(32)
+                        && let Ok(pending) = registry.pending_project_page(pending_after, 32)
                     {
+                        pending_after = pending.last().copied();
                         for project in pending {
-                            if workers.len() >= MAX_WORKERS {
-                                break;
-                            }
                             let Ok(registration) =
                                 registry.get(project).map(|record| record.registration)
                             else {
@@ -492,10 +623,85 @@ impl Supervisor {
                                 &root,
                                 registration,
                                 instance,
-                                &policy,
                                 &mut backoff,
-                                &mut pool,
+                                WorkerAdmission {
+                                    policy: &policy,
+                                    pool: &mut pool,
+                                    resources: &mut resources,
+                                },
                             );
+                        }
+                    }
+                    // Read only bounded metadata candidates. Direct query payloads never enter this loop.
+                    if let Some(registry) = registry.as_ref() {
+                        for project in workers.keys().copied() {
+                            match registry.next_pending_job(project) {
+                                Ok(Some(job)) => {
+                                    let _ = resources.pending(
+                                        project,
+                                        job.id,
+                                        job.kind,
+                                        Instant::now(),
+                                    );
+                                }
+                                Ok(None) => resources.forget_pending(project),
+                                Err(_) => {}
+                            }
+                        }
+                    }
+                    let mut failed = Vec::new();
+                    for (project, worker) in &mut workers {
+                        if worker.last_status.elapsed() < Duration::from_secs(1) {
+                            continue;
+                        }
+                        let control = resources.running(*project).and_then(|grant| {
+                            registry.as_ref().and_then(|registry| {
+                                Some(protocol::WorkControl {
+                                    grant: grant.id,
+                                    paused: registry.get(*project).ok()?.paused,
+                                    canceled: registry.cancellation_requested(grant.job).ok()?,
+                                })
+                            })
+                        });
+                        match worker.work_status(control) {
+                            Ok((_active, Some(finished)))
+                                if resources
+                                    .running(*project)
+                                    .is_some_and(|grant| grant.id == finished) =>
+                            {
+                                if let Some(identity) = worker.identity {
+                                    let _ = resources.finished(identity, finished);
+                                }
+                            }
+                            Ok(_) => {}
+                            Err(_) => failed.push(*project),
+                        }
+                    }
+                    loop {
+                        let Ok(Some(grant)) = resources.next(Instant::now()) else {
+                            break;
+                        };
+                        let project = grant.identity.project;
+                        if workers
+                            .get_mut(&project)
+                            .is_none_or(|worker| worker.run_job(grant).is_err())
+                        {
+                            failed.push(project);
+                        }
+                    }
+                    for project in failed {
+                        if let Some(worker) = workers.remove(&project) {
+                            let identity = worker.identity;
+                            drop(worker); // Drop drains/kills and reaps before capacity returns.
+                            if let Some(identity) = identity {
+                                let _ = resources.process_exited(identity);
+                                if let Ok(mut policy) = policy.lock() {
+                                    let _ = policy.process_exited(identity);
+                                }
+                                if let Some(pool) = pool.as_mut() {
+                                    let _ = pool.revoke(identity.worker);
+                                }
+                            }
                         }
                     }
                 }
@@ -506,11 +712,48 @@ impl Supervisor {
                 drop(workers);
             })?;
         Ok(Self {
+            resources,
             sender: Some(sender),
             thread: Some(thread),
         })
     }
 
+    pub fn resource_status(&self) -> ControlResponse {
+        match self.resources.lock() {
+            Ok(cache) => ControlResponse::Resources {
+                observation: Box::new(cache.snapshot.clone()),
+                age_ms: cache.observed.elapsed().as_millis().min(u64::MAX as u128) as u64,
+                configuration_error: cache.configuration_error,
+            },
+            Err(_) => ControlResponse::Failure {
+                code: "resource_observation_unavailable".into(),
+            },
+        }
+    }
+    pub async fn configure_resources(
+        &self,
+        configuration: airk_core::service_resources::ResourceConfiguration,
+    ) -> ControlResponse {
+        let (reply, receiver) = oneshot::channel();
+        if self.sender.as_ref().is_none_or(|queue| {
+            queue
+                .try_send(Envelope::ConfigureResources {
+                    configuration,
+                    reply,
+                })
+                .is_err()
+        }) {
+            return ControlResponse::Failure {
+                code: "broker_busy".into(),
+            };
+        }
+        match tokio::time::timeout(Duration::from_secs(4), receiver).await {
+            Ok(Ok(response)) => response,
+            _ => ControlResponse::Failure {
+                code: "resource_configuration_outcome_unknown".into(),
+            },
+        }
+    }
     pub async fn connect(&self, project: ProjectBinding) -> ControlResponse {
         let (sender, receiver) = oneshot::channel();
         if self.sender.as_ref().is_none_or(|queue| {

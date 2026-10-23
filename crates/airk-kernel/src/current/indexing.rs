@@ -98,6 +98,10 @@ struct ProgressiveBase<'a> {
 
 impl ProgressiveBase<'_> {
     fn check_pause(&mut self) -> Result<()> {
+        crate::service_execution::checkpoint()?;
+        if crate::service_execution::installed() {
+            return Ok(());
+        }
         self.last_pause_check = std::time::Instant::now();
         if airk_store::scheduler::Queue::new(&self.kernel.data_root)
             .status(&self.kernel.collection, &self.kernel.root_id())?
@@ -108,6 +112,7 @@ impl ProgressiveBase<'_> {
         Ok(())
     }
     fn observe(&mut self, artifact: &Artifact) -> Result<()> {
+        crate::service_execution::source_bytes(artifact.bytes as u64)?;
         if self.last_pause_check.elapsed() >= std::time::Duration::from_secs(2) {
             self.check_pause()?;
         }
@@ -545,9 +550,10 @@ impl Kernel {
         let started = std::time::Instant::now();
         let mut delay = std::time::Duration::from_millis(25);
         loop {
-            if airk_store::scheduler::Queue::new(&self.data_root)
-                .status(&self.collection, &self.root_id())?
-                .is_some_and(|job| job.paused && !job.manual)
+            if self.service_collection.is_none()
+                && airk_store::scheduler::Queue::new(&self.data_root)
+                    .status(&self.collection, &self.root_id())?
+                    .is_some_and(|job| job.paused && !job.manual)
             {
                 return Err(crate::scheduler::ScanPaused.into());
             }
@@ -616,7 +622,11 @@ impl Kernel {
             ..Default::default()
         });
         self.recover_runtime_bootstrap()?;
-        let mut execution = crate::limits::configured_extraction_execution()?;
+        let mut execution = if self.service_collection.is_some() {
+            crate::limits::execution_from_grant(&execution_lease.plan)?
+        } else {
+            crate::limits::configured_extraction_execution()?
+        };
         execution.requested = execution_lease.plan.requested_extraction_workers;
         execution.execution.workers = execution_lease.plan.extraction_workers;
         execution.execution.max_in_flight_source_bytes = execution.execution.workers

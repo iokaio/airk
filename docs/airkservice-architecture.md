@@ -306,7 +306,21 @@ Provide a stable user-installed `airk` launcher and a collection-bound stdio MCP
 
 Management requires a separately authenticated control connection and explicit trusted client context. Workspace configuration cannot choose the service executable, endpoint, credentials or another project's identity. Paths supplied by clients are not proof of ownership; resolve registered canonical roots, aliases and allowed operations inside the service.
 
-### 8.4 Brokered connection and reconnect contract
+### 8.4 Token-efficient retrieval contracts
+
+Terse is the default response mode. The extension panel offers **Terse response mode** and **Full response mode**, persisted as a user setting and applied to its MCP launch configuration; an individual tool request may explicitly choose `response_mode: "full"` or `"terse"`. Switching display mode never changes the selected publication, evidence validator, source citation, or response/work budget. The MCP instructions and tool descriptions tell agents to use terse for routine navigation and full for provenance audits, parser/coverage limitations, readiness diagnosis, or missing/surprising results. Full is not permission to infer resolved calls or live-source freshness.
+
+In terse responses send the exact revision token once, omit static explanatory notes and repeated per-record producer/coverage strings, and report freshness/readiness on first observation, when their substantive state changes, or when explicitly requested. Do not treat changing observation timestamps as a state transition, hide a new failure, or share a remembered status across independent clients. Preserve imported/native distinctions and candidate labels; full mode restores detailed provenance and status.
+
+Compact outline/symbol records contain `name`, `kind`, `lines`, and `signature`, without a duplicate `qualified_name`. Bind their original path/source hash once per file, with a small file reference for multi-file symbol pages. Count the compact serialized records and required file bindings against the byte budget before admission; roughly 100 bytes per ordinary definition is a qualification objective, not a universal signature-length guarantee. Every fact tool uses the same `items` result key in both modes, including empty results and conditional reads. Rich details remain explicitly available.
+
+Normal publication keeps serving the coherent committed generation while the writer prepares and commits a successor. If safe admission or selection is temporarily unavailable, return a structured retryable outcome with `retry_after_ms`; never represent contention as a corrupt index or silently substitute an explicitly requested revision.
+
+Call discovery indexes the terminal written method name as well as the complete written target, so `name=reclaim_objects` finds receiver-qualified and chained `x.reclaim_objects(...)` occurrences. Label these as syntax candidates; do not claim target/type resolution. Keep matching case-sensitive and bounded through authenticated postings.
+
+Retain authenticated change metadata across a finite generation/time window, with independent record/byte ceilings and explicit coverage floors when pressure trims the window. Baselines are exact incarnation-bound tokens. Retaining change metadata does not enable historical source reads or revive tokens across a rebuild. `airk_changes` calls a currently indexed selector **index-current**, separately disclosing live-source freshness. Test delayed baselines, expiry, restart, tamper rejection, pagination, and byte reductions with exact fixtures; do not advertise an unmeasured 50–70% token saving.
+
+### 8.5 Brokered connection and reconnect contract
 
 1. The launcher verifies the selected service and negotiates the broker protocol. The service authenticates the caller and resolves its requested root/storage/collection binding against trusted registrations.
 2. The service locates or starts the single owned worker, establishes its resource allowance and returns a short-lived connection grant plus its authenticated endpoint and supported query protocol. Bind the grant to the service instance, worker instance/fencing generation, collection/root binding, caller connection identity, retrieval capabilities and expiry. Transfer credentials only over protected IPC; exclude them from logs, command arguments and diagnostic exports.

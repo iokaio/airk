@@ -564,13 +564,14 @@ impl Kernel {
             .map_err(|error| self.semantic_failure(error))?;
         let read = self.store.current_read(&scope)?;
         let mut report = self.semantic_report(&read, &stats, started)?;
-        report.yield_to_source = airk_store::scheduler::Queue::new(&self.data_root)
-            .status(&self.collection, &self.root_id())?
-            .is_some_and(|job| {
-                job.requested_revision > job.completed_revision
-                    && !job.blocked
-                    && (!job.paused || job.manual)
-            });
+        report.yield_to_source = self.service_collection.is_none()
+            && airk_store::scheduler::Queue::new(&self.data_root)
+                .status(&self.collection, &self.root_id())?
+                .is_some_and(|job| {
+                    job.requested_revision > job.completed_revision
+                        && !job.blocked
+                        && (!job.paused || job.manual)
+                });
         report.current = Some(current_work);
         report.maintenance_error = result.maintenance_error;
         Ok((result.generation, report))
@@ -615,11 +616,16 @@ impl Kernel {
         let captures = writer.capture_objects();
         let mut generation = None;
         for batch in 0..max_batches {
+            crate::service_execution::checkpoint()?;
             if batch > 0 && deadline.is_some_and(|end| std::time::Instant::now() >= end) {
                 break;
             }
-            let job = airk_store::scheduler::Queue::new(&self.data_root)
-                .status(&self.collection, &self.root_id())?;
+            let job = if self.service_collection.is_some() {
+                None
+            } else {
+                airk_store::scheduler::Queue::new(&self.data_root)
+                    .status(&self.collection, &self.root_id())?
+            };
             if max_batches <= 8
                 && job.as_ref().is_some_and(|job| {
                     job.paused || job.blocked || job.requested_revision > job.completed_revision

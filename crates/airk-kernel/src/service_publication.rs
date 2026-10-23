@@ -68,6 +68,7 @@ impl Kernel {
         let mut after = None;
         let mut revision = None;
         loop {
+            crate::service_execution::checkpoint()?;
             let report = next.diagnose_current(revision, after.as_deref(), 32, 64 << 20)?;
             ensure!(
                 report.failed_objects == 0 && report.skipped_large == 0,
@@ -103,6 +104,7 @@ impl Kernel {
                 && collection::settings_digest(&next.store, &self.root_id())? == settings,
             "replacement configuration plan expired"
         );
+        crate::service_execution::checkpoint()?;
         let token = replacement.commit(expected, settings)?;
         Ok(RevisionToken {
             incarnation: token.incarnation,

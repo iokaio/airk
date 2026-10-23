@@ -15,3 +15,5 @@ pub mod project_client;
 pub mod project_protocol;
 mod project_supervisor;
 pub mod project_worker;
+
+mod service_resource_policy;

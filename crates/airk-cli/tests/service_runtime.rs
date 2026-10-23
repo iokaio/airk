@@ -752,6 +752,12 @@ fn private_worker_channel_renews_only_the_live_scoped_generation() -> Result<()>
     let data = owner.path().join("state");
     fs::create_dir(&source)?;
     fs::create_dir(&data)?;
+    for n in 0..8 {
+        fs::write(
+            source.join(format!("fixture-{n}.txt")),
+            "cobalt harbor source record\n".repeat(12000),
+        )?;
+    }
     airk_cli::local_ipc::prepare_root(&root)?;
     let service = airk_kernel::service_broker::new_instance_id()?;
     let project = airk_kernel::service_projects::registration(&source, &data, "fixture")?;
@@ -824,6 +830,112 @@ fn private_worker_channel_renews_only_the_live_scoped_generation() -> Result<()>
             ),
             "worker accepted a foreign generation renewal"
         );
+        use airk_core::{
+            service::{JobKind, JobState, RequestKey},
+            service_resources::WorkAllowance,
+        };
+        let mut registry = ServiceRegistry::open(&root, service)?;
+        let (namespace, epoch) = registry.request_epoch()?;
+        let job = registry.enqueue(
+            project.binding,
+            service,
+            &RequestKey {
+                namespace,
+                epoch,
+                nonce: airk_kernel::service_broker::new_instance_id()?,
+            },
+            JobKind::Index,
+        )?;
+        std::thread::sleep(Duration::from_millis(400));
+        ensure!(
+            registry.job(job.id)?.state == JobState::Pending,
+            "worker claimed an ungranted job"
+        );
+        let allowance = WorkAllowance {
+            id: airk_kernel::service_broker::new_instance_id()?,
+            identity,
+            job: job.id,
+            extraction_threads: 1,
+            inference_threads: 1,
+            working_memory_bytes: 256 << 20,
+            background_io_bytes_per_second: 1 << 20,
+            ttl_ms: 300_000,
+        };
+        let grant = allowance.id;
+        service_ipc::write_frame(
+            &mut input,
+            &Control::RunJob {
+                identity,
+                allowance,
+            },
+        )?;
+        ensure!(
+            matches!(
+                receiver.recv_timeout(Duration::from_secs(5))?,
+                Reply::WorkAccepted
+            ),
+            "worker rejected exact work grant"
+        );
+        service_ipc::write_frame(
+            &mut input,
+            &Control::WorkStatus {
+                identity,
+                control: Some(project_protocol::WorkControl {
+                    grant,
+                    paused: true,
+                    canceled: false,
+                }),
+            },
+        )?;
+        ensure!(
+            matches!(
+                receiver.recv_timeout(Duration::from_secs(5))?,
+                Reply::WorkStatus { .. }
+            ),
+            "worker lost paused work status"
+        );
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while registry.job(job.id)?.state == JobState::Pending {
+            ensure!(
+                Instant::now() < deadline,
+                "worker did not claim granted job"
+            );
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        registry.request_cancellation(job.id)?;
+        service_ipc::write_frame(
+            &mut input,
+            &Control::WorkStatus {
+                identity,
+                control: Some(project_protocol::WorkControl {
+                    grant,
+                    paused: false,
+                    canceled: true,
+                }),
+            },
+        )?;
+        receiver.recv_timeout(Duration::from_secs(5))?;
+        loop {
+            let current = registry.job(job.id)?;
+            if current.state == JobState::Canceled {
+                break;
+            }
+            ensure!(
+                current.state != JobState::Failed && Instant::now() < deadline,
+                "running cancellation did not settle at a safe boundary: {:?}",
+                current.state
+            );
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        ensure!(
+            !fs::read_dir(&data)?
+                .filter_map(Result::ok)
+                .any(|entry| entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("execution-1.2-")),
+            "service used legacy root execution slots"
+        );
         Ok(())
     })();
     drop(input);
@@ -836,5 +948,63 @@ fn private_worker_channel_renews_only_the_live_scoped_generation() -> Result<()>
         .map_err(|_| anyhow::anyhow!("private worker reader failed"))?;
     result?;
     ensure!(exited, "worker did not drain after control loss");
+    Ok(())
+}
+
+#[test]
+fn resource_configuration_failure_is_distinct_from_memory_and_cached_status_stays_available()
+-> Result<()> {
+    use airk_core::{
+        service::{ControlMethod, ControlResponse},
+        service_resources::{ResourceConfiguration, ResourcePreset},
+    };
+    let owner = tempfile::tempdir()?;
+    let root = owner.path().join("runtime");
+    airk_cli::local_ipc::prepare_root(&root)?;
+    fs::write(root.join("resources-1.4.json"), b"{invalid}")?;
+    let mut children = Children(vec![start(&root)?]);
+    wait_ready(&root)?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        let ControlResponse::Resources {
+            observation,
+            configuration_error,
+            ..
+        } = airk_cli::service_runtime::request(&root, ControlMethod::Resources).await?
+        else {
+            anyhow::bail!("resource cache unavailable")
+        };
+        ensure!(configuration_error, "invalid configuration was hidden");
+        ensure!(
+            observation.observed_rss_bytes != Some(u64::MAX),
+            "configuration error impersonated memory pressure"
+        );
+        let configuration = ResourceConfiguration {
+            preset: ResourcePreset::Responsive,
+            memory_bytes: Some(2 << 30),
+            ..Default::default()
+        };
+        let ControlResponse::Resources {
+            configuration_error,
+            observation,
+            ..
+        } = airk_cli::service_runtime::request(
+            &root,
+            ControlMethod::ConfigureResources { configuration },
+        )
+        .await?
+        else {
+            anyhow::bail!("valid explicit configuration rejected")
+        };
+        ensure!(
+            !configuration_error && observation.memory_limit_bytes == 2 << 30,
+            "configuration did not replace invalid saved state"
+        );
+        Ok::<_, anyhow::Error>(())
+    })?;
+    control(&root, "shutdown")?;
+    ensure!(wait_exit(&mut children.0[0])?, "service did not stop");
     Ok(())
 }

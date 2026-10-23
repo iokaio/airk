@@ -751,12 +751,15 @@ impl OnnxModel {
                 Ok(Tensor::from_shape(&[batch, length], values)?.into())
             })
             .collect::<Result<_>>()?;
-        let outputs = lease
-            .plan
-            .as_ref()
-            .context("ONNX plan missing")?
-            .runnable
-            .run(inputs)
+        let outputs =
+            multithread::multithread_tract_scope(multithread::Executor::SingleThread, || {
+                lease
+                    .plan
+                    .as_ref()
+                    .context("ONNX plan missing")?
+                    .runnable
+                    .run(inputs)
+            })
             .context("local ONNX inference failed")?;
         ensure!(
             outputs.len() == 1 && outputs[0].shape() == [batch, length, self.manifest.dimensions],

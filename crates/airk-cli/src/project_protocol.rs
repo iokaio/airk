@@ -27,6 +27,14 @@ pub enum Command {
         allowance: QueryAllowance,
         pool: Option<Box<crate::embedding_pool_protocol::Access>>,
     },
+    RunJob {
+        identity: WorkerIdentity,
+        allowance: airk_core::service_resources::WorkAllowance,
+    },
+    WorkStatus {
+        identity: WorkerIdentity,
+        control: Option<WorkControl>,
+    },
     Grant {
         caller: Incarnation,
     },
@@ -38,6 +46,11 @@ pub enum Command {
 pub enum Reply {
     Renewed,
     Activated,
+    WorkAccepted,
+    WorkStatus {
+        active: Option<Incarnation>,
+        finished: Option<Incarnation>,
+    },
     Ready {
         identity: WorkerIdentity,
         role: String,
@@ -63,4 +76,12 @@ pub struct Accepted {
 
 pub fn role(worker: Incarnation) -> String {
     format!("q-{worker}")
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkControl {
+    pub grant: Incarnation,
+    pub paused: bool,
+    pub canceled: bool,
 }

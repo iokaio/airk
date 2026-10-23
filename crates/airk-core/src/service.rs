@@ -35,6 +35,9 @@ pub enum ControlMethod {
         project: ProjectBinding,
         paused: bool,
     },
+    Cancel {
+        id: Sha256Digest,
+    },
     CancelPending {
         id: Sha256Digest,
     },
@@ -42,6 +45,10 @@ pub enum ControlMethod {
         project: ProjectBinding,
     },
     EmbeddingStatus,
+    Resources,
+    ConfigureResources {
+        configuration: crate::service_resources::ResourceConfiguration,
+    },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -69,6 +76,11 @@ pub struct ServiceHealth {
 pub enum ControlResponse {
     Health {
         observation: Box<ServiceHealth>,
+    },
+    Resources {
+        observation: Box<crate::service_resources::ResourceSnapshot>,
+        age_ms: u64,
+        configuration_error: bool,
     },
     Stopping,
     Incompatible {
@@ -100,6 +112,7 @@ pub enum ControlResponse {
         loads: u64,
         reuses: u64,
         sessions: usize,
+        observation_age_ms: Option<u64>,
     },
 }
 

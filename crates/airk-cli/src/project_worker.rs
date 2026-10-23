@@ -5,9 +5,7 @@ use crate::{
     project_protocol::{self as protocol, Command, Reply},
     service_ipc,
 };
-use airk_core::service::{
-    ConnectionGrant, JobKind, JobOutcome, MAX_FRAME_BYTES, QueryAllowance, WorkerIdentity,
-};
+use airk_core::service::{ConnectionGrant, JobKind, JobOutcome, MAX_FRAME_BYTES, WorkerIdentity};
 use airk_kernel::{
     Kernel,
     service_broker::{Broker, BrokerLimits},
@@ -143,6 +141,7 @@ fn execute(
             let mut after = None;
             let mut revision = None;
             loop {
+                airk_kernel::service_execution::checkpoint()?;
                 let report = kernel.diagnose_current(revision, after.as_deref(), 32, 64 << 20)?;
                 ensure!(
                     report.failed_objects == 0 && report.skipped_large == 0,
@@ -211,11 +210,8 @@ pub async fn run() -> Result<()> {
     };
     ensure!(
         accepted == identity
-            && allowance
-                == QueryAllowance {
-                    concurrent_queries: 4,
-                    response_bytes: 4 * MAX_FRAME_BYTES
-                },
+            && (1..=4).contains(&allowance.concurrent_queries)
+            && allowance.response_bytes == allowance.concurrent_queries * MAX_FRAME_BYTES,
         "project activation identity or allowance mismatch"
     );
     #[cfg(not(feature = "local-inference"))]
@@ -227,6 +223,7 @@ pub async fn run() -> Result<()> {
         Some((&registration.data_root).into()),
         &registration.collection,
     )?;
+    airk_kernel::service_execution::install(Path::new(&registration.data_root), identity)?;
     let receipt = kernel.service_rebuild_receipt()?;
     registry.recover_jobs_with_rebuild_receipt(&lease, receipt.as_ref())?;
     let mut broker = Broker::new(init.service, BrokerLimits::default())?;
@@ -270,17 +267,43 @@ pub async fn run() -> Result<()> {
     let job_activity = activity.clone();
     let job_busy = busy.clone();
     let job_lease = lease.clone();
+    let (work_sender, work_receiver) =
+        std::sync::mpsc::sync_channel::<airk_core::service_resources::WorkAllowance>(1);
+    let work_status = Arc::new(Mutex::new((None, None)));
+    let job_status = work_status.clone();
     let jobs = tokio::task::spawn_blocking(move || -> Result<()> {
         while !job_closing.load(Ordering::Acquire) {
-            let Some(job) = registry.claim_job(&job_lease)? else {
-                std::thread::sleep(Duration::from_millis(200));
-                continue;
+            let allowance = match work_receiver.recv_timeout(Duration::from_millis(200)) {
+                Ok(allowance) => allowance,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
             };
-            job_busy.store(true, Ordering::Release);
-            let outcome = execute(&kernel, job.kind, job.id).unwrap_or(JobOutcome::Failed {
-                code: "project_operation_failed".into(),
-            });
-            registry.complete_job(&job_lease, job.id, outcome)?;
+            if let Some(job) = registry.claim_job_id(&job_lease, allowance.job)? {
+                let outcome = if registry.cancellation_requested(job.id)? {
+                    Ok(JobOutcome::Canceled)
+                } else {
+                    airk_kernel::service_execution::run(allowance.clone(), || {
+                        execute(&kernel, job.kind, job.id)
+                    })
+                }
+                .unwrap_or_else(|error| {
+                    if error
+                        .downcast_ref::<airk_kernel::service_execution::Canceled>()
+                        .is_some()
+                    {
+                        JobOutcome::Canceled
+                    } else {
+                        JobOutcome::Failed {
+                            code: "project_operation_failed".into(),
+                        }
+                    }
+                });
+                registry.complete_job(&job_lease, job.id, outcome)?;
+            }
+            *job_status
+                .lock()
+                .map_err(|_| anyhow::anyhow!("work status unavailable"))? =
+                (None, Some(allowance.id));
             job_busy.store(false, Ordering::Release);
             job_activity.notify_one();
         }
@@ -298,8 +321,25 @@ pub async fn run() -> Result<()> {
             command=commands.recv()=>{
                 match command {
                     Some(Command::Renew{identity:expected})=>{
-                        let renewed=expected==identity&&state.broker.lock().map_err(|_|anyhow::anyhow!("query policy unavailable"))?.renew(identity,Instant::now(),Duration::from_secs(300)).is_ok();
+                        let renewed=expected==identity&&airk_kernel::service_execution::renew(identity).is_ok()&&state.broker.lock().map_err(|_|anyhow::anyhow!("query policy unavailable"))?.renew(identity,Instant::now(),Duration::from_secs(300)).is_ok();
                         service_ipc::write_frame(&mut std::io::stdout().lock(),&if renewed{Reply::Renewed}else{Reply::Failed})?;
+                    },
+                    Some(Command::RunJob{identity:expected, allowance})=>{
+                        let accepted=expected==identity && allowance.identity==identity && allowance.validate().is_ok()
+                            && !busy.swap(true, Ordering::AcqRel);
+                        let accepted=if accepted {
+                            airk_kernel::service_execution::activate(&allowance)?;
+                            *work_status.lock().map_err(|_|anyhow::anyhow!("work status unavailable"))?=(Some(allowance.id), None);
+                            work_sender.try_send(allowance).is_ok()
+                        }else{false};
+                        service_ipc::write_frame(&mut std::io::stdout().lock(), &if accepted{Reply::WorkAccepted}else{Reply::Failed})?;
+                        idle=Instant::now();
+                    },
+                    Some(Command::WorkStatus{identity:expected,control})=>{
+                        if expected==identity && let Some(control)=control {airk_kernel::service_execution::control(identity,control.grant,control.paused,control.canceled)?;}
+                        let (active,finished)=*work_status.lock().map_err(|_|anyhow::anyhow!("work status unavailable"))?;
+                        let reply=if expected==identity{Reply::WorkStatus{active,finished}}else{Reply::Failed};
+                        service_ipc::write_frame(&mut std::io::stdout().lock(), &reply)?;
                     },
                     Some(Command::Grant{caller})=>{
                         let grant=state.broker.lock().map_err(|_|anyhow::anyhow!("query policy unavailable"))?.issue(identity,caller,Instant::now(),Duration::from_secs(15));
@@ -326,6 +366,7 @@ pub async fn run() -> Result<()> {
         }
     }
     closing.store(true, Ordering::Release);
+    drop(work_sender);
     while connections.join_next().await.is_some() {}
     jobs.await??;
     let mut state = Arc::try_unwrap(state)

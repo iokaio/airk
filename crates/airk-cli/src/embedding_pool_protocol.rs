@@ -14,6 +14,7 @@ pub struct Init {
     pub runtime: PathBuf,
     pub service: Incarnation,
     pub pool: Incarnation,
+    pub inference_threads: u16,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -40,6 +41,7 @@ pub enum Control {
     Renew { worker: Incarnation },
     Register { grant: Grant },
     Revoke { worker: Incarnation },
+    ConfigureThreads { threads: u16 },
     Status,
     Stop,
 }
@@ -58,6 +60,7 @@ pub enum Observation {
         loads: u64,
         reuses: u64,
         sessions: usize,
+        age_ms: u64,
     },
     Failed,
 }

@@ -22,6 +22,21 @@ pub(crate) fn configured_extraction_execution() -> Result<ExtractionAdmission> {
     )
 }
 
+pub(crate) fn execution_from_grant(
+    plan: &airk_core::execution::ExecutionPlan,
+) -> Result<ExtractionAdmission> {
+    let execution = ExtractionExecution {
+        workers: plan.extraction_workers,
+        max_in_flight_source_bytes: plan.extraction_workers
+            * ExtractionExecution::MAX_PARALLEL_SOURCE_BYTES,
+    };
+    execution.validate()?;
+    Ok(ExtractionAdmission {
+        requested: plan.requested_extraction_workers,
+        execution,
+    })
+}
+
 fn admit(requested: Option<&str>, memory: Option<u64>) -> Result<ExtractionAdmission> {
     // Keep serial as the default until workload qualification selects otherwise.
     let requested = requested
