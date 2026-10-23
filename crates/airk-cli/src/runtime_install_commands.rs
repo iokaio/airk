@@ -38,6 +38,7 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
             }
         }
         RuntimeCommand::Foreground { install_dir } => {
+            launcher_repair::require_settled(install_dir)?;
             let (_, executable, _) = selected(install_dir)?;
             let mut command = Command::new(executable);
             command
@@ -97,6 +98,25 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
             staging::abort(install_dir, runtime_sha256)?;
             serde_json::json!({"aborted_stage":runtime_sha256,"promoted_runtime_preserved":install_dir.join("runtimes").join(runtime_sha256).try_exists()?})
         }
+        RuntimeCommand::RepairLauncher { install_dir } => {
+            let _lock = install_lock(install_dir)?;
+            crate::service_manager::ServiceManager::for_runtime(install_dir)?
+                .require_stopped_for_maintenance()?;
+            let _quiescence = quiescent(install_dir).context(
+                "stop the service and wait for all owners before repairing the launcher",
+            )?;
+            let (selection, _, _) = selected(install_dir)?;
+            launcher_repair::repair(install_dir, &selection.active)?;
+            serde_json::json!({"launcher_repaired":true,"runtime":selection.active})
+        }
+        RuntimeCommand::AbortLauncherRepair { install_dir } => {
+            let _lock = install_lock(install_dir)?;
+            crate::service_manager::ServiceManager::for_runtime(install_dir)?
+                .require_stopped_for_maintenance()?;
+            let _quiescence = quiescent(install_dir)?;
+            launcher_repair::abort(install_dir)?;
+            serde_json::json!({"launcher_repair_aborted":true})
+        }
         RuntimeCommand::Diagnose { install_dir } => {
             ensure!(install_dir.is_dir(), "runtime installation is missing");
             local_ipc::prepare_root(install_dir)?;
@@ -121,7 +141,12 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
                 .as_ref()
                 .err()
                 .map(|error| format!("{error:#}").chars().take(1024).collect::<String>());
-            serde_json::json!({"runtime":selection.ok(),"runtime_error":selection_error,"bootstrap":bootstrap.ok().flatten(),"bootstrap_error":bootstrap_error,"pending_stages":stages.ok(),"staging_error":stages_error,"live_service_health":"not_checked"})
+            let repair = launcher_repair::pending(install_dir);
+            let repair_error = repair
+                .as_ref()
+                .err()
+                .map(|error| error.to_string().chars().take(512).collect::<String>());
+            serde_json::json!({"runtime":selection.ok(),"runtime_error":selection_error,"bootstrap":bootstrap.ok().flatten(),"bootstrap_error":bootstrap_error,"pending_stages":stages.ok(),"staging_error":stages_error,"pending_launcher_repair":repair.ok().flatten(),"launcher_repair_error":repair_error,"live_service_health":"not_checked"})
         }
         RuntimeCommand::ResetStartup { install_dir } => {
             let _lock = install_lock(install_dir)?;
@@ -141,6 +166,7 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
             serde_json::to_value(activate(install_dir, &previous).await?)?
         }
         RuntimeCommand::Launch { install_dir, args } => {
+            launcher_repair::require_settled(install_dir)?;
             let (_, executable, _) = selected(install_dir)?;
             let mut command = Command::new(executable);
             command.args(args);

@@ -8,6 +8,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import time
 
 
 def sha256(path):
@@ -83,6 +84,36 @@ def main():
             plan = run("login", "--install-dir", install, "plan")
             if not plan["id"].startswith("airksvc-") or plan["arguments"][0:2] != ["runtime", "foreground"]:
                 raise RuntimeError("Optional startup plan reused a legacy scheduler identity")
+            print("Checking stopped-owner launcher repair and modified-file preservation...", flush=True)
+            before_launcher = sha256(launcher)
+            run("repair-launcher", "--install-dir", install, rejected=True)
+            if sha256(launcher) != before_launcher or (install / "launcher-repair.json").exists():
+                raise RuntimeError("Live-owner repair changed launcher state")
+            invoke(binary, "service", "shutdown", "--runtime-dir", install / "control")
+            until = time.monotonic() + 30
+            while True:
+                try:
+                    run("repair-launcher", "--install-dir", install)
+                    break
+                except RuntimeError as error:
+                    if "stop the service and wait for all owners" not in str(error) or time.monotonic() >= until:
+                        raise
+                    time.sleep(0.1)
+            changed = b"Original user-modified launcher fixture.\n"
+            launcher.write_bytes(changed)
+            run("repair-launcher", "--install-dir", install, rejected=True)
+            if launcher.read_bytes() != changed:
+                raise RuntimeError("Repair overwrote a modified launcher")
+            launcher.unlink()
+            if not run("repair-launcher", "--install-dir", install).get("launcher_repaired"):
+                raise RuntimeError("Missing launcher could not be repaired from approved offline bytes")
+            if sha256(launcher) != before_launcher:
+                raise RuntimeError("Repaired launcher has the wrong approved identity")
+            actual = invoke(launcher, "runtime", "launch", "--install-dir", install,
+                            "--", "--version", raw=True)
+            if actual != f"airk {version}":
+                raise RuntimeError("Repaired launcher lost argument forwarding")
+            health = run("ensure", "--install-dir", install)
             # A legal-payload change deliberately retains identical native executable
             # hashes. Health must still distinguish these approved installation identities.
             next_payload = fixture / "next-payload"
@@ -123,7 +154,7 @@ def main():
                 raise RuntimeError("Owned uninstall did not resume after the unknown file was removed")
             if (user_data / "sentinel").read_bytes() != original:
                 raise RuntimeError("Runtime uninstall changed project data")
-            print("Offline runtime staging, election, exact payload health, upgrade, rollback, stable launcher, and resumable uninstall passed.")
+            print("Offline runtime staging, election, exact payload health, upgrade, rollback, stable launcher repair, and resumable uninstall passed.")
         finally:
             # Never operate on an installed user service: this exact private control
             # namespace belongs to the temporary fixture above.

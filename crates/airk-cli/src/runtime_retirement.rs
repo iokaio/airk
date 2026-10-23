@@ -164,6 +164,7 @@ pub(super) async fn uninstall(root: &Path) -> Result<serde_json::Value> {
         if manager.owned_registration_exists()? {
             manager.uninstall()?;
         }
+        launcher_repair::settle_for_uninstall(root)?;
         for identity in staging::pending(root)? {
             staging::abort(root, &identity)?;
         }

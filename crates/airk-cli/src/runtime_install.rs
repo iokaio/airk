@@ -18,6 +18,8 @@ use std::{
     time::Duration,
 };
 
+#[path = "runtime_launcher_repair.rs"]
+mod launcher_repair;
 #[path = "runtime_retirement.rs"]
 mod retirement;
 #[path = "runtime_staging.rs"]
@@ -91,6 +93,16 @@ pub enum RuntimeCommand {
         install_dir: PathBuf,
         #[arg(long)]
         runtime_sha256: String,
+    },
+    /// Repair an absent or known older launcher from the selected approved payload; requires stopped owners.
+    RepairLauncher {
+        #[arg(long)]
+        install_dir: PathBuf,
+    },
+    /// Abort an owned unfinished launcher copy; an already replaced image must be finalized.
+    AbortLauncherRepair {
+        #[arg(long)]
+        install_dir: PathBuf,
     },
     /// Stop/unregister this service and retire owned runtime payloads; preserve project data.
     Uninstall {
@@ -641,6 +653,7 @@ fn prepare_launcher(root: &Path, main: &Path) -> Result<()> {
 
 pub fn verified_launcher(root: &Path) -> Result<PathBuf> {
     local_ipc::prepare_root(root)?;
+    launcher_repair::require_settled(root)?;
     let launcher = launcher_path(root);
     safe_file(&launcher)?;
     let receipt: LauncherReceipt =
@@ -861,6 +874,7 @@ async fn start(
 
 pub async fn ensure_running(root: &Path) -> Result<ServiceHealth> {
     let _lock = install_lock(root)?;
+    launcher_repair::require_settled(root)?;
     let (_, main, approval) = selected(root)?;
     start(root, &approval, &main, true).await
 }
@@ -932,6 +946,7 @@ fn quiescent(root: &Path) -> Result<Quiescence> {
 
 pub async fn activate(root: &Path, identity: &str) -> Result<Selection> {
     let _lock = install_lock(root)?;
+    launcher_repair::require_settled(root)?;
     ensure!(
         !root.join("uninstall.json").try_exists()?,
         "resume the pending runtime uninstall before activation"

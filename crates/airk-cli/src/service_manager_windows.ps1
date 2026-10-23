@@ -17,7 +17,11 @@ try {
 $airkResult = @{ loaded = $false; running = $false; definition_matches = $null }
 if ($null -ne $airkTask) {
     $airkResult.loaded = $true
-    $airkResult.running = ($airkTask.State -eq 4)
+    $airkResult.running = switch ([int] $airkTask.State) {
+        { $_ -eq 2 -or $_ -eq 4 } { $true }
+        { $_ -eq 1 -or $_ -eq 3 } { $false }
+        default { $null }
+    }
     $airkResult.definition_matches = $false
     if (-not [String]::IsNullOrEmpty($airkExpectedXml)) {
         # Ask the OS schema implementation to expand the same defaults on both
