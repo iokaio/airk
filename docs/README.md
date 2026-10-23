@@ -7,6 +7,7 @@ Start with the [1.3.2 empty-index progress release notes](release-1.3.2.md), [1.
 The [1.3.0 release](release-1.3.0.md) retires the former `airk_history` MCP endpoint because the single-current-index design cannot serve retained history; see the [retirement record](unreleased-mcp-tool-retirement.md). It also includes early MCP availability during initial indexing, scoped path updates, deferred semantic inference, adaptive publication batches, revision-bound queue reports, pending-rescan coverage, guarded lexical snapshots with Linux write notifications, a qualified model catalog and SQLite FTS5 lexical storage. The extension detects recognized older 1.2 formats during indexing and starts the required full rebuild automatically, preserving original files, collection IDs and saved settings; CLI upgrades use `index --full`. The [dated follow-up](indexing-follow-up-2026-10-21.md) records cache integrity limits and validation. GitHub and Marketplace release workflow records establish their separate publication status.
 
 - [Architecture and code boundaries](architecture.md)
+- [Proposed AIRK 1.4.0 local service architecture and implementation plan](airkservice-architecture.md)
 - [Historical architecture v2 implementation plan](architecture-v2.md)
 - [Proposed change tracing and bounded development indexes](change-tracing-plan.md)
 - [Decision 001: focused local retrieval](decisions/001-local-retrieval-kernel.md)

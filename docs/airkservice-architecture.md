@@ -1,0 +1,429 @@
+# AIRK 1.4.0 local service architecture and implementation plan
+
+Status: proposed for review; not implemented or qualified. Written October 22, 2026.
+
+Target release: **1.4.0, a clean break from the 1.3.x process, storage and client lifecycle.** This document does not change the checked-in implementation version or authorize publication. The [current architecture](architecture.md) remains the description of implemented behavior until this proposal is implemented and qualified.
+
+## 1. Decision and purpose
+
+Replace independently launched indexing helpers with one user-owned local AIRK service per execution environment and release channel. The service owns the project registry, durable work requests, resource admission and worker lifecycle. Separate project workers own independent project indexes. VS Code windows, CLI commands and coding-agent MCP connections become clients of that service.
+
+The service must install and run from a platform VSIX under an ordinary user account. Administrator access, sudo, a Windows Service Control Manager registration, a system-wide launch daemon, a system-level systemd unit, Docker, a compiler, a package manager and runtime model downloads must not be prerequisites.
+
+The architecture must accommodate many editor windows, projects and agents without multiplying indexing work or loading one model per client. A client connection is not an indexing worker. A registered project need not have a resident process when idle.
+
+AIRK remains a local indexing and bounded retrieval kernel. It does not schedule agents, generate answers, route external model requests or require a cloud service or external database. The service coordinates AIRK's own work only.
+
+## 2. Problems to address
+
+The 1.3.x design has independent collection stores but coordinates processes through shared files and short scheduler/quota transactions. Four execution slots provide coarse admission. Separate helper processes can duplicate model sessions. Publication can hold a collection gate while expensive preparation and application occur, blocking diagnostics and retrieval for that collection.
+
+Progressive batch targets currently double regardless of publication cost. A reported 1.3.2 run reached 992 committed files, matching batches of 32 + 64 + 128 + 256 + 512, and then showed a long gap. This is evidence of publication and visibility problems; it does not establish that another project's worker held the affected collection's gate, or that the process was deadlocked.
+
+Moving the same blocking publication path into a daemon would retain the central problem. The redesign must address publication, observability and worker scheduling together. The service must never depend on successfully reading a busy project database to answer a health request.
+
+## 3. Non-negotiable requirements
+
+- Isolate projects by canonical root, collection identity, applied configuration, storage ownership and revision identity.
+- Run multiple projects concurrently when resources permit, without a fixed four-project ceiling.
+- Deduplicate work from multiple windows and agents for the same project.
+- Keep committed evidence searchable while preparing ordinary updates and replacement indexes.
+- Keep service health, job status, cancellation and restart controls responsive during indexing.
+- Install, upgrade, diagnose and uninstall under the current user's permissions, including from an offline VSIX.
+- Support macOS Apple Silicon, macOS Intel, Windows x64 and Linux x64 as independently qualified native targets.
+- Provide a service-wide VS Code view, including projects not open in that window.
+- Support diagnosis, restart and repair of one project, a selected set, or all registered projects.
+- Preserve source files, explicit failures, bounded retrieval, exact citations and local-only inference.
+- Make resource limits, queue waits, incomplete work and unsupported environments visible.
+
+"No administrator required" means no additional privileges beyond an allowed user installation and execution. It cannot guarantee execution when organizational policy prohibits AIRK, extension installation, child processes or native code. AIRK must report that boundary and support approved deployment; it must not bypass policy.
+
+## 4. Process and ownership model
+
+```mermaid
+flowchart TD
+    V[VS Code windows] --> C[User service control and event API]
+    L[CLI client] --> C
+    M[Agent stdio MCP bridges] --> Q[Service query API]
+    C --> S[Durable scheduler and resource manager]
+    S --> A[Project A worker]
+    S --> B[Project B worker]
+    S --> N[Additional project workers]
+    Q --> A
+    Q --> B
+    Q --> N
+    A --> D1[Project A index and retained objects]
+    B --> D2[Project B index and retained objects]
+    N --> D3[Independent project stores]
+    A --> E[Bounded embedding worker pool]
+    B --> E
+    N --> E
+```
+
+### 4.1 Service identity
+
+The singleton scope is the OS user, host/runtime namespace and channel. Stable and explicitly isolated preview channels use different endpoints and data roots. Different VS Code profiles and editor distributions on the same host should discover the same compatible stable service rather than each creating a service inside its extension storage directory.
+
+A remote SSH host, WSL distribution, development container or container namespace is a separate execution environment. There is no claim of a single allocator spanning a Windows host, WSL, containers and remote machines. Multiple storage volumes within one environment are managed by the same service and resource manager.
+
+An owner-only instance lock elects one service. Starting from many clients simultaneously must produce one winner; other launchers connect or return a bounded startup failure. A PID alone is not identity: discovery includes instance ID, process start identity, executable identity, protocol range and endpoint ownership. Never remove a lock simply because a status call timed out.
+
+### 4.2 Responsibilities
+
+| Component | Responsibility | Must not do |
+|---|---|---|
+| Local service | Registry, client authentication, durable requests, subscriptions, admission, worker supervision, maintenance coordination | Parse files or perform inference on the control loop |
+| Project worker | Discovery, extraction coordination, project query execution, revision publication and recovery | Modify another project or create an independent resource policy |
+| Embedding worker pool | Reuse verified model sessions, compute source-bound vectors under admitted budgets | Publish project revisions or choose a project's identity |
+| VS Code extension | Install/connect, render state, register trusted projects, submit user actions, collect diagnostics | Run its own indexing scheduler or infer success from a spinner |
+| MCP bridge | Preserve stdio MCP framing and route bounded collection-scoped read requests | Install models, repair indexes or gain service management authority |
+| CLI | Scriptable service/client operations and explicit maintenance requests | Silently fall back to opening an index as a competing writer |
+
+Use one active project owner per collection, with concurrent bounded readers and parallel extraction inside admitted capacity. Spawn or retain workers according to activity; unload idle workers and model sessions under pressure. A worker crash should fail its in-flight requests and isolate its project while other workers continue.
+
+The service is a single coordination dependency. Its crash interrupts connections, even with isolated workers. Recovery must be automatic and bounded, but not described as zero downtime. If service ownership is lost, workers must stop admitting writes and terminate or surrender ownership before a replacement service grants it. Use process-lifetime handles and fencing generations, not heartbeats alone, to prevent surviving writers from overlapping new owners.
+
+### 4.3 Existing crate boundaries
+
+Keep lifecycle and IPC adapters in `airk-cli`, MCP adaptation in `airk-mcp`, scheduling/publication services in `airk-kernel`, and persistence, ownership locks and database adapters in `airk-store`. Extraction remains in `airk-ingest`; DiskANN algorithms and local inference remain in `airk-retrieval`; platform-neutral contracts belong in `airk-core`. Add modules in the owning crate before considering another crate. The extension calls native contracts rather than bypassing them.
+
+## 5. Shared and independent state
+
+| State/resource | Scope | Reason |
+|---|---|---|
+| Project database, facts, lexical records, graph and retained objects | One collection | Independent failure, publication and repair |
+| Project work owner and commit serialization | One collection | Prevent duplicate or conflicting writers |
+| Project registry and durable job metadata | One service | Join duplicate requests, recover work, enumerate all projects |
+| CPU, memory and disk-I/O admission | One service environment | Allocate the same finite hardware fairly |
+| Model files and compatible loaded sessions | Shared pool, partitioned by exact model/runtime identity | Avoid per-client downloads, sessions and inference oversubscription |
+| Quota accounting | Per storage root/volume, with per-project allowances | Prevent concurrent reservations from overspending available disk |
+| Event routing and service health | One service | Observe work without opening the affected index |
+| Client capabilities and request budgets | One connection/request | Separate retrieval from maintenance and bound abusive workloads |
+
+Shared scheduler and quota mutations must be short. No extraction, inference, corpus traversal or user callback may run while their transaction/lock is held. Large project work must not accumulate inside the registry database. Disk reservations remain tied to actual storage volumes even though CPU/memory admission is service-wide.
+
+Same-user workers are fault isolation, not a security sandbox against malicious code running as that user. In-memory embedding requests and results must carry project, source hash, model identity and cancellation identity so pooling cannot mix results between collections.
+
+## 6. Publication and concurrent reads
+
+### 6.1 Proposed normal update path
+
+1. Capture immutable source inputs and perform extraction outside the database writer transaction.
+2. Prepare bounded fact, lexical and vector changes against a named base revision. Include policy/model identity and source hashes.
+3. Reserve memory and disk growth, including journal/WAL and temporary objects.
+4. Admit a single project writer. Recheck the base and reconcile or retry stale preparation.
+5. Apply a bounded transaction and publish its coherent head. Never mix lexical, graph and source bindings from different revisions.
+6. Emit a committed revision event and release completed work grants.
+7. Reclaim unreferenced objects only after no live request/recovery record needs them.
+
+Use SQLite WAL and separate bounded read connections as the first storage prototype. Readers can observe a committed snapshot while a writer advances the database; writes still serialize per database. WAL also needs checkpoint management, and long readers can prevent checkpoint completion. These are explicit engineering requirements, not a guarantee that WAL removes every busy outcome. See [SQLite WAL](https://sqlite.org/wal.html) and [snapshot isolation](https://sqlite.org/isolation.html).
+
+Retain DiskANN as the vector engine and first prototype coherent graph/lexical updates in the project database. A separate vector directory is not inherently a concurrency solution; splitting storage requires a proven atomic manifest and crash protocol. Evaluate it only if measurements justify that added complexity.
+
+### 6.2 Required contract redesign
+
+The current implementation prepares and seals changes, rolls back, then repeats application from captured inputs under its durable journal contract. Removing that repetition or moving preparation outside exclusion changes the integrity and recovery design. Version 1.4.0 must specify a new authenticated publication contract and fault-test it; this is not a lock-removal patch.
+
+The target is to let readers finish a bounded materialization against their admitted committed revision while updates proceed. Hold any required snapshot only through bounded request execution, not through a long-lived MCP session or cursor lifetime. Continue to expire tokens/cursors explicitly when their contract no longer permits use. This does not introduce historical search or indefinitely retained revisions.
+
+Retained-object reclamation must protect active reads, captured work, pending journals and replacement builds. A database snapshot alone does not protect external object files. Define request leases and ownership accounting together, including crash cleanup and finite lease lifetimes.
+
+### 6.3 Full rebuild and repair publication
+
+Build a replacement index in a quota-reserved sibling directory while queries use the last verified current index. Validate replacement coherence and source/configuration identity before switching an owned manifest to the new incarnation. On Windows, do not depend on renaming or deleting a database directory with open handles: create a new uniquely named incarnation, switch the manifest, drain old readers, then retire it.
+
+Account for both copies. When there is insufficient space, offer an explicit offline rebuild with its downtime and affected collections shown. Never delete the last readable index as an implicit fallback. A corrupt index is not served merely to claim availability; unaffected verified collections remain usable.
+
+The manifest switch, reader lease handoff, interrupted switch recovery and cleanup must each have crash-injection tests. Rebuilding changes incarnation and invalidates old tokens explicitly.
+
+## 7. Scheduling and resource policy
+
+Replace the four execution-slot files with a service-wide admission model. Track extraction threads, inference threads, resident model memory, captured/prepared bytes, pending result bytes, query concurrency, disk reservations and background write pressure. Include inference-library internal threads in CPU accounting so multiple admitted sessions do not each claim the whole machine.
+
+Expose user-level Balanced, Responsive and Throughput policies plus explicit CPU/thread, memory and background-I/O overrides. Their numeric defaults require measurement before release. Detect affinity/container limits where supported; treat missing resource observations conservatively and expose their absence. Observed memory use and OS pressure should reduce new admission; portable byte accounting is not an OS-enforced memory limit.
+
+Use fair scheduling across projects and request classes. Interactive retrieval receives reserved admission capacity, while aging prevents permanent background starvation. A client cannot monopolize the service by opening more connections or raising its own priority. User-initiated indexing may receive a temporary boost, but other projects retain a minimum share. Paused or inaccessible projects must release unused grants.
+
+Allow expensive work in parallel across projects and within a project, but keep one project publication writer. Apply backpressure to bounded capture, extraction, embedding and publication queues. Parallel extraction must stop producing when the publication queue or memory budget fills.
+
+Choose publication batches using actual prepared bytes, retained memory, recent publication duration and cancellation responsiveness, with hard count/byte ceilings. Grow only when measured cost permits; shrink after slow commits. Batch targets are not deadlines: a storage operation can still overrun, so phase timing and stuck-worker recovery remain necessary.
+
+Coalesce repeated file events, join identical requests and reconcile at a durable high-water mark. New changes during a scan form later work; do not continually restart the scan. Watcher overflow requests a full reconciliation. Periodic reconciliation remains necessary for missed events and when no editor is open. Use one native watcher owner per registered project rather than one watcher per client; inactive-project watching is configurable and bounded by host limits.
+
+## 8. Protocol, clients and security
+
+### 8.1 Transport and discovery
+
+Use an owner-restricted Windows named pipe or Unix-domain socket, with bounded framed messages. Do not expose a listening TCP port by default. Discovery is an owner-protected record under a user runtime directory, not a file in the workspace. It describes the authenticated instance, protocol and runtime endpoint; it contains no query/source content.
+
+Authenticate peer user identity using supported OS mechanisms, enforce endpoint permissions, and use an owner-only bootstrap credential where needed. Check endpoint ownership and symlink/reparse handling before connecting. Credentials must not appear in command arguments, workspace files or diagnostic exports. Authentication does not isolate AIRK from fully compromised same-user processes.
+
+On Windows set an explicit pipe ACL for the intended user, reject remote pipe clients, and validate peer/owner identities; do not rely on the default pipe descriptor. Microsoft documents that default pipe permissions are broader than this design requires. See [named-pipe security](https://learn.microsoft.com/en-us/windows/win32/ipc/named-pipe-security-and-access-rights).
+
+### 8.2 Contracts
+
+Define protocol version negotiation, feature capabilities, maximum frame size, deadlines, cancellation, request IDs, structured errors and per-client outstanding-request limits. Service version, protocol version and index format version are separate identities. A compatible older 1.4-family client may connect only within the explicitly tested negotiated range; no 1.3 helper compatibility is implied.
+
+Proposed method groups, not existing commands:
+
+- `service`: identity, health, capabilities, resource status, diagnostics, drain, restart intent.
+- `projects`: paged list, trusted registration, status, settings, unregister without deleting sources.
+- `jobs`: enqueue, join, inspect, cancel, pause/resume, and bounded event subscription.
+- `queries`: existing bounded retrieval semantics with collection and revision binding.
+- `maintenance`: plan, validate, execute and inspect verify/recover/rebuild operations.
+
+Control/status execution uses bounded independent handlers and a small state snapshot maintained by events. It never waits behind query work or a project's exclusive writer. Authoritative on-disk verification is a separate job; status must identify cached observations and their age.
+
+Slow subscribers receive a gap marker and resynchronize from a snapshot rather than consuming unlimited memory. Sequence events by service instance and monotonic sequence number. Persist job transitions and failures; coalesce high-frequency counters rather than journaling every file. Reconnection is retryable, but a client must not automatically replay an ambiguous mutating request without its durable idempotency key.
+
+### 8.3 MCP and privilege separation
+
+Provide a stable user-installed `airk` launcher and a collection-bound stdio MCP bridge. The bridge connects to the service and can request on-demand startup, but receives retrieval capabilities only. Its connection must not expose restart, deletion, repair, project enumeration or registration tools to agents. Client disconnect cancels that client's requests, not a shared indexing job.
+
+Management requires a separately authenticated control connection and explicit trusted client context. Workspace configuration cannot choose the service executable, endpoint, credentials or another project's identity. Paths supplied by clients are not proof of ownership; resolve registered canonical roots, aliases and allowed operations inside the service.
+
+## 9. Installation and lifecycle without administrator access
+
+### 9.1 Common installation transaction
+
+The platform VSIX contains a verified native runtime, compatible launcher/MCP bridge, model assets, legal notices and a complete payload manifest. No runtime download is required. Additive network-based delivery may be considered later; it cannot be the only installation route.
+
+On first activation eligible under Workspace Trust:
+
+1. Locate the user-level AIRK installation using a trusted host-specific locator. User settings may select an organization-approved install location; workspace settings may not.
+2. Detect the actual execution host OS/architecture and check the platform payload and minimum runtime requirements.
+3. Acquire a user install lock; verify manifest hashes and release authenticity; stage in a new version/digest directory. A checksum detects corruption but is not publisher authentication by itself.
+4. Verify ownership, safe extraction paths, executable permissions, dependencies and a bounded native self-test. Refuse redirected/unsafe install targets and never modify OS security policy.
+5. Discover or elect the service and negotiate capabilities. Atomically select the verified runtime only after startup health succeeds.
+6. Connect the extension, register the trusted project, and subscribe to service/project events.
+7. Report the exact runtime, architecture, lifecycle mode, storage roots and installation result.
+
+Repeat installation and activation must be idempotent under multiple windows. Failed staging leaves the prior verified runtime selected. No unsigned script fetched from the network is executed. Do not add a PATH entry, login registration or shell-profile modification as a prerequisite to using the extension.
+
+The service must live outside the versioned VS Code extension directory so extension replacement/uninstallation cannot delete a running executable. Keep runtime payloads immutable. A small stable launcher resolves the selected runtime; coordinate launcher replacement with Windows file-lock constraints. The CLI can use an absolute launcher path when PATH changes are prohibited.
+
+### 9.2 Lifecycle modes
+
+| Mode | Installation privilege | Startup and lifetime |
+|---|---|---|
+| On-demand user service, required baseline | Ordinary user | Extension/CLI/MCP launcher elects the service; persists across client reloads where permitted; exits after an idle grace period when no clients or admitted jobs remain |
+| Per-user login integration, optional | Ordinary user where policy permits | Platform user startup manager starts/restarts AIRK within that user's session |
+| Organization-managed deployment | Managed by organization | Extension connects to an approved runtime and reports policy-controlled lifecycle actions |
+
+On-demand mode must not require persistence registration. Closing a window does not stop another client's work. Define whether requested background jobs continue without clients, expose that preference and drain safely at session shutdown. Restart backoff and a crash-loop circuit breaker apply in every mode.
+
+### 9.3 Windows x64
+
+Use a signed native x64 runtime on supported Windows versions. Proposed user install location: `%LOCALAPPDATA%\AIRK\runtime\<version>-<digest>`. Keep configuration and state under user-owned AIRK directories, with large indexes on a separately configurable local volume. Do not place active SQLite state on a roaming profile or network share by default.
+
+The baseline "service" is a hidden background process running as the interactive user, not an SCM service. Launch without a console window or shell, release extension-parent lifetime dependencies, and make the elected service own project/embedding worker process groups. Use Windows Job Objects where supported to contain worker lifetimes and account for inherited jobs, nested-job constraints and host policies in installed tests. Do not promise survival of logoff or process policies that terminate descendants.
+
+Use an explicit per-user named pipe identity and ACL. Include session context where required; across multiple logon sessions, connect only when owner and session-access policy permit. If policy requires separate session instances, show that reduced coordination scope rather than pretending admission is machine-wide.
+
+An optional Start at sign-in integration can use a current-user startup registration if allowed. It must be separately enabled and removable, and is not required for indexing. Do not depend on scheduled tasks, service-account credentials, the Log on as a service right, HKLM writes or UAC elevation.
+
+A traditional Windows service is an optional enterprise deployment adapter, not the extension's default installer. Creating an SCM service requires the corresponding SCM access rights, normally held by administrators. See [Microsoft's service access model](https://learn.microsoft.com/en-us/windows/win32/services/service-security-and-access-rights). A system-account service handling all users is outside this proposal; a managed adapter must preserve per-user authorization and storage isolation.
+
+Upgrade by staging a new directory, draining writes, switching the trusted runtime selection and restarting. Never overwrite an executing `.exe` or loaded DLL. Defer old-runtime deletion until processes exit. Diagnose Defender/EDR blocks, missing dependencies, denied pipe access and read-only installation locations without requesting exclusion rules automatically.
+
+### 9.4 macOS Apple Silicon
+
+Build and qualify `aarch64-apple-darwin` / `darwin-arm64` natively, including model runtime dependencies. Prefer a native arm64 VS Code and native AIRK payload. An x64 extension host running under Rosetta must not silently select or download another architecture: detect and explain the mismatch, and offer the matching approved package/native-editor path. Universal packaging is a future option only if both slices and dependencies are verified.
+
+Proposed runtime location: `~/Library/Application Support/AIRK/runtime/<version>-<digest>`. Put logs in `~/Library/Logs/AIRK`; keep the socket in a short, verified owner-only local runtime directory to avoid Unix socket path limits. Store large project indexes in a separately configurable local directory.
+
+Ship Developer ID-signed runtime components and notarized distribution payloads, with stapled notarization evidence where supported by the artifact format. Validate the actual offline VSIX extraction/install path under Gatekeeper; notarizing a different wrapper is insufficient qualification. Follow [Apple's notarization guidance](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution). Never remove quarantine attributes or disable Gatekeeper to make installation pass.
+
+### 9.5 macOS Intel
+
+Build and qualify `x86_64-apple-darwin` / `darwin-x64` separately on supported Intel macOS versions. Use native Intel inference dependencies and measured thread/memory defaults. Do not assume Apple Silicon performance, CPU instruction availability or notarization results qualify the Intel artifact.
+
+Use the same user directories, IPC protocol, control UI and lifecycle contracts as Apple Silicon. The documented minimum macOS version and dependency deployment target must be derived from the actual packaged binaries and release matrix. No Rosetta requirement applies to a native Intel installation.
+
+### 9.6 macOS lifecycle and protected files
+
+Both Mac architectures support the common on-demand mode. Optional login integration uses a user LaunchAgent under `~/Library/LaunchAgents`, owned by the current user, with absolute executable paths and bounded restart behavior. Register it in the current user's launchd domain, and expose manager state and errors in the extension. Never write `/Library/LaunchDaemons` or require root. Apple describes user agents as running for the logged-in user; they are not a promise of system-wide or logged-out operation. See [Apple's launchd guide](https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/CreatingLaunchdJobs.html).
+
+macOS privacy permissions may differ between a VS Code child process and a launchd-launched process. Test access from the actual lifecycle mode, including protected directories and external volumes. Show which project/path category is denied; do not claim no-admin installation bypasses TCC, Full Disk Access policy or managed-device restrictions. Prefer accessible source locations and approved permission workflows. If login integration is prohibited but ordinary background execution is allowed, retain on-demand mode and report the limitation.
+
+### 9.7 Linux x64
+
+Build and qualify `x86_64-unknown-linux-gnu` / `linux-x64` against an explicit minimum glibc/runtime baseline. No runtime apt/dnf installation is required. Detect incompatible loaders/libraries before registration. musl/Alpine and ARM64 Linux require separate artifacts and qualification; do not imply the glibc x64 package covers them.
+
+Use the XDG directories for configuration, data, cache and durable state. The proposed executable directory is `~/.local/lib/airk/runtime/<version>-<digest>`, with an optional user launcher under `~/.local/bin`. Use `$XDG_RUNTIME_DIR/airk` for an owner-only socket when valid. Without it, create a short private local runtime directory using safe OS primitives and verify ownership/mode; never use a predictable world-writable socket location. The [XDG specification](https://specifications.freedesktop.org/basedir/latest/) defines the distinct data/state/runtime roles.
+
+Where a user systemd manager is available, optional integration installs a unit under the user's configuration directory and manages it with `systemctl --user`. Set working paths, bounded restart behavior and logs explicitly; use supported user resource controls only after capability detection. The [systemd user-unit search paths](https://www.freedesktop.org/software/systemd/man/latest/systemd.unit.html) include user-owned configuration locations.
+
+Do not require systemd, a desktop session, root, polkit elevation or linger. On headless systems, containers or distributions without a usable user manager, use on-demand mode or an explicitly managed foreground `serve` process. Starting at boot without login is not guaranteed by this baseline. Report user-bus failures and whether an external supervisor owns restart responsibility.
+
+Detect `noexec` install mounts, denied child execution, filesystem limitations, inotify exhaustion and cgroup memory/CPU restrictions. Offer an approved executable location or managed runtime. Do not remount filesystems, change kernel watch limits or disable SELinux/AppArmor. Native watcher overflow must degrade to bounded reconciliation rather than silently losing coverage.
+
+### 9.8 Locked-down and offline environments
+
+| Constraint | Required behavior |
+|---|---|
+| No admin/sudo, user native execution allowed | Full on-demand install and normal indexing from platform VSIX |
+| No outbound network | Install runtime, model and legal payload entirely from VSIX; verify offline startup |
+| Startup registration blocked | Use on-demand mode; show that automatic login startup is unavailable |
+| User executable directory blocked | Connect to an organization-provisioned approved runtime or allow a policy-approved user executable location |
+| Native execution or child processes blocked entirely | Report exact failure and deployment requirements; retain diagnostics; do not claim indexing works |
+| Application allowlisting requires publisher approval | Supply signed artifacts, hashes and deployment instructions; wait for organization approval |
+| Filesystem cannot support required local database/locking semantics | Reject active index placement and offer a supported local volume |
+| VS Code extension installation itself prohibited | Organization must deploy/approve the extension; AIRK cannot self-install around that policy |
+
+Use a managed-runtime setting with explicit machine/user scope, verified identity and protocol constraints. In managed mode, disable installation or restart actions forbidden by policy and state who owns the runtime. Read-only runtime directories are supported when writable state/runtime endpoints are supplied separately.
+
+## 10. Remote VS Code and non-desktop hosts
+
+Place the native extension backend on the workspace host. Remote SSH installs the matching runtime on that SSH host; WSL installs Linux AIRK inside that distribution; Dev Containers/Codespaces install in the workspace container. Do not index remote paths using the local desktop service. VS Code distinguishes local and remote extension hosts; see [extension host placement](https://code.visualstudio.com/api/advanced-topics/extension-host) and [remote extension guidance](https://code.visualstudio.com/api/advanced-topics/remote-extensions).
+
+Show host/authority prominently on every service-wide action, especially Repair all and Restart service. Enumerate only projects registered in that service environment. Volumes and persistence follow the remote environment; explain when container deletion will remove indexes. Never mount a live SQLite index into independent hosts or containers as a substitute for IPC.
+
+Web-only VS Code without a native workspace extension host cannot install or run this service. Show unsupported native functionality clearly. Declare Workspace Trust and virtual-workspace capabilities explicitly. An untrusted workspace may display existing service health but cannot register roots, start indexing, install workspace-selected executables or invoke repair. See [Workspace Trust](https://code.visualstudio.com/api/extension-guides/workspace-trust).
+
+## 11. VS Code service console
+
+### 11.1 Service overview
+
+Add a Service view alongside the existing project dashboard. Every window connected to the same service sees the same job identities and state, with its current project highlighted. The view must include:
+
+- Host/authority, OS/architecture, lifecycle mode, runtime/version/digest, protocol, instance uptime and connection freshness.
+- Service health separately from project health; worker count, model sessions, admitted resources, observed memory, background queue depth and disk pressure.
+- All registered projects, including closed workspaces, with canonical display root, storage root, current revision, coverage age, semantic coverage and last successful publication.
+- Per-project phase, captured/extracted/prepared/committed counts, pending changes, last real work advance, elapsed phase time, and precise wait reason.
+- Recent bounded failure history, crash-loop state, supported actions and policy-disabled actions.
+
+Health is not progress. A responsive service with a busy worker is different from a disconnected service; a heartbeat is different from newly extracted files. Do not reset a no-progress timer merely because a worker sends liveness messages. Display unknown totals without invented percentages and never infer final completion from partial committed counts.
+
+### 11.2 Controls
+
+Provide command-palette and accessible view controls for Connect/reconnect, Start service, Restart service, Stop service, Open service logs, Copy diagnostics, Resource settings, Pause/resume project, Retry project, Verify index, Recover interrupted publication and Rebuild index. Include multi-select and all-project variants where applicable.
+
+Restart project worker is distinct from Restart service. Prefer project restart for a single worker failure. A service restart shows the affected host, clients/jobs and planned drain, then uses a restart intent coordinated by the launcher or platform manager. Other windows observe the restart and reconnect with capped backoff instead of starting competing instances. Offer a bounded force-stop escalation for an unresponsive instance only after identity verification; never kill every process named `airk`.
+
+Keep the console usable when the service is down. Local bootstrap diagnostics show installation verification, launcher errors, endpoint ownership, platform-manager state, last bounded logs and executable identity without requiring a service RPC. The webview must not receive raw credentials or execute command strings. Validate all messages in the extension host.
+
+### 11.3 Troubleshooting report
+
+Export a versioned bounded JSON report and readable summary containing service/client identity, platform capabilities, host scope, worker IDs/start identities, project/job states, observation ages, resource grants, lock/wait owners, phase timings, structured errors and recent transitions. Include whether each observation is live, cached, failed or unavailable.
+
+Exclude source contents, embedding payloads, query text, environment dumps, tokens and full process command lines by default. Paths may be sensitive: show a preview and support redaction before copying/exporting. Logs rotate by size/count and remain local. Diagnostic export is explicit; there is no automatic upload.
+
+## 12. Repair one project, selected projects or all projects
+
+All-project operations mean all registered projects in the selected service environment and storage roots, not every repository on the machine. They do not require opening each project in VS Code, but do require valid registered identity and currently accessible source permissions. Never recursively discover arbitrary projects as part of Repair all.
+
+### 12.1 Separate diagnosis from mutation
+
+| Action | Purpose | Availability effect |
+|---|---|---|
+| Verify | Check database, bindings and retained inputs at a named revision | Bounded read/maintenance work; report incomplete verification |
+| Recover | Complete or safely reject interrupted captured publication | Affected project may remain unavailable until recovery resolves |
+| Reconcile | Inventory saved sources and queue changed/missing evidence | Existing verified evidence remains available with coverage disclosures |
+| Rebuild vectors | Regenerate model-bound vectors from valid retained/source inputs | Lexical evidence stays available; vector coverage is explicit |
+| Rebuild index | Create and validate a new project incarnation | Serve verified prior incarnation where possible; switch after validation |
+
+"Repair" opens a plan that chooses among these operations based on verified state. It is not an unconditional wipe button. A journal with missing or corrupt captured inputs is not repaired by silently substituting changed live files. Offer an explicitly authorized fresh rebuild when captured recovery cannot be proven.
+
+### 12.2 Planning and execution
+
+1. Snapshot selected project identities, current incarnations, settings and observed failures into a maintenance plan.
+2. Show the exact action per project, temporary disk estimate/reservation, availability impact, unavailable roots and skipped projects. For destructive/offline fallback, require explicit confirmation of the concrete plan.
+3. On execution, revalidate ownership and revisions. Expired/stale plans must be refreshed rather than applied to a different incarnation.
+4. Acquire project maintenance ownership, quiesce conflicting writes and preserve durable pending changes. Unrelated projects continue.
+5. Execute bounded checkpoints with cancellation and structured progress. Cancellation cannot interrupt an atomic commit; it takes effect at a safe boundary.
+6. Validate, switch if applicable, reconcile changes that occurred during the build, and publish a per-project receipt.
+
+Bulk repair is a resumable job with bounded concurrency, not one transaction across all databases. Continue unaffected projects when one fails; expose succeeded, failed, canceled and skipped counts without declaring partial success complete. Survive extension reload, client disconnect and service restart using the durable plan and per-project checkpoints. Provide a finite retry policy, pause/cancel and disk-pressure backoff.
+
+Never delete source trees, saved user settings or unknown directories. Old index retirement is owner-verified and quota-accounted. Corrupt derived state may be quarantined only within an explicit bounded allowance; diagnostics must not accumulate unbounded copies. A report should explain when failed retained inputs make a source-based rebuild necessary.
+
+## 13. Clean break and version 1.4.0 transition
+
+Version 1.4.0 is the first service-backed release, not an optional 1.3 compatibility mode. No legacy direct-writer fallback, old scheduler participation, old index reader or in-place index conversion is required. Old helpers must not open 1.4-owned state.
+
+Use a new versioned storage namespace and explicit format marker. Do not imply that the existing `collections-1.2` layout or current database schema is accepted by 1.4. A new registry may accept user-confirmed roots and supported settings from a reviewed export, but every index is rebuilt from sources. Do not carry old journals, running jobs, locks, revision tokens or verification claims into the new store.
+
+The first-run transition must:
+
+1. Explain the clean break, new service lifecycle, rebuild cost and disk requirement.
+2. Identify known old registrations/configurations without treating them as trusted executable instructions.
+3. Ask the user to select trusted project roots and review settings for registration in the fresh service.
+4. Configure agents to use the new stable launcher/MCP bridge, preserving unrelated configuration. Show proposed changes and report clients that still reference old versioned helpers.
+5. Start bounded fresh indexing and display partial readiness accurately across projects.
+6. Offer explicit removal of owner-verified old derived state after the user no longer needs 1.3. Keep sources and user configuration protected.
+
+Separate namespaces permit an intentional fallback to the old installation without sharing live stores; that is not runtime interoperability. Old and new processes can still compete for physical resources, so detect/report known old AIRK workers and recommend stopping them before qualification. Do not kill them silently.
+
+Within 1.4, upgrades stage immutable payloads, negotiate client capabilities, drain writers and restart deliberately. Unsupported format changes require an explicit rebuild/new incarnation; executable rollback must never open a newer incompatible store. Pin an approved runtime in managed environments rather than allowing competing windows to continually upgrade/downgrade the service.
+
+Removing the extension does not delete project indexes. Provide separate Remove login integration, Uninstall runtime and Delete selected derived state operations. An uninstall request must account for other connected clients and service ownership; use explicit CLI cleanup when extension uninstall hooks cannot run. No source deletion is part of uninstall.
+
+## 14. Reliability, metrics and performance qualification
+
+Instrument control responsiveness, query queue/run time, source capture/extraction, prepared bytes, publication duration, model load/inference, watcher lag, disk admission, checkpoint time and recovery time. Report counts and timings without source/query content. Service health and real work progress have separate monotonic timestamps.
+
+Set separate control-plane deadlines, worker work-progress deadlines and shutdown grace periods. A missed worker deadline triggers diagnosis and bounded cancellation/restart, not repeated invisible retries. Preserve the committed head and captured recovery requirements. A query timeout releases its snapshot/lease; a dead client cannot pin old objects indefinitely.
+
+Initial qualification objectives, to measure and revise before approval:
+
+- Service health/status p95 below 250 ms on a responsive local host during sustained indexing; filesystem stalls must be reported separately.
+- No collection-wide reader exclusion for the duration of source extraction or embedding.
+- Interactive query p95 during background work within 2x the measured idle baseline for the declared workload, with explicit bounded admission rejection rather than unbounded queues.
+- Idle connected clients add no indexing worker or model session solely because they connected.
+- A worker crash or repair in one project does not prevent status or queries in another.
+- No unbounded queue, WAL growth, diagnostic retention or replacement-index disk usage.
+
+These are proposed acceptance objectives, not measured guarantees. Publish exact hardware, artifact identities, corpus characteristics, configured budgets, sample sizes, errors and tail latency. High-core machines must be tested for useful increased throughput and responsiveness; merely creating more threads is not evidence of scale.
+
+## 15. Implementation sequence and exit criteria
+
+Each phase produces reviewable contracts and evidence. Do not publish 1.4.0 until the complete minimum platform/installation matrix passes. All commands and UI names in this proposal remain provisional until implemented.
+
+| Phase | Work | Required exit evidence |
+|---|---|---|
+| 0. Design approval and baseline | Approve clean break, lifecycle, storage/read contracts, repair authorization and qualification matrix; instrument current publication costs | Reproducible baseline for the reported long gap, and written protocol/storage decisions |
+| 1. Service skeleton | Native serve/client adapters, user singleton, authenticated IPC, bounded control handlers, discovery and reconnect | Many concurrent launchers elect one instance; status remains responsive with a blocked synthetic worker; unsafe endpoints rejected |
+| 2. Durable work and project ownership | New registry, idempotent enqueue/join, fencing, worker supervision, pause/cancel and recovery | Multi-window duplicate requests join; worker/service crashes never create two writers; unrelated projects remain usable |
+| 3. Storage/publication redesign | New format, WAL prototype, coherent authenticated commit, bounded reader leases, replacement builds and cleanup | Fault-injected commit/switch/recovery tests, exact revision evidence, bounded reader/checkpoint behavior; no long preparation gate |
+| 4. Resource scheduler and embedding pool | Fair admission, bounded queues, exact model-session reuse, budgets and pressure handling | Scale tests across hardware classes, no internal-thread oversubscription or mixed-project embedding results |
+| 5. Platform installation and lifecycle | Offline VSIX payload, immutable install, user launcher, on-demand mode, optional platform startup adapters, managed runtime | Clean non-admin offline installation/upgrade/uninstall on every supported target; denied-persistence and policy-failure tests |
+| 6. Service console and maintenance | Service/project overview, subscriptions, down-service diagnostics, restart and resumable scoped/bulk repair | Installed-editor tests from two or more windows, closed-project repair, stale-plan rejection, partial-failure/cancellation receipts |
+| 7. MCP/CLI cutover and clean-break setup | Stable launcher, read-only bridges, explicit legacy configuration review, fresh indexing | Multiple actual agent clients share one project job; old helpers cannot open new state; no legacy writer fallback |
+| 8. Qualification and release | Signed/notarized target artifacts, full workload matrix, release documentation and controlled promotion | Exact artifact receipts, passing platform gates, documented limits and approved 1.4.0 release |
+
+Phases 2-4 need iterative prototypes before committing to final schema and worker counts. Installation and UI can be developed against a stable mocked protocol, but mocks cannot satisfy native lifecycle, publication or installed-platform exit criteria.
+
+### 15.1 Test matrix
+
+| Area | Required scenarios |
+|---|---|
+| Native targets | Windows x64; macOS arm64; macOS x64; supported glibc Linux x64; minimum supported OS/runtime versions |
+| Host environments | Desktop, SSH/headless Linux, WSL, development container; no user systemd manager; unsupported web-only host disclosure |
+| Hardware | Low-memory laptop, typical workstation, high-core/high-memory workstation; fast and slower local disks; constrained VM/container |
+| Client scale | 1, 4 and 10 active projects; 1, 10 and 50 concurrent agent/CLI clients; many windows on the same project; idle-client overhead |
+| Corpus/workload | Small and large repositories, heterogeneous file sizes, generated-file churn, source edits during rebuild, semantic opt-out, multiple model identities |
+| Failure isolation | Blocked extraction, worker crash, embedding crash, service crash, corrupt project DB, unavailable source volume, one failed project in bulk repair |
+| Publication | Concurrent reads/writes, exact lexical/vector/source revision coherence, stale preparation, crash at each journal/manifest boundary, long reader, checkpoint pressure |
+| Resources | Memory pressure, full disk, insufficient replacement headroom, fair-share starvation tests, model-session reuse, library thread accounting |
+| Installation | Standard user, no network, approved read-only runtime, startup registration denied, path spaces/non-ASCII, racing windows, upgrade while busy, signature/manifest failure |
+| Platform policy | Windows allowlisting/EDR denial; Mac quarantine/notarization/TCC; Linux noexec/SELinux/AppArmor denial; explicit actionable failure without bypass |
+| Control/security | Wrong user, unsafe endpoint/redirected directory, oversized frames, slow subscribers, unauthorized MCP management, untrusted workspace, malicious project paths |
+| Maintenance | Single/selected/all registered projects; closed project; missing roots; stale plan; restart/resume; cancel during build; safe switch and cleanup |
+
+Run repository-required formatting, clippy, workspace tests, extension tests, packaging/license/repository checks and whitespace checks for implementation changes. Platform-installed tests and measured load tests are additional requirements, not replacements for those checks. Keep unexecuted platform checks and unsupported architectures explicit.
+
+## 16. Decisions for review
+
+The recommended baseline is: user-owned on-demand service, optional user login integration, independent project workers, shared bounded embedding pool, separate project stores, WAL-based coherent publication prototype, and fresh 1.4.0 indexes.
+
+Before implementation, approve or amend:
+
+1. On-demand startup as the mandatory installation route, with persistent login startup optional.
+2. One service per user/environment/channel, including shared discovery across VS Code profiles.
+3. Clean rebuild and explicit agent reconfiguration for 1.4.0, with no legacy runtime compatibility.
+4. Bounded snapshot reads and replacement builds, including temporary storage cost and revision invalidation.
+5. Default continuation of requested jobs after the last editor closes, idle shutdown policy, and interactive/background resource priorities.
+6. The initial supported platform/runtime matrix and measurable release objectives.
+
+No implementation, version bump, commit, PR, publication or release is performed by this proposal. Approval of the architecture should lead to phased implementation and evidence, not a claim that a service process alone fixes the observed indexing failures.
