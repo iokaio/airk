@@ -60,6 +60,119 @@ fn startup_circuit_retains_failed_attempts_across_reopen_and_backwards_clock() -
     Ok(())
 }
 
+fn unselected_fixture() -> Result<(tempfile::TempDir, PathBuf, String)> {
+    let owner = tempfile::tempdir()?;
+    let root = owner.path().join("install");
+    local_ipc::prepare_root(&root)?;
+    layout::initialize(&root, Some(&root), RuntimeChannel::Stable)?;
+    local_ipc::prepare_root(&root.join("runtimes"))?;
+    let temporary = root.join("fixture");
+    local_ipc::prepare_root(&temporary)?;
+    let identity = fixture(&temporary)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(temporary.join("notices"), fs::Permissions::from_mode(0o700))?;
+    }
+    replace_json(
+        &temporary,
+        "approval.json",
+        &Approval {
+            schema: 1,
+            manifest_sha256: identity.clone(),
+            version: env!("CARGO_PKG_VERSION").into(),
+            verification_basis: VerificationBasis::OrganizationDigest,
+        },
+    )?;
+    fs::rename(temporary, root.join("runtimes").join(&identity))?;
+    Ok((owner, root, identity))
+}
+
+#[test]
+fn retirement_preflights_receipts_and_resumes_after_the_payload_directory_is_gone() -> Result<()> {
+    let (_owner, root, identity) = unselected_fixture()?;
+    let directory = root.join("runtimes").join(&identity);
+    let approval = fs::read(directory.join("approval.json"))?;
+    fs::write(
+        directory.join("approval.json"),
+        b"Changed approval must be preserved.",
+    )?;
+    assert!(retirement::remove(&root, &identity).is_err());
+    assert!(directory.join(main_name()).is_file());
+    fs::write(directory.join("approval.json"), approval)?;
+    let startup = root.join(format!("startup-{identity}.json"));
+    fs::write(&startup, b"Unknown startup receipt.")?;
+    assert!(retirement::remove(&root, &identity).is_err());
+    assert!(directory.join(main_name()).is_file());
+    fs::remove_file(&startup)?;
+    let manifest = fs::read(directory.join("airk-install.json"))?;
+    retirement::remove(&root, &identity)?;
+    // Recreate the exact durable boundary after directory removal but before
+    // startup/intent removal. No payload file is needed to complete this state.
+    let intent = root.join(format!("retire-{identity}.json"));
+    fs::write(&intent, manifest)?;
+    replace_json(
+        &root,
+        &format!("startup-{identity}.json"),
+        &StartupAttempts {
+            attempts_unix_ms: vec![1, 2, 3, 4],
+        },
+    )?;
+    assert!(retirement::remove(&root, &identity).is_err());
+    assert!(intent.exists() && startup.exists());
+    replace_json(
+        &root,
+        &format!("startup-{identity}.json"),
+        &StartupAttempts {
+            attempts_unix_ms: vec![1, 2, 3],
+        },
+    )?;
+    retirement::remove(&root, &identity)?;
+    assert!(!intent.exists() && !startup.exists() && !directory.exists());
+    Ok(())
+}
+
+#[tokio::test]
+async fn uninstall_before_first_activation_preserves_live_owners_then_removes_only_owned_payloads()
+-> Result<()> {
+    let (_owner, root, identity) = unselected_fixture()?;
+    let control = layout::control(&root)?;
+    local_ipc::prepare_root(&control)?;
+    let service = airk_store::service::ServiceLease::acquire(&control)?;
+    assert!(retirement::uninstall(&root).await.is_err());
+    assert!(
+        root.join("runtimes")
+            .join(&identity)
+            .join(main_name())
+            .is_file()
+    );
+    assert!(!root.join("uninstall.json").exists());
+    drop(service);
+    let retained = control.join("retained-fixture.txt");
+    fs::write(&retained, b"Preserve service state.")?;
+    let result = retirement::uninstall(&root).await?;
+    assert_eq!(result["uninstalled"], true);
+    assert_eq!(fs::read(retained)?, b"Preserve service state.");
+    assert!(!root.join("runtimes").join(identity).exists());
+    assert_eq!(retirement::uninstall(&root).await?["uninstalled"], true);
+    Ok(())
+}
+
+#[tokio::test]
+async fn uninstall_empty_initialized_layout_without_a_runtime_directory_is_idempotent() -> Result<()>
+{
+    let owner = tempfile::tempdir()?;
+    let root = owner.path().join("install");
+    local_ipc::prepare_root(&root)?;
+    layout::initialize(&root, Some(&root), RuntimeChannel::Stable)?;
+    for _ in 0..2 {
+        assert_eq!(retirement::uninstall(&root).await?["uninstalled"], true);
+        assert!(!root.join("runtimes").exists());
+        assert!(layout::control(&root)?.is_dir());
+    }
+    Ok(())
+}
+
 #[test]
 fn native_self_test_binds_actual_version_capabilities_and_bounded_completion() -> Result<()> {
     let result = serde_json::json!({"protocol":1,"version":"1.4.0","self_test":"passed","state_layout":1,"foreground_dispatch":1,"managed_reference":1});

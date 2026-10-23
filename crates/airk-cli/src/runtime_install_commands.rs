@@ -130,12 +130,18 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
         } => {
             managed::require_unmanaged(install_dir)?;
             let _lock = install_lock(install_dir)?;
-            let (selection, _, _) = selected(install_dir)?;
-            ensure!(
-                selection.active != *runtime_sha256
-                    && selection.previous.as_ref() != Some(runtime_sha256),
-                "active and rollback runtimes cannot be removed"
-            );
+            match fs::symlink_metadata(install_dir.join("selected.json")) {
+                Ok(_) => {
+                    let (selection, _, _) = selected(install_dir)?;
+                    ensure!(
+                        selection.active != *runtime_sha256
+                            && selection.previous.as_ref() != Some(runtime_sha256),
+                        "active and rollback runtimes cannot be removed"
+                    );
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+                Err(error) => return Err(error.into()),
+            }
             let _quiescence = quiescent(install_dir).context(
                 "stop the service and wait for all owners to exit before removing an old runtime",
             )?;

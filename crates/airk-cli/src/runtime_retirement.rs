@@ -3,10 +3,41 @@
 use super::*;
 use std::collections::BTreeSet;
 
+fn present(path: &Path) -> Result<bool> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn validate_startup(root: &Path, identity: &str) -> Result<()> {
+    let path = root.join(format!("startup-{identity}.json"));
+    if present(&path)? {
+        let attempts: StartupAttempts = serde_json::from_slice(&read_bounded(&path, 4096)?)?;
+        ensure!(
+            attempts.attempts_unix_ms.len() <= 3,
+            "changed startup receipt preserved"
+        );
+    }
+    Ok(())
+}
+
+fn finish(root: &Path, identity: &str) -> Result<()> {
+    validate_startup(root, identity)?;
+    let startup = root.join(format!("startup-{identity}.json"));
+    if present(&startup)? {
+        fs::remove_file(startup)?;
+        sync_directory(root)?;
+    }
+    fs::remove_file(root.join(format!("retire-{identity}.json")))?;
+    sync_directory(root)
+}
+
 fn validated_inventory(root: &Path, identity: &str) -> Result<InstallManifest> {
     digest(identity)?;
     let intent = root.join(format!("retire-{identity}.json"));
-    if !intent.try_exists()? {
+    if !present(&intent)? {
         let (main, _) = verify_runtime(root, identity)?;
         let directory = main.parent().context("runtime parent missing")?;
         let bytes = read_bounded(&directory.join("airk-install.json"), MAX_MANIFEST)?;
@@ -35,10 +66,12 @@ fn validated_inventory(root: &Path, identity: &str) -> Result<InstallManifest> {
 
 pub(super) fn remove(root: &Path, identity: &str) -> Result<()> {
     let inventory = validated_inventory(root, identity)?;
+    // Preflight ancillary receipts before deleting any payload bytes. This also
+    // runs when a crash already removed the last runtime directory entry.
+    validate_startup(root, identity)?;
     let directory = root.join("runtimes").join(identity);
-    if !directory.exists() {
-        fs::remove_file(root.join(format!("retire-{identity}.json")))?;
-        return Ok(());
+    if !present(&directory)? {
+        return finish(root, identity);
     }
     local_ipc::prepare_root(&directory)?;
     let mut allowed_files: BTreeSet<_> = inventory.files.keys().cloned().collect();
@@ -84,6 +117,22 @@ pub(super) fn remove(root: &Path, identity: &str) -> Result<()> {
                         runtime_pair::digest_file(&path)? == *expected,
                         "changed runtime file preserved during removal"
                     );
+                } else {
+                    let bytes = read_bounded(&path, MAX_MANIFEST)?;
+                    if name == "airk-install.json" {
+                        ensure!(
+                            format!("{:x}", Sha256::digest(bytes)) == identity,
+                            "changed runtime inventory preserved"
+                        );
+                    } else {
+                        let approval: Approval = serde_json::from_slice(&bytes)?;
+                        ensure!(
+                            approval.schema == 1
+                                && approval.manifest_sha256 == identity
+                                && approval.version == inventory.version,
+                            "foreign runtime approval preserved"
+                        );
+                    }
                 }
             }
         }
@@ -99,7 +148,7 @@ pub(super) fn remove(root: &Path, identity: &str) -> Result<()> {
     );
     for name in names {
         let file = payload_path(&directory, name)?;
-        if file.try_exists()? {
+        if present(&file)? {
             safe_file(&file)?;
             ensure!(
                 runtime_pair::digest_file(&file)? == inventory.files[name],
@@ -112,13 +161,13 @@ pub(super) fn remove(root: &Path, identity: &str) -> Result<()> {
     directories.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
     for relative in directories {
         let path = directory.join(relative);
-        if path.exists() {
+        if present(&path)? {
             fs::remove_dir(path)?;
         }
     }
     for name in ["airk-install.json", "approval.json"] {
         let path = directory.join(name);
-        if path.try_exists()? {
+        if present(&path)? {
             safe_file(&path)?;
             let bytes = read_bounded(&path, MAX_MANIFEST)?;
             if name == "airk-install.json" {
@@ -129,7 +178,9 @@ pub(super) fn remove(root: &Path, identity: &str) -> Result<()> {
             } else {
                 let approval: Approval = serde_json::from_slice(&bytes)?;
                 ensure!(
-                    approval.schema == 1 && approval.manifest_sha256 == identity,
+                    approval.schema == 1
+                        && approval.manifest_sha256 == identity
+                        && approval.version == inventory.version,
                     "foreign runtime approval preserved"
                 );
             }
@@ -137,13 +188,8 @@ pub(super) fn remove(root: &Path, identity: &str) -> Result<()> {
         }
     }
     fs::remove_dir(&directory)?;
-    let startup = root.join(format!("startup-{identity}.json"));
-    if startup.try_exists()? {
-        safe_file(&startup)?;
-        fs::remove_file(startup)?;
-    }
-    fs::remove_file(root.join(format!("retire-{identity}.json")))?;
-    sync_directory(root)
+    sync_directory(&root.join("runtimes"))?;
+    finish(root, identity)
 }
 
 #[derive(Serialize, Deserialize)]
@@ -158,13 +204,23 @@ pub(super) async fn uninstall(root: &Path) -> Result<serde_json::Value> {
         return managed::detach(root).await;
     }
     let intent_path = root.join("uninstall.json");
-    let intent: UninstallIntent = if intent_path.try_exists()? {
+    let intent: UninstallIntent = if present(&intent_path)? {
         serde_json::from_slice(&read_bounded(&intent_path, 4096)?)?
     } else {
-        let (_, main, approval) = selected(root)?;
-        drain(root, &main, &approval).await?;
+        let unselected = if present(&root.join("selected.json"))? {
+            let (_, main, approval) = selected(root)?;
+            drain(root, &main, &approval).await?;
+            None
+        } else {
+            // An interrupted first install has no authenticated process identity.
+            // Never infer ownership from a PID or stop a live unknown process.
+            Some(quiescent(root).context("unselected installation still has live owners")?)
+        };
         let manager = crate::service_manager::ServiceManager::for_runtime(root)?;
         if manager.owned_registration_exists()? {
+            if unselected.is_some() {
+                manager.require_stopped_for_maintenance()?;
+            }
             manager.uninstall()?;
         }
         launcher_repair::settle_for_uninstall(root)?;
@@ -172,15 +228,19 @@ pub(super) async fn uninstall(root: &Path) -> Result<serde_json::Value> {
             staging::abort(root, &identity)?;
         }
         let mut runtimes = Vec::new();
-        for entry in fs::read_dir(root.join("runtimes"))?.take(5) {
-            let entry = entry?;
-            let identity = entry
-                .file_name()
-                .into_string()
-                .map_err(|_| anyhow::anyhow!("unknown runtime directory preserved"))?;
-            digest(&identity)?;
-            verify_runtime(root, &identity)?;
-            runtimes.push(identity);
+        let directory = root.join("runtimes");
+        if present(&directory)? {
+            local_ipc::prepare_root(&directory)?;
+            for entry in fs::read_dir(directory)?.take(5) {
+                let entry = entry?;
+                let identity = entry
+                    .file_name()
+                    .into_string()
+                    .map_err(|_| anyhow::anyhow!("unknown runtime directory preserved"))?;
+                digest(&identity)?;
+                verify_runtime(root, &identity)?;
+                runtimes.push(identity);
+            }
         }
         ensure!(
             runtimes.len() <= 4,
@@ -200,8 +260,17 @@ pub(super) async fn uninstall(root: &Path) -> Result<serde_json::Value> {
     let _quiescence = quiescent(root)
         .context("service/project/embedding ownership must release before runtime removal")?;
     let selected = root.join("selected.json");
-    if selected.try_exists()? {
-        safe_file(&selected)?;
+    if present(&selected)? {
+        let selection: Selection = serde_json::from_slice(&read_bounded(&selected, 4096)?)?;
+        ensure!(
+            selection.schema == 1
+                && intent.runtimes.contains(&selection.active)
+                && selection
+                    .previous
+                    .as_ref()
+                    .is_none_or(|prior| intent.runtimes.contains(prior)),
+            "changed selection preserved during uninstall"
+        );
         fs::remove_file(selected)?;
     }
     let mut deferred = Vec::new();

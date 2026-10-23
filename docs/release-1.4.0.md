@@ -6,4 +6,6 @@ Implemented native development paths include authenticated service brokerage, di
 
 The default extension/CLI/container cutover, service console, bulk repair, remaining lifecycle/resource integration and final qualification are incomplete. Token-efficiency changes, including terse defaults, Full selection, compact facts and retained change baselines, remain Phase 7 requirements until their complete implementation and tests land. Development evidence is recorded in the affected operating guides. Historical 1.3.x release records continue to describe those versions.
 
+Interrupted first installations can now be removed before activation, with exclusive owner checks. Retirement validates ancillary receipts before deletion and completes cleanup after the payload directory is already gone, preserving changed or unknown state.
+
 Stage commits remain local and human DCO-signed. No push, publication or service VSIX is authorized before the user's implementation, test and review gate is satisfied. Final versions and packaging receipts will be recorded here at cutover.
