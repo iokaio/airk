@@ -210,7 +210,7 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
                 &helper,
                 &format!("airk-embed {}", env!("CARGO_PKG_VERSION")),
             )?;
-            serde_json::json!({"protocol":1,"version":env!("CARGO_PKG_VERSION"),"self_test":"passed"})
+            serde_json::json!({"protocol":1,"version":env!("CARGO_PKG_VERSION"),"self_test":"passed","state_layout":1,"foreground_dispatch":1})
         }
     };
     println!("{}", serde_json::to_string(&output)?);

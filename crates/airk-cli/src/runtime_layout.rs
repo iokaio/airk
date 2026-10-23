@@ -5,6 +5,7 @@ use super::*;
 const LAYOUT: &str = "runtime-layout.json";
 const OWNER: &str = "airk-state-1.4.owner.json";
 const CLAIM: &str = "airk-state-1.4.lock";
+const OWNER_PART: &str = "airk-state-1.4.owner.part";
 const MAX_LAYOUT: u64 = 32 * 1024;
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -22,6 +23,60 @@ fn exists(path: &Path) -> Result<bool> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
         Err(error) => Err(error.into()),
     }
+}
+
+fn publish_new(from: &Path, to: &Path) -> Result<()> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        let from = from
+            .as_os_str()
+            .encode_wide()
+            .chain(Some(0))
+            .collect::<Vec<_>>();
+        let to = to
+            .as_os_str()
+            .encode_wide()
+            .chain(Some(0))
+            .collect::<Vec<_>>();
+        // SAFETY: terminated paths; zero flags forbid replacement of an existing destination.
+        ensure!(
+            unsafe {
+                windows_sys::Win32::Storage::FileSystem::MoveFileExW(from.as_ptr(), to.as_ptr(), 0)
+            } != 0,
+            "exclusive state publication failed: {}",
+            std::io::Error::last_os_error()
+        );
+    }
+    #[cfg(unix)]
+    {
+        use std::{ffi::CString, os::unix::ffi::OsStrExt};
+        let from = CString::new(from.as_os_str().as_bytes())?;
+        let to = CString::new(to.as_os_str().as_bytes())?;
+        #[cfg(target_os = "linux")]
+        // SAFETY: terminated absolute paths and the documented exclusive-rename flag.
+        let result = unsafe {
+            libc::renameat2(
+                libc::AT_FDCWD,
+                from.as_ptr(),
+                libc::AT_FDCWD,
+                to.as_ptr(),
+                libc::RENAME_NOREPLACE,
+            )
+        };
+        #[cfg(target_os = "macos")]
+        // SAFETY: terminated absolute paths and the documented exclusive-rename flag.
+        let result = unsafe { libc::renamex_np(from.as_ptr(), to.as_ptr(), libc::RENAME_EXCL) };
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        anyhow::bail!("exclusive state publication is unsupported on this platform");
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        ensure!(
+            result == 0,
+            "filesystem cannot publish state exclusively: {}",
+            std::io::Error::last_os_error()
+        );
+    }
+    Ok(())
 }
 impl Layout {
     fn read(root: &Path) -> Result<Option<Self>> {
@@ -57,23 +112,38 @@ impl Layout {
         );
         Ok(true)
     }
+    fn owner_prefix(&self) -> Result<bool> {
+        let path = self.state.join(OWNER_PART);
+        if !exists(&path)? {
+            return Ok(false);
+        }
+        let bytes = read_bounded(&path, MAX_LAYOUT)?;
+        ensure!(
+            serde_json::to_vec(&self.owner())?.starts_with(&bytes),
+            "unknown or modified state ownership partial preserved"
+        );
+        Ok(true)
+    }
     fn claim(&self) -> Result<()> {
         if self.state != self.install && exists(&self.state)? && !self.claimed()? {
-            let mut entries = fs::read_dir(&self.state)?;
-            if let Some(first) = entries.next().transpose()? {
-                // A pending claim can die after creating its empty OS lock and
-                // before publishing ownership. No ledger can exist at that point.
+            for (index, entry) in fs::read_dir(&self.state)?.enumerate() {
+                let entry = entry?;
                 ensure!(
-                    !self.ready
-                        && first.path() == self.state.join(CLAIM)
-                        && entries.next().transpose()?.is_none(),
+                    !self.ready && index < 2,
                     "unknown nonempty service-state directory preserved"
                 );
-                safe_file(&first.path())?;
-                ensure!(
-                    first.metadata()?.len() == 0,
-                    "unknown state claim contents preserved"
-                );
+                if entry.path() == self.state.join(CLAIM) {
+                    safe_file(&entry.path())?;
+                    ensure!(
+                        entry.metadata()?.len() == 0,
+                        "unknown state claim contents preserved"
+                    );
+                } else {
+                    ensure!(
+                        entry.path() == self.state.join(OWNER_PART) && self.owner_prefix()?,
+                        "unknown service-state file preserved"
+                    );
+                }
             }
         }
         local_ipc::prepare_root(&self.state)?;
@@ -102,10 +172,27 @@ impl Layout {
                 bytes.len() as u64 <= MAX_LAYOUT,
                 "state ownership metadata exceeds bound"
             );
-            let mut temporary = tempfile::NamedTempFile::new_in(&self.state)?;
+            let partial = self.state.join(OWNER_PART);
+            let mut options = OpenOptions::new();
+            options.write(true);
+            if self.owner_prefix()? {
+                options.truncate(true);
+            } else {
+                options.create_new(true);
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            let mut temporary = options.open(&partial)?;
             temporary.write_all(&bytes)?;
-            temporary.as_file().sync_all()?;
-            temporary.persist_noclobber(self.state.join(OWNER))?;
+            temporary.sync_all()?;
+            drop(temporary);
+            publish_new(&partial, &self.state.join(OWNER))?;
+            sync_directory(&self.state)?;
+        } else if self.owner_prefix()? {
+            fs::remove_file(self.state.join(OWNER_PART))?;
             sync_directory(&self.state)?;
         }
         Ok(())
@@ -165,6 +252,18 @@ pub(super) fn initialize(
         );
         layout.ready = existing.ready;
     } else {
+        if !layout.claimed()? {
+            ensure!(
+                !exists(&layout.state.join(OWNER_PART))?,
+                "unrecognized ownership partial predates this state claim; preserving it"
+            );
+            if layout.state != layout.install && exists(&layout.state)? {
+                ensure!(
+                    fs::read_dir(&layout.state)?.next().transpose()?.is_none(),
+                    "unknown nonempty service-state directory preserved"
+                );
+            }
+        }
         ensure!(
             serde_json::to_vec(&layout)?.len() as u64 <= MAX_LAYOUT,
             "runtime layout exceeds metadata bound"

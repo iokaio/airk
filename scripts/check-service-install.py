@@ -79,7 +79,7 @@ def main():
             if run("ensure", "--install-dir", install)["instance"] != health["instance"]:
                 raise RuntimeError("Idempotent ensure launched another instance")
             inspection = run("inspect", "--install-dir", install)
-            if Path(inspection["control_dir"]).resolve() != control.resolve() or (install / "control").exists():
+            if not Path(inspection["control_dir"]).samefile(control) or (install / "control").exists():
                 raise RuntimeError("Service state was not isolated from executable installation")
             state_owner = state / "airk-state-1.4.owner.json"
             state_owner_digest = sha256(state_owner)

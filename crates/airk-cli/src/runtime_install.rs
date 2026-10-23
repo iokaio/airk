@@ -702,6 +702,26 @@ pub fn selected(root: &Path) -> Result<(Selection, PathBuf, Approval)> {
 }
 
 fn self_test(main: &Path) -> Result<()> {
+    struct Reaped(std::process::Child);
+    impl std::ops::Deref for Reaped {
+        type Target = std::process::Child;
+        fn deref(&self) -> &Self::Target {
+            &self.0
+        }
+    }
+    impl std::ops::DerefMut for Reaped {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            &mut self.0
+        }
+    }
+    impl Drop for Reaped {
+        fn drop(&mut self) {
+            if !matches!(self.0.try_wait(), Ok(Some(_))) {
+                let _ = self.0.kill();
+            }
+            let _ = self.0.wait();
+        }
+    }
     runtime_pair::validate_native_image(main)?;
     runtime_pair::validate_native_image(
         &main
@@ -714,17 +734,40 @@ fn self_test(main: &Path) -> Result<()> {
     command
         .args(["runtime", "self-test"])
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
+        .stdout(Stdio::piped())
         .stderr(Stdio::null());
     hidden(&mut command);
-    let mut child = crate::native_process::spawn(&mut command)
-        .context("approved runtime cannot execute; inspect native execution policy/dependencies")?;
+    let mut child = Reaped(crate::native_process::spawn(&mut command).context(
+        "approved runtime cannot execute; inspect native execution policy/dependencies",
+    )?);
     let _containment = crate::child_job::ChildJob::attach(&mut child)?;
+    let output = child
+        .stdout
+        .take()
+        .context("native self-test output is unavailable")?;
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    std::thread::Builder::new()
+        .name("airk-self-test-result".into())
+        .spawn(move || {
+            let mut bytes = Vec::new();
+            let result = output.take(4097).read_to_end(&mut bytes).map(|_| bytes);
+            let _ = sender.send(result);
+        })?;
     let until = std::time::Instant::now() + Duration::from_secs(30);
     loop {
         if let Some(status) = child.try_wait()? {
             ensure!(status.success(), "native runtime self-test failed");
-            return Ok(());
+            let bytes = receiver
+                .recv_timeout(Duration::from_secs(1))
+                .context("native runtime self-test did not return a bounded result")??;
+            let pair: runtime_pair::RuntimePair = serde_json::from_slice(&read_bounded(
+                &main
+                    .parent()
+                    .context("runtime directory missing")?
+                    .join("airk-runtime.json"),
+                4096,
+            )?)?;
+            return validate_self_test_result(&bytes, &pair.version);
         }
         if std::time::Instant::now() >= until {
             let _ = child.kill();
@@ -733,6 +776,24 @@ fn self_test(main: &Path) -> Result<()> {
         }
         std::thread::sleep(Duration::from_millis(25));
     }
+}
+
+fn validate_self_test_result(bytes: &[u8], version: &str) -> Result<()> {
+    ensure!(bytes.len() <= 4096, "native self-test result exceeds 4 KiB");
+    let result: serde_json::Value = serde_json::from_slice(bytes)?;
+    ensure!(
+        result["protocol"] == 1 && result["self_test"] == "passed",
+        "native self-test protocol or completion mismatch"
+    );
+    ensure!(
+        result["version"].as_str() == Some(version),
+        "native executable version does not match the approved payload"
+    );
+    ensure!(
+        result["state_layout"] == 1 && result["foreground_dispatch"] == 1,
+        "approved runtime lacks the required state-layout or foreground-dispatch capability"
+    );
+    Ok(())
 }
 
 fn hidden(command: &mut Command) {

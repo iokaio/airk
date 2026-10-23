@@ -120,6 +120,85 @@ fn lost_layout_requires_reviewed_claimed_state_instead_of_an_empty_ledger() -> R
 }
 
 #[test]
+fn state_owner_partial_child_fixture() -> Result<()> {
+    let Some(root) = std::env::var_os("AIRK_STATE_OWNER_PARTIAL_FIXTURE") else {
+        return Ok(());
+    };
+    let root = PathBuf::from(root);
+    let _guard = install_lock(&root)?;
+    let layout = Layout::read(&root)?.context("pending fixture layout missing")?;
+    local_ipc::prepare_root(&layout.state)?;
+    fs::write(layout.state.join(CLAIM), [])?;
+    let bytes = serde_json::to_vec(&layout.owner())?;
+    let mut partial = File::create(layout.state.join(OWNER_PART))?;
+    partial.write_all(&bytes[..bytes.len() / 2])?;
+    partial.sync_all()?;
+    std::process::exit(81);
+}
+
+#[test]
+fn process_death_during_owner_write_resumes_only_a_matching_owned_prefix() -> Result<()> {
+    let (_owner, root, state) = fixture()?;
+    let layout = Layout {
+        schema: 1,
+        install: root.clone(),
+        state: state.clone(),
+        channel: RuntimeChannel::Stable,
+        ready: false,
+    };
+    replace_json(&root, LAYOUT, &layout)?;
+    let mut command = Command::new(std::env::current_exe()?);
+    command
+        .args([
+            "--exact",
+            "runtime_install::layout::tests::state_owner_partial_child_fixture",
+            "--nocapture",
+        ])
+        .env("AIRK_STATE_OWNER_PARTIAL_FIXTURE", &root)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    assert_eq!(
+        crate::native_process::spawn(&mut command)?.wait()?.code(),
+        Some(81)
+    );
+    assert!(state.join(OWNER_PART).exists());
+    assert!(control(&root).is_err());
+    initialize(&root, None, RuntimeChannel::Stable)?;
+    assert_eq!(control(&root)?, state.join("control"));
+    assert!(!state.join(OWNER_PART).exists());
+    Ok(())
+}
+
+#[test]
+fn foreign_or_modified_owner_partials_are_preserved_and_exclusive_rename_never_replaces()
+-> Result<()> {
+    let (_owner, root, state) = fixture()?;
+    local_ipc::prepare_root(&state)?;
+    let partial = state.join(OWNER_PART);
+    fs::write(&partial, [])?;
+    assert!(initialize(&root, Some(&state), RuntimeChannel::Stable).is_err());
+    assert!(!root.join(LAYOUT).exists());
+    let layout = Layout {
+        schema: 1,
+        install: root.clone(),
+        state: state.clone(),
+        channel: RuntimeChannel::Stable,
+        ready: false,
+    };
+    replace_json(&root, LAYOUT, &layout)?;
+    fs::write(&partial, b"Preserve user-modified metadata.")?;
+    assert!(initialize(&root, None, RuntimeChannel::Stable).is_err());
+    assert_eq!(fs::read(&partial)?, b"Preserve user-modified metadata.");
+    let destination = state.join("foreign-destination");
+    fs::write(&destination, b"Preserve existing destination.")?;
+    assert!(publish_new(&partial, &destination).is_err());
+    assert_eq!(fs::read(&destination)?, b"Preserve existing destination.");
+    assert_eq!(fs::read(&partial)?, b"Preserve user-modified metadata.");
+    Ok(())
+}
+
+#[test]
 fn modified_or_aliased_state_ownership_is_preserved_and_never_redirects_control() -> Result<()> {
     let (owner, root, state) = fixture()?;
     initialize(&root, Some(&state), RuntimeChannel::Stable)?;

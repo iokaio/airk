@@ -61,6 +61,21 @@ fn startup_circuit_retains_failed_attempts_across_reopen_and_backwards_clock() -
 }
 
 #[test]
+fn native_self_test_binds_actual_version_capabilities_and_bounded_completion() -> Result<()> {
+    let result = serde_json::json!({"protocol":1,"version":"1.4.0","self_test":"passed","state_layout":1,"foreground_dispatch":1});
+    validate_self_test_result(&serde_json::to_vec(&result)?, "1.4.0")?;
+    assert!(validate_self_test_result(&serde_json::to_vec(&result)?, "9.9.9").is_err());
+    let mut changed = result.clone();
+    changed.as_object_mut().unwrap().remove("state_layout");
+    assert!(validate_self_test_result(&serde_json::to_vec(&changed)?, "1.4.0").is_err());
+    changed = result;
+    changed["self_test"] = "incomplete".into();
+    assert!(validate_self_test_result(&serde_json::to_vec(&changed)?, "1.4.0").is_err());
+    assert!(validate_self_test_result(&vec![b' '; 4097], "1.4.0").is_err());
+    Ok(())
+}
+
+#[test]
 fn runtime_removal_preserves_unknown_or_changed_files_and_resumes_partial_owned_deletion()
 -> Result<()> {
     let owner = tempfile::tempdir()?;
