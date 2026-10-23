@@ -9,7 +9,7 @@ pub const MAX_FRAME_BYTES: usize = 65_536;
 pub const MAX_GRANT_TTL_MS: u64 = 30_000;
 
 #[derive(Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum ControlMethod {
     Health,
     Shutdown,
@@ -38,6 +38,9 @@ pub enum ControlMethod {
     CancelPending {
         id: Sha256Digest,
     },
+    Connect {
+        project: ProjectBinding,
+    },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -63,14 +66,33 @@ pub struct ServiceHealth {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ControlResponse {
-    Health { observation: Box<ServiceHealth> },
+    Health {
+        observation: Box<ServiceHealth>,
+    },
     Stopping,
-    Incompatible { protocol: u32 },
-    Registered { project: RegisteredProject },
-    Projects { page: ProjectPage },
-    RequestEpoch { namespace: Incarnation, epoch: u64 },
-    Job { job: JobRecord },
-    Failure { code: String },
+    Incompatible {
+        protocol: u32,
+    },
+    Registered {
+        project: RegisteredProject,
+    },
+    Projects {
+        page: ProjectPage,
+    },
+    RequestEpoch {
+        namespace: Incarnation,
+        epoch: u64,
+    },
+    Job {
+        job: JobRecord,
+    },
+    Failure {
+        code: String,
+    },
+    Connection {
+        role: String,
+        grant: ConnectionGrant,
+    },
 }
 
 /// Digest of a canonical root/storage/collection registration, never a client path.

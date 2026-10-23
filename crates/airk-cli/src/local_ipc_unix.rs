@@ -54,6 +54,20 @@ pub fn prepare_root(root: &Path) -> Result<()> {
 
 pub struct Listener {
     listener: UnixListener,
+    path: std::path::PathBuf,
+    inode: (u64, u64),
+}
+
+impl Drop for Listener {
+    fn drop(&mut self) {
+        use std::os::unix::fs::FileTypeExt;
+        if let Ok(metadata) = fs::symlink_metadata(&self.path)
+            && metadata.file_type().is_socket()
+            && (metadata.dev(), metadata.ino()) == self.inode
+        {
+            let _ = fs::remove_file(&self.path);
+        }
+    }
 }
 
 impl Listener {
@@ -64,8 +78,12 @@ impl Listener {
                 .ok_or_else(|| anyhow::anyhow!("socket parent missing"))?,
         )?;
         // Existing sockets are never unlinked on timeout or failed startup.
+        let listener = UnixListener::bind(address)?;
+        let metadata = fs::symlink_metadata(address)?;
         Ok(Self {
-            listener: UnixListener::bind(address)?,
+            listener,
+            path: address.into(),
+            inode: (metadata.dev(), metadata.ino()),
         })
     }
     pub async fn accept(&mut self) -> Result<Stream> {

@@ -8,3 +8,7 @@ mod service_management;
 pub mod service_runtime;
 
 pub mod bundled_assets;
+pub mod project_client;
+pub mod project_protocol;
+mod project_supervisor;
+pub mod project_worker;

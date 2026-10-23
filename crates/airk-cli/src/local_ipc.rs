@@ -2,7 +2,6 @@
 //! Same-user native endpoints. Authentication occurs before deserializing messages.
 use anyhow::{Result, ensure};
 use serde::{Serialize, de::DeserializeOwned};
-#[cfg(windows)]
 use sha2::{Digest, Sha256};
 use std::{path::Path, time::Duration};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -14,6 +13,14 @@ mod platform;
 #[path = "local_ipc_unix.rs"]
 mod platform;
 pub use platform::{Listener, Stream, connect, current_user, prepare_root};
+
+/// Stable counter identity for the OS-authenticated user; not a bearer credential.
+pub fn caller_identity() -> Result<airk_core::identity::Incarnation> {
+    let hash = Sha256::digest(current_user()?.as_bytes());
+    Ok(airk_core::identity::Incarnation::from_bytes(
+        hash[..16].try_into()?,
+    ))
+}
 
 #[derive(Debug)]
 pub struct PeerRejected;

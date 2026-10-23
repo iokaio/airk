@@ -284,6 +284,20 @@ impl ServiceRegistry {
         Ok(project)
     }
 
+    /// Bounded identity-only ownership audit; no project payload or index is opened.
+    pub fn bindings(&self) -> Result<Vec<ProjectBinding>> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT binding FROM projects ORDER BY binding LIMIT 1025")?;
+        let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+        let bindings = rows.map(|row| row?.parse()).collect::<Result<Vec<_>>>()?;
+        ensure!(
+            bindings.len() <= MAX_PROJECTS,
+            "service registration capacity exceeded"
+        );
+        Ok(bindings)
+    }
+
     pub fn list(
         &mut self,
         after: Option<ProjectBinding>,

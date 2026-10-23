@@ -88,6 +88,15 @@ mod continuity_argument_tests {
 
 #[derive(Subcommand)]
 enum Command {
+    #[command(hide = true)]
+    ProjectWorker,
+    /// Read-only MCP bridge to an already registered service project.
+    Bridge {
+        #[arg(long)]
+        runtime_dir: PathBuf,
+        #[arg(long)]
+        project: airk_core::service::ProjectBinding,
+    },
     /// Run the 1.4 foreground service control loop in an explicit private runtime directory.
     Serve {
         #[arg(long)]
@@ -545,6 +554,8 @@ impl Command {
             | Self::Schedule { .. }
             | Self::Service { .. }
             | Self::Serve { .. }
+            | Self::ProjectWorker
+            | Self::Bridge { .. }
             | Self::Storage { .. } => return None,
             Self::Collections {
                 action: CollectionCommand::Quota { .. } | CollectionCommand::Diagnose { .. },
@@ -1158,6 +1169,16 @@ async fn main_async() -> anyhow::Result<()> {
     #[cfg(not(feature = "local-inference"))]
     airk_cli::embedding_client::install()?;
     let cli = Cli::parse();
+    if matches!(cli.command, Command::ProjectWorker) {
+        return airk_cli::project_worker::run().await;
+    }
+    if let Command::Bridge {
+        runtime_dir,
+        project,
+    } = &cli.command
+    {
+        return airk_cli::project_client::bridge(runtime_dir.clone(), *project).await;
+    }
     if let Command::Serve { runtime_dir } = &cli.command {
         return airk_cli::service_runtime::serve(runtime_dir).await;
     }
@@ -1250,7 +1271,7 @@ async fn main_async() -> anyhow::Result<()> {
     };
     let result = async { match cli.command {
         Command::Tools { action } => tools::run(action, kernel.clone()).await,
-        Command::Storage { .. } | Command::ModelCatalog | Command::Serve { .. } => unreachable!("handled before opening kernel"),
+        Command::Storage { .. } | Command::ModelCatalog | Command::Serve { .. } | Command::ProjectWorker | Command::Bridge { .. } => unreachable!("handled before opening kernel"),
         Command::Service { action } => {
             let manager = airk_kernel::service::ServiceManager::for_kernel(&kernel)?;
             match action {

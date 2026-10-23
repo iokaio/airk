@@ -88,6 +88,17 @@ fn worker_epoch(
 }
 
 impl ServiceRegistry {
+    /// Fair oldest-pending order, bounded independently of the number of saved projects.
+    pub fn pending_projects(&self, limit: usize) -> Result<Vec<ProjectBinding>> {
+        ensure!(
+            (1..=32).contains(&limit),
+            "invalid pending project page bound"
+        );
+        let mut statement = self.connection.prepare(
+            "SELECT j.project FROM service_jobs j JOIN projects p ON p.binding=j.project WHERE j.state='running' OR (j.state='pending' AND p.paused=0) GROUP BY j.project ORDER BY min(j.seq) LIMIT ?1")?;
+        let rows = statement.query_map([limit as i64], |row| row.get::<_, String>(0))?;
+        rows.map(|row| row?.parse()).collect()
+    }
     /// Rotate the request epoch when terminal receipts are retired, so an old unknown key
     /// always expires rather than accidentally replaying its former mutation.
     fn prune_job_receipts(&mut self, needs_job: bool) -> Result<()> {

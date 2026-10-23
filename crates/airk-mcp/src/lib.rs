@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 
 mod execution;
 pub mod local;
+pub mod remote;
 
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]

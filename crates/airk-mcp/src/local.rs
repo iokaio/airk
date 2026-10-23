@@ -24,9 +24,13 @@ pub struct LocalTools {
 
 impl LocalTools {
     pub async fn new(kernel: Kernel) -> anyhow::Result<Self> {
+        Self::with_client(kernel, ClientFamily::Cli).await
+    }
+
+    pub async fn with_client(kernel: Kernel, client: ClientFamily) -> anyhow::Result<Self> {
         let (client_transport, server_transport) = tokio::io::duplex(64 * 1024);
         let mut server = AirkServer::new(kernel);
-        server.client = ClientFamily::Cli;
+        server.client = client;
         let admission = server.admission.clone();
         let (client, server) = tokio::try_join!(
             async { Ok::<_, anyhow::Error>(().serve(client_transport).await?) },

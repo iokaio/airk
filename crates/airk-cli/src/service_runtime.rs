@@ -8,7 +8,7 @@ use airk_kernel::service_broker::{Broker, BrokerLimits, new_instance_id};
 use anyhow::{Result, ensure};
 use std::{
     path::Path,
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 use tokio::{
@@ -17,12 +17,13 @@ use tokio::{
 };
 
 struct State {
-    policy: Broker,
+    policy: Arc<Mutex<Broker>>,
     started: Instant,
     user: String,
     executable_sha256: String,
     shutdown: Notify,
     management: crate::service_management::Management,
+    supervisor: crate::project_supervisor::Supervisor,
 }
 
 async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
@@ -41,7 +42,11 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
         match request.method {
             ControlMethod::Health => {
                 let now = Instant::now();
-                let policy = state.policy.status(now);
+                let policy = state
+                    .policy
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("service policy unavailable"))?
+                    .status(now);
                 ControlResponse::Health {
                     observation: Box::new(ServiceHealth {
                         version: env!("CARGO_PKG_VERSION").into(),
@@ -56,6 +61,7 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                 }
             }
             ControlMethod::Shutdown => ControlResponse::Stopping,
+            ControlMethod::Connect { project } => state.supervisor.connect(project).await,
             method => state.management.request(method).await,
         }
     };
@@ -73,13 +79,19 @@ pub async fn serve(root: &Path) -> Result<()> {
     let address = local_ipc::endpoint(root, "control")?;
     let mut listener = Listener::bind(&address)?;
     let instance = new_instance_id()?;
+    let policy = Arc::new(Mutex::new(Broker::new(instance, BrokerLimits::default())?));
     let state = Arc::new(State {
-        policy: Broker::new(instance, BrokerLimits::default())?,
+        policy: policy.clone(),
         started: Instant::now(),
         user: local_ipc::current_user()?,
         executable_sha256: crate::runtime_pair::digest_file(&std::env::current_exe()?)?,
         shutdown: Notify::new(),
         management: crate::service_management::Management::start(root.canonicalize()?, instance)?,
+        supervisor: crate::project_supervisor::Supervisor::start(
+            root.canonicalize()?,
+            instance,
+            policy,
+        )?,
     });
     let admission = Arc::new(Semaphore::new(64));
     let mut connections = JoinSet::new();
@@ -111,6 +123,11 @@ pub async fn serve(root: &Path) -> Result<()> {
 }
 
 pub async fn request(root: &Path, method: ControlMethod) -> Result<ControlResponse> {
+    let response_deadline = if matches!(method, ControlMethod::Connect { .. }) {
+        Duration::from_secs(20)
+    } else {
+        Duration::from_secs(5)
+    };
     let address = local_ipc::endpoint(root, "control")?;
     let mut stream =
         tokio::time::timeout(Duration::from_secs(5), local_ipc::connect(&address)).await??;
@@ -123,7 +140,7 @@ pub async fn request(root: &Path, method: ControlMethod) -> Result<ControlRespon
         Duration::from_secs(5),
     )
     .await?;
-    let response = local_ipc::read_message(&mut stream, Duration::from_secs(5))
+    let response = local_ipc::read_message(&mut stream, response_deadline)
         .await?
         .ok_or_else(|| anyhow::anyhow!("service disconnected before control response"))?;
     if let ControlResponse::Health { observation } = &response {

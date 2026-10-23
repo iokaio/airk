@@ -69,17 +69,21 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
         ControlMethod::CancelPending { id } => ControlResponse::Job {
             job: registry.cancel_pending(id)?,
         },
-        ControlMethod::Health | ControlMethod::Shutdown => anyhow::bail!("not a registry method"),
+        ControlMethod::Health | ControlMethod::Shutdown | ControlMethod::Connect { .. } => {
+            anyhow::bail!("not a registry method")
+        }
     })
 }
 
 impl Management {
     pub fn start(root: PathBuf, instance: Incarnation) -> Result<Self> {
         let (sender, receiver) = sync_channel::<Envelope>(32);
+        let (ready, initialized) = sync_channel(1);
         let thread = std::thread::Builder::new()
             .name("airk-registry".into())
             .spawn(move || {
                 let mut registry = ServiceRegistry::open(&root, instance);
+                let _ = ready.send(());
                 while let Ok((method, reply)) = receiver.recv() {
                     let response = match registry.as_mut() {
                         Ok(registry) => execute(registry, method).unwrap_or_else(|error| {
@@ -96,6 +100,9 @@ impl Management {
                     let _ = reply.send(response);
                 }
             })?;
+        // Finish owned-ledger bootstrap before other service adapters open it.
+        // Failure remains a cached unavailable state so health can still run.
+        let _ = initialized.recv_timeout(Duration::from_secs(5));
         Ok(Self {
             sender: Some(sender),
             thread: Some(thread),
