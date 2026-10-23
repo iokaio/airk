@@ -114,14 +114,7 @@ impl VectorCache {
             manifest.canonical_bytes()?;
         }
         let staging = reservation.staging_directory()?;
-        ensure!(
-            staging
-                .parent()
-                .context("embedding cache staging parent missing")?
-                .canonicalize()?
-                == collection.canonicalize()?,
-            "embedding cache reservation belongs to another collection"
-        );
+        reservation.validate_collection_directory(collection)?;
         format::pack_path(collection, &Sha256Digest::from_bytes([0; 32]))?;
         let trusted = trusted.filter(|manifest| {
             manifest.pipeline_digest == pipeline && manifest.dimensions == descriptor.dimensions

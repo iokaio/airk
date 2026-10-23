@@ -114,6 +114,21 @@ impl FileStore {
     pub fn directory(&self) -> &Path {
         &self.directory
     }
+    /// Exact owned layout, shared by gates and quota adapters. A sibling is not
+    /// admitted merely because its collection name happens to match.
+    pub(crate) fn collection_namespace(&self) -> Result<&str> {
+        let namespace = self
+            .directory
+            .parent()
+            .and_then(Path::file_name)
+            .and_then(|name| name.to_str())
+            .context("collection namespace missing")?;
+        ensure!(
+            matches!(namespace, "collections-1.2" | "collections-1.4"),
+            "unsupported managed collection namespace"
+        );
+        Ok(namespace)
+    }
     pub fn expected_head(&self) -> Result<ExpectedHead> {
         let _lifecycle = self.lifecycle(false)?;
         sqlite::expected_head(&self.directory)
@@ -214,7 +229,7 @@ impl FileStore {
     pub(crate) fn lifecycle(&self, create: bool) -> Result<Option<Arc<File>>> {
         let Some(collections) = self.directory.parent().filter(|path| {
             path.file_name()
-                .is_some_and(|name| name == "collections-1.2")
+                .is_some_and(|name| name == "collections-1.2" || name == "collections-1.4")
         }) else {
             return Ok(None);
         };

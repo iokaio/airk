@@ -1,0 +1,29 @@
+# Service publication and bounded readers
+
+The opt-in service worker uses `collections-1.4/<collection>` and SQLite format 140. Default 1.3.x clients continue to select their existing namespace. The separate owner/header version makes new state incompatible with older readers even if they are pointed at its directory. This is a rebuild boundary, not migration.
+
+## Ordinary publication
+
+The collection's OS writer lock permits one publication coordinator. Its request gate is shared while it prepares and replays bounded captured changes. SQLite WAL provides committed snapshots to concurrent readers; lexical rows and their physical seal, authenticated map records, DiskANN graph rows and the new head commit in one transaction. Preparation still computes a target seal, rolls back and captures replay inputs. Moving that work outside reader exclusion does not remove its cost or establish a latency result.
+
+Prepared and Applying are durable intentions. In format 140 they leave the prior committed head and all of its evidence intact; a reader can use that snapshot until the coherent new head commits. Startup treats either intention as recovery work. Recovery uses authenticated captured inputs rather than changed live source. A later request selects the latest head; a supplied obsolete revision fails explicitly. No cursor retains a snapshot between requests.
+
+Main-file cache witnesses cannot authorize WAL reuse. Service reads hash the physical FTS shadow rows through their pinned SQL snapshot, including overlay content, and compare the authenticated lexical manifest. The legacy rollback cache remains limited to its existing format. Within one publication, tracked row changes can reuse the already verified writer base.
+
+## Disk and request admission
+
+Before the first SQLite open, including recovery, the owning writer creates or adopts a durable quota grant bound to the source root, collection and incarnation. It covers the admitted main-file capacity, 64 MiB WAL, 128 KiB SHM and 192 KiB allocation slack. The logical quota report conservatively includes full outstanding allowances alongside measured file lengths; it is not an OS filesystem quota. The allowance survives handle drop and process exit. Ready/orphan transaction cleanup must preserve this lifetime allowance. Capacity growth reserves the larger lifetime bound before publishing the new owner capacity. Existing databases with missing allowances fail closed.
+
+The explicitly selected native VFS checks WAL writes, growth truncation and preallocation hints before delegating to the platform, disables chunk rounding, and checks SHM region mapping before allocation. It leaves SQLite's process default unchanged and shares at most eight immutable limit registrations. Full/busy outcomes preserve the last committed snapshot and require retry after reader/checkpoint pressure is relieved. File checks reject oversized, linked or redirected sidecars and any rollback sidecar before SQLite opens them. Checkpoint growth remains covered by the main-file allowance.
+
+Each service read owns both its SQL transaction and a shared OS object-protection lease. Admission and reclamation exclusion use the same gate. Ordinary commits can proceed, but object deletion requires exclusive ownership and defers while any old or current read remains. Captured scan work and pending journals retain their existing separate ownership. Expiry does not release the OS lease. Its actual holder must finish or exit before reclamation proceeds.
+
+Service snapshots expire after 120 seconds; checks around materialization and SQLite progress callbacks reject expired work. A direct query exceeding 125 seconds exits its lock-bearing project worker rather than pretending that cancellation of an async future stopped native work. Only the supervisor's confirmed process reap returns its allowances. This is a finite failure boundary, not a guarantee that storage I/O can be preempted safely in place.
+
+## Validation and remaining scope
+
+October 23 Windows and non-root Linux validation: five integrated store regressions pass for old/new graph/head snapshots across replay, Applying recovery with durable allowance retention, missing/oversized overlay rejection, external-object exclusion, WAL lexical tampering despite a previously verified snapshot, and process death at bootstrap/dirty Applying boundaries. Six native service process regressions pass on both hosts with workers opening the new namespace. The earlier native VFS and seal mechanism experiments remain additional evidence; they are not substituted for these integrated tests.
+
+Sibling replacement builds, atomic owned manifest handoff, retirement of old incarnation allowances, exhaustive crash injection and installed-platform qualification remain separate open items in the [completion checklist](service-implementation-checklist.md). No new VSIX is qualified by this stage.
+
+The final Windows follow-up passed 175 store unit tests, all-feature workspace Clippy and the real two-project MiniLM smoke using development pair `target/airksvc-runtime-stage6b`: exactly one compatible model load, hybrid citations, lexical/service availability after helper termination and unchanged original source bytes. The smoke exposed and verified a correction to the vector-cache adapter's staging-parent assumption; quota validation now binds the explicit managed namespace and collection instead. Non-root Linux also passed that namespace-cache regression, five integrated publication regressions, six native process tests, seven adapters, eight service-store tests and the four earlier mechanism experiments. Formatting, repository/link and whitespace checks passed. Checked-in native/extension versions, README, current release notes and Marketplace description still agree at the unchanged default 1.3.2; service cutover and the approved 1.4.0 version remain pending.

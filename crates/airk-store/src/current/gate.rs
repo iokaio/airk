@@ -51,7 +51,7 @@ fn open(store: &FileStore) -> Result<File> {
     ensure!(
         parent
             .file_name()
-            .is_some_and(|name| name == "collections-1.2"),
+            .is_some_and(|name| name == "collections-1.2" || name == "collections-1.4"),
         "current store requires a managed collection"
     );
     let name = directory
@@ -93,6 +93,22 @@ pub(crate) fn check_writer(store: &FileStore, writer: &WriterLock) -> Result<Pat
 }
 
 impl Gate {
+    /// Convert this writer's object-protection lease into reclamation exclusion.
+    /// If a reader is present, restore shared protection and defer cleanup.
+    pub(crate) fn try_exclusive(&self) -> Result<bool> {
+        self.file.unlock()?;
+        match self.file.try_lock() {
+            Ok(()) => Ok(true),
+            Err(std::fs::TryLockError::WouldBlock) => {
+                self.file.try_lock_shared()?;
+                Ok(false)
+            }
+            Err(error) => {
+                self.file.try_lock_shared()?;
+                Err(error.into())
+            }
+        }
+    }
     pub(crate) fn shared(store: &FileStore) -> Result<Self> {
         let lifecycle = store.lifecycle(false)?;
         let file = open(store)?;

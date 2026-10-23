@@ -23,6 +23,8 @@ use std::{
 mod grants_tests;
 #[path = "postings_tests.rs"]
 mod postings_tests;
+#[path = "service_publication_tests.rs"]
+mod service_publication_tests;
 
 const CAPACITY: u64 = 8 * 1024 * 1024;
 
@@ -45,10 +47,13 @@ impl Fixture {
         Ok(fixture)
     }
     fn empty() -> Result<Self> {
+        Self::empty_namespace("collections-1.2")
+    }
+    fn empty_namespace(namespace: &str) -> Result<Self> {
         let directory = tempfile::tempdir()?;
         fs::create_dir(directory.path().join("source"))?;
         let quota = Quota::open(directory.path().join("data"))?;
-        let store = FileStore::new(quota.root().join("collections-1.2/project-current"));
+        let store = FileStore::new(quota.root().join(namespace).join("project-current"));
         let scope = CurrentScope {
             root: directory
                 .path()
@@ -1815,6 +1820,10 @@ fn child(fixture: &Fixture, mode: &str) -> Result<ChildGuard> {
             .arg("--nocapture")
             .env("AIRK_CURRENT_CHILD_DATA", fixture.quota.root())
             .env(
+                "AIRK_CURRENT_CHILD_NAMESPACE",
+                fixture.store.collection_namespace()?,
+            )
+            .env(
                 "AIRK_CURRENT_CHILD_SCOPE",
                 serde_json::to_string(&fixture.scope)?,
             )
@@ -1850,7 +1859,9 @@ fn current_child_process() -> Result<()> {
     };
     let quota = Quota::open(root)?;
     let scope: CurrentScope = serde_json::from_str(&std::env::var("AIRK_CURRENT_CHILD_SCOPE")?)?;
-    let store = FileStore::new(quota.root().join("collections-1.2").join(&scope.collection));
+    let namespace =
+        std::env::var("AIRK_CURRENT_CHILD_NAMESPACE").unwrap_or_else(|_| "collections-1.2".into());
+    let store = FileStore::new(quota.root().join(namespace).join(&scope.collection));
     let ready = std::env::var_os("AIRK_CURRENT_CHILD_READY").context("ready path missing")?;
     let mode = std::env::var("AIRK_CURRENT_CHILD_MODE")?;
     if mode == "read" {

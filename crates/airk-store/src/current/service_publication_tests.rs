@@ -1,0 +1,203 @@
+// SPDX-License-Identifier: Apache-2.0
+use super::*;
+
+fn service_fixture() -> Result<Fixture> {
+    let fixture = Fixture::empty_namespace("collections-1.4")?;
+    let writer = fixture.store.lock()?;
+    fixture
+        .store
+        .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?
+        .initialize(fixture.head.clone())?;
+    drop(writer);
+    Ok(fixture)
+}
+
+#[test]
+fn service_publication_keeps_old_snapshot_and_graph_coherent_through_replay() -> Result<()> {
+    let fixture = service_fixture()?;
+    let old = fixture.store.current_read(&fixture.scope)?;
+    let (_reservation, sealed) = fixture.sealed()?;
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    let pending = current.prepare(
+        &fixture.head.token()?,
+        fixture.target(&sealed),
+        &sealed,
+        &[],
+        None,
+    )?;
+    assert_eq!(old.token()?, fixture.head.token()?);
+    current.mark_applying(&pending)?;
+    // Applying is an intent; the SQL head and all evidence still name the base.
+    assert_eq!(
+        fixture.store.current_read(&fixture.scope)?.token()?,
+        old.token()?
+    );
+    current.commit(&pending, pending.target.lexical_commit)?;
+    let latest = fixture.store.current_read(&fixture.scope)?;
+    assert_eq!(latest.token()?, pending.target.token()?);
+    assert_eq!(latest.read(1)?.bytes, vec![7; 16]);
+    assert_eq!(old.counts()?.allocated_count, 0);
+    assert_eq!(old.token()?, fixture.head.token()?);
+    assert!(latest.require_token(&old.token()?).is_err());
+    // A live reader, including an older snapshot, protects external objects.
+    assert!(!current.reclaim_exclusive()?);
+    drop(old);
+    drop(latest);
+    assert!(current.reclaim_exclusive()?);
+    Ok(())
+}
+
+#[test]
+fn service_publication_retains_recovery_capacity_and_rejects_missing_or_oversized_sidecars()
+-> Result<()> {
+    let fixture = service_fixture()?;
+    let pending = fixture.prepare(&[])?;
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    current.mark_applying(&pending)?;
+    drop(current);
+    drop(writer);
+    // Reopen/replay after an interrupted Applying intent without live source.
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    current.mark_applying(&pending)?;
+    current.commit(&pending, pending.target.lexical_commit)?;
+    current.release_orphan_grants()?;
+    let grants = fixture.quota.current_grants(&writer)?;
+    assert_eq!(grants.len(), 1);
+    assert_eq!(grants[0].scope().transaction, wal::id(&fixture.scope));
+    drop(current);
+    drop(writer);
+    let sidecar = fixture.store.directory().join("current.sqlite3-wal");
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&sidecar)?;
+    file.set_len(wal::WAL_BYTES + 1)?;
+    drop(file);
+    assert!(fixture.store.current_read(&fixture.scope).is_err());
+    let writer = fixture.store.lock()?;
+    assert!(
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)
+            .is_err()
+    );
+    fs::remove_file(sidecar)?;
+    // Simulate an invalid missing lifetime allowance. Neither path may recreate
+    // it over an existing database and silently authorize an unowned overlay.
+    for grant in fixture.quota.current_grants(&writer)? {
+        grant.release(&writer)?;
+    }
+    assert!(fixture.store.current_read(&fixture.scope).is_err());
+    assert!(
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)
+            .is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn service_publication_authenticates_wal_shadow_rows_without_main_file_cache() -> Result<()> {
+    let mut fixture = Fixture::empty_namespace("collections-1.4")?;
+    let manifest = lexical::LexicalManifest::empty()?;
+    fixture.head.lexical_commit = manifest.digest()?;
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    current.initialize(fixture.head.clone())?;
+    current
+        .install_initial_lexical_manifest(&fixture.head.token()?, &manifest.canonical_bytes()?)?;
+    let old = fixture.store.current_read(&fixture.scope)?;
+    old.verify_lexical()?;
+    // Keep the initial snapshot pinned so the forged commit remains in WAL.
+    let connection = database::open_writer(
+        &fixture.store.directory().join("current.sqlite3"),
+        CAPACITY,
+        false,
+    )?;
+    connection.execute("UPDATE current_fts_config SET v=999 WHERE k='version'", [])?;
+    assert!(
+        fixture
+            .store
+            .current_read(&fixture.scope)?
+            .verify_lexical()
+            .is_err()
+    );
+    old.verify_lexical()?;
+    Ok(())
+}
+
+#[test]
+fn service_publication_process_death_preserves_head_and_releases_only_actual_reader_leases()
+-> Result<()> {
+    for mode in ["applying", "hot-apply"] {
+        let fixture = service_fixture()?;
+        let pending = fixture.prepare(&[])?;
+        let interrupted = child(&fixture, mode)?;
+        let read = fixture.store.current_read(&fixture.scope)?;
+        assert_eq!(read.token()?, fixture.head.token()?);
+        assert_eq!(read.counts()?.allocated_count, 0);
+        assert!(read.has_prepared_update()?);
+        drop(read);
+        drop(interrupted);
+        let reader = child(&fixture, "read")?;
+        let writer = fixture.store.lock()?;
+        let mut current =
+            fixture
+                .store
+                .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+        current.mark_applying(&pending)?;
+        current.commit(&pending, pending.target.lexical_commit)?;
+        assert!(!current.reclaim_exclusive()?);
+        drop(reader);
+        assert!(current.reclaim_exclusive()?);
+        drop(current);
+        drop(writer);
+        assert_eq!(
+            fixture.store.current_read(&fixture.scope)?.token()?,
+            pending.target.token()?
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn service_publication_bootstrap_process_death_recovers_each_durable_boundary() -> Result<()> {
+    for mode in [
+        "bootstrap-before-open",
+        "bootstrap-before-commit",
+        "bootstrap-after-commit",
+    ] {
+        let fixture = Fixture::empty_namespace("collections-1.4")?;
+        drop(child(&fixture, mode)?);
+        let writer = fixture.store.lock()?;
+        let mut current =
+            fixture
+                .store
+                .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+        assert_eq!(current.initialize(fixture.head.clone())?, fixture.head);
+        current.release_orphan_grants()?;
+        assert_eq!(fixture.quota.current_grants(&writer)?.len(), 1);
+        assert_eq!(
+            fixture.store.current_read(&fixture.scope)?.token()?,
+            fixture.head.token()?
+        );
+    }
+    Ok(())
+}

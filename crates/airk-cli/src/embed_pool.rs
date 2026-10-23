@@ -80,7 +80,7 @@ fn location_key(
             ensure!(
                 collection.canonicalize()?
                     == data
-                        .join("collections-1.2")
+                        .join("collections-1.4")
                         .join(&project.collection)
                         .canonicalize()?,
                 "model objects are outside admitted collection"

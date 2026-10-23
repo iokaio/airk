@@ -20,6 +20,7 @@ pub struct CurrentRead {
     head: CurrentHead,
     pub(super) lexical_path: std::path::PathBuf,
     pub(super) lexical_verified: std::sync::OnceLock<()>,
+    deadline: Option<std::time::Instant>,
     _gate: Gate,
 }
 
@@ -208,7 +209,7 @@ impl CurrentRead {
             Ok(
                 connection.query_row("SELECT phase FROM current_state WHERE id=1", [], |row| {
                     row.get::<_, String>(0)
-                })? == "prepared",
+                })? != "ready",
             )
         })
     }
@@ -216,6 +217,7 @@ impl CurrentRead {
         &self.head
     }
     pub fn token(&self) -> Result<CurrentToken> {
+        self.live()?;
         self.head.token()
     }
     pub fn require_token(&self, token: &CurrentToken) -> Result<()> {
@@ -226,11 +228,22 @@ impl CurrentRead {
         Ok(())
     }
     pub(crate) fn with_connection<T>(&self, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
+        self.live()?;
         let connection = self
             .connection
             .lock()
             .map_err(|_| anyhow::anyhow!("current reader connection poisoned"))?;
-        f(&connection)
+        let result = f(&connection)?;
+        self.live()?;
+        Ok(result)
+    }
+    fn live(&self) -> Result<()> {
+        ensure!(
+            self.deadline
+                .is_none_or(|deadline| std::time::Instant::now() < deadline),
+            "current request snapshot expired; repeat against the current revision"
+        );
+        Ok(())
     }
 }
 
@@ -239,6 +252,7 @@ impl GraphRecordReader for CurrentRead {
         &self.head.graph_head.scope
     }
     fn counts(&self) -> Result<GraphCounts> {
+        self.live()?;
         Ok(self.head.graph_head.counts())
     }
     fn read(&self, id: u32) -> Result<GraphRecord> {
@@ -255,14 +269,35 @@ impl FileStore {
             "foreign current collection path"
         );
         let gate = Gate::shared(self)?;
+        let deadline = super::wal::enabled(self.directory())
+            .then(|| std::time::Instant::now() + std::time::Duration::from_secs(120));
         database::reject_legacy_collection(self.directory())?;
         self.ensure_index_ready()?;
         let capacity = database::check_owner(self.directory(), scope)?;
+        if super::wal::enabled(self.directory()) {
+            let root = self
+                .directory()
+                .parent()
+                .and_then(std::path::Path::parent)
+                .context("service data root missing")?;
+            crate::quota::Quota::open(root)?.verify_current_allowance(
+                &crate::quota::CurrentGrantScope {
+                    collection: scope.collection.clone(),
+                    incarnation: scope.incarnation,
+                    transaction: super::wal::id(scope),
+                },
+                super::wal::total(capacity)?,
+            )?;
+        }
         ensure!(
             std::fs::metadata(self.directory().join("current.sqlite3"))?.len() <= capacity,
             "current database exceeds captured capacity"
         );
         let connection = database::open_reader(&self.directory().join("current.sqlite3"))?;
+        if let Some(deadline) = deadline {
+            connection
+                .progress_handler(1000, Some(move || std::time::Instant::now() >= deadline))?;
+        }
         let (phase, bytes): (String, Vec<u8>) = connection
             .query_row(
                 "SELECT phase,head FROM current_state WHERE id=1 AND length(head)<=65536",
@@ -271,7 +306,9 @@ impl FileStore {
             )
             .context("current index metadata missing")?;
         ensure!(
-            phase == "ready" || phase == "prepared",
+            phase == "ready"
+                || phase == "prepared"
+                || (phase == "applying" && super::wal::enabled(self.directory())),
             "current index requires writer recovery before reads"
         );
         let head = decode_head(&bytes, scope)?;
@@ -280,6 +317,7 @@ impl FileStore {
             head,
             lexical_path: self.directory().join("current.sqlite3"),
             lexical_verified: std::sync::OnceLock::new(),
+            deadline,
             _gate: gate,
         }))
     }

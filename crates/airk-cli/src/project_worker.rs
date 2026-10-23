@@ -95,7 +95,16 @@ async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
                 .map_err(|_| anyhow::anyhow!("query policy unavailable"))?
                 .begin_query(state.identity, session, MAX_FRAME_BYTES, Instant::now())?;
             // The permit and revision materialization survive transport cancellation.
-            let response = state.tools.call(request.tool, request.arguments).await;
+            let response = match tokio::time::timeout(Duration::from_secs(125),
+                state.tools.call(request.tool, request.arguments)).await {
+                Ok(response) => response,
+                Err(_) => {
+                    // Cancelling a protocol future does not stop accepted native
+                    // work or release its object lease. Exit this lock-bearing
+                    // worker; only the supervisor's confirmed reap frees capacity.
+                    std::process::exit(75);
+                }
+            };
             let value = response.and_then(|response|Ok(serde_json::to_value(response)?))
                 .unwrap_or_else(|_|serde_json::json!({"content":[{"type":"text","text":"AIRK read-only tool failed or is unavailable."}],"isError":true}));
             let result = local_ipc::write_message(&mut stream,&value,Duration::from_secs(5)).await;
@@ -204,7 +213,7 @@ pub async fn run() -> Result<()> {
     crate::embedding_pool_client::install(pool.map(|access| *access))?;
     #[cfg(feature = "local-inference")]
     let _ = pool;
-    let kernel = Kernel::open_collection(
+    let kernel = Kernel::open_service_collection(
         Path::new(&registration.root),
         Some((&registration.data_root).into()),
         &registration.collection,

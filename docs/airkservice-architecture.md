@@ -32,6 +32,8 @@ Latest local validation on October 22: the locked Windows workspace test run, in
 
 The implementation remains incomplete. Integrated publication/object leases and replacement rebuilding, fair/observed resource policies, immutable user installation and lifecycle adapters, the service console and scoped/bulk repair, default extension/MCP/CLI/container cutover, fresh 1.4 namespaces and synchronized 1.4.0 versions, and final installed-platform qualification remain outstanding. No service VSIX has been built; the user's packaging gate remains closed until the implementation is complete and reviewed. Stage commits remain local and DCO-signed; no push is authorized.
 
+The [implementation completion checklist](service-implementation-checklist.md) tracks the remaining phases and final packaging gate. Stage commits are checkpoints; the implementation task remains open until the complete plan and its validation gates are satisfied.
+
 ## 1. Decision and purpose
 
 Replace independently launched indexing helpers with one user-owned local AIRK service per execution environment and release channel. The service owns the project registry, durable work requests, resource admission and worker lifecycle. Separate project workers own independent project indexes. VS Code windows, CLI commands and coding-agent MCP connections become clients of that service. This is an architectural choice for explicit ownership, shared resource policy and a consistent client lifecycle, independent of whether incremental changes could improve 1.3.x performance.
@@ -207,6 +209,8 @@ Same-user workers are fault isolation, not a security sandbox against malicious 
 [Local usage reporting](usage-reporting.md) remains store-backed and collection-scoped through kernel services. The project worker records one observation per outer retrieval request using bridge-supplied framing metadata validated under the reporting contract; connection brokerage and internal worker/pool calls add no duplicate observations. Collection report retrieval uses the direct worker connection. Service-wide status may aggregate bounded content-free counters but does not create a global content ledger or forward source/query payloads; recording failures and partial estimates retain their existing disclosures.
 
 ## 6. Publication and concurrent reads
+
+October 23 integration: ordinary opt-in service updates now use a separate format-140 `collections-1.4` store, durable WAL/SHM admission and shared request/object leases. Readers authenticate their actual SQLite snapshot; reclamation obtains exclusion and defers for live requests. Five integrated store regressions and six native process regressions pass on Windows and non-root Linux. See the [implemented publication contract](service-publication.md). Sibling replacement/manifest retirement, complete crash qualification and client cutover remain open.
 
 The [October 22 mechanism spike](service-publication-spike.md) now exercises the real lexical seal against committed WAL snapshots, demonstrates pinned-reader WAL growth beyond main-file admission, and tests a native file-I/O guard that rejects unadmitted WAL/SHM growth. All four experiments pass on Windows and non-root Linux. These are isolated tests, with no runtime format/journal switch. Owner-verified sidecars, durable growth/recovery reservations, external-object leases and integrated replacement publication remain required before cutover.
 

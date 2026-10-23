@@ -171,7 +171,16 @@ impl Kernel {
         data_dir: Option<PathBuf>,
         collection: &str,
     ) -> Result<Self> {
-        Self::open_collection_with_recovery(root, data_dir, collection, true)
+        Self::open_collection_with_layout(root, data_dir, collection, true, false)
+    }
+
+    /// Service-only fresh storage. Never migrates or opens a legacy collection.
+    pub fn open_service_collection(
+        root: impl AsRef<Path>,
+        data_dir: Option<PathBuf>,
+        collection: &str,
+    ) -> Result<Self> {
+        Self::open_collection_with_layout(root, data_dir, collection, true, true)
     }
 
     /// Open retained state for inspection without replaying pending publications
@@ -181,7 +190,7 @@ impl Kernel {
         data_dir: Option<PathBuf>,
         collection: &str,
     ) -> Result<Self> {
-        Self::open_collection_with_recovery(root, data_dir, collection, false)
+        Self::open_collection_with_layout(root, data_dir, collection, false, false)
     }
 
     fn open_collection_with_recovery(
@@ -189,6 +198,16 @@ impl Kernel {
         data_dir: Option<PathBuf>,
         collection: &str,
         recover: bool,
+    ) -> Result<Self> {
+        Self::open_collection_with_layout(root, data_dir, collection, recover, false)
+    }
+
+    fn open_collection_with_layout(
+        root: impl AsRef<Path>,
+        data_dir: Option<PathBuf>,
+        collection: &str,
+        recover: bool,
+        service: bool,
     ) -> Result<Self> {
         airk_store::validate_collection(collection)?;
         let root = root
@@ -219,7 +238,15 @@ impl Kernel {
             root,
             collection: collection.into(),
             data_root: directory.clone(),
-            store: FileStore::new(directory.join("collections-1.2").join(collection)),
+            store: FileStore::new(
+                directory
+                    .join(if service {
+                        "collections-1.4"
+                    } else {
+                        "collections-1.2"
+                    })
+                    .join(collection),
+            ),
         };
         if recover {
             kernel.recover_runtime_bootstrap()?;

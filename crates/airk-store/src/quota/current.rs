@@ -99,6 +99,24 @@ impl CurrentGrant {
 }
 
 impl Quota {
+    pub(crate) fn verify_current_allowance(
+        &self,
+        scope: &CurrentGrantScope,
+        minimum: u64,
+    ) -> Result<()> {
+        let _lock = self.lock()?;
+        let record = read_record(
+            &self
+                .root
+                .join(".quota-1.2/current-grants")
+                .join(scope.filename()),
+        )?;
+        ensure!(
+            record.scope == *scope && record.bytes >= minimum,
+            "missing or insufficient service WAL recovery allowance"
+        );
+        Ok(())
+    }
     /// Call under lifecycle -> collection writer -> exclusive current gate. The
     /// ledger lock is released before callers start any SQLite transaction.
     pub fn reserve_current(
@@ -177,7 +195,12 @@ impl Quota {
 
 fn validate_writer(quota: &Quota, writer: &crate::WriterLock, collection: &str) -> Result<()> {
     crate::validate_collection(collection)?;
-    let expected = quota.root.join("collections-1.2").join(collection);
+    let directory = writer.path.parent().context("writer directory missing")?;
+    let store = crate::FileStore::new(directory);
+    let expected = quota
+        .root
+        .join(store.collection_namespace()?)
+        .join(collection);
     unlinked(&expected)?;
     ensure!(
         writer.path.parent().context("writer has no directory")? == expected.canonicalize()?,

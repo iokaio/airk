@@ -133,6 +133,15 @@ impl CurrentWriter<'_> {
                 ..Default::default()
             });
         }
+        // A WAL snapshot protects SQL pages, not external retained files. The
+        // request's shared OS lease survives commits and disconnect; only actual
+        // release/process exit permits this exclusion and subsequent deletion.
+        if !self.reclaim_exclusive()? {
+            return Ok(ReclamationReport {
+                pending: true,
+                ..Default::default()
+            });
+        }
         let mut candidates = Vec::new();
         let mut count = 0;
         for name in [

@@ -19,6 +19,8 @@ mod rebuild;
 pub mod relationships;
 pub mod resources;
 pub mod vector_map;
+mod wal;
+mod wal_budget;
 #[cfg(test)]
 mod wal_budget_spike;
 

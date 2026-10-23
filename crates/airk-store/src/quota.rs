@@ -795,7 +795,9 @@ impl Quota {
                 };
                 let bytes = metadata.len();
                 result.used_bytes = checked_add(result.used_bytes, bytes)?;
-                if let Ok(relative) = path.strip_prefix(self.root.join("collections-1.2"))
+                if let Some(relative) = ["collections-1.2", "collections-1.4"]
+                    .iter()
+                    .find_map(|namespace| path.strip_prefix(self.root.join(namespace)).ok())
                     && let Some(Component::Normal(collection)) = relative.components().next()
                     && let Some(collection) = collection
                         .to_str()
@@ -847,6 +849,21 @@ struct ReservationInner {
 #[derive(Clone)]
 pub struct Reservation(Arc<ReservationInner>);
 impl Reservation {
+    pub(crate) fn validate_collection_directory(&self, directory: &Path) -> Result<()> {
+        let store = crate::FileStore::new(directory);
+        let expected = self
+            .0
+            .quota
+            .root
+            .join(store.collection_namespace()?)
+            .join(&self.0.collection);
+        unlinked(&expected)?;
+        ensure!(
+            expected.canonicalize()? == directory.canonicalize()?,
+            "quota reservation belongs to another collection"
+        );
+        Ok(())
+    }
     pub fn limit(&self) -> u64 {
         self.0.limit
     }
@@ -878,12 +895,11 @@ impl Reservation {
     fn checked_destination(&self, path: &Path) -> Result<PathBuf> {
         crate::validate_collection(&self.0.collection)?;
         self.0.quota.control()?;
-        let base = self
-            .0
-            .quota
-            .root
-            .join("collections-1.2")
-            .join(&self.0.collection);
+        let base = ["collections-1.2", "collections-1.4"]
+            .iter()
+            .map(|namespace| self.0.quota.root.join(namespace).join(&self.0.collection))
+            .find(|base| path.starts_with(base))
+            .context("quota writer target is outside its collection")?;
         let relative = path
             .strip_prefix(&base)
             .context("quota writer target is outside its collection")?;

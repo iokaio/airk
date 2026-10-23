@@ -640,6 +640,9 @@ impl Drop for CurrentWriter<'_> {
 }
 
 impl CurrentWriter<'_> {
+    pub(super) fn reclaim_exclusive(&self) -> Result<bool> {
+        self._gate.try_exclusive()
+    }
     pub(super) fn has_object_captures(&self) -> bool {
         self.writer.has_object_captures()
     }
@@ -667,7 +670,23 @@ impl FileStore {
                 == Some(scope.collection.as_str()),
             "foreign current writer collection"
         );
-        let gate = Gate::exclusive(self, writer)?;
+        let service_publication = super::wal::enabled(self.directory());
+        let gate = if service_publication {
+            Gate::shared(self)?
+        } else {
+            Gate::exclusive(self, writer)?
+        };
+        let _wal = if service_publication {
+            Some(super::wal::reserve(
+                self,
+                writer,
+                quota,
+                scope,
+                database_capacity_bytes,
+            )?)
+        } else {
+            None
+        };
         database::reject_legacy_collection(self.directory())?;
         let path = self.directory().join("current.sqlite3");
         let bootstrap = read_bootstrap(self, scope)?;
@@ -799,6 +818,9 @@ impl CurrentWriter<'_> {
             return Err(error);
         }
         observe(CapacityStage::BeforeOwner)?;
+        if super::wal::enabled(self.store.directory()) {
+            super::wal::reserve(&self.store, self.writer, &self.quota, &self.scope, next)?;
+        }
         database::grow_owner(self.store.directory(), &self.scope, previous, next)?;
         observe(CapacityStage::AfterOwner)?;
         self.capacity = next;
@@ -907,10 +929,13 @@ impl CurrentWriter<'_> {
             );
         }
         let id = bootstrap_id(&head)?;
-        let allowance = self
-            .capacity
-            .checked_add(database::journal_bound(16, 65_536)?)
-            .context("initial capacity overflow")?;
+        let allowance = if super::wal::enabled(self.store.directory()) {
+            65536
+        } else {
+            self.capacity
+                .checked_add(database::journal_bound(16, 65_536)?)
+                .context("initial capacity overflow")?
+        };
         let mut grant = match self
             .quota
             .current_grant(self.writer, &self.grant_scope(id))?
@@ -946,7 +971,11 @@ impl CurrentWriter<'_> {
         {
             let transaction = connection.transaction()?;
             transaction.pragma_update(None, "application_id", 0x4149_524bi32)?;
-            transaction.pragma_update(None, "user_version", database::DATABASE_VERSION)?;
+            transaction.pragma_update(
+                None,
+                "user_version",
+                super::wal::version(self.store.directory()),
+            )?;
             create(&transaction)?;
             transaction.execute(
                 "INSERT OR ROLLBACK INTO current_state(id,phase,head) VALUES(1,'ready',?1)",
@@ -2129,6 +2158,11 @@ impl CurrentWriter<'_> {
         );
         let mut released = 0;
         for grant in grants {
+            if super::wal::enabled(self.store.directory())
+                && grant.scope().transaction == super::wal::id(&self.scope)
+            {
+                continue;
+            }
             grant.release(self.writer)?;
             released += 1;
         }

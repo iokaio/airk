@@ -79,6 +79,7 @@ impl ModelObjects {
         set: &ModelObjectSet,
         reservation: &crate::quota::Reservation,
     ) -> Result<RetainedModelObjects> {
+        reservation.validate_collection_directory(&self.collection)?;
         let staging = reservation.staging_directory()?;
         self.retain_at(
             source_directory,
