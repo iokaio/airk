@@ -161,6 +161,26 @@ def main():
                 raise RuntimeError(f"Projects did not share one verified MiniLM load: {observation}")
             print("Two supervised projects reused one MiniLM session and returned hybrid citations.", flush=True)
 
+            replacement = rpc({"enqueue": {"project": projects[0]["binding"], "caller": uuid.uuid4().hex,
+                "key": {"namespace": epoch["namespace"], "epoch": epoch["epoch"], "nonce": uuid.uuid4().hex},
+                "kind": "rebuild"}})
+            if replacement.get("status") != "job":
+                raise RuntimeError("Replacement rebuild was not accepted")
+            deadline = time.monotonic() + 180
+            while True:
+                receipt = rpc({"job": {"id": replacement["job"]["id"]}})["job"]
+                if receipt["state"] == "succeeded":
+                    break
+                if receipt["state"] in ("failed", "canceled") or time.monotonic() >= deadline:
+                    raise RuntimeError(f"Supervised replacement did not complete: {receipt}")
+                time.sleep(0.2)
+            for bridge in bridges:
+                bridge.search("hybrid")
+            observation = rpc("embedding_status")
+            if not observation.get("available") or observation.get("loads") != 1:
+                raise RuntimeError("Replacement stopped compatible loaded-session reuse")
+            print("Replacement handoff preserved both direct clients and compatible MiniLM reuse.", flush=True)
+
             # This PID comes from our private authenticated service's supervised helper.
             os.kill(observation["process_id"], signal.SIGTERM)
             time.sleep(0.3)

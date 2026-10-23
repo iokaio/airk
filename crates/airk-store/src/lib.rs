@@ -21,6 +21,7 @@ pub mod extraction_policy;
 pub mod history;
 pub mod history_policy;
 pub mod maintenance;
+mod managed_collection;
 pub mod model_objects;
 mod normalized;
 pub mod quota;
@@ -117,17 +118,19 @@ impl FileStore {
     /// Exact owned layout, shared by gates and quota adapters. A sibling is not
     /// admitted merely because its collection name happens to match.
     pub(crate) fn collection_namespace(&self) -> Result<&str> {
-        let namespace = self
-            .directory
-            .parent()
-            .and_then(Path::file_name)
-            .and_then(|name| name.to_str())
-            .context("collection namespace missing")?;
-        ensure!(
-            matches!(namespace, "collections-1.2" | "collections-1.4"),
-            "unsupported managed collection namespace"
-        );
-        Ok(namespace)
+        Ok(self.managed_path()?.namespace)
+    }
+    pub(crate) fn managed_path(&self) -> Result<managed_collection::ManagedPath<'_>> {
+        managed_collection::ManagedPath::parse(&self.directory)
+    }
+    pub(crate) fn collection_id(&self) -> Result<&str> {
+        Ok(self.managed_path()?.collection)
+    }
+    pub fn service_incarnation(&self) -> Result<Option<airk_core::identity::Incarnation>> {
+        self.managed_path()?.slot.map(str::parse).transpose()
+    }
+    pub fn managed_collection_directory(&self) -> Result<&Path> {
+        Ok(self.managed_path()?.logical)
     }
     pub fn expected_head(&self) -> Result<ExpectedHead> {
         let _lifecycle = self.lifecycle(false)?;
@@ -227,15 +230,10 @@ impl FileStore {
         sqlite::publish_catalog_v2(&self.directory, inventory, receipt, expected, reservation)
     }
     pub(crate) fn lifecycle(&self, create: bool) -> Result<Option<Arc<File>>> {
-        let Some(collections) = self.directory.parent().filter(|path| {
-            path.file_name()
-                .is_some_and(|name| name == "collections-1.2" || name == "collections-1.4")
-        }) else {
+        let Ok(managed) = self.managed_path() else {
             return Ok(None);
         };
-        let root = collections
-            .parent()
-            .context("collection has no data root")?;
+        let root = managed.root;
         quota::ensure_current_root(root)?;
         if !root.exists() {
             if !create {
@@ -312,15 +310,23 @@ impl FileStore {
     /// OS-backed exclusivity releases after process death. Legacy lock markers
     /// still fail closed until an operator establishes that their writer exited.
     pub fn lock(&self) -> Result<WriterLock> {
+        if self.managed_path().is_ok() {
+            managed_collection::validate_ancestors(&self.directory)?;
+        }
         let lifecycle = self.lifecycle(true)?;
-        let parent = self
+        let physical_parent = self
             .directory
             .parent()
             .context("index directory has no parent")?;
-        let name = self
-            .directory
-            .file_name()
-            .context("index directory has no name")?;
+        fs::create_dir_all(physical_parent)?;
+        let logical = self
+            .managed_path()
+            .ok()
+            .map_or(self.directory.as_path(), |path| path.logical);
+        let parent = logical
+            .parent()
+            .context("logical collection parent missing")?;
+        let name = logical.file_name().context("index directory has no name")?;
         fs::create_dir_all(parent)?;
         ensure!(
             !fs::symlink_metadata(parent)?.file_type().is_symlink(),

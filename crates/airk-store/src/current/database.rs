@@ -86,6 +86,12 @@ pub(super) fn obsolete_lexical_scope(directory: &Path) -> Result<Option<CurrentS
 
 fn read_owner(directory: &Path) -> Result<Owner> {
     let owner = read_owner_any(directory)?;
+    if let Some(incarnation) = crate::FileStore::new(directory).service_incarnation()? {
+        ensure!(
+            owner.scope.incarnation == incarnation,
+            "current owner differs from managed incarnation directory"
+        );
+    }
     ensure!(
         owner.version == super::wal::version(directory),
         "incompatible collection format; run airk index --full (or Rebuild in the extension) to rebuild for SQLite FTS5 in 1.3.0"
@@ -118,6 +124,12 @@ fn read_owner_any(directory: &Path) -> Result<Owner> {
 }
 
 pub(crate) fn create_owner(directory: &Path, scope: &CurrentScope, capacity: u64) -> Result<()> {
+    if let Some(incarnation) = crate::FileStore::new(directory).service_incarnation()? {
+        ensure!(
+            scope.incarnation == incarnation,
+            "current scope differs from managed incarnation directory"
+        );
+    }
     if directory.join(OWNER_FILE).try_exists()? {
         ensure!(
             check_owner(directory, scope)? == capacity,

@@ -52,6 +52,23 @@ def digest(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
+def source_identity():
+    names = subprocess.check_output([
+        "git", "-c", f"safe.directory={ROOT.as_posix()}", "ls-files", "-z",
+        "--cached", "--others", "--exclude-standard", "--", "Cargo.toml", "Cargo.lock",
+        "rust-toolchain.toml", ".cargo", "crates", "scripts/build-service-runtime.py"], cwd=ROOT)
+    result = hashlib.sha256()
+    files = sorted(set(name for name in names.split(b"\0") if name))
+    for name in files:
+        path = ROOT / os.fsdecode(name)
+        if path.is_symlink() or not path.resolve().is_relative_to(ROOT):
+            raise RuntimeError("Source input escapes the runtime workspace")
+        result.update(len(name).to_bytes(8, "big"))
+        result.update(name)
+        result.update(bytes.fromhex(digest(path)) if path.is_file() else b"missing")
+    return {"sha256": result.hexdigest(), "files": len(files)}
+
+
 def publish_staging(staging, destination):
     # A just-executed Windows image can briefly retain a scan/share handle. Retry
     # only this owned staging rename; persistent permission/policy failures stay errors.
@@ -75,6 +92,7 @@ def main():
     if destination.exists() or destination.is_symlink():
         raise SystemExit("Destination already exists; select a fresh runtime directory")
     destination.parent.mkdir(parents=True, exist_ok=True)
+    source = source_identity()
     check_lightweight_dependencies()
     with tempfile.TemporaryDirectory(prefix=".airk-runtime-stage-", dir=destination.parent) as temporary:
         staging = Path(temporary)
@@ -98,6 +116,12 @@ def main():
                                                text=True, encoding="utf-8").strip()
             if identity != f"{Path(executable).stem} {version}":
                 raise RuntimeError(f"Unexpected executable identity: {identity}")
+        if source_identity() != source:
+            raise RuntimeError("Native source changed during the paired build; staging was not published")
+        receipt = {"schema": 1, "source": source, "profile": args.profile,
+                   "runtime": manifest, "rustc": subprocess.check_output(
+                       ["rustc", "--version", "--verbose"], text=True, encoding="utf-8").strip()}
+        (staging / "airk-build.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
         # The final directory is created only after both artifacts and identities verify.
         publish_staging(staging, destination)
     print(f"Staged {version} runtime pair: {destination}")

@@ -235,12 +235,7 @@ fn digest<T: Serialize>(value: &T) -> Result<Sha256Digest> {
     ))
 }
 fn collection(store: &FileStore) -> Result<String> {
-    Ok(store
-        .directory()
-        .file_name()
-        .and_then(|name| name.to_str())
-        .context("collection name missing")?
-        .into())
+    Ok(store.collection_id()?.into())
 }
 pub(crate) fn check_writer(store: &FileStore, writer: &WriterLock, quota: &Quota) -> Result<()> {
     ensure!(
@@ -248,7 +243,7 @@ pub(crate) fn check_writer(store: &FileStore, writer: &WriterLock, quota: &Quota
         "foreign collection writer guard"
     );
     ensure!(
-        store.directory().canonicalize()?
+        store.managed_path()?.logical.canonicalize()?
             == quota
                 .root()
                 .join(store.collection_namespace()?)

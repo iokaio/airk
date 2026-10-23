@@ -410,7 +410,10 @@ impl Kernel {
         let scope = CurrentScope {
             root: self.root_id(),
             collection: self.collection.clone(),
-            incarnation: incarnation()?,
+            incarnation: self
+                .store
+                .service_incarnation()?
+                .map_or_else(incarnation, Ok)?,
         };
         let graph_scope = GraphScope {
             root: scope.root.clone(),

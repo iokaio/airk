@@ -125,7 +125,13 @@ async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
     result
 }
 
-fn execute(kernel: &Kernel, kind: JobKind) -> Result<JobOutcome> {
+fn execute(
+    kernel: &Kernel,
+    kind: JobKind,
+    job: airk_core::identity::Sha256Digest,
+) -> Result<JobOutcome> {
+    let selected = kernel.refresh_service_snapshot()?;
+    let kernel = &selected;
     match kind {
         JobKind::Index | JobKind::Reconcile => {
             kernel.index()?;
@@ -153,7 +159,11 @@ fn execute(kernel: &Kernel, kind: JobKind) -> Result<JobOutcome> {
                 );
             }
         }
-        JobKind::Rebuild => anyhow::bail!("replacement build integration pending"),
+        JobKind::Rebuild => {
+            return Ok(JobOutcome::Succeeded {
+                revision: Some(kernel.rebuild_service(job)?),
+            });
+        }
     }
     Ok(JobOutcome::Succeeded {
         revision: kernel
@@ -172,7 +182,6 @@ pub async fn run() -> Result<()> {
     let registration = registry.get(init.project)?.registration;
     airk_kernel::service_projects::validate(&registration)?;
     let epoch = registry.admit_worker(&mut lease)?;
-    registry.recover_jobs(&lease)?;
     let lease = Arc::new(lease);
     ensure!(
         PROCESS_LEASE.set(lease.clone()).is_ok(),
@@ -218,6 +227,8 @@ pub async fn run() -> Result<()> {
         Some((&registration.data_root).into()),
         &registration.collection,
     )?;
+    let receipt = kernel.service_rebuild_receipt()?;
+    registry.recover_jobs_with_rebuild_receipt(&lease, receipt.as_ref())?;
     let mut broker = Broker::new(init.service, BrokerLimits::default())?;
     broker.register(
         identity,
@@ -266,7 +277,7 @@ pub async fn run() -> Result<()> {
                 continue;
             };
             job_busy.store(true, Ordering::Release);
-            let outcome = execute(&kernel, job.kind).unwrap_or(JobOutcome::Failed {
+            let outcome = execute(&kernel, job.kind, job.id).unwrap_or(JobOutcome::Failed {
                 code: "project_operation_failed".into(),
             });
             registry.complete_job(&job_lease, job.id, outcome)?;

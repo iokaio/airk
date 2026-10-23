@@ -4,7 +4,7 @@ pub mod analysis;
 pub mod collection;
 mod database;
 pub mod discovery;
-mod gate;
+pub(crate) mod gate;
 pub mod graph;
 mod journal;
 pub mod lexical;
@@ -31,6 +31,21 @@ pub use journal::{
     CurrentCommit, CurrentWriter, PendingTransaction, TransactionPhase,
 };
 pub use read::CurrentRead;
+/// Protect retained assets used by a helper without opening its project database.
+pub struct CurrentObjectLease {
+    _gate: gate::Gate,
+}
+impl crate::FileStore {
+    pub fn pin_service_objects(&self) -> anyhow::Result<CurrentObjectLease> {
+        anyhow::ensure!(
+            self.collection_namespace()? == "collections-1.4",
+            "service object lease requires service storage"
+        );
+        Ok(CurrentObjectLease {
+            _gate: gate::Gate::shared(self)?,
+        })
+    }
+}
 
 /// Idle verification observers must not pin Windows files during derived-state
 /// disposal or data-root relocation. No active request gates are released here.
@@ -206,7 +221,7 @@ impl crate::FileStore {
         let _gate = gate::Gate::shared(self)?;
         let scope = database::owned_scope(self.directory())?;
         ensure!(
-            self.directory().file_name().and_then(|n| n.to_str()) == Some(&scope.collection),
+            self.collection_id()? == scope.collection,
             "foreign current owner"
         );
         Ok(Some(scope))
@@ -225,7 +240,7 @@ impl crate::FileStore {
         );
         crate::validate_collection(collection)?;
         ensure!(
-            self.directory().file_name().and_then(|name| name.to_str()) == Some(collection),
+            self.collection_id()? == collection,
             "foreign current collection path"
         );
         if !self.directory().try_exists()? {
@@ -251,8 +266,7 @@ impl crate::FileStore {
     pub fn current_database_capacity(&self, scope: &CurrentScope) -> Result<u64> {
         scope.validate()?;
         ensure!(
-            self.directory().file_name().and_then(|name| name.to_str())
-                == Some(scope.collection.as_str()),
+            self.collection_id()? == scope.collection,
             "foreign current capacity collection"
         );
         database::check_owner(self.directory(), scope)

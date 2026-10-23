@@ -59,6 +59,12 @@ pub struct UsageView {
 }
 
 impl crate::Kernel {
+    fn usage_directory(&self) -> std::path::PathBuf {
+        self.store
+            .managed_collection_directory()
+            .unwrap_or(self.store.directory())
+            .to_path_buf()
+    }
     pub fn usage_scope(&self) -> UsageScope {
         UsageScope {
             collection: self.collection.clone(),
@@ -73,20 +79,20 @@ impl crate::Kernel {
                 ..UsagePolicy::default()
             });
         }
-        airk_store::usage::policy(self.store.directory())
+        airk_store::usage::policy(&self.usage_directory())
     }
 
     pub fn configure_usage(&self, mode: RecordingMode) -> Result<UsagePolicy> {
         self.initialize()?;
-        let mut policy = airk_store::usage::policy(self.store.directory())?;
+        let mut policy = airk_store::usage::policy(&self.usage_directory())?;
         policy.mode = mode;
-        airk_store::usage::configure(self.store.directory(), &policy)?;
+        airk_store::usage::configure(&self.usage_directory(), &policy)?;
         Ok(policy)
     }
 
     pub fn clear_usage(&self) -> Result<Value> {
         self.load()?;
-        airk_store::usage::clear(self.store.directory())?;
+        airk_store::usage::clear(&self.usage_directory())?;
         Ok(
             serde_json::json!({"cleared":true,"collection":self.collection,"source_files_preserved":true}),
         )
@@ -94,12 +100,12 @@ impl crate::Kernel {
 
     pub fn usage_feedback(&self, request_id: &str, usefulness: Usefulness) -> Result<Value> {
         airk_store::usage::validate_binding(
-            self.store.directory(),
+            &self.usage_directory(),
             &self.root_id(),
             &self.collection,
         )?;
         airk_store::usage::feedback(
-            self.store.directory(),
+            &self.usage_directory(),
             &self.usage_scope(),
             request_id,
             usefulness,
@@ -109,9 +115,9 @@ impl crate::Kernel {
 
     pub fn usage_report(&self, days: u16) -> Result<UsageView> {
         ensure!((1..=30).contains(&days), "usage report days must be 1..30");
-        if self.store.directory().exists() {
+        if self.usage_directory().exists() {
             airk_store::usage::validate_binding(
-                self.store.directory(),
+                &self.usage_directory(),
                 &self.root_id(),
                 &self.collection,
             )?;
@@ -120,7 +126,7 @@ impl crate::Kernel {
         let end = (unix_ms() / DAY_MS + 1) * DAY_MS;
         let start = end.saturating_sub(u64::from(days) * DAY_MS);
         let scope = self.usage_scope();
-        let stored = UsageStore::read(self.store.directory(), &scope, start, end)?;
+        let stored = UsageStore::read(&self.usage_directory(), &scope, start, end)?;
         let mut report = summarize(&scope, start, end, [], ByteTokenHeuristic::default())?;
         for bucket in &stored.buckets {
             report.merge(bucket)?;
@@ -176,16 +182,16 @@ impl crate::Kernel {
             Err(_) => true,
         };
         let store = if enabled
-            && self.store.directory().exists()
+            && self.usage_directory().exists()
             && airk_store::usage::validate_binding(
-                self.store.directory(),
+                &self.usage_directory(),
                 &self.root_id(),
                 &self.collection,
             )
             .is_ok()
         {
             policy.ok().and_then(|p| {
-                UsageStore::open_best_effort(self.store.directory(), &self.usage_scope(), &p)
+                UsageStore::open_best_effort(&self.usage_directory(), &self.usage_scope(), &p)
                     .ok()
                     .flatten()
             })
@@ -203,7 +209,7 @@ impl crate::Kernel {
             disk_before: if enabled
                 && matches!(operation, UsageOperation::Index | UsageOperation::Reindex)
             {
-                bounded_disk_bytes(self.store.directory())
+                bounded_disk_bytes(&self.usage_directory())
             } else {
                 None
             },
@@ -235,7 +241,7 @@ impl crate::Kernel {
                 )
             {
                 store = UsageStore::open_best_effort(
-                    self.store.directory(),
+                    &self.usage_directory(),
                     &self.usage_scope(),
                     &self.usage_policy()?,
                 )?;
@@ -324,7 +330,7 @@ impl crate::Kernel {
                 UsageOperation::Index | UsageOperation::Reindex
             ) && let Some(value) = logical
             {
-                let disk_after = bounded_disk_bytes(self.store.directory());
+                let disk_after = bounded_disk_bytes(&self.usage_directory());
                 event.index_work = Some(IndexWork {
                     indexed: value["indexed"].as_u64().unwrap_or(0),
                     reused: value["reused"].as_u64().unwrap_or(0),
@@ -690,11 +696,11 @@ impl crate::Kernel {
             "usage recording is disabled"
         );
         airk_store::usage::validate_binding(
-            self.store.directory(),
+            &self.usage_directory(),
             &self.root_id(),
             &self.collection,
         )?;
-        let store = UsageStore::open(self.store.directory(), &self.usage_scope(), &policy)?
+        let store = UsageStore::open(&self.usage_directory(), &self.usage_scope(), &policy)?
             .ok_or_else(|| anyhow::anyhow!("usage recording is disabled"))?;
         let recorded = store.record_supplement(event)?;
         Ok(

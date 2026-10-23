@@ -174,12 +174,12 @@ impl Quota {
     /// Conservative orphan discovery. The collection journal, inspected outside
     /// the ledger lock, decides whether each grant is adopted or explicitly retired.
     pub fn current_grants(&self, writer: &crate::WriterLock) -> Result<Vec<CurrentGrant>> {
-        let collection = writer
+        let directory = writer
             .path
             .parent()
-            .and_then(Path::file_name)
-            .and_then(|name| name.to_str())
             .context("invalid current grant writer")?;
+        let managed = crate::managed_collection::ManagedPath::parse(directory)?;
+        let collection = managed.collection;
         validate_writer(self, writer, collection)?;
         let _lock = self.lock()?;
         Ok(read_records(self, true, None)?
@@ -203,7 +203,8 @@ fn validate_writer(quota: &Quota, writer: &crate::WriterLock, collection: &str) 
         .join(collection);
     unlinked(&expected)?;
     ensure!(
-        writer.path.parent().context("writer has no directory")? == expected.canonicalize()?,
+        store.managed_path()?.logical.canonicalize()? == expected.canonicalize()?
+            && store.managed_path()?.collection == collection,
         "current quota grant requires its collection writer"
     );
     Ok(())

@@ -6,6 +6,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[path = "service_collection.rs"]
+pub mod collection;
 #[path = "service_registry.rs"]
 pub mod registry;
 

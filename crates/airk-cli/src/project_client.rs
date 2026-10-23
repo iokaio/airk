@@ -10,11 +10,14 @@ use anyhow::{Result, ensure};
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 pub struct Connection {
     stream: Stream,
+    authorized_until: Instant,
+    last_finished: Instant,
+    healthy: bool,
 }
 impl Connection {
     pub async fn connect(root: &Path, project: ProjectBinding) -> Result<Self> {
@@ -36,6 +39,7 @@ impl Connection {
                 && role == protocol::role(grant.identity.worker),
             "brokered worker identity mismatch"
         );
+        let setup_started = Instant::now();
         let mut stream = tokio::time::timeout(
             Duration::from_secs(5),
             local_ipc::connect(&local_ipc::endpoint(root, &role)?),
@@ -49,7 +53,17 @@ impl Connection {
             accepted.identity == grant.identity,
             "direct worker identity mismatch"
         );
-        Ok(Self { stream })
+        Ok(Self {
+            stream,
+            authorized_until: setup_started + Duration::from_secs(55),
+            last_finished: Instant::now(),
+            healthy: true,
+        })
+    }
+    fn reusable(&self, now: Instant) -> bool {
+        self.healthy
+            && now < self.authorized_until
+            && now.saturating_duration_since(self.last_finished) < Duration::from_secs(25)
     }
 
     pub async fn call(
@@ -57,17 +71,27 @@ impl Connection {
         tool: String,
         arguments: serde_json::Map<String, serde_json::Value>,
     ) -> Result<serde_json::Value> {
+        ensure!(
+            self.reusable(Instant::now()),
+            "direct connection expired before query submission; obtain fresh brokerage"
+        );
+        // A dropped async caller may leave an unread result on this stream. Mark
+        // it unusable before the first write; restore only after a complete reply.
+        self.healthy = false;
         local_ipc::write_message(
             &mut self.stream,
             &Query { tool, arguments },
             Duration::from_secs(5),
         )
         .await?;
-        local_ipc::read_message(&mut self.stream, Duration::from_secs(120))
+        let result = local_ipc::read_message(&mut self.stream, Duration::from_secs(120))
             .await?
             .ok_or_else(|| {
                 anyhow::anyhow!("project query disconnected; retry through fresh brokerage")
-            })
+            })?;
+        self.last_finished = Instant::now();
+        self.healthy = true;
+        Ok(result)
     }
 }
 
@@ -84,7 +108,11 @@ impl airk_mcp::remote::RemoteTools for Backend {
     ) -> airk_mcp::remote::RemoteFuture<'_> {
         Box::pin(async move {
             let mut connection = self.connection.lock().await;
-            if connection.is_none() {
+            if connection
+                .as_ref()
+                .is_none_or(|connection| !connection.reusable(Instant::now()))
+            {
+                *connection = None;
                 *connection = Some(Connection::connect(&self.root, self.project).await?);
             }
             let result = connection
@@ -107,4 +135,63 @@ pub async fn bridge(root: PathBuf, project: ProjectBinding) -> Result<()> {
         connection: tokio::sync::Mutex::new(None),
     }))
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn canceled_direct_exchange_is_not_reused_and_known_deadlines_precede_submission()
+    -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let root = directory.path().join("runtime");
+        local_ipc::prepare_root(&root)?;
+        let endpoint = local_ipc::endpoint(&root, "direct-client-lifetime-test")?;
+        let mut listener = local_ipc::Listener::bind(&endpoint)?;
+        let sent = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let peer_sent = sent.clone();
+        let peer_release = release.clone();
+        let peer = tokio::spawn(async move {
+            let mut stream = listener.accept().await?;
+            let query: Query = local_ipc::read_message(&mut stream, Duration::from_secs(5))
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("test query not submitted"))?;
+            ensure!(query.tool == "airk_status", "unexpected fixture request");
+            peer_sent.notify_one();
+            peer_release.notified().await;
+            let _ = local_ipc::write_message(
+                &mut stream,
+                &serde_json::json!({"fixture":"complete"}),
+                Duration::from_secs(5),
+            )
+            .await;
+            Ok::<_, anyhow::Error>(())
+        });
+        let stream = local_ipc::connect(&endpoint).await?;
+        let now = Instant::now();
+        let mut connection = Connection {
+            stream,
+            authorized_until: now + Duration::from_secs(55),
+            last_finished: now,
+            healthy: true,
+        };
+        assert!(connection.reusable(now + Duration::from_secs(24)));
+        assert!(!connection.reusable(now + Duration::from_secs(25)));
+        assert!(!connection.reusable(now + Duration::from_secs(56)));
+        {
+            let request = connection.call("airk_status".into(), Default::default());
+            tokio::pin!(request);
+            tokio::select! {
+                _=sent.notified()=>{},
+                result=&mut request=>anyhow::bail!("fixture exchange completed before cancellation: {result:?}"),
+            }
+        }
+        assert!(!connection.reusable(Instant::now()));
+        drop(connection);
+        release.notify_one();
+        peer.await??;
+        Ok(())
+    }
 }

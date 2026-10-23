@@ -666,8 +666,7 @@ impl FileStore {
         database::validate_capacity(database_capacity_bytes)?;
         crate::maintenance::check_writer(self, writer, quota)?;
         ensure!(
-            self.directory().file_name().and_then(|name| name.to_str())
-                == Some(scope.collection.as_str()),
+            self.collection_id()? == scope.collection,
             "foreign current writer collection"
         );
         let service_publication = super::wal::enabled(self.directory());
@@ -2153,11 +2152,17 @@ impl CurrentWriter<'_> {
         ensure!(
             grants
                 .iter()
-                .all(|grant| grant.scope().incarnation == self.scope.incarnation),
+                .all(|grant| grant.scope().incarnation == self.scope.incarnation
+                    || super::wal::enabled(self.store.directory())),
             "foreign current recovery capacity grant"
         );
         let mut released = 0;
         for grant in grants {
+            if super::wal::enabled(self.store.directory())
+                && grant.scope().incarnation != self.scope.incarnation
+            {
+                continue;
+            }
             if super::wal::enabled(self.store.directory())
                 && grant.scope().transaction == super::wal::id(&self.scope)
             {

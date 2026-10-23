@@ -33,6 +33,7 @@ pub mod scheduler;
 pub mod service;
 pub mod service_broker;
 pub mod service_projects;
+mod service_publication;
 pub mod storage;
 #[cfg(feature = "local-inference")]
 mod tokenization;
@@ -56,6 +57,8 @@ pub struct Kernel {
     collection: String,
     data_root: PathBuf,
     store: FileStore,
+    service_collection: Option<airk_store::service::collection::Collection>,
+    service_selection: Option<Arc<airk_store::service::collection::Selection>>,
 }
 
 type ProgressObserver = Arc<dyn Fn(&airk_core::readiness::IndexProgress) + Send + Sync>;
@@ -233,20 +236,32 @@ impl Kernel {
                 "data directory must not contain the workspace root"
             );
         }
+        let service_collection = if service {
+            std::fs::create_dir_all(&directory)?;
+            let collection = airk_store::service::collection::Collection::initialize(
+                &directory,
+                root.to_str().context("non-UTF-8 workspace")?,
+                collection,
+                service_broker::new_instance_id()?,
+            )?;
+            collection.recover_abandoned_replacement()?;
+            Some(collection)
+        } else {
+            None
+        };
+        let store = if let Some(collection) = &service_collection {
+            collection.selected_store()?
+        } else {
+            FileStore::new(directory.join("collections-1.2").join(collection))
+        };
         let kernel = Self {
             progress: None,
             root,
             collection: collection.into(),
             data_root: directory.clone(),
-            store: FileStore::new(
-                directory
-                    .join(if service {
-                        "collections-1.4"
-                    } else {
-                        "collections-1.2"
-                    })
-                    .join(collection),
-            ),
+            store,
+            service_collection,
+            service_selection: None,
         };
         if recover {
             kernel.recover_runtime_bootstrap()?;

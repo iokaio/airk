@@ -121,8 +121,8 @@ pub fn open_selected_lexical<'a>(
     read: &'a CurrentRead,
 ) -> Result<VerifiedCurrentLexical<'a>> {
     ensure!(
-        store.directory().file_name().and_then(|name| name.to_str())
-            == Some(read.head().scope.collection.as_str()),
+        store.current_scope(&read.head().scope.root, &read.head().scope.collection)?
+            == Some(read.head().scope.clone()),
         "foreign selected current lexical collection"
     );
     read.verify_lexical()?;

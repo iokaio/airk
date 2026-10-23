@@ -47,6 +47,7 @@ struct Engine {
     owners: BTreeMap<Incarnation, Weak<AtomicBool>>,
     sessions: BTreeMap<(Incarnation, Incarnation), Session>,
     model: Option<EmbeddingModel>,
+    model_lease: Option<airk_store::current::CurrentObjectLease>,
     model_key: Option<Sha256Digest>,
     tokenizer: Option<airk_kernel::usage::OfflineTokenizer>,
     tokenizer_path: Option<PathBuf>,
@@ -78,17 +79,19 @@ fn location_key(
             objects,
         } => {
             ensure!(
-                collection.canonicalize()?
-                    == data
-                        .join("collections-1.4")
-                        .join(&project.collection)
-                        .canonicalize()?,
+                airk_store::service::collection::validate_location(
+                    collection,
+                    data,
+                    &project.collection
+                )
+                .is_ok(),
                 "model objects are outside admitted collection"
             );
             ensure!(
                 objects.legacy_identity == identity,
                 "retained model identity mismatch"
             );
+            let _lease = airk_store::FileStore::new(collection).pin_service_objects()?;
             model::inspect_objects_cache_descriptor(collection, objects)?.identity()
         }
     }
@@ -100,6 +103,7 @@ impl Engine {
             owners: BTreeMap::new(),
             sessions: BTreeMap::new(),
             model: None,
+            model_lease: None,
             model_key: None,
             tokenizer: None,
             tokenizer_path: None,
@@ -140,7 +144,14 @@ impl Engine {
         }
         // Retire incompatible inference state before allocating its replacement.
         self.model = None;
+        self.model_lease = None;
         self.model_key = None;
+        let lease = match location {
+            ModelLocation::Retained { collection, .. } => {
+                Some(airk_store::FileStore::new(collection).pin_service_objects()?)
+            }
+            ModelLocation::Directory { .. } => None,
+        };
         super::handle(
             Request::Open {
                 protocol: PROTOCOL,
@@ -152,6 +163,7 @@ impl Engine {
             &mut None,
         )?;
         self.model_key = Some(*key);
+        self.model_lease = lease;
         self.loads = self.loads.saturating_add(1);
         Ok(())
     }
@@ -446,6 +458,7 @@ pub async fn run() -> Result<()> {
                             && engine.used.elapsed() > Duration::from_secs(60)
                         {
                             engine.model = None;
+                            engine.model_lease = None;
                             engine.model_key = None;
                             engine.tokenizer = None;
                             engine.tokenizer_path = None;

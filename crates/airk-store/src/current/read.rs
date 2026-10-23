@@ -264,8 +264,7 @@ impl FileStore {
     pub fn current_read(&self, scope: &CurrentScope) -> Result<Arc<CurrentRead>> {
         scope.validate()?;
         ensure!(
-            self.directory().file_name().and_then(|name| name.to_str())
-                == Some(scope.collection.as_str()),
+            self.collection_id()? == scope.collection,
             "foreign current collection path"
         );
         let gate = Gate::shared(self)?;
@@ -275,11 +274,7 @@ impl FileStore {
         self.ensure_index_ready()?;
         let capacity = database::check_owner(self.directory(), scope)?;
         if super::wal::enabled(self.directory()) {
-            let root = self
-                .directory()
-                .parent()
-                .and_then(std::path::Path::parent)
-                .context("service data root missing")?;
+            let root = self.managed_path()?.root;
             crate::quota::Quota::open(root)?.verify_current_allowance(
                 &crate::quota::CurrentGrantScope {
                     collection: scope.collection.clone(),

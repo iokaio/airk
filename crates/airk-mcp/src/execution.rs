@@ -141,6 +141,10 @@ impl AirkServer {
         let client = self.client;
         tokio::task::spawn_blocking(move || {
             let _permit = permit;
+            let kernel = match kernel.refresh_service_snapshot() {
+                Ok(kernel) => kernel,
+                Err(_) => return error("AIRK collection selection is busy or unavailable; retry against the current revision"),
+            };
             let span = kernel.usage_span(operation, client);
             let result =
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| work(kernel.clone())))

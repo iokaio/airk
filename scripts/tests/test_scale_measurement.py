@@ -15,9 +15,14 @@ SPEC.loader.exec_module(BENCHMARK)
 class ScaleMeasurementTests(unittest.TestCase):
     def test_child_resources_are_observed_without_a_usage_ledger(self):
         with tempfile.TemporaryDirectory() as directory:
+            # Generate measurable CPU work as well as an RSS sampling window;
+            # sleeping alone does not guarantee a nonzero process CPU sample.
             response, metrics = BENCHMARK.measured(
-                [sys.executable, "-c", "import json,time; values=list(range(100000)); time.sleep(0.12); print(json.dumps({'sum':sum(values)}))"],
-                Path(directory), "child")
+                [sys.executable, "-c", "import json,time\nvalues=list(range(100000))\n"
+                 "deadline=time.process_time()+0.06\n"
+                 "while time.process_time()<deadline:\n    sum(values)\n"
+                 "time.sleep(0.12)\nprint(json.dumps({'sum':sum(values)}))"],
+                Path(directory), "child", timeout=10)
             self.assertEqual(response, {"sum": 4_999_950_000})
             self.assertEqual(metrics["exit_code"], 0)
             self.assertGreater(metrics["wall_ms"], 0)

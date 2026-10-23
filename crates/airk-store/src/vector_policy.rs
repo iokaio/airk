@@ -97,17 +97,14 @@ impl FileStore {
             writer.path == directory.join("writer.lock"),
             "foreign vector policy writer"
         );
-        let collection = directory
-            .file_name()
-            .and_then(|name| name.to_str())
-            .ok_or_else(|| anyhow::anyhow!("invalid policy collection"))?;
+        let collection = self.collection_id()?;
         ensure!(
             quota
                 .root()
-                .join("collections-1.2")
+                .join(self.collection_namespace()?)
                 .join(collection)
                 .canonicalize()?
-                == directory,
+                == self.managed_path()?.logical.canonicalize()?,
             "foreign vector policy quota"
         );
         self.owned_policy_bytes(owner_root, name)?;

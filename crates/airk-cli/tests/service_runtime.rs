@@ -380,7 +380,7 @@ fn racing_launchers_elect_one_service_and_restart_changes_instance_without_proje
     );
     assert!(root.join("instance-1.4.lock").is_file());
     assert!(
-        !root.join("collections-1.2").exists(),
+        !root.join("collections-1.2").exists() && !root.join("collections-1.4").exists(),
         "health must not open collection state"
     );
     Ok(())
@@ -438,13 +438,19 @@ fn supervised_jobs_and_direct_queries_preserve_grants_and_stop_on_service_loss()
             anyhow::bail!("index job not accepted")
         };
         let deadline = Instant::now() + Duration::from_secs(30);
-        loop {
+        let indexed_revision = loop {
             let Response::Job { job: observation } = request(Method::Job { id: job.id }).await?
             else {
                 anyhow::bail!("job inspection failed")
             };
             if observation.state == JobState::Succeeded {
-                break;
+                let Some(airk_core::service::JobOutcome::Succeeded {
+                    revision: Some(revision),
+                }) = observation.outcome
+                else {
+                    anyhow::bail!("index completion lost its revision")
+                };
+                break revision;
             }
             ensure!(
                 observation.state != JobState::Failed,
@@ -453,7 +459,7 @@ fn supervised_jobs_and_direct_queries_preserve_grants_and_stop_on_service_loss()
             );
             ensure!(Instant::now() < deadline, "native job did not finish");
             tokio::time::sleep(Duration::from_millis(100)).await;
-        }
+        };
         let Response::Connection { role, grant } = request(Method::Connect {
             project: project.binding,
         })
@@ -508,6 +514,53 @@ fn supervised_jobs_and_direct_queries_preserve_grants_and_stop_on_service_loss()
             "direct response lost original citation"
         );
         probe_stdio_bridge(&root, project.binding)?;
+        let Response::Job { job: rebuild } = request(Method::Enqueue {
+            project: project.binding,
+            caller,
+            key: RequestKey {
+                namespace,
+                epoch,
+                nonce: airk_kernel::service_broker::new_instance_id()?,
+            },
+            kind: JobKind::Rebuild,
+        })
+        .await?
+        else {
+            anyhow::bail!("replacement job was not accepted")
+        };
+        let until = Instant::now() + Duration::from_secs(30);
+        loop {
+            let Response::Job { job } = request(Method::Job { id: rebuild.id }).await? else {
+                anyhow::bail!("replacement job disappeared")
+            };
+            if job.state == JobState::Succeeded {
+                let Some(airk_core::service::JobOutcome::Succeeded {
+                    revision: Some(revision),
+                }) = job.outcome
+                else {
+                    anyhow::bail!("replacement lost revision receipt")
+                };
+                ensure!(
+                    revision.incarnation != indexed_revision.incarnation,
+                    "replacement reused its old incarnation"
+                );
+                break;
+            }
+            ensure!(
+                job.state != JobState::Failed && Instant::now() < until,
+                "replacement did not complete: {:?}",
+                job.outcome
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        let replaced = connection
+            .call("airk_search".into(), arguments.clone())
+            .await?;
+        ensure!(
+            replaced.get("isError").and_then(Value::as_bool) != Some(true)
+                && replaced.to_string().contains("original.txt"),
+            "existing direct client did not select the replacement incarnation"
+        );
         // Retrieval-only connections expose neither management nor mutation tools.
         let result = connection
             .call("service_shutdown".into(), Default::default())

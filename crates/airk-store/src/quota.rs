@@ -859,7 +859,7 @@ impl Reservation {
             .join(&self.0.collection);
         unlinked(&expected)?;
         ensure!(
-            expected.canonicalize()? == directory.canonicalize()?,
+            expected.canonicalize()? == store.managed_path()?.logical.canonicalize()?,
             "quota reservation belongs to another collection"
         );
         Ok(())

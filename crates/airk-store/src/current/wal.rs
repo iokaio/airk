@@ -17,10 +17,8 @@ pub(super) const SHM_BYTES: u64 = 128 << 10;
 const SLACK: u64 = 3 * 65536;
 
 pub(super) fn enabled(directory: &Path) -> bool {
-    directory
-        .parent()
-        .and_then(Path::file_name)
-        .is_some_and(|name| name == "collections-1.4")
+    crate::managed_collection::ManagedPath::parse(directory)
+        .is_ok_and(|path| path.namespace == "collections-1.4")
 }
 pub(super) fn id(scope: &CurrentScope) -> Sha256Digest {
     framed_digest(
@@ -53,6 +51,7 @@ pub(super) fn validate_files(directory: &Path, capacity: u64) -> Result<()> {
             metadata.is_file() && !metadata.file_type().is_symlink() && metadata.len() <= limit,
             "invalid or unadmitted service database file: {name}"
         );
+        crate::managed_collection::reject_file_aliases(&path, &metadata)?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;

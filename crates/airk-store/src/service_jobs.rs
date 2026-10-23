@@ -263,10 +263,28 @@ impl ServiceRegistry {
     /// Call only after acquiring the project lease and persisting its new fencing generation.
     /// Pure reconciliation may retry; interrupted rebuilds require explicit recovery planning.
     pub fn recover_jobs(&mut self, lease: &ProjectLease) -> Result<()> {
+        self.recover_jobs_with_rebuild_receipt(lease, None)
+    }
+    pub fn recover_jobs_with_rebuild_receipt(
+        &mut self,
+        lease: &ProjectLease,
+        receipt: Option<&crate::service::collection::RebuildReceipt>,
+    ) -> Result<()> {
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let epoch = worker_epoch(&transaction, &self.root, lease)?;
+        if let Some(receipt) = receipt {
+            let outcome = serde_json::to_vec(&JobOutcome::Succeeded {
+                revision: Some(airk_core::identity::RevisionToken {
+                    incarnation: receipt.token.incarnation,
+                    generation: receipt.token.sequence,
+                    revision: receipt.token.digest,
+                }),
+            })?;
+            transaction.execute("UPDATE service_jobs SET state='succeeded',outcome=?1 WHERE id=?2 AND project=?3 AND kind='rebuild' AND state='running' AND epoch<>?4",
+                params![outcome,receipt.job.to_string(),lease.binding.to_string(),i64::try_from(epoch)?])?;
+        }
         let failed = serde_json::to_vec(&JobOutcome::Failed {
             code: "interrupted_maintenance_or_retry_exhausted".into(),
         })?;
@@ -601,6 +619,50 @@ mod tests {
         assert!(registry.claim_job(&lease)?.is_none());
         registry.pause(project.binding, false)?;
         assert!(registry.claim_job(&lease)?.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn matching_rebuild_switch_receipt_recovers_success_without_replaying_live_or_foreign_work()
+    -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let caller = Incarnation::from_bytes([7; 16]);
+        let mut registry = ServiceRegistry::open(root.path(), caller)?;
+        let project =
+            ProjectRegistration::new("/source".into(), "/state".into(), "fixture".into())?;
+        registry.register(&project)?;
+        let (namespace, epoch) = registry.request_epoch()?;
+        let key = RequestKey {
+            namespace,
+            epoch,
+            nonce: caller,
+        };
+        let job = registry.enqueue(project.binding, caller, &key, JobKind::Rebuild)?;
+        let mut lease = ProjectLease::acquire(root.path(), project.binding)?;
+        registry.admit_worker(&mut lease)?;
+        registry.claim_job(&lease)?;
+        let receipt = crate::service::collection::RebuildReceipt {
+            job: job.id,
+            token: crate::current::CurrentToken {
+                incarnation: Incarnation::from_bytes([8; 16]),
+                sequence: 3,
+                digest: Sha256Digest::from_bytes([9; 32]),
+            },
+        };
+        registry.recover_jobs_with_rebuild_receipt(&lease, Some(&receipt))?;
+        assert_eq!(registry.job(job.id)?.state, JobState::Running);
+        drop(lease);
+        let mut replacement = ProjectLease::acquire(root.path(), project.binding)?;
+        registry.admit_worker(&mut replacement)?;
+        registry.recover_jobs_with_rebuild_receipt(&replacement, Some(&receipt))?;
+        assert_eq!(registry.job(job.id)?.state, JobState::Succeeded);
+        assert!(registry.claim_job(&replacement)?.is_none());
+        assert_eq!(
+            registry
+                .enqueue(project.binding, caller, &key, JobKind::Rebuild)?
+                .id,
+            job.id
+        );
         Ok(())
     }
 }
