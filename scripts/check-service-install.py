@@ -40,9 +40,11 @@ def main():
             raise RuntimeError(result.stderr[-4096:])
         return result.stdout.strip() if raw else json.loads(result.stdout)
 
-    with tempfile.TemporaryDirectory(prefix="airk-install-original-fixture-", dir=Path(__file__).resolve().parents[1] / "target") as temporary:
+    with tempfile.TemporaryDirectory(prefix="airk install original café fixture-", dir=Path(__file__).resolve().parents[1] / "target") as temporary:
         fixture = Path(temporary)
         install = fixture / "install"
+        state = fixture / "service-state"
+        control = state / "control"
         user_data = fixture / "project-data"
         user_data.mkdir()
         original = b"Original project data must survive runtime uninstall.\n"
@@ -53,7 +55,8 @@ def main():
 
         def stage(source, approved):
             return run("stage", "--source", source, "--install-dir", install,
-                       "--approved-sha256", approved, "--verification-basis", "organization-digest")
+                       "--approved-sha256", approved, "--verification-basis", "organization-digest",
+                       "--state-dir", state)
 
         try:
             run("stage", "--source", payload, "--install-dir", install,
@@ -76,6 +79,10 @@ def main():
             if run("ensure", "--install-dir", install)["instance"] != health["instance"]:
                 raise RuntimeError("Idempotent ensure launched another instance")
             inspection = run("inspect", "--install-dir", install)
+            if Path(inspection["control_dir"]).resolve() != control.resolve() or (install / "control").exists():
+                raise RuntimeError("Service state was not isolated from executable installation")
+            state_owner = state / "airk-state-1.4.owner.json"
+            state_owner_digest = sha256(state_owner)
             launcher = Path(inspection["launcher"])
             actual = invoke(launcher, "runtime", "launch", "--install-dir", install,
                             "--", "--version", raw=True)
@@ -89,7 +96,7 @@ def main():
             run("repair-launcher", "--install-dir", install, rejected=True)
             if sha256(launcher) != before_launcher or (install / "launcher-repair.json").exists():
                 raise RuntimeError("Live-owner repair changed launcher state")
-            invoke(binary, "service", "shutdown", "--runtime-dir", install / "control")
+            invoke(binary, "service", "shutdown", "--runtime-dir", control)
             until = time.monotonic() + 30
             while True:
                 try:
@@ -113,6 +120,39 @@ def main():
                             "--", "--version", raw=True)
             if actual != f"airk {version}":
                 raise RuntimeError("Repaired launcher lost argument forwarding")
+            print("Checking continuous foreground dispatch through the repaired launcher...", flush=True)
+            foreground = subprocess.Popen([str(launcher), "runtime", "foreground", "--install-dir", str(install)],
+                                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                          stderr=subprocess.DEVNULL, env=environment, creationflags=flags)
+            try:
+                until = time.monotonic() + 90
+                while True:
+                    if foreground.poll() is not None:
+                        raise RuntimeError("Foreground launcher exited before native health")
+                    try:
+                        observed = invoke(binary, "service", "health", "--runtime-dir", control)
+                        if observed.get("observation", {}).get("runtime_sha256") == identity:
+                            break
+                    except RuntimeError:
+                        pass
+                    if time.monotonic() >= until:
+                        raise RuntimeError("Foreground dispatch did not use the pinned writable-state namespace")
+                    time.sleep(0.1)
+                if (install / "control").exists():
+                    raise RuntimeError("Foreground dispatch recreated legacy install-root state")
+                invoke(binary, "service", "shutdown", "--runtime-dir", control)
+                if foreground.wait(timeout=30):
+                    raise RuntimeError("Foreground launcher did not preserve clean service exit")
+            finally:
+                if foreground.poll() is None:
+                    subprocess.run([str(binary), "service", "shutdown", "--runtime-dir", str(control)],
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                   timeout=30, env=environment, creationflags=flags)
+                    try:
+                        foreground.wait(timeout=30)
+                    except subprocess.TimeoutExpired:
+                        foreground.kill()
+                        foreground.wait(timeout=30)
             health = run("ensure", "--install-dir", install)
             # A legal-payload change deliberately retains identical native executable
             # hashes. Health must still distinguish these approved installation identities.
@@ -154,12 +194,14 @@ def main():
                 raise RuntimeError("Owned uninstall did not resume after the unknown file was removed")
             if (user_data / "sentinel").read_bytes() != original:
                 raise RuntimeError("Runtime uninstall changed project data")
+            if not control.is_dir() or sha256(state_owner) != state_owner_digest:
+                raise RuntimeError("Runtime uninstall removed durable service state or ownership")
             print("Offline runtime staging, election, exact payload health, upgrade, rollback, stable launcher repair, and resumable uninstall passed.")
         finally:
             # Never operate on an installed user service: this exact private control
             # namespace belongs to the temporary fixture above.
-            if (install / "control").exists():
-                subprocess.run([str(binary), "service", "shutdown", "--runtime-dir", str(install / "control")],
+            if control.exists():
+                subprocess.run([str(binary), "service", "shutdown", "--runtime-dir", str(control)],
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                timeout=30, env=environment, creationflags=flags)
 

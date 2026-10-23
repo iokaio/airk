@@ -2,11 +2,12 @@
 //! Native user identity selects defaults; XDG locations remain explicit user environment policy.
 use anyhow::{Context, Result, ensure};
 use serde::Serialize;
-#[cfg(any(target_os = "linux", test))]
-use std::path::Path;
-use std::{ffi::OsString, path::PathBuf};
+use std::{
+    ffi::OsString,
+    path::{Path, PathBuf},
+};
 
-#[derive(Clone, Copy, Debug, clap::ValueEnum, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum, Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Channel {
     Stable,
@@ -41,6 +42,36 @@ fn checked(path: PathBuf) -> Result<PathBuf> {
         "invalid native user directory"
     );
     Ok(path)
+}
+
+pub(crate) fn canonical_location(path: &Path) -> Result<PathBuf> {
+    checked(path.to_path_buf())?;
+    ensure!(
+        !path
+            .components()
+            .any(|part| matches!(part, std::path::Component::ParentDir)),
+        "parent traversal is not a native location"
+    );
+    let mut parent = path.to_path_buf();
+    let mut suffix = Vec::new();
+    while !parent.try_exists()? {
+        suffix.push(
+            parent
+                .file_name()
+                .context("missing native location ancestor")?
+                .to_owned(),
+        );
+        ensure!(parent.pop(), "missing native location ancestor");
+    }
+    ensure!(
+        parent.is_dir(),
+        "native location ancestor must be a directory"
+    );
+    let mut resolved = parent.canonicalize()?;
+    for part in suffix.into_iter().rev() {
+        resolved.push(part);
+    }
+    checked(resolved)
 }
 
 #[cfg(windows)]

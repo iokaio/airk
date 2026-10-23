@@ -445,7 +445,14 @@ impl ServiceManager {
 
     fn check_launchable(&self) -> Result<()> {
         if self.id.starts_with("airksvc-") {
-            crate::runtime_install::verified_launcher(Path::new(&self.data))?;
+            let root = Path::new(&self.data);
+            let launcher = crate::runtime_install::verified_launcher(root)?;
+            let (_, selected, _) = crate::runtime_install::selected(root)?;
+            ensure!(
+                crate::runtime_pair::digest_file(&launcher)?
+                    == crate::runtime_pair::digest_file(&selected)?,
+                "login startup requires the selected runtime's launcher; stop owners and run repair-launcher before starting it"
+            );
         }
         Ok(())
     }

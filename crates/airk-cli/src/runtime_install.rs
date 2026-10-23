@@ -20,6 +20,8 @@ use std::{
 
 #[path = "runtime_launcher_repair.rs"]
 mod launcher_repair;
+#[path = "runtime_layout.rs"]
+mod layout;
 #[path = "runtime_retirement.rs"]
 mod retirement;
 #[path = "runtime_staging.rs"]
@@ -66,6 +68,16 @@ pub enum RuntimeCommand {
         approved_sha256: String,
         #[arg(long, value_enum)]
         verification_basis: VerificationBasis,
+        /// Writable service state; defaults to native state for a native install, otherwise this install root.
+        #[arg(long)]
+        state_dir: Option<PathBuf>,
+        #[arg(long, value_enum, default_value = "stable")]
+        channel: RuntimeChannel,
+    },
+    /// Abandon an unfinished state-layout claim; preserve all state directories and their contents.
+    AbortLayout {
+        #[arg(long)]
+        install_dir: PathBuf,
     },
     /// Drain the selected service and select a staged runtime only after native health succeeds.
     Activate {
@@ -735,7 +747,7 @@ fn hidden(command: &mut Command) {
 
 async fn health(root: &Path, approval: &Approval, expected_sha256: &str) -> Result<ServiceHealth> {
     let response = service_runtime::request_for_version(
-        &root.join("control"),
+        &layout::control(root)?,
         ControlMethod::Health,
         &approval.version,
     )
@@ -761,7 +773,7 @@ async fn start(
     main: &Path,
     enforce_backoff: bool,
 ) -> Result<ServiceHealth> {
-    let control = root.join("control");
+    let control = layout::control(root)?;
     local_ipc::prepare_root(&control)?;
     let expected_sha256 = runtime_pair::digest_file(main)?;
     if let Ok(observation) = health(root, approval, &expected_sha256).await {
@@ -866,7 +878,7 @@ pub async fn ensure_running(root: &Path) -> Result<ServiceHealth> {
 }
 
 async fn drain(root: &Path, main: &Path, approval: &Approval) -> Result<()> {
-    let control = root.join("control");
+    let control = layout::control(root)?;
     if !control.try_exists()? {
         return Ok(());
     }
@@ -910,7 +922,7 @@ struct Quiescence {
 }
 
 fn quiescent(root: &Path) -> Result<Quiescence> {
-    let control = root.join("control");
+    let control = layout::control(root)?;
     let service = airk_store::service::ServiceLease::acquire(&control)?;
     let registry = airk_store::service::registry::ServiceRegistry::open(
         &control,

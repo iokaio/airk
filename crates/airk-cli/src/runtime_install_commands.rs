@@ -41,11 +41,22 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
         RuntimeCommand::Foreground { install_dir } => {
             launcher_repair::require_settled(install_dir)?;
             let (_, executable, _) = selected(install_dir)?;
+            if std::env::current_exe()?.canonicalize()? != executable.canonicalize()? {
+                // A stable launcher must use the selected runtime's lifecycle
+                // implementation, including its state layout and upgrade intent.
+                let mut command = Command::new(executable);
+                command
+                    .arg("runtime")
+                    .arg("foreground")
+                    .arg("--install-dir")
+                    .arg(install_dir);
+                return forward(command);
+            }
             let mut command = Command::new(executable);
             command
                 .arg("serve")
                 .arg("--runtime-dir")
-                .arg(install_dir.join("control"));
+                .arg(layout::control(install_dir)?);
             return forward(command);
         }
         RuntimeCommand::Stage {
@@ -53,12 +64,21 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
             install_dir,
             approved_sha256,
             verification_basis,
-        } => serde_json::to_value(stage(
+            state_dir,
+            channel,
+        } => serde_json::to_value(staging::stage_with_layout(
             source,
             install_dir,
             approved_sha256,
             *verification_basis,
+            state_dir.as_deref(),
+            *channel,
         )?)?,
+        RuntimeCommand::AbortLayout { install_dir } => {
+            let _lock = install_lock(install_dir)?;
+            layout::abort(install_dir)?;
+            serde_json::json!({"pending_layout_aborted":true,"state_preserved":true})
+        }
         RuntimeCommand::Activate {
             install_dir,
             runtime_sha256,
@@ -68,7 +88,12 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
         }
         RuntimeCommand::Inspect { install_dir } => {
             let (selection, executable, approval) = selected(install_dir)?;
-            serde_json::json!({"selection":selection,"executable":executable,"approval":approval,"launcher":launcher_path(install_dir)})
+            let control = layout::control(install_dir);
+            let state_error = control
+                .as_ref()
+                .err()
+                .map(|error| error.to_string().chars().take(512).collect::<String>());
+            serde_json::json!({"selection":selection,"executable":executable,"approval":approval,"launcher":launcher_path(install_dir),"control_dir":control.ok(),"state_error":state_error})
         }
         RuntimeCommand::Remove {
             install_dir,
@@ -147,7 +172,12 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
                 .as_ref()
                 .err()
                 .map(|error| error.to_string().chars().take(512).collect::<String>());
-            serde_json::json!({"runtime":selection.ok(),"runtime_error":selection_error,"bootstrap":bootstrap.ok().flatten(),"bootstrap_error":bootstrap_error,"pending_stages":stages.ok(),"staging_error":stages_error,"pending_launcher_repair":repair.ok().flatten(),"launcher_repair_error":repair_error,"live_service_health":"not_checked"})
+            let state_layout = layout::inspect(install_dir);
+            let layout_error = state_layout
+                .as_ref()
+                .err()
+                .map(|error| error.to_string().chars().take(512).collect::<String>());
+            serde_json::json!({"runtime":selection.ok(),"runtime_error":selection_error,"bootstrap":bootstrap.ok().flatten(),"bootstrap_error":bootstrap_error,"pending_stages":stages.ok(),"staging_error":stages_error,"pending_launcher_repair":repair.ok().flatten(),"launcher_repair_error":repair_error,"state_layout":state_layout.ok(),"layout_error":layout_error,"live_service_health":"not_checked"})
         }
         RuntimeCommand::ResetStartup { install_dir } => {
             let _lock = install_lock(install_dir)?;

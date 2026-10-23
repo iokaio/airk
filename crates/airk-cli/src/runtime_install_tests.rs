@@ -163,6 +163,7 @@ fn failed_native_self_test_preserves_selection_and_never_publishes_staging() -> 
     let approved = fixture(&source)?;
     let root = owner.path().join("install");
     local_ipc::prepare_root(&root)?;
+    layout::initialize(&root, Some(&root), RuntimeChannel::Stable)?;
     fs::write(root.join("selected.json"), b"Prior selection fixture.")?;
     // Inert bytes cannot pass the native executable self-test on any host.
     assert!(

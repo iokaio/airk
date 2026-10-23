@@ -8,7 +8,7 @@ The [1.3.0 release](release-1.3.0.md) retires the former `airk_history` MCP endp
 
 - [Architecture and code boundaries](architecture.md)
 - [Proposed AIRK 1.4.0 local service architecture and implementation plan](airkservice-architecture.md)
-- [Offline service installation, resumable launcher repair, registered-manager proof and lifecycle](service-installation.md)
+- [Offline service installation, writable state, launcher repair and startup ownership](service-installation.md)
 - [Service implementation completion checklist](service-implementation-checklist.md)
 - [Service publication, disk admission and bounded readers](service-publication.md)
 - [Service worker ownership and durable job storage contract](service-jobs.md)

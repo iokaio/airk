@@ -279,6 +279,17 @@ pub(super) fn stage(
     approved: &str,
     basis: VerificationBasis,
 ) -> Result<Approval> {
+    stage_with_layout(source, root, approved, basis, None, RuntimeChannel::Stable)
+}
+
+pub(super) fn stage_with_layout(
+    source: &Path,
+    root: &Path,
+    approved: &str,
+    basis: VerificationBasis,
+    state: Option<&Path>,
+    channel: RuntimeChannel,
+) -> Result<Approval> {
     let _lock = install_lock(root)?;
     ensure!(
         !root.join("uninstall.json").try_exists()?,
@@ -286,6 +297,7 @@ pub(super) fn stage(
     );
     let source = source.canonicalize()?;
     let (bytes, inventory) = manifest(&source, approved)?;
+    layout::initialize(root, state, channel)?;
     let runtimes = root.join("runtimes");
     local_ipc::prepare_root(&runtimes)?;
     let destination = runtimes.join(approved);
