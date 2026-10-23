@@ -18,6 +18,8 @@ Qualification follow-up: one earlier broad Windows run reported an intermittent 
 
 Missing-source integration: native workers now serve existing ownership-matched retained evidence after a registered root disappears, report source availability separately and reject new scans/rebuilds with `source_unavailable`. The console still needs to present these native observations.
 
+Inspection integration: explicit bounded read-only jobs now capture revision/settings guards and content-free readiness summaries, with fenced persistent observations and explicit cached reads. Idle paused projects can be inspected without resuming their source jobs. Maintenance-plan execution and console presentation remain open.
+
 Source-isolation integration: registrations and fenced additional-root updates now serialize overlap checks against all registered data, control and verified installer-private paths. Workers validate pending source configuration before capture. Windows/Linux process regressions preserve committed evidence and private bytes on rejection; new cache/log locations introduced at cutover must join these protections.
 - [ ] Phase 7: default extension, CLI, container and read-only MCP cutover; fresh 1.4 namespace, old-helper rejection and explicit legacy agent configuration review; no direct-store fallback or service payload forwarding. Audit separate 1.4 quota/lifecycle metadata ownership as well as collection filenames, so legacy-root cleanup cannot release service allowances.
 - [ ] Phase 8: synchronized native/extension/lockfile 1.4.0 versions, exact artifact receipts, repository/native/extension checks, workload and installed-platform matrix, review and release documentation.

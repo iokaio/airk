@@ -32,6 +32,7 @@ pub mod roots;
 pub mod scheduler;
 pub mod service_broker;
 pub mod service_execution;
+pub mod service_inspection;
 pub mod service_projects;
 mod service_publication;
 pub mod service_resource_observations;

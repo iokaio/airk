@@ -258,6 +258,31 @@ fn missing_registered_source_still_brokers_retained_evidence_and_reports_a_typed
         ensure!(found_retry, "explicit retry lost its durable event");
         ensure!(matches!(request(Method::Events { project: Some(project.binding),cursor:None,limit:0 }).await?,
             Response::Failure { code } if code=="invalid_event_page_limit"),"event page rejection lost its typed reason");
+        let Response::Job {job:inspection}=request(Method::Enqueue {
+            project:project.binding, caller:airk_kernel::service_broker::new_instance_id()?,
+            key:RequestKey {namespace,epoch,nonce:airk_kernel::service_broker::new_instance_id()?},
+            kind:JobKind::Inspect,
+        }).await? else { anyhow::bail!("read-only inspection was not accepted") };
+        let until=tokio::time::Instant::now()+Duration::from_secs(30);
+        loop {
+            let Response::Job {job:observed}=request(Method::Job{id:inspection.id}).await? else {anyhow::bail!("inspection receipt missing")};
+            if let Some(outcome)=observed.outcome {
+                ensure!(matches!(outcome,JobOutcome::Succeeded{revision:Some(found)} if found==token),
+                    "missing-source inspection did not preserve its exact readable revision");
+                break;
+            }
+            ensure!(tokio::time::Instant::now()<until,"paused-project inspection did not settle");
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        let Response::Inspection {observation:Some(observation),cached:true,..}=request(Method::Inspection{project:project.binding}).await?
+            else {anyhow::bail!("cached inspection unavailable")};
+        ensure!(observation.snapshot.publication==Some(token)
+            && observation.snapshot.source_state==airk_core::service_inspection::SourceState::Unavailable,
+            "source availability was confused with retained index availability");
+        let Response::Registered {project:paused}=request(Method::Pause{project:project.binding,paused:true}).await?
+            else {anyhow::bail!("project state unavailable")};
+        ensure!(paused.paused,"inspection resumed paused source work");
+        ensure!(!serde_json::to_string(&observation.snapshot)?.contains("memo.md"),"inspection retained source payload");
         ensure!(
             kernel
                 .status()?

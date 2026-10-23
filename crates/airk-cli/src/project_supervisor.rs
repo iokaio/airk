@@ -742,7 +742,9 @@ impl Supervisor {
                             registry.as_ref().and_then(|registry| {
                                 Some(protocol::WorkControl {
                                     grant: grant.id,
-                                    paused: registry.get(*project).ok()?.paused,
+                                    paused: registry.get(*project).ok()?.paused
+                                        && registry.job(grant.job).ok()?.kind
+                                            != airk_core::service::JobKind::Inspect,
                                     canceled: registry.cancellation_requested(grant.job).ok()?,
                                 })
                             })

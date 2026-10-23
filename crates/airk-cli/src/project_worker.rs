@@ -161,7 +161,7 @@ fn execute(
     airk_kernel::service_execution::progress_phase(match kind {
         JobKind::Index | JobKind::Reconcile | JobKind::Rebuild => WorkPhase::Discovering,
         JobKind::Vectors => WorkPhase::Embedding,
-        JobKind::Verify => WorkPhase::Verifying,
+        JobKind::Inspect | JobKind::Verify => WorkPhase::Verifying,
         JobKind::Recover => WorkPhase::Recovering,
         JobKind::Maintain => WorkPhase::Retiring,
     });
@@ -203,7 +203,9 @@ fn execute(
                 );
             }
         }
-        JobKind::Recover | JobKind::Maintain => unreachable!("handled before read selection"),
+        JobKind::Recover | JobKind::Maintain | JobKind::Inspect => {
+            unreachable!("handled outside ordinary execution")
+        }
         JobKind::Rebuild => {
             return Ok(JobOutcome::Succeeded {
                 revision: Some(kernel.rebuild_service(job)?),
@@ -367,6 +369,26 @@ pub async fn run() -> Result<()> {
                                 .collect::<Vec<_>>();
                             registry.record_watch_roots(&job_lease, &roots)?;
                         }
+                        if job.kind == JobKind::Inspect {
+                            airk_kernel::service_execution::progress_phase(
+                                airk_core::service_progress::WorkPhase::Verifying,
+                            );
+                            let snapshot = kernel.inspect_service(identity.project)?;
+                            let observed_unix_ms = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)?
+                                .as_millis()
+                                .try_into()?;
+                            registry.record_inspection(
+                                &job_lease,
+                                identity,
+                                job.id,
+                                observed_unix_ms,
+                                &snapshot,
+                            )?;
+                            return Ok(JobOutcome::Succeeded {
+                                revision: snapshot.publication,
+                            });
+                        }
                         let outcome = execute(&kernel, job.kind, job.id)?;
                         airk_kernel::service_execution::progress_phase(
                             airk_core::service_progress::WorkPhase::Retiring,
@@ -402,6 +424,10 @@ pub async fn run() -> Result<()> {
                                 "source_unavailable"
                             } else if error.is::<airk_store::service::registry::SourceBoundary>() {
                                 "protected_source_boundary"
+                            } else if error
+                                .is::<airk_kernel::service_inspection::InspectionChanged>()
+                            {
+                                "inspection_changed"
                             } else {
                                 "project_operation_failed"
                             }

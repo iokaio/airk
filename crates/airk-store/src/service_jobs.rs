@@ -126,7 +126,7 @@ impl ServiceRegistry {
             "invalid pending project page bound"
         );
         let mut statement = self.connection.prepare(
-            "SELECT j.project FROM service_jobs j JOIN projects p ON p.binding=j.project WHERE j.state='running' OR (j.state='pending' AND p.paused=0) GROUP BY j.project ORDER BY min(j.seq) LIMIT ?1")?;
+            "SELECT j.project FROM service_jobs j JOIN projects p ON p.binding=j.project WHERE j.state='running' OR (j.state='pending' AND (p.paused=0 OR j.kind='inspect')) GROUP BY j.project ORDER BY min(j.seq) LIMIT ?1")?;
         let rows = statement.query_map([limit as i64], |row| row.get::<_, String>(0))?;
         rows.map(|row| row?.parse()).collect()
     }
@@ -142,7 +142,7 @@ impl ServiceRegistry {
         );
         let mut statement = self.connection.prepare(
             "SELECT DISTINCT j.project FROM service_jobs j JOIN projects p ON p.binding=j.project
-             WHERE (j.state='running' OR (j.state='pending' AND p.paused=0))
+             WHERE (j.state='running' OR (j.state='pending' AND (p.paused=0 OR j.kind='inspect')))
              AND (?1 IS NULL OR j.project>?1) ORDER BY j.project LIMIT ?2",
         )?;
         let rows = statement.query_map(
@@ -156,7 +156,7 @@ impl ServiceRegistry {
             .connection
             .query_row(
                 "SELECT j.id FROM service_jobs j JOIN projects p ON p.binding=j.project
-             WHERE j.project=?1 AND j.state='pending' AND p.paused=0 ORDER BY j.seq LIMIT 1",
+             WHERE j.project=?1 AND j.state='pending' AND (p.paused=0 OR j.kind='inspect') ORDER BY j.seq LIMIT 1",
                 [project.to_string()],
                 |row| row.get(0),
             )
@@ -660,9 +660,6 @@ impl ServiceRegistry {
             [lease.binding.to_string()],
             |row| row.get(0),
         )?;
-        if paused {
-            return Ok(None);
-        }
         let running: bool = transaction.query_row(
             "SELECT EXISTS(SELECT 1 FROM service_jobs WHERE project=?1 AND state='running')",
             [lease.binding.to_string()],
@@ -671,7 +668,7 @@ impl ServiceRegistry {
         if running {
             return Ok(None);
         }
-        let id: Option<String> = transaction.query_row("SELECT id FROM service_jobs WHERE project=?1 AND state='pending' AND (?2 IS NULL OR id=?2) ORDER BY seq LIMIT 1", params![lease.binding.to_string(), selected.map(|id|id.to_string())], |row| row.get(0)).optional()?;
+        let id: Option<String> = transaction.query_row("SELECT id FROM service_jobs WHERE project=?1 AND state='pending' AND (?2 IS NULL OR id=?2) AND (NOT ?3 OR kind='inspect') ORDER BY seq LIMIT 1", params![lease.binding.to_string(), selected.map(|id|id.to_string()),paused], |row| row.get(0)).optional()?;
         let Some(id) = id else {
             return Ok(None);
         };

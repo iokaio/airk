@@ -33,6 +33,8 @@ mod watch;
 pub use watch::WatchProject;
 #[path = "service_events.rs"]
 mod events;
+#[path = "service_inspection.rs"]
+mod inspection;
 
 pub struct ServiceRegistry {
     root: PathBuf,
@@ -224,6 +226,7 @@ impl ServiceRegistry {
         registry.connection.execute_batch(jobs::SCHEMA)?;
         registry.connection.execute_batch(watch::SCHEMA)?;
         registry.connection.execute_batch(events::SCHEMA)?;
+        registry.connection.execute_batch(inspection::SCHEMA)?;
         registry.connection.execute_batch(progress::SCHEMA)?;
         registry
             .connection

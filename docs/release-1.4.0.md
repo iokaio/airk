@@ -21,3 +21,5 @@ Windows worker and extraction cleanup now share bounded native Job Object owners
 Stage commits remain local and human DCO-signed. No push, publication or service VSIX is authorized before the user's implementation, test and review gate is satisfied. Final versions and packaging receipts will be recorded here at cutover.
 
 The native management path now keeps a bounded transactional event log with restart-stable snapshot paging, explicit retention gaps and content-free failure codes. Explicit retry preserves the failed/canceled receipt and resets the applicable finite automatic policy only once per accepted key. The trusted console still needs to present these operations.
+
+Native project inspection now records bounded cached revision/settings observations with worker fencing and independent root availability. Explicit inspection can use an idle paused project while its source work remains paused. Repair-plan execution and the service console remain under implementation.

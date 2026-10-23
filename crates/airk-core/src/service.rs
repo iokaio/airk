@@ -36,6 +36,9 @@ pub enum ControlMethod {
     Progress {
         project: ProjectBinding,
     },
+    Inspection {
+        project: ProjectBinding,
+    },
     ConfigureWatch {
         project: ProjectBinding,
         enabled: bool,
@@ -120,6 +123,11 @@ pub enum ControlResponse {
     Progress {
         project: ProjectBinding,
         observation: Option<Box<crate::service_progress::ProgressObservation>>,
+    },
+    Inspection {
+        project: ProjectBinding,
+        observation: Option<Box<crate::service_inspection::InspectionObservation>>,
+        cached: bool,
     },
     SourceStatus {
         available: bool,
@@ -254,6 +262,7 @@ pub struct ProjectPage {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum JobKind {
+    Inspect,
     Index,
     Reconcile,
     Vectors,
@@ -266,6 +275,7 @@ pub enum JobKind {
 impl JobKind {
     pub fn code(self) -> &'static str {
         match self {
+            Self::Inspect => "inspect",
             Self::Index => "index",
             Self::Reconcile => "reconcile",
             Self::Vectors => "vectors",
