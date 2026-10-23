@@ -7,6 +7,61 @@ use anyhow::{Context, Result, ensure};
 use std::sync::Arc;
 
 impl Kernel {
+    pub fn pending_service_retirements(&self) -> Result<usize> {
+        self.service_collection
+            .as_ref()
+            .context("service collection required")?
+            .pending_retirements()
+    }
+    pub fn service_recovery_required(&self) -> Result<bool> {
+        ensure!(
+            self.service_collection.is_some(),
+            "service collection required"
+        );
+        if self
+            .store
+            .directory()
+            .join("current-bootstrap.json")
+            .try_exists()?
+        {
+            return Ok(true);
+        }
+        let Some(scope) = self.current_scope()? else {
+            return Ok(false);
+        };
+        self.store.current_read(&scope)?.has_prepared_update()
+    }
+    pub fn recover_service_publication(&self) -> Result<Option<RevisionToken>> {
+        ensure!(
+            self.service_collection.is_some(),
+            "service collection required"
+        );
+        crate::service_execution::checkpoint()?;
+        let selected = self.refresh_service_snapshot()?;
+        selected.recover_runtime_bootstrap()?;
+        let Some(scope) = selected.current_scope()? else {
+            return Ok(None);
+        };
+        let recovered = crate::current::recover_current(
+            &selected.store,
+            &Quota::open(&selected.data_root)?,
+            &scope,
+        )?;
+        Ok(Some(RevisionToken {
+            incarnation: recovered.token.incarnation,
+            generation: recovered.token.sequence,
+            revision: recovered.token.digest,
+        }))
+    }
+    pub fn maintain_service_collection(&self) -> Result<collection::RetirementReport> {
+        let collection = self
+            .service_collection
+            .as_ref()
+            .context("service collection required")?;
+        crate::service_execution::checkpoint()?;
+        collection.recover_abandoned_replacement()?;
+        self.retire_service_incarnations()
+    }
     pub fn service_rebuild_receipt(&self) -> Result<Option<collection::RebuildReceipt>> {
         self.service_collection
             .as_ref()
@@ -193,6 +248,11 @@ mod tests {
         drop(old);
         assert_eq!(kernel.retire_service_incarnations()?.removed_directories, 1);
         assert!(!old_directory.exists());
+        assert_eq!(kernel.recover_service_publication()?, Some(token));
+        assert!(
+            !old_directory.exists(),
+            "recovery resurrected a retired initial slot"
+        );
         Ok(())
     }
 

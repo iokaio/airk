@@ -34,6 +34,7 @@ pub enum Command {
     WorkStatus {
         identity: WorkerIdentity,
         control: Option<WorkControl>,
+        keep_for_maintenance: bool,
     },
     Grant {
         caller: Incarnation,
@@ -48,8 +49,8 @@ pub enum Reply {
     Activated,
     WorkAccepted,
     WorkStatus {
-        active: Option<Incarnation>,
-        finished: Option<Incarnation>,
+        #[serde(flatten)]
+        observation: WorkObservation,
     },
     Ready {
         identity: WorkerIdentity,
@@ -84,4 +85,12 @@ pub struct WorkControl {
     pub grant: Incarnation,
     pub paused: bool,
     pub canceled: bool,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkObservation {
+    pub active: Option<Incarnation>,
+    pub finished: Option<Incarnation>,
+    pub maintenance: Option<airk_core::service::MaintenanceObservation>,
 }

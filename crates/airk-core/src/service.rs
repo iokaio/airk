@@ -22,6 +22,9 @@ pub enum ControlMethod {
         limit: usize,
     },
     RequestEpoch,
+    Maintenance {
+        project: ProjectBinding,
+    },
     Enqueue {
         project: ProjectBinding,
         caller: Incarnation,
@@ -81,6 +84,11 @@ pub enum ControlResponse {
         observation: Box<crate::service_resources::ResourceSnapshot>,
         age_ms: u64,
         configuration_error: bool,
+    },
+    Maintenance {
+        project: ProjectBinding,
+        observation: Option<MaintenanceObservation>,
+        retrying: bool,
     },
     Stopping,
     Incompatible {
@@ -207,6 +215,8 @@ pub enum JobKind {
     Vectors,
     Verify,
     Rebuild,
+    Recover,
+    Maintain,
 }
 
 impl JobKind {
@@ -217,6 +227,8 @@ impl JobKind {
             Self::Vectors => "vectors",
             Self::Verify => "verify",
             Self::Rebuild => "rebuild",
+            Self::Recover => "recover",
+            Self::Maintain => "maintain",
         }
     }
 }
@@ -351,3 +363,26 @@ impl std::fmt::Display for AdmissionError {
 }
 
 impl std::error::Error for AdmissionError {}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MaintenanceObservation {
+    pub pending_incarnations: Option<usize>,
+    pub removed_files: u32,
+    pub failed: bool,
+    pub observed_unix_ms: u64,
+}
+
+impl MaintenanceObservation {
+    pub fn validate(&self) -> Result<()> {
+        ensure!(
+            self.pending_incarnations.is_none_or(|count| count <= 8) && self.removed_files <= 4096,
+            "maintenance observation exceeds contract bounds"
+        );
+        ensure!(
+            self.failed || self.pending_incarnations.is_some(),
+            "successful maintenance observation lacks pending count"
+        );
+        Ok(())
+    }
+}

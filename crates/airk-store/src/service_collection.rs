@@ -561,6 +561,9 @@ impl Collection {
     }
     /// An available replacement lock proves the old build owner no longer runs.
     /// Selection remains usable even when classification/cleanup needs a retry.
+    pub fn pending_retirements(&self) -> Result<usize> {
+        Ok(self.manifest()?.retired.len())
+    }
     pub fn recover_abandoned_replacement(&self) -> Result<()> {
         let _lease = acquire_file(&self.directory, "replacement.lock")?;
         let _lock = acquire_file(&self.directory, "manifest.lock")?;

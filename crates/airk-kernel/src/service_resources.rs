@@ -11,7 +11,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-const RESIDENT_BYTES: u64 = 128 << 20;
+// Include the resident baseline and its one admitted bounded query materialization.
+const RESIDENT_BYTES: u64 = 512 << 20;
 const MODEL_BYTES: u64 = 512 << 20;
 const SERVICE_BYTES: u64 = 32 << 20;
 const WORK_BYTES: u64 = 768 << 20;
@@ -232,10 +233,11 @@ impl Resources {
                     0
                 } else {
                     match waiting.kind {
-                        JobKind::Index | JobKind::Rebuild => 1,
+                        JobKind::Index | JobKind::Rebuild | JobKind::Recover => 1,
                         JobKind::Reconcile => 2,
                         JobKind::Vectors => 3,
                         JobKind::Verify => 4,
+                        JobKind::Maintain => 5,
                     }
                 };
                 (rank, Some(**project) == self.last_project, waiting.sequence)

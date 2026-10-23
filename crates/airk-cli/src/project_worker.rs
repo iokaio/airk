@@ -42,6 +42,23 @@ struct State {
     closing: Arc<AtomicBool>,
 }
 
+#[derive(Default)]
+struct WorkState {
+    active: Option<airk_core::identity::Incarnation>,
+    finished: Option<airk_core::identity::Incarnation>,
+    maintenance: Option<airk_core::service::MaintenanceObservation>,
+}
+fn observe_maintenance(kernel: &Kernel) -> airk_core::service::MaintenanceObservation {
+    let result = kernel.maintain_service_collection();
+    airk_core::service::MaintenanceObservation {
+        pending_incarnations: result.as_ref().ok().map(|report| report.pending),
+        removed_files: result.as_ref().map_or(0, |report| report.removed_files),
+        failed: result.is_err(),
+        observed_unix_ms: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |time| time.as_millis().min(u64::MAX as u128) as u64),
+    }
+}
 async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
     let Some(grant): Option<ConnectionGrant> =
         local_ipc::read_message(&mut stream, Duration::from_secs(5)).await?
@@ -128,6 +145,14 @@ fn execute(
     kind: JobKind,
     job: airk_core::identity::Sha256Digest,
 ) -> Result<JobOutcome> {
+    if kind == JobKind::Recover {
+        return Ok(JobOutcome::Succeeded {
+            revision: kernel.recover_service_publication()?,
+        });
+    }
+    if kind == JobKind::Maintain {
+        return Ok(JobOutcome::Succeeded { revision: None });
+    }
     let selected = kernel.refresh_service_snapshot()?;
     let kernel = &selected;
     match kind {
@@ -158,6 +183,7 @@ fn execute(
                 );
             }
         }
+        JobKind::Recover | JobKind::Maintain => unreachable!("handled before read selection"),
         JobKind::Rebuild => {
             return Ok(JobOutcome::Succeeded {
                 revision: Some(kernel.rebuild_service(job)?),
@@ -218,7 +244,7 @@ pub async fn run() -> Result<()> {
     crate::embedding_pool_client::install(pool.map(|access| *access))?;
     #[cfg(feature = "local-inference")]
     let _ = pool;
-    let kernel = Kernel::open_service_collection(
+    let kernel = Kernel::open_service_collection_for_diagnostics(
         Path::new(&registration.root),
         Some((&registration.data_root).into()),
         &registration.collection,
@@ -226,6 +252,30 @@ pub async fn run() -> Result<()> {
     airk_kernel::service_execution::install(Path::new(&registration.data_root), identity)?;
     let receipt = kernel.service_rebuild_receipt()?;
     registry.recover_jobs_with_rebuild_receipt(&lease, receipt.as_ref())?;
+    // Recovery is durable desired work, admitted by the service rather than an
+    // unaccounted startup replay. Failed recovery leaves the owner reachable.
+    if kernel.service_recovery_required().unwrap_or(false) {
+        registry.enqueue_internal(
+            init.project,
+            init.service,
+            JobKind::Recover,
+            airk_kernel::service_broker::new_instance_id()?,
+        )?;
+    }
+    let pending_retirements = kernel.pending_service_retirements()?;
+    if pending_retirements > 0 {
+        registry.record_maintenance(
+            &lease,
+            &airk_core::service::MaintenanceObservation {
+                pending_incarnations: Some(pending_retirements),
+                removed_files: 0,
+                failed: false,
+                observed_unix_ms: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |time| time.as_millis().min(u64::MAX as u128) as u64),
+            },
+        )?;
+    }
     let mut broker = Broker::new(init.service, BrokerLimits::default())?;
     broker.register(
         identity,
@@ -237,6 +287,7 @@ pub async fn run() -> Result<()> {
     let _stop = StopOnDrop(closing.clone());
     let activity = Arc::new(Notify::new());
     let busy = Arc::new(AtomicBool::new(false));
+    let maintenance_waiting = Arc::new(AtomicBool::new(false));
     let state = Arc::new(State {
         identity,
         broker: Mutex::new(broker),
@@ -269,7 +320,7 @@ pub async fn run() -> Result<()> {
     let job_lease = lease.clone();
     let (work_sender, work_receiver) =
         std::sync::mpsc::sync_channel::<airk_core::service_resources::WorkAllowance>(1);
-    let work_status = Arc::new(Mutex::new((None, None)));
+    let work_status = Arc::new(Mutex::new(WorkState::default()));
     let job_status = work_status.clone();
     let jobs = tokio::task::spawn_blocking(move || -> Result<()> {
         while !job_closing.load(Ordering::Acquire) {
@@ -283,7 +334,21 @@ pub async fn run() -> Result<()> {
                     Ok(JobOutcome::Canceled)
                 } else {
                     airk_kernel::service_execution::run(allowance.clone(), || {
-                        execute(&kernel, job.kind, job.id)
+                        let outcome = execute(&kernel, job.kind, job.id)?;
+                        let maintenance = observe_maintenance(&kernel);
+                        let _ = registry.record_maintenance(&job_lease, &maintenance);
+                        let failed = job.kind == JobKind::Maintain && maintenance.failed;
+                        job_status
+                            .lock()
+                            .map_err(|_| anyhow::anyhow!("work status unavailable"))?
+                            .maintenance = Some(maintenance);
+                        if failed {
+                            Ok(JobOutcome::Failed {
+                                code: "owned_retirement_failed".into(),
+                            })
+                        } else {
+                            Ok(outcome)
+                        }
                     })
                 }
                 .unwrap_or_else(|error| {
@@ -300,10 +365,13 @@ pub async fn run() -> Result<()> {
                 });
                 registry.complete_job(&job_lease, job.id, outcome)?;
             }
-            *job_status
-                .lock()
-                .map_err(|_| anyhow::anyhow!("work status unavailable"))? =
-                (None, Some(allowance.id));
+            {
+                let mut status = job_status
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("work status unavailable"))?;
+                status.active = None;
+                status.finished = Some(allowance.id);
+            }
             job_busy.store(false, Ordering::Release);
             job_activity.notify_one();
         }
@@ -329,16 +397,17 @@ pub async fn run() -> Result<()> {
                             && !busy.swap(true, Ordering::AcqRel);
                         let accepted=if accepted {
                             airk_kernel::service_execution::activate(&allowance)?;
-                            *work_status.lock().map_err(|_|anyhow::anyhow!("work status unavailable"))?=(Some(allowance.id), None);
+                            {let mut status=work_status.lock().map_err(|_|anyhow::anyhow!("work status unavailable"))?;status.active=Some(allowance.id);status.finished=None;}
                             work_sender.try_send(allowance).is_ok()
                         }else{false};
                         service_ipc::write_frame(&mut std::io::stdout().lock(), &if accepted{Reply::WorkAccepted}else{Reply::Failed})?;
                         idle=Instant::now();
                     },
-                    Some(Command::WorkStatus{identity:expected,control})=>{
+                    Some(Command::WorkStatus{identity:expected,control,keep_for_maintenance})=>{
+                        if expected==identity {maintenance_waiting.store(keep_for_maintenance,Ordering::Release);}
                         if expected==identity && let Some(control)=control {airk_kernel::service_execution::control(identity,control.grant,control.paused,control.canceled)?;}
-                        let (active,finished)=*work_status.lock().map_err(|_|anyhow::anyhow!("work status unavailable"))?;
-                        let reply=if expected==identity{Reply::WorkStatus{active,finished}}else{Reply::Failed};
+                        let status=work_status.lock().map_err(|_|anyhow::anyhow!("work status unavailable"))?;
+                        let reply=if expected==identity{Reply::WorkStatus{observation:protocol::WorkObservation{active:status.active,finished:status.finished,maintenance:status.maintenance.clone()}}}else{Reply::Failed};
                         service_ipc::write_frame(&mut std::io::stdout().lock(), &reply)?;
                     },
                     Some(Command::Grant{caller})=>{
@@ -358,7 +427,7 @@ pub async fn run() -> Result<()> {
             _=connections.join_next(),if !connections.is_empty()=>{idle=Instant::now();},
             _=tick.tick()=>{
                 if jobs.is_finished(){break;}
-                if busy.load(Ordering::Acquire){idle=Instant::now();}
+                if busy.load(Ordering::Acquire)||maintenance_waiting.load(Ordering::Acquire){idle=Instant::now();}
                 if connections.is_empty()&&idle.elapsed()>Duration::from_secs(15){break;}
                 // A generation has a bounded lifetime; replacement requires fresh brokerage.
                 if state.broker.lock().map_err(|_|anyhow::anyhow!("query policy unavailable"))?.status(Instant::now()).draining_projects>0 {break;}

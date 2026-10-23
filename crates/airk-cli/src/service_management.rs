@@ -45,6 +45,14 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
         } => ControlResponse::Projects {
             page: registry.list(after, revision, limit)?,
         },
+        ControlMethod::Maintenance { project } => {
+            registry.get(project)?;
+            ControlResponse::Maintenance {
+                project,
+                observation: registry.maintenance_observation(project)?,
+                retrying: registry.maintenance_retrying(project)?,
+            }
+        }
         ControlMethod::RequestEpoch => {
             let (namespace, epoch) = registry.request_epoch()?;
             ControlResponse::RequestEpoch { namespace, epoch }

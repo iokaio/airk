@@ -17,6 +17,11 @@ pub(super) const SCHEMA: &str = "
         attempts INTEGER NOT NULL CHECK(attempts>=0 AND attempts<=3),
         outcome BLOB CHECK(outcome IS NULL OR length(outcome)<=2048));
     CREATE INDEX IF NOT EXISTS service_jobs_pending ON service_jobs(project,state,seq);
+    CREATE TABLE IF NOT EXISTS service_maintenance(
+        project TEXT PRIMARY KEY REFERENCES projects(binding),
+        observation BLOB NOT NULL CHECK(length(observation)<=4096),
+        pending INTEGER,failed INTEGER NOT NULL CHECK(failed IN(0,1)),
+        retries INTEGER NOT NULL CHECK(retries BETWEEN 0 AND 7),next_ms INTEGER NOT NULL) WITHOUT ROWID;
     CREATE TABLE IF NOT EXISTS service_job_cancellation(
         job TEXT PRIMARY KEY REFERENCES service_jobs(id) ON DELETE CASCADE) WITHOUT ROWID;
     CREATE TABLE IF NOT EXISTS service_requests(
@@ -184,6 +189,17 @@ impl ServiceRegistry {
         key: &RequestKey,
         kind: JobKind,
     ) -> Result<JobRecord> {
+        self.enqueue_impl(project, caller, key, kind, None)
+    }
+
+    fn enqueue_impl(
+        &mut self,
+        project: ProjectBinding,
+        caller: Incarnation,
+        key: &RequestKey,
+        kind: JobKind,
+        maintenance_now_ms: Option<u64>,
+    ) -> Result<JobRecord> {
         let epoch = i64::try_from(key.epoch).map_err(|_| JobError::KeyExpired)?;
         // Accepted keys remain readable even when every queue slot is occupied.
         let existing: Option<String> = self.connection.query_row(
@@ -243,6 +259,12 @@ impl ServiceRegistry {
             |row| row.get(0),
         )?;
         ensure!(registered, "service project is not registered");
+        if maintenance_now_ms.is_some() {
+            let busy: bool = transaction.query_row(
+                "SELECT EXISTS(SELECT 1 FROM service_jobs WHERE project=?1 AND state IN('pending','running'))",
+                [project.to_string()], |row| row.get(0))?;
+            ensure!(!busy, "project already has admitted work");
+        }
         let requests: i64 =
             transaction.query_row("SELECT count(*) FROM service_requests", [], |row| {
                 row.get(0)
@@ -287,11 +309,122 @@ impl ServiceRegistry {
                 id.to_string()
             ],
         )?;
+        if let Some(now_ms) = maintenance_now_ms {
+            // Admission and retry debit share this transaction. Replaying an accepted
+            // key returns above, without consuming another attempt after a crash.
+            let retries: u32 = transaction.query_row(
+                "SELECT m.retries FROM service_maintenance m JOIN projects p ON p.binding=m.project
+                 WHERE m.project=?1 AND p.paused=0 AND (m.pending>0 OR m.failed=1)
+                 AND m.retries<CASE WHEN m.failed=1 THEN 3 ELSE 7 END AND m.next_ms<=?2
+                 AND NOT EXISTS(SELECT 1 FROM service_jobs WHERE project=?1 AND id<>?3 AND state IN('pending','running'))",
+                params![project.to_string(), i64::try_from(now_ms)?, id.to_string()],
+                |row| row.get(0),
+            ).context("maintenance is no longer eligible")?;
+            let next = now_ms
+                .checked_add((1u64 << (retries + 1)) * 1000)
+                .context("maintenance deadline overflow")?;
+            transaction.execute(
+                "UPDATE service_maintenance SET retries=retries+1,next_ms=?1 WHERE project=?2",
+                params![i64::try_from(next)?, project.to_string()],
+            )?;
+        }
         let accepted = record(&transaction, id)?;
         transaction.commit()?;
         Ok(accepted)
     }
 
+    pub fn record_maintenance(
+        &mut self,
+        lease: &ProjectLease,
+        observation: &airk_core::service::MaintenanceObservation,
+    ) -> Result<()> {
+        observation.validate()?;
+        let bytes = serde_json::to_vec(observation)?;
+        ensure!(bytes.len() <= 4096, "maintenance observation too large");
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        worker_epoch(&tx, &self.root, lease)?;
+        let clean = observation.pending_incarnations == Some(0) && !observation.failed;
+        tx.execute("INSERT INTO service_maintenance(project,observation,pending,failed,retries,next_ms) VALUES(?1,?2,?3,?4,0,0)
+            ON CONFLICT(project) DO UPDATE SET observation=excluded.observation,pending=excluded.pending,failed=excluded.failed,
+            retries=CASE WHEN ?5 THEN 0 ELSE service_maintenance.retries END,next_ms=CASE WHEN ?5 THEN 0 ELSE service_maintenance.next_ms END",
+            params![lease.binding.to_string(),bytes,observation.pending_incarnations.map(|count|count as i64),observation.failed,clean])?;
+        tx.commit()?;
+        Ok(())
+    }
+    pub fn maintenance_observation(
+        &self,
+        project: ProjectBinding,
+    ) -> Result<Option<airk_core::service::MaintenanceObservation>> {
+        let bytes: Option<Vec<u8>> = self
+            .connection
+            .query_row(
+                "SELECT substr(observation,1,4097) FROM service_maintenance WHERE project=?1",
+                [project.to_string()],
+                |row| row.get(0),
+            )
+            .optional()?;
+        bytes
+            .map(|bytes| {
+                ensure!(bytes.len() <= 4096, "maintenance observation too large");
+                let observation: airk_core::service::MaintenanceObservation =
+                    serde_json::from_slice(&bytes)?;
+                observation.validate()?;
+                Ok(observation)
+            })
+            .transpose()
+    }
+    pub fn maintenance_retrying(&self, project: ProjectBinding) -> Result<bool> {
+        Ok(self.connection.query_row("SELECT EXISTS(SELECT 1 FROM service_maintenance m JOIN projects p ON p.binding=m.project WHERE m.project=?1 AND p.paused=0 AND (m.pending>0 OR m.failed=1) AND m.retries<CASE WHEN m.failed=1 THEN 3 ELSE 7 END)",[project.to_string()],|row|row.get(0))?)
+    }
+    pub fn due_maintenance(&self, now_ms: u64) -> Result<Vec<ProjectBinding>> {
+        let mut statement=self.connection.prepare("SELECT m.project FROM service_maintenance m JOIN projects p ON p.binding=m.project WHERE p.paused=0 AND (m.pending>0 OR m.failed=1) AND m.retries<CASE WHEN m.failed=1 THEN 3 ELSE 7 END AND m.next_ms<=?1 AND NOT EXISTS(SELECT 1 FROM service_jobs j WHERE j.project=m.project AND j.state IN('pending','running')) ORDER BY m.next_ms,m.project LIMIT 32")?;
+        let rows = statement.query_map([i64::try_from(now_ms)?], |row| row.get::<_, String>(0))?;
+        rows.map(|row| row?.parse()).collect()
+    }
+    /// Atomically accept one eligible automatic pass and consume its durable retry.
+    pub fn enqueue_due_maintenance(
+        &mut self,
+        project: ProjectBinding,
+        caller: Incarnation,
+        nonce: Incarnation,
+        now_ms: u64,
+    ) -> Result<JobRecord> {
+        let (namespace, epoch) = self.request_epoch()?;
+        self.enqueue_impl(
+            project,
+            caller,
+            &RequestKey {
+                namespace,
+                epoch,
+                nonce,
+            },
+            JobKind::Maintain,
+            Some(now_ms),
+        )
+    }
+    /// Internal desired-state requests use the same bounded durable receipts and
+    /// pending-kind joining as trusted control clients; this never claims work.
+    pub fn enqueue_internal(
+        &mut self,
+        project: ProjectBinding,
+        caller: Incarnation,
+        kind: JobKind,
+        nonce: Incarnation,
+    ) -> Result<JobRecord> {
+        let (namespace, epoch) = self.request_epoch()?;
+        self.enqueue(
+            project,
+            caller,
+            &RequestKey {
+                namespace,
+                epoch,
+                nonce,
+            },
+            kind,
+        )
+    }
     pub fn job(&self, id: Sha256Digest) -> Result<JobRecord> {
         record(&self.connection, id)
     }
@@ -433,6 +566,14 @@ impl ServiceRegistry {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let current = record(&transaction, id)?;
+        if current.kind == JobKind::Maintain
+            && matches!(current.state, JobState::Pending | JobState::Running)
+        {
+            transaction.execute(
+                "UPDATE service_maintenance SET retries=7 WHERE project=?1",
+                [current.project.to_string()],
+            )?;
+        }
         match current.state {
             JobState::Pending => {
                 transaction.execute(
@@ -469,6 +610,12 @@ impl ServiceRegistry {
             current.state == JobState::Pending,
             "running or completed job requires worker-aware cancellation"
         );
+        if current.kind == JobKind::Maintain {
+            transaction.execute(
+                "UPDATE service_maintenance SET retries=7 WHERE project=?1",
+                [current.project.to_string()],
+            )?;
+        }
         transaction.execute(
             "UPDATE service_jobs SET state='canceled',outcome=?1 WHERE id=?2",
             params![serde_json::to_vec(&JobOutcome::Canceled)?, id.to_string()],
@@ -484,6 +631,129 @@ mod tests {
     use super::*;
     use airk_core::service::ProjectRegistration;
 
+    #[test]
+    fn maintenance_backoff_is_durable_bounded_and_does_not_consume_paused_or_queued_attempts()
+    -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let instance = Incarnation::from_bytes([7; 16]);
+        let mut registry = ServiceRegistry::open(root.path(), instance)?;
+        let project =
+            ProjectRegistration::new("/source".into(), "/state".into(), "fixture".into())?;
+        registry.register(&project)?;
+        let mut lease = ProjectLease::acquire(root.path(), project.binding)?;
+        registry.admit_worker(&mut lease)?;
+        let mut observation = airk_core::service::MaintenanceObservation {
+            pending_incarnations: Some(1),
+            removed_files: 0,
+            failed: false,
+            observed_unix_ms: 1000,
+        };
+        registry.record_maintenance(&lease, &observation)?;
+        registry.pause(project.binding, true)?;
+        assert!(registry.due_maintenance(1_000_000)?.is_empty());
+        assert!(
+            registry
+                .enqueue_due_maintenance(
+                    project.binding,
+                    instance,
+                    Incarnation::from_bytes([42; 16]),
+                    1000
+                )
+                .is_err()
+        );
+        registry.pause(project.binding, false)?;
+        let canceled = registry.enqueue_internal(
+            project.binding,
+            instance,
+            JobKind::Maintain,
+            Incarnation::from_bytes([0; 16]),
+        )?;
+        registry.cancel_pending(canceled.id)?;
+        assert!(
+            registry.due_maintenance(1_000_000)?.is_empty(),
+            "canceled maintenance restarted automatically"
+        );
+        observation.pending_incarnations = Some(0);
+        registry.record_maintenance(&lease, &observation)?;
+        observation.pending_incarnations = Some(1);
+        registry.record_maintenance(&lease, &observation)?;
+        for n in 1..=7u8 {
+            let now = u64::from(n) * 1_000_000;
+            assert_eq!(registry.due_maintenance(now)?, vec![project.binding]);
+            let nonce = Incarnation::from_bytes([n; 16]);
+            let job = registry.enqueue_due_maintenance(project.binding, instance, nonce, now)?;
+            assert_eq!(
+                registry
+                    .enqueue_due_maintenance(project.binding, instance, nonce, now)?
+                    .id,
+                job.id
+            );
+            assert!(
+                registry
+                    .enqueue_due_maintenance(
+                        project.binding,
+                        instance,
+                        Incarnation::from_bytes([n + 32; 16]),
+                        now + 1_000_000
+                    )
+                    .is_err()
+            );
+            assert!(registry.due_maintenance(now)?.is_empty());
+            registry.claim_job_id(&lease, job.id)?;
+            registry.complete_job(&lease, job.id, JobOutcome::Succeeded { revision: None })?;
+            registry.record_maintenance(&lease, &observation)?;
+        }
+        assert!(registry.due_maintenance(100_000_000)?.is_empty());
+        assert!(!registry.maintenance_retrying(project.binding)?);
+        drop(registry);
+        let mut registry = ServiceRegistry::open(root.path(), instance)?;
+        assert!(registry.due_maintenance(1_000_000)?.is_empty());
+        assert_eq!(
+            registry
+                .maintenance_observation(project.binding)?
+                .unwrap()
+                .pending_incarnations,
+            Some(1)
+        );
+        observation.pending_incarnations = Some(0);
+        registry.record_maintenance(&lease, &observation)?;
+        observation.pending_incarnations = None;
+        observation.failed = true;
+        registry.record_maintenance(&lease, &observation)?;
+        for n in 8..=10u8 {
+            let now = u64::from(n) * 1_000_000;
+            assert_eq!(registry.due_maintenance(now)?, vec![project.binding]);
+            let nonce = Incarnation::from_bytes([n; 16]);
+            let job = registry.enqueue_due_maintenance(project.binding, instance, nonce, now)?;
+            assert_eq!(
+                registry
+                    .enqueue_due_maintenance(project.binding, instance, nonce, now)?
+                    .id,
+                job.id
+            );
+            assert!(
+                registry
+                    .enqueue_due_maintenance(
+                        project.binding,
+                        instance,
+                        Incarnation::from_bytes([n + 32; 16]),
+                        now + 1_000_000
+                    )
+                    .is_err()
+            );
+            registry.claim_job_id(&lease, job.id)?;
+            registry.complete_job(
+                &lease,
+                job.id,
+                JobOutcome::Failed {
+                    code: "owned_retirement_failed".into(),
+                },
+            )?;
+            registry.record_maintenance(&lease, &observation)?;
+        }
+        assert!(registry.due_maintenance(100_000_000)?.is_empty());
+        Ok(())
+    }
     #[test]
     fn service_grants_claim_exact_jobs_and_cancellation_intent_survives_reopen() -> Result<()> {
         let root = tempfile::tempdir()?;

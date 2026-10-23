@@ -189,6 +189,16 @@ impl Kernel {
         Self::open_collection_with_layout(root, data_dir, collection, true, true)
     }
 
+    /// The project owner can report failed captured recovery and accept an explicit
+    /// fresh rebuild without silently discarding the failed journal on startup.
+    pub fn open_service_collection_for_diagnostics(
+        root: impl AsRef<Path>,
+        data_dir: Option<PathBuf>,
+        collection: &str,
+    ) -> Result<Self> {
+        Self::open_collection_with_layout(root, data_dir, collection, false, true)
+    }
+
     /// Open retained state for inspection without replaying pending publications
     /// or runtime bootstrap recovery. Reads reject an incomplete publication.
     pub fn open_collection_for_diagnostics(

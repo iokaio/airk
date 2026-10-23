@@ -514,6 +514,17 @@ fn supervised_jobs_and_direct_queries_preserve_grants_and_stop_on_service_loss()
             "direct response lost original citation"
         );
         probe_stdio_bridge(&root, project.binding)?;
+        let pinned = airk_kernel::Kernel::open_service_collection_for_diagnostics(
+            &source,
+            Some(data.clone()),
+            "fixture",
+        )?
+        .refresh_service_snapshot()?;
+        let pinned_revision = pinned
+            .status()?
+            .publication
+            .context("old native snapshot missing")?
+            .token;
         let Response::Job { job: rebuild } = request(Method::Enqueue {
             project: project.binding,
             caller,
@@ -561,6 +572,39 @@ fn supervised_jobs_and_direct_queries_preserve_grants_and_stop_on_service_loss()
                 && replaced.to_string().contains("original.txt"),
             "existing direct client did not select the replacement incarnation"
         );
+        ensure!(
+            pinned
+                .status()?
+                .publication
+                .context("pinned publication missing")?
+                .token
+                == pinned_revision,
+            "replacement changed a pinned old request"
+        );
+        let registry = airk_store::service::registry::ServiceRegistry::open(&root, caller)?;
+        ensure!(
+            registry
+                .maintenance_observation(project.binding)?
+                .is_some_and(|observation| observation.pending_incarnations == Some(1)),
+            "retirement ignored live old reader"
+        );
+        drop(pinned);
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            if registry
+                .maintenance_observation(project.binding)?
+                .is_some_and(|observation| {
+                    observation.pending_incarnations == Some(0) && !observation.failed
+                })
+            {
+                break;
+            }
+            ensure!(
+                Instant::now() < deadline,
+                "automatic owned retirement did not finish after old reader released"
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
         // Retrieval-only connections expose neither management nor mutation tools.
         let result = connection
             .call("service_shutdown".into(), Default::default())
@@ -880,6 +924,7 @@ fn private_worker_channel_renews_only_the_live_scoped_generation() -> Result<()>
             &mut input,
             &Control::WorkStatus {
                 identity,
+                keep_for_maintenance: false,
                 control: Some(project_protocol::WorkControl {
                     grant,
                     paused: true,
@@ -907,6 +952,7 @@ fn private_worker_channel_renews_only_the_live_scoped_generation() -> Result<()>
             &mut input,
             &Control::WorkStatus {
                 identity,
+                keep_for_maintenance: false,
                 control: Some(project_protocol::WorkControl {
                     grant,
                     paused: false,

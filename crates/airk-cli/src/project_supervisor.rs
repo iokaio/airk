@@ -206,19 +206,26 @@ impl ChildWorker {
     fn work_status(
         &mut self,
         control: Option<protocol::WorkControl>,
-    ) -> Result<(Option<Incarnation>, Option<Incarnation>)> {
+        keep_for_maintenance: bool,
+    ) -> Result<protocol::WorkObservation> {
         let identity = self.identity.context("project identity missing")?;
         service_ipc::write_frame(
             self.input.as_mut().context("project input missing")?,
-            &WorkerCommand::WorkStatus { identity, control },
+            &WorkerCommand::WorkStatus {
+                identity,
+                control,
+                keep_for_maintenance,
+            },
         )?;
-        let Reply::WorkStatus { active, finished } =
-            self.output.recv_timeout(Duration::from_secs(3))?
+        let Reply::WorkStatus { observation } = self.output.recv_timeout(Duration::from_secs(3))?
         else {
             anyhow::bail!("project work status failed")
         };
+        if let Some(maintenance) = &observation.maintenance {
+            maintenance.validate()?;
+        }
         self.last_status = Instant::now();
-        Ok((active, finished))
+        Ok(observation)
     }
 
     fn renew(&mut self) -> Result<()> {
@@ -607,6 +614,22 @@ impl Supervisor {
                         Err(mpsc::RecvTimeoutError::Disconnected) => break,
                         Err(mpsc::RecvTimeoutError::Timeout) => {}
                     }
+                    if let Some(registry) = registry.as_mut() {
+                        let now_ms = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map_or(0, |time| time.as_millis().min(u64::MAX as u128) as u64);
+                        if let Ok(due) = registry.due_maintenance(now_ms) {
+                            for project in due {
+                                if resources.running(project).is_none() {
+                                    let Ok(nonce) = new_instance_id() else {
+                                        continue;
+                                    };
+                                    let _ = registry
+                                        .enqueue_due_maintenance(project, instance, nonce, now_ms);
+                                }
+                            }
+                        }
+                    }
                     if may_allocate
                         && let Some(registry) = registry.as_ref()
                         && let Ok(pending) = registry.pending_project_page(pending_after, 32)
@@ -663,11 +686,16 @@ impl Supervisor {
                                 })
                             })
                         });
-                        match worker.work_status(control) {
-                            Ok((_active, Some(finished)))
-                                if resources
-                                    .running(*project)
-                                    .is_some_and(|grant| grant.id == finished) =>
+                        let keep_for_maintenance = registry.as_ref().is_some_and(|registry| {
+                            registry.maintenance_retrying(*project).unwrap_or(false)
+                        });
+                        match worker.work_status(control, keep_for_maintenance) {
+                            Ok(protocol::WorkObservation {
+                                finished: Some(finished),
+                                ..
+                            }) if resources
+                                .running(*project)
+                                .is_some_and(|grant| grant.id == finished) =>
                             {
                                 if let Some(identity) = worker.identity {
                                     let _ = resources.finished(identity, finished);
