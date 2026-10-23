@@ -21,4 +21,5 @@ RUN --mount=type=cache,id=airksvc-light-target,target=/build/target,uid=10001,gi
     && ls -l target/debug/airk \
     && cargo test -p airk-cli --no-default-features --test service_runtime --locked \
     && cargo test -p airk-store --lib service:: --locked \
-    && cargo test -p airk-store --lib publication_spike_tests --locked
+    && cargo test -p airk-store --lib publication_spike_tests --locked \
+    && cargo test -p airk-store --lib wal_budget_spike --locked

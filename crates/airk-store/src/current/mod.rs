@@ -19,6 +19,8 @@ mod rebuild;
 pub mod relationships;
 pub mod resources;
 pub mod vector_map;
+#[cfg(test)]
+mod wal_budget_spike;
 
 pub use database::{DATABASE_VERSION, PAGE_BYTES, journal_bound};
 pub use gate::CurrentGateContention;
