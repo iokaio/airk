@@ -20,6 +20,10 @@ New workers hold a shared lease on the former global worker lock for their entir
 
 The requested `.gitignore` addition excludes local `.mcp.json` configuration.
 
+## Follow-up in 1.3.2
+
+The empty-index progressive publication fix and dashboard corrections are recorded in the [1.3.2 release notes](release-1.3.2.md). The validation below remains the historical 1.3.1 record.
+
 ## Validation
 
 Regression coverage includes independent collection locks, rejected cross-collection mutations, legacy/new worker exclusion, a real child-process scan concurrent with another project's publication and deletion, selected-project joins, bounded-capacity deferral before model parsing, resumption with only one available slot, and editor wait messages. Existing crash, pause, quota, publication and relocation checks remain required. Local and hosted results will be recorded separately; installed-editor acceptance and performance under representative concurrent workloads are separate qualification.

@@ -373,7 +373,7 @@ class Controller implements vscode.Disposable {
                     this.trusted();
                     return runJson(spec, 'model-catalog');
                 });
-                this.vectorProgress.set(this.mcpKey(spec), 'Building vector index');
+                this.vectorProgress.set(this.mcpKey(spec), 'Indexing saved files before vector indexing');
                 this.sidebar.refresh();
             }
             this.trusted();

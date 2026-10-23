@@ -927,6 +927,93 @@ fn retire_missing_prior_extraction(deleted: bool) -> Result<()> {
 }
 
 #[test]
+fn initialized_empty_scan_closes_discovery_without_eligible_files() -> Result<()> {
+    for full in [false, true] {
+        let root = tempfile::tempdir()?;
+        let data = tempfile::tempdir()?;
+        let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+        kernel.configure_vectors(false)?;
+        kernel.initialize()?;
+        kernel.scheduled_index(full, false)?;
+        let status = kernel.status()?;
+        assert_eq!(status.files, 0);
+        assert_eq!(
+            status.discovery_readiness.state,
+            airk_core::readiness::DiscoveryState::Ready
+        );
+        assert_eq!(status.discovery_readiness.total_artifacts, Some(0));
+        kernel.scheduled_index(full, false)?;
+        assert_eq!(
+            kernel.status()?.publication,
+            status.publication,
+            "a completed empty scan remains a no-op on the next request"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn initialized_empty_indexes_publish_batches_even_for_full_rebuilds() -> Result<()> {
+    use std::sync::Mutex;
+    for (full, change_configuration) in [(false, 0), (true, 0), (true, 1), (true, 2)] {
+        let root = tempfile::tempdir()?;
+        let data = tempfile::tempdir()?;
+        for index in 0..35 {
+            std::fs::write(
+                root.path().join(format!("file_{index:02}.txt")),
+                "original bounded rebuild evidence\n",
+            )?;
+        }
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let observed = events.clone();
+        let kernel = Kernel::open(root.path(), Some(data.path().into()))?.with_index_progress(
+            move |event| {
+                observed.lock().unwrap().push(event.clone());
+            },
+        );
+        kernel.configure_vectors(false)?;
+        kernel.initialize()?;
+        assert!(kernel.current_scope()?.is_some());
+        assert_eq!(kernel.status()?.files, 0);
+        if change_configuration == 1 {
+            kernel.configure_index_detail(airk_core::extraction::IndexDetail::Balanced)?;
+        } else if change_configuration == 2 {
+            write_static_test_model(&data.path().join("models/local"))?;
+            kernel.configure_vectors(true)?;
+        }
+        let report = kernel.scheduled_index(full, false)?;
+        let events = events.lock().unwrap();
+        let first = events
+            .iter()
+            .find(|event| event.phase == "base_committed")
+            .expect("an initialized empty index must publish before discovery completes");
+        assert_eq!(first.committed_artifacts, 32);
+        assert!(first.total_artifacts.is_none());
+        assert_eq!(events.last().unwrap().phase, "base_coverage_complete");
+        assert_eq!(events.last().unwrap().committed_artifacts, 35);
+        drop(events);
+        assert_eq!(
+            report.current.unwrap().changed_artifacts,
+            35,
+            "the final publication must not rewrite already committed batches"
+        );
+        assert_eq!(kernel.status()?.files, 35);
+        if change_configuration == 2 {
+            let status = kernel.status()?;
+            assert_eq!(status.semantic_readiness.selected_artifacts, 35);
+            assert_eq!(status.semantic_readiness.completed_artifacts, 0);
+            kernel.resume_current_enrichment()?;
+            assert_eq!(kernel.status()?.semantic_readiness.completed_artifacts, 35);
+        }
+        assert_eq!(
+            kernel.read_file("file_34.txt", 1, 1, 4096)?.hits[0].text,
+            "original bounded rebuild evidence\n"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn source_batches_defer_semantics_and_preserve_the_next_scan_interval() -> Result<()> {
     use std::sync::{
         Mutex,

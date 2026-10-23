@@ -108,6 +108,29 @@ test('initial indexing shows committed MCP evidence and a quiet scan warning', (
     assert.match(sidebarContent(sample), /This project is already indexing in another window or process/);
 });
 
+test('source scan labels cached semantic readiness and keeps progress beside index controls', () => {
+    const sample = structuredClone(state);
+    const item = sample.collections[0];
+    item.vectors = { enabled: true, published: true, indexed_vectors: 100,
+        pending_reindex: false, default_search_mode: 'hybrid', semantic_readiness: {
+            state: 'ready', selected_artifacts: 32, completed_artifacts: 32,
+            selected_units: null, completed_units: 100, failure: null } };
+    item.indexActivity = { phase: 'scan_started', revision: null, processed_artifacts: 0,
+        committed_artifacts: 0, selected_artifacts: null, completed_artifacts: null,
+        elapsedSeconds: 65, quietSeconds: 65 };
+    let html = sidebarContent(sample);
+    assert.match(html, /Last observed publication: semantic evidence ready; source indexing is in progress/);
+    assert.match(html, /class="semantic-running" role="status">Indexing for 1m 5s: 0 files committed, 0 processed/);
+    assert.ok(html.indexOf('data-action="index"') < html.indexOf('Indexing for 1m 5s'));
+    assert.ok(html.indexOf('Indexing for 1m 5s') < html.indexOf('Diagnose &amp; Repair<\/button>'));
+    assert.doesNotMatch(html, /role="status">Semantic evidence ready<\/p>/);
+    item.state = 'current';
+    item.indexActivity = undefined;
+    html = sidebarContent(sample);
+    assert.match(html, /role="status">Semantic evidence ready<\/p>/);
+    assert.doesNotMatch(html, /Last observed publication|Indexing for 1m/);
+});
+
 test('CLI getting-started note reports setup failures and keeps repair behind workspace trust', () => {
     assert.match(sidebarContent({ ...state, cliStatus: 'ready' }), /<code>airk --help<\/code>/);
     assert.match(sidebarContent({ ...state, cliStatus: 'ready' }), /Restart external terminal apps/);

@@ -4,7 +4,11 @@
 
 Everything runs on your machine. There is no cloud service, API key, Docker, Rust or Python to install: the native helper is bundled in the extension.
 
-> **Version 1.3.1.** Platform packages target Windows x64, Linux x64 and macOS (Intel and Apple Silicon); CI and release workflow records identify verified builds and publication status. AIRK 1.2 starts a fresh current index; existing 1.1 indexes and settings remain untouched. See [the 1.3.1 release notes](https://github.com/iokaio/airk/blob/main/docs/release-1.3.1.md), [the 1.3.0 format changes](https://github.com/iokaio/airk/blob/main/docs/release-1.3.0.md), [the 1.2.4 diagnosis and recovery notes](https://github.com/iokaio/airk/blob/main/docs/release-1.2.4.md), [the 1.2.3 Agent Lean default and indexing fix](https://github.com/iokaio/airk/blob/main/docs/release-1.2.3.md), [the 1.2.2 semantic indexing fix](https://github.com/iokaio/airk/blob/main/docs/release-1.2.2.md), [the 1.2 behavior notes](https://github.com/iokaio/airk/blob/main/docs/release-1.2.0.md), and [Known limits](#known-limits).
+> **Version 1.3.2.** Platform packages target Windows x64, Linux x64 and macOS (Intel and Apple Silicon); CI and release workflow records identify verified builds and publication status. AIRK 1.2 starts a fresh current index; existing 1.1 indexes and settings remain untouched. See [the 1.3.2 release notes](https://github.com/iokaio/airk/blob/main/docs/release-1.3.2.md), [the 1.3.1 release notes](https://github.com/iokaio/airk/blob/main/docs/release-1.3.1.md), [the 1.3.0 format changes](https://github.com/iokaio/airk/blob/main/docs/release-1.3.0.md), [the 1.2.4 diagnosis and recovery notes](https://github.com/iokaio/airk/blob/main/docs/release-1.2.4.md), [the 1.2.3 Agent Lean default and indexing fix](https://github.com/iokaio/airk/blob/main/docs/release-1.2.3.md), [the 1.2.2 semantic indexing fix](https://github.com/iokaio/airk/blob/main/docs/release-1.2.2.md), [the 1.2 behavior notes](https://github.com/iokaio/airk/blob/main/docs/release-1.2.0.md), and [Known limits](#known-limits).
+
+## What's new in 1.3.2
+
+Initialized empty indexes now publish progressive source batches, including empty full rebuilds and first-use configuration changes. The first batch targets 32 files, and completed batches are preserved at final publication. Source-scan status is clearer, with elapsed time and committed/processed counts beside the indexing buttons. The reported Windows two-project setup passed manual acceptance with the 1.3.2 VSIX; see [scope and qualification](https://github.com/iokaio/airk/blob/main/docs/release-1.3.2.md).
 
 ## What's new in 1.3.1
 
@@ -114,7 +118,7 @@ Version 1.3.0 gives each agent **fifteen read-only MCP tools**. The former `airk
 
 Every response is size-bounded. The tools cannot write files, run commands, switch collections or reach the network. Full reference: [MCP tools](https://github.com/iokaio/airk/blob/main/docs/mcp.md).
 
-In the 1.3.0 source, search returns focused snippets; request `full_chunks: true` for complete indexed chunks. Set `AIRK_MCP_RESPONSE_MODE=terse` on a manually configured MCP worker to shorten repeated envelope metadata while keeping tokens, citations, hashes and coverage state. The helper check expects fifteen tools. See the [1.3.1 release notes](https://github.com/iokaio/airk/blob/main/docs/release-1.3.0.md); no release or Marketplace publication has occurred.
+In the 1.3.0 source, search returns focused snippets; request `full_chunks: true` for complete indexed chunks. Set `AIRK_MCP_RESPONSE_MODE=terse` on a manually configured MCP worker to shorten repeated envelope metadata while keeping tokens, citations, hashes and coverage state. The helper check expects fifteen tools. See the [1.3.2 release notes](https://github.com/iokaio/airk/blob/main/docs/release-1.3.2.md); candidate builds and publication are verified separately.
 
 ## Supported content
 

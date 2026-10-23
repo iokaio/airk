@@ -739,15 +739,16 @@ impl Kernel {
                             .unwrap_or(false)
                 })
         });
+        // A newly initialized (or format-rebuilt) empty index needs the same
+        // bounded first publications as a collection with no current store.
+        // A full scan of an empty base cannot mix old and rebuilt evidence.
+        // Populated full/configuration rebuilds retain their atomic boundary.
         let progressive_enabled = defer_completion
-            && !full
             && paths.is_none()
-            && (existing.is_none()
-                || (!configuration_changed
-                    && (!previous.artifacts.is_empty()
-                        || prior_scan_work
-                            .as_ref()
-                            .is_some_and(|work| !work.complete()))));
+            && (previous.artifacts.is_empty() || (!full && !configuration_changed));
+        let publish_scan_start = progressive_enabled
+            && previous.artifacts.is_empty()
+            && prior_scan_work.as_ref().is_none_or(|work| !work.complete());
         let mut stats = EmbeddingCacheStats {
             model_load_us,
             ..Default::default()
@@ -770,7 +771,7 @@ impl Kernel {
         };
         let mut progressive = if let Some(scope) = &progressive_scope {
             let scan_work = progress::ScanWork::start()?;
-            if previous.artifacts.is_empty() {
+            if publish_scan_start {
                 let publication =
                     self.publication_reservation_with_limit(MAX_INDEX_RESERVATION_BYTES)?;
                 CurrentUpdater {
@@ -965,7 +966,7 @@ impl Kernel {
                 .map(|old| same_artifact(old, artifact))
                 .transpose()?
                 .unwrap_or(false);
-            if full || (configuration_changed && !progressive_enabled) || !same {
+            if ((full || configuration_changed) && !progressive_enabled) || !same {
                 changes.insert(
                     path.clone(),
                     ArtifactChange::Upsert(Box::new(CapturedInput {
@@ -987,6 +988,7 @@ impl Kernel {
                 .is_none_or(|work| work.changed_artifacts == 0)
             && existing.is_some()
             && prior_scan_work.as_ref().is_none_or(|work| work.complete())
+            && !publish_scan_start
         {
             final_scan_work = None;
         }
@@ -1073,7 +1075,10 @@ impl Kernel {
                         defer: true,
                         cache: EmbeddingCacheContext {
                             cache: None,
-                            bypass: full,
+                            // Empty full rebuilds already published compatible
+                            // batches. Replacing their graph here would discard
+                            // those bindings and require rewriting every path.
+                            bypass: full && !progressive_enabled,
                             stats: &mut stats,
                             max_workers: airk_retrieval::embedding_batch::worker_limit(
                                 std::env::var("AIRK_INDEX_WORKERS").ok().as_deref(),

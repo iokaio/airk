@@ -2,7 +2,7 @@
 
 **AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents**
 
-Start with the [1.3.1 independent workers and offline model release notes](release-1.3.1.md) and [1.3.0 release notes](release-1.3.0.md), [published 1.2.4 diagnosis and recovery notes](release-1.2.4.md), [1.2.3 Agent Lean default and indexing fix](release-1.2.3.md), [1.2.2 semantic indexing fix](release-1.2.2.md) and [1.2.0 behavior and upgrade notes](release-1.2.0.md) for current defaults, upgrade steps and qualification limits. For setup, use [coding-agent integration](agent-integration.md) and [extension controls](vscode-extension.md); for indexing and disk use, use [ingestion limits and detail](ingestion-limits.md), [storage quotas](storage-quotas.md), [current-index operation](current-index-runtime.md) and [current-object cleanup](retention.md). The 1.1 release notes and v2 design records below are historical.
+Start with the [1.3.2 empty-index progress release notes](release-1.3.2.md), [1.3.1 independent workers and offline model release notes](release-1.3.1.md) and [1.3.0 release notes](release-1.3.0.md), [published 1.2.4 diagnosis and recovery notes](release-1.2.4.md), [1.2.3 Agent Lean default and indexing fix](release-1.2.3.md), [1.2.2 semantic indexing fix](release-1.2.2.md) and [1.2.0 behavior and upgrade notes](release-1.2.0.md) for current defaults, upgrade steps and qualification limits. For setup, use [coding-agent integration](agent-integration.md) and [extension controls](vscode-extension.md); for indexing and disk use, use [ingestion limits and detail](ingestion-limits.md), [storage quotas](storage-quotas.md), [current-index operation](current-index-runtime.md) and [current-object cleanup](retention.md). The 1.1 release notes and v2 design records below are historical.
 
 The [1.3.0 release](release-1.3.0.md) retires the former `airk_history` MCP endpoint because the single-current-index design cannot serve retained history; see the [retirement record](unreleased-mcp-tool-retirement.md). It also includes early MCP availability during initial indexing, scoped path updates, deferred semantic inference, adaptive publication batches, revision-bound queue reports, pending-rescan coverage, guarded lexical snapshots with Linux write notifications, a qualified model catalog and SQLite FTS5 lexical storage. The extension detects recognized older 1.2 formats during indexing and starts the required full rebuild automatically, preserving original files, collection IDs and saved settings; CLI upgrades use `index --full`. The [dated follow-up](indexing-follow-up-2026-10-21.md) records cache integrity limits and validation. GitHub and Marketplace release workflow records establish their separate publication status.
 
@@ -33,6 +33,7 @@ The [1.3.0 release](release-1.3.0.md) retires the former `airk_history` MCP endp
 - [Durable native scheduling and crash recovery](native-scheduler.md)
 - [MCP tool contracts](mcp.md)
 - [1.3.1 independent project workers](release-1.3.1.md)
+- [1.3.2 empty-index progressive publication fix and validation](release-1.3.2.md)
 - [1.3.0 changes and qualification limits](release-1.3.0.md)
 - [Historical 1.2.5 local candidate and dated validation](release-1.2.5.md)
 - [MCP tool retirement in 1.3.0](unreleased-mcp-tool-retirement.md)

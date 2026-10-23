@@ -131,7 +131,9 @@ export function sidebarContent(state: SidebarState): string {
         const semanticLabel = semantic?.state === 'pending' || semantic?.state === 'partial'
             ? `Semantic indexing${semanticPercent !== undefined ? ` ${semanticPercent}%` : ''}: ${semanticDone} of ${semanticTotal} selected files complete${semanticRemaining !== undefined ? `; ${semanticRemaining} remaining` : ''}`
             : semantic?.state === 'failed' ? `Semantic enrichment failed: ${semantic.completed_artifacts} of ${semantic.selected_artifacts} selected files complete`
-            : semantic?.state === 'ready' ? (discovery && discovery.state !== 'ready'
+            : semantic?.state === 'ready' ? (item.state === 'indexing'
+                ? 'Last observed publication: semantic evidence ready; source indexing is in progress'
+                : discovery && discovery.state !== 'ready'
                 ? 'Semantic evidence ready for committed files; discovery incomplete' : 'Semantic evidence ready') : '';
         const vectors = `<div class="mcp"><h3>Vector search</h3>
             <label class="toggle"><input id="${escape(item.collection)}-vectors" type="checkbox" role="switch" ${attributes} data-vectors="true"${item.vectors?.enabled !== false ? ' checked' : ''}${disabled || !item.vectors || indexing || state.changingStorage ? ' disabled' : ''}> Include meaning-based matches</label>
@@ -150,7 +152,7 @@ export function sidebarContent(state: SidebarState): string {
         const elapsed = activity ? `${Math.floor(activity.elapsedSeconds / 60)}m ${activity.elapsedSeconds % 60}s` : '';
         const published = !!(activity?.revision || item.vectors?.published || item.detail?.published_detail);
         const waitMessage = activity?.phase === 'waiting_capacity' ? 'Waiting for indexing capacity' : activity?.phase === 'waiting_collection' ? 'This project is already indexing in another window or process' : 'Waiting for this project’s indexing request';
-        const activeIndex = activity && ['waiting', 'waiting_collection', 'waiting_capacity'].includes(activity.phase) ? `<p class="muted" role="status">${escape(waitMessage)} (${escape(elapsed)}). The request remains queued. ${published ? 'Published evidence remains available.' : 'MCP can start; search awaits the first publication.'}</p>` : activity ? `<p class="muted" role="status">Indexing for ${escape(elapsed)}: ${escape(activity.committed_artifacts)} files committed, ${escape(activity.processed_artifacts)} processed. ${published ? 'Published evidence is available to MCP now; discovery remains incomplete.' : 'MCP can start; search awaits the first publication.'}</p>${activity.quietSeconds >= 120 ? `<p class="notice" role="status">No new progress for ${escape(Math.floor(activity.quietSeconds / 60))} minutes. Open Diagnose &amp; Repair if this persists; a stalled scan stops after ten minutes without progress.</p>` : ''}` : '';
+        const activeIndex = activity && ['waiting', 'waiting_collection', 'waiting_capacity'].includes(activity.phase) ? `<p class="muted" role="status">${escape(waitMessage)} (${escape(elapsed)}). The request remains queued. ${published ? 'Published evidence remains available.' : 'MCP can start; search awaits the first publication.'}</p>` : activity ? `<p class="semantic-running" role="status">Indexing for ${escape(elapsed)}: ${escape(activity.committed_artifacts)} files committed, ${escape(activity.processed_artifacts)} processed. ${published ? 'Published evidence is available to MCP now; discovery remains incomplete.' : 'MCP can start; search awaits the first publication.'}</p>${activity.quietSeconds >= 120 ? `<p class="notice" role="status">No new progress for ${escape(Math.floor(activity.quietSeconds / 60))} minutes. Open Diagnose &amp; Repair if this persists; a stalled scan stops after ten minutes without progress.</p>` : ''}` : '';
         const last = item.lastIndexed ? new Date(item.lastIndexed).toLocaleString() : 'Not indexed in this editor yet';
         const error = item.error || view?.error;
         const mcp = item.mcp, checking = mcp?.phase === 'checking' || mcp?.phase === 'preparing';
@@ -166,11 +168,11 @@ export function sidebarContent(state: SidebarState): string {
             <p class="muted">Call tools directly in the Terminal panel. Includes help, examples and JSON results for this collection.</p></div>`;
         return `<section class="collection"><div class="heading"><h2>${escape(item.name)}</h2><span class="badge${indexing ? ' working' : ''}">${escape(status)}</span></div>
             <p class="path" title="${escape(item.root)}">${escape(item.root)}</p>
-            <div class="coverage"><strong>${escape(label)}</strong><span>saved-file coverage</span></div>${progress}${activeIndex}
+            <div class="coverage"><strong>${escape(label)}</strong><span>saved-file coverage</span></div>${progress}
             <div class="metrics">${metric('Current', report?.current)}${metric('Eligible', report?.eligible)}${metric('Stale', report?.stale)}${metric('Missing', report?.missing)}</div>
             ${report ? `<p class="muted">${escape(report.extraction_failed)} extraction failures · ${escape(report.unsupported)} unsupported · ${escape(report.capacity_blocked)} capacity blocked</p>` : '<p class="muted">Coverage pending rescan. Inventories refresh every five minutes or on explicit refresh.</p>'}
             ${view?.pending && report ? '<p class="muted">Files changed; these counts are from the previous scan.</p>' : ''}
-            ${error ? `<p class="error" role="status">${escape(error.slice(0, 600))}</p>` : ''}${actions}
+            ${error ? `<p class="error" role="status">${escape(error.slice(0, 600))}</p>` : ''}${actions}${activeIndex}
             <div class="actions"><button class="secondary" data-action="diagnose" ${attributes}${disabled || state.changingStorage ? ' disabled' : ''}>Diagnose &amp; Repair</button></div>
             <p class="muted">${item.usage ? `Last 30 days: ${escape(item.usage.calls)} recorded calls · ${escape(item.usage.reduction ?? 'Not measured')} estimated tokens avoided versus complete cited files (${escape(item.usage.compared)} comparisons). ${item.usage.disabled ? 'Recording is off. ' : ''}Updated ${escape(new Date(item.usage.checkedAt).toLocaleTimeString())}.` : 'Open Usage &amp; Savings to see activity and estimated savings.'}</p>${vectors}${detail}
             <details id="location-${escape(item.collection)}"><summary>Storage and last index</summary><dl><dt>Index size</dt><dd>${bytes(item.diskBytes)}</dd><dt>Eligible source size</dt><dd>${bytes(report?.eligible_source_bytes)}</dd><dt>Last indexed</dt><dd>${escape(last)}</dd><dt>Index folder</dt><dd class="path">${escape(item.dataDir)}</dd></dl></details>${connection}</section>`;
