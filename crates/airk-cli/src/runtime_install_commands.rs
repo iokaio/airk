@@ -89,6 +89,14 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
             let _lock = install_lock(install_dir)?;
             retirement::uninstall(install_dir).await?
         }
+        RuntimeCommand::AbortStage {
+            install_dir,
+            runtime_sha256,
+        } => {
+            let _lock = install_lock(install_dir)?;
+            staging::abort(install_dir, runtime_sha256)?;
+            serde_json::json!({"aborted_stage":runtime_sha256,"promoted_runtime_preserved":install_dir.join("runtimes").join(runtime_sha256).try_exists()?})
+        }
         RuntimeCommand::Diagnose { install_dir } => {
             ensure!(install_dir.is_dir(), "runtime installation is missing");
             local_ipc::prepare_root(install_dir)?;
@@ -108,7 +116,12 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
                 .as_ref()
                 .err()
                 .map(|error| format!("{error:#}").chars().take(1024).collect::<String>());
-            serde_json::json!({"runtime":selection.ok(),"runtime_error":selection_error,"bootstrap":bootstrap.ok().flatten(),"bootstrap_error":bootstrap_error,"live_service_health":"not_checked"})
+            let stages = staging::pending(install_dir);
+            let stages_error = stages
+                .as_ref()
+                .err()
+                .map(|error| format!("{error:#}").chars().take(1024).collect::<String>());
+            serde_json::json!({"runtime":selection.ok(),"runtime_error":selection_error,"bootstrap":bootstrap.ok().flatten(),"bootstrap_error":bootstrap_error,"pending_stages":stages.ok(),"staging_error":stages_error,"live_service_health":"not_checked"})
         }
         RuntimeCommand::ResetStartup { install_dir } => {
             let _lock = install_lock(install_dir)?;

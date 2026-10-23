@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
 
-fn fixture(root: &Path) -> Result<String> {
+pub(super) fn fixture(root: &Path) -> Result<String> {
     fs::create_dir_all(root.join("notices"))?;
     fs::write(root.join(main_name()), b"Original inert main fixture.")?;
     fs::write(root.join(helper_name()), b"Original inert helper fixture.")?;

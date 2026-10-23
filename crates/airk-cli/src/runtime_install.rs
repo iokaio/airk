@@ -20,12 +20,14 @@ use std::{
 
 #[path = "runtime_retirement.rs"]
 mod retirement;
+#[path = "runtime_staging.rs"]
+mod staging;
 
 const MAX_MANIFEST: u64 = 512 * 1024;
 const MAX_FILES: usize = 2048;
 const MAX_PAYLOAD: u64 = 4 * 1024 * 1024 * 1024;
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, ValueEnum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
 #[serde(rename_all = "snake_case")]
 pub enum VerificationBasis {
     TrustedDistribution,
@@ -78,6 +80,13 @@ pub enum RuntimeCommand {
     },
     /// Remove one unused owned runtime; preserve active/rollback selections and unknown files.
     Remove {
+        #[arg(long)]
+        install_dir: PathBuf,
+        #[arg(long)]
+        runtime_sha256: String,
+    },
+    /// Abort an ownership-proven interrupted copy; preserve promoted runtimes and unknown files.
+    AbortStage {
         #[arg(long)]
         install_dir: PathBuf,
         #[arg(long)]
@@ -156,7 +165,7 @@ pub struct InstallManifest {
     pub files: BTreeMap<String, String>,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Approval {
     pub schema: u32,
@@ -315,6 +324,7 @@ fn safe_file(path: &Path) -> Result<()> {
 fn payload_path(root: &Path, name: &str) -> Result<PathBuf> {
     ensure!(
         !name.is_empty()
+            && name.is_ascii()
             && name.len() <= 1024
             && !name.contains('\\')
             && !name.chars().any(char::is_control),
@@ -514,8 +524,12 @@ fn manifest(root: &Path, approved: &str) -> Result<(Vec<u8>, InstallManifest)> {
         "offline dependency notices missing"
     );
     let mut topology = std::collections::BTreeSet::new();
+    let mut portable_names = BTreeMap::new();
     for name in manifest.files.keys() {
         payload_path(root, name)?;
+        if let Some(prior) = portable_names.insert(name.to_ascii_lowercase(), name.clone()) {
+            ensure!(prior == *name, "case-aliased payload topology");
+        }
         topology.insert(name.clone());
         let mut parent = Path::new(name).parent();
         while let Some(path) = parent.filter(|path| !path.as_os_str().is_empty()) {
@@ -528,6 +542,15 @@ fn manifest(root: &Path, approved: &str) -> Result<(Vec<u8>, InstallManifest)> {
                 "payload file/directory identity collision"
             );
             topology.insert(directory);
+            let directory = path
+                .to_str()
+                .context("non-UTF-8 payload directory")?
+                .replace('\\', "/");
+            if let Some(prior) =
+                portable_names.insert(directory.to_ascii_lowercase(), directory.clone())
+            {
+                ensure!(prior == directory, "case-aliased payload topology");
+            }
             parent = path.parent();
         }
         ensure!(
@@ -538,10 +561,7 @@ fn manifest(root: &Path, approved: &str) -> Result<(Vec<u8>, InstallManifest)> {
     let mut total = 0u64;
     for (name, expected) in &manifest.files {
         digest(expected)?;
-        ensure!(
-            !matches!(name.as_str(), "airk-install.json" | "approval.json"),
-            "reserved payload name"
-        );
+        ensure!(!staging::reserved(name), "reserved payload name");
         let file = payload_path(root, name)?;
         safe_file(&file)?;
         total = total
@@ -563,113 +583,7 @@ pub fn stage(
     approved: &str,
     basis: VerificationBasis,
 ) -> Result<Approval> {
-    let _lock = install_lock(root)?;
-    ensure!(
-        !root.join("uninstall.json").try_exists()?,
-        "resume the pending runtime uninstall before staging another payload"
-    );
-    let source = source.canonicalize()?;
-    let (bytes, inventory) = manifest(&source, approved)?;
-    let runtimes = root.join("runtimes");
-    local_ipc::prepare_root(&runtimes)?;
-    let destination = runtimes.join(approved);
-    if destination.try_exists()? {
-        let (main, approval) = verify_runtime(root, approved)?;
-        prepare_launcher(root, &main)?;
-        return Ok(approval);
-    }
-    ensure!(
-        fs::read_dir(&runtimes)?.take(5).count() < 4,
-        "four retained runtimes/staging directories already occupy this installation; inspect and remove an unused owned runtime before staging another"
-    );
-    let temporary = tempfile::Builder::new()
-        .prefix("stage-")
-        .tempdir_in(&runtimes)?;
-    // On Windows the parent has an explicit inheritable owner-only ACL.
-    let mut copied = 0u64;
-    for (name, expected) in &inventory.files {
-        let from = payload_path(&source, name)?;
-        let to = payload_path(temporary.path(), name)?;
-        fs::create_dir_all(to.parent().context("payload parent missing")?)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            for parent in to
-                .parent()
-                .context("payload parent missing")?
-                .ancestors()
-                .take_while(|path| *path != temporary.path())
-            {
-                fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
-            }
-        }
-        let bound = fs::metadata(&from)?
-            .len()
-            .min(2 * 1024 * 1024 * 1024)
-            .min(MAX_PAYLOAD.saturating_sub(copied));
-        let mut output = OpenOptions::new().write(true).create_new(true).open(&to)?;
-        let actual = std::io::copy(&mut File::open(&from)?.take(bound + 1), &mut output)?;
-        copied = copied
-            .checked_add(actual)
-            .context("runtime payload byte overflow")?;
-        ensure!(
-            actual <= bound && copied <= MAX_PAYLOAD,
-            "runtime payload grew beyond staging allowance"
-        );
-        ensure!(
-            runtime_pair::digest_file(&to)? == *expected,
-            "payload changed while staging"
-        );
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(
-                &to,
-                fs::Permissions::from_mode(if name == main_name() || name == helper_name() {
-                    0o700
-                } else {
-                    0o600
-                }),
-            )?;
-        }
-        output
-            .sync_all()
-            .context("flush staged runtime component")?;
-        sync_directory(to.parent().context("payload parent missing")?)?;
-    }
-    fs::write(temporary.path().join("airk-install.json"), bytes)?;
-    OpenOptions::new()
-        .write(true)
-        .open(temporary.path().join("airk-install.json"))?
-        .sync_all()
-        .context("flush staged install manifest")?;
-    let approval = Approval {
-        schema: 1,
-        manifest_sha256: approved.into(),
-        version: inventory.version,
-        verification_basis: basis,
-    };
-    replace_json(temporary.path(), "approval.json", &approval)?;
-    self_test(&temporary.path().join(main_name()))?;
-    sync_directory(temporary.path())?;
-    // Only this newly created, fully verified temporary directory is renamed.
-    let until = std::time::Instant::now() + Duration::from_secs(5);
-    loop {
-        match fs::rename(temporary.path(), &destination) {
-            Ok(()) => break,
-            Err(error)
-                if cfg!(windows)
-                    && matches!(error.raw_os_error(), Some(5 | 32 | 33))
-                    && std::time::Instant::now() < until =>
-            {
-                std::thread::sleep(Duration::from_millis(100))
-            }
-            Err(error) => return Err(error.into()),
-        }
-    }
-    sync_directory(&runtimes)?;
-    prepare_launcher(root, &destination.join(main_name()))?;
-    Ok(approval)
+    staging::stage(source, root, approved, basis)
 }
 
 fn prepare_launcher(root: &Path, main: &Path) -> Result<()> {

@@ -2,6 +2,8 @@
 
 Status: opt-in native control, durable jobs, supervised workers, direct retrieval/MCP, shared inference, saved-source watching and ordinary/replacement publication implemented; complete maintenance integration, resource qualification and extension cutover remain in progress. Written October 22, 2026; implementation updated October 23.
 
+Implemented interrupted installation: [offline staging](service-installation.md) now saves ownership and file-length reservations before copying, resumes bounded unfinished copies after process death, and provides safe abort/diagnosis without touching sources, changed files or promoted payloads. Actual registered-manager identity, coordinated startup/upgrade and launcher repair remain in progress.
+
 Implemented work observations: [fenced job progress and pause-aware stall handling](service-progress.md) now report real retained-artifact, journal and verification boundaries, per-phase timing and last actual advancement. Cached samples survive restart and disclose newer fencing; heartbeats and phase changes do not reset the work watchdog. Console/event-history integration remains open.
 
 Implemented shared-model ownership: the [inference pool](service-embedding.md) now retains bounded verified immutable files under the private service root. Active sessions pin those files rather than retired collection incarnations; a real MiniLM smoke verifies retirement with one model still loaded. Per-project provisioning/calibration-file cutover remains pending.

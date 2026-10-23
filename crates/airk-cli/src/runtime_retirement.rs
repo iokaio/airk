@@ -164,6 +164,9 @@ pub(super) async fn uninstall(root: &Path) -> Result<serde_json::Value> {
         if manager.owned_registration_exists()? {
             manager.uninstall()?;
         }
+        for identity in staging::pending(root)? {
+            staging::abort(root, &identity)?;
+        }
         let mut runtimes = Vec::new();
         for entry in fs::read_dir(root.join("runtimes"))?.take(5) {
             let entry = entry?;
