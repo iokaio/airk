@@ -26,12 +26,14 @@ use std::{
 use tokio::sync::oneshot;
 
 struct ChildWorker {
+    _containment: crate::child_job::ChildJob,
     child: Child,
     input: Option<ChildStdin>,
     output: Receiver<Reply>,
     reader: Option<std::thread::JoinHandle<()>>,
     identity: Option<WorkerIdentity>,
     role: String,
+    runtime: PathBuf,
     started: Instant,
     last_renewal: Instant,
     pool_active: bool,
@@ -55,6 +57,7 @@ impl Drop for ChildWorker {
                 }
             }
         }
+        let _ = local_ipc::remove_exited_endpoint(&self.runtime, &self.role);
         if let Some(reader) = self.reader.take() {
             let _ = reader.join();
         }
@@ -76,17 +79,21 @@ impl ChildWorker {
             use std::os::windows::process::CommandExt;
             command.creation_flags(0x08000000);
         }
-        let mut child = command.spawn().context("start project owner")?;
+        let mut child =
+            crate::native_process::spawn(&mut command).context("start project owner")?;
+        let containment = crate::child_job::ChildJob::attach(&mut child)?;
         let input = child.stdin.take().context("project input missing")?;
         let mut output = child.stdout.take().context("project output missing")?;
         let (sender, receiver) = mpsc::sync_channel(1);
         let mut process = Self {
             child,
+            _containment: containment,
             input: Some(input),
             output: receiver,
             reader: None,
             identity: None,
             role: protocol::role(worker),
+            runtime: root.into(),
             started: Instant::now(),
             last_renewal: Instant::now(),
             pool_active: false,
@@ -250,6 +257,7 @@ struct ResourceCache {
     snapshot: airk_core::service_resources::ResourceSnapshot,
     observed: Instant,
     configuration_error: bool,
+    idle_safe: bool,
 }
 enum Envelope {
     ConfigureResources {
@@ -380,6 +388,7 @@ impl Supervisor {
             snapshot: initial.snapshot(),
             observed: Instant::now(),
             configuration_error,
+            idle_safe: false,
         }));
         let resource_cache = resources.clone();
         let thread = std::thread::Builder::new()
@@ -387,13 +396,14 @@ impl Supervisor {
             .spawn(move || {
                 let mut workers = BTreeMap::<ProjectBinding, ChildWorker>::new();
                 let mut pool: Option<Pool> = None;
-                let mut registry = None;
+                let mut registry: Option<ServiceRegistry> = None;
                 let mut backoff = BTreeMap::<ProjectBinding, (Instant, u32)>::new();
                 let mut predecessors: Option<Vec<ProjectBinding>> = None;
                 let mut predecessor_pool = None;
                 let mut resources = initial;
                 let mut configuration_error = configuration_error;
                 let mut pending_after = None;
+                let mut endpoints_ready = false;
                 loop {
                     let observations = std::iter::once(std::process::id())
                         .chain(workers.values().map(|worker| worker.child.id()))
@@ -412,6 +422,12 @@ impl Supervisor {
                         cache.snapshot = resources.snapshot();
                         cache.observed = Instant::now();
                         cache.configuration_error = configuration_error;
+                        cache.idle_safe = workers.is_empty()
+                            && registry.as_ref().is_some_and(|registry| {
+                                registry
+                                    .pending_projects(1)
+                                    .is_ok_and(|page| page.is_empty())
+                            });
                     }
                     if pool.as_mut().is_some_and(Pool::exited) {
                         pool = None;
@@ -439,8 +455,13 @@ impl Supervisor {
                     }
                     // A restarted service must not reassign unknown old query/model capacity.
                     // Parent EOF stops old admission, but only OS lock release proves drain.
-                    let may_allocate = predecessors.as_ref().is_some_and(Vec::is_empty)
+                    let predecessors_released = predecessors.as_ref().is_some_and(Vec::is_empty)
                         && predecessor_pool == Some(false);
+                    if predecessors_released && !endpoints_ready {
+                        endpoints_ready =
+                            local_ipc::cleanup_predecessor_endpoints(&root).unwrap_or(false);
+                    }
+                    let may_allocate = predecessors_released && endpoints_ready;
                     let finished: Vec<_> = workers
                         .iter_mut()
                         .filter_map(|(project, worker)| {
@@ -746,6 +767,11 @@ impl Supervisor {
         })
     }
 
+    pub fn can_idle_exit(&self) -> bool {
+        self.resources
+            .lock()
+            .is_ok_and(|cache| cache.idle_safe && cache.observed.elapsed() < Duration::from_secs(2))
+    }
     pub fn resource_status(&self) -> ControlResponse {
         match self.resources.lock() {
             Ok(cache) => ControlResponse::Resources {

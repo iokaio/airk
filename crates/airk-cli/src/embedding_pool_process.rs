@@ -15,6 +15,7 @@ use std::{
 };
 
 pub struct Pool {
+    _containment: crate::child_job::ChildJob,
     child: Child,
     input: Option<ChildStdin>,
     output: Receiver<protocol::Observation>,
@@ -41,6 +42,8 @@ impl Drop for Pool {
                 }
             }
         }
+        let _ =
+            crate::local_ipc::remove_exited_endpoint(&self.runtime, &protocol::role(self.instance));
         if let Some(reader) = self.reader.take() {
             let _ = reader.join();
         }
@@ -64,12 +67,14 @@ impl Pool {
             use std::os::windows::process::CommandExt;
             command.creation_flags(0x08000000);
         }
-        let mut child = command.spawn()?;
+        let mut child = crate::native_process::spawn(&mut command)?;
+        let containment = crate::child_job::ChildJob::attach(&mut child)?;
         let input = child.stdin.take().context("pool input missing")?;
         let mut output = child.stdout.take().context("pool output missing")?;
         let (sender, receiver) = mpsc::sync_channel(1);
         let mut pool = Self {
             child,
+            _containment: containment,
             input: Some(input),
             output: receiver,
             reader: None,

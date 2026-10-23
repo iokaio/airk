@@ -88,6 +88,11 @@ mod continuity_argument_tests {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Install, select and launch an approved offline service runtime pair.
+    Runtime {
+        #[command(subcommand)]
+        action: airk_cli::runtime_install::RuntimeCommand,
+    },
     #[command(hide = true)]
     ProjectWorker,
     /// Read-only MCP bridge to an already registered service project.
@@ -101,6 +106,9 @@ enum Command {
     Serve {
         #[arg(long)]
         runtime_dir: PathBuf,
+        /// On-demand grace after all clients/workers and runnable jobs are gone.
+        #[arg(long, value_parser = clap::value_parser!(u64).range(1..=3600))]
+        idle_exit_seconds: Option<u64>,
     },
     /// Inspect native CPU capabilities and the pinned automatic model selection.
     ModelCatalog,
@@ -559,6 +567,7 @@ impl Command {
             | Self::Schedule { .. }
             | Self::Service { .. }
             | Self::Serve { .. }
+            | Self::Runtime { .. }
             | Self::ProjectWorker
             | Self::Bridge { .. }
             | Self::Storage { .. } => return None,
@@ -1184,8 +1193,19 @@ async fn main_async() -> anyhow::Result<()> {
     }
     #[cfg(not(feature = "local-inference"))]
     airk_cli::embedding_client::install()?;
-    if let Command::Serve { runtime_dir } = &cli.command {
-        return airk_cli::service_runtime::serve(runtime_dir).await;
+    if let Command::Runtime { action } = &cli.command {
+        return airk_cli::runtime_install::run(action).await;
+    }
+    if let Command::Serve {
+        runtime_dir,
+        idle_exit_seconds,
+    } = &cli.command
+    {
+        return airk_cli::service_runtime::serve_with_idle(
+            runtime_dir,
+            idle_exit_seconds.map(std::time::Duration::from_secs),
+        )
+        .await;
     }
     if let Command::Service { action } = &cli.command {
         if let ServiceCommand::Register { runtime_dir } = action {
@@ -1290,9 +1310,9 @@ async fn main_async() -> anyhow::Result<()> {
     };
     let result = async { match cli.command {
         Command::Tools { action } => tools::run(action, kernel.clone()).await,
-        Command::Storage { .. } | Command::ModelCatalog | Command::Serve { .. } | Command::ProjectWorker | Command::Bridge { .. } => unreachable!("handled before opening kernel"),
+        Command::Storage { .. } | Command::Runtime { .. } | Command::ModelCatalog | Command::Serve { .. } | Command::ProjectWorker | Command::Bridge { .. } => unreachable!("handled before opening kernel"),
         Command::Service { action } => {
-            let manager = airk_kernel::service::ServiceManager::for_kernel(&kernel)?;
+            let manager = airk_cli::service_manager::ServiceManager::for_kernel(&kernel)?;
             match action {
                 ServiceCommand::Plan => print_json(&manager.plan()?),
                 ServiceCommand::Status => print_json(&manager.status()?),

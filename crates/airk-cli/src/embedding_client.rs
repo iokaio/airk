@@ -77,7 +77,8 @@ impl Session {
             use std::os::windows::process::CommandExt;
             command.creation_flags(0x08000000);
         }
-        let mut child = command.spawn().context("start verified embedding worker")?;
+        let mut child = crate::native_process::spawn(&mut command)
+            .context("start verified embedding worker")?;
         let mut input = child.stdin.take().context("embedding input missing")?;
         let mut output = child.stdout.take().context("embedding output missing")?;
         let child = Arc::new(Mutex::new(child));

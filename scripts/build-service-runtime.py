@@ -56,7 +56,8 @@ def source_identity():
     names = subprocess.check_output([
         "git", "-c", f"safe.directory={ROOT.as_posix()}", "ls-files", "-z",
         "--cached", "--others", "--exclude-standard", "--", "Cargo.toml", "Cargo.lock",
-        "rust-toolchain.toml", ".cargo", "crates", "scripts/build-service-runtime.py"], cwd=ROOT)
+        "rust-toolchain.toml", ".cargo", "crates", "scripts/build-service-runtime.py",
+        "scripts/license-notices.py", "LICENSE", "third_party"], cwd=ROOT)
     result = hashlib.sha256()
     files = sorted(set(name for name in names.split(b"\0") if name))
     for name in files:
@@ -81,6 +82,20 @@ def publish_staging(staging, destination):
             if os.name != "nt" or error.winerror not in (5, 32, 33) or time.monotonic() >= deadline:
                 raise
             time.sleep(0.1)
+
+
+def seal_install_payload(staging, version, operating_system, architecture):
+    """Inventory the complete offline payload; its digest needs independent approval."""
+    shutil.copyfile(ROOT / "LICENSE", staging / "LICENSE")
+    subprocess.run([os.sys.executable, str(ROOT / "scripts" / "license-notices.py"),
+                    "--output", str(staging / "notices")], cwd=ROOT, check=True)
+    files = {item.relative_to(staging).as_posix(): digest(item)
+             for item in sorted(staging.rglob("*")) if item.is_file()}
+    if len(files) > 2048:
+        raise RuntimeError("Offline runtime inventory exceeds installer file budget")
+    manifest = {"schema": 1, "version": version, "os": operating_system,
+                "arch": architecture, "files": files}
+    (staging / "airk-install.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 
 
 def main():
@@ -122,6 +137,9 @@ def main():
                    "runtime": manifest, "rustc": subprocess.check_output(
                        ["rustc", "--version", "--verbose"], text=True, encoding="utf-8").strip()}
         (staging / "airk-build.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+        seal_install_payload(staging, version, operating_system, architecture)
+        if source_identity() != source:
+            raise RuntimeError("Native source changed during offline payload staging")
         # The final directory is created only after both artifacts and identities verify.
         publish_staging(staging, destination)
     print(f"Staged {version} runtime pair: {destination}")

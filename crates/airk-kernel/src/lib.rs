@@ -30,7 +30,6 @@ mod publication;
 mod resources;
 pub mod roots;
 pub mod scheduler;
-pub mod service;
 pub mod service_broker;
 pub mod service_execution;
 pub mod service_projects;

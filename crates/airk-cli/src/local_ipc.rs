@@ -50,7 +50,7 @@ pub fn endpoint(root: &Path, role: &str) -> Result<String> {
     #[cfg(unix)]
     {
         use std::os::unix::ffi::OsStrExt;
-        let path = root.join(format!("{role}.sock"));
+        let path = unix_socket_root(&root)?.join(format!("{role}.sock"));
         ensure!(
             path.as_os_str().as_bytes().len() <= 100,
             "native socket path exceeds portable bound"
@@ -60,6 +60,155 @@ pub fn endpoint(root: &Path, role: &str) -> Result<String> {
             .ok_or_else(|| anyhow::anyhow!("runtime socket path is not UTF-8"))?
             .into())
     }
+}
+
+#[cfg(unix)]
+fn unix_socket_root(root: &Path) -> Result<std::path::PathBuf> {
+    use std::io::{Read, Write};
+    let mut hash = Sha256::new();
+    hash.update(current_user()?.as_bytes());
+    hash.update([0]);
+    hash.update(root.as_os_str().as_encoded_bytes());
+    let identity = format!("{:x}", hash.finalize());
+    let base = if let Some(xdg) = std::env::var_os("XDG_RUNTIME_DIR") {
+        let xdg = std::path::PathBuf::from(xdg);
+        if xdg.is_absolute() && xdg.exists() && prepare_root(&xdg).is_ok() {
+            xdg
+        } else {
+            std::path::PathBuf::from("/tmp")
+        }
+    } else {
+        std::path::PathBuf::from("/tmp")
+    };
+    use std::os::unix::ffi::OsStrExt;
+    let candidate = base.join(format!("ak-{}", &identity[..16]));
+    let directory = if candidate.as_os_str().as_bytes().len() <= 40 {
+        candidate
+    } else {
+        std::path::PathBuf::from("/tmp").join(format!("ak-{}", &identity[..16]))
+    };
+    prepare_root(&directory)?;
+    let receipt = directory.join("identity");
+    if !receipt.try_exists()? {
+        let mut temporary = tempfile::NamedTempFile::new_in(&directory)?;
+        temporary.write_all(identity.as_bytes())?;
+        temporary.as_file().sync_all()?;
+        match temporary.persist_noclobber(&receipt) {
+            Ok(_) => {}
+            Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error.error.into()),
+        }
+    }
+    use std::os::unix::fs::MetadataExt;
+    let metadata = std::fs::symlink_metadata(&receipt)?;
+    ensure!(
+        metadata.is_file()
+            && !metadata.file_type().is_symlink()
+            && metadata.nlink() == 1
+            && metadata.len() <= 64,
+        "invalid native socket namespace receipt"
+    );
+    let mut saved = String::new();
+    std::fs::File::open(receipt)?
+        .take(65)
+        .read_to_string(&mut saved)?;
+    ensure!(
+        saved == identity,
+        "socket namespace belongs to another runtime"
+    );
+    Ok(directory)
+}
+
+/// Only the elected service owner may replace its fixed stale control socket.
+pub fn prepare_control_endpoint(lease: &airk_store::service::ServiceLease) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{FileTypeExt, MetadataExt};
+        let path = endpoint(lease.root(), "control")?;
+        match std::fs::symlink_metadata(&path) {
+            Ok(metadata) => {
+                ensure!(
+                    metadata.file_type().is_socket()
+                        && metadata.nlink() == 1
+                        && metadata.uid().to_string() == current_user()?,
+                    "unexpected service control entry"
+                );
+                std::fs::remove_file(path)?;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = lease;
+    Ok(())
+}
+
+/// Called only before allocating any new children, after predecessor OS leases release.
+/// Unknown entries survive. A pass removes at most 64 recognized stale sockets.
+pub(crate) fn cleanup_predecessor_endpoints(root: &Path) -> Result<bool> {
+    #[cfg(unix)]
+    {
+        let directory = unix_socket_root(&root.canonicalize()?)?;
+        let mut removed = 0;
+        for entry in std::fs::read_dir(directory)?.take(1024) {
+            let entry = entry?;
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else {
+                continue;
+            };
+            let Some(role) = name.strip_suffix(".sock") else {
+                continue;
+            };
+            let recognized = (role.starts_with("q-") || role.starts_with("e-"))
+                && role.len() == 34
+                && role[2..]
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+            if recognized {
+                remove_exited_endpoint(root, role)?;
+                removed += 1;
+                if removed == 64 {
+                    return Ok(false);
+                }
+            }
+        }
+        Ok(true)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = root;
+        Ok(true)
+    }
+}
+
+/// The owning adapter must prove actual process exit before invoking this function.
+pub(crate) fn remove_exited_endpoint(root: &Path, role: &str) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{FileTypeExt, MetadataExt};
+        ensure!(
+            role.starts_with("q-") || role.starts_with("e-"),
+            "invalid child endpoint role"
+        );
+        let path = endpoint(root, role)?;
+        match std::fs::symlink_metadata(&path) {
+            Ok(metadata) => {
+                ensure!(
+                    metadata.file_type().is_socket()
+                        && metadata.nlink() == 1
+                        && metadata.uid().to_string() == current_user()?,
+                    "foreign child endpoint entry"
+                );
+                std::fs::remove_file(path)?;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = (root, role);
+    Ok(())
 }
 
 /// One deadline covers a whole frame, including a peer that trickles its bytes.

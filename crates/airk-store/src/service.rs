@@ -86,6 +86,9 @@ impl EmbeddingLease {
 }
 
 impl ServiceLease {
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
     /// Native adapter must first establish an owner-only runtime directory.
     pub fn acquire(root: &Path) -> Result<Self> {
         let root = root.canonicalize()?;

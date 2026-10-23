@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Explicit per-user OS lifecycle. Inspection never installs or starts a worker.
-use crate::Kernel;
+use airk_kernel::Kernel;
 use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -89,6 +89,50 @@ struct Output {
 
 impl ServiceManager {
     pub fn for_kernel(kernel: &Kernel) -> Result<Self> {
+        let data = absolute_existing_ancestor(kernel.data_dir())?;
+        let args = vec![
+            "--root".into(),
+            kernel
+                .root()
+                .to_str()
+                .context("service root must be UTF-8")?
+                .into(),
+            "--data-dir".into(),
+            data.to_str()
+                .context("service data root must be UTF-8")?
+                .into(),
+            "--collection".into(),
+            kernel.collection().into(),
+            "schedule".into(),
+            "run".into(),
+            "--watch".into(),
+        ];
+        Self::for_command(&data, std::env::current_exe()?.canonicalize()?, args, false)
+    }
+
+    /// A separate shared-service identity never overwrites an old root scheduler.
+    pub fn for_runtime(root: &Path) -> Result<Self> {
+        let root = root.canonicalize()?;
+        let launcher = crate::runtime_install::verified_launcher(&root)?;
+        Self::for_command(
+            &root,
+            launcher,
+            vec![
+                "runtime".into(),
+                "foreground".into(),
+                "--install-dir".into(),
+                root.to_str().context("install root must be UTF-8")?.into(),
+            ],
+            true,
+        )
+    }
+
+    fn for_command(
+        data_path: &Path,
+        executable: PathBuf,
+        args: Vec<String>,
+        shared: bool,
+    ) -> Result<Self> {
         let platform = if cfg!(windows) {
             Platform::Windows
         } else if cfg!(target_os = "macos") {
@@ -98,46 +142,18 @@ impl ServiceManager {
         } else {
             bail!("per-user service management is supported on Windows, macOS and Linux");
         };
-        let principal = if platform == Platform::Windows {
-            let output = execute(&Invocation::new(
-                windows_tool("whoami.exe")?,
-                &["/user", "/fo", "csv", "/nh"],
-            ))?;
-            ensure!(
-                output.success,
-                "cannot resolve current Windows user: {}",
-                output.text
-            );
-            output
-                .text
-                .split([',', '"', '\r', '\n'])
-                .find(|part| {
-                    part.starts_with("S-1-")
-                        && part
-                            .chars()
-                            .all(|ch| ch.is_ascii_digit() || ch == '-' || ch == 'S')
-                })
-                .context("whoami did not return a current-user SID")?
-                .to_owned()
-        } else {
-            let output = execute(&Invocation::new("/usr/bin/id", &["-u"]))?;
-            let uid = output.text.trim();
-            ensure!(
-                output.success && !uid.is_empty() && uid.bytes().all(|byte| byte.is_ascii_digit()),
-                "cannot resolve current Unix user"
-            );
-            uid.into()
-        };
-        let data = absolute_existing_ancestor(kernel.data_dir())?;
+        let principal = crate::local_ipc::current_user()?;
+        let data = absolute_existing_ancestor(data_path)?;
         let data = data
             .to_str()
             .context("service data root must be UTF-8")?
             .to_owned();
+        let prefix = if shared { "airksvc-" } else { "airk-" };
         let id = format!(
-            "airk-{:x}",
+            "{prefix}{:x}",
             Sha256::digest(format!("{principal}\0{data}").as_bytes())
         );
-        let id = id[..37].to_owned();
+        let id = id[..prefix.len() + 32].to_owned();
         let home = if platform == Platform::Windows {
             env_path("APPDATA")?
         } else {
@@ -164,22 +180,6 @@ impl ServiceManager {
                 .join(format!("{id}.plist")),
         };
         let receipt = config.join("airk/services").join(format!("{id}.json"));
-        let executable = std::env::current_exe()?.canonicalize()?;
-        let args = vec![
-            "--root".into(),
-            kernel
-                .root()
-                .to_str()
-                .context("service root must be UTF-8")?
-                .into(),
-            "--data-dir".into(),
-            data.clone(),
-            "--collection".into(),
-            kernel.collection().into(),
-            "schedule".into(),
-            "run".into(),
-            "--watch".into(),
-        ];
         for argument in args.iter().map(String::as_str).chain([executable
             .to_str()
             .context("service executable must be UTF-8")?])
@@ -257,7 +257,11 @@ impl ServiceManager {
             definition,
             executable: self.executable.clone(),
             arguments: self.args.clone(),
-            scope: "current-user login session; one worker per canonical data root",
+            scope: if self.id.starts_with("airksvc-") {
+                "current-user shared AIRK service; optional login registration"
+            } else {
+                "current-user login session; one worker per canonical data root"
+            },
         })
     }
 
@@ -394,6 +398,10 @@ impl ServiceManager {
         self.status()
     }
 
+    pub fn owned_registration_exists(&self) -> Result<bool> {
+        self.check_owned()
+    }
+
     fn check_owned(&self) -> Result<bool> {
         let Some(bytes) = read_config(&self.receipt)? else {
             return Ok(false);
@@ -439,7 +447,7 @@ impl ServiceManager {
         format!("{}/{}", self.domain(), self.id)
     }
     fn systemctl(&self, args: &[&str]) -> Invocation {
-        let mut invocation = Invocation::new("systemctl", &["--user", "--no-pager"]);
+        let mut invocation = Invocation::new("/usr/bin/systemctl", &["--user", "--no-pager"]);
         invocation.args.extend(args.iter().map(|arg| (*arg).into()));
         invocation.env.insert("SYSTEMD_PAGER".into(), String::new());
         invocation
@@ -634,7 +642,7 @@ fn windows_path(value: &str) -> String {
         .map(|rest| format!(r"\\{rest}"))
         .unwrap_or_else(|| value.trim_start_matches(r"\\?\").into())
 }
-fn windows_argument(value: &str) -> String {
+pub(crate) fn windows_argument(value: &str) -> String {
     let mut out = String::from("\"");
     let mut slashes = 0;
     for ch in value.chars() {
@@ -676,8 +684,7 @@ fn execute(invocation: &Invocation) -> Result<Output> {
         use std::os::windows::process::CommandExt;
         command.creation_flags(0x08000000);
     }
-    let mut child = command
-        .spawn()
+    let mut child = crate::native_process::spawn(&mut command)
         .with_context(|| format!("start service manager {}", invocation.program.display()))?;
     let (sender, receiver) = mpsc::channel();
     for mut stream in [
@@ -718,6 +725,16 @@ fn execute(invocation: &Invocation) -> Result<Output> {
         }
     }
     Ok(Output { success, text })
+}
+
+/// The same bounded native command adapter also checks the paired helper's role/version.
+pub(crate) fn check_executable_identity(program: &Path, expected: &str) -> Result<()> {
+    let output = execute(&Invocation::new(program, &["--version"]))?;
+    ensure!(
+        output.success && output.text.trim() == expected,
+        "paired executable identity mismatch"
+    );
+    Ok(())
 }
 
 #[cfg(test)]

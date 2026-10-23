@@ -58,7 +58,75 @@ pub fn digest_file(path: &Path) -> Result<String> {
     Ok(format!("{:x}", hash.finalize()))
 }
 
+/// Reject malformed/wrong-target images before handing them to native process creation.
+/// Successful header inspection does not establish dependency availability or approval.
+pub fn validate_native_image(path: &Path) -> Result<()> {
+    let mut bytes = Vec::new();
+    fs::File::open(path)?.take(65536).read_to_end(&mut bytes)?;
+    #[cfg(windows)]
+    {
+        ensure!(
+            bytes.len() >= 64 && &bytes[..2] == b"MZ",
+            "invalid native PE executable header"
+        );
+        let offset = u32::from_le_bytes(bytes[60..64].try_into()?) as usize;
+        let pe = bytes
+            .get(offset..offset.saturating_add(26))
+            .context("PE header exceeds inspection bound")?;
+        let machine = if cfg!(target_arch = "x86_64") {
+            0x8664
+        } else {
+            0xaa64
+        };
+        ensure!(
+            &pe[..4] == b"PE\0\0"
+                && u16::from_le_bytes(pe[4..6].try_into()?) == machine
+                && u16::from_le_bytes(pe[24..26].try_into()?) == 0x20b,
+            "runtime executable has incompatible PE architecture"
+        );
+    }
+    #[cfg(target_os = "linux")]
+    {
+        ensure!(
+            bytes.len() >= 20 && &bytes[..4] == b"\x7fELF" && bytes[4] == 2 && bytes[5] == 1,
+            "invalid native ELF executable header"
+        );
+        let machine = if cfg!(target_arch = "x86_64") {
+            62
+        } else {
+            183
+        };
+        ensure!(
+            u16::from_le_bytes(bytes[18..20].try_into()?) == machine,
+            "runtime executable has incompatible ELF architecture"
+        );
+    }
+    #[cfg(target_os = "macos")]
+    {
+        ensure!(
+            bytes.len() >= 16 && bytes[..4] == [0xcf, 0xfa, 0xed, 0xfe],
+            "invalid native Mach-O executable header"
+        );
+        let cpu = if cfg!(target_arch = "aarch64") {
+            0x0100000c
+        } else {
+            0x01000007
+        };
+        ensure!(
+            u32::from_le_bytes(bytes[4..8].try_into()?) == cpu
+                && u32::from_le_bytes(bytes[12..16].try_into()?) == 2,
+            "runtime executable has incompatible Mach-O architecture"
+        );
+    }
+    Ok(())
+}
+
 pub fn verify_helper(main: &Path) -> Result<PathBuf> {
+    verify_installed_pair(main, env!("CARGO_PKG_VERSION"))
+}
+
+/// A stable launcher can validate a later selected runtime without adopting its version.
+pub fn verify_installed_pair(main: &Path, expected_version: &str) -> Result<PathBuf> {
     let parent = main.parent().context("runtime directory missing")?;
     for ancestor in parent.ancestors() {
         let metadata = fs::symlink_metadata(ancestor)?;
@@ -90,7 +158,7 @@ pub fn verify_helper(main: &Path) -> Result<PathBuf> {
     let pair: RuntimePair = serde_json::from_slice(&bytes)?;
     ensure!(
         pair.schema == 1
-            && pair.version == env!("CARGO_PKG_VERSION")
+            && pair.version == expected_version
             && pair.os == std::env::consts::OS
             && pair.arch == std::env::consts::ARCH,
         "incompatible runtime pair"

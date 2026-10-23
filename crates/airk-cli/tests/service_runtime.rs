@@ -106,6 +106,42 @@ fn wait_exit(child: &mut Child) -> Result<bool> {
     }
 }
 
+#[test]
+fn on_demand_idle_exit_does_not_require_login_manager_and_health_does_not_extend_it() -> Result<()>
+{
+    let owner = tempfile::tempdir()?;
+    let root = owner.path().join("runtime");
+    let child = command()
+        .arg("serve")
+        .arg("--runtime-dir")
+        .arg(&root)
+        .args(["--idle-exit-seconds", "3"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+    let mut children = Children(vec![child]);
+    wait_ready(&root)?;
+    let until = Instant::now() + Duration::from_secs(10);
+    loop {
+        let _ = control(&root, "health");
+        if let Some(status) = children.0[0].try_wait()? {
+            ensure!(status.success(), "idle service did not exit cleanly");
+            break;
+        }
+        ensure!(
+            Instant::now() < until,
+            "read-only health polling prevented idle shutdown"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    ensure!(
+        airk_store::service::ServiceLease::acquire(&root).is_ok(),
+        "idle service retained ownership"
+    );
+    Ok(())
+}
+
 fn probe_stdio_bridge(root: &Path, project: airk_core::service::ProjectBinding) -> Result<()> {
     use std::io::{BufRead, Read, Write};
     let mut child = command()

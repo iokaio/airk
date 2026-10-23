@@ -69,6 +69,8 @@ pub struct ServiceHealth {
     pub instance: Incarnation,
     pub process_id: u32,
     pub executable_sha256: String,
+    #[serde(default)]
+    pub runtime_sha256: Option<String>,
     pub user: String,
     pub uptime_ms: u64,
     pub policy: BrokerStatus,
