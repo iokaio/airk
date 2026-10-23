@@ -21,6 +21,9 @@ const APPLICATION: i64 = 0x41535256;
 const MAX_DATABASE_BYTES: u64 = 32 * 1024 * 1024;
 pub const MAX_PROJECTS: usize = 1024;
 
+#[path = "service_jobs.rs"]
+mod jobs;
+
 pub struct ServiceRegistry {
     root: PathBuf,
     connection: Connection,
@@ -171,6 +174,15 @@ impl ServiceRegistry {
                     application == APPLICATION && version == 1,
                     "unsupported service registry format"
                 );
+                let actual: String = connection.query_row(
+                    "SELECT incarnation FROM service_meta WHERE id=1",
+                    [],
+                    |row| row.get(0),
+                )?;
+                ensure!(
+                    actual.parse::<Incarnation>()? == owner.incarnation,
+                    "service registry ownership mismatch"
+                );
             }
         }
         connection.execute_batch(
@@ -199,6 +211,7 @@ impl ServiceRegistry {
             registry.incarnation()? == owner.incarnation,
             "service registry identity disagrees with owner"
         );
+        registry.connection.execute_batch(jobs::SCHEMA)?;
         Ok(registry)
     }
 

@@ -127,6 +127,86 @@ pub struct ProjectPage {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum JobKind {
+    Index,
+    Reconcile,
+    Vectors,
+    Verify,
+    Rebuild,
+}
+
+impl JobKind {
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::Index => "index",
+            Self::Reconcile => "reconcile",
+            Self::Vectors => "vectors",
+            Self::Verify => "verify",
+            Self::Rebuild => "rebuild",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum JobState {
+    Pending,
+    Running,
+    Succeeded,
+    Failed,
+    Canceled,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RequestKey {
+    pub namespace: Incarnation,
+    pub epoch: u64,
+    pub nonce: Incarnation,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
+pub enum JobOutcome {
+    Succeeded {
+        revision: Option<crate::identity::RevisionToken>,
+    },
+    Failed {
+        code: String,
+    },
+    Canceled,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct JobRecord {
+    pub id: Sha256Digest,
+    pub project: ProjectBinding,
+    pub kind: JobKind,
+    pub state: JobState,
+    pub fencing_generation: u64,
+    pub attempts: u32,
+    pub outcome: Option<JobOutcome>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum JobError {
+    KeyExpired,
+    KeyConflict,
+    Capacity,
+    UnknownJob,
+    StaleWorker,
+}
+impl std::fmt::Display for JobError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+impl std::error::Error for JobError {}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkerIdentity {
     pub service: Incarnation,
