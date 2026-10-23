@@ -10,4 +10,6 @@ Interrupted first installations can now be removed before activation, with exclu
 
 Registered projects with missing source roots can serve existing ownership-matched retained evidence. New scans and rebuilds fail explicitly without publishing root-wide deletions; status reports source availability independently of index identity and readiness.
 
+Source admission now rejects overlaps with service control, verified installer state/install directories and all registered project data roots. Transactional checks cover additional-root changes and registration races; native indexing rechecks pending configuration before capture.
+
 Stage commits remain local and human DCO-signed. No push, publication or service VSIX is authorized before the user's implementation, test and review gate is satisfied. Final versions and packaging receipts will be recorded here at cutover.

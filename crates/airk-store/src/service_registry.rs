@@ -25,6 +25,9 @@ pub const MAX_PROJECTS: usize = 1024;
 mod jobs;
 #[path = "service_progress.rs"]
 mod progress;
+#[path = "service_source_isolation.rs"]
+mod source_isolation;
+pub use source_isolation::SourceBoundary;
 #[path = "service_watch.rs"]
 mod watch;
 pub use watch::WatchProject;
@@ -219,6 +222,9 @@ impl ServiceRegistry {
         registry.connection.execute_batch(jobs::SCHEMA)?;
         registry.connection.execute_batch(watch::SCHEMA)?;
         registry.connection.execute_batch(progress::SCHEMA)?;
+        registry
+            .connection
+            .execute_batch(source_isolation::SCHEMA)?;
         Ok(registry)
     }
 
@@ -237,6 +243,7 @@ impl ServiceRegistry {
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        source_isolation::validate(&transaction, &self.root, registration, &[])?;
         let existing: Option<Vec<u8>> = transaction
             .query_row(
                 "SELECT substr(payload,1,20481) FROM projects WHERE binding=?1",

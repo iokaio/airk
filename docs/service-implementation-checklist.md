@@ -15,6 +15,8 @@ User authorization: implement the entire plan, make human DCO-signed local stage
 - [ ] Phase 6: trusted service console, bounded status/events, restart, one/selected/all repair, closed/missing projects, stale plans, cancellation and resumable partial-failure receipts; actual multi-window editor acceptance. Fenced durable native job-progress samples, phase timing and pause-aware stall handling are integrated; console presentation and detailed failure/event history remain open.
 
 Missing-source integration: native workers now serve existing ownership-matched retained evidence after a registered root disappears, report source availability separately and reject new scans/rebuilds with `source_unavailable`. The console still needs to present these native observations.
+
+Source-isolation integration: registrations and fenced additional-root updates now serialize overlap checks against all registered data, control and verified installer-private paths. Workers validate pending source configuration before capture. Windows/Linux process regressions preserve committed evidence and private bytes on rejection; new cache/log locations introduced at cutover must join these protections.
 - [ ] Phase 7: default extension, CLI, container and read-only MCP cutover; fresh 1.4 namespace, old-helper rejection and explicit legacy agent configuration review; no direct-store fallback or service payload forwarding. Audit separate 1.4 quota/lifecycle metadata ownership as well as collection filenames, so legacy-root cleanup cannot release service allowances.
 - [ ] Phase 8: synchronized native/extension/lockfile 1.4.0 versions, exact artifact receipts, repository/native/extension checks, workload and installed-platform matrix, review and release documentation.
 

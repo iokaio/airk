@@ -10,6 +10,61 @@ fn fixture() -> Result<(tempfile::TempDir, PathBuf, PathBuf)> {
 }
 
 #[test]
+fn source_isolation_uses_both_real_layout_receipts_and_retains_proven_private_paths() -> Result<()>
+{
+    let (owner, root, state) = fixture()?;
+    initialize(&root, Some(&state), RuntimeChannel::Stable)?;
+    let control = control(&root)?;
+    local_ipc::prepare_root(&control)?;
+    let mut registry = airk_store::service::registry::ServiceRegistry::open(
+        &control,
+        airk_kernel::service_broker::new_instance_id()?,
+    )?;
+    let source = owner.path().canonicalize()?.join("source");
+    let data = owner.path().canonicalize()?.join("data");
+    let safe = airk_core::service::ProjectRegistration::new(
+        source.to_str().unwrap().into(),
+        data.to_str().unwrap().into(),
+        "safe".into(),
+    )?;
+    registry.register(&safe)?;
+    for private in [root.join("runtimes"), state.join("logs")] {
+        let candidate = airk_core::service::ProjectRegistration::new(
+            private.to_str().unwrap().into(),
+            data.to_str().unwrap().into(),
+            "private".into(),
+        )?;
+        assert!(
+            registry
+                .register(&candidate)
+                .err()
+                .unwrap()
+                .is::<airk_store::service::registry::SourceBoundary>()
+        );
+    }
+    let receipt = state.join(OWNER);
+    let original = fs::read(&receipt)?;
+    fs::write(&receipt, b"Unknown ownership must be preserved.")?;
+    assert!(registry.register(&safe).is_err());
+    assert_eq!(fs::read(&receipt)?, b"Unknown ownership must be preserved.");
+    fs::write(&receipt, original)?;
+    fs::remove_file(&receipt)?;
+    let candidate = airk_core::service::ProjectRegistration::new(
+        state.join("logs").to_str().unwrap().into(),
+        data.to_str().unwrap().into(),
+        "private".into(),
+    )?;
+    assert!(
+        registry
+            .register(&candidate)
+            .err()
+            .unwrap()
+            .is::<airk_store::service::registry::SourceBoundary>()
+    );
+    Ok(())
+}
+
+#[test]
 fn separate_writable_state_is_pinned_without_creating_control_or_opening_an_index() -> Result<()> {
     let (_owner, root, state) = fixture()?;
     initialize(&root, Some(&state), RuntimeChannel::Stable)?;

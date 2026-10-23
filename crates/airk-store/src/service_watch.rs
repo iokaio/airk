@@ -52,7 +52,7 @@ pub(super) fn block_source_retry(
     Ok(())
 }
 
-fn roots(bytes: &[u8]) -> Result<Vec<String>> {
+pub(super) fn roots(bytes: &[u8]) -> Result<Vec<String>> {
     ensure!(
         bytes.len() <= 96 * 1024,
         "watch root metadata exceeds byte budget"
@@ -264,6 +264,13 @@ impl ServiceRegistry {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         super::jobs::worker_epoch(&tx, &self.root, lease)?;
+        let payload: Vec<u8> = tx.query_row(
+            "SELECT substr(payload,1,20481) FROM projects WHERE binding=?1",
+            [lease.binding.to_string()],
+            |row| row.get(0),
+        )?;
+        let registered = super::decode(&payload, 0, false)?;
+        super::source_isolation::validate(&tx, &self.root, &registered.registration, &additional)?;
         ensure_row(&tx, lease.binding)?;
         let prior: (Vec<u8>, bool) = tx.query_row(
             "SELECT substr(roots,1,98305),roots_observed FROM service_watch WHERE project=?1",

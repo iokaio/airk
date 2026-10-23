@@ -334,7 +334,8 @@ impl Kernel {
     pub fn root(&self) -> &Path {
         &self.root
     }
-    pub(crate) fn require_service_sources(&self) -> Result<()> {
+    /// Validate configured source locations before a service operation captures originals.
+    pub fn require_service_sources(&self) -> Result<()> {
         if self.service_collection.is_some() {
             service_projects::require_source(&self.root)?;
             let roots =

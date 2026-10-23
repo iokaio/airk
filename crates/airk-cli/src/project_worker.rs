@@ -355,6 +355,18 @@ pub async fn run() -> Result<()> {
                     Ok(JobOutcome::Canceled)
                 } else {
                     airk_kernel::service_execution::run(allowance.clone(), || {
+                        if matches!(
+                            job.kind,
+                            JobKind::Index | JobKind::Reconcile | JobKind::Rebuild
+                        ) {
+                            let selected = kernel.refresh_service_snapshot()?;
+                            selected.require_service_sources()?;
+                            let roots = selected
+                                .configured_roots()?
+                                .into_values()
+                                .collect::<Vec<_>>();
+                            registry.record_watch_roots(&job_lease, &roots)?;
+                        }
                         let outcome = execute(&kernel, job.kind, job.id)?;
                         airk_kernel::service_execution::progress_phase(
                             airk_core::service_progress::WorkPhase::Retiring,
@@ -388,6 +400,8 @@ pub async fn run() -> Result<()> {
                             } else if error.is::<airk_kernel::service_projects::SourceUnavailable>()
                             {
                                 "source_unavailable"
+                            } else if error.is::<airk_store::service::registry::SourceBoundary>() {
+                                "protected_source_boundary"
                             } else {
                                 "project_operation_failed"
                             }

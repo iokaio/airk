@@ -12,6 +12,76 @@ use std::{
 struct Children(Vec<Child>);
 
 #[test]
+fn manually_changed_extra_roots_cannot_capture_another_projects_private_data() -> Result<()> {
+    use airk_core::service::{
+        ControlMethod as Method, ControlResponse as Response, JobKind, JobOutcome, RequestKey,
+    };
+    let owner = tempfile::tempdir()?;
+    let runtime = owner.path().join("runtime");
+    let source = owner.path().join("source");
+    let other_source = owner.path().join("other-source");
+    let data = owner.path().join("data");
+    let other_data = owner.path().join("other-data");
+    for directory in [&source, &other_source, &data, &other_data] {
+        fs::create_dir(directory)?;
+    }
+    fs::write(
+        source.join("memo.md"),
+        "# Amber harbor\nPublic amber harbor fixture.\n",
+    )?;
+    fs::write(
+        other_data.join("private.md"),
+        "Confidential fictional radish blueprint.\n",
+    )?;
+    let project = airk_kernel::service_projects::registration(&source, &data, "public")?;
+    let other = airk_kernel::service_projects::registration(&other_source, &other_data, "other")?;
+    let kernel =
+        airk_kernel::Kernel::open_service_collection(&source, Some(data.clone()), "public")?;
+    kernel.configure_vectors(false)?;
+    kernel.index()?;
+    let token = kernel
+        .status()?
+        .publication
+        .context("initial publication missing")?
+        .token;
+    // Directly prepare a pending configuration, as if it had been changed outside
+    // the native management boundary. It must still be checked before capture.
+    kernel.add_root("private", &other_data)?;
+    let mut children = Children(vec![start(&runtime)?]);
+    wait_ready(&runtime)?;
+    tokio::runtime::Runtime::new()?.block_on(async {
+        let request = |method| airk_cli::service_runtime::request(&runtime, method);
+        for registered in [project.clone(), other] {
+            ensure!(matches!(request(Method::Register { project: registered }).await?, Response::Registered { .. }), "registration failed");
+        }
+        let Response::RequestEpoch { namespace, epoch } = request(Method::RequestEpoch).await? else { anyhow::bail!("epoch missing") };
+        let Response::Job { job } = request(Method::Enqueue { project: project.binding,
+            caller: airk_kernel::service_broker::new_instance_id()?,
+            key: RequestKey { namespace, epoch, nonce: airk_kernel::service_broker::new_instance_id()? }, kind: JobKind::Index }).await?
+            else { anyhow::bail!("durable job missing") };
+        let until = tokio::time::Instant::now() + Duration::from_secs(30);
+        loop {
+            let Response::Job { job: observed } = request(Method::Job { id: job.id }).await? else { anyhow::bail!("receipt missing") };
+            if let Some(outcome) = observed.outcome {
+                ensure!(matches!(outcome, JobOutcome::Failed { code } if code == "protected_source_boundary"), "unsafe extra root was not refused before capture");
+                break;
+            }
+            ensure!(tokio::time::Instant::now() < until, "source preflight did not settle");
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        let selected = kernel.refresh_service_snapshot()?;
+        ensure!(selected.status()?.publication.context("retained publication missing")?.token == token, "unsafe root changed publication");
+        let query = airk_core::SearchQuery { text: "radish blueprint".into(), path_prefix: None, limit: 5, max_bytes: 4096 };
+        ensure!(selected.search(&query)?.hits.is_empty(), "private data entered retained evidence");
+        ensure!(fs::read_to_string(other_data.join("private.md"))? == "Confidential fictional radish blueprint.\n", "private fixture changed");
+        request(Method::Shutdown).await?;
+        Ok::<_, anyhow::Error>(())
+    })?;
+    ensure!(wait_exit(&mut children.0[0])?, "service did not drain");
+    Ok(())
+}
+
+#[test]
 fn missing_registered_source_still_brokers_retained_evidence_and_reports_a_typed_job_failure()
 -> Result<()> {
     use airk_core::service::{
