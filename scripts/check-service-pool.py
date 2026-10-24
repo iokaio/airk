@@ -234,8 +234,20 @@ def main():
                 raise RuntimeError("Retirement unnecessarily discarded the compatible loaded model")
             print("Replacement preserved direct clients and one MiniLM load; old incarnation retired while shared files stayed pinned.", flush=True)
 
+            def event_tail(cursor=None):
+                events = []
+                for _ in range(16):
+                    page = rpc({"events": {"project": projects[0]["binding"], "cursor": cursor, "limit": 32}})["page"]
+                    events.extend(page["events"])
+                    if page["next"] is None:
+                        return events, page["tail"]
+                    cursor = page["next"]
+                raise RuntimeError("Fixture event observation exceeded its bounded pages")
+
+            _, event_cursor = event_tail()
             # Ask the native owner to drain its exact opaque worker identity.
             # A stale/foreign identity must never stop the current helper.
+            worker_identities = [rpc({"connect": {"project": project["binding"]}})["grant"]["identity"] for project in projects]
             observation = rpc("embedding_status")
             rejected = rpc({"stop_embedding": {"worker": uuid.uuid4().hex, "force": True}})
             if rejected.get("code") != "embedding_worker_changed":
@@ -268,12 +280,74 @@ def main():
                     raise RuntimeError(f"Post-failure source job did not finish: {receipt}")
                 time.sleep(0.2)
             bridges[0].search("lexical", "quartz lighthouse")
-            bridges[0].wait_semantics("failed")
+            # Readiness describes persisted coverage, while the independent job
+            # receipt proves failure even if its diagnostic publication was busy.
+            deadline = time.monotonic() + 180
+            while True:
+                events, event_cursor = event_tail(event_cursor)
+                failed = next((event for event in events if event["kind"] == "job_failed"
+                               and event.get("job_kind") == "vectors"), None)
+                if failed is not None:
+                    failed_semantic = rpc({"job": {"id": failed["job"]}})["job"]
+                    if failed_semantic["state"] != "failed":
+                        raise RuntimeError("Failed semantic event disagreed with its receipt")
+                    break
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("Post-stop semantic continuation did not report failure: " + json.dumps({
+                        "events": events, "progress": rpc({"progress": {"project": projects[0]["binding"]}}),
+                        "resources": rpc("resources"), "embedding": rpc("embedding_status")}))
+                time.sleep(0.2)
+            if bridges[0].readiness()["state"] == "ready":
+                raise RuntimeError("Failed semantic job claimed complete coverage")
             if rpc({"job": {"id": accepted["job"]["id"]}})["job"]["state"] != "succeeded":
                 raise RuntimeError("Later semantic failure changed the successful source receipt")
             if any(document.read_bytes() != original for document, original in originals):
                 raise RuntimeError("Native service changed an original source document")
             print("Embedding-process failure preserved lexical retrieval, service health and original source bytes.", flush=True)
+            if rpc("embedding_status").get("available"):
+                raise RuntimeError("Explicit helper stop was automatically undone")
+            starting = rpc("start_embedding")
+            if starting.get("status") != "embedding_starting":
+                raise RuntimeError(f"Explicit helper recovery was not accepted: {starting}")
+            deadline = time.monotonic() + 90
+            while True:
+                recovered = rpc("embedding_status")
+                if recovered.get("available"):
+                    break
+                if time.monotonic() >= deadline:
+                    raise RuntimeError(f"Embedding replacement did not become ready: {recovered}")
+                time.sleep(0.2)
+            if recovered["worker"] == observation["worker"]:
+                raise RuntimeError("Embedding replacement reused an old process incarnation")
+            for project, identity in zip(projects, worker_identities):
+                if rpc({"connect": {"project": project["binding"]}})["grant"]["identity"] != identity:
+                    raise RuntimeError("Helper recovery replaced an independent project worker")
+            # Failed semantic jobs require an explicit new request; recovery never
+            # silently replays an uncertain operation or cancels a source receipt.
+            accepted = rpc({"retry": {"id": failed_semantic["id"], "caller": uuid.uuid4().hex,
+                "key": {"namespace": epoch["namespace"], "epoch": epoch["epoch"], "nonce": uuid.uuid4().hex}}})
+            if accepted.get("status") != "job":
+                raise RuntimeError(f"Semantic recovery was not accepted: {accepted}")
+            deadline = time.monotonic() + 180
+            while True:
+                receipt = rpc({"job": {"id": accepted["job"]["id"]}})["job"]
+                if receipt["state"] == "succeeded":
+                    break
+                if receipt["state"] in ("failed", "canceled") or time.monotonic() >= deadline:
+                    raise RuntimeError(f"Explicit semantic recovery failed: {receipt}")
+                time.sleep(0.2)
+            bridges[0].wait_semantics()
+            for bridge in bridges:
+                bridge.search("vector")
+            if rpc({"job": {"id": failed_semantic["id"]}})["job"]["state"] != "failed":
+                raise RuntimeError("Explicit semantic retry rewrote the original failure receipt")
+            recovered = rpc("embedding_status")
+            if recovered.get("loads") != 1:
+                raise RuntimeError(f"Replacement helper did not share one compatible model: {recovered}")
+            if any(document.read_bytes() != original for document, original in originals):
+                raise RuntimeError("Helper recovery changed original source bytes")
+            print("Explicit helper recovery rebound existing project sessions and restored vectors with one new shared MiniLM load.", flush=True)
+
         finally:
             for bridge in bridges:
                 bridge.close()

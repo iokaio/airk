@@ -288,7 +288,7 @@ pub async fn run() -> Result<()> {
             && allowance.response_bytes == allowance.concurrent_queries * MAX_FRAME_BYTES,
         "project activation identity or allowance mismatch"
     );
-    crate::embedding_pool_client::install(pool.map(|access| *access))?;
+    crate::embedding_pool_client::install(&init.runtime, identity, pool.map(|access| *access))?;
     let storage = airk_store::service::data_scope::bind(
         Path::new(&registration.data_root),
         &init.runtime,
@@ -613,6 +613,10 @@ pub async fn run() -> Result<()> {
                     Some(Command::Renew{identity:expected})=>{
                         let renewed=expected==identity&&airk_kernel::service_execution::renew(identity).is_ok()&&state.broker.lock().map_err(|_|anyhow::anyhow!("query policy unavailable"))?.renew(identity,Instant::now(),Duration::from_secs(300)).is_ok();
                         service_ipc::write_frame(&mut std::io::stdout().lock(),&if renewed{Reply::Renewed}else{Reply::Failed})?;
+                    },
+                    Some(Command::ConfigurePool{identity:expected,pool})=>{
+                        let accepted=expected==identity && crate::embedding_pool_client::update(pool.map(|access| *access)).is_ok();
+                        service_ipc::write_frame(&mut std::io::stdout().lock(), &if accepted{Reply::PoolConfigured}else{Reply::Failed})?;
                     },
                     Some(Command::RunJob{identity:expected, allowance})=>{
                         let accepted=expected==identity && allowance.identity==identity && allowance.validate().is_ok()

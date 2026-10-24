@@ -28,6 +28,10 @@ pub enum Command {
         allowance: QueryAllowance,
         pool: Option<Box<crate::embedding_pool_protocol::Access>>,
     },
+    ConfigurePool {
+        identity: WorkerIdentity,
+        pool: Option<Box<crate::embedding_pool_protocol::Access>>,
+    },
     RunJob {
         identity: WorkerIdentity,
         allowance: airk_core::service_resources::WorkAllowance,
@@ -49,6 +53,7 @@ pub enum Command {
 pub enum Reply {
     Renewed,
     Activated,
+    PoolConfigured,
     WorkAccepted,
     WorkStatus {
         #[serde(flatten)]

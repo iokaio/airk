@@ -8,13 +8,13 @@ use airk_retrieval::embedding_worker::{
 use anyhow::{Context, Result, ensure};
 use std::{
     collections::BTreeSet,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
         atomic::{AtomicBool, Ordering},
         mpsc,
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 struct Work {
@@ -213,29 +213,372 @@ impl Connector for PoolConnector {
         Ok(Arc::new(session))
     }
 }
-struct Unavailable;
-impl Connector for Unavailable {
-    fn open(&self, _location: ModelLocation, _identity: &str) -> Result<Arc<dyn RemoteSession>> {
-        anyhow::bail!("shared embedding pool unavailable; lexical retrieval remains available")
+// Updating authority never performs transport I/O on the project control loop.
+struct HubState {
+    access: Option<protocol::Access>,
+    client: Option<Arc<Client>>,
+    attempts: u32,
+    retry_at: Instant,
+    generation: u64,
+}
+struct Hub {
+    runtime: PathBuf,
+    identity: airk_core::service::WorkerIdentity,
+    state: Mutex<HubState>,
+    connecting: Mutex<()>,
+}
+impl Hub {
+    fn new(runtime: &Path, identity: airk_core::service::WorkerIdentity) -> Result<Self> {
+        Ok(Self {
+            runtime: runtime.canonicalize()?,
+            identity,
+            state: Mutex::new(HubState {
+                access: None,
+                client: None,
+                attempts: 0,
+                retry_at: Instant::now(),
+                generation: 0,
+            }),
+            connecting: Mutex::new(()),
+        })
+    }
+    fn update(&self, access: Option<protocol::Access>) -> Result<()> {
+        if let Some(access) = &access {
+            access.grant.project.validate()?;
+            ensure!(
+                access.runtime.canonicalize()? == self.runtime
+                    && access.role == protocol::role(access.grant.pool)
+                    && access.grant.worker == self.identity.worker
+                    && access.grant.service == self.identity.service
+                    && access.grant.project.binding == self.identity.project,
+                "embedding capability crossed worker authority"
+            );
+        }
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| anyhow::anyhow!("pool authority unavailable"))?;
+        // A duplicate control acknowledgment must not reset a failed connection's retry budget.
+        let unchanged = match (&state.access, &access) {
+            (Some(old), Some(new)) => {
+                old.grant.pool == new.grant.pool && old.grant.token == new.grant.token
+            }
+            (None, None) => true,
+            _ => false,
+        };
+        if !unchanged {
+            state.generation = state
+                .generation
+                .checked_add(1)
+                .context("pool authority generation exhausted")?;
+            state.access = access;
+            state.client = None;
+            state.attempts = 0;
+            state.retry_at = Instant::now();
+        }
+        Ok(())
+    }
+    fn client(&self) -> Result<Arc<Client>> {
+        let (access, generation) = {
+            let mut state = self
+                .state
+                .lock()
+                .map_err(|_| anyhow::anyhow!("pool authority unavailable"))?;
+            if let Some(client) = &state.client
+                && !client.failed.load(Ordering::Acquire)
+            {
+                return Ok(client.clone());
+            }
+            let access = state.access.clone().context(
+                "shared embedding pool unavailable; lexical retrieval remains available",
+            )?;
+            ensure!(
+                state.attempts < 3 && Instant::now() >= state.retry_at,
+                "embedding reconnect backoff or attempt limit"
+            );
+            // Only one inference caller establishes a connection. Authority updates remain independent.
+            let guard = self
+                .connecting
+                .try_lock()
+                .map_err(|_| anyhow::anyhow!("embedding reconnect busy"))?;
+            state.attempts += 1;
+            state.retry_at = Instant::now() + Duration::from_secs(1 << state.attempts);
+            (access, (state.generation, guard))
+        };
+        let client = Arc::new(Client::new(access)?);
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| anyhow::anyhow!("pool authority unavailable"))?;
+        ensure!(
+            state.generation == generation.0,
+            "embedding authority changed during connection"
+        );
+        state.client = Some(client.clone());
+        Ok(client)
     }
 }
-
-pub fn install(access: Option<protocol::Access>) -> Result<()> {
-    let connector: Arc<dyn Connector> = match access {
-        Some(access) => match Client::new(access) {
-            Ok(client) => Arc::new(PoolConnector {
-                client: Arc::new(client),
-            }),
-            Err(_) => Arc::new(Unavailable),
-        },
-        None => Arc::new(Unavailable),
-    };
-    embedding_worker::install_connector(connector)
+struct ModelBinding {
+    client: Arc<Client>,
+    session: Arc<dyn RemoteSession>,
+}
+struct RebindingModel {
+    hub: Arc<Hub>,
+    location: ModelLocation,
+    identity: String,
+    binding: Mutex<ModelBinding>,
+}
+impl RemoteSession for RebindingModel {
+    fn request(&self, request: Request) -> Result<Response> {
+        let client = self.hub.client()?;
+        let mut binding = self
+            .binding
+            .lock()
+            .map_err(|_| anyhow::anyhow!("model session unavailable"))?;
+        if !Arc::ptr_eq(&client, &binding.client) {
+            let session = PoolConnector {
+                client: client.clone(),
+            }
+            .open(self.location.clone(), &self.identity)?;
+            *binding = ModelBinding { client, session };
+        }
+        // An uncertain request is never replayed. Only a later call may reopen the descriptor.
+        binding.session.request(request)
+    }
+}
+struct HubConnector(Arc<Hub>);
+impl Connector for HubConnector {
+    fn provision_model(&self, source: &Path) -> Result<airk_core::model_objects::ModelObjectSet> {
+        PoolConnector {
+            client: self.0.client()?,
+        }
+        .provision_model(source)
+    }
+    fn provision_bundled(&self) -> Result<airk_core::model_objects::ModelObjectSet> {
+        PoolConnector {
+            client: self.0.client()?,
+        }
+        .provision_bundled()
+    }
+    fn tokenizer(&self, path: &Path) -> Result<Arc<dyn RemoteSession>> {
+        PoolConnector {
+            client: self.0.client()?,
+        }
+        .tokenizer(path)
+    }
+    fn open(&self, location: ModelLocation, identity: &str) -> Result<Arc<dyn RemoteSession>> {
+        let client = self.0.client()?;
+        let session = PoolConnector {
+            client: client.clone(),
+        }
+        .open(location.clone(), identity)?;
+        Ok(Arc::new(RebindingModel {
+            hub: self.0.clone(),
+            location,
+            identity: identity.into(),
+            binding: Mutex::new(ModelBinding { client, session }),
+        }))
+    }
+}
+static HUB: OnceLock<Arc<Hub>> = OnceLock::new();
+pub fn install(
+    runtime: &Path,
+    identity: airk_core::service::WorkerIdentity,
+    access: Option<protocol::Access>,
+) -> Result<()> {
+    let hub = Arc::new(Hub::new(runtime, identity)?);
+    hub.update(access)?;
+    ensure!(
+        HUB.set(hub.clone()).is_ok(),
+        "pool connector already installed"
+    );
+    embedding_worker::install_connector(Arc::new(HubConnector(hub)))
+}
+pub fn update(access: Option<protocol::Access>) -> Result<()> {
+    HUB.get()
+        .context("pool connector not installed")?
+        .update(access)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn fixture_access(runtime: &Path) -> Result<protocol::Access> {
+        let instance = airk_kernel::service_broker::new_instance_id()?;
+        Ok(protocol::Access {
+            runtime: runtime.into(),
+            role: protocol::role(instance),
+            grant: protocol::Grant {
+                service: instance,
+                pool: instance,
+                worker: instance,
+                token: airk_core::identity::Sha256Digest::from_bytes([1; 32]),
+                project: airk_core::service::ProjectRegistration::new(
+                    "/source".into(),
+                    "/state".into(),
+                    "fixture".into(),
+                )?,
+            },
+        })
+    }
+    fn fixture_hub(access: &protocol::Access) -> Result<Arc<Hub>> {
+        Ok(Arc::new(Hub::new(
+            &access.runtime,
+            airk_core::service::WorkerIdentity {
+                service: access.grant.service,
+                worker: access.grant.worker,
+                project: access.grant.project.binding,
+                fencing_generation: 1,
+            },
+        )?))
+    }
+    #[test]
+    fn authority_updates_are_lazy_and_reject_foreign_capabilities() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let access = fixture_access(directory.path())?;
+        let hub = fixture_hub(&access)?;
+        hub.update(Some(access.clone()))?; // No endpoint exists: control performs no connection.
+        for field in 0..5 {
+            let mut foreign = access.clone();
+            let other = airk_kernel::service_broker::new_instance_id()?;
+            match field {
+                0 => foreign.grant.service = other,
+                1 => foreign.grant.worker = other,
+                2 => {
+                    foreign.grant.project = airk_core::service::ProjectRegistration::new(
+                        "/other".into(),
+                        "/state".into(),
+                        "fixture".into(),
+                    )?
+                }
+                3 => foreign.role = protocol::role(other),
+                _ => foreign.runtime = directory.path().join("missing"),
+            }
+            assert!(hub.update(Some(foreign)).is_err());
+            assert_eq!(hub.state.lock().unwrap().generation, 1);
+        }
+        hub.state.lock().unwrap().attempts = 3;
+        hub.update(Some(access))?;
+        assert!(hub.client().is_err()); // Duplicate grants cannot reset exhaustion.
+        hub.update(None)?;
+        assert!(hub.state.lock().unwrap().access.is_none());
+        Ok(())
+    }
+    async fn fixture_pool(
+        access: protocol::Access,
+        bytes: u64,
+    ) -> Result<tokio::task::JoinHandle<Result<Vec<String>>>> {
+        let mut listener =
+            local_ipc::Listener::bind(&local_ipc::endpoint(&access.runtime, &access.role)?)?;
+        Ok(tokio::spawn(async move {
+            let mut stream = listener.accept().await?;
+            let _: protocol::Grant = local_ipc::read_message(&mut stream, Duration::from_secs(5))
+                .await?
+                .context("fixture grant missing")?;
+            local_ipc::write_message(
+                &mut stream,
+                &protocol::Observation::Ready {
+                    pool: access.grant.pool,
+                    role: access.role,
+                },
+                Duration::from_secs(5),
+            )
+            .await?;
+            let mut opened = Vec::new();
+            while let Some(envelope) = local_ipc::read_message_limited::<_, protocol::Envelope>(
+                &mut stream,
+                Duration::from_secs(10),
+                MAX_FRAME_BYTES,
+            )
+            .await?
+            {
+                let response = match envelope.operation {
+                    protocol::Operation::Call { request } => match *request {
+                        Request::Open {
+                            protocol,
+                            version,
+                            identity,
+                            ..
+                        } => {
+                            opened.push(identity.clone());
+                            Response::Opened {
+                                protocol,
+                                version,
+                                identity,
+                            }
+                        }
+                        Request::Peak => Response::Peak { bytes },
+                        _ => anyhow::bail!("unexpected fixture operation"),
+                    },
+                    protocol::Operation::Close => Response::Peak { bytes: 0 },
+                };
+                local_ipc::write_message_limited(
+                    &mut stream,
+                    &protocol::ResultEnvelope {
+                        project: envelope.project,
+                        worker: envelope.worker,
+                        session: envelope.session,
+                        request_id: envelope.request_id,
+                        input_digest: envelope.input_digest,
+                        response,
+                    },
+                    Duration::from_secs(5),
+                    MAX_FRAME_BYTES,
+                )
+                .await?;
+            }
+            Ok(opened)
+        }))
+    }
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn retained_model_session_rebinds_without_replacing_project_worker() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let root = directory.path().join("runtime");
+        local_ipc::prepare_root(&root)?;
+        let first = fixture_access(&root)?;
+        let mut second = first.clone();
+        second.grant.pool = airk_kernel::service_broker::new_instance_id()?;
+        second.grant.token = airk_core::identity::Sha256Digest::from_bytes([2; 32]);
+        second.role = protocol::role(second.grant.pool);
+        let first_peer = fixture_pool(first.clone(), 11).await?;
+        let second_peer = fixture_pool(second.clone(), 22).await?;
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            let hub = fixture_hub(&first)?;
+            hub.update(Some(first))?;
+            let model = HubConnector(hub.clone()).open(
+                ModelLocation::Directory {
+                    path: root.join("immutable-model"),
+                },
+                "retained-model-identity",
+            )?;
+            assert!(matches!(
+                model.request(Request::Peak)?,
+                Response::Peak { bytes: 11 }
+            ));
+            hub.update(None)?;
+            assert!(model.request(Request::Peak).is_err());
+            hub.update(Some(second))?;
+            assert!(matches!(
+                model.request(Request::Peak)?,
+                Response::Peak { bytes: 22 }
+            ));
+            assert!(matches!(
+                model.request(Request::Peak)?,
+                Response::Peak { bytes: 22 }
+            ));
+            Ok(())
+        })
+        .await??;
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(10), first_peer).await???,
+            ["retained-model-identity"]
+        );
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(10), second_peer).await???,
+            ["retained-model-identity"]
+        );
+        Ok(())
+    }
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn full_client_queue_preserves_close_and_cannot_reopen_a_retired_session() -> Result<()> {
         let directory = tempfile::tempdir()?;

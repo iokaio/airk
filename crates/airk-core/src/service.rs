@@ -99,6 +99,7 @@ pub enum ControlMethod {
         project: ProjectBinding,
     },
     EmbeddingStatus,
+    StartEmbedding,
     StopEmbedding {
         worker: Incarnation,
         #[serde(default)]
@@ -218,6 +219,7 @@ pub enum ControlResponse {
         sessions: usize,
         observation_age_ms: Option<u64>,
     },
+    EmbeddingStarting,
     EmbeddingStopped {
         worker: Incarnation,
     },

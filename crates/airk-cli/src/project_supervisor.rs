@@ -36,7 +36,7 @@ struct ChildWorker {
     runtime: PathBuf,
     started: Instant,
     last_renewal: Instant,
-    pool_active: bool,
+    pool_binding: Option<Incarnation>,
     last_status: Instant,
 }
 
@@ -101,7 +101,7 @@ impl ChildWorker {
             runtime: root.into(),
             started: Instant::now(),
             last_renewal: Instant::now(),
-            pool_active: false,
+            pool_binding: None,
             last_status: Instant::now(),
         };
         process.reader = Some(
@@ -178,7 +178,7 @@ impl ChildWorker {
         allowance: QueryAllowance,
         pool: Option<crate::embedding_pool_protocol::Access>,
     ) -> Result<()> {
-        let pool_active = pool.is_some();
+        let pool_binding = pool.as_ref().map(|access| access.grant.pool);
         service_ipc::write_frame(
             self.input.as_mut().context("project input missing")?,
             &WorkerCommand::Activate {
@@ -194,10 +194,32 @@ impl ChildWorker {
             ),
             "project activation failed"
         );
-        self.pool_active = pool_active;
+        self.pool_binding = pool_binding;
         Ok(())
     }
 
+    fn configure_pool(
+        &mut self,
+        pool: Option<crate::embedding_pool_protocol::Access>,
+    ) -> Result<()> {
+        let pool_binding = pool.as_ref().map(|access| access.grant.pool);
+        service_ipc::write_frame(
+            self.input.as_mut().context("project input missing")?,
+            &WorkerCommand::ConfigurePool {
+                identity: self.identity.context("project identity missing")?,
+                pool: pool.map(Box::new),
+            },
+        )?;
+        ensure!(
+            matches!(
+                self.output.recv_timeout(Duration::from_secs(3))?,
+                Reply::PoolConfigured
+            ),
+            "project pool configuration unknown"
+        );
+        self.pool_binding = pool_binding;
+        Ok(())
+    }
     fn run_job(&mut self, allowance: airk_core::service_resources::WorkAllowance) -> Result<()> {
         let identity = self.identity.context("project identity missing")?;
         service_ipc::write_frame(
@@ -261,6 +283,33 @@ impl ChildWorker {
     }
 }
 
+// Three attempts per service lifetime (or explicit start), with no source-job dependency.
+struct PoolRecovery {
+    attempts: u32,
+    retry_at: Instant,
+    suppressed: bool,
+    requested: bool,
+}
+impl PoolRecovery {
+    fn new(now: Instant) -> Self {
+        Self {
+            attempts: 0,
+            retry_at: now,
+            suppressed: false,
+            requested: false,
+        }
+    }
+    fn due(&self, now: Instant) -> bool {
+        !self.suppressed && self.attempts < 3 && now >= self.retry_at
+    }
+    fn attempted(&mut self) {
+        self.attempts += 1;
+    }
+    fn failed(&mut self, now: Instant) {
+        self.retry_at = now + Duration::from_secs(1 << self.attempts.min(3));
+    }
+}
+
 struct ResourceCache {
     snapshot: airk_core::service_resources::ResourceSnapshot,
     observed: Instant,
@@ -277,6 +326,9 @@ enum Envelope {
         reply: oneshot::Sender<ControlResponse>,
     },
     EmbeddingStatus {
+        reply: oneshot::Sender<ControlResponse>,
+    },
+    StartEmbedding {
         reply: oneshot::Sender<ControlResponse>,
     },
     StopEmbedding {
@@ -373,9 +425,6 @@ fn start_worker(
             Duration::from_secs(300),
         )?;
     resources.resident_started(identity)?;
-    if pool.is_none() {
-        *pool = Pool::start(root, instance, resources.snapshot().inference_threads_limit).ok();
-    }
     let access = pool
         .as_mut()
         .and_then(|pool| pool.access(identity.worker, registration).ok());
@@ -438,6 +487,7 @@ impl Supervisor {
             .spawn(move || {
                 let mut workers = BTreeMap::<ProjectBinding, ChildWorker>::new();
                 let mut pool: Option<Pool> = None;
+                let mut pool_recovery = PoolRecovery::new(Instant::now());
                 let mut registry: Option<ServiceRegistry> = None;
                 let mut backoff = BTreeMap::<ProjectBinding, (Instant, u32)>::new();
                 let mut predecessors: Option<Vec<ProjectBinding>> = None;
@@ -519,7 +569,8 @@ impl Supervisor {
                     }
                     if pool.as_mut().is_some_and(Pool::exited) {
                         log.record(airk_core::service_logs::LogKind::ModelFailed, None, None);
-                        pool = None;
+                        drop(pool.take());
+                        pool_recovery.failed(Instant::now());
                     }
                     if predecessors.is_none()
                         && let Some(registry) = registry.as_ref()
@@ -551,6 +602,23 @@ impl Supervisor {
                         && endpoints_ready
                         && !provider_error
                         && pending_providers == 0;
+                    if may_allocate
+                        && pool.is_none()
+                        && pool_recovery.due(Instant::now())
+                        && (!workers.is_empty() || pool_recovery.requested)
+                    {
+                        pool_recovery.attempted();
+                        pool = Pool::start(
+                            &root,
+                            instance,
+                            resources.snapshot().inference_threads_limit,
+                        )
+                        .ok();
+                        if pool.is_none() {
+                            pool_recovery.failed(Instant::now());
+                            log.record(airk_core::service_logs::LogKind::ModelFailed, None, None);
+                        }
+                    }
                     let finished: Vec<_> = workers
                         .iter_mut()
                         .filter_map(|(project, worker)| match worker.child.try_wait() {
@@ -597,7 +665,45 @@ impl Supervisor {
                         }
                     }
                     let mut failed_renewals = Vec::new();
+                    let mut pool_control_failed = false;
                     for (project, worker) in &mut workers {
+                        if pool_control_failed {
+                            continue;
+                        }
+                        let desired_pool = pool.as_ref().map(Pool::identity);
+                        if worker.pool_binding != desired_pool {
+                            let access = (|| -> Result<_> {
+                                match pool.as_mut() {
+                                    Some(pool) => Ok(Some(
+                                        pool.access(
+                                            worker
+                                                .identity
+                                                .context("project identity missing")?
+                                                .worker,
+                                            registry
+                                                .as_ref()
+                                                .context("registry unavailable")?
+                                                .get(*project)?
+                                                .registration,
+                                        )?,
+                                    )),
+                                    None => Ok(None),
+                                }
+                            })();
+                            let access = match access {
+                                Ok(access) => access,
+                                Err(_) => {
+                                    // The failed authority is the helper, not this project.
+                                    // Drain it before retrying any ambiguous control exchange.
+                                    pool_control_failed = true;
+                                    continue;
+                                }
+                            };
+                            if worker.configure_pool(access).is_err() {
+                                failed_renewals.push(*project);
+                                continue;
+                            }
+                        }
                         if worker.last_renewal.elapsed() < Duration::from_secs(30) {
                             continue;
                         }
@@ -615,11 +721,16 @@ impl Supervisor {
                             failed_renewals.push(*project);
                             continue;
                         }
-                        if worker.pool_active
-                            && let Some(pool) = pool.as_mut()
+                        if let Some(pool) = pool.as_mut()
+                            && worker.pool_binding == Some(pool.identity())
                         {
-                            let _ = pool.renew(identity.worker);
+                            pool_control_failed = pool.renew(identity.worker).is_err();
                         }
+                    }
+                    if pool_control_failed {
+                        drop(pool.take());
+                        pool_recovery.failed(Instant::now());
+                        log.record(airk_core::service_logs::LogKind::ModelFailed, None, None);
                     }
                     for project in failed_renewals {
                         log.record(
@@ -742,6 +853,18 @@ impl Supervisor {
                             };
                             let _ = reply.send(response);
                         }
+                        Ok(Envelope::StartEmbedding { reply }) => {
+                            let response = if pool.is_some() {
+                                ControlResponse::Failure {
+                                    code: "embedding_already_running".into(),
+                                }
+                            } else {
+                                pool_recovery = PoolRecovery::new(Instant::now());
+                                pool_recovery.requested = true;
+                                ControlResponse::EmbeddingStarting
+                            };
+                            let _ = reply.send(response);
+                        }
                         Ok(Envelope::StopEmbedding {
                             worker,
                             force,
@@ -753,6 +876,7 @@ impl Supervisor {
                             {
                                 // The actual native owner drains its child/job.
                                 // Caller-supplied numerical PIDs never authorize a signal.
+                                pool_recovery.suppressed = true;
                                 let failed = force
                                     && pool.as_mut().is_some_and(|pool| pool.terminate().is_err());
                                 drop(pool.take());
@@ -850,6 +974,22 @@ impl Supervisor {
                         for project in workers.keys().copied() {
                             match registry.next_pending_job(project) {
                                 Ok(Some(job)) => {
+                                    // A newly admitted worker may precede the first helper turn.
+                                    // Wait through finite recovery, then expose failure normally;
+                                    // source jobs never depend on this inference-only gate.
+                                    if matches!(
+                                        job.kind,
+                                        airk_core::service::JobKind::ModelSetup
+                                            | airk_core::service::JobKind::Vectors
+                                    ) && workers
+                                        .get(&project)
+                                        .is_some_and(|worker| worker.pool_binding.is_none())
+                                        && !pool_recovery.suppressed
+                                        && pool_recovery.attempts < 3
+                                    {
+                                        resources.forget_pending(project);
+                                        continue;
+                                    }
                                     let _ = resources.pending(
                                         project,
                                         job.id,
@@ -1060,6 +1200,24 @@ impl Supervisor {
             },
         }
     }
+    pub async fn start_embedding(&self) -> ControlResponse {
+        let (reply, receiver) = oneshot::channel();
+        if self
+            .sender
+            .as_ref()
+            .is_none_or(|queue| queue.try_send(Envelope::StartEmbedding { reply }).is_err())
+        {
+            return ControlResponse::Failure {
+                code: "broker_busy".into(),
+            };
+        }
+        match tokio::time::timeout(Duration::from_secs(4), receiver).await {
+            Ok(Ok(response)) => response,
+            _ => ControlResponse::Failure {
+                code: "embedding_start_outcome_unknown".into(),
+            },
+        }
+    }
     pub async fn stop_embedding(&self, worker: Incarnation, force: bool) -> ControlResponse {
         let (reply, receiver) = oneshot::channel();
         if self.sender.as_ref().is_none_or(|queue| {
@@ -1081,5 +1239,28 @@ impl Supervisor {
                 code: "embedding_stop_outcome_unknown".into(),
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn helper_recovery_is_bounded_and_manual_stop_remains_stopped() {
+        let now = Instant::now();
+        let mut recovery = PoolRecovery::new(now);
+        for attempt in 1..=3 {
+            assert!(recovery.due(now + Duration::from_secs(30 * attempt)));
+            recovery.attempted();
+            let failed = now + Duration::from_secs(30 * attempt);
+            recovery.failed(failed);
+            assert!(!recovery.due(failed));
+        }
+        assert!(!recovery.due(now + Duration::from_secs(3600)));
+        let mut explicit = PoolRecovery::new(now);
+        explicit.suppressed = true;
+        assert!(!explicit.due(now + Duration::from_secs(3600)));
+        explicit = PoolRecovery::new(now);
+        assert!(explicit.due(now));
     }
 }
