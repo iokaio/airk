@@ -57,7 +57,8 @@ fn exists(path: &Path) -> Result<bool> {
         Err(e) => Err(e.into()),
     }
 }
-fn location(path: &Path) -> Result<PathBuf> {
+/// Resolve existing ancestors without creating a directory or accepting traversal.
+pub fn canonical_location(path: &Path) -> Result<PathBuf> {
     ensure!(
         path.is_absolute()
             && path.to_str().is_some_and(|value| value.len() <= 4096)
@@ -95,8 +96,8 @@ fn expected(data: &Path, control: &Path, namespace: Incarnation) -> Result<Scope
         namespace != Incarnation::from_bytes([0; 16]),
         "empty service registry identity"
     );
-    let data = location(data)?;
-    let control = location(control)?;
+    let data = canonical_location(data)?;
+    let control = canonical_location(control)?;
     ensure!(
         !data.starts_with(&control) && !control.starts_with(&data),
         "service data and control roots must be disjoint"

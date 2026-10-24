@@ -49,6 +49,12 @@ struct Cli {
     data_dir: Option<PathBuf>,
     #[arg(long, default_value = "default", global = true)]
     collection: String,
+    /// Trusted installed-runtime context supplied by the stable launcher.
+    #[arg(long, global = true, hide = true, requires = "service_project")]
+    service_install_dir: Option<PathBuf>,
+    /// Previously reviewed opaque project binding; retained reads need no live source resolution.
+    #[arg(long, global = true, requires = "service_install_dir")]
+    service_project: Option<airk_core::service::ProjectBinding>,
     #[command(subcommand)]
     command: Command,
 }
@@ -56,6 +62,24 @@ struct Cli {
 #[cfg(test)]
 mod continuity_argument_tests {
     use super::*;
+
+    #[test]
+    fn service_project_requires_explicit_installed_context() {
+        let binding = "ab".repeat(32);
+        assert!(Cli::try_parse_from(["airk", "--service-project", &binding, "mcp"]).is_err());
+        assert!(Cli::try_parse_from(["airk", "--service-install-dir", ".", "mcp"]).is_err());
+        assert!(
+            Cli::try_parse_from([
+                "airk",
+                "--service-install-dir",
+                ".",
+                "--service-project",
+                &binding,
+                "mcp"
+            ])
+            .is_ok()
+        );
+    }
 
     #[test]
     fn keys_exclude_text_filters_and_validate_exact_identity() {
@@ -457,6 +481,15 @@ enum CompressionCommand {
 
 #[derive(Subcommand)]
 enum ServiceCommand {
+    /// Resolve canonical source and planned storage identities without writes.
+    PrepareRegistration,
+    /// Create only storage already reserved by the authenticated service registry.
+    PrepareStorage {
+        #[arg(long)]
+        runtime_dir: PathBuf,
+        #[arg(long)]
+        project: airk_core::service::ProjectBinding,
+    },
     /// Prepare exact file selectors and cached settings guard from a bounded JSON draft on stdin.
     PrepareConfiguration {
         #[arg(long)]
@@ -1245,6 +1278,13 @@ async fn main_async() -> anyhow::Result<()> {
     {
         return airk_cli::project_client::bridge(runtime_dir.clone(), *project).await;
     }
+    if let (Some(install), Some(project)) = (&cli.service_install_dir, cli.service_project) {
+        anyhow::ensure!(
+            matches!(cli.command, Command::Mcp),
+            "this service project adapter currently accepts only mcp"
+        );
+        return airk_cli::runtime_install::bridge_installed(install, project).await;
+    }
     #[cfg(not(feature = "local-inference"))]
     airk_cli::embedding_client::install()?;
     if let Command::Runtime { action } = &cli.command {
@@ -1262,6 +1302,27 @@ async fn main_async() -> anyhow::Result<()> {
         .await;
     }
     if let Command::Service { action } = &cli.command {
+        if matches!(action, ServiceCommand::PrepareRegistration) {
+            let data = cli
+                .data_dir
+                .as_deref()
+                .context("registration preparation requires explicit --data-dir")?;
+            return print_json(&airk_cli::service_registration::prepare(
+                &cli.root,
+                data,
+                &cli.collection,
+            )?);
+        }
+        if let ServiceCommand::PrepareStorage {
+            runtime_dir,
+            project,
+        } = action
+        {
+            return print_json(&airk_cli::service_registration::prepare_storage(
+                runtime_dir,
+                *project,
+            )?);
+        }
         if let ServiceCommand::PrepareConfiguration {
             runtime_dir,
             project,
@@ -1426,7 +1487,7 @@ async fn main_async() -> anyhow::Result<()> {
                 ServiceCommand::Start => print_json(&manager.start()?),
                 ServiceCommand::Stop => print_json(&manager.stop()?),
                 ServiceCommand::Uninstall => print_json(&manager.uninstall()?),
-                ServiceCommand::PrepareConfiguration { .. } | ServiceCommand::Console { .. } | ServiceCommand::Logs { .. } | ServiceCommand::Health { .. } | ServiceCommand::Shutdown { .. } | ServiceCommand::Rpc { .. } | ServiceCommand::Register { .. } => unreachable!("handled before opening kernel"),
+                ServiceCommand::PrepareRegistration | ServiceCommand::PrepareStorage { .. } | ServiceCommand::PrepareConfiguration { .. } | ServiceCommand::Console { .. } | ServiceCommand::Logs { .. } | ServiceCommand::Health { .. } | ServiceCommand::Shutdown { .. } | ServiceCommand::Rpc { .. } | ServiceCommand::Register { .. } => unreachable!("handled before opening kernel"),
             }
         },
         Command::Schedule { action } => match action {

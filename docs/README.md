@@ -11,6 +11,7 @@ The [1.3.0 release](release-1.3.0.md) retires the former `airk_history` MCP endp
 - [Draft 1.4.0 development release record](release-1.4.0.md)
 - [Offline service installation, resumable activation, managed payloads and startup ownership](service-installation.md) Shutdown ownership checks also cover damaged payload files, and initialization receipts prevent silent registry replacement after control loss.
 - [Reviewed runtime upgrades, rollback, saved activation and version pins](service-runtime-transitions.md)
+- [Reviewed project setup, reserved storage and stable-launcher MCP bindings](service-project-setup.md)
 - [Service implementation completion checklist](service-implementation-checklist.md)
 - [Service publication, admitted sidecar lifetimes and bounded readers](service-publication.md)
 - [Service worker ownership, source/semantic phases and durable continuations](service-jobs.md)

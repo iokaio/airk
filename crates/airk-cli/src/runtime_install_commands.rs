@@ -339,6 +339,21 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
             launcher_repair::require_settled(install_dir)?;
             let (_, executable, _) = selected(install_dir)?;
             let mut command = Command::new(executable);
+            if args.iter().any(|value| {
+                value == "--service-project"
+                    || value
+                        .to_str()
+                        .is_some_and(|value| value.starts_with("--service-project="))
+            }) {
+                ensure!(
+                    !args.iter().any(|value| value == "--service-install-dir"
+                        || value
+                            .to_str()
+                            .is_some_and(|value| value.starts_with("--service-install-dir="))),
+                    "launcher owns service installation context"
+                );
+                command.arg("--service-install-dir").arg(install_dir);
+            }
             command.args(args);
             return forward(command);
         }

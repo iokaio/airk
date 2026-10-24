@@ -218,7 +218,7 @@ export async function joinScheduledIndex<T>(initialArgs: string[],
 /** Real bounded stdio initialization/tool-list/status probe, independent of any coding agent. */
 export function probeMcp(spec: LaunchSpec, expectedTools: 14 | 15 | 16 = 15, clientVersion = 'development'): Promise<{ tools: string[]; status: unknown }> {
     return new Promise((resolve, reject) => {
-        const child = spawn(spec.command, launchArgs(spec), { cwd: spec.root, env: { ...process.env, AIRK_CLIENT: 'vscode' }, windowsHide: true, stdio: 'pipe' });
+        const child = spawn(spec.command, launchArgs(spec), { cwd: spec.service?path.dirname(spec.command):spec.root, env: { ...process.env, AIRK_CLIENT: 'vscode' }, windowsHide: true, stdio: 'pipe' });
         let buffer = '', stderr = '', total = 0, done = false;
         const requests = new Map<number, { resolve(value: any): void; reject(error: Error): void }>();
         const finish = (error?: Error, result?: { tools: string[]; status: unknown }) => {
@@ -228,7 +228,7 @@ export function probeMcp(spec: LaunchSpec, expectedTools: 14 | 15 | 16 = 15, cli
             requests.clear();
             if (error) { reject(error); } else { resolve(result!); }
         };
-        const timer = setTimeout(() => finish(new Error('AIRK MCP probe timed out.')), 15000);
+        const timer = setTimeout(() => finish(new Error('AIRK MCP probe timed out.')), spec.service?90000:15000);
         child.on('error', error => finish(error));
         child.on('exit', code => { if (!done) { finish(new Error(`AIRK MCP exited (${code}): ${stderr}`)); } });
         child.stdin.on('error', error => finish(error));

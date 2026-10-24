@@ -117,3 +117,5 @@ Guarded project configuration now supports trusted vectors/detail/selection, sou
 Approved vector repair now regenerates completed retained evidence through bounded service turns, with forced inference, durable per-job progress, atomic citation/node replacement and explicit semantic coverage. See [vector regeneration](service-vector-regeneration.md). Default adapter cutover and final platform/editor qualification remain open.
 
 The trusted console now [reviews runtime upgrades and rollback](service-runtime-transitions.md), fences the captured selection natively and resumes exact saved activations. Different-version pins remain installed with read-only diagnostics; reconnect does not silently replace them. Installer/lifecycle inspection no longer migrates the registry. Default adapters and final platform/editor qualification remain open.
+
+The CLI/native adapter owns [reviewed project registration](service-project-setup.md), canonical planned paths and reserved storage creation; the registry owns serialized source/private-state isolation. Extension bindings select the installed launcher and direct brokered MCP frontend without opening a local Kernel.

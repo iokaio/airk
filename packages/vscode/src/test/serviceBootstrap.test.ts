@@ -6,8 +6,33 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { NativeRunner, RuntimeHost, RuntimeOptions, verifyBundledRuntime } from '../serviceBootstrap';
-import { RecordValue, ServiceError, record } from '../serviceClient';
+import { RecordValue, ServiceClient, ServiceError, record } from '../serviceClient';
 const sha=(bytes:Buffer|string)=>createHash('sha256').update(bytes).digest('hex');
+test('reviewed project setup reserves exact native identity before creating storage and refuses copied reviews',async()=>{
+    const f=await fixture(),calls:string[][]=[],mutations:unknown[]=[];
+    const registration={binding:'ab'.repeat(32),root:path.join(f.root,'source'),data_root:path.join(f.root,'new','data'),collection:'fixture'};
+    let authorized=true,loseTrust=false;
+    const host=new RuntimeHost(f.root,'1.4.0',{channel:'stable'},async(command,args)=>{
+        assert.equal(command,path.join(f.source,f.main));calls.push(args);
+        if(args.includes('prepare-registration'))return registration;
+        assert.equal(args[1],'prepare-storage');assert.ok(mutations.length);return registration;
+    },()=>authorized);
+    host.client=()=>new ServiceClient({async request(method){mutations.push(method);if(loseTrust)authorized=false;
+        return {status:'registered',project:{registration,fencing_generation:0,paused:false}};},dispose(){}});
+    const binding={installDir:f.root,controlDir:path.join(f.root,'control'),executable:path.join(f.root,'selected-main'),launcher:null,
+        runtimeSha256:f.digest,version:'1.4.0',lifecycle:'on-demand' as const,verificationBasis:'trusted_distribution'};
+    try{
+        const review=await host.reviewProject(binding,registration.root,registration.data_root,'fixture');assert.ok(Object.isFrozen(review));
+        await assert.rejects(fs.stat(registration.data_root),{code:'ENOENT'});
+        await assert.rejects(host.registerProject(binding,{...review}),/project_registration_not_reviewed/);assert.equal(mutations.length,0);
+        await host.registerProject(binding,review);
+        assert.deepEqual(mutations,[{reserve_project:{project:registration}}]);
+        assert.deepEqual(calls.at(-1),['service','prepare-storage','--runtime-dir',binding.controlDir,'--project',registration.binding]);
+        await assert.rejects(host.registerProject(binding,review),/project_registration_not_reviewed/);
+        const next=await host.reviewProject(binding,registration.root,registration.data_root,'fixture');const before=calls.length;loseTrust=true;
+        await assert.rejects(host.registerProject(binding,next),/runtime_client_no_longer_authorized/);assert.equal(calls.length,before);
+    }finally{await f.cleanup();}
+});
 test('configuration preparation uses bounded stdin and the verified bundled command without launching the selected image',async()=>{
     const f=await fixture(),calls:string[][]=[];const project='12'.repeat(32);
     const request={incarnation:'34'.repeat(16),settings:'56'.repeat(32),configuration:{operation:'vectors',enabled:false}};

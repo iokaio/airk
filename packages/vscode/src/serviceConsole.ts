@@ -34,7 +34,8 @@ export class ServiceConsole implements vscode.WebviewViewProvider,vscode.Disposa
     private failures=0;
     private readonly output=vscode.window.createOutputChannel('AIRK Service');
     private readonly listeners:vscode.Disposable[]=[];
-    constructor(private readonly context:vscode.ExtensionContext,readonly runtime:ConsoleRuntime){
+    constructor(private readonly context:vscode.ExtensionContext,readonly runtime:ConsoleRuntime,
+        private readonly workspace?:{register():Promise<void>;currentProjects():ReadonlySet<string>}){
         this.controller=this.createController();
     }
     private createController():ServiceConsoleController{
@@ -54,6 +55,8 @@ export class ServiceConsole implements vscode.WebviewViewProvider,vscode.Disposa
                 ],{title:'AIRK MCP response mode',placeHolder:'Agents can also request response_mode: full for an individual call'});
                 if(selected&&vscode.workspace.isTrusted&&!this.disposed)await vscode.workspace.getConfiguration('airk').update('mcp.responseMode',selected.value,vscode.ConfigurationTarget.Global);
             },
+            registerWorkspace:this.workspace?()=>this.workspace!.register():undefined,
+            currentProjects:()=>this.workspace?.currentProjects()??new Set<string>(),
         });
     }
     reset():void{

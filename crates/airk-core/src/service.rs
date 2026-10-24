@@ -19,6 +19,10 @@ pub enum ControlMethod {
     Register {
         project: ProjectRegistration,
     },
+    /// Reserve disjoint canonical planned storage before a trusted adapter creates it.
+    ReserveProject {
+        project: ProjectRegistration,
+    },
     Projects {
         after: Option<ProjectBinding>,
         revision: Option<u64>,

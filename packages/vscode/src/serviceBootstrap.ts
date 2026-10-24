@@ -31,6 +31,15 @@ export interface RuntimeTransitionReview {
     readonly action:'upgrade'|'rollback'|'resume'; readonly installDir:string; readonly controlDir:string;
     readonly observedActive:string; readonly expectedActive:string; readonly target:string; readonly version:string;
 }
+export interface ProjectRegistrationReview {
+    readonly installDir:string; readonly controlDir:string; readonly runtimeSha256:string;
+    readonly binding:string; readonly root:string; readonly data_root:string; readonly collection:string;
+}
+function projectRegistration(value:unknown):{binding:string;root:string;data_root:string;collection:string}{
+    const registration=record(value),collection=registration.collection;
+    if(typeof collection!=='string'||collection.length>128||!collection.length||collection==='.'||collection==='..'||!/^[A-Za-z0-9._-]+$/.test(collection))throw new ServiceError('invalid_project_registration');
+    return {binding:identifier(registration.binding,32),root:safePath(registration.root),data_root:safePath(registration.data_root),collection};
+}
 function safePath(value: unknown): string {
     if(typeof value!=='string'||value.length>4096||!path.isAbsolute(value)||/[\u0000-\u001f\u007f]/.test(value)){throw new ServiceError('invalid_runtime_path');}
     return value;
@@ -127,6 +136,7 @@ export class RuntimeHost {
     private bundle?:Promise<VerifiedBundle>;
     private preparing?:Promise<RuntimeBinding>;
     private readonly transitionReviews=new WeakSet<RuntimeTransitionReview>();
+    private readonly projectReviews=new WeakSet<ProjectRegistrationReview>();
     constructor(private readonly extensionPath:string,private readonly version:string,readonly options:RuntimeOptions,
         private readonly run:NativeRunner=nativeRunner, private readonly canContinue:()=>boolean=()=>true) {
         this.options=structuredClone(options);
@@ -252,6 +262,31 @@ export class RuntimeHost {
                 ||!Number.isSafeInteger(value.preserved_files)||Number(value.preserved_files)<0||Number(value.preserved_files)>2050
                 ||value.starts_service!==false||value.requires_stopped_owners!==true)throw new ServiceError('invalid_payload_repair_preview');}
         return value;
+    }
+    async reviewProject(binding:RuntimeBinding,root:string,dataRoot:string,collection:string):Promise<ProjectRegistrationReview>{
+        this.active();safePath(root);safePath(dataRoot);
+        if(binding.version!==this.version||binding.payloadVerified===false)throw new ServiceError('matching_verified_runtime_required');
+        if(!/^[A-Za-z0-9._-]{1,128}$/.test(collection)||collection==='.'||collection==='..')throw new ServiceError('invalid_project_collection');
+        const bundle=await this.verified();
+        const registration=projectRegistration(await this.invoke(bundle.main,['--root',root,'--data-dir',dataRoot,'--collection',collection,'service','prepare-registration']));
+        if(registration.collection!==collection)throw new ServiceError('crossed_project_registration');
+        const review:ProjectRegistrationReview=Object.freeze({installDir:binding.installDir,controlDir:binding.controlDir,runtimeSha256:binding.runtimeSha256,...registration});
+        this.projectReviews.add(review);return review;
+    }
+    async registerProject(binding:RuntimeBinding,review:ProjectRegistrationReview):Promise<ProjectRegistrationReview>{
+        this.active();
+        if(!this.projectReviews.has(review)||review.installDir!==binding.installDir||review.controlDir!==binding.controlDir
+            ||review.runtimeSha256!==binding.runtimeSha256)throw new ServiceError('project_registration_not_reviewed');
+        const registration={binding:review.binding,root:review.root,data_root:review.data_root,collection:review.collection};
+        const client=this.client(binding);
+        try {
+            const response=await client.rpc({reserve_project:{project:registration}},'registered');this.active();
+            if(JSON.stringify(projectRegistration(record(response.project).registration))!==JSON.stringify(registration))throw new ServiceError('crossed_project_registration');
+        }finally{client.dispose();}
+        const bundle=await this.verified();
+        const completed=projectRegistration(await this.invoke(bundle.main,['service','prepare-storage','--runtime-dir',binding.controlDir,'--project',review.binding]));
+        if(JSON.stringify(completed)!==JSON.stringify(registration))throw new ServiceError('crossed_project_storage');
+        this.projectReviews.delete(review);return review;
     }
     async prepareConfiguration(binding:RuntimeBinding,project:string,draft:RecordValue):Promise<ProjectConfigurationRequest>{
         this.active();identifier(project,32);

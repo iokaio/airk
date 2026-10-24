@@ -5,6 +5,16 @@ import { ConsoleHost, ServiceConsoleController } from '../serviceConsoleControll
 import { consoleAction, diagnosticPreview, renderConsole, ServiceConsoleState } from '../serviceConsoleView';
 import { RecordValue, ServiceClient, ServiceError } from '../serviceClient';
 const project='12'.repeat(32),namespace='34'.repeat(16),instance='56'.repeat(16),job='78'.repeat(32);
+test('console workspace registration uses a trusted host action and highlights only native project bindings',async()=>{
+    const f=fixture();let registrations=0;
+    f.host.registerWorkspace=async()=>{registrations++;};f.host.currentProjects=()=>new Set([project]);
+    await f.controller.refresh();assert.match(renderConsole(f.controller.state),/Review workspace registration/);
+    assert.match(renderConsole(f.controller.state),/Open workspace/);
+    const forged={type:'service',revision:f.controller.state.revision,action:'registerWorkspace',root:'/untrusted'};
+    await f.controller.action(forged);assert.equal(registrations,0);
+    await f.action('registerWorkspace');assert.equal(registrations,1);
+    f.setTrusted(false);await f.action('registerWorkspace');assert.equal(registrations,1);f.controller.dispose();
+});
 function fixture(){
     let trusted=true,fail=false;const sent:unknown[]=[],values=new Map<string,unknown>(),copied:string[]=[];
     const row={project:{registration:{binding:project,root:'/sensitive/<source>',data_root:'/private/data',collection:'<script>name</script>'},paused:false,fencing_generation:1},progress:null,inspection:null};

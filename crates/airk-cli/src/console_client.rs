@@ -45,6 +45,7 @@ async fn handle(
         | ControlMethod::Health
         | ControlMethod::Shutdown
         | ControlMethod::Register { .. }
+        | ControlMethod::ReserveProject { .. }
         | ControlMethod::Projects { .. }
         | ControlMethod::RequestEpoch
         | ControlMethod::PlanCreate { .. }

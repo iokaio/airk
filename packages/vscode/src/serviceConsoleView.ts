@@ -6,6 +6,7 @@ export interface ServiceConsoleState {
     revision:string; trusted:boolean; busy:boolean; authority:string; version:string; connected:boolean;
     lifecycle?:'on-demand'|'external'|'user-on-demand';
     responseMode?:'terse'|'full';
+    registrationAvailable?:boolean; currentProjects?:ReadonlySet<string>;
     health:ConsoleObservation; resources:ConsoleObservation; model:ConsoleObservation; sources:ConsoleObservation;
     bootstrap:ConsoleObservation; page?:ConsolePage; workers?:RecordValue; events:RecordValue[]; historyOmitted:boolean;
     serviceEvents?:ConsoleObservation;
@@ -15,7 +16,7 @@ export interface ServiceConsoleState {
     pending:{id:string;title:string;unknown:boolean;lifecycle?:boolean;forceAvailable?:boolean}[]; preview?:string; includePaths:boolean; message?:string;
 }
 export type ConsoleAction = {type:'service';revision:string;action:string;project?:string;id?:string;selected?:boolean;scope?:'one'|'selected'|'all';operation?:RepairOperation;includePaths?:boolean;allowFallback?:boolean};
-const simple=['refresh','connect','start','stop','restart','repairRuntime','upgradeRuntime','rollbackRuntime','resumeActivation','logs','resources','responseMode','recoverLifecycle','abandonLifecycle','startEmbedding','stopEmbedding','forceEmbedding','firstPage','nextPage','morePlan','refreshPlan','pausePlan','resumePlan','cancelPlan','approvePlan','previewReport','copyReport'];
+const simple=['registerWorkspace','refresh','connect','start','stop','restart','repairRuntime','upgradeRuntime','rollbackRuntime','resumeActivation','logs','resources','responseMode','recoverLifecycle','abandonLifecycle','startEmbedding','stopEmbedding','forceEmbedding','firstPage','nextPage','morePlan','refreshPlan','pausePlan','resumePlan','cancelPlan','approvePlan','previewReport','copyReport'];
 const projects=['inspect','index','pause','resume','restartProject','watch','modelSetup','configureProject','copyConfiguration'];
 const operations=['auto','verify','recover','reconcile','vectors','rebuild'];
 /** Messages select fixed host-owned operations; no paths, commands, tokens or RPC bodies are accepted. */
@@ -72,7 +73,7 @@ function projectRow(row:RecordValue,state:ServiceConsoleState):string {
     const resultValue=result&&result.job===configuration.id?result.value:undefined;
     const attr=`data-project="${e(binding)}"`;
     const unavailable=state.busy||!state.connected||!state.trusted;
-    return `<article><h3><label><input type="checkbox" data-action="select" ${attr}${state.selected.has(binding)?' checked':''}${unavailable?' disabled':''}> ${e(registration.collection)}</label></h3>
+    return `<article><h3><label><input type="checkbox" data-action="select" ${attr}${state.selected.has(binding)?' checked':''}${unavailable?' disabled':''}> ${e(registration.collection)}</label>${state.currentProjects?.has(binding)?' · Open workspace':''}</h3>
         ${facts([['Source',registration.root],['Index data',registration.data_root],['Project identity',binding],
             ['Worker',identity.worker??(worker.restarting?'Restart queued':worker.identity===null?'No resident worker observed':'Worker identity not observed')],['Worker fence',identity.fencing_generation],
             ['Worker age at sample (ms)',state.workers?.age_ms],['Worker observation',state.connected?'Connected sample':'Cached sample'],['Startup circuit blocked',worker.automatic_start_blocked],
@@ -135,6 +136,7 @@ export function consoleContent(state:ServiceConsoleState):string {
         ${state.message?`<p role="status">${e(state.message)}</p>`:''}
         ${state.configurationResultsOmitted?'<p>Some configuration results were omitted from this bounded snapshot. Reconnect to retrieve an individual result.</p>':''}
         <div class="controls">${button('refresh','Refresh','',state.busy)}${button('connect','Connect / reconnect','',unavailable)}
+        ${state.registrationAvailable?button('registerWorkspace','Review workspace registration','',unavailable):''}
         ${button('start','Start service','',unavailable||state.lifecycle==='external')}${button('restart','Restart service','',unavailable||!state.connected||state.lifecycle==='external')}
         ${button('stop','Stop service','',unavailable||(!state.connected||state.health.state!=='live')&&typeof lifecycle.recorded_instance!=='string'||state.lifecycle==='external')}${button('logs','Open service logs','',state.busy)}${button('resources','Resource settings','',unavailable||!state.connected)}</div>
         ${state.lifecycle==='external'?'<p>Startup, stop and restart are controlled by the external service manager.</p>':''}

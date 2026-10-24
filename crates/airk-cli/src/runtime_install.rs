@@ -255,6 +255,26 @@ pub fn default_install_root() -> Result<PathBuf> {
     Ok(crate::user_paths::UserPaths::discover(RuntimeChannel::Stable)?.install)
 }
 
+/// Installed frontends use the elected broker and direct project transport.
+/// They never initialize a local Kernel if installation, policy or health fails.
+pub async fn bridge_installed(
+    root: &Path,
+    project: airk_core::service::ProjectBinding,
+) -> Result<()> {
+    let (selection, _, approval) = selected(root)?;
+    ensure!(
+        approval.version == env!("CARGO_PKG_VERSION"),
+        "matching runtime version required"
+    );
+    let health = ensure_running(root).await?;
+    ensure!(
+        health.version == approval.version
+            && health.runtime_sha256.as_deref() == Some(selection.active.as_str()),
+        "installed service changed; reconnect through the selected launcher"
+    );
+    crate::project_client::bridge(layout::control(root)?, project).await
+}
+
 #[derive(Subcommand)]
 pub enum LoginCommand {
     Plan,

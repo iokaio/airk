@@ -73,6 +73,13 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
         ControlMethod::PlanCancel { id } => ControlResponse::Plan {
             plan: registry.cancel_maintenance_plan(id, now_ms)?,
         },
+        ControlMethod::ReserveProject { project } => {
+            airk_kernel::service_projects::validate_planned(&project)?;
+            registry.register(&project)?;
+            ControlResponse::Registered {
+                project: registry.get(project.binding)?,
+            }
+        }
         ControlMethod::Register { project } => {
             airk_kernel::service_projects::validate(&project)?;
             registry.register(&project)?;
@@ -346,7 +353,9 @@ impl Management {
                     };
                     let source_changed = matches!(
                         method,
-                        ControlMethod::ConfigureWatch { .. } | ControlMethod::Register { .. }
+                        ControlMethod::ConfigureWatch { .. }
+                            | ControlMethod::Register { .. }
+                            | ControlMethod::ReserveProject { .. }
                     );
                     let plan_changed = matches!(
                         method,

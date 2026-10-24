@@ -224,6 +224,42 @@ pub fn validate(project: &ProjectRegistration) -> Result<()> {
     Ok(())
 }
 
+/// Prepare a metadata reservation. Only storage may be missing; sources must
+/// already exist. The service serializes this reservation against every source
+/// and private-state boundary before an adapter may create the storage path.
+pub fn planned_registration(
+    root: &Path,
+    data: &Path,
+    collection: &str,
+) -> Result<ProjectRegistration> {
+    airk_store::validate_collection(collection)?;
+    let root = root.canonicalize().context("resolve service source root")?;
+    ensure!(root.is_dir(), "service source must be a directory");
+    let data = airk_store::service::data_scope::canonical_location(data)?;
+    ensure!(
+        !root.starts_with(&data) && !data.starts_with(&root),
+        "service sources and planned storage must be disjoint"
+    );
+    ProjectRegistration::new(
+        root.to_str().context("source root is not UTF-8")?.into(),
+        data.to_str().context("data root is not UTF-8")?.into(),
+        collection.into(),
+    )
+}
+
+pub fn validate_planned(project: &ProjectRegistration) -> Result<()> {
+    project.validate()?;
+    ensure!(
+        planned_registration(
+            Path::new(&project.root),
+            Path::new(&project.data_root),
+            &project.collection,
+        )? == *project,
+        "planned registration identity changed"
+    );
+    Ok(())
+}
+
 #[cfg(test)]
 #[path = "service_source_availability_tests.rs"]
 mod tests;

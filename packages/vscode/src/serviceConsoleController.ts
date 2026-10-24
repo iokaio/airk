@@ -19,6 +19,8 @@ export interface ConsoleHost {
     abandonLifecycle?(binding:RuntimeBinding,intent:LifecycleIntent,id:string):Promise<RecordValue>;
     responseMode?():'terse'|'full';
     chooseResponseMode?():Promise<void>;
+    registerWorkspace?():Promise<void>;
+    currentProjects?():ReadonlySet<string>;
 }
 const empty=():ConsoleObservation=>({state:'unavailable',checkedAt:Date.now()});
 function code(error:unknown):string{return error instanceof ServiceError?error.code:'console_operation_failed';}
@@ -48,6 +50,8 @@ export class ServiceConsoleController {
     private publish():void{
         if(this.disposed)return;this.state.trusted=this.host.trusted();this.state.revision=randomUUID();
         this.state.responseMode=this.host.responseMode?.()??'terse';
+        this.state.registrationAvailable=!!this.host.registerWorkspace;
+        this.state.currentProjects=new Set(this.host.currentProjects?.()??[]);
         this.host.changed(this.state);
     }
     private async rpc(method:unknown,expected?:string):Promise<RecordValue>{
@@ -275,6 +279,11 @@ export class ServiceConsoleController {
         const requestedPreview=this.state.preview;
         this.state.busy=true;this.state.message=undefined;this.publish();
         try{
+            if(action.action==='registerWorkspace'){
+                this.authorized();if(!this.host.registerWorkspace)throw new ServiceError('workspace_registration_unavailable');
+                await this.host.registerWorkspace();this.authorized();
+                this.client?.dispose();this.client=undefined;await this.discover();await this.observe();return;
+            }
             if(action.action==='previewReport'){
                 this.state.includePaths=action.includePaths!;this.state.preview=diagnosticPreview(this.state,this.state.includePaths);return;
             }

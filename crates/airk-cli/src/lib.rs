@@ -10,6 +10,7 @@ pub mod service_configuration;
 pub mod service_ipc;
 pub mod service_logs;
 mod service_management;
+pub mod service_registration;
 pub mod service_runtime;
 
 pub mod bundled_assets;
