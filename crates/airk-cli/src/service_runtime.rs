@@ -103,8 +103,10 @@ pub async fn serve(root: &Path) -> Result<()> {
 }
 
 pub async fn serve_with_idle(root: &Path, idle_grace: Option<Duration>) -> Result<()> {
+    crate::runtime_install::validate_control_root(root)?;
     local_ipc::prepare_root(root)?;
     let _ownership = airk_store::service::ServiceLease::acquire(root)?;
+    crate::runtime_install::record_control_root(&_ownership)?;
     _ownership.prepare_control_endpoint()?;
     local_ipc::prepare_control_endpoint(&_ownership)?;
     let address = local_ipc::endpoint(root, "control")?;

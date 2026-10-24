@@ -178,6 +178,13 @@ pub enum RuntimeCommand {
     SelfTest,
 }
 
+pub(crate) fn validate_control_root(control: &Path) -> Result<()> {
+    layout::validate_control(control)
+}
+pub(crate) fn record_control_root(lease: &airk_store::service::ServiceLease) -> Result<()> {
+    layout::record_control(lease)
+}
+
 pub(crate) fn log_parent(control: &Path) -> Result<PathBuf> {
     layout::log_parent(control)
 }
@@ -1136,6 +1143,7 @@ fn quiescent(root: &Path) -> Result<Quiescence> {
     let control = layout::control(root)?;
     local_ipc::prepare_root(&control)?;
     let service = airk_store::service::ServiceLease::acquire(&control)?;
+    layout::record_control(&service)?;
     let registry = airk_store::service::registry::ServiceRegistry::open(
         &control,
         airk_kernel::service_broker::new_instance_id()?,

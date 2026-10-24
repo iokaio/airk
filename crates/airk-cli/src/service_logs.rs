@@ -41,7 +41,11 @@ fn expected_owner(root: &Path) -> Result<Owner> {
         schema: 1,
         root: airk_core::identity::framed_digest(
             b"airk-diagnostic-log-owner/1.4",
-            &[root.canonicalize()?.as_os_str().as_encoded_bytes()],
+            &[
+                crate::user_paths::canonical_location(&std::path::absolute(root)?)?
+                    .as_os_str()
+                    .as_encoded_bytes(),
+            ],
         ),
     })
 }

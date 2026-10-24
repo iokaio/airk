@@ -7,6 +7,8 @@ const OWNER: &str = "airk-state-1.4.owner.json";
 const CLAIM: &str = "airk-state-1.4.lock";
 const OWNER_PART: &str = "airk-state-1.4.owner.part";
 const MAX_LAYOUT: u64 = 32 * 1024;
+const CONTROL_OWNER: &str = "airk-control-1.4.owner.json";
+const CONTROL_PART: &str = "airk-control-1.4.owner.part";
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -347,13 +349,137 @@ pub(super) fn control(root: &Path) -> Result<PathBuf> {
                 "service state initialization is incomplete; repeat approved staging or inspect the layout"
             );
             local_ipc::prepare_root(&layout.state)?;
-            Ok(layout.state.join("control"))
+            let control = layout.state.join("control");
+            validate_control(&control)?;
+            Ok(control)
         }
     }
 }
 
+// Resolve the parent before inspecting the child, so a redirected control
+// directory cannot escape its state-level receipt and masquerade as raw mode.
+fn control_location(control: &Path) -> Result<PathBuf> {
+    let absolute = std::path::absolute(control)?;
+    let parent = crate::user_paths::canonical_location(
+        absolute.parent().context("control parent missing")?,
+    )?;
+    Ok(parent.join(
+        absolute
+            .file_name()
+            .context("control directory name missing")?,
+    ))
+}
+fn require_control(control: &Path) -> Result<()> {
+    ensure!(
+        exists(control)?,
+        "initialized service control directory is missing; restore the owned state instead of creating another registry"
+    );
+    let metadata = fs::symlink_metadata(control)?;
+    ensure!(
+        metadata.is_dir()
+            && !metadata.file_type().is_symlink()
+            && control.canonicalize()? == control,
+        "initialized service control directory is redirected or unavailable"
+    );
+    Ok(())
+}
+fn control_binding(control: &Path) -> Result<Option<Layout>> {
+    let state = control.parent().context("control parent missing")?;
+    let marker = state.join(CONTROL_OWNER);
+    let partial = state.join(CONTROL_PART);
+    let completed = exists(&marker)?;
+    let owner = if completed {
+        serde_json::from_slice::<Layout>(&read_bounded(&marker, MAX_LAYOUT)?)?
+    } else if exists(&state.join(OWNER))? {
+        serde_json::from_slice::<Layout>(&read_bounded(&state.join(OWNER), MAX_LAYOUT)?)?
+    } else {
+        ensure!(
+            !exists(&partial)? && !exists(&state.join(CLAIM))? && !exists(&state.join(OWNER_PART))?,
+            "service state ownership is incomplete; control initialization cannot fall back"
+        );
+        return Ok(None); // Explicit raw development namespace.
+    };
+    ensure!(
+        owner.ready && owner.state == state && control == state.join("control"),
+        "control initialization belongs to another state directory"
+    );
+    let layout = Layout::read(&owner.install)?.context("control installation binding missing")?;
+    ensure!(
+        layout == owner,
+        "control initialization install/state ownership differs"
+    );
+    if exists(&partial)? {
+        let bytes = read_bounded(&partial, MAX_LAYOUT)?;
+        ensure!(
+            serde_json::to_vec(&owner)?.starts_with(&bytes),
+            "unknown control initialization partial preserved"
+        );
+        require_control(control)?;
+    }
+    if completed {
+        require_control(control)?;
+        if exists(&state.join(OWNER))? {
+            let current: Layout =
+                serde_json::from_slice(&read_bounded(&state.join(OWNER), MAX_LAYOUT)?)?;
+            ensure!(
+                current == owner,
+                "control initialization conflicts with current state ownership"
+            );
+        }
+    }
+    Ok(Some(owner))
+}
+/// Must run before directory creation, including explicit foreground startup.
+pub(super) fn validate_control(control: &Path) -> Result<()> {
+    control_binding(&control_location(control)?)?;
+    Ok(())
+}
+/// Record initialization before any registry creation, under singleton ownership.
+pub(super) fn record_control(lease: &airk_store::service::ServiceLease) -> Result<()> {
+    let control = control_location(lease.root())?;
+    ensure!(
+        control == lease.root(),
+        "control initialization lease differs"
+    );
+    let Some(owner) = control_binding(&control)? else {
+        return Ok(());
+    };
+    require_control(&control)?;
+    let marker = owner.state.join(CONTROL_OWNER);
+    if exists(&marker)? {
+        return Ok(());
+    }
+    let bytes = serde_json::to_vec(&owner)?;
+    ensure!(
+        bytes.len() as u64 <= MAX_LAYOUT,
+        "control initialization receipt exceeds bound"
+    );
+    let partial = owner.state.join(CONTROL_PART);
+    let mut options = OpenOptions::new();
+    options.write(true);
+    if exists(&partial)? {
+        options.truncate(true);
+    } else {
+        options.create_new(true);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(&partial)?;
+    file.write_all(&bytes)?;
+    file.sync_all()?;
+    drop(file);
+    publish_new(&partial, &marker)?;
+    sync_directory(&owner.state)
+}
+
 pub(super) fn log_parent(control: &Path) -> Result<PathBuf> {
-    let control = control.canonicalize()?;
+    let control = control_location(control)?;
+    if exists(&control)? {
+        require_control(&control)?;
+    }
     let state = control.parent().context("control parent missing")?;
     let owner_path = state.join(OWNER);
     if !exists(&owner_path)? {
@@ -389,7 +515,14 @@ pub(super) fn inspect(root: &Path) -> Result<serde_json::Value> {
         }
         Some(layout) => {
             let claimed = layout.claimed()?;
-            serde_json::json!({"layout":layout,"state_claimed":claimed,"control":layout.state.join("control")})
+            let control = layout.state.join("control");
+            let initialized = exists(&layout.state.join(CONTROL_OWNER))?;
+            let interrupted = exists(&layout.state.join(CONTROL_PART))?;
+            let error = validate_control(&control)
+                .err()
+                .map(|error| format!("{error:#}").chars().take(1024).collect::<String>());
+            serde_json::json!({"layout":layout,"state_claimed":claimed,"control":control,
+                "control_initialized":initialized,"control_initialization_interrupted":interrupted,"control_error":error})
         }
     })
 }

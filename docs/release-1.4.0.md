@@ -43,3 +43,6 @@ The change feed now retains bounded authenticated parent/event metadata across p
 Service collections now use independent 1.4 quota policy, reservation/recovery ledgers, staging paths and lifecycle locks. Namespace-bound writers and cleanup reject cross-family ownership, and legacy relocation refuses service-owned roots. See [storage ownership](service-storage-ownership.md).
 
 Owned login Stop/Uninstall now authenticates saved shutdown identity independently of payload launch qualification, with OS-held registration proof required for fallback stopping. Full runtime uninstall stops owned startup before payload retirement checks and preserves damaged/unknown files. See [installation contracts](service-installation.md); installed-manager damage recovery remains in the final matrix.
+
+
+Installed control initialization now has an independent state-level receipt, written under singleton ownership before registry creation. Missing or redirected initialized control directories cause startup/discovery to fail without making an empty replacement; restoring the original directory preserves the durable namespace. Matching interrupted receipts resume within their original directory. Diagnostic inspection reports the failure, and verified external native logs remain readable without recreating control state. Unknown or conflicting ownership is preserved.

@@ -2364,3 +2364,87 @@ fn installed_log_binding_places_the_ring_outside_control_and_missing_ownership_n
     );
     Ok(())
 }
+
+#[test]
+fn installed_control_loss_rejects_native_startup_and_restoration_retains_registry_namespace()
+-> Result<()> {
+    use airk_core::service::{ControlMethod as Method, ControlResponse as Response};
+    let owner = tempfile::tempdir()?;
+    let base = owner.path().canonicalize()?;
+    let install = base.join("install");
+    let state = base.join("state");
+    for path in [&install, &state] {
+        airk_cli::local_ipc::prepare_root(path)?;
+    }
+    let logs = base.join("native-logs");
+    let binding = serde_json::to_vec(
+        &serde_json::json!({"schema":1,"install":install,"state":state,"logs":logs,"channel":"stable","ready":true}),
+    )?;
+    fs::write(install.join("runtime-layout.json"), &binding)?;
+    fs::write(state.join("airk-state-1.4.owner.json"), &binding)?;
+    fs::write(state.join("airk-state-1.4.lock"), [])?;
+    let root = state.join("control");
+    let mut children = Children(vec![start(&root)?]);
+    wait_ready(&root)?;
+    let executor = tokio::runtime::Runtime::new()?;
+    let namespace = executor.block_on(async {
+        let Response::RequestEpoch { namespace, .. } =
+            airk_cli::service_runtime::request(&root, Method::RequestEpoch).await?
+        else {
+            anyhow::bail!("request namespace missing")
+        };
+        Ok::<_, anyhow::Error>(namespace)
+    })?;
+    control(&root, "shutdown")?;
+    ensure!(wait_exit(&mut children.0[0])?, "first service did not stop");
+    let marker = fs::read(state.join("airk-control-1.4.owner.json"))?;
+    let database = fs::read(root.join("service-1.4.sqlite3"))?;
+    let saved = state.join("original-control");
+    fs::rename(&root, &saved)?;
+    ensure!(
+        !airk_cli::service_logs::recent(&root, 32)?
+            .records
+            .is_empty(),
+        "owned external logs unavailable after control loss"
+    );
+    ensure!(!root.exists(), "cached log export recreated control state");
+    children.0.push(start(&root)?);
+    ensure!(
+        !wait_exit(children.0.last_mut().unwrap())?,
+        "missing initialized control was silently recreated"
+    );
+    ensure!(
+        !root.exists(),
+        "failed startup created another control directory"
+    );
+    ensure!(
+        fs::read(state.join("airk-control-1.4.owner.json"))? == marker,
+        "initialization receipt changed"
+    );
+    ensure!(
+        fs::read(saved.join("service-1.4.sqlite3"))? == database,
+        "original registry changed"
+    );
+    fs::rename(&saved, &root)?;
+    children.0.push(start(&root)?);
+    wait_ready(&root)?;
+    executor.block_on(async {
+        let Response::RequestEpoch {
+            namespace: actual, ..
+        } = airk_cli::service_runtime::request(&root, Method::RequestEpoch).await?
+        else {
+            anyhow::bail!("restored namespace missing")
+        };
+        ensure!(
+            actual == namespace,
+            "restoration reset the durable namespace"
+        );
+        Ok::<_, anyhow::Error>(())
+    })?;
+    control(&root, "shutdown")?;
+    ensure!(
+        wait_exit(children.0.last_mut().unwrap())?,
+        "restored service did not stop"
+    );
+    Ok(())
+}

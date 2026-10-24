@@ -478,3 +478,114 @@ fn log_filesystem_failure_does_not_disable_the_owned_control_binding() -> Result
     );
     Ok(())
 }
+
+#[test]
+fn initialized_control_loss_never_creates_an_empty_registry_and_restoration_keeps_identity()
+-> Result<()> {
+    let (_owner, root, state) = fixture()?;
+    initialize(&root, Some(&state), RuntimeChannel::Stable)?;
+    let path = control(&root)?;
+    assert!(!path.exists());
+    local_ipc::prepare_root(&path)?;
+    let lease = airk_store::service::ServiceLease::acquire(&path)?;
+    record_control(&lease)?;
+    let marker = fs::read(state.join(CONTROL_OWNER))?;
+    let namespace = {
+        let mut registry = airk_store::service::registry::ServiceRegistry::open(
+            &path,
+            airk_kernel::service_broker::new_instance_id()?,
+        )?;
+        registry.request_epoch()?.0
+    };
+    drop(lease);
+    let saved = state.join("original-control");
+    fs::rename(&path, &saved)?;
+    assert!(control(&root).is_err());
+    assert!(validate_control(&path).is_err());
+    assert!(!path.exists());
+    let observation = inspect(&root)?;
+    assert_eq!(observation["control_initialized"], true);
+    assert!(
+        observation["control_error"]
+            .as_str()
+            .unwrap()
+            .contains("control directory is missing")
+    );
+    assert_eq!(fs::read(state.join(CONTROL_OWNER))?, marker);
+    fs::rename(&saved, &path)?;
+    validate_control(&path)?;
+    assert_eq!(control(&root)?, path);
+    let mut registry = airk_store::service::registry::ServiceRegistry::open(
+        &path,
+        airk_kernel::service_broker::new_instance_id()?,
+    )?;
+    assert_eq!(registry.request_epoch()?.0, namespace);
+    Ok(())
+}
+
+#[test]
+fn interrupted_control_receipt_requires_original_directory_and_resumes_exact_prefix() -> Result<()>
+{
+    let (_owner, root, state) = fixture()?;
+    initialize(&root, Some(&state), RuntimeChannel::Stable)?;
+    let path = control(&root)?;
+    let binding = Layout::read(&root)?.unwrap();
+    let bytes = serde_json::to_vec(&binding)?;
+    fs::write(state.join(CONTROL_PART), &bytes[..bytes.len() / 2])?;
+    assert!(control(&root).is_err());
+    assert!(!path.exists());
+    local_ipc::prepare_root(&path)?;
+    let lease = airk_store::service::ServiceLease::acquire(&path)?;
+    record_control(&lease)?;
+    assert_eq!(fs::read(state.join(CONTROL_OWNER))?, bytes);
+    assert!(!state.join(CONTROL_PART).exists());
+    Ok(())
+}
+
+#[test]
+fn changed_control_binding_is_preserved_and_never_routes_to_another_installation() -> Result<()> {
+    let (_owner, root, state) = fixture()?;
+    initialize(&root, Some(&state), RuntimeChannel::Stable)?;
+    let path = control(&root)?;
+    local_ipc::prepare_root(&path)?;
+    let lease = airk_store::service::ServiceLease::acquire(&path)?;
+    record_control(&lease)?;
+    let original = fs::read(state.join(OWNER))?;
+    let mut changed = Layout::read(&root)?.unwrap();
+    changed.channel = RuntimeChannel::Preview;
+    fs::write(state.join(OWNER), serde_json::to_vec(&changed)?)?;
+    assert!(validate_control(&path).is_err());
+    fs::write(state.join(OWNER), original)?;
+    fs::write(
+        state.join(CONTROL_OWNER),
+        b"Unknown initialization preserved.",
+    )?;
+    assert!(control(&root).is_err());
+    assert!(validate_control(&path).is_err());
+    assert!(record_control(&lease).is_err());
+    assert_eq!(
+        fs::read(state.join(CONTROL_OWNER))?,
+        b"Unknown initialization preserved."
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn redirected_control_cannot_escape_the_state_receipt_into_raw_mode() -> Result<()> {
+    let (_owner, root, state) = fixture()?;
+    initialize(&root, Some(&state), RuntimeChannel::Stable)?;
+    let path = control(&root)?;
+    local_ipc::prepare_root(&path)?;
+    let lease = airk_store::service::ServiceLease::acquire(&path)?;
+    record_control(&lease)?;
+    drop(lease);
+    let original = state.join("original-control");
+    fs::rename(&path, &original)?;
+    let other = tempfile::tempdir()?;
+    std::os::unix::fs::symlink(other.path(), &path)?;
+    assert!(validate_control(&path).is_err());
+    assert!(control(&root).is_err());
+    assert!(fs::read_dir(other.path())?.next().is_none());
+    Ok(())
+}
