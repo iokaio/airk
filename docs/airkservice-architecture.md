@@ -612,3 +612,5 @@ Numeric defaults must be recorded before workload qualification, together with o
 Run repository-required formatting, clippy, workspace tests, extension tests, packaging/license/repository checks and whitespace checks for implementation changes. Platform-installed tests and measured load tests are additional requirements, not replacements for those checks. Keep unexecuted platform checks and unsupported architectures explicit.
 
 Implementation progress is recorded at the start of this document. The plan itself does not authorize a version bump, commit, PR, publication or release. Each implemented phase needs its own validation evidence; a service process alone does not establish that indexing failures are fixed.
+
+Development shutdown refinement: login Stop/Uninstall authenticates saved inventory identity independently of launchable payload validation and requires exact OS registration proof for fallback stopping. Full removal preserves damaged payloads for explicit follow-up after stopping owned startup; see [installation contracts](service-installation.md).

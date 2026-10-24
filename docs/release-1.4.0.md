@@ -18,7 +18,7 @@ Native activation now records resumable drain/launcher/probe/restoration intent,
 
 Windows worker and extraction cleanup now share bounded native Job Object ownership and confirm descendant exit before returning capacity. Native manager commands also apply their deadline to input and output completion and reject oversized diagnostic output. Unix extraction and short-lived manager commands now keep a private group leader unreaped until bounded native descendant checks complete, including Linux pidfd exit waits. Unix service-owner crash containment remains an implementation gate; macOS has compile checks but no runtime qualification. See [process ownership](service-processes.md).
 
-Stage commits remain local and human DCO-signed. No push, publication or service VSIX is authorized before the user's implementation, test and review gate is satisfied. Final versions and packaging receipts will be recorded here at cutover.
+Stage commits remain local and human DCO-signed. Push and publication remain unauthorized. Build a service VSIX only after the user's implementation, test and review gate is satisfied. Final versions and packaging receipts will be recorded here at cutover.
 
 The native management path now keeps a bounded transactional event log with restart-stable snapshot paging, explicit retention gaps and content-free failure codes. Explicit retry preserves the failed/canceled receipt and resets the applicable finite automatic policy only once per accepted key. The trusted console still needs to present these operations.
 
@@ -39,3 +39,5 @@ Physical compression now preserves the prior capture’s posting format, and the
 The change feed now retains bounded authenticated parent/event metadata across publications, with independent coverage floors, whole-group pressure/age expiry and exact baseline/cursor checks. It coalesces delayed file and selected unit observations while preserving current-source-read expiry. See [retention contracts](service-change-retention.md).
 
 Service collections now use independent 1.4 quota policy, reservation/recovery ledgers, staging paths and lifecycle locks. Namespace-bound writers and cleanup reject cross-family ownership, and legacy relocation refuses service-owned roots. See [storage ownership](service-storage-ownership.md).
+
+Owned login Stop/Uninstall now authenticates saved shutdown identity independently of payload launch qualification, with OS-held registration proof required for fallback stopping. Full runtime uninstall stops owned startup before payload retirement checks and preserves damaged/unknown files. See [installation contracts](service-installation.md); installed-manager damage recovery remains in the final matrix.

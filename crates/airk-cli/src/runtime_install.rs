@@ -1017,6 +1017,74 @@ async fn drain(root: &Path, main: &Path, approval: &Approval) -> Result<()> {
     drain_identity(root, approval, &expected_sha256).await
 }
 
+/// Shutdown authenticates saved identity, without executing or qualifying a
+/// payload. Missing/changed ancillary files must not disable an owned OS stop.
+fn stop_identity(root: &Path) -> Result<(Approval, String)> {
+    let selection = selection_record(root)?;
+    let directory = payload_path(
+        root,
+        &format!("runtimes/{}/airk-install.json", selection.active),
+    )?
+    .parent()
+    .context("shutdown runtime parent missing")?
+    .to_path_buf();
+    let approval: Approval =
+        serde_json::from_slice(&read_bounded(&directory.join("approval.json"), 4096)?)?;
+    let bytes = read_bounded(&directory.join("airk-install.json"), MAX_MANIFEST)?;
+    ensure!(
+        format!("{:x}", Sha256::digest(&bytes)) == selection.active,
+        "shutdown inventory identity mismatch"
+    );
+    let inventory: InstallManifest = serde_json::from_slice(&bytes)?;
+    ensure!(
+        approval.schema == 1
+            && inventory.schema == 1
+            && approval.manifest_sha256 == selection.active
+            && approval.version == inventory.version,
+        "shutdown approval identity mismatch"
+    );
+    let hash = inventory
+        .files
+        .get(main_name())
+        .context("shutdown executable identity missing")?;
+    digest(hash)?;
+    Ok((approval, hash.clone()))
+}
+
+async fn wait_quiescent(root: &Path) -> Result<()> {
+    let until = tokio::time::Instant::now() + Duration::from_secs(45);
+    loop {
+        if let Ok(guard) = quiescent(root) {
+            drop(guard);
+            return Ok(());
+        }
+        ensure!(
+            tokio::time::Instant::now() < until,
+            "service owners have not released after stop"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+async fn stop_login(
+    root: &Path,
+    manager: &crate::service_manager::ServiceManager,
+    uninstall: bool,
+) -> Result<crate::service_manager::ServiceStatus> {
+    // A graceful drain is preferable, but its receipts/health may be damaged.
+    // Only OS-held registration proof authorizes the fallback stop below.
+    if let Ok((approval, hash)) = stop_identity(root) {
+        let _ = drain_identity(root, &approval, &hash).await;
+    }
+    let status = manager.stop()?;
+    wait_quiescent(root).await?;
+    if uninstall {
+        manager.uninstall()
+    } else {
+        Ok(status)
+    }
+}
+
 async fn drain_identity(root: &Path, approval: &Approval, expected_sha256: &str) -> Result<()> {
     let control = layout::control(root)?;
     if !control.try_exists()? {

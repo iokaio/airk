@@ -34,15 +34,14 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
                     serde_json::to_value(manager.install()?)?
                 }
                 LoginCommand::Start => serde_json::to_value(manager.start()?)?,
-                LoginCommand::Stop | LoginCommand::Uninstall => {
-                    let (_, main, approval) = selected(install_dir)?;
-                    drain(install_dir, &main, &approval).await?;
-                    if matches!(action, LoginCommand::Stop) {
-                        serde_json::to_value(manager.stop()?)?
-                    } else {
-                        serde_json::to_value(manager.uninstall()?)?
-                    }
-                }
+                LoginCommand::Stop | LoginCommand::Uninstall => serde_json::to_value(
+                    stop_login(
+                        install_dir,
+                        &manager,
+                        matches!(action, LoginCommand::Uninstall),
+                    )
+                    .await?,
+                )?,
             }
         }
         RuntimeCommand::Foreground { install_dir } => {

@@ -354,3 +354,70 @@ fn failed_native_self_test_preserves_selection_and_never_publishes_staging() -> 
     );
     Ok(())
 }
+
+#[test]
+fn shutdown_identity_does_not_require_launchable_payload_but_rejects_changed_receipts() -> Result<()>
+{
+    let (_owner, root, identity) = unselected_fixture()?;
+    replace_json(
+        &root,
+        "selected.json",
+        &Selection {
+            schema: 1,
+            active: identity.clone(),
+            previous: None,
+        },
+    )?;
+    let directory = root.join("runtimes").join(&identity);
+    let expected = runtime_pair::digest_file(&directory.join(main_name()))?;
+    fs::remove_file(directory.join("LICENSE"))?;
+    fs::remove_file(directory.join(main_name()))?;
+    assert!(selected(&root).is_err());
+    let (approval, hash) = stop_identity(&root)?;
+    assert_eq!(hash, expected);
+    assert_eq!(approval.manifest_sha256, identity);
+    let path = directory.join("airk-install.json");
+    let original = fs::read(&path)?;
+    let mut changed = original.clone();
+    changed.push(b' ');
+    fs::write(&path, changed)?;
+    assert!(stop_identity(&root).is_err());
+    fs::write(&path, &original)?;
+    replace_json(
+        &directory,
+        "approval.json",
+        &Approval {
+            schema: 1,
+            manifest_sha256: identity,
+            version: "different-version".into(),
+            verification_basis: VerificationBasis::OrganizationDigest,
+        },
+    )?;
+    assert!(stop_identity(&root).is_err());
+    assert!(!directory.join(main_name()).exists());
+    assert!(!directory.join("LICENSE").exists());
+    assert_eq!(fs::read(path)?, original);
+    Ok(())
+}
+
+#[tokio::test]
+async fn damaged_payload_cannot_authorize_stopping_an_unowned_login_job() -> Result<()> {
+    let (_owner, root, identity) = unselected_fixture()?;
+    replace_json(
+        &root,
+        "selected.json",
+        &Selection {
+            schema: 1,
+            active: identity.clone(),
+            previous: None,
+        },
+    )?;
+    let directory = root.join("runtimes").join(&identity);
+    fs::remove_file(directory.join("LICENSE"))?;
+    let manager = crate::service_manager::ServiceManager::for_runtime(&root)?;
+    assert!(stop_login(&root, &manager, false).await.is_err());
+    assert!(directory.join(main_name()).is_file());
+    assert!(!root.join("startup-owner.json").exists());
+    assert!(!directory.join("LICENSE").exists());
+    Ok(())
+}

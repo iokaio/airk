@@ -208,7 +208,13 @@ pub(super) async fn uninstall(root: &Path) -> Result<serde_json::Value> {
     let intent: UninstallIntent = if present(&intent_path)? {
         serde_json::from_slice(&read_bounded(&intent_path, 4096)?)?
     } else {
-        let unselected = if present(&root.join("selected.json"))? {
+        let manager = crate::service_manager::ServiceManager::for_runtime(root)?;
+        if manager.owned_registration_exists()? {
+            // Stop the exact OS-owned job even if payload qualification below
+            // fails. Unknown/changed payload bytes remain preserved for repair.
+            stop_login(root, &manager, true).await?;
+        }
+        let _unselected = if present(&root.join("selected.json"))? {
             let selection = selection_record(root)?;
             let (main, approval, _) = owned_inventory(root, &selection.active)?;
             drain(root, &main, &approval).await?;
@@ -218,13 +224,6 @@ pub(super) async fn uninstall(root: &Path) -> Result<serde_json::Value> {
             // Never infer ownership from a PID or stop a live unknown process.
             Some(quiescent(root).context("unselected installation still has live owners")?)
         };
-        let manager = crate::service_manager::ServiceManager::for_runtime(root)?;
-        if manager.owned_registration_exists()? {
-            if unselected.is_some() {
-                manager.require_stopped_for_maintenance()?;
-            }
-            manager.uninstall()?;
-        }
         launcher_repair::settle_for_uninstall(root)?;
         for identity in staging::pending(root)? {
             staging::abort(root, &identity)?;
