@@ -642,3 +642,5 @@ Approved vector repair now regenerates completed retained evidence through bound
 The trusted console now [reviews runtime upgrades and rollback](service-runtime-transitions.md), fences the captured selection natively and resumes exact saved activations. Different-version pins remain installed with read-only diagnostics; reconnect does not silently replace them. Installer/lifecycle inspection no longer migrates the registry. Default adapters and final platform/editor qualification remain open.
 
 Project bootstrap now has an implemented [reviewed registration adapter](service-project-setup.md), with metadata reservation before storage creation and opaque stable-launcher MCP bindings. Default adapter cutover remains open.
+
+The [service client adapters](service-client-adapters.md) now implement direct CLI tool/shell/status access, bounded saved CLI request recovery and a prepared service-backed extension activation. Guarded rebuild commands capture a preview without automatically approving it. Default cutover remains open.

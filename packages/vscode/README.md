@@ -386,3 +386,5 @@ Saved bootstrap snapshots now read completed registry metadata without executing
 Development payload repair now requires an exact native preview and stopped owners, preserves the complete damaged slot, resumes interrupted copies and returns an idempotent completion receipt. The trusted console uses the matching approved offline bundle; Start remains explicit and uninstall retains the damaged originals. See [payload repair](https://github.com/iokaio/airk/blob/main/docs/service-installation.md#explicit-payload-repair).
 
 The development adapter now supports [reviewed project setup](https://github.com/iokaio/airk/blob/main/docs/service-project-setup.md): canonical preparation, storage reservation and stable-launcher MCP bindings. Default service cutover and final VSIX qualification remain in progress.
+
+Development [service client adapters](https://github.com/iokaio/airk/blob/main/docs/service-client-adapters.md) include direct CLI tools, durable request recovery and a service-backed activation awaiting default cutover. No final 1.4 VSIX is available yet.

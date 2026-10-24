@@ -30,3 +30,19 @@ test('workspace definitions require explicit review, persist opaque bindings and
         assert.equal(submitted,1);
     }finally{await fs.rm(root,{recursive:true,force:true});}
 });
+
+test('reviewing new storage changes only the active workspace binding and preserves the preceding registration',async()=>{
+    const root=await fs.mkdtemp(path.join(os.tmpdir(),'airk-workspace-selection-')),values=new Map<string,unknown>();
+    const source=path.join(root,'source');await fs.mkdir(source);
+    const binding:RuntimeBinding={installDir:root,controlDir:path.join(root,'control'),executable:path.join(root,'main'),launcher:path.join(root,'airk-launcher'),
+        runtimeSha256:'ab'.repeat(32),version:'1.4.0',lifecycle:'on-demand',verificationBasis:'trusted_distribution'};
+    let selected='cd'.repeat(32);
+    const workspace=new ServiceWorkspace({keys:()=>[...values.keys()],get:<T>(key:string)=>values.get(key) as T|undefined,update:async(key,value)=>{values.set(key,value);}},
+        {reviewProject:async(_binding,root,data_root,collection)=>({...binding,binding:selected,root,data_root,collection}),registerProject:async(_binding,review)=>review},()=>true);
+    try{
+        await workspace.register(binding,source,path.join(root,'data-a'),'fixture',async()=>true);
+        selected='ef'.repeat(32);await workspace.register(binding,source,path.join(root,'data-b'),'fixture',async()=>true);
+        const current=await workspace.definitions(binding,[source]);assert.equal(current.length,1);assert.equal(current[0].service?.project,selected);
+        assert.equal([...values.keys()].filter(key=>key.startsWith('airk.service.workspace.1.')).length,2);
+    }finally{await fs.rm(root,{recursive:true,force:true});}
+});

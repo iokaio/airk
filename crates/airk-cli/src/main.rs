@@ -480,7 +480,31 @@ enum CompressionCommand {
 }
 
 #[derive(Subcommand)]
+enum ClientRequestCommand {
+    Prepare {
+        #[arg(long)]
+        project: airk_core::service::ProjectBinding,
+        #[arg(long,default_value="index",value_parser=["index","inspect","reconcile","vectors","model_setup","verify","recover","maintain"])]
+        kind: String,
+    },
+    List,
+    Retry {
+        nonce: airk_core::identity::Incarnation,
+    },
+    Forget {
+        nonce: airk_core::identity::Incarnation,
+    },
+}
+
+#[derive(Subcommand)]
 enum ServiceCommand {
+    /// Inspect, explicitly retry or forget exact saved CLI request keys.
+    Requests {
+        #[arg(long)]
+        runtime_dir: PathBuf,
+        #[command(subcommand)]
+        action: ClientRequestCommand,
+    },
     /// Resolve canonical source and planned storage identities without writes.
     PrepareRegistration,
     /// Create only storage already reserved by the authenticated service registry.
@@ -1279,11 +1303,90 @@ async fn main_async() -> anyhow::Result<()> {
         return airk_cli::project_client::bridge(runtime_dir.clone(), *project).await;
     }
     if let (Some(install), Some(project)) = (&cli.service_install_dir, cli.service_project) {
+        if let Command::Tools { action } = &cli.command
+            && tools::inspect(action)?
+        {
+            return Ok(());
+        }
         anyhow::ensure!(
-            matches!(cli.command, Command::Mcp),
-            "this service project adapter currently accepts only mcp"
+            matches!(
+                cli.command,
+                Command::Mcp | Command::Tools { .. } | Command::Index { .. } | Command::Status
+            ),
+            "this service project adapter accepts mcp, tools, status or indexing"
         );
-        return airk_cli::runtime_install::bridge_installed(install, project).await;
+        if let Command::Index {
+            progress,
+            path,
+            scheduled,
+            automatic,
+            full,
+            paths,
+            coalesced,
+        } = &cli.command
+        {
+            anyhow::ensure!(
+                !*progress
+                    && path.is_none()
+                    && !*scheduled
+                    && !*automatic
+                    && !*full
+                    && paths.is_empty()
+                    && !*coalesced,
+                "service indexing uses its registered root and durable queue; use a reviewed repair plan for a full rebuild"
+            );
+        }
+        let resolved = airk_cli::service_frontend::resolve(
+            Some(install),
+            Some(project),
+            &cli.root,
+            cli.data_dir.as_deref(),
+            &cli.collection,
+        )
+        .await?;
+        return match cli.command {
+            Command::Mcp => airk_cli::project_client::bridge(resolved.control, project).await,
+            Command::Tools { action } => {
+                tools::run_remote(
+                    action,
+                    resolved.control,
+                    project,
+                    std::path::Path::new(&resolved.registration.root),
+                    std::path::Path::new(&resolved.registration.data_root),
+                    &resolved.registration.collection,
+                )
+                .await
+            }
+            Command::Status => {
+                tools::run_remote(
+                    tools::ToolsCommand::Call {
+                        tool: "airk_status".into(),
+                        args: None,
+                        args_file: None,
+                    },
+                    resolved.control,
+                    project,
+                    std::path::Path::new(&resolved.registration.root),
+                    std::path::Path::new(&resolved.registration.data_root),
+                    &resolved.registration.collection,
+                )
+                .await
+            }
+            Command::Index { .. } => {
+                let nonce = airk_cli::client_requests::prepare(
+                    &resolved.control,
+                    project,
+                    airk_core::service::JobKind::Index,
+                )
+                .await?;
+                eprintln!(
+                    "Saved CLI request {nonce}; inspect or retry it with 'airk service requests --runtime-dir <control> ...'."
+                );
+                print_json(&airk_cli::client_requests::submit(&resolved.control, nonce).await?)?;
+                airk_cli::client_requests::forget(&resolved.control, nonce)
+            }
+            _ => unreachable!("service frontend command checked above"),
+        };
     }
     #[cfg(not(feature = "local-inference"))]
     airk_cli::embedding_client::install()?;
@@ -1302,6 +1405,31 @@ async fn main_async() -> anyhow::Result<()> {
         .await;
     }
     if let Command::Service { action } = &cli.command {
+        if let ServiceCommand::Requests {
+            runtime_dir,
+            action,
+        } = action
+        {
+            return match action {
+                ClientRequestCommand::Prepare { project, kind } => {
+                    let kind = serde_json::from_value(serde_json::json!(kind))?;
+                    let nonce =
+                        airk_cli::client_requests::prepare(runtime_dir, *project, kind).await?;
+                    print_json(&serde_json::json!({"prepared":nonce,"submitted":false}))
+                }
+                ClientRequestCommand::List => {
+                    print_json(&airk_cli::client_requests::list(runtime_dir)?)
+                }
+                ClientRequestCommand::Retry { nonce } => {
+                    print_json(&airk_cli::client_requests::submit(runtime_dir, *nonce).await?)?;
+                    airk_cli::client_requests::forget(runtime_dir, *nonce)
+                }
+                ClientRequestCommand::Forget { nonce } => {
+                    airk_cli::client_requests::forget(runtime_dir, *nonce)?;
+                    print_json(&serde_json::json!({"forgotten":nonce,"native_work_canceled":false}))
+                }
+            };
+        }
         if matches!(action, ServiceCommand::PrepareRegistration) {
             let data = cli
                 .data_dir
@@ -1487,7 +1615,7 @@ async fn main_async() -> anyhow::Result<()> {
                 ServiceCommand::Start => print_json(&manager.start()?),
                 ServiceCommand::Stop => print_json(&manager.stop()?),
                 ServiceCommand::Uninstall => print_json(&manager.uninstall()?),
-                ServiceCommand::PrepareRegistration | ServiceCommand::PrepareStorage { .. } | ServiceCommand::PrepareConfiguration { .. } | ServiceCommand::Console { .. } | ServiceCommand::Logs { .. } | ServiceCommand::Health { .. } | ServiceCommand::Shutdown { .. } | ServiceCommand::Rpc { .. } | ServiceCommand::Register { .. } => unreachable!("handled before opening kernel"),
+                ServiceCommand::Requests{..} | ServiceCommand::PrepareRegistration | ServiceCommand::PrepareStorage { .. } | ServiceCommand::PrepareConfiguration { .. } | ServiceCommand::Console { .. } | ServiceCommand::Logs { .. } | ServiceCommand::Health { .. } | ServiceCommand::Shutdown { .. } | ServiceCommand::Rpc { .. } | ServiceCommand::Register { .. } => unreachable!("handled before opening kernel"),
             }
         },
         Command::Schedule { action } => match action {

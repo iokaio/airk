@@ -25,7 +25,7 @@ pub enum ResponseMode {
     Full,
 }
 impl ResponseMode {
-    pub(crate) fn from_environment() -> Self {
+    pub fn from_environment() -> Self {
         Self::from_setting(std::env::var("AIRK_MCP_RESPONSE_MODE").ok().as_deref())
     }
     fn from_setting(value: Option<&str>) -> Self {

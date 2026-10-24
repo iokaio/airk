@@ -119,3 +119,5 @@ Approved vector repair now regenerates completed retained evidence through bound
 The trusted console now [reviews runtime upgrades and rollback](service-runtime-transitions.md), fences the captured selection natively and resumes exact saved activations. Different-version pins remain installed with read-only diagnostics; reconnect does not silently replace them. Installer/lifecycle inspection no longer migrates the registry. Default adapters and final platform/editor qualification remain open.
 
 The CLI/native adapter owns [reviewed project registration](service-project-setup.md), canonical planned paths and reserved storage creation; the registry owns serialized source/private-state isolation. Extension bindings select the installed launcher and direct brokered MCP frontend without opening a local Kernel.
+
+The CLI owns the bounded [client request journal and direct frontend adapter](service-client-adapters.md). Metadata is saved under the already source-isolated control root, while retrieval uses the shared direct-project client. The extension activation delegates watching/indexing to native ownership and retains reviewed opaque workspace selections.

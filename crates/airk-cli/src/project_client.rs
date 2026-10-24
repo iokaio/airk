@@ -237,13 +237,17 @@ impl airk_mcp::remote::RemoteTools for Backend {
     }
 }
 
-pub async fn bridge(root: PathBuf, project: ProjectBinding) -> Result<()> {
-    airk_mcp::remote::serve(Arc::new(Backend {
+/// One direct client session, shared by stdio MCP and native read-only tools.
+pub fn tools(root: PathBuf, project: ProjectBinding) -> Arc<dyn airk_mcp::remote::RemoteTools> {
+    Arc::new(Backend {
         root,
         project,
         state: tokio::sync::Mutex::new(Default::default()),
-    }))
-    .await
+    })
+}
+
+pub async fn bridge(root: PathBuf, project: ProjectBinding) -> Result<()> {
+    airk_mcp::remote::serve(tools(root, project)).await
 }
 
 #[cfg(test)]

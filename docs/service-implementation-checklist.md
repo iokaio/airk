@@ -65,3 +65,5 @@ Approved vector repair now regenerates completed retained evidence through bound
 The trusted console now [reviews runtime upgrades and rollback](service-runtime-transitions.md), fences the captured selection natively and resumes exact saved activations. Different-version pins remain installed with read-only diagnostics; reconnect does not silently replace them. Installer/lifecycle inspection no longer migrates the registry. Default adapters and final platform/editor qualification remain open.
 
 The [project setup adapter](service-project-setup.md) now implements read-only canonical preparation, serialized storage reservation, guarded directory creation and retained opaque MCP bindings. Default cutover and installed/native Mac qualification remain open.
+
+The [client adapter development contract](service-client-adapters.md) records direct CLI retrieval, bounded native request recovery and tested service-backed extension activation. Package activation still awaits default CLI/container/packager cutover; management and final qualification gates remain open.

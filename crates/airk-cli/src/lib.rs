@@ -7,6 +7,7 @@ pub mod embedding_pool_protocol;
 pub mod local_ipc;
 pub mod runtime_pair;
 pub mod service_configuration;
+pub mod service_frontend;
 pub mod service_ipc;
 pub mod service_logs;
 mod service_management;
@@ -37,4 +38,5 @@ mod source_supervisor;
 pub mod unix_guardian;
 mod user_paths;
 
+pub mod client_requests;
 pub mod console_client;

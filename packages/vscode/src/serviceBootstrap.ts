@@ -209,6 +209,7 @@ export class RuntimeHost {
                     await this.invoke(bundle.main,['runtime','activate','--install-dir',installDir,'--runtime-sha256',bundle.digest],180000);
                 }
                 if(selection?.active&&runtimeVersion(record(inspected?.approval).version)!==this.version)throw new ServiceError('explicit_runtime_upgrade_or_matching_extension_required');
+                if(!explicitStart&&record(inspected?.lifecycle??{}).explicitly_stopped===true)throw new ServiceError('service_explicitly_stopped');
                 await this.invoke(bundle.main,['runtime',explicitStart?'start':'ensure','--install-dir',installDir],180000);
                 const inspection=await this.invoke(bundle.main,['runtime','inspect','--install-dir',installDir]);
                 return this.binding(inspection,installDir);

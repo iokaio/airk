@@ -5,10 +5,11 @@ const fs=require('node:fs/promises');
 const path=require('node:path');
 const crypto=require('node:crypto');
 const {RuntimeHost,nativeRunner}=require('../packages/vscode/out/serviceBootstrap.js');
-const {probeMcp}=require('../packages/vscode/out/native.js');
+const {probeMcp,runText}=require('../packages/vscode/out/native.js');
 
 (async()=>{
     assert.equal(process.argv[2],'--runtime');
+    const cli=process.argv[4]==='--cli';assert.ok(process.argv[4]===undefined||cli);
     const payload=await fs.realpath(process.argv[3]),parent=await fs.realpath(path.join(__dirname,'../target'));
     const fixture=await fs.mkdtemp(path.join(parent,'airk-frontend-fixture-'));
     const install=path.join(fixture,'installation'),native=path.join(fixture,'native'),source=path.join(fixture,'source');
@@ -46,6 +47,23 @@ const {probeMcp}=require('../packages/vscode/out/native.js');
         const spec={command:binding.launcher,root:review.root,dataDir:review.data_root,collection:review.collection,name:'Frontend fixture',
             service:{installDir:install,project:review.binding}};
         const first=await probeMcp(spec,15,inventory.version);assert.equal(first.tools.length,15);assert.notEqual(first.status.state,'not_indexed');
+        if(cli){
+            const context=['--service-install-dir',install,'--service-project',review.binding];
+            const result=await nativeRunner(binding.executable,[...context,'tools','call','airk_status'],180000);
+            assert.notEqual(result.isError,true);assert.ok(result.content.some(part=>part.type==='text'));
+            const prepared=await nativeRunner(binding.executable,['service','requests','--runtime-dir',control,'prepare','--project',review.binding],180000);
+            assert.equal(prepared.submitted,false);assert.match(prepared.prepared,/^[0-9a-f]{32}$/);
+            const pendingPath=path.join(control,'client-requests',`${prepared.prepared}.json`);
+            const pending=JSON.parse(await fs.readFile(pendingPath,'utf8'));
+            const accepted=await client.rpc(pending.request,'job');
+            // The service accepted it, while the prepared client's saved record still exists:
+            // this is the exact durable state after losing its acknowledgment.
+            const recovered=await nativeRunner(binding.executable,['service','requests','--runtime-dir',control,'retry',prepared.prepared],180000);
+            assert.equal(recovered.job.id,accepted.job.id);await assert.rejects(fs.stat(pendingPath),{code:'ENOENT'});
+            const shell=await runText(binding.executable,[...context,'tools','shell'],path.dirname(binding.executable),180000,undefined,undefined,'call airk_status\nexit\n');
+            assert.match(shell,/Result:/);assert.ok(shell.includes(review.collection));
+            console.log('Direct CLI tool/shell calls passed; saved acknowledgment recovery returned the original native job.');
+        }
         assert.equal(await fs.readFile(path.join(source,'memo.txt'),'utf8'),original);
         await fs.rename(source,path.join(fixture,'temporarily-offline-source'));
         const retained=await probeMcp(spec,15,inventory.version);assert.notEqual(retained.status.state,'not_indexed');

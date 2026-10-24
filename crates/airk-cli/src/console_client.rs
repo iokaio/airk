@@ -100,6 +100,13 @@ async fn handle(
         .await
         .unwrap_or_else(|_| failure("service_request_outcome_unknown"))
 }
+/// Same-version/engine and instance-fenced metadata call for native frontends.
+/// No connection grant or evidence response can leave through this adapter.
+pub async fn request(root: &Path, method: ControlMethod) -> Result<ControlResponse> {
+    let engine = runtime_pair::current_executable_sha256()?;
+    Ok(metadata_only(handle(root, method, &engine, None).await))
+}
+
 pub async fn run(root: &Path, runtime: Option<airk_core::identity::Sha256Digest>) -> Result<()> {
     let runtime = runtime.map(|digest| digest.to_string());
     let engine = runtime_pair::digest_file(&std::env::current_exe()?)?;

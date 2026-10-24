@@ -255,12 +255,42 @@ pub fn default_install_root() -> Result<PathBuf> {
     Ok(crate::user_paths::UserPaths::discover(RuntimeChannel::Stable)?.install)
 }
 
+/// An owned stable launcher also identifies custom installations without PATH or environment guesses.
+pub fn caller_install_root() -> Result<PathBuf> {
+    let executable = std::env::current_exe()?.canonicalize()?;
+    if executable.file_name()
+        == Some(std::ffi::OsStr::new(if cfg!(windows) {
+            "airk-launcher.exe"
+        } else {
+            "airk-launcher"
+        }))
+    {
+        let root = executable.parent().context("launcher parent missing")?;
+        ensure!(
+            verified_launcher(root)?.canonicalize()? == executable,
+            "launcher installation changed"
+        );
+        return Ok(root.to_path_buf());
+    }
+    default_install_root()
+}
+
+pub fn default_project_data(root: &Path) -> Result<PathBuf> {
+    let (_, channel) = layout::retained_parameters(root)?;
+    Ok(crate::user_paths::UserPaths::discover(channel)?.data)
+}
+
 /// Installed frontends use the elected broker and direct project transport.
 /// They never initialize a local Kernel if installation, policy or health fails.
 pub async fn bridge_installed(
     root: &Path,
     project: airk_core::service::ProjectBinding,
 ) -> Result<()> {
+    crate::project_client::bridge(installed_control(root).await?, project).await
+}
+
+/// Verify the selected runtime and elected service without opening a collection.
+pub async fn installed_control(root: &Path) -> Result<PathBuf> {
     let (selection, _, approval) = selected(root)?;
     ensure!(
         approval.version == env!("CARGO_PKG_VERSION"),
@@ -272,7 +302,7 @@ pub async fn bridge_installed(
             && health.runtime_sha256.as_deref() == Some(selection.active.as_str()),
         "installed service changed; reconnect through the selected launcher"
     );
-    crate::project_client::bridge(layout::control(root)?, project).await
+    layout::control(root)
 }
 
 #[derive(Subcommand)]

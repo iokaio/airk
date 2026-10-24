@@ -392,6 +392,19 @@ export class ServiceConsoleController {
             this.releaseIdle();
         }
     }
+    /** Trusted host command: capture a native repair preview; execution still needs its separate review. */
+    async projectPlan(project:string,operation:import('./serviceClient').RepairOperation):Promise<void>{
+        if(!await this.whenIdle())return;
+        this.state.busy=true;this.state.message=undefined;this.publish();
+        try{
+            this.authorized();identifier(project,32);if(!this.client)await this.discover();
+            if(!this.client)throw new ServiceError('console_not_connected');
+            await this.observe();
+            await this.mutation(`Plan ${operation} ${project}`,await this.client.preparePlan([project],operation));
+            await this.observe();
+        }catch(error){this.state.message=code(error);}
+        finally{try{this.pending();}catch(error){this.state.message=code(error);}this.state.busy=false;this.publish();this.releaseIdle();}
+    }
     private async connectedAction(action:NonNullable<ReturnType<typeof consoleAction>>):Promise<void>{
         const project=action.project!,id=action.id!;
         switch(action.action){

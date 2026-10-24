@@ -9,6 +9,7 @@ import { identifier, record, ServiceError } from './serviceClient';
 import { IntentStorage } from './serviceIntents';
 
 const PREFIX='airk.service.workspace.1.';
+const ACTIVE='airk.service.workspace.active.1.';
 interface SavedProject {schema:1;opened:string;registration:ProjectRegistrationReview}
 function absolute(value:unknown):string {
     if(typeof value!=='string'||value.length>4096||!path.isAbsolute(value)||/[\u0000-\u001f\u007f]/.test(value))throw new ServiceError('invalid_saved_workspace_path');
@@ -22,6 +23,7 @@ export class ServiceWorkspace {
     constructor(private readonly storage:IntentStorage,private readonly runtime:Pick<RuntimeHost,'reviewProject'|'registerProject'>,
         private readonly authorized:()=>boolean){}
     private active():void {if(!this.authorized())throw new ServiceError('runtime_client_no_longer_authorized');}
+    private selection(install:string,opened:string):string{return ACTIVE+createHash('sha256').update(JSON.stringify([install,opened])).digest('hex');}
     private saved():SavedProject[]{
         const keys=this.storage.keys().filter(key=>key.startsWith(PREFIX)).sort();
         if(keys.length>1024)throw new ServiceError('workspace_registration_capacity');
@@ -43,6 +45,7 @@ export class ServiceWorkspace {
         if(!await confirm(review))return;this.active();
         await this.runtime.registerProject(binding,review);this.active();
         await this.storage.update(key,{schema:1,opened,registration:review} satisfies SavedProject);this.active();
+        await this.storage.update(this.selection(review.installDir,opened),review.binding);this.active();
         return review;
     }
     async definitions(binding:RuntimeBinding,openedRoots:readonly string[]):Promise<LaunchSpec[]>{
@@ -50,7 +53,11 @@ export class ServiceWorkspace {
         const saved=this.saved(),specs:LaunchSpec[]=[],seen=new Set<string>();
         for(const opened of openedRoots){
             absolute(opened);
-            for(const value of saved.filter(value=>same(value.opened,opened)&&same(value.registration.installDir,binding.installDir))){
+            const candidates=saved.filter(value=>same(value.opened,opened)&&same(value.registration.installDir,binding.installDir));
+            const selected=this.storage.get<string>(this.selection(binding.installDir,opened));
+            if(selected!==undefined)identifier(selected,32);
+            if(selected===undefined&&candidates.length>1)throw new ServiceError('workspace_binding_review_required');
+            for(const value of candidates.filter(value=>selected===undefined||value.registration.binding===selected)){
                 const project=value.registration;
                 if(!same(project.controlDir,binding.controlDir))continue;
                 try{

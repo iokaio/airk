@@ -166,9 +166,19 @@ public static class AirkPathNotification {
 
 export async function installCli(helper: string, context: Pick<ExtensionContext, 'globalStorageUri' | 'environmentVariableCollection'>): Promise<string[]> {
     const directory = await publishCli(helper, context.globalStorageUri.fsPath);
+    return installPath(directory,context);
+}
+
+/** The verified native installation owns this launcher; never copy an extension helper over it. */
+export async function installLauncherCli(launcher:string,context:Pick<ExtensionContext,'environmentVariableCollection'>):Promise<string[]>{
+    const directory=path.dirname(launcher);validatePath(directory,process.platform);
+    return installPath(directory,context);
+}
+
+async function installPath(directory:string,context:Pick<ExtensionContext,'environmentVariableCollection'>):Promise<string[]>{
     const variables = context.environmentVariableCollection;
     variables.persistent = true;
-    variables.description = 'Makes the bundled AIRK CLI available in new terminals.';
+    variables.description = 'Makes the installed AIRK CLI available in new terminals.';
     variables.prepend('PATH', directory + path.delimiter);
     if (process.platform === 'win32') {
         const powershell = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');

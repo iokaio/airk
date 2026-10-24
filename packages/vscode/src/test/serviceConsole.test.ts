@@ -15,6 +15,25 @@ test('console workspace registration uses a trusted host action and highlights o
     await f.action('registerWorkspace');assert.equal(registrations,1);
     f.setTrusted(false);await f.action('registerWorkspace');assert.equal(registrations,1);f.controller.dispose();
 });
+
+test('trusted rebuild commands create a saved guarded preview and never approve or execute it automatically',async()=>{
+    const f=fixture(),base=f.host.runtime.client({} as any),calls:unknown[]=[];
+    const plan={id:'de'.repeat(32),preview_digest:'ef'.repeat(32),counts:{selected:1},state:'ready'};
+    f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){
+        const name=typeof method==='string'?method:Object.keys(method as object)[0];
+        if(name==='plan_create'){
+            assert.ok([...f.values.keys()].some(key=>key.startsWith('airk.service.intent.')));calls.push(structuredClone(method));return {status:'plan',plan};
+        }
+        if(name==='plan')return {status:'plan',plan};
+        if(name==='plan_items')return {status:'plan_items',page:{plan,items:[{project}],after:null}};
+        if(name==='plan_execute')throw new Error('Preview must never execute without separate approval');
+        return base.transport.request(method);
+    }});
+    await f.controller.projectPlan(project,'rebuild');assert.equal(f.controller.state.message,undefined);
+    assert.equal(f.controller.state.plan?.value.id,plan.id);assert.equal(calls.length,1);
+    assert.equal((calls[0] as any).plan_create.request.operation,'rebuild');assert.deepEqual((calls[0] as any).plan_create.request.selection,{selected:[project]});
+    f.setTrusted(false);await f.controller.projectPlan(project,'rebuild');assert.equal(calls.length,1);f.controller.dispose();
+});
 function fixture(){
     let trusted=true,fail=false;const sent:unknown[]=[],values=new Map<string,unknown>(),copied:string[]=[];
     const row={project:{registration:{binding:project,root:'/sensitive/<source>',data_root:'/private/data',collection:'<script>name</script>'},paused:false,fencing_generation:1},progress:null,inspection:null};

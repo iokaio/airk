@@ -89,6 +89,10 @@ export class ServiceConsole implements vscode.WebviewViewProvider,vscode.Disposa
         await controller.action({type:'service',revision:controller.state.revision,action,
             ...(action==='previewReport'?{includePaths:false}:{})});
     }
+    async previewRepair(project:string,operation:import('./serviceClient').RepairOperation):Promise<void>{
+        await vscode.commands.executeCommand('airk.service.focus');
+        await this.controller.projectPlan(project,operation);
+    }
     private async logs(observation?:BootstrapObservation):Promise<void>{
         if(!vscode.workspace.isTrusted)throw new ServiceError('runtime_client_no_longer_authorized');
         const bootstrap=observation??await this.runtime.discover();

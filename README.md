@@ -232,3 +232,5 @@ Saved bootstrap snapshots now read completed registry metadata without executing
 Development payload repair now requires an exact native preview and stopped owners, preserves the complete damaged slot, resumes interrupted copies and returns an idempotent completion receipt. The trusted console uses the matching approved offline bundle; Start remains explicit and uninstall retains the damaged originals. See [payload repair](docs/service-installation.md#explicit-payload-repair).
 
 The development adapter now supports [reviewed project setup](docs/service-project-setup.md): canonical read-only preparation, source-isolated storage reservation and stable-launcher MCP bindings. Default service cutover remains in progress; this is not a released 1.4 VSIX.
+
+Development [service client adapters](docs/service-client-adapters.md) now include direct CLI tools, a bounded native request journal and service-backed extension activation awaiting default cutover. Final synchronized 1.4 packaging and qualification remain open.
