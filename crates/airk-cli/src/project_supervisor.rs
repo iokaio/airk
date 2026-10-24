@@ -289,6 +289,7 @@ impl Drop for Supervisor {
 }
 
 struct WorkerAdmission<'a> {
+    log: &'a crate::service_logs::Log,
     policy: &'a Mutex<Broker>,
     pool: &'a mut Option<Pool>,
     resources: &'a mut airk_kernel::service_resources::Resources,
@@ -311,6 +312,7 @@ fn start_worker(
     admission: WorkerAdmission<'_>,
 ) -> Result<()> {
     let WorkerAdmission {
+        log,
         policy,
         pool,
         resources,
@@ -335,6 +337,11 @@ fn start_worker(
             backoff.insert(
                 project,
                 (Instant::now() + Duration::from_secs(1 << attempt), attempt),
+            );
+            log.record(
+                airk_core::service_logs::LogKind::WorkerFailed,
+                Some(project),
+                None,
             );
             settle_failed_start(root, instance, project);
             return Err(error);
@@ -378,6 +385,11 @@ fn start_worker(
             project,
             (Instant::now() + Duration::from_secs(1 << attempt), attempt),
         );
+        log.record(
+            airk_core::service_logs::LogKind::WorkerFailed,
+            Some(project),
+            None,
+        );
         settle_failed_start(root, instance, project);
         return Err(error);
     }
@@ -392,6 +404,7 @@ impl Supervisor {
         policy: Arc<Mutex<Broker>>,
         source_pid: Arc<std::sync::atomic::AtomicU32>,
         source_telemetry: Arc<std::sync::atomic::AtomicBool>,
+        log: crate::service_logs::Log,
     ) -> Result<Self> {
         let (sender, receiver) = mpsc::sync_channel::<Envelope>(32);
         let loaded = crate::service_resource_policy::load(&root);
@@ -457,6 +470,7 @@ impl Supervisor {
                             });
                     }
                     if pool.as_mut().is_some_and(Pool::exited) {
+                        log.record(airk_core::service_logs::LogKind::ModelFailed, None, None);
                         pool = None;
                     }
                     if registry.is_none() {
@@ -491,8 +505,18 @@ impl Supervisor {
                     let may_allocate = predecessors_released && endpoints_ready;
                     let finished: Vec<_> = workers
                         .iter_mut()
-                        .filter_map(|(project, worker)| {
-                            matches!(worker.child.try_wait(), Ok(Some(_))).then_some(*project)
+                        .filter_map(|(project, worker)| match worker.child.try_wait() {
+                            Ok(Some(status)) => {
+                                if !status.success() {
+                                    log.record(
+                                        airk_core::service_logs::LogKind::WorkerFailed,
+                                        Some(*project),
+                                        None,
+                                    );
+                                }
+                                Some(*project)
+                            }
+                            _ => None,
                         })
                         .collect();
                     for project in finished {
@@ -550,6 +574,11 @@ impl Supervisor {
                         }
                     }
                     for project in failed_renewals {
+                        log.record(
+                            airk_core::service_logs::LogKind::WorkerFailed,
+                            Some(project),
+                            None,
+                        );
                         if let Some(worker) = workers.remove(&project) {
                             let identity = worker.identity;
                             // An ambiguous acknowledgement never releases live capacity.
@@ -607,6 +636,7 @@ impl Supervisor {
                                     instance,
                                     &mut backoff,
                                     WorkerAdmission {
+                                        log: &log,
                                         policy: &policy,
                                         pool: &mut pool,
                                         resources: &mut resources,
@@ -710,6 +740,7 @@ impl Supervisor {
                                 instance,
                                 &mut backoff,
                                 WorkerAdmission {
+                                    log: &log,
                                     policy: &policy,
                                     pool: &mut pool,
                                     resources: &mut resources,
@@ -810,6 +841,11 @@ impl Supervisor {
                         }
                     }
                     for project in failed {
+                        log.record(
+                            airk_core::service_logs::LogKind::WorkerFailed,
+                            Some(project),
+                            None,
+                        );
                         if let Some(worker) = workers.remove(&project) {
                             let identity = worker.identity;
                             drop(worker); // Drop drains/kills and reaps before capacity returns.

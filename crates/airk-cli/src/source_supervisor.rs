@@ -313,7 +313,11 @@ impl Drop for SourceSupervisor {
     }
 }
 impl SourceSupervisor {
-    pub fn start(root: PathBuf, service: Incarnation) -> Result<Self> {
+    pub fn start(
+        root: PathBuf,
+        service: Incarnation,
+        log: crate::service_logs::Log,
+    ) -> Result<Self> {
         let (sender, receiver) = mpsc::sync_channel(1);
         let process_id = Arc::new(AtomicU32::new(0));
         let pid = process_id.clone();
@@ -370,6 +374,11 @@ impl SourceSupervisor {
                             || airk_kernel::service_resource_observations::rss(child.process.id())
                                 .is_some_and(|bytes| bytes > 128 * 1024 * 1024)
                     }) {
+                        log.record(
+                            airk_core::service_logs::LogKind::SourceWorkerFailed,
+                            None,
+                            None,
+                        );
                         drop(child.take());
                         pid.store(0, Ordering::Release);
                         sent.clear();

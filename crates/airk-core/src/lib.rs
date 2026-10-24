@@ -24,6 +24,7 @@ pub mod readiness;
 pub mod service;
 pub mod service_events;
 pub mod service_inspection;
+pub mod service_logs;
 pub mod service_maintenance;
 pub mod service_progress;
 pub mod service_resources;

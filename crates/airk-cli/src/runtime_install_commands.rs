@@ -248,7 +248,10 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
                 .as_ref()
                 .err()
                 .map(|error| error.to_string().chars().take(512).collect::<String>());
-            serde_json::json!({"runtime":selection.ok(),"runtime_error":selection_error,"bootstrap":bootstrap.ok().flatten(),"bootstrap_error":bootstrap_error,"pending_stages":stages.ok(),"staging_error":stages_error,"pending_launcher_repair":repair.ok().flatten(),"launcher_repair_error":repair_error,"state_layout":state_layout.ok(),"layout_error":layout_error,"managed_policy":policy.ok().flatten(),"managed_policy_error":policy_error,"pending_activation":activation.ok().flatten(),"activation_error":activation_error,"activation_result":activation_result.ok().flatten(),"activation_result_error":activation_result_error,"live_service_health":"not_checked"})
+            let logs = layout::control(install_dir)
+                .and_then(|control| crate::service_logs::recent(&control, 32));
+            let log_error = logs.is_err();
+            serde_json::json!({"logs":logs.ok(),"logs_unavailable":log_error,"runtime":selection.ok(),"runtime_error":selection_error,"bootstrap":bootstrap.ok().flatten(),"bootstrap_error":bootstrap_error,"pending_stages":stages.ok(),"staging_error":stages_error,"pending_launcher_repair":repair.ok().flatten(),"launcher_repair_error":repair_error,"state_layout":state_layout.ok(),"layout_error":layout_error,"managed_policy":policy.ok().flatten(),"managed_policy_error":policy_error,"pending_activation":activation.ok().flatten(),"activation_error":activation_error,"activation_result":activation_result.ok().flatten(),"activation_result_error":activation_result_error,"live_service_health":"not_checked"})
         }
         RuntimeCommand::ResetStartup { install_dir } => {
             let _lock = install_lock(install_dir)?;

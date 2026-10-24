@@ -12,6 +12,97 @@ use std::{
 struct Children(Vec<Child>);
 
 #[test]
+fn process_logs_survive_shutdown_and_unknown_log_state_does_not_disable_health() -> Result<()> {
+    use airk_core::{
+        service::{ControlMethod as Method, ControlResponse as Response},
+        service_logs::LogKind,
+    };
+    let owner = tempfile::tempdir()?;
+    let root = owner.path().join("runtime");
+    let mut children = Children(vec![start(&root)?]);
+    wait_ready(&root)?;
+    tokio::runtime::Runtime::new()?.block_on(async {
+        let request = |method| airk_cli::service_runtime::request(&root, method);
+        let Response::Health { observation } = request(Method::Health).await? else {
+            anyhow::bail!("health unavailable")
+        };
+        ensure!(
+            observation.logs.available && observation.logs.write_failures == 0,
+            "owned diagnostic log unavailable"
+        );
+        let Response::Logs { page } = request(Method::Logs { limit: 32 }).await? else {
+            anyhow::bail!("cached log control unavailable")
+        };
+        ensure!(
+            page.records
+                .iter()
+                .any(|record| record.kind == LogKind::ServiceStarted),
+            "startup record missing"
+        );
+        request(Method::Shutdown).await?;
+        Ok::<_, anyhow::Error>(())
+    })?;
+    ensure!(
+        wait_exit(&mut children.0[0])?,
+        "logged service did not drain"
+    );
+    let cached = airk_cli::service_logs::recent(&root, 32)?;
+    let readable = Command::new(env!("CARGO_BIN_EXE_airk"))
+        .args([
+            "--root",
+            "/missing-source-must-not-open",
+            "service",
+            "logs",
+            "--runtime-dir",
+        ])
+        .arg(&root)
+        .args(["--format", "text"])
+        .output()?;
+    ensure!(
+        readable.status.success()
+            && String::from_utf8(readable.stdout)?.contains("Cached AIRK process log"),
+        "down-service readable diagnostics tried to open a project or lost logs"
+    );
+    ensure!(
+        cached
+            .records
+            .last()
+            .is_some_and(|record| record.kind == LogKind::ServiceStopped),
+        "down-service diagnostics lost final lifecycle boundary"
+    );
+    let other = owner.path().join("other-runtime");
+    airk_cli::local_ipc::prepare_root(&other)?;
+    fs::create_dir(other.join("logs-1.4"))?;
+    let unknown = other.join("logs-1.4/unknown.txt");
+    fs::write(&unknown, b"Preserve unrelated log fixture.")?;
+    children.0.push(start(&other)?);
+    wait_ready(&other)?;
+    tokio::runtime::Runtime::new()?.block_on(async {
+        let Response::Health { observation } =
+            airk_cli::service_runtime::request(&other, Method::Health).await?
+        else {
+            anyhow::bail!("health failed with foreign logs")
+        };
+        ensure!(
+            !observation.logs.available && observation.logs.write_failures > 0,
+            "foreign logs were adopted or failure hidden"
+        );
+        airk_cli::service_runtime::request(&other, Method::Shutdown).await?;
+        Ok::<_, anyhow::Error>(())
+    })?;
+    ensure!(
+        wait_exit(&mut children.0[1])?,
+        "unavailable-log service did not drain"
+    );
+    ensure!(
+        fs::read(unknown)? == b"Preserve unrelated log fixture."
+            && !other.join("logs-1.4.owner.json").exists(),
+        "unknown log state was modified"
+    );
+    Ok(())
+}
+
+#[test]
 fn maintenance_preview_survives_restart_and_rejects_changed_settings_before_mutation() -> Result<()>
 {
     use airk_core::{
@@ -1550,6 +1641,8 @@ fn foreign_registry_state_is_preserved_and_does_not_disable_native_health() -> R
     tokio::runtime::Runtime::new()?.block_on(async {
         use airk_core::service::{ControlMethod,ControlResponse};
         ensure!(matches!(airk_cli::service_runtime::request(&root,ControlMethod::RequestEpoch).await?,ControlResponse::Failure{code} if code=="registry_unavailable"),"foreign registry was admitted");
+        ensure!(matches!(airk_cli::service_runtime::request(&root,ControlMethod::Logs{limit:32}).await?,ControlResponse::Logs{..}),
+            "registry failure blocked independent process diagnostics");
         Ok::<_,anyhow::Error>(())
     })?;
     ensure!(

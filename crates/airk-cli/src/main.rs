@@ -454,6 +454,15 @@ enum CompressionCommand {
 
 #[derive(Subcommand)]
 enum ServiceCommand {
+    /// Read bounded cached process diagnostics even when the service is down.
+    Logs {
+        #[arg(long)]
+        runtime_dir: PathBuf,
+        #[arg(long, default_value_t = 32)]
+        limit: usize,
+        #[arg(long,default_value="json",value_parser=["json","text"])]
+        format: String,
+    },
     /// Register canonical existing source/storage roots with the native service.
     Register {
         #[arg(long)]
@@ -1214,6 +1223,19 @@ async fn main_async() -> anyhow::Result<()> {
         .await;
     }
     if let Command::Service { action } = &cli.command {
+        if let ServiceCommand::Logs {
+            runtime_dir,
+            limit,
+            format,
+        } = action
+        {
+            let page = airk_cli::service_logs::recent(runtime_dir, *limit)?;
+            if format == "text" {
+                println!("{}", airk_cli::service_logs::render(&page)?);
+                return Ok(());
+            }
+            return print_json(&page);
+        }
         if let ServiceCommand::Register { runtime_dir } = action {
             let data = cli.data_dir.as_deref().ok_or_else(|| {
                 anyhow::anyhow!("service registration requires explicit --data-dir")
@@ -1329,7 +1351,7 @@ async fn main_async() -> anyhow::Result<()> {
                 ServiceCommand::Start => print_json(&manager.start()?),
                 ServiceCommand::Stop => print_json(&manager.stop()?),
                 ServiceCommand::Uninstall => print_json(&manager.uninstall()?),
-                ServiceCommand::Health { .. } | ServiceCommand::Shutdown { .. } | ServiceCommand::Rpc { .. } | ServiceCommand::Register { .. } => unreachable!("handled before opening kernel"),
+                ServiceCommand::Logs { .. } | ServiceCommand::Health { .. } | ServiceCommand::Shutdown { .. } | ServiceCommand::Rpc { .. } | ServiceCommand::Register { .. } => unreachable!("handled before opening kernel"),
             }
         },
         Command::Schedule { action } => match action {

@@ -152,7 +152,8 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
         ControlMethod::CancelPending { id } => ControlResponse::Job {
             job: registry.cancel_pending(id)?,
         },
-        ControlMethod::Health
+        ControlMethod::Logs { .. }
+        | ControlMethod::Health
         | ControlMethod::Shutdown
         | ControlMethod::Connect { .. }
         | ControlMethod::EmbeddingStatus
@@ -169,6 +170,7 @@ impl Management {
         root: PathBuf,
         instance: Incarnation,
         source: crate::source_supervisor::SourceWake,
+        log: crate::service_logs::Log,
     ) -> Result<Self> {
         let (sender, receiver) = sync_channel::<Envelope>(32);
         let pending = Arc::new(AtomicUsize::new(0));
@@ -182,6 +184,7 @@ impl Management {
                 let mut registry = ServiceRegistry::open(&root, instance);
                 let _ = ready.send(());
                 let mut next_tick = std::time::Instant::now();
+                let mut metadata_failed = false;
                 loop {
                     if std::time::Instant::now() >= next_tick {
                         let running = registry.as_mut().ok().and_then(|registry| {
@@ -192,6 +195,14 @@ impl Management {
                                 .advance_maintenance_plans(now.as_millis().try_into().ok()?)
                                 .ok()
                         });
+                        if running.is_none() && !metadata_failed {
+                            log.record(
+                                airk_core::service_logs::LogKind::MetadataUnavailable,
+                                None,
+                                None,
+                            );
+                        }
+                        metadata_failed = running.is_none();
                         // Unknown metadata state retains service ownership until a
                         // later bounded turn can establish whether work remains.
                         runnable_plans.store(running.unwrap_or(true), Ordering::Release);
@@ -216,26 +227,36 @@ impl Management {
                             | ControlMethod::PlanPause { .. }
                             | ControlMethod::PlanCancel { .. }
                     );
-                    let response = match registry.as_mut() {
-                        Ok(registry) => execute(registry, method).unwrap_or_else(|error| {
-                            let code = error
-                                .downcast_ref::<JobError>()
-                                .map(|code| format!("{code:?}"))
-                                .or_else(|| {
-                                    error
-                                        .downcast_ref::<airk_core::service_events::EventError>()
-                                        .map(ToString::to_string)
-                                })
-                                .or_else(|| {
-                                    error
+                    let response = match method {
+                        ControlMethod::Logs { limit } => {
+                            match crate::service_logs::recent(&root, limit) {
+                                Ok(page) => ControlResponse::Logs { page },
+                                Err(_) => ControlResponse::Failure {
+                                    code: "diagnostic_logs_unavailable".into(),
+                                },
+                            }
+                        }
+                        method => match registry.as_mut() {
+                            Ok(registry) => execute(registry, method).unwrap_or_else(|error| {
+                                let code = error
+                                    .downcast_ref::<JobError>()
+                                    .map(|code| format!("{code:?}"))
+                                    .or_else(|| {
+                                        error
+                                            .downcast_ref::<airk_core::service_events::EventError>()
+                                            .map(ToString::to_string)
+                                    })
+                                    .or_else(|| {
+                                        error
                                         .downcast_ref::<airk_core::service_maintenance::PlanError>()
                                         .map(ToString::to_string)
-                                })
-                                .unwrap_or_else(|| "invalid_registry_request".into());
-                            ControlResponse::Failure { code }
-                        }),
-                        Err(_) => ControlResponse::Failure {
-                            code: "registry_unavailable".into(),
+                                    })
+                                    .unwrap_or_else(|| "invalid_registry_request".into());
+                                ControlResponse::Failure { code }
+                            }),
+                            Err(_) => ControlResponse::Failure {
+                                code: "registry_unavailable".into(),
+                            },
                         },
                     };
                     if source_changed {

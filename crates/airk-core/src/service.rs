@@ -11,6 +11,9 @@ pub const MAX_GRANT_TTL_MS: u64 = 30_000;
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum ControlMethod {
+    Logs {
+        limit: usize,
+    },
     Health,
     Shutdown,
     Register {
@@ -113,6 +116,7 @@ pub struct ControlRequest {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ServiceHealth {
+    pub logs: crate::service_logs::LogTelemetry,
     pub version: String,
     pub protocol: u32,
     pub instance: Incarnation,
@@ -128,6 +132,9 @@ pub struct ServiceHealth {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ControlResponse {
+    Logs {
+        page: crate::service_logs::LogPage,
+    },
     Health {
         observation: Box<ServiceHealth>,
     },

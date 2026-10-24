@@ -48,6 +48,8 @@ The implementation remains incomplete. Remaining work includes complete maintena
 
 Implemented maintenance foundation: [durable native repair plans](service-maintenance.md) now freeze one/selected/all-project membership, capture guarded previews, require concrete fallback approval, and execute fenced private jobs with pause/cancel, finite retries and retained partial-failure receipts. The console and full qualification matrix remain open.
 
+Implemented diagnostic foundation: [bounded rotated process logs](service-logging.md) now support independent health telemetry and cached JSON/readable export while the service or registry is unavailable. The development ring uses the protected control namespace; native global log-location binding and the console remain cutover work.
+
 The [implementation completion checklist](service-implementation-checklist.md) tracks the remaining phases and final packaging gate. Stage commits are checkpoints; the implementation task remains open until the complete plan and its validation gates are satisfied.
 
 ## 1. Decision and purpose
