@@ -184,6 +184,10 @@ impl CurrentRead {
     /// Authenticates the compact record and path. Call FileStore's verified
     /// retained-object reader before using referenced source or extraction bytes.
     pub fn artifact(&self, path: &str) -> Result<Option<airk_core::Artifact>> {
+        Ok(self.captured_input(path)?.map(|input| input.artifact))
+    }
+    /// Retains the authenticated posting format for physical-only maintenance.
+    pub fn captured_input(&self, path: &str) -> Result<Option<CapturedInput>> {
         let Some(bytes) = self.map_get(map::MapDomain::Artifact, path.as_bytes())? else {
             return Ok(None);
         };
@@ -192,7 +196,7 @@ impl CurrentRead {
             captured.artifact.path == path && captured.bytes()? == bytes,
             "current artifact record binding mismatch"
         );
-        Ok(Some(captured.artifact))
+        Ok(Some(captured))
     }
     /// Returns authenticated current-map bytes. Referenced retained objects must
     /// still be loaded through FileStore's verified object readers.

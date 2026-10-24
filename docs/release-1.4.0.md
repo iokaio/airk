@@ -33,3 +33,5 @@ Format-140 SQLite connections now retain admitted WAL/SHM filenames across final
 Service source freshness now uses fenced cached registry samples rather than legacy scheduler observations. Latest source outcomes survive job-receipt rotation, and distinct source-attempt IDs expose repeated failures even when their codes match. Missing/expired observations remain explicit; index readiness is independent of source freshness and live-source verification. See [source freshness](service-freshness.md).
 
 Native call discovery now indexes terminal written method names for receiver/chained calls and exposes explicit candidate labels without resolving receivers. Prior posting formats remain readable and retire safely. Temporary selection/read contention returns typed MCP retry hints while hard errors and exact-revision expiry stay distinct. See [retrieval contracts](service-retrieval.md).
+
+Physical compression now preserves the prior capture’s posting format, and the native writer rejects a format change during physical-only repacking. This keeps later call-posting retirement compatible with older captures; source evidence remains byte-exact.

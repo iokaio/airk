@@ -46,6 +46,108 @@ fn written_call(target: &str) -> airk_core::extraction::LocalFact {
 }
 
 #[test]
+fn physical_repack_preserves_legacy_posting_format_before_later_deletion() -> Result<()> {
+    let fixture = Fixture::new()?;
+    let source = "body".repeat(10_000);
+    let mut original = retained_input_with_facts(
+        &fixture,
+        "one.txt",
+        &source,
+        vec![written_call("x.reclaim_objects")],
+    )?;
+    original.postings_version = 0;
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    let first = current
+        .commit_artifact(&fixture.head.token()?, "one.txt", Some(&original))?
+        .token;
+    drop(current);
+    drop(writer);
+    let reservation = fixture.quota.reserve(&fixture.scope.collection, 4 << 20)?;
+    let read = fixture.store.current_read(&fixture.scope)?;
+    let mut captured = read.captured_input("one.txt")?.context("capture missing")?;
+    assert_eq!(captured.postings_version, 0);
+    let retained = fixture.store.load_retrieval_artifact(&captured.artifact)?;
+    captured.artifact = fixture.store.retain_payload_encoded(
+        &retained.artifact,
+        &retained.payload,
+        &retained.profile,
+        Some(source.as_bytes()),
+        Some(&reservation),
+        airk_core::compression::CompressionMode::Space,
+    )?;
+    assert!(
+        captured
+            .artifact
+            .retained
+            .as_ref()
+            .unwrap()
+            .source_encoding
+            .is_some()
+    );
+    let sealed = graph::GraphOverlay::new(
+        &reservation,
+        read,
+        graph::GraphOverlayLimits {
+            maximum_bytes: 1 << 20,
+            ..Default::default()
+        },
+    )?
+    .seal()?;
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    let mut wrong = captured.clone();
+    wrong.postings_version = 1;
+    assert!(
+        current
+            .prepare_repack(&first, &sealed, &[wrong], None)
+            .unwrap_err()
+            .to_string()
+            .contains("posting format")
+    );
+    assert_eq!(current.head()?.token()?, first);
+    assert!(current.pending()?.is_none());
+    let pending = current.prepare_repack(&first, &sealed, &[captured], None)?;
+    current.mark_applying(&pending)?;
+    let repacked = current
+        .commit(&pending, pending.target.lexical_commit)?
+        .token;
+    drop(current);
+    drop(writer);
+    let read = fixture.store.current_read(&fixture.scope)?;
+    let captured = read.captured_input("one.txt")?.unwrap();
+    assert_eq!(captured.postings_version, 0);
+    assert_eq!(
+        fixture.store.read_retained_source(&captured.artifact)?,
+        source.as_bytes()
+    );
+    drop(read);
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    current.commit_artifact(&repacked, "one.txt", None)?;
+    drop(current);
+    drop(writer);
+    assert!(
+        fixture
+            .store
+            .current_read(&fixture.scope)?
+            .lookup_paths(Lookup::Files, "", None, 10)?
+            .paths
+            .is_empty()
+    );
+    Ok(())
+}
+
+#[test]
 fn terminal_call_postings_retire_legacy_memberships_and_preserve_exact_candidates() -> Result<()> {
     for version in [0, 1] {
         let fixture = Fixture::new()?;

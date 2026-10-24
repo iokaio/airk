@@ -1721,6 +1721,10 @@ impl CurrentWriter<'_> {
             )?;
             let old: CapturedInput =
                 serde_json::from_slice(&plan.get(key)?.context("repack source missing")?)?;
+            ensure!(
+                input.postings_version == old.postings_version,
+                "repack changed posting format"
+            );
             let old = old.artifact;
             let mut comparison = input.artifact.clone();
             let prior = old
