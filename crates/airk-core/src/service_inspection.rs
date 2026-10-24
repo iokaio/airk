@@ -76,6 +76,8 @@ pub struct InspectionSnapshot {
     pub incarnation: Incarnation,
     pub publication: Option<RevisionToken>,
     pub settings_digest: Option<Sha256Digest>,
+    #[serde(default)]
+    pub quota_policy_digest: Option<Sha256Digest>,
     pub index_state: IndexState,
     pub source_state: SourceState,
     pub recovery_required: Option<bool>,

@@ -67,6 +67,13 @@ pub(super) struct PendingArtifact {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub(super) struct RecomputeBoundary {
+    pub graph: airk_core::identity::Incarnation,
+    pub first_id: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct SemanticWork {
     pub version: u32,
     pub selection_digest: Sha256Digest,
@@ -83,6 +90,10 @@ pub(super) struct SemanticWork {
     pub failure: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub regeneration_job: Option<Sha256Digest>,
+    /// Authenticated append-only graph boundary for this forced work chain.
+    /// Earlier nodes and embedding-cache entries remain ineligible for reuse.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recompute_boundary: Option<RecomputeBoundary>,
 }
 
 impl SemanticWork {
@@ -147,6 +158,12 @@ impl SemanticWork {
                 "invalid semantic work path"
             );
         }
+        ensure!(
+            self.recompute_boundary.as_ref().is_none_or(
+                |boundary| self.force_recompute && boundary.first_id <= u64::from(u32::MAX) + 1
+            ),
+            "invalid forced semantic work boundary"
+        );
         Ok(())
     }
 
@@ -319,7 +336,12 @@ pub(super) fn prepare_work(
         },
         pending,
         failure: None,
-        regeneration_job: compatible.and_then(|p| p.regeneration_job),
+        regeneration_job: compatible
+            .filter(|prior| !full && prior.force_recompute && !prior.pending.is_empty())
+            .and_then(|prior| prior.regeneration_job),
+        recompute_boundary: compatible
+            .filter(|prior| !full && prior.force_recompute && !prior.pending.is_empty())
+            .and_then(|prior| prior.recompute_boundary.clone()),
     };
     work.validate()?;
     Ok(work)
@@ -422,6 +444,7 @@ impl Kernel {
             pending,
             failure: None,
             regeneration_job: Some(job),
+            recompute_boundary: None,
         };
         let policy = read_policy(&read, &self.store)?;
         drop(read);

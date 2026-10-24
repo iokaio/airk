@@ -8,6 +8,20 @@ use airk_core::{
 use anyhow::{Result, ensure};
 use serde_json::{Value, json};
 use std::path::Path;
+pub fn verified_input(
+    input: &airk_core::service_configuration::InputFile,
+    limit: usize,
+) -> Result<Vec<u8>> {
+    input.validate()?;
+    use sha2::{Digest, Sha256};
+    let bytes = crate::usage::read_usage_input(input_path(&input.path)?, limit)?;
+    ensure!(
+        airk_core::identity::Sha256Digest::from_bytes(Sha256::digest(&bytes).into())
+            == input.sha256,
+        "configuration input changed since preparation"
+    );
+    Ok(bytes)
+}
 
 #[derive(Debug)]
 pub struct ConfigurationChanged;
@@ -100,6 +114,40 @@ impl Kernel {
             }
             ProjectConfiguration::Usage { mode } => {
                 serde_json::to_value(self.configure_usage(*mode)?)?
+            }
+            ProjectConfiguration::ClearUsage => self.clear_usage()?,
+            ProjectConfiguration::UsageFeedback {
+                request_id,
+                usefulness,
+            } => self.usage_feedback(request_id, *usefulness)?,
+            ProjectConfiguration::ImportUsage { input } => {
+                let measurement = serde_json::from_slice(&verified_input(input, 65_536)?)?;
+                self.usage_import(&measurement)?
+            }
+            ProjectConfiguration::ExtractionPolicy { input } => {
+                let policy = serde_json::from_slice(&verified_input(input, 131_072)?)?;
+                let configured = self.configure_extraction_policy(policy)?;
+                json!({"extraction_policy_digest":configured.digest,"source_pass_requested":true})
+            }
+            ProjectConfiguration::ScanLimits { input } => {
+                let limits = serde_json::from_slice(&verified_input(input, 65_536)?)?;
+                serde_json::to_value(self.configure_scan_limits(limits)?)?
+            }
+            ProjectConfiguration::QuotaPolicy {
+                input,
+                expected_policy_digest,
+            } => {
+                use sha2::{Digest, Sha256};
+                let policy = serde_json::from_slice(&verified_input(input, 16_384)?)?;
+                let current = self.quota_policy()?;
+                ensure!(
+                    airk_core::identity::Sha256Digest::from_bytes(
+                        Sha256::digest(serde_json::to_vec(&current)?).into()
+                    ) == *expected_policy_digest,
+                    ConfigurationChanged
+                );
+                let status = self.configure_quota_if_current(policy, Some(&current))?;
+                json!({"updated":true,"scope":"shared_data_root","collections":status.collections.len(),"root_limit_bytes":status.root_limit_bytes})
             }
             ProjectConfiguration::Calibrate {
                 tokenizer,

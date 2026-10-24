@@ -124,7 +124,7 @@ fn source_and_replacement_publish_without_helper_and_semantics_resume_in_bounded
     });
     embedding_worker::install_connector(Arc::new(Adapter(transport.clone())))?;
     let kernel = Kernel::open_service_collection(&source, Some(data.clone()), "phases")?
-        .with_service_models(&runtime, plan)?;
+        .with_service_models(&runtime, plan.clone())?;
     let project = airk_kernel::service_projects::registration(&source, &data, "phases")?;
     let identity = WorkerIdentity {
         service: Incarnation::from_bytes([81; 16]),
@@ -182,7 +182,7 @@ fn source_and_replacement_publish_without_helper_and_semantics_resume_in_bounded
         attempts,
         "replacement opened the helper"
     );
-    let current = kernel.refresh_service_snapshot()?;
+    let mut current = kernel.refresh_service_snapshot()?;
     let offline = owner.path().join("offline-source");
     fs::rename(&source, &offline)?;
     transport.available.store(true, Ordering::Release);
@@ -239,6 +239,7 @@ fn source_and_replacement_publish_without_helper_and_semantics_resume_in_bounded
         .semantic_readiness
         .unwrap();
     assert_eq!(partial.completed_artifacts, 32);
+    let before_queries = transport.embedded.load(Ordering::Acquire);
     for path in ["memo-00.md", "memo-39.md"] {
         let shared = current.semantic_search(&SearchQuery {
             text: "beacon".into(),
@@ -251,6 +252,14 @@ fn source_and_replacement_publish_without_helper_and_semantics_resume_in_bounded
             "citation lost between regeneration turns: {path}"
         );
     }
+    let query_inputs = transport.embedded.load(Ordering::Acquire) - before_queries;
+    assert_eq!(
+        query_inputs, 2,
+        "account query inference separately from regeneration"
+    );
+    current =
+        Kernel::open_service_collection_for_diagnostics(&source, Some(data.clone()), "phases")?
+            .with_service_models(&runtime, plan.clone())?;
     work(identity, 9, || {
         current.begin_service_vector_regeneration(regeneration)
     })?;
@@ -260,9 +269,10 @@ fn source_and_replacement_publish_without_helper_and_semantics_resume_in_bounded
         current.status()?.semantic_readiness.state,
         SemanticState::Ready
     );
-    assert!(
-        transport.embedded.load(Ordering::Acquire) >= embedded + 39,
-        "regeneration reused cached embeddings"
+    assert_eq!(
+        transport.embedded.load(Ordering::Acquire),
+        embedded + 39 + query_inputs,
+        "regeneration must recompute old inputs once and share fresh identical inputs across turns and reopen"
     );
     assert_eq!(
         fs::read_to_string(offline.join("memo-00.md"))?,

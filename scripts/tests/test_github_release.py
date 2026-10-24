@@ -98,6 +98,42 @@ def fixtures(directory, channel="preview"):
 
 
 class GithubReleaseContracts(unittest.TestCase):
+    def test_service_native_release_requires_paired_inventory_and_rejects_legacy_schema(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary) / "native"
+            target = "x86_64-unknown-linux-gnu"
+            _, receipt = native_fixture(directory, target)
+            (directory / receipt["archive"]).unlink()
+            version = "1.4.0"
+            files = {"airk": b"main fixture", "airk-embed": b"helper fixture", "LICENSE": b"license", "NOTICE": b"notice", "THIRD_PARTY_NOTICES.md": b"attribution",
+                     "notices/inventory.json": b"{}"}
+            sha = lambda data: release.hashlib.sha256(data).hexdigest()
+            pair = {"schema": 1, "version": version, "os": "linux", "arch": "x86_64",
+                    "airk_sha256": sha(files["airk"]), "embed_sha256": sha(files["airk-embed"])}
+            source = {"sha256": "d" * 64, "files": 4}
+            files["airk-runtime.json"] = json.dumps(pair).encode()
+            files["airk-build.json"] = json.dumps({"schema": 1, "runtime": pair, "source": source}).encode()
+            install = {key: pair[key] for key in ("schema", "version", "os", "arch")}
+            install["files"] = {name: sha(data) for name, data in files.items()}
+            files["airk-install.json"] = json.dumps(install).encode()
+            archive = directory / f"airk-{version}-{target}.zip"
+            with zipfile.ZipFile(archive, "w") as zipped:
+                for name, data in files.items():
+                    info = zipfile.ZipInfo(name)
+                    info.external_attr = (0o100755 if name in ("airk", "airk-embed") else 0o100644) << 16
+                    zipped.writestr(info, data)
+            receipt.update(schema="airk-native-candidate/2", version=version, source=source,
+                           archive=archive.name, archive_sha256=release.digest(archive),
+                           payload={name: sha(data) for name, data in files.items()},
+                           install_manifest_sha256=sha(files["airk-install.json"]))
+            write_receipt(directory, receipt)
+            observed, _ = release.verify_native(directory, target, COMMIT, version, False)
+            self.assertEqual(observed["source"], source)
+            receipt["schema"] = "airk-native-candidate/1"
+            write_receipt(directory, receipt)
+            with self.assertRaisesRegex(ValueError, "provenance"):
+                release.verify_native(directory, target, COMMIT, version, False)
+
     def assemble(self, directory, output, channel="preview"):
         return release.assemble(directory, output, COMMIT, VERSION, TAG, channel, "123", "1")
 

@@ -13,6 +13,7 @@ import { IntentJournal } from './serviceIntents';
 import { ServiceWorkspace } from './serviceWorkspace';
 import { McpVerification } from './sidebar';
 import { installLauncherCli } from './cliInstall';
+import { openUsagePanel } from './usagePanel';
 
 function same(left:string,right:string):boolean {
     return path.relative(process.platform==='win32'?path.toNamespacedPath(left):left,process.platform==='win32'?path.toNamespacedPath(right):right)==='';
@@ -73,6 +74,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         this.refreshing=this.refreshOnce().finally(()=>{this.refreshing=undefined;});return this.refreshing;
     }
     private async refreshOnce():Promise<void>{
+        const previous=JSON.stringify(this.specs.map(spec=>[spec.command,launchArgs(spec)]));
         this.specs=[];this.roots=[];this.binding=undefined;
         try{
             this.trusted();const observation=await this.runtime().discover();this.trusted();
@@ -86,7 +88,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             this.specs=await this.workspace.definitions(binding,this.folders().map(folder=>folder.uri.fsPath));this.trusted();
             this.status.text=`AIRK: ${this.specs.length} registered`;
         }catch(error){this.status.text='AIRK: inspect service';this.output.appendLine(String(error));}
-        finally{this.treeChanges.fire();this.definitions.fire();}
+        finally{this.treeChanges.fire();if(previous!==JSON.stringify(this.specs.map(spec=>[spec.command,launchArgs(spec)])))this.definitions.fire();}
     }
     async registerWorkspace():Promise<void>{
         this.trusted();
@@ -133,6 +135,10 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         this.trusted();await this.refresh();
         if(!this.specs.length){await this.registerWorkspace();return this.specs[0];}
         if(this.specs.length===1)return this.specs[0];
+        const active=vscode.window.activeTextEditor&&vscode.workspace.getWorkspaceFolder(vscode.window.activeTextEditor.document.uri);
+        const root=active&&this.roots.find(root=>same(root.opened,active.uri.fsPath));
+        const selected=root&&this.specs.filter(spec=>same(spec.root,root.canonical));
+        if(selected?.length===1)return selected[0];
         return (await vscode.window.showQuickPick(this.specs.map(spec=>({label:spec.name,description:spec.root,spec})),{title:'AIRK registered project'}))?.spec;
     }
     async index():Promise<void>{
@@ -161,7 +167,8 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         const selected=spec??await this.chooseSpec();if(!selected)return;this.trusted();
         if(!this.isCurrent(selected))throw new ServiceError('workspace_registration_changed');
         try{const result=await probeMcp(selected,15,this.context.extension.packageJSON.version);this.trusted();
-            this.checks.set(selected.service!.project,{phase:'verified',tools:result.tools,checkedAt:Date.now(),indexState:'published'});
+            this.checks.set(selected.service!.project,{phase:'verified',tools:result.tools,checkedAt:Date.now(),
+                indexState:record(result.status).state==='not_indexed'?'not_indexed':'published'});
             this.output.appendLine(`Verified ${result.tools.length} MCP tools through the installed launcher. Agent connection is separate.`);
         }catch(error){this.checks.set(selected.service!.project,{phase:'failed',checkedAt:Date.now(),error:String(error).slice(0,600)});throw error;}
     }
@@ -175,6 +182,23 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         const spec=await this.chooseSpec();if(!spec)return;this.trusted();await this.runtime().ensure();this.trusted();
         const text=await runText(spec.command,[...launchArgs(spec,'tools'),'call',tool,'--args',JSON.stringify({response_mode:this.responseMode()})],path.dirname(spec.command),180000);
         this.trusted();this.output.appendLine(JSON.stringify(JSON.parse(text),null,2));this.output.show(true);
+    }
+    async usage():Promise<void>{
+        const spec=await this.chooseSpec();if(!spec)return;this.trusted();await this.runtime().ensure();this.trusted();
+        const generation=this.generation,valid=()=>generation===this.generation&&this.isCurrent(spec);
+        await openUsagePanel(spec,valid,async(args,continuing)=>{
+            this.trusted();if(!valid()||continuing?.()===false)throw new ServiceError('project_configuration_selection_changed');
+            let draft:Record<string,unknown>;
+            if(args.length===1&&args[0]==='clear')draft={operation:'clear_usage'};
+            else if(args.length===3&&args[0]==='configure'&&args[1]==='--mode'&&['disabled','aggregates_only','diagnostic_events'].includes(args[2]))draft={operation:'usage',mode:args[2]};
+            else if(args.length===4&&args[0]==='feedback'&&args[2]==='--usefulness'&&['useful','partly-useful','not-useful'].includes(args[3])){
+                identifier(args[1],16);draft={operation:'usage_feedback',request_id:args[1],usefulness:args[3].replaceAll('-','_')};
+            }else if(args.length===4&&args[0]==='import'&&args[2]==='--if-sha256'&&path.isAbsolute(args[1])){
+                identifier(args[3],32);draft={operation:'import_usage',path:args[1],expected_sha256:args[3]};
+            }else throw new ServiceError('invalid_usage_action');
+            if(!spec.service)throw new ServiceError('native_project_binding_required');
+            await this.console.configureProject(spec.service.project,draft,()=>valid()&&continuing?.()!==false);
+        });
     }
     async installCommandLine():Promise<void>{
         this.trusted();const observation=await this.runtime().discover();this.trusted();
@@ -237,6 +261,7 @@ export async function activate(context:vscode.ExtensionContext):Promise<{getServ
             await controller.registerWorkspace();}};
     commands.installCli=()=>controller.installCommandLine();
     commands.openTools=()=>controller.openTools();
+    commands.usage=()=>controller.usage();
     for(const [name,action] of Object.entries(commands))context.subscriptions.push(vscode.commands.registerCommand(`airk.${name}`,safe(action)));
     if(vscode.lm?.registerMcpServerDefinitionProvider)context.subscriptions.push(vscode.lm.registerMcpServerDefinitionProvider('airk.collections',{
         onDidChangeMcpServerDefinitions:controller.definitions.event,provideMcpServerDefinitions:()=>controller.provideDefinitions(),resolveMcpServerDefinition:value=>controller.resolveDefinition(value)}));

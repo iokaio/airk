@@ -1,27 +1,92 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Explicit real-model qualification; no model downloads during tests.
+//! Kernel inference/cache qualification, separate from native service-client tests.
+//! Run with local-inference and verified AIRK_TEST_MODEL_DIR; tests never download assets.
 use anyhow::{Context, Result, ensure};
 use serde_json::Value;
 use std::{fs, path::Path, process::Command};
 
+// These counters describe the kernel's local inference/cache implementation. Run
+// it in an isolated test process; public CLI work is brokered and asynchronous.
 fn run(root: &Path, data: &Path, workers: &str, args: &[&str]) -> Result<Value> {
-    let output = Command::new(env!("CARGO_BIN_EXE_airk"))
-        .arg("--root")
-        .arg(root)
-        .arg("--data-dir")
-        .arg(data)
+    let result = tempfile::NamedTempFile::new()?;
+    let output = Command::new(std::env::current_exe()?)
+        .args(["--exact", "component_adapter", "--nocapture"])
+        .env(
+            "AIRK_PERF_REQUEST",
+            serde_json::to_string(&(root, data, args))?,
+        )
+        .env("AIRK_PERF_RESULT", result.path())
         .env("AIRK_USAGE_MODE", "disabled")
         .env("AIRK_INDEX_WORKERS", workers)
-        .args(args)
         .output()?;
     ensure!(
         output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
     );
-    Ok(serde_json::from_slice(&output.stdout)?)
+    Ok(serde_json::from_slice(&fs::read(result.path())?)?)
 }
 
+#[test]
+fn component_adapter() -> Result<()> {
+    let Some(request) = std::env::var_os("AIRK_PERF_REQUEST") else {
+        return Ok(());
+    };
+    let (root, data, args): (std::path::PathBuf, std::path::PathBuf, Vec<String>) =
+        serde_json::from_str(request.to_str().context("invalid component request")?)?;
+    let args = args.iter().map(String::as_str).collect::<Vec<_>>();
+    let kernel = airk_kernel::Kernel::open_collection(root, Some(data), "component-performance")?;
+    let value = match args.as_slice() {
+        ["collections", "vectors", "install", model] => {
+            serde_json::to_value(kernel.install_vector_model(Path::new(model))?)?
+        }
+        [
+            "collections",
+            "vectors",
+            "selection",
+            "set",
+            "--file",
+            policy,
+        ] => serde_json::to_value(
+            kernel.configure_vector_selection(serde_json::from_slice(&fs::read(policy)?)?)?,
+        )?,
+        ["index"] => serde_json::to_value(kernel.index()?)?,
+        ["index", "--full"] => serde_json::to_value(kernel.reindex()?)?,
+        ["status"] => serde_json::to_value(kernel.status()?)?,
+        ["info", path] => serde_json::to_value(kernel.file_info(path)?)?,
+        [
+            "search",
+            text,
+            "--mode",
+            mode @ ("vector" | "lexical"),
+            rest @ ..,
+        ] => {
+            let prefix = match rest {
+                [] => None,
+                ["--path-prefix", value] => Some((*value).to_owned()),
+                _ => anyhow::bail!("unsupported component search"),
+            };
+            let query = airk_core::SearchQuery {
+                text: (*text).into(),
+                path_prefix: prefix,
+                limit: 10,
+                max_bytes: 4096,
+            };
+            serde_json::to_value(if *mode == "vector" {
+                kernel.semantic_search(&query)?
+            } else {
+                kernel.search(&query)?
+            })?
+        }
+        _ => anyhow::bail!("unsupported component operation: {args:?}"),
+    };
+    fs::write(
+        std::env::var_os("AIRK_PERF_RESULT").context("component result missing")?,
+        serde_json::to_vec(&value)?,
+    )?;
+    Ok(())
+}
 #[test]
 #[ignore = "requires AIRK_TEST_MODEL_DIR with verified local ONNX assets"]
 fn serial_parallel_and_incremental_vectors_preserve_retrieval() -> Result<()> {

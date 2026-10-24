@@ -156,6 +156,7 @@ mod tests {
             fencing_generation: epoch,
         };
         let snapshot = InspectionSnapshot {
+            quota_policy_digest: None,
             project: project.binding,
             incarnation: Incarnation::from_bytes([7; 16]),
             publication: None,

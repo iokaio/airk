@@ -473,6 +473,12 @@ pub struct ConnectionGrant {
     pub caller: Incarnation,
     pub token: Sha256Digest,
     pub ttl_ms: u64,
+    /// Informational accounting label, never authority or an authentication claim.
+    #[serde(default = "unknown_client")]
+    pub client: crate::usage::ClientFamily,
+}
+fn unknown_client() -> crate::usage::ClientFamily {
+    crate::usage::ClientFamily::Unknown
 }
 
 impl std::fmt::Debug for ConnectionGrant {

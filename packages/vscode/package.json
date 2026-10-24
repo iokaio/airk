@@ -1,8 +1,8 @@
 {
   "name": "airk",
   "displayName": "AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents",
-  "description": "Give Claude Code, Codex, Gemini CLI, Copilot and other MCP agents a local index of code and documents. Index projects concurrently with a bundled offline model and get bounded, cited evidence. No cloud service or API key.",
-  "version": "1.3.2",
+  "description": "Local indexed evidence for coding agents, with a native service, direct MCP retrieval and a shared offline model. No cloud service or API key.",
+  "version": "1.4.0",
   "icon": "images/icon.png",
   "publisher": "iokaio",
   "license": "Apache-2.0",

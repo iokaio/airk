@@ -280,6 +280,7 @@ impl Broker {
             caller,
             token,
             ttl_ms: ttl.as_millis() as u64,
+            client: airk_core::usage::ClientFamily::Unknown,
         };
         self.pending.insert(
             token,

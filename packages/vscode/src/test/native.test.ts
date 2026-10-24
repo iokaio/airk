@@ -6,8 +6,9 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { NativeProcessError, NativeWriteQueue, joinScheduledIndex, ScheduledIndexStillQueued, parseIndexProgress, prepareHelper, probeMcp, runJson, runText } from '../native';
-import { IndexReport, LaunchSpec, collectionId } from '../model';
-import { Coverage } from '../coverage';
+import { LaunchSpec, launchArgs } from '../model';
+import { NativeServiceFixture } from './nativeServiceFixture';
+import { record } from '../serviceClient';
 
 async function removeFixture(directory: string, prefix: string): Promise<void> {
     const resolved = await fs.realpath(directory), base = await fs.realpath(os.tmpdir());
@@ -104,17 +105,14 @@ test('index progress is validated and a silent native scan is stopped', async ()
         () => false, 150), /stopped after 150 ms without progress/);
 });
 
-test('MCP helper verifies before the first index publication', { skip: !process.env.AIRK_TEST_BINARY }, async () => {
-    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'airk-unindexed-mcp-'));
-    try {
-        const root = path.join(directory, 'project'), dataDir = path.join(directory, 'state');
-        await fs.mkdir(root);
-        const spec: LaunchSpec = { command: process.env.AIRK_TEST_BINARY!, root, dataDir,
-            collection: collectionId(await fs.realpath(root)), name: 'Project' };
-        const result = await probeMcp(spec);
-        assert.equal(result.tools.length, 15);
-        assert.deepEqual(result.status, { state: 'not_indexed' });
-    } finally { await removeFixture(directory, 'airk-unindexed-mcp-'); }
+test('registered native MCP verifies before the first publication without starting inference', {skip:!process.env.AIRK_TEST_BINARY,timeout:240000}, async()=>{
+    const fixture=await NativeServiceFixture.create(process.env.AIRK_TEST_BINARY!);
+    try{
+        const spec=await fixture.register('unindexed');
+        const result=await probeMcp(spec);assert.equal(result.tools.length,15);assert.deepEqual(result.status,{state:'not_indexed'});
+        const embedding=await fixture.embedding();
+        assert.equal(embedding.loads,0);assert.equal(embedding.sessions,0);
+    }finally{await fixture.dispose();}
 });
 
 test('native process diagnostics stay bounded and retain both ends of stderr', async () => {
@@ -153,48 +151,32 @@ test('native writer queue isolates data directories and collections', async () =
     assert.equal(calls.at(-1), 'same', 'The same native writer must wait even through a path spelling alias');
 });
 
-test('native semantic adapter finishes bounded batches and honors saved pause without a service', { skip: !process.env.AIRK_TEST_BINARY }, async () => {
-    const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'airk-semantic-adapter-'));
-    const directory = await fs.realpath(temporary);
-    try {
-        const root = path.join(directory, 'source'), dataDir = path.join(directory, 'state');
-        const model = path.join(dataDir, 'models', 'local');
-        await fs.mkdir(root); await fs.mkdir(model, { recursive: true });
-        const vocabulary = JSON.stringify({ authenticate: [1, 0], login: [1, 0] });
-        await fs.writeFile(path.join(model, 'vocabulary.json'), vocabulary);
-        await fs.writeFile(path.join(model, 'model.json'), JSON.stringify({ schema: 1,
-            name: 'original-semantic-adapter-fixture', license: 'Apache-2.0', dimensions: 2,
-            sha256: createHash('sha256').update(vocabulary).digest('hex') }));
-        for (let file = 0; file < 65; file++) { await fs.writeFile(path.join(root, `file_${String(file).padStart(2, '0')}.txt`), 'authenticate\n'); }
-        const spec: LaunchSpec = { command: path.resolve(process.env.AIRK_TEST_BINARY!), root, dataDir,
-            collection: 'semantic-adapter', name: 'Fixture' };
-        await runJson(spec, 'index', ['--scheduled']);
-        const queued = await runJson<{ requested_revision: number }>(spec, 'schedule', ['status']);
-        await runJson(spec, 'schedule', ['wait', String(queued.requested_revision), '--progress']);
-        assert.equal((await runJson<{ requested_revision: number }>(spec, 'schedule', ['status'])).requested_revision, queued.requested_revision);
-        type Ready = {state: string; completed_artifacts: number; selected_artifacts: number};
-        let status = await runJson<Ready>(spec, 'semantic', ['status']);
-        assert.equal(status.state, 'pending'); assert.equal(status.completed_artifacts, 0);
-        await runJson(spec, 'schedule', ['pause']);
-        assert.equal((await runJson<{state: string}>(spec, 'semantic', ['run', '--scheduled'])).state, 'paused');
-        const paused = await runJson<Ready>(spec, 'semantic', ['status']);
-        assert.equal(paused.state, status.state); assert.equal(paused.completed_artifacts, status.completed_artifacts);
-        await runJson(spec, 'schedule', ['resume']);
-        const committed: number[] = [];
-        const outcome = await runJson<{state: string; report: IndexReport}>(spec, 'semantic', ['run', '--scheduled', '--progress'], line => {
-            const event = parseIndexProgress(line);
-            if (event?.phase === 'enrichment_committed' && event.completed_artifacts !== null) { committed.push(event.completed_artifacts); }
-            return !!event;
-        });
-        assert.equal(outcome.state, 'enriched');
-        assert.deepEqual(committed, [32, 64, 65], 'One helper reuses its model across durable batches');
-        assert.equal(outcome.report.semantic_readiness?.state, 'ready');
-        assert.equal(typeof outcome.report.embedding_model_load_us, 'number');
-        status = await runJson<Ready>(spec, 'semantic', ['status']);
-        assert.equal(status.completed_artifacts, 65);
-        assert.equal((await runJson<{state: string}>(spec, 'semantic', ['run', '--scheduled'])).state, 'idle');
-        assert.equal(await fs.readFile(path.join(root, 'file_64.txt'), 'utf8'), 'authenticate\n');
-    } finally { await removeFixture(directory, 'airk-semantic-adapter-'); }
+test('native semantic work stays independent of helper stop and resumes through durable pause-aware jobs', {skip:!process.env.AIRK_TEST_BINARY,timeout:360000}, async()=>{
+    const fixture=await NativeServiceFixture.create(process.env.AIRK_TEST_BINARY!);
+    try{
+        const spec=await fixture.register('semantic'),model=path.join(fixture.owner,'model');await fs.mkdir(model);
+        const vocabulary=JSON.stringify({authenticate:[1,0],login:[1,0]});
+        await fs.writeFile(path.join(model,'vocabulary.json'),vocabulary);
+        await fs.writeFile(path.join(model,'model.json'),JSON.stringify({schema:1,name:'original-native-semantic-fixture',license:'Apache-2.0',dimensions:2,
+            sha256:createHash('sha256').update(vocabulary).digest('hex')}));
+        await fixture.configure(spec,{operation:'install_model',directory:model});
+        const embedding=await fixture.ensureEmbedding();
+        assert.equal(embedding.available,true);
+        await fixture.client!.rpc({stop_embedding:{worker:embedding.worker,force:false}},'embedding_stopped');
+        for(let file=0;file<65;file++)await fs.writeFile(path.join(spec.root,`file_${String(file).padStart(2,'0')}.txt`),'authenticate\n');
+        await fixture.job(spec);
+        const lexical=await fixture.tool(spec,'airk_search',{query:'authenticate',mode:'lexical'});
+        assert.ok(Array.isArray(lexical.hits)&&lexical.hits.length>0);
+        const paused=await fixture.client!.rpc({pause:{project:spec.service!.project,paused:true}});assert.ok(paused);
+        await fixture.ensureEmbedding();
+        const accepted=await fixture.client!.submitJob(await fixture.client!.prepareJob(spec.service!.project,'vectors'));
+        const queued=record(accepted.job);assert.equal(queued.state,'pending');
+        await fixture.client!.rpc({pause:{project:spec.service!.project,paused:false}});
+        assert.equal((await fixture.waitJob(String(queued.id))).state,'succeeded');
+        const ready=await fixture.ready(spec,65);assert.equal(ready.indexed_vectors,1);
+        for(let file=0;file<65;file++)assert.equal(await fs.readFile(path.join(spec.root,`file_${String(file).padStart(2,'0')}.txt`),'utf8'),'authenticate\n');
+        await assert.rejects(runJson(spec,'schedule',['run','--watch']));
+    }finally{await fixture.dispose();}
 });
 
 // Keep ordinary adapter tests on AIRK_TEST_BINARY; only this test needs an old helper.
@@ -282,86 +264,58 @@ test('bundled helper rejects mismatched platforms and tampered bytes before exec
 });
 
 // CI/local build script supplies an absolute native binary; ordinary unit runs skip this boundary.
-test('extension native adapter indexes, rebuilds, probes MCP, isolates and removes collections', { skip: !process.env.AIRK_TEST_BINARY }, async () => {
-    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'airk-native-extension-'));
-    try {
-        const root = path.join(directory, 'Project A'), other = path.join(directory, 'Project B'), dataDir = path.join(directory, 'Index Storage');
-        await fs.mkdir(root); await fs.mkdir(other);
-        await fs.writeFile(path.join(root, 'a.py'), 'def authenticate_fixture():\n    return True\n');
-        await fs.writeFile(path.join(other, 'b.py'), 'def second_fixture():\n    return False\n');
-        const command = path.resolve(process.env.AIRK_TEST_BINARY!);
-        const spec: LaunchSpec = { command, root, dataDir, collection: collectionId(root), name: 'A' };
-        const detail = await runJson<{ configured_detail: string; published_detail: string | null }>(spec, 'collections', ['extraction', 'show']);
-        assert.equal(detail.configured_detail, 'agent_lean'); assert.equal(detail.published_detail, null);
-        const progress: string[] = [];
-        const first = await runJson<IndexReport>(spec, 'index', ['--progress', '--scheduled'], line => {
-            const event = parseIndexProgress(line);
-            if (event) { progress.push(event.phase); }
-            return !!event;
-        });
-        assert.equal(first.indexed, 1);
-        assert.ok(progress.includes('scan_started'));
-        assert.ok(progress.includes('base_committed') || progress.includes('base_coverage_complete'));
-        const published = await runJson<{ configured_detail: string; published_detail: string }>(spec, 'collections', ['extraction', 'show']);
-        assert.equal(published.configured_detail, 'agent_lean'); assert.equal(published.published_detail, 'agent_lean');
-        const coverage = await runJson<Coverage>(spec, 'coverage', ['--refresh']); assert.equal(coverage.percent, 100); assert.equal(coverage.current, 1);
-        const limits = await runJson<import('../ingestionLimits').LimitsDescription>(spec, 'collections', ['limits', 'describe']);
-        assert.equal(limits.mode, 'automatic'); assert.ok(limits.effective.corpus_bytes <= 4294967296);
-        const reduced = { ...limits.effective, corpus_bytes: 1 };
-        await runJson(spec, 'collections', ['limits', 'set', '--json', JSON.stringify(reduced), '--expected-json', JSON.stringify(limits.effective)]);
-        await assert.rejects(runJson(spec, 'index', ['--scheduled', '--automatic']), /corpus exceeds configured byte limit/);
-        await assert.rejects(runJson(spec, 'collections', ['limits', 'set', '--json', JSON.stringify(limits.effective), '--expected-json', JSON.stringify(limits.effective)]), /approval was pending/);
-        await runJson(spec, 'collections', ['limits', 'set', '--json', JSON.stringify(limits.effective), '--expected-json', JSON.stringify(reduced)]);
-        assert.equal((await runJson<IndexReport>(spec, 'index', ['--scheduled', '--automatic'])).reused, 1);
-        await runJson(spec, 'collections', ['limits', 'reset']);
-        await runJson(spec, 'schedule', ['pause']);
-        await assert.rejects(runJson(spec, 'index', ['--scheduled', '--automatic']), /scheduling is paused/);
-        assert.equal((await runJson<IndexReport>(spec, 'index', ['--scheduled'])).reused, 1);
-        await runJson(spec, 'schedule', ['resume']);
-        assert.equal((await runJson<IndexReport>(spec, 'index')).reused, 1);
-        const full = await runJson<IndexReport>(spec, 'index', ['--full']); assert.equal(full.reused, 0); assert.ok(full.generation > first.generation);
-        const probe = await probeMcp(spec); assert.equal(probe.tools.length, 15);
-        assert.ok(probe.tools.includes('airk_changes'));
-        await assert.rejects(runJson(spec, 'collections', ['retention', 'show']), /generation retention is unsupported/i);
-        await assert.rejects(runJson(spec, 'collections', ['prune', '--apply']), /unsupported/i);
-        const beforeMaintenance = await runJson<{ publication: { token: unknown } }>(spec, 'status');
-        const maintained = await runJson<{ removed_files: number; pending: boolean }>(spec, 'collections', ['maintain']);
-        assert.equal(maintained.pending, false);
-        assert.equal(maintained.removed_files, 0, 'Publication already reclaimed obsolete current objects');
-        const afterMaintenance = await runJson<{ publication: { token: unknown } }>(spec, 'status');
-        assert.deepEqual(afterMaintenance.publication.token, beforeMaintenance.publication.token);
-        assert.ok(probe.tools.includes('airk_code_facts')); assert.ok(probe.tools.includes('airk_relationships'));
-        const second = { ...spec, root: other, collection: collectionId(other), name: 'B' };
-        await runJson(second, 'index');
-        const facts = await runJson<{ facts: unknown[] }>(second, 'symbol', ['authenticate_fixture']); assert.equal(facts.facts.length, 0);
-        await runJson(spec, 'collections', ['remove', second.collection]);
-        const usage = await runJson<{ report: { calls: number } }>(spec, 'usage', ['report']); assert.ok(usage.report.calls > 0);
-        assert.ok((await fs.readFile(path.join(other, 'b.py'), 'utf8')).includes('second_fixture'));
-        // Cache validates immutable helper bytes and offers a stable path outside the extension.
-        const extension = path.join(directory, 'extension'), native = path.join(extension, 'native'); await fs.mkdir(native, { recursive: true });
-        const executable = process.platform === 'win32' ? 'airk.exe' : 'airk', binary = await fs.readFile(command);
-        await fs.writeFile(path.join(native, executable), binary);
-        // The real helper reports the workspace version, which must match the extension package.
-        const version: string = require('../../package.json').version;
-        const digest = createHash('sha256').update(binary).digest('hex');
-        await fs.writeFile(path.join(native, 'manifest.json'), JSON.stringify({ version, vsix_target: `${process.platform}-${process.arch}`,
-            payload: { [executable]: digest } }));
-        // Seed damage before execution: Windows may still map a just-exited
-        // executable, and the repair contract does not overwrite a live image.
-        const cacheDirectory = path.join(directory, 'cache', 'helpers', `${version}-${process.platform}-${process.arch}-${digest.slice(0, 16)}`);
-        await fs.mkdir(cacheDirectory, { recursive: true });
-        await fs.writeFile(path.join(cacheDirectory, executable), 'damaged derived helper cache');
-        const repairs: string[] = [];
-        const cached = await prepareHelper(extension, path.join(directory, 'cache'), version, message => repairs.push(message));
-        assert.equal(cached, path.join(cacheDirectory, executable));
-        assert.equal(createHash('sha256').update(await fs.readFile(cached)).digest('hex'), digest);
-        assert.equal(repairs.length, 1);
-        assert.equal(await prepareHelper(extension, path.join(directory, 'cache'), version, message => repairs.push(message)), cached);
-        assert.equal(repairs.length, 1, 'Verified cached bytes need no second repair');
-        assert.equal((await runText(cached, ['--version'])).trim(), `airk ${version}`);
-    } finally { await removeFixture(directory, 'airk-native-extension-'); }
+test('extension native clients index, inspect, approve rebuilds, enforce limits and preserve isolated sources', {skip:!process.env.AIRK_TEST_BINARY,timeout:480000}, async()=>{
+    const fixture=await NativeServiceFixture.create(process.env.AIRK_TEST_BINARY!);
+    try{
+        const a=await fixture.register('project-a'),b=await fixture.register('project-b');
+        await fs.writeFile(path.join(a.root,'a.py'),'def authenticate_fixture():\n    return True\n');
+        await fs.writeFile(path.join(b.root,'b.py'),'def second_fixture():\n    return False\n');
+        assert.equal((await fixture.settings(a,'extraction_policy')).configured_detail,'agent_lean');
+        await fixture.configure(a,{operation:'vectors',enabled:false});
+        await fixture.configure(b,{operation:'vectors',enabled:false});
+        await fixture.job(a);await fixture.job(b);
+        const initial=await fixture.tool(a,'airk_status');assert.equal(initial.files,1);
+        await fixture.job(a);
+        assert.deepEqual((await fixture.tool(a,'airk_status')).publication,initial.publication);
+        const published=await fixture.settings(a,'extraction_policy');
+        assert.equal(published.configured_detail,'agent_lean');assert.equal(published.published_detail,'agent_lean');
+        const limits=await fixture.settings(a,'scan_limits'),effective=record(limits.effective);
+        assert.equal(limits.mode,'automatic');assert.ok(Number(effective.corpus_bytes)<=4294967296);
+        const selected=path.join(fixture.owner,'limits.json');await fs.writeFile(selected,JSON.stringify({...effective,corpus_bytes:1}));
+        await fixture.configure(a,{operation:'scan_limits',path:selected});
+        // Failed scans publish readiness metadata while preserving retained
+        // artifacts. Check source changes and evidence independently of that marker.
+        const limited=await fixture.tool(a,'airk_status');
+        const retainedBefore=await fixture.tool(a,'airk_read_file',{path:'a.py',start_line:1,end_line:2});
+        const accepted=await fixture.client!.submitJob(await fixture.client!.prepareJob(a.service!.project,'index'));
+        assert.equal((await fixture.waitJob(String(record(accepted.job).id))).state,'failed');
+        const failed=await fixture.tool(a,'airk_status');
+        assert.equal(record(failed.publication).incarnation,record(limited.publication).incarnation);
+        assert.equal(record(failed.discovery_readiness).state,'failed');
+        const unchanged=await fixture.tool(a,'airk_changes',{since:record(limited.publication).token,limit:100,max_bytes:65536});
+        assert.equal(unchanged.baseline_status,'verified');assert.deepEqual(unchanged.changes,[]);assert.equal(unchanged.truncated,false);
+        assert.deepEqual((await fixture.tool(a,'airk_read_file',{path:'a.py',start_line:1,end_line:2})).hits,retainedBefore.hits);
+        const hits=(await fixture.tool(a,'airk_search',{query:'authenticate',mode:'lexical'})).hits;
+        assert.ok(Array.isArray(hits)&&hits.length>0);assert.equal(record(record(hits[0]).citation).path,'a.py');
+        await fs.writeFile(selected,JSON.stringify(effective));
+        await fixture.configure(a,{operation:'scan_limits',path:selected});await fixture.job(a);
+        const before=await fixture.tool(a,'airk_status');await fixture.repair(a,'verify');
+        assert.deepEqual((await fixture.tool(a,'airk_status')).publication,before.publication);
+        await fixture.repair(a,'rebuild');
+        const rebuilt=await fixture.tool(a,'airk_status');
+        assert.notEqual(record(rebuilt.publication).incarnation,record(before.publication).incarnation);
+        const probe=await probeMcp(a);assert.equal(probe.tools.length,15);assert.ok(probe.tools.includes('airk_changes'));
+        const foreign=await fixture.tool(b,'airk_code_facts',{name:'authenticate_fixture',compact:false});
+        assert.deepEqual(foreign.items,[]);
+        await assert.rejects(runJson(a,'collections',['remove',b.collection]));
+        assert.equal((await fixture.tool(b,'airk_status')).files,1);
+        assert.equal(await fs.readFile(path.join(a.root,'a.py'),'utf8'),'def authenticate_fixture():\n    return True\n');
+        assert.equal(await fs.readFile(path.join(b.root,'b.py'),'utf8'),'def second_fixture():\n    return False\n');
+        const usage=record(JSON.parse(await runText(a.command,[...launchArgs(a,'usage'),'report'],path.dirname(a.command),120000)));
+        assert.ok(Number(record(usage.report).calls)>0);
+        assert.equal(record((await fixture.run(['runtime','inspect','--install-dir',fixture.install])).managed_policy).lifecycle,'user_on_demand');
+    }finally{await fixture.dispose();}
 });
-
 
 test('native queue waits resume the same request and reject untyped or invalid continuations', async () => {
     const pending = { airk_error: 1, code: 'scheduled_index_pending', retryable: true, requested_revision: 7, message: 'still queued' };

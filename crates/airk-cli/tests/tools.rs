@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 use serde_json::{Value, json};
+mod common;
 use std::{
     fs,
     io::Write,
@@ -8,15 +9,7 @@ use std::{
 };
 
 fn command(root: &Path, state: &Path) -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_airk"));
-    command
-        .arg("--root")
-        .arg(root)
-        .arg("--data-dir")
-        .arg(state)
-        .args(["--collection", "tools-test"])
-        .env("AIRK_USAGE_MODE", "disabled");
-    command
+    common::command(root, state, "tools-test")
 }
 
 fn success(output: Output) -> Value {
@@ -84,18 +77,15 @@ fn tool_calls_preserve_evidence_scope_errors_and_argument_budgets() {
         "# Fixture\nAuthenticate the local account.\n",
     )
     .unwrap();
-    success(
-        command(root.path(), state.path())
-            .args(["collections", "vectors", "set", "--enabled", "false"])
-            .output()
-            .unwrap(),
-    );
-    success(
+    let service = common::Service::start(root.path(), state.path(), "tools-test");
+    service.configure(airk_cli::service_configuration::Draft::Vectors { enabled: false });
+    let accepted = success(
         command(root.path(), state.path())
             .arg("index")
             .output()
             .unwrap(),
     );
+    service.wait(serde_json::from_value(accepted["job"]["id"].clone()).unwrap());
     let query = state.path().join("query with spaces.json");
     fs::write(
         &query,
@@ -184,6 +174,7 @@ fn tool_calls_preserve_evidence_scope_errors_and_argument_budgets() {
 fn interactive_tools_show_help_and_recover_from_invalid_requests() {
     let root = tempfile::tempdir().unwrap();
     let state = tempfile::tempdir().unwrap();
+    let _service = common::Service::start(root.path(), state.path(), "tools-test");
     let query = root.path().join("arguments with spaces.json");
     fs::write(&query, "{}").unwrap();
     let mut child = command(root.path(), state.path())

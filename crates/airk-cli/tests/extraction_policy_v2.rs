@@ -1,174 +1,155 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Original command fixtures: configured policy is distinct from published evidence.
-use anyhow::{Result, ensure};
-use serde_json::{Value, json};
-use std::{
-    fs,
-    path::Path,
-    process::{Command, Output},
-};
-
-fn run(root: &Path, state: &Path, args: &[&str]) -> Result<Output> {
-    Ok(Command::new(env!("CARGO_BIN_EXE_airk"))
-        .arg("--root")
-        .arg(root)
-        .arg("--data-dir")
-        .arg(state)
-        .env("AIRK_USAGE_MODE", "disabled")
-        .args(args)
-        .output()?)
-}
-fn call(root: &Path, state: &Path, args: &[&str]) -> Result<Value> {
-    let output = run(root, state, args)?;
-    ensure!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    Ok(serde_json::from_slice(&output.stdout)?)
-}
+//! Native configuration validates selected files and publishes through source jobs.
+mod common;
+use airk_core::service::{JobOutcome, JobState};
+use anyhow::Result;
+use serde_json::json;
+use std::fs;
 
 #[test]
-fn configured_policy_waits_for_publication_and_validation_does_not_mutate() -> Result<()> {
+fn selected_policy_preview_is_read_only_and_guarded_configuration_requests_publication()
+-> Result<()> {
     let root = tempfile::tempdir()?;
     let state = tempfile::tempdir()?;
+    let input = tempfile::tempdir()?;
     let source = root.path().join("original.rs");
-    let bytes = b"pub fn original_fixture() -> u32 { 7 }\n";
-    fs::write(&source, bytes)?;
-    call(root.path(), state.path(), &["index"])?;
-    let original = call(
+    let original = b"pub fn original_fixture() -> u32 { 7 }\n";
+    fs::write(&source, original)?;
+    let service = common::Service::start(root.path(), state.path(), "default");
+    service.configure(airk_cli::service_configuration::Draft::Vectors { enabled: false });
+    common::call(root.path(), state.path(), "default", &["index"])?;
+    let before = common::call(
         root.path(),
         state.path(),
-        &["collections", "extraction", "show"],
+        "default",
+        &["settings", "extraction_policy"],
     )?;
-    assert_eq!(original["pending_reindex"], false);
-    let policy = json!({"version":1,"rules":[{"selector":{"kind":"exact","path":"original.rs"},"case_sensitive":true,"adapter_id":"text"}]}).to_string();
-    let preview = call(
+    let policy = input.path().join("policy.json");
+    fs::write(&policy, json!({"version":1,"rules":[{"selector":{"kind":"exact","path":"original.rs"},"case_sensitive":true,"adapter_id":"text"}]}).to_string())?;
+    let preview = common::call(
         root.path(),
         state.path(),
-        &["collections", "extraction", "validate", "--json", &policy],
+        "default",
+        &[
+            "settings",
+            "extraction_policy",
+            "--validate-file",
+            policy.to_str().unwrap(),
+        ],
     )?;
     assert_eq!(preview["origin"], "preview");
     assert_eq!(
-        call(
+        common::call(
             root.path(),
             state.path(),
-            &["collections", "extraction", "show"]
+            "default",
+            &["settings", "extraction_policy"]
         )?["digest"],
-        original["digest"]
+        before["digest"]
     );
-    let configured = call(
+    let configured = common::configure_cli(
+        &service,
         root.path(),
         state.path(),
-        &["collections", "extraction", "set", "--json", &policy],
+        "default",
+        json!({"operation":"extraction_policy","path":policy}),
     )?;
-    assert_eq!(configured["pending_reindex"], true);
-    assert_eq!(configured["applied_digest"], original["applied_digest"]);
-    assert_eq!(configured["publication"], original["publication"]);
-    call(root.path(), state.path(), &["index"])?;
-    let applied = call(
+    assert!(matches!(
+        configured.outcome,
+        Some(JobOutcome::Succeeded { .. })
+    ));
+    common::call(root.path(), state.path(), "default", &["index"])?;
+    let applied = common::call(
         root.path(),
         state.path(),
-        &["collections", "extraction", "show"],
+        "default",
+        &["settings", "extraction_policy"],
     )?;
+    assert_eq!(applied["digest"], preview["digest"]);
+    assert_eq!(applied["applied_digest"], preview["digest"]);
     assert_eq!(applied["pending_reindex"], false);
-    assert_eq!(applied["applied_digest"], configured["digest"]);
-    assert_eq!(fs::read(&source)?, bytes);
+    assert_eq!(fs::read(source)?, original);
     Ok(())
 }
 
 #[test]
-fn policy_inputs_are_bounded_validated_and_scope_checked() -> Result<()> {
+fn invalid_bounded_policy_files_and_foreign_bindings_preserve_configuration() -> Result<()> {
     let root = tempfile::tempdir()?;
     let state = tempfile::tempdir()?;
-    let fixture = tempfile::tempdir()?;
+    let input = tempfile::tempdir()?;
     fs::write(root.path().join("original.rs"), "fn original() {}\n")?;
-    call(root.path(), state.path(), &["index"])?;
-    let file = fixture.path().join("policy.json");
-    fs::write(&file, br#"{"version":1,"rules":[]}"#)?;
-    let file = file.to_str().unwrap();
-    call(
+    let service = common::Service::start(root.path(), state.path(), "default");
+    service.configure(airk_cli::service_configuration::Draft::Vectors { enabled: false });
+    common::call(root.path(), state.path(), "default", &["index"])?;
+    let before = common::call(
         root.path(),
         state.path(),
-        &["collections", "extraction", "set", "--file", file],
+        "default",
+        &["settings", "extraction_policy"],
     )?;
-    for action in ["validate", "set"] {
+    let policy = input.path().join("policy.json");
+    for invalid in [
+        r#"{"version":99,"rules":[]}"#,
+        r#"{"version":1,"rules":[],"unknown":true}"#,
+        r#"{"version":1,"rules":[{"selector":{"kind":"exact","path":"../outside"},"case_sensitive":true,"adapter_id":"text"}]}"#,
+        "{",
+        "[]",
+    ] {
+        fs::write(&policy, invalid)?;
         assert!(
-            !run(
-                root.path(),
-                state.path(),
-                &["collections", "extraction", action]
-            )?
-            .status
-            .success()
+            !common::command(root.path(), state.path(), "default")
+                .args(["settings", "extraction_policy", "--validate-file"])
+                .arg(&policy)
+                .output()?
+                .status
+                .success()
         );
-        assert!(
-            !run(
-                root.path(),
-                state.path(),
-                &[
-                    "collections",
-                    "extraction",
-                    action,
-                    "--file",
-                    file,
-                    "--json",
-                    "{} "
-                ]
-            )?
-            .status
-            .success()
-        );
-        assert!(
-            !run(
-                root.path(),
-                state.path(),
-                &[
-                    "collections",
-                    "extraction",
-                    action,
-                    "--json",
-                    r#"{"version":99,"rules":[]}"#
-                ]
-            )?
-            .status
-            .success()
-        );
-        assert!(
-            !run(
-                root.path(),
-                state.path(),
-                &[
-                    "collections",
-                    "extraction",
-                    action,
-                    "--json",
-                    r#"{"version":1,"rules":[],"unknown":true}"#
-                ]
-            )?
-            .status
-            .success()
-        );
-    }
-    fs::write(file, vec![b' '; 131_073])?;
-    assert!(
-        !run(
+        let failed = common::configure_cli(
+            &service,
             root.path(),
             state.path(),
-            &["collections", "extraction", "set", "--file", file]
-        )?
-        .status
-        .success()
-    );
-    let wrong = tempfile::tempdir()?;
-    for action in [
-        vec!["show"],
-        vec!["validate", "--json", r#"{"version":1,"rules":[]}"#],
-        vec!["set", "--json", r#"{"version":1,"rules":[]}"#],
-    ] {
-        let mut args = vec!["collections", "extraction"];
-        args.extend(action);
-        assert!(!run(wrong.path(), state.path(), &args)?.status.success());
+            "default",
+            json!({"operation":"extraction_policy","path":policy}),
+        )?;
+        assert_eq!(failed.state, JobState::Failed);
+        assert_eq!(
+            common::call(
+                root.path(),
+                state.path(),
+                "default",
+                &["settings", "extraction_policy"]
+            )?["digest"],
+            before["digest"]
+        );
     }
+    fs::write(&policy, vec![b' '; 131_073])?;
+    assert!(
+        common::configure_cli(
+            &service,
+            root.path(),
+            state.path(),
+            "default",
+            json!({"operation":"extraction_policy","path":policy})
+        )
+        .is_err()
+    );
+    assert!(
+        !common::command(root.path(), state.path(), "default")
+            .arg("configure")
+            .output()?
+            .status
+            .success()
+    );
+    let wrong = "ef".repeat(32);
+    let output = common::native_command()
+        .arg("--service-runtime-dir")
+        .arg(&service.control)
+        .args(["--service-project", &wrong, "settings", "extraction_policy"])
+        .output()?;
+    assert!(!output.status.success());
+    assert_eq!(
+        fs::read_to_string(root.path().join("original.rs"))?,
+        "fn original() {}\n"
+    );
     Ok(())
 }

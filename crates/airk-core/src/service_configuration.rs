@@ -51,6 +51,24 @@ pub enum ProjectConfiguration {
     Usage {
         mode: RecordingMode,
     },
+    ClearUsage,
+    UsageFeedback {
+        request_id: String,
+        usefulness: crate::usage::Usefulness,
+    },
+    ImportUsage {
+        input: InputFile,
+    },
+    ExtractionPolicy {
+        input: InputFile,
+    },
+    ScanLimits {
+        input: InputFile,
+    },
+    QuotaPolicy {
+        input: InputFile,
+        expected_policy_digest: Sha256Digest,
+    },
     Calibrate {
         tokenizer: InputFile,
         baseline: InputFile,
@@ -81,6 +99,11 @@ fn alias(value: &str) -> Result<()> {
 impl ProjectConfiguration {
     pub fn validate(&self) -> Result<()> {
         match self {
+            Self::ImportUsage { input }
+            | Self::ExtractionPolicy { input }
+            | Self::ScanLimits { input }
+            | Self::QuotaPolicy { input, .. } => input.validate()?,
+            Self::UsageFeedback { request_id, .. } => crate::usage::validate_hex(request_id, 16)?,
             Self::VectorSelection { policy } => policy.validate()?,
             Self::AddRoot {
                 alias: name,
@@ -109,7 +132,8 @@ impl ProjectConfiguration {
             Self::BundledModel
             | Self::Vectors { .. }
             | Self::Detail { .. }
-            | Self::Usage { .. } => {}
+            | Self::Usage { .. }
+            | Self::ClearUsage => {}
         }
         ensure!(
             serde_json::to_vec(self)?.len() <= MAX_CONFIGURATION_BYTES,
@@ -129,6 +153,8 @@ impl ProjectConfiguration {
             Self::BundledModel
                 | Self::Vectors { .. }
                 | Self::Detail { .. }
+                | Self::ExtractionPolicy { .. }
+                | Self::ScanLimits { .. }
                 | Self::VectorSelection { .. }
                 | Self::AddRoot { .. }
                 | Self::RemoveRoot { .. }

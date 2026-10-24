@@ -50,6 +50,7 @@ mod tokenization;
 #[cfg(not(feature = "local-inference"))]
 use remote_tokenization as tokenization;
 pub mod usage;
+pub mod usage_page;
 pub mod vectors;
 pub mod watcher;
 use airk_retrieval::truncate_utf8;

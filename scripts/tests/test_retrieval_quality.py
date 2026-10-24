@@ -4,6 +4,7 @@ import importlib.util
 import json
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 
 SPEC = importlib.util.spec_from_file_location(
@@ -13,6 +14,26 @@ SPEC.loader.exec_module(QUALITY)
 
 
 class RetrievalQualityTests(unittest.TestCase):
+    def test_only_unsubmitted_busy_rejections_are_retried(self):
+        for submitted in (False, True):
+            session = self.session([self.hit("wanted.txt")])
+            accepted = session.request()
+            replies = [{"isError":True,"content":[{"text":json.dumps({"error":{
+                "code":"direct_query_admission","reason":"busy","query_submitted":submitted,"retry_after_ms":25}})}]}, accepted]
+            def request(*_):
+                return replies.pop(0)
+            session.request = request
+            with patch.object(QUALITY.time,"sleep") as sleep:
+                if submitted:
+                    with self.assertRaises(RuntimeError):
+                        session.search(self.case())
+                    self.assertEqual(len(replies),1)
+                    sleep.assert_not_called()
+                else:
+                    self.assertEqual(session.search(self.case())["admission_retries"],1)
+                    self.assertEqual(replies,[])
+                    sleep.assert_called_once_with(0.025)
+
     def session(self, hits, publication="fixture-revision"):
         session = QUALITY.Session.__new__(QUALITY.Session)
         session.publication = None

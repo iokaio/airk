@@ -1,41 +1,27 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Original command-level fixtures for explicit retention policy and maintenance.
-use anyhow::{Result, ensure};
+use anyhow::Result;
+mod common;
 use serde_json::Value;
-use std::{
-    fs,
-    path::Path,
-    process::{Command, Output},
-};
+use std::{fs, path::Path, process::Output};
 
 fn run(root: &Path, state: &Path, args: &[&str]) -> Result<Output> {
-    Ok(Command::new(env!("CARGO_BIN_EXE_airk"))
-        .arg("--root")
-        .arg(root)
-        .arg("--data-dir")
-        .arg(state)
-        .env("AIRK_USAGE_MODE", "disabled")
+    Ok(common::command(root, state, "default")
         .args(args)
         .output()?)
 }
 fn call(root: &Path, state: &Path, args: &[&str]) -> Result<Value> {
-    let result = run(root, state, args)?;
-    ensure!(
-        result.status.success(),
-        "{}",
-        String::from_utf8_lossy(&result.stderr)
-    );
-    Ok(serde_json::from_slice(&result.stdout)?)
+    common::call(root, state, "default", args)
 }
 #[test]
 fn current_maintenance_replaces_retention_and_preserves_sources_and_token() -> Result<()> {
     let root = tempfile::tempdir()?;
     let state = tempfile::tempdir()?;
+    let service = common::Service::start(root.path(), state.path(), "default");
     fs::write(root.path().join("note.txt"), "original source")?;
     call(root.path(), state.path(), &["index"])?;
     let before = call(root.path(), state.path(), &["status"])?;
-    let clean = call(root.path(), state.path(), &["collections", "maintain"])?;
-    assert_eq!(clean["removed_files"], 0);
+    service.repair(airk_core::service_maintenance::RepairOperation::Auto);
     assert_eq!(
         call(root.path(), state.path(), &["status"])?["publication"],
         before["publication"]
@@ -47,7 +33,7 @@ fn current_maintenance_replaces_retention_and_preserves_sources_and_token() -> R
     ] {
         let output = run(root.path(), state.path(), &args)?;
         assert!(!output.status.success());
-        assert!(String::from_utf8_lossy(&output.stderr).contains("unsupported"));
+        assert!(String::from_utf8_lossy(&output.stderr).contains("unrecognized"));
     }
     assert_eq!(
         fs::read_to_string(root.path().join("note.txt"))?,

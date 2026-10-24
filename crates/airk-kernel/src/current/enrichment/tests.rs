@@ -38,6 +38,10 @@ fn source_changes_preserve_forced_recomputation_for_unfinished_semantic_work() -
     previous.force_recompute = true;
     let job = Sha256Digest::from_bytes([42; 32]);
     previous.regeneration_job = Some(job);
+    previous.recompute_boundary = Some(RecomputeBoundary {
+        graph: read.head().graph_head.scope.graph_instance,
+        first_id: read.head().graph_head.allocated_count,
+    });
     let configuration = read.collection_state()?.unwrap().configuration;
     let snapshot = kernel.current_scan_projection(&read)?;
     let (path, artifact) = snapshot.artifacts.first_key_value().unwrap();
@@ -50,14 +54,35 @@ fn source_changes_preserve_forced_recomputation_for_unfinished_semantic_work() -
         &changes,
         Some(&previous),
         &configuration.vector_selection,
-        configuration.model.unwrap().pipeline_digest,
+        configuration.model.as_ref().unwrap().pipeline_digest,
         false,
     )?;
     assert!(next.force_recompute);
     assert_eq!(next.regeneration_job, Some(job));
     assert_eq!(next.pending.len(), 1);
+    assert_eq!(
+        next.recompute_boundary.as_ref().unwrap().first_id,
+        previous.recompute_boundary.as_ref().unwrap().first_id
+    );
+    let full = prepare_work(
+        &snapshot,
+        &changes,
+        Some(&previous),
+        &configuration.vector_selection,
+        configuration.model.as_ref().unwrap().pipeline_digest,
+        true,
+    )?;
+    assert!(
+        full.recompute_boundary.is_none(),
+        "new forced rebuild cannot reuse a preceding work boundary"
+    );
+    assert!(
+        full.regeneration_job.is_none(),
+        "new full work cannot inherit an older job identity"
+    );
     // Older canonical manifests omit the additive field and remain readable.
     previous.regeneration_job = None;
+    previous.recompute_boundary = None;
     let bytes = previous.canonical_bytes()?;
     assert!(!String::from_utf8_lossy(&bytes).contains("regeneration_job"));
     assert!(SemanticWork::from_bytes(&bytes)?.regeneration_job.is_none());

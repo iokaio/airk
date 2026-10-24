@@ -14,6 +14,44 @@ spec.loader.exec_module(signing)
 
 
 class SigningContracts(unittest.TestCase):
+    def test_pair_receipt_binds_both_components_and_preserves_unrelated_payload(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source"
+            output = root / "signed"
+            runtime = output / "runtime"
+            source.mkdir()
+            runtime.mkdir(parents=True)
+            components = {}
+            original = {"files": {"LICENSE": "a" * 64}}
+            signed = {"files": {"LICENSE": "a" * 64}}
+            for name in ("airk.exe", "airk-embed.exe"):
+                (source / name).write_bytes(("original " + name).encode())
+                (runtime / name).write_bytes(("signed " + name).encode())
+                original["files"][name] = signing.digest(source / name)
+                signed["files"][name] = signing.digest(runtime / name)
+                components[name] = {"schema": "airk-native-signing/1", "target": "x86_64-pc-windows-msvc",
+                                    "commit": "fixture", "cargo_lock_sha256": "b" * 64,
+                                    "source_sha256": original["files"][name], "binary_sha256": signed["files"][name]}
+            (source / "airk-install.json").write_text(json.dumps(original), encoding="utf-8")
+            (runtime / "airk-install.json").write_text(json.dumps(signed), encoding="utf-8")
+            receipt = {"schema": "airk-service-pair-signing/1", "target": "x86_64-pc-windows-msvc", "commit": "fixture",
+                       "cargo_lock_sha256": "b" * 64, "source_install_sha256": signing.digest(source / "airk-install.json"),
+                       "install_manifest_sha256": signing.digest(runtime / "airk-install.json"), "components": components}
+            (output / "signing.json").write_text(json.dumps(receipt), encoding="utf-8")
+            with patch.object(signing, "verify", return_value={}) as verify:
+                result, _ = signing.read_verified_pair(output, source, receipt["target"], "fixture", "b" * 64)
+                self.assertEqual(result, runtime)
+                self.assertEqual({call.args[0].name for call in verify.call_args_list}, set(components))
+                signed["files"]["LICENSE"] = "c" * 64
+                (runtime / "airk-install.json").write_text(json.dumps(signed), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "unrelated"):
+                    signing.read_verified_pair(output, source, receipt["target"], "fixture", "b" * 64)
+                del components["airk-embed.exe"]
+                (output / "signing.json").write_text(json.dumps(receipt), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "component inventory"):
+                    signing.read_verified_pair(output, source, receipt["target"], "fixture", "b" * 64)
+
     def test_apple_verification_requires_runtime_timestamp_and_exact_team(self):
         with tempfile.TemporaryDirectory() as temporary:
             binary = Path(temporary) / "airk"

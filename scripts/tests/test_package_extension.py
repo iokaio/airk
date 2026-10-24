@@ -70,8 +70,8 @@ class VsixContracts(unittest.TestCase):
             for name in package.MODULES:
                 (compiled / name).write_text('"use strict";\n', encoding="utf-8")
             (compiled / "extension.js").write_text(
-                'require("vscode"); require("./retention"); require("./extractionPolicy"); require("./history");', encoding="utf-8")
-            (compiled / "history.js").write_text('require("./native.js");', encoding="utf-8")
+                'require("vscode"); require("./serviceExtension"); require("./serviceConsole");', encoding="utf-8")
+            (compiled / "serviceExtension.js").write_text('require("./native.js");', encoding="utf-8")
             (compiled / "native.js").write_text('require("node:fs"); require("./model");', encoding="utf-8")
             (compiled / "test").mkdir()
             (compiled / "test" / "private.test.js").write_text("not runtime", encoding="utf-8")
@@ -82,7 +82,7 @@ class VsixContracts(unittest.TestCase):
             for name in package.MODULES:
                 self.assertEqual((stage / name).read_bytes(), (compiled / name).read_bytes())
             for missing in ("./futureControl", "./test/private.test", "../outside"):
-                (compiled / "history.js").write_text('require("' + missing + '");', encoding="utf-8")
+                (compiled / "serviceExtension.js").write_text('require("' + missing + '");', encoding="utf-8")
                 rejected = Path(directory) / "rejected"
                 with self.assertRaisesRegex(ValueError, "Runtime import outside allowlisted stage"):
                     package.stage_runtime_modules(compiled, rejected)

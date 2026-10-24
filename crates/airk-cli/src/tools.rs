@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-use airk_kernel::Kernel;
-use airk_mcp::local::{LocalTools, tools};
+use airk_mcp::local::tools;
 use anyhow::{Context, Result, ensure};
 use clap::Subcommand;
 use serde_json::{Map, Value, json};
@@ -14,13 +13,7 @@ const MAX_ARGUMENT_BYTES: usize = 64 * 1024;
 trait ToolSession {
     async fn call(&self, tool: String, arguments: Map<String, Value>) -> Result<Value>;
 }
-impl ToolSession for LocalTools {
-    async fn call(&self, tool: String, arguments: Map<String, Value>) -> Result<Value> {
-        Ok(serde_json::to_value(
-            LocalTools::call(self, tool, arguments).await?,
-        )?)
-    }
-}
+
 struct RemoteSession(std::sync::Arc<dyn airk_mcp::remote::RemoteTools>);
 impl ToolSession for RemoteSession {
     async fn call(&self, tool: String, mut arguments: Map<String, Value>) -> Result<Value> {
@@ -205,32 +198,6 @@ async fn call(
         "MCP tool failed; see the result above"
     );
     Ok(())
-}
-
-pub async fn run(action: ToolsCommand, kernel: Kernel) -> Result<()> {
-    let mut session = LocalTools::new(kernel.clone()).await?;
-    let result = match action {
-        ToolsCommand::Call {
-            tool,
-            args,
-            args_file,
-        } => match arguments(args.as_deref(), args_file.as_deref()) {
-            Ok(args) => call(&session, tool, args, true).await,
-            Err(error) => Err(error),
-        },
-        ToolsCommand::Shell => {
-            shell(
-                &session,
-                kernel.root(),
-                kernel.data_dir(),
-                kernel.collection(),
-            )
-            .await
-        }
-        _ => unreachable!("inspection is handled before opening the kernel"),
-    };
-    let closed = session.close().await;
-    result.and(closed)
 }
 
 pub async fn run_remote(

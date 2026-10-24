@@ -6,7 +6,6 @@ use airk_kernel::{
     current::{CurrentUpdateStage, CurrentUpdater},
 };
 use airk_store::{
-    FileStore,
     current::{ArtifactChange, CapturedInput, CurrentScope},
     quota::Quota,
 };
@@ -17,8 +16,14 @@ fn crash_child() -> Result<()> {
     let Ok(encoded) = std::env::var("AIRK_RUNTIME_CRASH_CASE") else {
         return Ok(());
     };
-    let (data, boundary): (std::path::PathBuf, String) = serde_json::from_str(&encoded)?;
-    let store = FileStore::new(data.join("collections-1.2/project-a"));
+    let (data, root, boundary): (std::path::PathBuf, std::path::PathBuf, String) =
+        serde_json::from_str(&encoded)?;
+    let collection = airk_store::service::collection::Collection::existing(
+        &data,
+        root.to_str().unwrap(),
+        "project-a",
+    )?;
+    let store = collection.selected_store()?;
     let owner: Value =
         serde_json::from_slice(&fs::read(store.directory().join("current-owner.json"))?)?;
     let scope: CurrentScope = serde_json::from_value(owner["scope"].clone())?;
@@ -26,7 +31,7 @@ fn crash_child() -> Result<()> {
     let configuration = read.collection_state()?.unwrap().configuration;
     let artifact = read.artifact("captured.txt")?.unwrap();
     drop(read);
-    let quota = Quota::open(data)?;
+    let quota = Quota::open_service(data)?;
     let reservation = quota.reserve("project-a", 512 << 20)?;
     let writer = store.lock()?;
     if boundary.starts_with("cold-") {
@@ -83,16 +88,22 @@ fn cli_and_mcp_recover_captured_updates_after_process_exit_and_expire_old_tokens
                 root.path().join("captured.txt"),
                 "captured original source\n",
             )?;
-            let kernel =
-                Kernel::open_collection(root.path(), Some(data.path().into()), "project-a")?;
+            let owner = tempfile::tempdir()?;
+            common::bind_data(&owner.path().join("control"), data.path())?;
+            let kernel = Kernel::open_service_collection(
+                root.path(),
+                Some(data.path().into()),
+                "project-a",
+            )?;
             kernel.configure_vectors(false)?;
             kernel.index()?;
             let old = kernel.status()?.publication.unwrap().token;
+            drop(kernel);
             let output = Command::new(std::env::current_exe()?)
                 .args(["--exact", "current_recovery::crash_child", "--nocapture"])
                 .env(
                     "AIRK_RUNTIME_CRASH_CASE",
-                    serde_json::to_string(&(data.path(), boundary))?,
+                    serde_json::to_string(&(data.path(), root.path().canonicalize()?, boundary))?,
                 )
                 .output()?;
             ensure!(
@@ -104,6 +115,7 @@ fn cli_and_mcp_recover_captured_updates_after_process_exit_and_expire_old_tokens
                 root.path().join("captured.txt"),
                 "LIVE_UNINDEXED_SENTINEL\n",
             )?;
+            let _service = common::Service::in_owner(root.path(), data.path(), "project-a", owner);
             let recovered: Value = if mcp {
                 let mut session = Session::start(root.path(), data.path())?;
                 session.send(json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"recovery-fixture","version":"1"}}}))?;
@@ -114,50 +126,98 @@ fn cli_and_mcp_recover_captured_updates_after_process_exit_and_expire_old_tokens
                     "airk_read_file",
                     json!({"path":"captured.txt","start_line":1,"end_line":1}),
                 )?;
+                if boundary.starts_with("cold-") {
+                    ensure!(
+                        result["result"]["isError"] == true
+                            && result.to_string().contains("rollback sidecar"),
+                        "{result}"
+                    );
+                    ensure!(
+                        fs::read_to_string(root.path().join("captured.txt"))?
+                            == "LIVE_UNINDEXED_SENTINEL\n",
+                        "source modified on refusal"
+                    );
+                    continue;
+                }
                 ensure!(result["result"]["isError"] != true, "{result}");
                 serde_json::from_str(result["result"]["content"][0]["text"].as_str().unwrap())?
             } else {
-                let output = Command::new(env!("CARGO_BIN_EXE_airk"))
-                    .arg("--root")
-                    .arg(root.path())
-                    .arg("--data-dir")
-                    .arg(data.path())
-                    .args([
-                        "--collection",
+                if boundary.starts_with("cold-") {
+                    let error = common::call(
+                        root.path(),
+                        data.path(),
                         "project-a",
+                        &[
+                            "read",
+                            "captured.txt",
+                            "--start-line",
+                            "1",
+                            "--end-line",
+                            "1",
+                        ],
+                    )
+                    .unwrap_err();
+                    ensure!(
+                        format!("{error:#}").contains("rollback sidecar"),
+                        "{error:#}"
+                    );
+                    ensure!(
+                        fs::read_to_string(root.path().join("captured.txt"))?
+                            == "LIVE_UNINDEXED_SENTINEL\n",
+                        "source modified on refusal"
+                    );
+                    continue;
+                }
+                common::call(
+                    root.path(),
+                    data.path(),
+                    "project-a",
+                    &[
                         "read",
                         "captured.txt",
                         "--start-line",
                         "1",
                         "--end-line",
                         "1",
-                    ])
-                    .output()?;
-                ensure!(
-                    output.status.success(),
-                    "{}",
-                    String::from_utf8_lossy(&output.stderr)
-                );
-                serde_json::from_slice(&output.stdout)?
+                    ],
+                )?
             };
             assert!(recovered.to_string().contains("captured original source"));
             assert!(!recovered.to_string().contains("LIVE_UNINDEXED_SENTINEL"));
-            let reopened =
-                Kernel::open_collection(root.path(), Some(data.path().into()), "project-a")?;
-            let current = reopened.status()?.publication.unwrap().token;
-            let published = !boundary.starts_with("cold-");
-            assert_eq!(current.generation, old.generation + u64::from(published));
-            let previous = reopened.file_info_conditional(
-                "captured.txt",
-                &airk_core::evidence::EvidenceReadOptions {
-                    revision: Some(old),
-                    ..Default::default()
-                },
+            let observed: airk_core::identity::RevisionToken =
+                recovered["read"]["publication"]["token"]
+                    .as_str()
+                    .unwrap()
+                    .parse()?;
+            // Opening a read-only connection cannot authorize prepared replay.
+            assert_eq!(observed, old);
+            _service.job(airk_core::service::JobKind::Recover);
+            let recovered = common::call(
+                root.path(),
+                data.path(),
+                "project-a",
+                &["info", "captured.txt"],
+            )?;
+            let current: airk_core::identity::RevisionToken =
+                recovered["read"]["publication"]["token"]
+                    .as_str()
+                    .unwrap()
+                    .parse()?;
+            assert_eq!(current.generation, old.generation + 1);
+            let previous = common::call(
+                root.path(),
+                data.path(),
+                "project-a",
+                &["info", "captured.txt", "--revision", &old.to_string()],
             );
-            assert_eq!(previous.is_err(), published);
-            let second =
-                Kernel::open_collection(root.path(), Some(data.path().into()), "project-a")?;
-            assert_eq!(second.status()?.publication.unwrap().token, current);
+            assert!(previous.is_err());
+            let second = common::call(
+                root.path(),
+                data.path(),
+                "project-a",
+                &["info", "captured.txt"],
+            )?;
+            assert_eq!(second["read"]["publication"]["token"], current.to_string());
             assert_eq!(
                 fs::read_to_string(root.path().join("captured.txt"))?,
                 "LIVE_UNINDEXED_SENTINEL\n"

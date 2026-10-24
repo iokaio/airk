@@ -116,6 +116,7 @@ fn owner(
 }
 fn snapshot(project: ProjectBinding) -> InspectionSnapshot {
     InspectionSnapshot {
+        quota_policy_digest: None,
         project,
         incarnation: Incarnation::from_bytes([3; 16]),
         publication: None,

@@ -15,11 +15,9 @@ ROOT = Path(__file__).resolve().parent.parent
 EXTENSION = ROOT / "packages" / "vscode"
 TARGETS = {"x86_64-pc-windows-msvc": "win32-x64", "x86_64-unknown-linux-gnu": "linux-x64",
            "aarch64-apple-darwin": "darwin-arm64", "x86_64-apple-darwin": "darwin-x64"}
-MODULES = ("extension.js", "model.js", "native.js", "cliInstall.js", "scheduler.js", "coverage.js",
-           "retention.js", "extractionPolicy.js", "ingestionLimits.js", "history.js", "report.js", "sidebar.js",
-           "agentConnections.js", "agentConfig.js", "agentSetup.js", "dashboardView.js", "collectionTree.js",
-           "usagePanel.js", "usageReport.js", "vectorModel.js", "diagnostics.js", "diagnosticsView.js",
-           "agentDiagnostics.js", "indexProgress.js", "serviceBootstrap.js", "serviceClient.js",
+MODULES = ("extension.js", "serviceExtension.js", "serviceWorkspace.js", "model.js", "native.js", "cliInstall.js",
+           "usagePanel.js", "usageReport.js", "report.js",
+           "agentConnections.js", "agentConfig.js", "agentSetup.js", "serviceBootstrap.js", "serviceClient.js",
            "serviceConsole.js", "serviceConsoleController.js", "serviceConsoleView.js", "serviceIntents.js")
 JSONC_FILES = ("package.json", "LICENSE.md", "lib/umd/main.js", "lib/umd/impl/edit.js",
                "lib/umd/impl/format.js", "lib/umd/impl/parser.js", "lib/umd/impl/scanner.js",
@@ -109,8 +107,9 @@ def verify_vsix(archive, expected, executable, platform=None, version=None, pre_
         normalized = {("readme.md" if name == "README.md" else "LICENSE.txt" if name == "LICENSE" else name): value for name, value in expected.items()}
         if payload != normalized or set(names) != {"extension/" + name for name in normalized} | generated:
             raise ValueError("VSIX payload differs from the allowlisted stage")
-        if executable != "airk.exe" and not (zipped.getinfo("extension/native/" + executable).external_attr >> 16) & stat.S_IXUSR:
-            raise ValueError("VSIX lost native executable permission")
+        for name in expected:
+            if name in ("native/airk", "native/runtime/airk", "native/runtime/airk-embed") and not (zipped.getinfo("extension/" + name).external_attr >> 16) & stat.S_IXUSR:
+                raise ValueError("VSIX lost native executable permission: " + name)
         metadata = ET.fromstring(zipped.read("extension.vsixmanifest"))
         identity = next((element for element in metadata.iter()
                          if element.tag.rsplit("}", 1)[-1] == "Identity"), None)
@@ -146,6 +145,8 @@ def main():
     if not output.is_relative_to(artifacts) or output == artifacts or not native.is_relative_to(artifacts):
         raise SystemExit("Native input and fresh extension output must be inside artifacts/")
     manifest = json.loads((native / "manifest.json").read_text(encoding="utf-8"))
+    if manifest.get("schema") != "airk-native-candidate/2":
+        raise SystemExit("A verified separate native service pair is required")
     package = json.loads((EXTENSION / "package.json").read_text(encoding="utf-8"))
     pre_release = args.channel == "preview"
     if manifest["target"] != args.target or manifest["vsix_target"] != TARGETS[args.target] or manifest["version"] != package["version"]:
@@ -163,21 +164,37 @@ def main():
     stage.mkdir()
     publish.mkdir()
     executable = "airk.exe" if "windows" in args.target else "airk"
+    helper = "airk-embed.exe" if "windows" in args.target else "airk-embed"
     with zipfile.ZipFile(archive) as zipped:
         if len(zipped.namelist()) != len(set(zipped.namelist())) or set(zipped.namelist()) != set(manifest["payload"]):
             raise SystemExit("Native archive inventory differs")
         for name, expected in manifest["payload"].items():
             safe_name(name)
-            if name not in (executable, "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md") and not name.startswith("notices/"):
+            if name not in (executable, helper, "airk-build.json", "airk-runtime.json", "airk-install.json", "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md") and not name.startswith("notices/"):
                 raise SystemExit("Unexpected native payload path: " + name)
             data = zipped.read(name)
             if digest(data) != expected:
                 raise SystemExit("Native payload digest mismatch: " + name)
-            destination = stage / "native" / name
+            if stat.S_ISLNK(zipped.getinfo(name).external_attr >> 16):
+                raise SystemExit("Native archive links are forbidden")
+            destination = stage / "native" / "runtime" / name
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes(data)
-    (stage / "native" / executable).chmod(0o755)
-    shutil.copyfile(native / "manifest.json", stage / "native" / "manifest.json")
+    runtime = stage / "native" / "runtime"
+    install_digest = digest((runtime / "airk-install.json").read_bytes())
+    install = json.loads((runtime / "airk-install.json").read_text(encoding="utf-8"))
+    inventory = {name: value for name, value in manifest["payload"].items() if name != "airk-install.json"}
+    if install.get("files") != inventory or install_digest != manifest.get("install_manifest_sha256"):
+        raise SystemExit("Native pair installer inventory differs")
+    for name in (executable, helper):
+        if name not in inventory:
+            raise SystemExit("Native pair executable missing: " + name)
+        (runtime / name).chmod(0o755)
+    wrapper = {"schema": 2, "version": manifest["version"], "vsix_target": manifest["vsix_target"],
+               "runtime_dir": "runtime", "install_manifest_sha256": install_digest,
+               "payload": {name: inventory[name] for name in (executable, helper)}}
+    (stage / "native" / "manifest.json").write_text(json.dumps(wrapper, indent=2) + "\n", encoding="utf-8")
+    shutil.copyfile(native / "manifest.json", stage / "native" / "candidate.json")
     stage_runtime_modules(EXTENSION / "out", stage / "out")
     stage_jsonc_parser(EXTENSION / "node_modules" / "jsonc-parser", stage / "node_modules" / "jsonc-parser")
     for key in ("scripts", "devDependencies"):

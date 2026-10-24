@@ -75,6 +75,8 @@ pub struct Query {
     pub tool: String,
     pub arguments: serde_json::Map<String, serde_json::Value>,
     #[serde(default)]
+    pub native: Option<airk_mcp::local::NativeRead>,
+    #[serde(default)]
     pub status_receipt: airk_mcp::response::StatusReceipt,
 }
 
@@ -83,6 +85,8 @@ pub struct Query {
 pub struct QueryResult {
     pub result: serde_json::Value,
     pub status_receipt: airk_mcp::response::StatusReceipt,
+    #[serde(default)]
+    pub rebind: bool,
 }
 
 #[derive(Serialize, Deserialize)]

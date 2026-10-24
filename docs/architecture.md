@@ -1,5 +1,8 @@
 # Architecture
 
+Current 1.4.0 cutover: the public CLI and extension are service clients. Only native worker roles open project Kernels/stores; the broker remains metadata-only and retrieval/inference use direct scoped transports. Source and lockfile versions are synchronized. Container/package cutover and final qualification remain in progress.
+
+
 AIRK is an independent local indexing/retrieval kernel. Source workspaces are authoritative; all index state is derived. It does not reason, generate answers, manage agents, route model calls or require an external database.
 
 The [October 17 release summary](releases-2026-10-17.md) covers the 1.1.0–1.1.2 changes and upgrade behavior. This page describes the resulting component boundaries; release publication and workload qualification are recorded separately.
@@ -11,12 +14,20 @@ flowchart LR
   K --> S[Collection disk state]
   S --> R[SQLite FTS5 lexical and authenticated fact retrieval]
   V[Default local embeddings and disk-backed DiskANN] --> R
-  C[CLI or optional extension] --> K
+  C[CLI or optional extension] --> N[Native service: registration, grants and durable work]
   A[Coding agent] --> M[Read-only stdio MCP]
-  M --> K
+  M --> N
+  C --> P[Scoped project worker]
+  M --> P
+  N -. supervises .-> P
+  P --> K
+  P --> H[Shared inference helper]
+  N -. lifecycle and admission .-> H
   R --> K
   K --> E[Bounded evidence and original locations]
 ~~~
+
+The service brokers connections and schedules metadata-bound work. Evidence and model inputs travel directly between clients, project workers and the shared helper; those payloads do not pass through the broker.
 
 ## Dependency boundaries
 

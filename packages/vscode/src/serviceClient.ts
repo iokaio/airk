@@ -112,12 +112,23 @@ export function validateConfigurationRequest(input:unknown):ProjectConfiguration
     identifier(value.incarnation,16);identifier(value.settings,32);
     const names:Record<string,string[]>={bundled_model:[],vectors:['enabled'],detail:['level'],vector_selection:['policy'],
         add_root:['alias','path'],remove_root:['alias'],install_model:['directory','manifest_sha256'],usage:['mode'],
+        clear_usage:[],usage_feedback:['request_id','usefulness'],import_usage:['input'],extraction_policy:['input'],scan_limits:['input'],quota_policy:['input','expected_policy_digest'],
         calibrate:['tokenizer','baseline','returned','generation','content_kind','record']};
     if(typeof operation!=='string'||!Object.hasOwn(names,operation)||Object.keys(configuration).sort().join(',')!==['operation',...names[operation]].sort().join(','))throw new ServiceError('invalid_project_configuration');
     const filePath=(input:unknown)=>{if(typeof input!=='string'||!path.isAbsolute(input)||input.length>4096||/[\u0000-\u001f\u007f]/.test(input))throw new ServiceError('invalid_configuration_path');};
     if(operation==='vectors'&&typeof configuration.enabled!=='boolean')throw new ServiceError('invalid_project_configuration');
     if(operation==='detail'&&!['essential','agent_lean','balanced','detailed'].includes(String(configuration.level)))throw new ServiceError('invalid_project_configuration');
     if(operation==='usage'&&!['disabled','aggregates_only','diagnostic_events'].includes(String(configuration.mode)))throw new ServiceError('invalid_project_configuration');
+    if(operation==='usage_feedback'){
+        identifier(configuration.request_id,16);
+        if(!['useful','partly_useful','not_useful'].includes(String(configuration.usefulness)))throw new ServiceError('invalid_project_configuration');
+    }
+    if(['import_usage','extraction_policy','scan_limits','quota_policy'].includes(String(operation))){
+        const input=record(configuration.input);
+        if(Object.keys(input).sort().join(',')!=='path,sha256')throw new ServiceError('invalid_project_configuration');
+        filePath(input.path);identifier(input.sha256,32);
+        if(operation==='quota_policy')identifier(configuration.expected_policy_digest,32);
+    }
     if(operation==='add_root'||operation==='remove_root'){
         if(typeof configuration.alias!=='string'||!/^[A-Za-z0-9_-]{1,64}$/.test(configuration.alias))throw new ServiceError('invalid_configuration_alias');
         if(operation==='add_root')filePath(configuration.path);

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Exercise PDF ingestion through the distributed executable, including worker dispatch.
 use serde_json::Value;
-use std::{fs, process::Command};
+use std::fs;
+mod common;
 
 fn pdf() -> Vec<u8> {
     let stream = "BT /F1 12 Tf 10 100 Td (Isolated PDF evidence.) Tj ET";
@@ -36,25 +37,11 @@ fn distributed_cli_indexes_pdf_in_its_worker_and_preserves_source_locations() ->
     let state = tempfile::tempdir()?;
     let original = pdf();
     fs::write(source.path().join("original.pdf"), &original)?;
+    let service = common::Service::start(source.path(), state.path(), "isolated-pdf");
+    service.configure(airk_cli::service_configuration::Draft::Vectors { enabled: false });
     let command = |args: &[&str]| -> anyhow::Result<Value> {
-        let output = Command::new(env!("CARGO_BIN_EXE_airk"))
-            .arg("--root")
-            .arg(source.path())
-            .arg("--data-dir")
-            .arg(state.path())
-            .args(["--collection", "isolated-pdf"])
-            .args(args)
-            .env("AIRK_USAGE_MODE", "disabled")
-            .output()?;
-        assert!(
-            output.status.success(),
-            "stdout: {}\nstderr: {}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        Ok(serde_json::from_slice(&output.stdout)?)
+        common::call(source.path(), state.path(), "isolated-pdf", args)
     };
-    command(&["collections", "vectors", "set", "--enabled", "false"])?;
     command(&["index"])?;
     let envelope = command(&[
         "tools",

@@ -255,14 +255,14 @@ export class ServiceConsoleController {
         this.bootstrap.inspection.lifecycle=lifecycle;
         this.state.bootstrap={...this.state.bootstrap,value:{...this.state.bootstrap.value,lifecycle}};
     }
-    private async mutation(title:string,intent:ConsoleIntent):Promise<void>{
+    private async mutation(title:string,intent:ConsoleIntent):Promise<RecordValue>{
         if(!this.journal||(!this.client&&!('lifecycle' in intent)))throw new ServiceError('console_not_connected');
         const id=await this.journal.prepare(title,intent);this.pending();this.publish();
-        this.authorized();await this.submit(id);this.pending();
+        this.authorized();const response=await this.submit(id);this.pending();return response;
     }
-    private async submit(id:string,force=false):Promise<void>{
+    private async submit(id:string,force=false):Promise<RecordValue>{
         if(!this.journal)throw new ServiceError('console_journal_not_observed');
-        await this.journal.submit(this.client,id,response=>this.receipt(response),async intent=>{
+        return this.journal.submit(this.client,id,response=>this.receipt(response),async intent=>{
             this.authorized();if(!this.binding)throw new ServiceError('runtime_binding_not_observed');
             try{
                 const result=await this.host.lifecycle(this.binding,intent,force);this.authorized();return result;
@@ -393,6 +393,37 @@ export class ServiceConsoleController {
         }
     }
     /** Trusted host command: capture a native repair preview; execution still needs its separate review. */
+    async projectConfiguration(project:string,draft:RecordValue,valid:()=>boolean=()=>true):Promise<void>{
+        if(!await this.whenIdle())throw new ServiceError('console_not_connected');
+        const check=()=>{this.authorized();if(!valid())throw new ServiceError('project_configuration_selection_changed');};
+        this.state.busy=true;this.state.message=undefined;this.publish();
+        try{
+            check();identifier(project,32);if(!this.client)await this.discover();check();
+            if(!this.client||!this.binding)throw new ServiceError('console_not_connected');
+            await this.observe();check();
+            const wait=async(response:RecordValue,kind:string)=>{
+                const accepted=record(response.job),id=identifier(accepted.id,32),deadline=Date.now()+90000;
+                if(accepted.project!==project||accepted.kind!==kind)throw new ServiceError('crossed_configuration_job');
+                while(true){
+                    check();const observed=record((await this.rpc({job:{id}},'job')).job);check();
+                    if(observed.id!==id||observed.project!==project||observed.kind!==kind)throw new ServiceError('crossed_configuration_job');
+                    if(observed.outcome){
+                        if(record(observed.outcome).state!=='succeeded')throw new ServiceError('configuration_job_failed');
+                        return id;
+                    }
+                    if(Date.now()>=deadline)throw new ServiceError('configuration_job_still_pending');
+                    await new Promise(resolve=>setTimeout(resolve,100));
+                }
+            };
+            await wait(await this.mutation(`Inspect configuration ${project}`,{enqueue:await this.client.prepareJob(project,'inspect')}),'inspect');check();
+            const request=await this.host.runtime.prepareConfiguration(this.binding,project,draft);check();
+            const id=await wait(await this.mutation(`Configure ${String(request.configuration.operation)} ${project}`,await this.client.prepareConfiguration(project,request)),'configure');
+            const result=await this.rpc({configuration_result:{id}},'configuration');check();
+            if(record(result.job).id!==id||record(result.job).project!==project||result.result===null)throw new ServiceError('configuration_result_unavailable');
+            await this.observe();
+        }catch(error){this.state.message=code(error);throw error;}
+        finally{try{this.pending();}catch(error){this.state.message=code(error);}this.state.busy=false;this.publish();this.releaseIdle();}
+    }
     async projectPlan(project:string,operation:import('./serviceClient').RepairOperation):Promise<void>{
         if(!await this.whenIdle())return;
         this.state.busy=true;this.state.message=undefined;this.publish();

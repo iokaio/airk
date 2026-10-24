@@ -61,6 +61,19 @@ test('guide separates client setup from helper checks and escapes all workspace 
     assert.ok(agentChoices().some(item => item.client === 'codex' && item.label === 'Codex'));
 });
 
+test('service guide makes legacy review explicit and describes MCP verification as read-only', () => {
+    const selected = { ...spec, service: { installDir: path.resolve('/fixture/install'), project: 'a'.repeat(64) } };
+    const html = renderConnectionGuide('claude', selected, 'Review configuration');
+    assert.match(html, /data-action="reviewLegacy"/);
+    assert.match(html, /without starting indexing/);
+    assert.doesNotMatch(html, /helper check updates this collection/);
+    assert.doesNotMatch(renderConnectionGuide('claude', selected, '', '', true), /data-action="reviewLegacy"/);
+    assert.doesNotMatch(renderConnectionGuide('codex', selected, ''), /data-action="reviewLegacy"/);
+    assert.match(renderConnectionGuide('codex', selected, ''), /manual review/);
+    assert.equal(connectionAction({ action: 'reviewLegacy' }, 'claude'), 'reviewLegacy');
+    assert.equal(connectionAction({ action: 'reviewLegacy' }, 'codex'), undefined);
+});
+
 test('guide messages cannot run arbitrary actions or another client’s installer', () => {
     for (const value of [null, {}, { action: 'delete' }, { action: ['createCodex'] }]) {
         assert.equal(connectionAction(value, 'codex'), undefined);

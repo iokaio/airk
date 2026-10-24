@@ -10,7 +10,7 @@ repository.workspace = true
 publish.workspace = true
 
 [features]
-default = ["local-inference", "bundled-model"]
+default = []
 local-inference = ["airk-kernel/local-inference", "airk-retrieval/local-inference"]
 bundled-model = []
 embedding-worker = ["local-inference", "bundled-model"]

@@ -1,5 +1,8 @@
 # Service client adapters and request recovery
 
+**Development checkpoint before the 1.4 default cutover (2026-10-24).** The artifact identities and 1.3.2 development versions below remain historical evidence. The current source/lockfiles are 1.4.0 and the extension/public CLI now use service defaults; see the [current completion checklist](service-implementation-checklist.md).
+
+
 This records development adapter behavior for the [1.4 plan](airkservice-architecture.md). The service-backed extension activation is implemented in `serviceExtension.ts`, but the package still activates the older controller pending the coordinated default CLI/container/package cutover. Native and extension versions remain 1.3.2 during this development stage. This is not a released 1.4 VSIX.
 
 ## Direct native clients
@@ -11,6 +14,8 @@ Frontend resolution first verifies the approved selected runtime and elected ser
 Ordinary service indexing uses the registered source and durable native queue. Legacy window-scheduler options, path overrides and unreviewed full rebuilds are refused on this path. A full rebuild instead creates a native guarded maintenance preview; the console still requires separate approval before execution.
 
 ## Durable CLI requests
+
+The default 1.4 adapter also supports [direct usage/settings pages and guarded configuration](service-native-management.md). Configuration intents use the same bounded journal and exact-key recovery as enqueue intents. Their inspection and input selectors remain native; report bodies do not pass through the broker.
 
 The native CLI saves an immutable request before submitting it. Each record binds its control location, registry namespace, caller, nonce, request epoch, project and job kind. The same-version/engine metadata adapter checks health and sends to the observed service instance. A changed instance or uncertain response preserves the record. There is no automatic fresh-key replay.
 

@@ -57,7 +57,7 @@ def source_identity():
         "git", "-c", f"safe.directory={ROOT.as_posix()}", "ls-files", "-z",
         "--cached", "--others", "--exclude-standard", "--", "Cargo.toml", "Cargo.lock",
         "rust-toolchain.toml", ".cargo", "crates", "scripts/build-service-runtime.py",
-        "scripts/license-notices.py", "LICENSE", "third_party"], cwd=ROOT)
+        "scripts/license-notices.py", "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md", "third_party"], cwd=ROOT)
     result = hashlib.sha256()
     files = sorted(set(name for name in names.split(b"\0") if name))
     for name in files:
@@ -86,7 +86,8 @@ def publish_staging(staging, destination):
 
 def seal_install_payload(staging, version, operating_system, architecture):
     """Inventory the complete offline payload; its digest needs independent approval."""
-    shutil.copyfile(ROOT / "LICENSE", staging / "LICENSE")
+    for name in ("LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"):
+        shutil.copyfile(ROOT / name, staging / name)
     subprocess.run([os.sys.executable, str(ROOT / "scripts" / "license-notices.py"),
                     "--output", str(staging / "notices")], cwd=ROOT, check=True)
     files = {item.relative_to(staging).as_posix(): digest(item)
@@ -96,6 +97,19 @@ def seal_install_payload(staging, version, operating_system, architecture):
     manifest = {"schema": 1, "version": version, "os": operating_system,
                 "arch": architecture, "files": files}
     (staging / "airk-install.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+
+def write_pair_metadata(staging, version, operating_system, architecture):
+    main = "airk.exe" if operating_system == "windows" else "airk"
+    helper = "airk-embed.exe" if operating_system == "windows" else "airk-embed"
+    manifest = {"schema": 1, "version": version, "os": operating_system, "arch": architecture,
+                "airk_sha256": digest(staging / main), "embed_sha256": digest(staging / helper)}
+    (staging / "airk-runtime.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    for executable in (main, helper):
+        identity = subprocess.check_output([str(staging / executable), "--version"], text=True, encoding="utf-8").strip()
+        if identity != f"{Path(executable).stem} {version}":
+            raise RuntimeError(f"Unexpected executable identity: {identity}")
+    return manifest
 
 
 def main():
@@ -122,15 +136,7 @@ def main():
         architecture = {"amd64": "x86_64", "x86_64": "x86_64", "arm64": "aarch64", "aarch64": "aarch64"}.get(platform.machine().lower())
         if not operating_system or not architecture:
             raise RuntimeError("Unsupported host runtime pair target")
-        manifest = {"schema": 1, "version": version, "os": operating_system, "arch": architecture,
-                    "airk_sha256": digest(staging / main_binary.name),
-                    "embed_sha256": digest(staging / helper.name)}
-        (staging / "airk-runtime.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-        for executable in (main_binary.name, helper.name):
-            identity = subprocess.check_output([str(staging / executable), "--version"],
-                                               text=True, encoding="utf-8").strip()
-            if identity != f"{Path(executable).stem} {version}":
-                raise RuntimeError(f"Unexpected executable identity: {identity}")
+        manifest = write_pair_metadata(staging, version, operating_system, architecture)
         if source_identity() != source:
             raise RuntimeError("Native source changed during the paired build; staging was not published")
         receipt = {"schema": 1, "source": source, "profile": args.profile,

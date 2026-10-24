@@ -65,7 +65,10 @@ impl Admission {
             rejected: AtomicU64::new(0),
         }))
     }
-    async fn admit(&self, control: bool) -> Result<OwnedSemaphorePermit, CallToolResult> {
+    pub(crate) async fn admit(
+        &self,
+        control: bool,
+    ) -> Result<OwnedSemaphorePermit, CallToolResult> {
         let semaphore = if control {
             &self.0.control
         } else {

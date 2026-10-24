@@ -1,5 +1,8 @@
 # Reviewed runtime upgrades and rollback
 
+**Development checkpoint before the 1.4 default cutover (2026-10-24).** The artifact identities and 1.3.2 development versions below remain historical evidence. The current source/lockfiles are 1.4.0 and the extension/public CLI now use service defaults; see the [current completion checklist](service-implementation-checklist.md).
+
+
 This is the implemented development contract for the [service console](service-console.md). Native and extension versions remain 1.3.2 while default adapter cutover is incomplete. It does not describe a released VSIX.
 
 The trusted console offers **Review bundled runtime upgrade**, **Review previous runtime** and **Review saved runtime activation**. The host reads the current installation, selected approval, pending native activation and exact candidate before asking for confirmation. The review identifies the execution host, preceding selection, target digest/version and drain/start effects. It does not claim to have counted other connected clients. Organization-managed payloads disable competing user upgrade/rollback controls.

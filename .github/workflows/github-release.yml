@@ -159,7 +159,7 @@ jobs:
         run: python scripts/github-release.py stage-signing --directory artifacts/tested-native --target ${{ matrix.target }}
       - name: Stage Windows signing copy
         if: runner.os == 'Windows'
-        run: python scripts/ci-windows-sign.py prepare
+        run: python scripts/ci-windows-sign.py prepare --pair
       - name: Authenticate AIRK's environment through Azure OIDC
         id: azure
         if: runner.os == 'Windows'
@@ -175,7 +175,9 @@ jobs:
           endpoint: https://wus2.codesigning.azure.net
           signing-account-name: ioka-llc-signing
           certificate-profile-name: WritingForgePro
-          files: ${{ github.workspace }}\artifacts\signed\x86_64-pc-windows-msvc\airk.exe
+          files: |
+            ${{ github.workspace }}\artifacts\signed\x86_64-pc-windows-msvc\runtime\airk.exe
+            ${{ github.workspace }}\artifacts\signed\x86_64-pc-windows-msvc\runtime\airk-embed.exe
           file-digest: SHA256
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
@@ -192,7 +194,7 @@ jobs:
           exclude-interactive-browser-credential: true
       - name: Verify Windows trust, publisher, identity EKU and timestamp
         if: runner.os == 'Windows'
-        run: python scripts/ci-windows-sign.py record
+        run: python scripts/ci-windows-sign.py record --pair
       - name: Clear Azure login
         if: always() && runner.os == 'Windows' && steps.azure.outcome == 'success'
         run: az logout
@@ -203,12 +205,12 @@ jobs:
           MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-        run: python scripts/ci-macos-sign.py --target ${{ matrix.target }}
+        run: python scripts/ci-macos-sign.py --target ${{ matrix.target }} --pair
       - name: Remove temporary Apple credentials after any failure
         if: always() && runner.os == 'macOS'
         run: python scripts/ci-macos-sign.py --cleanup
       - name: Reverify signature and package the signed native copy
-        run: python scripts/package-native.py --target ${{ matrix.target }} --signed-dir artifacts/signed/${{ matrix.target }}
+        run: python scripts/package-native.py --target ${{ matrix.target }} --runtime-dir artifacts/runtime/${{ matrix.target }} --signed-dir artifacts/signed/${{ matrix.target }}
       - name: Repackage matching VSIX with the signed helper
         env:
           AIRK_CHANNEL: ${{ inputs.channel }}

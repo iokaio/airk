@@ -168,6 +168,7 @@ mod tests {
         let response = metadata_only(ControlResponse::Connection {
             role: "original-private-fixture".into(),
             grant: ConnectionGrant {
+                client: airk_core::usage::ClientFamily::Unknown,
                 protocol: 1,
                 identity: WorkerIdentity {
                     service: Incarnation::from_bytes([1; 16]),

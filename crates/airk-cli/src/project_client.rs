@@ -79,23 +79,38 @@ pub struct Connection {
 }
 impl Connection {
     pub async fn connect(root: &Path, project: ProjectBinding) -> Result<Self> {
+        Self::connect_as(root, project, airk_core::usage::ClientFamily::Unknown).await
+    }
+    pub async fn connect_as(
+        root: &Path,
+        project: ProjectBinding,
+        client: airk_core::usage::ClientFamily,
+    ) -> Result<Self> {
         // No evidence query has been submitted. Every retry gets fresh health,
         // scope and a new short-lived grant; an uncertain query is never replayed.
         retry_setup(
-            || Self::connect_once(root, project),
+            || Self::connect_once(root, project, client),
             Duration::from_secs(30),
             8,
             Duration::from_millis(100),
         )
         .await
     }
-    async fn connect_once(root: &Path, project: ProjectBinding) -> Result<Self> {
+    async fn connect_once(
+        root: &Path,
+        project: ProjectBinding,
+        client: airk_core::usage::ClientFamily,
+    ) -> Result<Self> {
         let ControlResponse::Health { observation } =
             service_runtime::request(root, ControlMethod::Health).await?
         else {
             anyhow::bail!("service health unavailable")
         };
-        let (role, grant) =
+        ensure!(
+            observation.version == env!("CARGO_PKG_VERSION"),
+            "native service version differs from this client"
+        );
+        let (role, mut grant) =
             match service_runtime::request(root, ControlMethod::Connect { project }).await? {
                 ControlResponse::Connection { role, grant } => (role, grant),
                 ControlResponse::Failure { code }
@@ -125,6 +140,7 @@ impl Connection {
             local_ipc::connect(&local_ipc::endpoint(root, &role)?),
         )
         .await??;
+        grant.client = client;
         local_ipc::write_message(&mut stream, &grant, Duration::from_secs(5)).await?;
         let accepted: Accepted = local_ipc::read_message(&mut stream, Duration::from_secs(5))
             .await?
@@ -141,7 +157,7 @@ impl Connection {
             status_receipt: Default::default(),
         })
     }
-    fn reusable(&self, now: Instant) -> bool {
+    pub(crate) fn reusable(&self, now: Instant) -> bool {
         self.healthy
             && now < self.authorized_until
             && now.saturating_duration_since(self.last_finished) < Duration::from_secs(25)
@@ -152,6 +168,27 @@ impl Connection {
         tool: String,
         arguments: serde_json::Map<String, serde_json::Value>,
     ) -> Result<serde_json::Value> {
+        self.exchange(Query {
+            tool,
+            arguments,
+            native: None,
+            status_receipt: self.status_receipt,
+        })
+        .await
+    }
+    pub async fn read_native(
+        &mut self,
+        request: airk_mcp::local::NativeRead,
+    ) -> Result<serde_json::Value> {
+        self.exchange(Query {
+            tool: String::new(),
+            arguments: Default::default(),
+            native: Some(request),
+            status_receipt: self.status_receipt,
+        })
+        .await
+    }
+    async fn exchange(&mut self, query: Query) -> Result<serde_json::Value> {
         ensure!(
             self.reusable(Instant::now()),
             "direct connection expired before query submission; obtain fresh brokerage"
@@ -159,16 +196,7 @@ impl Connection {
         // A dropped async caller may leave an unread result on this stream. Mark
         // it unusable before the first write; restore only after a complete reply.
         self.healthy = false;
-        local_ipc::write_message(
-            &mut self.stream,
-            &Query {
-                tool,
-                arguments,
-                status_receipt: self.status_receipt,
-            },
-            Duration::from_secs(5),
-        )
-        .await?;
+        local_ipc::write_message(&mut self.stream, &query, Duration::from_secs(5)).await?;
         let result: protocol::QueryResult =
             local_ipc::read_message(&mut self.stream, Duration::from_secs(120))
                 .await?
@@ -176,7 +204,7 @@ impl Connection {
                     anyhow::anyhow!("project query disconnected; retry through fresh brokerage")
                 })?;
         self.last_finished = Instant::now();
-        self.healthy = true;
+        self.healthy = !result.rebind;
         self.status_receipt = result.status_receipt;
         Ok(result.result)
     }
@@ -199,8 +227,14 @@ struct Backend {
     root: PathBuf,
     project: ProjectBinding,
     state: tokio::sync::Mutex<ClientState>,
+    client: std::sync::Mutex<airk_core::usage::ClientFamily>,
 }
 impl airk_mcp::remote::RemoteTools for Backend {
+    fn client(&self, client: airk_core::usage::ClientFamily) {
+        if let Ok(mut label) = self.client.lock() {
+            *label = client;
+        }
+    }
     fn call(
         &self,
         tool: String,
@@ -214,7 +248,13 @@ impl airk_mcp::remote::RemoteTools for Backend {
                 .is_none_or(|connection| !connection.reusable(Instant::now()))
             {
                 state.connection = None;
-                let mut connection = Connection::connect(&self.root, self.project).await?;
+                let client = self
+                    .client
+                    .lock()
+                    .map(|client| *client)
+                    .unwrap_or(airk_core::usage::ClientFamily::Unknown);
+                let mut connection =
+                    Connection::connect_as(&self.root, self.project, client).await?;
                 connection.restore_status_receipt(state.status_receipt);
                 state.connection = Some(connection);
             }
@@ -243,6 +283,7 @@ pub fn tools(root: PathBuf, project: ProjectBinding) -> Arc<dyn airk_mcp::remote
         root,
         project,
         state: tokio::sync::Mutex::new(Default::default()),
+        client: std::sync::Mutex::new(airk_core::usage::ClientFamily::Cli),
     })
 }
 

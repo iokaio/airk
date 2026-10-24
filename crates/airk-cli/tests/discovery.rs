@@ -2,7 +2,8 @@
 //! Shipped command parsing and MCP schemas share discovery continuation semantics.
 use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
-use std::{fs, process::Command};
+use std::fs;
+mod common;
 
 #[test]
 fn cli_and_mcp_resume_the_same_compact_outline_and_fact_pages() -> Result<()> {
@@ -16,20 +17,9 @@ fn cli_and_mcp_resume_the_same_compact_outline_and_fact_pages() -> Result<()> {
         root.path().join("other.txt"),
         "Original discovery fixture.\n",
     )?;
+    let _service = common::Service::start(root.path(), state.path(), "default");
     let cli = |arguments: &[&str]| -> Result<Value> {
-        let output = Command::new(env!("CARGO_BIN_EXE_airk"))
-            .arg("--root")
-            .arg(root.path())
-            .arg("--data-dir")
-            .arg(state.path())
-            .args(arguments)
-            .output()?;
-        ensure!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        Ok(serde_json::from_slice(&output.stdout)?)
+        common::call(root.path(), state.path(), "default", arguments)
     };
     let tool = |name: &str, arguments: Value| -> Result<Value> {
         let encoded = serde_json::to_string(&arguments)?;
@@ -56,7 +46,7 @@ fn cli_and_mcp_resume_the_same_compact_outline_and_fact_pages() -> Result<()> {
         "airk_outline",
         json!({"path":"many.rs","compact":true,"limit":1,"cursor":first["cursor"]}),
     )?;
-    assert_eq!(first["minimal"]["items"][0]["name"], "alpha");
+    assert_eq!(first["items"][0]["name"], "alpha");
     assert_eq!(next["items"][0]["name"], "beta");
     assert!(next.get("facts").is_none());
     assert_eq!(next["truncated"], false);
@@ -69,14 +59,14 @@ fn cli_and_mcp_resume_the_same_compact_outline_and_fact_pages() -> Result<()> {
         "--cursor",
         first["cursor"].as_str().context("outline cursor")?,
     ])?;
-    assert_eq!(next["items"], direct["minimal"]["items"]);
+    assert_eq!(next["items"], direct["items"]);
 
     let first = cli(&["code-facts", "--kind", "definition", "--limit", "1"])?;
     let next = tool(
         "airk_code_facts",
-        json!({"kind":"definition","compact":false,"limit":1,"cursor":first["cursor"]}),
+        json!({"kind":"definition","limit":1,"cursor":first["cursor"]}),
     )?;
-    assert_eq!(first["facts"][0]["name"], "alpha");
+    assert_eq!(first["items"][0]["name"], "alpha");
     assert_eq!(next["items"][0]["name"], "beta");
     assert_eq!(next["truncated"], false);
     let schema = cli(&["tools", "help", "airk_outline", "--json"])?;

@@ -93,6 +93,9 @@ export class ServiceConsole implements vscode.WebviewViewProvider,vscode.Disposa
         await vscode.commands.executeCommand('airk.service.focus');
         await this.controller.projectPlan(project,operation);
     }
+    async configureProject(project:string,draft:RecordValue,valid:()=>boolean):Promise<void>{
+        await this.controller.projectConfiguration(project,draft,valid);
+    }
     private async logs(observation?:BootstrapObservation):Promise<void>{
         if(!vscode.workspace.isTrusted)throw new ServiceError('runtime_client_no_longer_authorized');
         const bootstrap=observation??await this.runtime.discover();
@@ -135,6 +138,9 @@ export class ServiceConsole implements vscode.WebviewViewProvider,vscode.Disposa
             {label:'Select custom offline model',operation:'install_model',description:'Select and pin model.json from a local model directory'},
             {label:'Select bundled MiniLM',operation:'bundled_model',description:'Replace the current selection with the paired offline default'},
             {label:'Usage recording',operation:'usage',description:'Choose disabled, aggregates or diagnostic events'},
+            {label:'Extraction policy file',operation:'extraction_policy',description:'Apply selected adapter rules and request a source pass'},
+            {label:'Source scan limits file',operation:'scan_limits',description:'Set bounded extraction limits for this project'},
+            {label:'Shared storage quota file',operation:'quota_policy',description:'Change storage admission for all collections sharing this data root'},
             {label:'Calibrate token counts',operation:'calibrate',description:'Count explicit logical JSON samples with a local tokenizer'},
         ],{title:`AIRK project settings: ${String(registration.collection)}`,placeHolder:'Changes become durable native jobs; source files stay unchanged'});
         if(!selection)return;
@@ -168,6 +174,16 @@ export class ServiceConsole implements vscode.WebviewViewProvider,vscode.Disposa
             if(!['file','vscode-remote'].includes(selected[0].scheme))throw new ServiceError('native_configuration_requires_file');
             return selected[0].fsPath;
         };
+        if(['extraction_policy','scan_limits','quota_policy'].includes(operation)){
+            const path=await choose(`Select ${operation==='quota_policy'?'shared storage quota':operation==='scan_limits'?'source scan limits':'extraction policy'} JSON on this execution host`);
+            if(!path)return;
+            if(operation==='quota_policy'){
+                const registration=record(record(row.project).registration);
+                const answer=await vscode.window.showInformationMessage(`Apply this storage quota policy to every collection sharing ${String(registration.data_root)}? It controls new storage admission.`,{modal:true},'Apply shared quotas');
+                if(answer!=='Apply shared quotas')return;
+            }
+            return {operation,path};
+        }
         if(operation==='install_model'){
             const directory=await choose('Select the offline model directory on this execution host',true);
             return directory?{operation,directory}:undefined;

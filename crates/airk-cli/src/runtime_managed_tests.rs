@@ -61,6 +61,35 @@ fn unlisted_or_changed_provider_files_are_preserved_and_block_execution() -> Res
 }
 
 #[test]
+fn managed_client_launcher_is_an_owned_main_copy_and_does_not_copy_helper_or_change_policy()
+-> Result<()> {
+    let (_owner, root, policy) = fixture(ManagedLifecycle::External)?;
+    let before = fs::read(root.join(POLICY))?;
+    let (main, _) = policy.verify()?;
+    prepare_launcher(&root, &main)?;
+    assert_eq!(
+        runtime_pair::digest_file(&verified_launcher(&root)?)?,
+        policy.executable_sha256
+    );
+    prepare_launcher(&root, &main)?;
+    assert_eq!(fs::read(root.join(POLICY))?, before);
+    assert!(!root.join("airk-embed.exe").exists());
+    assert!(!root.join("airk-embed").exists());
+    assert!(!root.join("runtimes").exists());
+    assert!(!root.join("selected.json").exists());
+    assert!(!layout::control(&root)?.exists());
+    assert!(require_unmanaged(&root).is_err());
+    fs::write(launcher_path(&root), b"Changed owned client copy")?;
+    assert!(prepare_launcher(&root, &main).is_err());
+    assert_eq!(
+        fs::read(launcher_path(&root))?,
+        b"Changed owned client copy"
+    );
+    assert_eq!(runtime_pair::digest_file(&main)?, policy.executable_sha256);
+    Ok(())
+}
+
+#[test]
 fn foreign_policy_cannot_rebind_an_installation() -> Result<()> {
     let (_owner, root, mut policy) = fixture(ManagedLifecycle::External)?;
     policy.install = root.join("foreign-installation");

@@ -9,6 +9,61 @@ use rmcp::{
     service::RunningService,
 };
 
+/// Native read capabilities are separate from the fixed MCP tool inventory.
+#[derive(Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReportFormat {
+    #[default]
+    Json,
+    Csv,
+    Markdown,
+}
+impl ReportFormat {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Json => "json",
+            Self::Csv => "csv",
+            Self::Markdown => "markdown",
+        }
+    }
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub enum NativeRead {
+    ValidateSettings {
+        view: SettingsView,
+        input: airk_core::service_configuration::InputFile,
+        cursor: Option<String>,
+        max_bytes: usize,
+    },
+    Settings {
+        view: SettingsView,
+        cursor: Option<String>,
+        max_bytes: usize,
+    },
+    UsageReport {
+        days: u16,
+        cursor: Option<String>,
+        max_bytes: usize,
+        #[serde(default)]
+        format: ReportFormat,
+        #[serde(default)]
+        price: Option<airk_core::usage::PriceScenario>,
+    },
+    UsagePolicy,
+}
+#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SettingsView {
+    ExtractionPolicy,
+    VectorSelection,
+    VectorStatus,
+    Roots,
+    ScanLimits,
+    QuotaPolicy,
+    QuotaStatus,
+}
+
 /// Listing/help require neither a collection nor a source scan.
 pub fn tools() -> Vec<Tool> {
     let mut tools = AirkServer::tool_router().list_all();
@@ -65,13 +120,10 @@ impl LocalTools {
     /// A direct client owns its response observations, while native work still
     /// shares the owning worker's finite admission budget.
     pub async fn session(&self) -> anyhow::Result<Self> {
-        Self::with_admission(
-            self.kernel.clone(),
-            self.family,
-            self.admission.clone(),
-            false,
-        )
-        .await
+        self.session_with_client(self.family).await
+    }
+    pub async fn session_with_client(&self, client: ClientFamily) -> anyhow::Result<Self> {
+        Self::with_admission(self.kernel.clone(), client, self.admission.clone(), false).await
     }
 
     pub async fn call(
@@ -83,6 +135,130 @@ impl LocalTools {
             .client
             .call_tool(CallToolRequestParams::new(name).with_arguments(arguments))
             .await?)
+    }
+
+    pub async fn read_native(
+        &self,
+        request: NativeRead,
+        project: airk_core::service::ProjectBinding,
+    ) -> anyhow::Result<serde_json::Value> {
+        let permit = self
+            .admission
+            .admit(true)
+            .await
+            .map_err(|_| anyhow::anyhow!("native read admission unavailable"))?;
+        let kernel = self.kernel.clone();
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            let kernel = kernel.refresh_service_snapshot()?;
+            match request {
+                NativeRead::ValidateSettings {
+                    view,
+                    input,
+                    cursor,
+                    max_bytes,
+                } => {
+                    let value = match view {
+                        SettingsView::ExtractionPolicy => {
+                            let policy = serde_json::from_slice(
+                                &airk_kernel::service_configuration::verified_input(
+                                    &input, 131_072,
+                                )?,
+                            )?;
+                            serde_json::to_value(kernel.validate_extraction_policy(&policy)?)?
+                        }
+                        SettingsView::VectorSelection => {
+                            let policy = serde_json::from_slice(
+                                &airk_kernel::service_configuration::verified_input(
+                                    &input, 16_384,
+                                )?,
+                            )?;
+                            serde_json::to_value(kernel.validate_vector_selection(&policy)?)?
+                        }
+                        SettingsView::ScanLimits => {
+                            let limits: airk_kernel::limits::ScanLimits = serde_json::from_slice(
+                                &airk_kernel::service_configuration::verified_input(
+                                    &input, 65_536,
+                                )?,
+                            )?;
+                            limits.validate()?;
+                            serde_json::to_value(limits)?
+                        }
+                        SettingsView::QuotaPolicy => {
+                            let policy: airk_kernel::storage::QuotaPolicy = serde_json::from_slice(
+                                &airk_kernel::service_configuration::verified_input(
+                                    &input, 16_384,
+                                )?,
+                            )?;
+                            policy.validate()?;
+                            serde_json::to_value(policy)?
+                        }
+                        _ => anyhow::bail!("settings view does not accept validation input"),
+                    };
+                    Ok(serde_json::to_value(airk_kernel::usage_page::page(
+                        serde_json::json!({"project":project,"value":value}),
+                        cursor.as_deref(),
+                        max_bytes,
+                    )?)?)
+                }
+                NativeRead::Settings {
+                    view,
+                    cursor,
+                    max_bytes,
+                } => {
+                    let value = match view {
+                        SettingsView::ExtractionPolicy => {
+                            serde_json::to_value(kernel.extraction_policy()?)?
+                        }
+                        SettingsView::VectorSelection => {
+                            serde_json::to_value(kernel.vector_selection_status()?)?
+                        }
+                        SettingsView::VectorStatus => {
+                            serde_json::to_value(kernel.vector_status()?)?
+                        }
+                        SettingsView::Roots => serde_json::to_value(kernel.roots()?)?,
+                        SettingsView::ScanLimits => {
+                            serde_json::to_value(kernel.describe_scan_limits()?)?
+                        }
+                        SettingsView::QuotaPolicy => serde_json::to_value(kernel.quota_policy()?)?,
+                        SettingsView::QuotaStatus => serde_json::to_value(kernel.quota_status()?)?,
+                    };
+                    Ok(serde_json::to_value(airk_kernel::usage_page::page(
+                        serde_json::json!({"project":project,"value":value}),
+                        cursor.as_deref(),
+                        max_bytes,
+                    )?)?)
+                }
+                NativeRead::UsagePolicy => {
+                    serde_json::to_value(kernel.usage_policy()?).map_err(Into::into)
+                }
+                NativeRead::UsageReport {
+                    days,
+                    cursor,
+                    max_bytes,
+                    format,
+                    price,
+                } => {
+                    let view = match price {
+                        Some(price) => kernel.usage_report_with_price(days, &price)?,
+                        None => kernel.usage_report(days)?,
+                    };
+                    let view = match format {
+                        ReportFormat::Json => serde_json::to_value(view)?,
+                        _ => serde_json::Value::String(airk_kernel::usage::render_report(
+                            &view,
+                            format.name(),
+                        )?),
+                    };
+                    Ok(serde_json::to_value(airk_kernel::usage_page::page(
+                        serde_json::json!({"project":project,"value":view}),
+                        cursor.as_deref(),
+                        max_bytes,
+                    )?)?)
+                }
+            }
+        })
+        .await?
     }
 
     pub fn status_receipt(&self) -> crate::response::StatusReceipt {

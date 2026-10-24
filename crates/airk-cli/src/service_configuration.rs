@@ -41,6 +41,24 @@ pub enum Draft {
     Usage {
         mode: RecordingMode,
     },
+    ClearUsage,
+    UsageFeedback {
+        request_id: String,
+        usefulness: airk_core::usage::Usefulness,
+    },
+    ImportUsage {
+        path: PathBuf,
+        expected_sha256: Option<airk_core::identity::Sha256Digest>,
+    },
+    ExtractionPolicy {
+        path: PathBuf,
+    },
+    ScanLimits {
+        path: PathBuf,
+    },
+    QuotaPolicy {
+        path: PathBuf,
+    },
     Calibrate {
         tokenizer: PathBuf,
         baseline: PathBuf,
@@ -58,7 +76,7 @@ fn selected(path: &Path) -> Result<PathBuf> {
     );
     Ok(path.canonicalize()?)
 }
-fn input(path: &Path, limit: u64) -> Result<InputFile> {
+pub fn input(path: &Path, limit: u64) -> Result<InputFile> {
     let path = selected(path)?;
     crate::runtime_install::safe_file(&path)?;
     let mut file = std::fs::File::open(&path)?;
@@ -113,6 +131,34 @@ impl Draft {
             }
             Self::BundledModel => ProjectConfiguration::BundledModel,
             Self::Usage { mode } => ProjectConfiguration::Usage { mode },
+            Self::ClearUsage => ProjectConfiguration::ClearUsage,
+            Self::UsageFeedback {
+                request_id,
+                usefulness,
+            } => ProjectConfiguration::UsageFeedback {
+                request_id,
+                usefulness,
+            },
+            Self::ImportUsage {
+                path,
+                expected_sha256,
+            } => {
+                let input = input(&path, 65_536)?;
+                ensure!(
+                    expected_sha256.is_none_or(|expected| expected == input.sha256),
+                    "measurement changed since preview"
+                );
+                ProjectConfiguration::ImportUsage { input }
+            }
+            Self::ExtractionPolicy { path } => ProjectConfiguration::ExtractionPolicy {
+                input: input(&path, 131_072)?,
+            },
+            Self::ScanLimits { path } => ProjectConfiguration::ScanLimits {
+                input: input(&path, 65_536)?,
+            },
+            Self::QuotaPolicy { .. } => {
+                anyhow::bail!("quota preparation requires native project inspection")
+            }
             Self::Calibrate {
                 tokenizer,
                 baseline,
@@ -138,7 +184,6 @@ pub async fn prepare(
     project: ProjectBinding,
     draft: Draft,
 ) -> Result<ConfigurationRequest> {
-    let configuration = draft.prepare()?;
     let ControlResponse::Inspection {
         observation: Some(observation),
         ..
@@ -150,6 +195,16 @@ pub async fn prepare(
         observation.snapshot.project == project,
         "configuration inspection belongs to another project"
     );
+    let configuration = match draft {
+        Draft::QuotaPolicy { path } => ProjectConfiguration::QuotaPolicy {
+            input: input(&path, 16_384)?,
+            expected_policy_digest: observation
+                .snapshot
+                .quota_policy_digest
+                .context("inspect the current storage quota policy before changing it")?,
+        },
+        draft => draft.prepare()?,
+    };
     let request = ConfigurationRequest {
         incarnation: observation.snapshot.incarnation,
         settings: observation
@@ -187,6 +242,32 @@ mod tests {
         std::fs::write(&sample, vec![b'x'; 262145])?;
         assert!(input(&sample, 262144).is_err());
         assert!(input(Path::new("relative.json"), 262144).is_err());
+        Ok(())
+    }
+    #[test]
+    fn usage_import_preparation_rejects_bytes_changed_after_the_reviewed_preview() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let sample = directory.path().join("measurement.json");
+        std::fs::write(&sample, b"{\"original\":true}")?;
+        let expected = input(&sample, 65_536)?.sha256;
+        let prepared = Draft::ImportUsage {
+            path: sample.clone(),
+            expected_sha256: Some(expected),
+        }
+        .prepare()?;
+        assert!(
+            matches!(prepared, ProjectConfiguration::ImportUsage { input } if input.sha256 == expected)
+        );
+        std::fs::write(&sample, b"{\"changed\":true}")?;
+        assert!(
+            Draft::ImportUsage {
+                path: sample.clone(),
+                expected_sha256: Some(expected)
+            }
+            .prepare()
+            .is_err()
+        );
+        assert_eq!(std::fs::read(&sample)?, b"{\"changed\":true}");
         Ok(())
     }
 }

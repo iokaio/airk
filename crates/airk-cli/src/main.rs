@@ -1,16 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
-use airk_core::RelationshipQuery;
-use airk_core::SearchQuery;
-use airk_core::usage::{ClientFamily, RecordingMode, ResponseRepresentation, UsageOperation};
-use airk_kernel::{FactQuery, Kernel};
-use anyhow::Context;
+//! The 1.4 CLI is a native service client. Source/store ownership stays in workers.
+use airk_core::service::{ControlMethod, ControlResponse, JobKind};
+use anyhow::{Context, Result, ensure};
 use clap::{Parser, Subcommand, ValueEnum};
-use std::path::PathBuf;
-
-mod bundled_model;
+use serde_json::{Value, json};
+use std::{
+    io::Read,
+    path::{Path, PathBuf},
+};
 mod tools;
-
-#[derive(clap::Args, Default)]
+#[derive(clap::Args, Default, serde::Serialize)]
 struct EvidenceOptions {
     #[arg(long)]
     revision: Option<airk_core::identity::RevisionToken>,
@@ -24,23 +23,11 @@ struct EvidenceOptions {
     artifact_id: Option<airk_core::identity::ArtifactId>,
 }
 
-impl From<EvidenceOptions> for airk_core::evidence::EvidenceReadOptions {
-    fn from(value: EvidenceOptions) -> Self {
-        Self {
-            revision: value.revision,
-            if_evidence: value.if_evidence,
-            follow_moves: value.follow_moves,
-            known_hash: value.known_hash,
-            artifact_id: value.artifact_id,
-        }
-    }
-}
-
 #[derive(Parser)]
 #[command(
     name = "airk",
     version,
-    about = "Artifact Indexing and Retrieval Kernel"
+    about = "Artifact Indexing and Retrieval Kernel — native service client"
 )]
 struct Cli {
     #[arg(long, default_value = ".", global = true)]
@@ -49,71 +36,43 @@ struct Cli {
     data_dir: Option<PathBuf>,
     #[arg(long, default_value = "default", global = true)]
     collection: String,
-    /// Trusted installed-runtime context supplied by the stable launcher.
-    #[arg(long, global = true, hide = true, requires = "service_project")]
+    #[arg(long, global = true)]
     service_install_dir: Option<PathBuf>,
-    /// Previously reviewed opaque project binding; retained reads need no live source resolution.
-    #[arg(long, global = true, requires = "service_install_dir")]
+    #[arg(
+        long,
+        global = true,
+        hide = true,
+        requires = "service_project",
+        conflicts_with = "service_install_dir"
+    )]
+    service_runtime_dir: Option<PathBuf>,
+    #[arg(long, global = true)]
     service_project: Option<airk_core::service::ProjectBinding>,
     #[command(subcommand)]
     command: Command,
 }
-
-#[cfg(test)]
-mod continuity_argument_tests {
-    use super::*;
-
-    #[test]
-    fn service_project_requires_explicit_installed_context() {
-        let binding = "ab".repeat(32);
-        assert!(Cli::try_parse_from(["airk", "--service-project", &binding, "mcp"]).is_err());
-        assert!(Cli::try_parse_from(["airk", "--service-install-dir", ".", "mcp"]).is_err());
-        assert!(
-            Cli::try_parse_from([
-                "airk",
-                "--service-install-dir",
-                ".",
-                "--service-project",
-                &binding,
-                "mcp"
-            ])
-            .is_ok()
-        );
-    }
-
-    #[test]
-    fn keys_exclude_text_filters_and_validate_exact_identity() {
-        let key = "01".repeat(16);
-        for (command, selector) in [("code-facts", "--symbol-key"), ("facts", "--document-key")] {
-            assert!(Cli::try_parse_from(["airk", command, selector, &key]).is_ok());
-            assert!(Cli::try_parse_from(["airk", command, selector, "short"]).is_err());
-            assert!(
-                Cli::try_parse_from(["airk", command, selector, &key, "--name", "original"])
-                    .is_err()
-            );
-            assert!(
-                Cli::try_parse_from(["airk", command, selector, &key, "--kind", "definition"])
-                    .is_err()
-            );
-        }
-        assert!(Cli::try_parse_from(["airk", "facts", "src", "--document-key", &key]).is_err());
-        assert!(
-            Cli::try_parse_from([
-                "airk",
-                "code-facts",
-                "--symbol-key",
-                &key,
-                "--path-prefix",
-                "src"
-            ])
-            .is_err()
-        );
-    }
-}
-
 #[derive(Subcommand)]
 enum Command {
-    /// Install, select and launch an approved offline service runtime pair.
+    /// Read registered project settings through exact bounded direct pages.
+    Settings {
+        #[arg(value_parser = ["extraction_policy", "vector_selection", "vector_status", "roots", "scan_limits", "quota_policy", "quota_status"])]
+        view: String,
+        #[arg(long)]
+        validate_file: Option<PathBuf>,
+    },
+    /// Submit a guarded project configuration using a bounded native draft.
+    Configure {
+        #[arg(long, required_unless_present = "stdin", conflicts_with = "stdin")]
+        file: Option<PathBuf>,
+        #[arg(long)]
+        stdin: bool,
+    },
+    /// Collection-scoped reports over the direct native worker connection.
+    Usage {
+        #[command(subcommand)]
+        action: UsageCommand,
+    },
+    /// Manage an approved offline service runtime.
     Runtime {
         #[command(subcommand)]
         action: airk_cli::runtime_install::RuntimeCommand,
@@ -124,14 +83,14 @@ enum Command {
     SourceWorker,
     #[command(hide = true)]
     ProcessGuardian,
-    /// Read-only MCP bridge to an already registered service project.
+    /// Read-only service adapter for Bridge.
     Bridge {
         #[arg(long)]
         runtime_dir: PathBuf,
         #[arg(long)]
         project: airk_core::service::ProjectBinding,
     },
-    /// Run the 1.4 foreground service control loop in an explicit private runtime directory.
+    /// Private native control loop for an explicit service runtime.
     Serve {
         #[arg(long)]
         runtime_dir: PathBuf,
@@ -139,14 +98,14 @@ enum Command {
         #[arg(long, value_parser = clap::value_parser!(u64).range(1..=3600))]
         idle_exit_seconds: Option<u64>,
     },
-    /// Inspect native CPU capabilities and the pinned automatic model selection.
+    /// Read-only service adapter for ModelCatalog.
     ModelCatalog,
-    /// Inspect and call the read-only MCP tools, or open an interactive tools console.
+    /// List, inspect or call the same read-only MCP tools.
     Tools {
         #[command(subcommand)]
         action: tools::ToolsCommand,
     },
-    /// Inspect observed indexed changes and validate remembered evidence.
+    /// Read-only service adapter for Changes.
     Changes {
         #[arg(long)]
         since: Option<airk_core::identity::RevisionToken>,
@@ -172,44 +131,11 @@ enum Command {
         #[arg(long)]
         cursor: Option<String>,
     },
-    /// Extract explicit local OCR pages using a bounded provider request JSON.
-    Ocr {
-        path: String,
-        #[arg(long)]
-        request: PathBuf,
-    },
-    /// Manage an explicit per-user native indexing service for this data root.
-    Service {
-        #[command(subcommand)]
-        action: ServiceCommand,
-    },
-    /// Relocate an explicitly selected data root while keeping old managed state.
-    Storage {
-        #[command(subcommand)]
-        action: StorageCommand,
-    },
-    /// Persistent local indexing queue shared by CLI and editor workers.
-    Schedule {
-        #[command(subcommand)]
-        action: ScheduleCommand,
-    },
-    /// Local content-free activity, performance and counterfactual context estimates.
-    Usage {
-        #[command(subcommand)]
-        action: UsageCommand,
-    },
-    /// Inspect eligible workspace indexing coverage; optionally refresh discovery.
-    Coverage {
-        #[arg(long)]
-        refresh: bool,
-    },
-    /// Optional producer-side semantic binding and revision-checked import.
-    Analysis {
-        #[command(subcommand)]
-        action: AnalysisCommand,
-    },
-    /// Query enriched code syntax and imported facts without broad source text.
+    /// Read-only service adapter for CodeFacts.
     CodeFacts {
+        /// False includes rich facts and durable IDs; independent of response mode.
+        #[arg(long, num_args = 0..=1, default_missing_value = "true")]
+        compact: Option<bool>,
         /// Continue the same revision-bound discovery with unchanged filters.
         #[arg(long)]
         cursor: Option<String>,
@@ -229,7 +155,7 @@ enum Command {
         #[arg(long, default_value_t = 8192)]
         max_bytes: usize,
     },
-    /// Bounded incoming/outgoing relationships; syntax edges remain candidates.
+    /// Read-only service adapter for Relationships.
     Relationships {
         symbol: String,
         #[arg(long, default_value = "incoming")]
@@ -245,57 +171,16 @@ enum Command {
         #[arg(long, default_value_t = 8192)]
         max_bytes: usize,
     },
-    /// Manage per-user disk usage; never deletes source workspace files.
-    Collections {
-        #[command(subcommand)]
-        action: CollectionCommand,
-    },
-    /// Keep one container host running for collection-scoped docker-exec workers.
-    Host,
-    /// Index the workspace and print a ready-to-merge native MCP configuration.
+    /// Print a stable-launcher MCP configuration for an existing registration.
     Setup {
         #[arg(long,value_enum,default_value_t=SetupClient::Claude)]
         client: SetupClient,
     },
-    /// Initialize local derived state without indexing sources.
+    /// Register canonical roots and prepare reserved service storage.
     Init,
-    /// Incrementally index eligible UTF-8 files; report exclusions.
-    Index {
-        /// Emit JSON progress observations to stderr; final JSON stays on stdout.
-        #[arg(long)]
-        progress: bool,
-        path: Option<PathBuf>,
-        /// Persist and join the shared local indexing queue.
-        #[arg(long)]
-        scheduled: bool,
-        /// Respect native pause state when scheduled by an editor.
-        #[arg(long, requires = "scheduled")]
-        automatic: bool,
-        /// Re-extract every eligible file while preserving the prior index on failure.
-        #[arg(long)]
-        full: bool,
-        /// Refresh only these logical saved paths; repeat or supply several paths.
-        #[arg(long, num_args = 1.., conflicts_with = "full")]
-        paths: Vec<String>,
-        /// The submitter already waited for edits to settle.
-        #[arg(long, requires = "scheduled")]
-        coalesced: bool,
-    },
-    /// Show the active snapshot and counts.
+    /// Read the registered project status through the direct client.
     Status,
-    /// Inspect or resume durable semantic enrichment and select default search behavior.
-    Semantic {
-        #[command(subcommand)]
-        action: SemanticCommand,
-    },
-    /// Inspect CPU/memory worker admission. AIRK_EXECUTION_MODE selects automatic, interactive or throughput.
-    Execution,
-    /// Configure retained-object encoding or repack one bounded current batch.
-    Compression {
-        #[command(subcommand)]
-        action: CompressionCommand,
-    },
-    /// Retrieve bounded evidence using the collection default (hybrid unless opted out).
+    /// Read-only service adapter for Search.
     Search {
         query: String,
         #[arg(long, value_enum, conflicts_with = "semantic")]
@@ -310,7 +195,7 @@ enum Command {
         #[arg(long, default_value_t = 8192)]
         max_bytes: usize,
     },
-    /// List indexed paths by prefix.
+    /// Read-only service adapter for Files.
     Files {
         /// Continue the same revision-bound discovery with unchanged filters.
         #[arg(long)]
@@ -322,7 +207,7 @@ enum Command {
         #[arg(long, default_value_t = 8192)]
         max_bytes: usize,
     },
-    /// Read indexed source lines, with inclusive 1-based bounds.
+    /// Read-only service adapter for Read.
     Read {
         #[command(flatten)]
         evidence: EvidenceOptions,
@@ -334,22 +219,22 @@ enum Command {
         #[arg(long, default_value_t = 8192)]
         max_bytes: usize,
     },
-    /// Serve read-only MCP tools over stdio.
+    /// Serve read-only MCP through the installed broker and direct project worker.
     Mcp,
-    /// Inspect format and extraction quality for an indexed file.
+    /// Read-only service adapter for Info.
     Info {
         path: String,
         #[command(flatten)]
         evidence: EvidenceOptions,
     },
-    /// Retrieve a file's native and imported code/document outline.
+    /// Read-only service adapter for Outline.
     Outline {
         /// Continue the same revision-bound discovery with unchanged filters.
         #[arg(long)]
         cursor: Option<String>,
         /// Return minimal names/kinds/lines/signatures with shared original file/provenance bindings.
-        #[arg(long)]
-        compact: bool,
+        #[arg(long, num_args = 0..=1, default_missing_value = "true")]
+        compact: Option<bool>,
         #[command(flatten)]
         evidence: EvidenceOptions,
         path: String,
@@ -358,8 +243,11 @@ enum Command {
         #[arg(long, default_value_t = 8192)]
         max_bytes: usize,
     },
-    /// Find exact native syntax and imported provider definitions.
+    /// Read-only service adapter for Symbol.
     Symbol {
+        /// False includes rich facts and durable IDs; independent of response mode.
+        #[arg(long, num_args = 0..=1, default_missing_value = "true")]
+        compact: Option<bool>,
         /// Continue the same revision-bound discovery with unchanged filters.
         #[arg(long)]
         cursor: Option<String>,
@@ -369,16 +257,22 @@ enum Command {
         #[arg(long, default_value = "")]
         path_prefix: String,
     },
-    /// Retrieve native import declarations.
+    /// Read-only service adapter for Imports.
     Imports {
+        /// False includes rich facts and durable IDs; independent of response mode.
+        #[arg(long, num_args = 0..=1, default_missing_value = "true")]
+        compact: Option<bool>,
         /// Continue the same revision-bound discovery with unchanged filters.
         #[arg(long)]
         cursor: Option<String>,
         #[arg(default_value = "")]
         path_prefix: String,
     },
-    /// Retrieve structured document/configuration facts.
+    /// Read-only service adapter for Facts.
     Facts {
+        /// False includes rich facts and durable IDs; independent of response mode.
+        #[arg(long, num_args = 0..=1, default_missing_value = "true")]
+        compact: Option<bool>,
         /// Continue the same revision-bound discovery with unchanged filters.
         #[arg(long)]
         cursor: Option<String>,
@@ -397,13 +291,13 @@ enum Command {
         #[arg(long, default_value_t = 8192)]
         max_bytes: usize,
     },
-    /// Find textual identifier occurrences; no semantic name resolution.
+    /// Read-only service adapter for Refs.
     Refs {
         name: String,
         #[arg(long, default_value = "")]
         path_prefix: String,
     },
-    /// Retrieve neighboring indexed lines.
+    /// Read-only service adapter for Context.
     Context {
         #[command(flatten)]
         evidence: EvidenceOptions,
@@ -416,71 +310,95 @@ enum Command {
         #[arg(long, default_value_t = 8192)]
         max_bytes: usize,
     },
-}
-
-#[derive(Subcommand)]
-enum ScheduleCommand {
-    Enqueue {
+    /// Accept durable indexing work for the registered project.
+    Index {
         #[arg(long)]
         full: bool,
-        #[arg(long, num_args = 1.., conflicts_with = "full")]
-        paths: Vec<String>,
-        #[arg(long)]
-        coalesced: bool,
     },
-    Status,
-    /// Join an existing request without enqueueing another scan.
-    Wait {
-        #[arg(value_parser = clap::value_parser!(u64).range(1..))]
-        revision: u64,
-        #[arg(long)]
-        progress: bool,
-    },
+    /// Explicit shared bundled-model setup; preserve an existing/custom selection.
+    SetupModel,
+    /// Accept a bounded native inspection job.
+    Inspect,
     Pause,
     Resume,
-    Forget,
-    Run {
-        #[arg(long)]
-        watch: bool,
-        #[arg(long, default_value_t = 1000, value_parser = clap::value_parser!(u64).range(250..=60000))]
-        poll_ms: u64,
-    },
-}
-
-#[derive(Subcommand)]
-enum SemanticCommand {
-    Status,
-    Run {
-        /// Run one collection-scoped batch, honoring scheduler pause and failures.
-        #[arg(long)]
-        scheduled: bool,
-        /// Emit JSON progress observations to stderr; final JSON stays on stdout.
-        #[arg(long)]
-        progress: bool,
-    },
-    Policy {
-        #[arg(value_parser = ["partial_hybrid", "lexical_while_pending", "require_complete"])]
+    Watch {
+        #[arg(value_parser=["on","off"])]
         mode: String,
     },
+    /// Run the installed service under an explicit container/user supervisor.
+    Host,
+    /// Bounded native metadata and request recovery; never a project writer.
+    Service {
+        #[command(subcommand)]
+        action: ServiceCommand,
+    },
 }
-
 #[derive(Subcommand)]
-enum CompressionCommand {
-    Show,
-    Set {
-        #[arg(value_parser = ["off", "automatic", "space"])]
-        mode: String,
-    },
-    Repack {
+enum ServiceCommand {
+    Requests {
         #[arg(long)]
-        after: Option<String>,
-        #[arg(long, default_value_t = 32, value_parser = clap::value_parser!(u32).range(1..=32))]
-        max_files: u32,
+        runtime_dir: PathBuf,
+        #[command(subcommand)]
+        action: ClientRequestCommand,
+    },
+    PrepareRegistration,
+    PrepareStorage {
+        #[arg(long)]
+        runtime_dir: PathBuf,
+        #[arg(long)]
+        project: airk_core::service::ProjectBinding,
+    },
+    PrepareConfiguration {
+        #[arg(long)]
+        runtime_dir: PathBuf,
+        #[arg(long)]
+        project: airk_core::service::ProjectBinding,
+    },
+    Console {
+        #[arg(long)]
+        runtime_dir: PathBuf,
+        /// Pin the approved complete payload identity supplied by the trusted launcher.
+        #[arg(long)]
+        runtime_sha256: Option<airk_core::identity::Sha256Digest>,
+    },
+    Logs {
+        #[arg(long)]
+        runtime_dir: PathBuf,
+        #[arg(long, default_value_t = 32)]
+        limit: usize,
+        #[arg(long,default_value="json",value_parser=["json","text"])]
+        format: String,
+    },
+    Register {
+        #[arg(long)]
+        runtime_dir: PathBuf,
+    },
+    Rpc {
+        #[arg(long)]
+        runtime_dir: PathBuf,
+        #[arg(long, required_unless_present = "stdin", conflicts_with = "stdin")]
+        request_file: Option<PathBuf>,
+        /// Read bounded management JSON from stdin instead of a request file.
+        #[arg(long)]
+        stdin: bool,
+    },
+    Health {
+        #[arg(long)]
+        runtime_dir: PathBuf,
+    },
+    Shutdown {
+        #[arg(long)]
+        runtime_dir: PathBuf,
     },
 }
-
 #[derive(Subcommand)]
 enum ClientRequestCommand {
+    PrepareConfiguration {
+        #[arg(long)]
+        project: airk_core::service::ProjectBinding,
+        #[arg(long)]
+        file: PathBuf,
+    },
     Prepare {
         #[arg(long)]
         project: airk_core::service::ProjectBinding,
@@ -495,102 +413,35 @@ enum ClientRequestCommand {
         nonce: airk_core::identity::Incarnation,
     },
 }
-
-#[derive(Subcommand)]
-enum ServiceCommand {
-    /// Inspect, explicitly retry or forget exact saved CLI request keys.
-    Requests {
-        #[arg(long)]
-        runtime_dir: PathBuf,
-        #[command(subcommand)]
-        action: ClientRequestCommand,
-    },
-    /// Resolve canonical source and planned storage identities without writes.
-    PrepareRegistration,
-    /// Create only storage already reserved by the authenticated service registry.
-    PrepareStorage {
-        #[arg(long)]
-        runtime_dir: PathBuf,
-        #[arg(long)]
-        project: airk_core::service::ProjectBinding,
-    },
-    /// Prepare exact file selectors and cached settings guard from a bounded JSON draft on stdin.
-    PrepareConfiguration {
-        #[arg(long)]
-        runtime_dir: PathBuf,
-        #[arg(long)]
-        project: airk_core::service::ProjectBinding,
-    },
-    /// Trusted framed metadata adapter; never starts a service or forwards evidence.
-    Console {
-        #[arg(long)]
-        runtime_dir: PathBuf,
-        /// Pin the approved complete payload identity supplied by the trusted launcher.
-        #[arg(long)]
-        runtime_sha256: Option<airk_core::identity::Sha256Digest>,
-    },
-    /// Read bounded cached process diagnostics even when the service is down.
-    Logs {
-        #[arg(long)]
-        runtime_dir: PathBuf,
-        #[arg(long, default_value_t = 32)]
-        limit: usize,
-        #[arg(long,default_value="json",value_parser=["json","text"])]
-        format: String,
-    },
-    /// Register canonical existing source/storage roots with the native service.
-    Register {
-        #[arg(long)]
-        runtime_dir: PathBuf,
-    },
-    /// Submit one bounded native management request from a JSON file.
-    Rpc {
-        #[arg(long)]
-        runtime_dir: PathBuf,
-        #[arg(long, required_unless_present = "stdin", conflicts_with = "stdin")]
-        request_file: Option<PathBuf>,
-        /// Read bounded management JSON from stdin instead of a request file.
-        #[arg(long)]
-        stdin: bool,
-    },
-    /// Inspect the native service without opening a project database.
-    Health {
-        #[arg(long)]
-        runtime_dir: PathBuf,
-    },
-    /// Gracefully stop the selected native service instance.
-    Shutdown {
-        #[arg(long)]
-        runtime_dir: PathBuf,
-    },
-    Plan,
-    Install,
-    Status,
-    Start,
-    Stop,
-    Uninstall,
-}
-
-#[derive(Subcommand)]
-enum StorageCommand {
-    /// Inspect the copy and required quota headroom without moving data.
-    Plan { destination: PathBuf },
-    /// Copy, verify and activate a new data root; all clients must be stopped.
-    Relocate { destination: PathBuf },
-    /// Resume a recorded interrupted relocation from the original data root.
-    Recover,
-}
-
 #[derive(Subcommand)]
 enum UsageCommand {
-    /// Import one bounded content-free client/session measurement JSON (at most 16 KiB).
+    Report {
+        #[arg(long, default_value_t = 7)]
+        days: u16,
+        #[arg(long, default_value = "json", value_parser = ["json", "csv", "markdown"])]
+        format: String,
+        #[arg(long)]
+        price_scenario: Option<PathBuf>,
+    },
+    Policy,
+    Clear,
+    #[command(name = "configure", alias = "set")]
+    Set {
+        #[arg(long, value_parser = ["disabled", "aggregates_only", "diagnostic_events"])]
+        mode: String,
+    },
+    Feedback {
+        request_id: String,
+        #[arg(long, value_parser = ["useful", "partly_useful", "not_useful", "partly-useful", "not-useful"])]
+        usefulness: String,
+    },
     Import {
         file: PathBuf,
-        /// Validate and display the content-free measurement without recording it.
         #[arg(long)]
         preview: bool,
+        #[arg(long)]
+        if_sha256: Option<airk_core::identity::Sha256Digest>,
     },
-    /// Count comparable logical JSON samples with a digest-bound offline tokenizer.
     Calibrate {
         #[arg(long)]
         tokenizer: PathBuf,
@@ -600,540 +451,12 @@ enum UsageCommand {
         returned: PathBuf,
         #[arg(long)]
         generation: u64,
-        #[arg(long, default_value="unknown", value_parser=["code","structured_text","markdown","pdf","docx","xlsx","pptx","svg","plain_text","mixed","unknown"])]
+        #[arg(long)]
         content_kind: String,
-        /// Persist only aggregate counts and tokenizer identity; preview is the default.
         #[arg(long)]
         record: bool,
     },
-    /// Explicit usefulness feedback for a retained request_id; missing feedback remains unknown.
-    Feedback {
-        request_id: String,
-        #[arg(long, value_parser = ["useful", "partly-useful", "not-useful"])]
-        usefulness: String,
-    },
-    /// Export bounded selected-collection aggregates; does not record its own output.
-    Report {
-        #[arg(long, default_value_t = 30)]
-        days: u16,
-        #[arg(long, default_value = "json", value_parser = ["json", "csv", "markdown"])]
-        format: String,
-        /// Explicit dated input-price scenario JSON; never fetched or saved implicitly.
-        #[arg(long)]
-        price_scenario: Option<PathBuf>,
-    },
-    /// Disable recording, enable aggregates, or opt into short-lived content-free diagnostics.
-    Configure {
-        #[arg(long, value_enum)]
-        mode: UsageMode,
-    },
-    /// Clear this collection's local usage history while preserving indexed sources.
-    Clear,
 }
-
-#[derive(Clone, Copy, ValueEnum)]
-enum UsageMode {
-    Disabled,
-    AggregatesOnly,
-    DiagnosticEvents,
-}
-
-#[derive(Clone, Copy, ValueEnum)]
-enum SearchMode {
-    Lexical,
-    Vector,
-    Hybrid,
-}
-
-impl Command {
-    fn usage_operation(&self) -> Option<UsageOperation> {
-        Some(match self {
-            Self::Usage { .. }
-            | Self::ModelCatalog
-            | Self::Tools { .. }
-            | Self::Mcp
-            | Self::Host
-            | Self::Schedule { .. }
-            | Self::Service { .. }
-            | Self::Serve { .. }
-            | Self::Runtime { .. }
-            | Self::ProjectWorker
-            | Self::SourceWorker
-            | Self::ProcessGuardian
-            | Self::Bridge { .. }
-            | Self::Storage { .. } => return None,
-            Self::Collections {
-                action: CollectionCommand::Quota { .. } | CollectionCommand::Diagnose { .. },
-            } => return None,
-            // The native worker records the actual job once, including joined callers.
-            Self::Index {
-                scheduled: true, ..
-            } => return None,
-            Self::Semantic {
-                action:
-                    SemanticCommand::Run {
-                        scheduled: true, ..
-                    },
-            } => return None,
-            Self::Coverage { .. } => UsageOperation::Coverage,
-            Self::Analysis { .. } | Self::Ocr { .. } | Self::Collections { .. } | Self::Init => {
-                UsageOperation::CollectionMaintenance
-            }
-            Self::Setup { .. } | Self::Index { full: false, .. } => UsageOperation::Index,
-            Self::Index { full: true, .. } => UsageOperation::Reindex,
-            Self::Status | Self::Execution => UsageOperation::Status,
-            Self::Compression { .. } => UsageOperation::CollectionMaintenance,
-            Self::Semantic {
-                action: SemanticCommand::Status,
-            } => UsageOperation::Status,
-            Self::Semantic {
-                action: SemanticCommand::Run { .. },
-            } => UsageOperation::Index,
-            Self::Semantic {
-                action: SemanticCommand::Policy { .. },
-            } => UsageOperation::CollectionMaintenance,
-            Self::Search { .. } => UsageOperation::Search,
-            Self::Files { .. } => UsageOperation::ListFiles,
-            Self::Read { .. } => UsageOperation::ReadFile,
-            Self::Changes { .. } => UsageOperation::Changes,
-            Self::Info { .. } => UsageOperation::FileInfo,
-            Self::Outline { .. } => UsageOperation::Outline,
-            Self::Symbol { .. } => UsageOperation::Symbols,
-            Self::Imports { .. } => UsageOperation::Imports,
-            Self::Facts { .. } => UsageOperation::DocumentFacts,
-            Self::Refs { .. } => UsageOperation::References,
-            Self::Context { .. } => UsageOperation::Context,
-            Self::CodeFacts { .. } => UsageOperation::CodeFacts,
-            Self::Relationships { .. } => UsageOperation::Relationships,
-        })
-    }
-}
-
-struct OutputRecorder<'a> {
-    kernel: &'a Kernel,
-    span: std::cell::RefCell<Option<airk_kernel::usage::RequestSpan>>,
-}
-
-impl OutputRecorder<'_> {
-    fn print(&self, value: &impl serde::Serialize) -> anyhow::Result<()> {
-        let mut logical = serde_json::to_value(value)?;
-        if let Some(object) = logical.as_object_mut()
-            && let Some(id) = self
-                .span
-                .borrow()
-                .as_ref()
-                .and_then(|span| span.request_id())
-        {
-            object.insert("request_id".into(), id.into());
-        }
-        let text = serde_json::to_string(&logical)?;
-        self.print_text(&text, Some(&logical));
-        Ok(())
-    }
-    fn print_text(&self, text: &str, logical: Option<&serde_json::Value>) {
-        println!("{text}");
-        if let Some(span) = self.span.borrow_mut().take() {
-            self.kernel.finish_usage(
-                span,
-                logical,
-                text.len(),
-                false,
-                ResponseRepresentation::LogicalResultJson,
-            );
-        }
-    }
-    fn failure(&self) {
-        if let Some(span) = self.span.borrow_mut().take() {
-            self.kernel.finish_usage(
-                span,
-                None,
-                0,
-                true,
-                ResponseRepresentation::LogicalResultJson,
-            );
-        }
-    }
-}
-
-#[derive(Subcommand)]
-enum AnalysisCommand {
-    /// Run an explicitly configured local LSP against an isolated indexed source copy.
-    Lsp {
-        #[arg(long)]
-        request: PathBuf,
-    },
-    /// Run Universal Ctags against explicit indexed paths in an isolated copy.
-    Ctags {
-        #[arg(long)]
-        request: PathBuf,
-    },
-    /// Print manifest BEFORE running producer; keep it outside indexed sources.
-    Prepare {
-        #[arg(long)]
-        producer: String,
-        #[arg(long)]
-        producer_version: String,
-        #[arg(long, required = true)]
-        build_input: Vec<String>,
-    },
-    /// Validate and transactionally import SCIP plus producer-completed manifest.
-    Import {
-        index: PathBuf,
-        #[arg(long)]
-        manifest: PathBuf,
-    },
-}
-
-#[derive(Subcommand)]
-enum VectorCommand {
-    Show,
-    /// Install the embedded FP32 MiniLM model offline, preserving existing models.
-    InstallBundled,
-    /// Inspect or save explicit vector-only exclusions; lexical evidence is retained.
-    Selection {
-        #[command(subcommand)]
-        action: VectorSelectionCommand,
-    },
-    /// Verify and install local model inputs under native storage quotas.
-    Install {
-        source: PathBuf,
-    },
-    Set {
-        #[arg(long, action = clap::ArgAction::Set)]
-        enabled: bool,
-    },
-}
-
-#[derive(Subcommand)]
-enum VectorSelectionCommand {
-    Show,
-    /// Validate a proposed policy without saving or indexing it.
-    Validate {
-        #[arg(long, required_unless_present = "json", conflicts_with = "json")]
-        file: Option<PathBuf>,
-        #[arg(long, conflicts_with = "file")]
-        json: Option<String>,
-    },
-    /// Save a policy for the next index; preserves the vector enabled setting.
-    Set {
-        #[arg(long, required_unless_present = "json", conflicts_with = "json")]
-        file: Option<PathBuf>,
-        #[arg(long, conflicts_with = "file")]
-        json: Option<String>,
-    },
-}
-
-fn vector_selection_input(
-    file: Option<PathBuf>,
-    json: Option<String>,
-) -> anyhow::Result<airk_core::vector_selection::VectorSelectionPolicy> {
-    use std::io::Read;
-    const MAXIMUM: u64 = 131_072;
-    let bytes = match (file, json) {
-        (Some(file), None) => {
-            let input = std::fs::File::open(file)?;
-            anyhow::ensure!(
-                input.metadata()?.len() <= MAXIMUM,
-                "vector selection exceeds 128 KiB"
-            );
-            let mut bytes = Vec::new();
-            input.take(MAXIMUM + 1).read_to_end(&mut bytes)?;
-            bytes
-        }
-        (None, Some(json)) => json.into_bytes(),
-        _ => anyhow::bail!("provide exactly one vector selection --file or --json"),
-    };
-    anyhow::ensure!(
-        bytes.len() <= MAXIMUM as usize,
-        "vector selection exceeds 128 KiB"
-    );
-    Ok(serde_json::from_slice(&bytes)?)
-}
-
-#[derive(Subcommand)]
-enum CollectionCommand {
-    /// Prepare an explicit full rebuild by discarding an obsolete pre-FTS5 index.
-    /// Preserves collection identity, source files and saved settings.
-    PrepareRebuild,
-    /// Verify one bounded, revision-bound page of retained source and extraction inputs.
-    Diagnose {
-        #[arg(long)]
-        revision: Option<airk_core::identity::RevisionToken>,
-        #[arg(long, requires = "revision")]
-        after: Option<String>,
-        #[arg(long, default_value_t = 128)]
-        max_files: usize,
-        #[arg(long, default_value_t = 33554432)]
-        max_bytes: u64,
-    },
-    /// Reclaim unreferenced current-index objects after a complete ownership check.
-    Maintain,
-    /// Inspect or save the collection vector setting used by the panel.
-    Vectors {
-        #[command(subcommand)]
-        action: VectorCommand,
-    },
-    /// Inspect or explicitly administer optional retained history.
-    History {
-        #[command(subcommand)]
-        action: HistoryCommand,
-    },
-    /// Pin already committed evidence; never captures unsaved source files.
-    Checkpoint {
-        #[command(subcommand)]
-        action: CheckpointCommand,
-    },
-    /// Inspect or persist extraction selection; changes apply on successful indexing.
-    Extraction {
-        #[command(subcommand)]
-        action: ExtractionCommand,
-    },
-    /// Inspect or explicitly configure searchable revision retention.
-    Retention {
-        #[command(subcommand)]
-        action: RetentionCommand,
-    },
-    /// Inspect or explicitly replace collection ingestion bounds.
-    Limits {
-        #[command(subcommand)]
-        action: LimitsCommand,
-    },
-    /// Inspect or explicitly replace the quota policy shared by this data root.
-    Quota {
-        #[command(subcommand)]
-        action: QuotaCommand,
-    },
-    /// Register source aliases; changes take effect on the next successful index.
-    Roots {
-        #[command(subcommand)]
-        action: RootsCommand,
-    },
-    /// List collections and actual derived-state disk bytes.
-    List,
-    /// Remove an explicitly named managed collection; retains source files.
-    Remove { id: String },
-    /// Inspect reclaimable retained vector generations; --apply removes unpinned candidates.
-    Prune {
-        #[arg(long)]
-        apply: bool,
-    },
-}
-
-#[derive(Subcommand)]
-enum CheckpointCommand {
-    List,
-    Create {
-        label: String,
-        #[arg(long)]
-        revision: airk_core::identity::RevisionToken,
-    },
-    Remove {
-        label: String,
-        #[arg(long)]
-        revision: airk_core::identity::RevisionToken,
-    },
-}
-#[derive(Subcommand)]
-enum HistoryCommand {
-    Show,
-    Set {
-        #[arg(long)]
-        json: String,
-    },
-    Preview,
-    Run {
-        #[arg(long)]
-        apply: bool,
-    },
-    Available {
-        #[arg(long)]
-        revision: Option<airk_core::identity::RevisionToken>,
-        #[arg(long)]
-        cursor: Option<String>,
-        #[arg(long, default_value_t = 64)]
-        limit: usize,
-        #[arg(long, default_value_t = 65536)]
-        max_bytes: usize,
-    },
-    /// Preview logical purge; apply requires the exact preview digest.
-    Purge {
-        #[arg(long)]
-        json: String,
-        #[arg(long)]
-        apply: bool,
-        #[arg(long, requires = "apply")]
-        expected_plan: Option<airk_core::identity::Sha256Digest>,
-    },
-}
-
-#[derive(Subcommand)]
-enum RetentionCommand {
-    /// Continue pending automatic cleanup once; skip manual policy or a busy writer.
-    Continue,
-    /// Read effective policy, protected storage and pending maintenance; never clean up.
-    Show,
-    /// Preview the current or proposed policy without changing managed state.
-    Preview {
-        #[arg(long, conflicts_with = "json")]
-        file: Option<PathBuf>,
-        #[arg(long, conflicts_with = "file")]
-        json: Option<String>,
-    },
-    /// Persist an explicit policy; does not immediately remove generations.
-    Set {
-        #[arg(required_unless_present = "json", conflicts_with = "json")]
-        file: Option<PathBuf>,
-        #[arg(long, conflicts_with = "file")]
-        json: Option<String>,
-    },
-    /// Preview policy maintenance; --apply performs one bounded pass.
-    Run {
-        #[arg(long)]
-        apply: bool,
-        /// Maximum removal bytes for this pass (1..64 GiB); does not change policy.
-        #[arg(long, value_parser = clap::value_parser!(u64).range(1..=68_719_476_736))]
-        max_removal_bytes: Option<u64>,
-        /// Cooperative elapsed-time budget for this pass (1..60000 ms).
-        #[arg(long, value_parser = clap::value_parser!(u64).range(1..=60_000))]
-        max_duration_ms: Option<u64>,
-        /// Maximum surviving inventory metadata examined (16 KiB..8 GiB).
-        #[arg(long, value_parser = clap::value_parser!(u64).range(16_384..=8_589_934_592))]
-        max_metadata_bytes: Option<u64>,
-    },
-}
-
-#[derive(Subcommand)]
-enum ExtractionCommand {
-    Show,
-    /// Select optional evidence for the next successful index; preserves adapter rules.
-    Detail {
-        #[arg(value_parser = ["agent_lean", "essential", "balanced", "detailed"])]
-        level: String,
-    },
-    Validate {
-        #[arg(long, required_unless_present = "json", conflicts_with = "json")]
-        file: Option<PathBuf>,
-        #[arg(long, conflicts_with = "file")]
-        json: Option<String>,
-    },
-    Set {
-        #[arg(long, required_unless_present = "json", conflicts_with = "json")]
-        file: Option<PathBuf>,
-        #[arg(long, conflicts_with = "file")]
-        json: Option<String>,
-    },
-}
-
-fn extraction_policy_input(
-    file: Option<PathBuf>,
-    json: Option<String>,
-) -> anyhow::Result<airk_kernel::extraction::ExtractionPolicy> {
-    use std::io::Read;
-    const MAXIMUM: u64 = 131_072;
-    let bytes = if let Some(file) = file {
-        let input = std::fs::File::open(file)?;
-        anyhow::ensure!(
-            input.metadata()?.len() <= MAXIMUM,
-            "extraction policy exceeds 128 KiB"
-        );
-        let mut bytes = Vec::new();
-        input.take(MAXIMUM + 1).read_to_end(&mut bytes)?;
-        bytes
-    } else {
-        json.expect("clap requires policy input").into_bytes()
-    };
-    anyhow::ensure!(
-        bytes.len() <= MAXIMUM as usize,
-        "extraction policy exceeds 128 KiB"
-    );
-    Ok(serde_json::from_slice(&bytes)?)
-}
-
-fn retention_policy_bytes(
-    file: Option<PathBuf>,
-    json: Option<String>,
-) -> anyhow::Result<Option<Vec<u8>>> {
-    const MAXIMUM: u64 = 65_536;
-    let bytes = if let Some(file) = file {
-        use std::io::Read;
-        let input = std::fs::File::open(file)?;
-        anyhow::ensure!(
-            input.metadata()?.len() <= MAXIMUM,
-            "retention policy exceeds 64 KiB"
-        );
-        let mut bytes = Vec::new();
-        input.take(MAXIMUM + 1).read_to_end(&mut bytes)?;
-        Some(bytes)
-    } else {
-        json.map(String::into_bytes)
-    };
-    anyhow::ensure!(
-        bytes
-            .as_ref()
-            .is_none_or(|bytes| bytes.len() <= MAXIMUM as usize),
-        "retention policy exceeds 64 KiB"
-    );
-    Ok(bytes)
-}
-
-#[derive(Subcommand)]
-enum LimitsCommand {
-    Show,
-    /// Show effective policy, automatic recommendation and detected memory.
-    Describe,
-    /// Remove the explicit override and restore machine-aware defaults.
-    Reset,
-    /// Validate a ScanLimits JSON object without saving it.
-    Validate {
-        file: PathBuf,
-    },
-    /// Read a ScanLimits JSON object; quotas still constrain publication.
-    Set {
-        #[arg(required_unless_present = "json")]
-        file: Option<PathBuf>,
-        #[arg(long, conflicts_with = "file")]
-        json: Option<String>,
-        #[arg(long)]
-        expected_json: Option<String>,
-    },
-}
-
-#[derive(Subcommand)]
-enum RootsCommand {
-    List,
-    Add {
-        alias: String,
-        path: PathBuf,
-    },
-    Remove {
-        alias: String,
-    },
-    /// Resolve an indexed path through its published revision's source aliases.
-    Locate {
-        path: String,
-    },
-}
-
-#[derive(Subcommand)]
-enum QuotaCommand {
-    Status,
-    Policy,
-    /// Set the entire shared policy from a bounded JSON file, including collection overrides.
-    Set {
-        #[arg(required_unless_present = "json", conflicts_with = "json")]
-        policy: Option<PathBuf>,
-        #[arg(long)]
-        json: Option<String>,
-        #[arg(long)]
-        expected_json: Option<String>,
-    },
-}
-
-fn print_json(value: &impl serde::Serialize) -> anyhow::Result<()> {
-    println!("{}", serde_json::to_string(value)?);
-    Ok(())
-}
-
 #[derive(Clone, Copy, ValueEnum)]
 enum SetupClient {
     Claude,
@@ -1149,118 +472,48 @@ enum SetupClient {
     OpencodeV2,
     Kilo,
 }
-
-fn client_config(kernel: &Kernel, client: SetupClient) -> anyhow::Result<String> {
-    let command = std::env::current_exe()?
-        .to_str()
-        .ok_or_else(|| anyhow::anyhow!("executable is not UTF-8"))?
-        .to_owned();
-    let root = kernel
-        .root()
-        .to_str()
-        .ok_or_else(|| anyhow::anyhow!("root is not UTF-8"))?
-        .to_owned();
-    let data = kernel
-        .data_dir()
-        .canonicalize()?
-        .to_str()
-        .ok_or_else(|| anyhow::anyhow!("data directory is not UTF-8"))?
-        .to_owned();
-    let args = vec![
-        "--root".to_owned(),
-        root,
-        "--data-dir".to_owned(),
-        data,
-        "--collection".to_owned(),
-        kernel.collection().into(),
-        "mcp".into(),
-    ];
-    let mut server = serde_json::json!({"command":command,"args":args});
-    let config = match client {
-        SetupClient::Codex => {
-            return Ok(format!(
-                "[mcp_servers.airk]\ncommand = {}\nargs = {}",
-                serde_json::to_string(&command)?,
-                serde_json::to_string(&args)?
-            ));
-        }
-        SetupClient::Vscode => {
-            server["type"] = serde_json::json!("stdio");
-            serde_json::json!({"servers":{"airk":server}})
-        }
-        SetupClient::Cursor => {
-            server["type"] = serde_json::json!("stdio");
-            serde_json::json!({"mcpServers":{"airk":server}})
-        }
-        SetupClient::CopilotCli => {
-            server["type"] = serde_json::json!("local");
-            server["tools"] = serde_json::json!(["*"]);
-            serde_json::json!({"mcpServers":{"airk":server}})
-        }
-        SetupClient::Opencode | SetupClient::OpencodeV2 | SetupClient::Kilo => {
-            let mut full_command = vec![command];
-            full_command.extend(args);
-            let server = serde_json::json!({"type":"local","command":full_command});
-            if matches!(client, SetupClient::OpencodeV2) {
-                serde_json::json!({"mcp":{"servers":{"airk":server}}})
-            } else {
-                serde_json::json!({"mcp":{"airk":server}})
-            }
-        }
-        _ => serde_json::json!({"mcpServers":{"airk":server}}),
-    };
-    Ok(serde_json::to_string(&config)?)
+#[derive(Clone, Copy, ValueEnum)]
+enum SearchMode {
+    Lexical,
+    Vector,
+    Hybrid,
 }
 
-fn error_envelope(error: &anyhow::Error) -> serde_json::Value {
-    let busy = error.is::<airk_kernel::CurrentGateContention>();
-    let paused = error.is::<airk_kernel::scheduler::ScanPaused>();
-    let pending = error.downcast_ref::<airk_kernel::scheduler::ScheduledIndexPending>();
-    let message: String = format!("{error:#}").chars().take(4096).collect();
-    serde_json::json!({ "airk_error": 1,
-        "code": if busy { "current_gate_busy" } else if pending.is_some() { "scheduled_index_pending" } else if paused { "scheduled_index_paused" } else { "operation_failed" },
-        "retryable": busy || pending.is_some() || paused,
-        "requested_revision": pending.map(|pending| pending.revision), "message": message })
+fn print_json(value: &impl serde::Serialize) -> Result<()> {
+    println!("{}", serde_json::to_string(value)?);
+    Ok(())
 }
-
-#[test]
-fn scheduled_outcomes_preserve_typed_retry_and_revision_fields() {
-    let pending = anyhow::Error::new(airk_kernel::scheduler::ScheduledIndexPending { revision: 7 })
-        .context("waiting");
-    let envelope = error_envelope(&pending);
-    assert_eq!(envelope["airk_error"], 1);
-    assert_eq!(envelope["code"], "scheduled_index_pending");
-    assert_eq!(envelope["retryable"], true);
-    assert_eq!(envelope["requested_revision"], 7);
-    let paused = error_envelope(&airk_kernel::scheduler::ScanPaused.into());
-    assert_eq!(paused["code"], "scheduled_index_paused");
-    assert_eq!(paused["retryable"], true);
-    assert_eq!(
-        error_envelope(&anyhow::anyhow!("scheduled_index_pending"))["retryable"],
-        false
+fn bounded(input: impl Read, limit: u64) -> Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    input.take(limit + 1).read_to_end(&mut bytes)?;
+    ensure!(
+        bytes.len() as u64 <= limit,
+        "native input exceeds byte budget"
     );
+    Ok(bytes)
 }
-
 fn main() -> std::process::ExitCode {
     match run_cli() {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => {
             if std::env::var("AIRK_ERROR_FORMAT").as_deref() == Ok("json") {
-                eprintln!("{}", error_envelope(&error));
+                eprintln!(
+                    "{}",
+                    json!({"airk_error":1,"code":"operation_failed","retryable":false,"message":format!("{error:#}").chars().take(4096).collect::<String>()})
+                );
             } else {
-                eprintln!("Error: {error:?}");
+                eprintln!("Error: {error:#}");
             }
             std::process::ExitCode::FAILURE
         }
     }
 }
-
-fn run_cli() -> anyhow::Result<()> {
+fn run_cli() -> Result<()> {
     if std::env::args_os()
         .nth(1)
         .is_some_and(|arg| arg == "process-guardian")
     {
-        anyhow::ensure!(
+        ensure!(
             std::env::args_os().count() == 2,
             "invalid guardian invocation"
         );
@@ -1272,686 +525,548 @@ fn run_cli() -> anyhow::Result<()> {
     if airk_kernel::dispatch_pdf_worker()? {
         return Ok(());
     }
-    // The command dispatcher's async state exceeds the Windows main-thread
-    // stack in debug builds. Keep PDF workers on the original entry path.
     std::thread::Builder::new()
         .name("airk-cli".into())
         .stack_size(8 << 20)
-        .spawn(main_async)?
+        .spawn(run)?
         .join()
         .map_err(|_| anyhow::anyhow!("AIRK CLI thread panicked"))?
 }
-
-#[tokio::main(worker_threads = 2)]
-async fn main_async() -> anyhow::Result<()> {
+#[tokio::main(flavor = "multi_thread", worker_threads = 2)]
+async fn run() -> Result<()> {
     let cli = Cli::parse();
-    anyhow::ensure!(
-        !matches!(cli.command, Command::ProcessGuardian),
-        "guardian requires its standalone private invocation"
-    );
-    if matches!(cli.command, Command::SourceWorker) {
-        return airk_cli::source_worker::run();
-    }
-    if matches!(cli.command, Command::ProjectWorker) {
-        return airk_cli::project_worker::run().await;
-    }
-    if let Command::Bridge {
-        runtime_dir,
-        project,
-    } = &cli.command
+    let executable = std::env::current_exe()?;
+    if !matches!(cli.command, Command::Runtime { .. })
+        && executable.file_name()
+            == Some(std::ffi::OsStr::new(if cfg!(windows) {
+                "airk-launcher.exe"
+            } else {
+                "airk-launcher"
+            }))
     {
-        return airk_cli::project_client::bridge(runtime_dir.clone(), *project).await;
+        return airk_cli::runtime_install::run(
+            &airk_cli::runtime_install::RuntimeCommand::Launch {
+                install_dir: airk_cli::runtime_install::caller_install_root()?,
+                args: std::env::args_os().skip(1).collect(),
+            },
+        )
+        .await;
     }
-    if let (Some(install), Some(project)) = (&cli.service_install_dir, cli.service_project) {
-        if let Command::Tools { action } = &cli.command
-            && tools::inspect(action)?
-        {
-            return Ok(());
+    match &cli.command {
+        Command::Runtime { action } => return airk_cli::runtime_install::run(action).await,
+        Command::ProjectWorker => return airk_cli::project_worker::run().await,
+        Command::SourceWorker => return airk_cli::source_worker::run(),
+        Command::ProcessGuardian => {
+            anyhow::bail!("guardian requires its standalone private invocation")
         }
-        anyhow::ensure!(
-            matches!(
-                cli.command,
-                Command::Mcp | Command::Tools { .. } | Command::Index { .. } | Command::Status
-            ),
-            "this service project adapter accepts mcp, tools, status or indexing"
-        );
-        if let Command::Index {
-            progress,
-            path,
-            scheduled,
-            automatic,
-            full,
-            paths,
-            coalesced,
-        } = &cli.command
-        {
-            anyhow::ensure!(
-                !*progress
-                    && path.is_none()
-                    && !*scheduled
-                    && !*automatic
-                    && !*full
-                    && paths.is_empty()
-                    && !*coalesced,
-                "service indexing uses its registered root and durable queue; use a reviewed repair plan for a full rebuild"
-            );
+        Command::Bridge {
+            runtime_dir,
+            project,
+        } => return airk_cli::project_client::bridge(runtime_dir.clone(), *project).await,
+        Command::Serve {
+            runtime_dir,
+            idle_exit_seconds,
+        } => {
+            return airk_cli::service_runtime::serve_with_idle(
+                runtime_dir,
+                idle_exit_seconds.map(std::time::Duration::from_secs),
+            )
+            .await;
         }
-        let resolved = airk_cli::service_frontend::resolve(
-            Some(install),
-            Some(project),
+        Command::Service { action } => return service(&cli, action).await,
+        Command::ModelCatalog => {
+            let mut report = serde_json::to_value(airk_kernel::inspect_model_catalog()?)?;
+            report["bundled_model"] = json!({"manifest":airk_cli::bundled_assets::manifest()?});
+            return print_json(&report);
+        }
+        Command::Tools { action } if tools::inspect(action)? => return Ok(()),
+        Command::Host => {
+            return airk_cli::runtime_install::run(
+                &airk_cli::runtime_install::RuntimeCommand::Foreground {
+                    install_dir: install_root(&cli)?,
+                },
+            )
+            .await;
+        }
+        Command::Init => return initialize(&cli).await,
+        Command::Index { full: true } => anyhow::bail!(
+            "full rebuilds require a guarded maintenance preview and separate approval; use Service Console or typed service RPC"
+        ),
+        _ => (),
+    }
+    let project = if let Some(control) = &cli.service_runtime_dir {
+        airk_cli::service_frontend::resolve_control(
+            control,
+            cli.service_project.context("project binding required")?,
+        )
+        .await?
+    } else {
+        airk_cli::service_frontend::resolve(
+            cli.service_install_dir.as_deref(),
+            cli.service_project,
             &cli.root,
             cli.data_dir.as_deref(),
             &cli.collection,
         )
-        .await?;
-        return match cli.command {
-            Command::Mcp => airk_cli::project_client::bridge(resolved.control, project).await,
-            Command::Tools { action } => {
-                tools::run_remote(
-                    action,
-                    resolved.control,
-                    project,
-                    std::path::Path::new(&resolved.registration.root),
-                    std::path::Path::new(&resolved.registration.data_root),
-                    &resolved.registration.collection,
-                )
-                .await
-            }
-            Command::Status => {
-                tools::run_remote(
-                    tools::ToolsCommand::Call {
-                        tool: "airk_status".into(),
-                        args: None,
-                        args_file: None,
-                    },
-                    resolved.control,
-                    project,
-                    std::path::Path::new(&resolved.registration.root),
-                    std::path::Path::new(&resolved.registration.data_root),
-                    &resolved.registration.collection,
-                )
-                .await
-            }
-            Command::Index { .. } => {
-                let nonce = airk_cli::client_requests::prepare(
-                    &resolved.control,
-                    project,
-                    airk_core::service::JobKind::Index,
-                )
-                .await?;
-                eprintln!(
-                    "Saved CLI request {nonce}; inspect or retry it with 'airk service requests --runtime-dir <control> ...'."
-                );
-                print_json(&airk_cli::client_requests::submit(&resolved.control, nonce).await?)?;
-                airk_cli::client_requests::forget(&resolved.control, nonce)
-            }
-            _ => unreachable!("service frontend command checked above"),
-        };
-    }
-    #[cfg(not(feature = "local-inference"))]
-    airk_cli::embedding_client::install()?;
-    if let Command::Runtime { action } = &cli.command {
-        return airk_cli::runtime_install::run(action).await;
-    }
-    if let Command::Serve {
-        runtime_dir,
-        idle_exit_seconds,
-    } = &cli.command
-    {
-        return airk_cli::service_runtime::serve_with_idle(
-            runtime_dir,
-            idle_exit_seconds.map(std::time::Duration::from_secs),
-        )
-        .await;
-    }
-    if let Command::Service { action } = &cli.command {
-        if let ServiceCommand::Requests {
-            runtime_dir,
-            action,
-        } = action
-        {
-            return match action {
-                ClientRequestCommand::Prepare { project, kind } => {
-                    let kind = serde_json::from_value(serde_json::json!(kind))?;
-                    let nonce =
-                        airk_cli::client_requests::prepare(runtime_dir, *project, kind).await?;
-                    print_json(&serde_json::json!({"prepared":nonce,"submitted":false}))
+        .await?
+    };
+    let registration = &project.registration;
+    match cli.command {
+        Command::Settings {
+            view,
+            validate_file,
+        } => {
+            let view = serde_json::from_value(json!(view))?;
+            let value = match validate_file {
+                Some(file) => {
+                    airk_cli::usage_client::validate_settings(
+                        &project.control,
+                        registration.binding,
+                        view,
+                        airk_cli::service_configuration::input(&file, 131_072)?,
+                    )
+                    .await?
                 }
-                ClientRequestCommand::List => {
-                    print_json(&airk_cli::client_requests::list(runtime_dir)?)
-                }
-                ClientRequestCommand::Retry { nonce } => {
-                    print_json(&airk_cli::client_requests::submit(runtime_dir, *nonce).await?)?;
-                    airk_cli::client_requests::forget(runtime_dir, *nonce)
-                }
-                ClientRequestCommand::Forget { nonce } => {
-                    airk_cli::client_requests::forget(runtime_dir, *nonce)?;
-                    print_json(&serde_json::json!({"forgotten":nonce,"native_work_canceled":false}))
+                None => {
+                    airk_cli::usage_client::settings(&project.control, registration.binding, view)
+                        .await?
                 }
             };
+            print_json(&value)
         }
-        if matches!(action, ServiceCommand::PrepareRegistration) {
-            let data = cli
-                .data_dir
+        Command::Configure { file, stdin: _ } => {
+            let bytes = match file {
+                Some(file) => bounded(
+                    std::fs::File::open(file)?,
+                    airk_core::service_configuration::MAX_CONFIGURATION_BYTES as u64,
+                )?,
+                None => bounded(
+                    std::io::stdin(),
+                    airk_core::service_configuration::MAX_CONFIGURATION_BYTES as u64,
+                )?,
+            };
+            configure(
+                &project.control,
+                registration.binding,
+                serde_json::from_slice(&bytes)?,
+            )
+            .await
+        }
+        Command::Usage { action } => match action {
+            UsageCommand::Report {
+                days,
+                format,
+                price_scenario,
+            } => {
+                let price = price_scenario
+                    .map(|file| -> Result<airk_core::usage::PriceScenario> {
+                        let price: airk_core::usage::PriceScenario =
+                            serde_json::from_slice(&bounded(std::fs::File::open(file)?, 16_384)?)?;
+                        price.validate()?;
+                        Ok(price)
+                    })
+                    .transpose()?;
+                let value = airk_cli::usage_client::render(
+                    &project.control,
+                    registration.binding,
+                    days,
+                    serde_json::from_value(json!(format))?,
+                    price,
+                )
+                .await?;
+                if let Some(text) = value.as_str() {
+                    print!("{text}");
+                    Ok(())
+                } else {
+                    print_json(&value)
+                }
+            }
+            UsageCommand::Policy => {
+                let mut connection = airk_cli::project_client::Connection::connect(
+                    &project.control,
+                    registration.binding,
+                )
+                .await?;
+                print_json(
+                    &connection
+                        .read_native(airk_mcp::local::NativeRead::UsagePolicy)
+                        .await?,
+                )
+            }
+            UsageCommand::Import {
+                file,
+                preview: true,
+                ..
+            } => {
+                use sha2::Digest;
+                let bytes = bounded(std::fs::File::open(file)?, 65_536)?;
+                let input_sha256 = format!("{:x}", sha2::Sha256::digest(&bytes));
+                let measurement: airk_core::usage::SupplementalMeasurement =
+                    serde_json::from_slice(&bytes)?;
+                measurement.validate()?;
+                ensure!(
+                    measurement.provenance
+                        != airk_core::usage::MeasurementProvenance::LocalTokenizer,
+                    "local-tokenizer provenance requires usage calibrate"
+                );
+                print_json(
+                    &json!({"preview":measurement,"input_sha256":input_sha256,"collection":registration.collection,"recorded":false,"link_validation":"Native execution verifies retained request links and collection scope."}),
+                )
+            }
+            action => {
+                use airk_cli::service_configuration::Draft;
+                let draft = match action {
+                    UsageCommand::Clear => Draft::ClearUsage,
+                    UsageCommand::Set { mode } => Draft::Usage {
+                        mode: serde_json::from_value(json!(mode))?,
+                    },
+                    UsageCommand::Feedback {
+                        request_id,
+                        usefulness,
+                    } => Draft::UsageFeedback {
+                        request_id,
+                        usefulness: serde_json::from_value(json!(usefulness.replace('-', "_")))?,
+                    },
+                    UsageCommand::Import {
+                        file, if_sha256, ..
+                    } => Draft::ImportUsage {
+                        path: file,
+                        expected_sha256: if_sha256,
+                    },
+                    UsageCommand::Calibrate {
+                        tokenizer,
+                        baseline,
+                        returned,
+                        generation,
+                        content_kind,
+                        record,
+                    } => Draft::Calibrate {
+                        tokenizer,
+                        baseline,
+                        returned,
+                        generation,
+                        content_kind: serde_json::from_value(json!(content_kind))?,
+                        record,
+                    },
+                    _ => unreachable!(),
+                };
+                configure(&project.control, registration.binding, draft).await
+            }
+        },
+        Command::Mcp => {
+            airk_cli::project_client::bridge(project.control, registration.binding).await
+        }
+        Command::Tools { action } => {
+            tools::run_remote(
+                action,
+                project.control,
+                registration.binding,
+                Path::new(&registration.root),
+                Path::new(&registration.data_root),
+                &registration.collection,
+            )
+            .await
+        }
+        Command::Setup { client } => {
+            let install = project
+                .install
                 .as_deref()
-                .context("registration preparation requires explicit --data-dir")?;
-            return print_json(&airk_cli::service_registration::prepare(
+                .context("agent setup requires an installed stable launcher")?;
+            let command = airk_cli::runtime_install::verified_launcher(install)?;
+            println!(
+                "{}",
+                configuration(&command, install, registration, client)?
+            );
+            Ok(())
+        }
+        Command::Index { .. } => job(&project.control, registration.binding, JobKind::Index).await,
+        Command::SetupModel => {
+            job(&project.control, registration.binding, JobKind::ModelSetup).await
+        }
+        Command::Inspect => job(&project.control, registration.binding, JobKind::Inspect).await,
+        Command::Pause | Command::Resume => print_control(
+            airk_cli::console_client::request(
+                &project.control,
+                ControlMethod::Pause {
+                    project: registration.binding,
+                    paused: matches!(cli.command, Command::Pause),
+                },
+            )
+            .await?,
+        ),
+        Command::Watch { mode } => print_control(
+            airk_cli::console_client::request(
+                &project.control,
+                ControlMethod::ConfigureWatch {
+                    project: registration.binding,
+                    enabled: mode == "on",
+                },
+            )
+            .await?,
+        ),
+        command => {
+            let (name, arguments) = query(command)?;
+            tools::run_remote(
+                tools::ToolsCommand::Call {
+                    tool: name.into(),
+                    args: Some(serde_json::to_string(&arguments)?),
+                    args_file: None,
+                },
+                project.control,
+                registration.binding,
+                Path::new(&registration.root),
+                Path::new(&registration.data_root),
+                &registration.collection,
+            )
+            .await
+        }
+    }
+}
+fn install_root(cli: &Cli) -> Result<PathBuf> {
+    match &cli.service_install_dir {
+        Some(root) => Ok(root.clone()),
+        None => airk_cli::runtime_install::caller_install_root(),
+    }
+}
+async fn initialize(cli: &Cli) -> Result<()> {
+    ensure!(
+        cli.service_runtime_dir.is_none(),
+        "raw service registration requires explicit service metadata commands"
+    );
+    let install = install_root(cli)?;
+    let control = airk_cli::runtime_install::installed_control(&install).await?;
+    let data = match &cli.data_dir {
+        Some(data) => data.clone(),
+        None => airk_cli::runtime_install::default_project_data(&install)?,
+    };
+    let registration = airk_cli::service_registration::prepare(&cli.root, &data, &cli.collection)?;
+    ensure!(
+        cli.service_project
+            .is_none_or(|binding| binding == registration.binding),
+        "requested project binding differs from canonical registration"
+    );
+    let response = airk_cli::console_client::request(
+        &control,
+        ControlMethod::ReserveProject {
+            project: registration.clone(),
+        },
+    )
+    .await?;
+    let ControlResponse::Registered { project } = response else {
+        print_control(response)?;
+        anyhow::bail!("registration was not acknowledged")
+    };
+    ensure!(
+        project.registration == registration,
+        "crossed native registration"
+    );
+    ensure!(
+        airk_cli::service_registration::prepare_storage(&control, registration.binding)?
+            == registration,
+        "changed prepared storage identity"
+    );
+    print_json(&project)
+}
+async fn job(
+    control: &Path,
+    project: airk_core::service::ProjectBinding,
+    kind: JobKind,
+) -> Result<()> {
+    let nonce = airk_cli::client_requests::prepare(control, project, kind).await?;
+    eprintln!(
+        "Saved CLI request {nonce}; use 'airk service requests --runtime-dir <control> list/retry' for uncertain outcomes."
+    );
+    print_json(&airk_cli::client_requests::submit(control, nonce).await?)?;
+    airk_cli::client_requests::forget(control, nonce)
+}
+async fn configure(
+    control: &Path,
+    project: airk_core::service::ProjectBinding,
+    draft: airk_cli::service_configuration::Draft,
+) -> Result<()> {
+    use airk_core::service::JobOutcome;
+    let nonce = airk_cli::client_requests::prepare(control, project, JobKind::Inspect).await?;
+    let ControlResponse::Job { job } = airk_cli::client_requests::submit(control, nonce).await?
+    else {
+        anyhow::bail!("configuration inspection not acknowledged")
+    };
+    airk_cli::client_requests::forget(control, nonce)?;
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(90);
+    loop {
+        let ControlResponse::Job { job } =
+            airk_cli::console_client::request(control, ControlMethod::Job { id: job.id }).await?
+        else {
+            anyhow::bail!("configuration inspection receipt unavailable")
+        };
+        if let Some(outcome) = job.outcome {
+            ensure!(
+                matches!(outcome, JobOutcome::Succeeded { .. }),
+                "configuration inspection failed: {outcome:?}"
+            );
+            break;
+        }
+        ensure!(
+            tokio::time::Instant::now() < deadline,
+            "configuration inspection is still pending: {}",
+            job.id
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    let nonce = airk_cli::client_requests::prepare_configuration(control, project, draft).await?;
+    eprintln!(
+        "Saved CLI configuration request {nonce}; retry only with its saved key after uncertain outcomes."
+    );
+    print_json(&airk_cli::client_requests::submit(control, nonce).await?)?;
+    airk_cli::client_requests::forget(control, nonce)
+}
+fn print_control(response: ControlResponse) -> Result<()> {
+    print_json(&response)?;
+    if let ControlResponse::Failure { code } = response {
+        anyhow::bail!("native request refused: {code}");
+    }
+    Ok(())
+}
+async fn service(cli: &Cli, action: &ServiceCommand) -> Result<()> {
+    match action {
+        ServiceCommand::Requests {
+            runtime_dir,
+            action,
+        } => match action {
+            ClientRequestCommand::PrepareConfiguration { project, file } => {
+                let draft = serde_json::from_slice(&bounded(
+                    std::fs::File::open(file)?,
+                    airk_core::service_configuration::MAX_CONFIGURATION_BYTES as u64,
+                )?)?;
+                let nonce =
+                    airk_cli::client_requests::prepare_configuration(runtime_dir, *project, draft)
+                        .await?;
+                print_json(&json!({"prepared":nonce,"submitted":false}))
+            }
+            ClientRequestCommand::List => {
+                print_json(&airk_cli::client_requests::list(runtime_dir)?)
+            }
+            ClientRequestCommand::Prepare { project, kind } => {
+                let kind = serde_json::from_value(json!(kind))?;
+                let nonce = airk_cli::client_requests::prepare(runtime_dir, *project, kind).await?;
+                print_json(&json!({"prepared":nonce,"submitted":false}))
+            }
+            ClientRequestCommand::Retry { nonce } => {
+                print_json(&airk_cli::client_requests::submit(runtime_dir, *nonce).await?)?;
+                airk_cli::client_requests::forget(runtime_dir, *nonce)
+            }
+            ClientRequestCommand::Forget { nonce } => {
+                airk_cli::client_requests::forget(runtime_dir, *nonce)?;
+                print_json(&json!({"forgotten":nonce,"native_work_canceled":false}))
+            }
+        },
+        ServiceCommand::PrepareRegistration => {
+            print_json(&airk_cli::service_registration::prepare(
                 &cli.root,
-                data,
+                cli.data_dir
+                    .as_deref()
+                    .context("registration preparation requires explicit --data-dir")?,
                 &cli.collection,
-            )?);
+            )?)
         }
-        if let ServiceCommand::PrepareStorage {
+        ServiceCommand::PrepareStorage {
             runtime_dir,
             project,
-        } = action
-        {
-            return print_json(&airk_cli::service_registration::prepare_storage(
-                runtime_dir,
-                *project,
-            )?);
-        }
-        if let ServiceCommand::PrepareConfiguration {
+        } => print_json(&airk_cli::service_registration::prepare_storage(
+            runtime_dir,
+            *project,
+        )?),
+        ServiceCommand::PrepareConfiguration {
             runtime_dir,
             project,
-        } = action
-        {
-            use std::io::Read;
-            let mut bytes = Vec::new();
-            std::io::stdin()
-                .take(airk_core::service_configuration::MAX_CONFIGURATION_BYTES as u64 + 1)
-                .read_to_end(&mut bytes)?;
-            anyhow::ensure!(
-                bytes.len() <= airk_core::service_configuration::MAX_CONFIGURATION_BYTES,
-                "configuration draft exceeds budget"
-            );
-            let draft = serde_json::from_slice(&bytes)?;
-            return print_json(
+        } => {
+            let draft = serde_json::from_slice(&bounded(
+                std::io::stdin(),
+                airk_core::service_configuration::MAX_CONFIGURATION_BYTES as u64,
+            )?)?;
+            print_json(
                 &airk_cli::service_configuration::prepare(runtime_dir, *project, draft).await?,
-            );
+            )
         }
-        if let ServiceCommand::Console {
+        ServiceCommand::Console {
             runtime_dir,
             runtime_sha256,
-        } = action
-        {
-            return airk_cli::console_client::run(runtime_dir, *runtime_sha256).await;
-        }
-        if let ServiceCommand::Logs {
+        } => airk_cli::console_client::run(runtime_dir, *runtime_sha256).await,
+        ServiceCommand::Logs {
             runtime_dir,
             limit,
             format,
-        } = action
-        {
+        } => {
             let page = airk_cli::service_logs::recent(runtime_dir, *limit)?;
             if format == "text" {
                 println!("{}", airk_cli::service_logs::render(&page)?);
-                return Ok(());
+                Ok(())
+            } else {
+                print_json(&page)
             }
-            return print_json(&page);
         }
-        if let ServiceCommand::Register { runtime_dir } = action {
-            let data = cli.data_dir.as_deref().ok_or_else(|| {
-                anyhow::anyhow!("service registration requires explicit --data-dir")
-            })?;
-            let project =
-                airk_kernel::service_projects::registration(&cli.root, data, &cli.collection)?;
-            return print_json(
-                &airk_cli::service_runtime::request(
-                    runtime_dir,
-                    airk_core::service::ControlMethod::Register { project },
-                )
-                .await?,
-            );
+        ServiceCommand::Register { runtime_dir } => {
+            let project = airk_kernel::service_projects::registration(
+                &cli.root,
+                cli.data_dir
+                    .as_deref()
+                    .context("service registration requires explicit --data-dir")?,
+                &cli.collection,
+            )?;
+            print_control(
+                airk_cli::console_client::request(runtime_dir, ControlMethod::Register { project })
+                    .await?,
+            )
         }
-        if let ServiceCommand::Rpc {
+        ServiceCommand::Rpc {
             runtime_dir,
             request_file,
             stdin,
-        } = action
-        {
-            use std::io::Read;
-            let mut bytes = Vec::new();
-            let input: Box<dyn Read> = if *stdin {
-                Box::new(std::io::stdin())
+        } => {
+            let bytes = if *stdin {
+                bounded(std::io::stdin(), airk_core::service::MAX_FRAME_BYTES as u64)?
             } else {
-                Box::new(std::fs::File::open(
-                    request_file
-                        .as_ref()
-                        .context("management request file missing")?,
-                )?)
+                bounded(
+                    std::fs::File::open(request_file.as_ref().context("request file required")?)?,
+                    airk_core::service::MAX_FRAME_BYTES as u64,
+                )?
             };
-            input
-                .take(airk_core::service::MAX_FRAME_BYTES as u64 + 1)
-                .read_to_end(&mut bytes)?;
-            anyhow::ensure!(
-                bytes.len() <= airk_core::service::MAX_FRAME_BYTES,
-                "native management request exceeds bound"
+            let method: ControlMethod = serde_json::from_slice(&bytes)?;
+            ensure!(
+                !matches!(method, ControlMethod::Connect { .. }),
+                "metadata RPC cannot expose evidence credentials; use mcp or tools"
             );
-            let method: airk_core::service::ControlMethod = serde_json::from_slice(&bytes)?;
-            return print_json(&airk_cli::service_runtime::request(runtime_dir, method).await?);
+            // Transport success and native application status are distinct in this raw metadata API.
+            print_json(&airk_cli::console_client::request(runtime_dir, method).await?)
         }
-        let selected = match action {
-            ServiceCommand::Health { runtime_dir } => {
-                Some((runtime_dir, airk_core::service::ControlMethod::Health))
-            }
-            ServiceCommand::Shutdown { runtime_dir } => {
-                Some((runtime_dir, airk_core::service::ControlMethod::Shutdown))
-            }
-            _ => None,
-        };
-        if let Some((runtime_dir, method)) = selected {
-            return print_json(&airk_cli::service_runtime::request(runtime_dir, method).await?);
+        ServiceCommand::Health { runtime_dir } => {
+            let response =
+                airk_cli::console_client::request(runtime_dir, ControlMethod::Health).await?;
+            ensure!(
+                matches!(response, ControlResponse::Health { .. }),
+                "service health unavailable or incompatible"
+            );
+            print_json(&response)
         }
-    }
-    if matches!(cli.command, Command::ModelCatalog) {
-        let mut report = serde_json::to_value(airk_kernel::inspect_model_catalog()?)?;
-        report["bundled_model"] = serde_json::json!({ "manifest": bundled_model::manifest()? });
-        return print_json(&report);
-    }
-    if let Command::Tools { action } = &cli.command
-        && tools::inspect(action)?
-    {
-        return Ok(());
-    }
-    if matches!(cli.command, Command::Service { .. }) && cli.data_dir.is_none() {
-        anyhow::bail!("service lifecycle requires explicit --data-dir");
-    }
-    // Recovery must run before Kernel opens the intentionally frozen old root.
-    if let Command::Storage { action } = &cli.command {
-        let source = cli
-            .data_dir
-            .as_deref()
-            .ok_or_else(|| anyhow::anyhow!("storage relocation requires explicit --data-dir"))?;
-        return match action {
-            StorageCommand::Plan { destination } => {
-                print_json(&airk_kernel::storage::relocation_plan(source, destination)?)
-            }
-            StorageCommand::Relocate { destination } => {
-                print_json(&airk_kernel::storage::relocate(source, destination)?)
-            }
-            StorageCommand::Recover => {
-                print_json(&airk_kernel::storage::recover_relocation(source)?)
-            }
-        };
-    }
-    let root = match &cli.command {
-        Command::Index {
-            path: Some(path), ..
-        } => path.clone(),
-        _ => cli.root,
-    };
-    let kernel = if matches!(
-        &cli.command,
-        Command::Collections {
-            action: CollectionCommand::Diagnose { .. } | CollectionCommand::PrepareRebuild
-        } | Command::Index { full: true, .. }
-            | Command::Schedule { .. }
-    ) {
-        Kernel::open_collection_for_diagnostics(root, cli.data_dir, &cli.collection)?
-    } else {
-        Kernel::open_collection(root, cli.data_dir, &cli.collection)?
-    };
-    let recorder = OutputRecorder {
-        kernel: &kernel,
-        span: std::cell::RefCell::new(
-            cli.command
-                .usage_operation()
-                .map(|operation| kernel.usage_span(operation, ClientFamily::Cli)),
+        ServiceCommand::Shutdown { runtime_dir } => print_control(
+            airk_cli::console_client::request(runtime_dir, ControlMethod::Shutdown).await?,
         ),
-    };
-    let result = async { match cli.command {
-        Command::Tools { action } => tools::run(action, kernel.clone()).await,
-        Command::Storage { .. } | Command::Runtime { .. } | Command::ModelCatalog | Command::Serve { .. } | Command::ProjectWorker | Command::SourceWorker | Command::ProcessGuardian | Command::Bridge { .. } => unreachable!("handled before opening kernel"),
-        Command::Service { action } => {
-            let manager = airk_cli::service_manager::ServiceManager::for_kernel(&kernel)?;
-            match action {
-                ServiceCommand::Plan => print_json(&manager.plan()?),
-                ServiceCommand::Status => print_json(&manager.status()?),
-                ServiceCommand::Install => {
-                    kernel.schedule_enqueue(false)?;
-                    print_json(&manager.install()?)
-                }
-                ServiceCommand::Start => print_json(&manager.start()?),
-                ServiceCommand::Stop => print_json(&manager.stop()?),
-                ServiceCommand::Uninstall => print_json(&manager.uninstall()?),
-                ServiceCommand::Requests{..} | ServiceCommand::PrepareRegistration | ServiceCommand::PrepareStorage { .. } | ServiceCommand::PrepareConfiguration { .. } | ServiceCommand::Console { .. } | ServiceCommand::Logs { .. } | ServiceCommand::Health { .. } | ServiceCommand::Shutdown { .. } | ServiceCommand::Rpc { .. } | ServiceCommand::Register { .. } => unreachable!("handled before opening kernel"),
-            }
-        },
-        Command::Schedule { action } => match action {
-            ScheduleCommand::Enqueue { full, paths, coalesced } => print_json(&kernel.schedule_enqueue_selected(full, (!paths.is_empty()).then_some(paths.as_slice()), coalesced)?),
-            ScheduleCommand::Status => print_json(&kernel.schedule_status()?),
-            ScheduleCommand::Wait { revision, progress } => {
-                let worker = if progress { kernel.clone().with_index_progress(|event| {
-                    if let Ok(json) = serde_json::to_string(event) { eprintln!("{json}"); }
-                }) } else { kernel.clone() };
-                print_json(&tokio::task::spawn_blocking(move || worker.wait_scheduled_index(revision)).await??)
-            }
-            ScheduleCommand::Pause => print_json(&kernel.schedule_pause(true)?),
-            ScheduleCommand::Resume => print_json(&kernel.schedule_pause(false)?),
-            ScheduleCommand::Forget => {
-                kernel.schedule_forget()?;
-                print_json(&serde_json::json!({"forgotten":true,"collection":kernel.collection()}))
-            }
-            ScheduleCommand::Run { watch, poll_ms } => {
-                let mut watcher = if watch { Some(airk_kernel::watcher::NativeWatcher::new(&kernel)?) } else { None };
-                loop {
-                    if let Some(watcher) = &mut watcher {
-                        let events = watcher.poll()?;
-                        if !events.queued_collections.is_empty() || !events.errors.is_empty() || events.recovering_dropped_events {
-                            print_json(&events)?;
-                        }
-                    }
-                    let worker = kernel.clone();
-                    let outcome = tokio::task::spawn_blocking(move || worker.run_scheduled_once()).await??;
-                    if !watch || matches!(outcome.state, "indexed" | "failed" | "maintained" | "maintenance_failed") { print_json(&outcome)?; }
-                    if !watch { break; }
-                    if matches!(outcome.state, "idle" | "indexed" | "failed" | "maintained" | "maintenance_failed") {
-                        let worker = kernel.clone();
-                        let reconciliation = tokio::task::spawn_blocking(move || worker.reconcile_scheduled_once()).await??;
-                        if !matches!(reconciliation.state, "idle" | "busy") { print_json(&reconciliation)?; }
-                    }
-                    tokio::select! {
-                        result = tokio::signal::ctrl_c() => { result?; break; },
-                        _ = tokio::time::sleep(std::time::Duration::from_millis(poll_ms)) => {}
-                    }
-                }
-                Ok(())
-            }
-        },
-        Command::Usage { action } => match action {
-            UsageCommand::Import { file, preview } => {
-                let event: airk_core::usage::SupplementalMeasurement = serde_json::from_slice(&airk_kernel::usage::read_usage_input(&file,16_384)?)?;
-                if preview {
-                    event.validate()?;
-                    print_json(&serde_json::json!({"measurement":event,"recorded":false,"notice":"Validated content-free input. Request links and collection admission are checked only when importing."}))
-                } else { print_json(&kernel.usage_import(&event)?) }
-            },
-            UsageCommand::Calibrate {tokenizer,baseline,returned,generation,content_kind,record} => {
-                let content_kind = serde_json::from_value(serde_json::Value::String(content_kind))?;
-                print_json(&kernel.usage_calibrate(airk_kernel::usage::CalibrationRequest {
-                    tokenizer:&tokenizer,baseline:&baseline,returned:&returned,generation,content_kind,record,
-                })?)
-            },
-            UsageCommand::Feedback { request_id, usefulness } => print_json(&kernel.usage_feedback(&request_id, match usefulness.as_str() {
-                "useful" => airk_core::usage::Usefulness::Useful,
-                "partly-useful" => airk_core::usage::Usefulness::PartlyUseful,
-                _ => airk_core::usage::Usefulness::NotUseful,
-            })?),
-            UsageCommand::Report { days, format, price_scenario } => {
-                let view = if let Some(path) = price_scenario {
-                    let scenario = serde_json::from_slice(&airk_kernel::usage::read_usage_input(&path,4096)?)?;
-                    kernel.usage_report_with_price(days,&scenario)?
-                } else { kernel.usage_report(days)? };
-                if format == "json" {
-                    let stdout = std::io::stdout();
-                    let mut output = stdout.lock();
-                    serde_json::to_writer(&mut output, &view)?;
-                    std::io::Write::write_all(&mut output, b"\n")?;
-                } else {
-                    println!("{}", airk_kernel::usage::render_report(&view, &format)?);
-                }
-                Ok(())
-            }
-            UsageCommand::Configure { mode } => print_json(&kernel.configure_usage(match mode {
-                UsageMode::Disabled => RecordingMode::Disabled,
-                UsageMode::AggregatesOnly => RecordingMode::AggregatesOnly,
-                UsageMode::DiagnosticEvents => RecordingMode::DiagnosticEvents,
-            })?),
-            UsageCommand::Clear => print_json(&kernel.clear_usage()?),
-        },
-        Command::Coverage { refresh } => recorder.print(&kernel.coverage(refresh)?),
-        Command::Ocr { path, request } => {
-            let request = serde_json::from_slice(&airk_kernel::usage::read_usage_input(&request,65_536)?)?;
-            recorder.print(&kernel.extract_ocr(&path,&request)?)
-        },
-        Command::Analysis { action } => match action {
-            AnalysisCommand::Lsp { request } => {
-                let request = serde_json::from_slice(&airk_kernel::usage::read_usage_input(&request,65_536)?)?;
-                recorder.print(&kernel.run_provider("lsp",&request)?)
-            }
-            AnalysisCommand::Ctags { request } => {
-                let request = serde_json::from_slice(&airk_kernel::usage::read_usage_input(&request,65_536)?)?;
-                recorder.print(&kernel.run_provider("ctags",&request)?)
-            }
-            AnalysisCommand::Prepare {
-                producer,
-                producer_version,
-                build_input,
-            } => {
-                recorder.print(&kernel.prepare_analysis(&producer, &producer_version, &build_input)?)
-            }
-            AnalysisCommand::Import { index, manifest } => {
-                recorder.print(&kernel.import_scip(&index, &manifest)?)
-            }
-        },
-        Command::CodeFacts {
-            cursor,
-            symbol_key,
-            name,
-            kind,
-            language,
-            path_prefix,
-            limit,
-            max_bytes,
-        } => if let Some(key) = symbol_key {
-            recorder.print(&kernel.continuity_facts(airk_core::continuity::ContinuityKey::Symbol(key), limit, max_bytes)?)
-        } else { recorder.print(&kernel.code_facts_page(&FactQuery {
-            path_prefix,
-            name,
-            kind,
-            language,
-            exact_name: true,
-            limit,
-            max_bytes,
-            path_exact: false,
-            document_only: false,
-        }, &airk_core::discovery::DiscoveryOptions { minimal: false, cursor, compact: false })?) },
-        Command::Relationships {
-            symbol,
-            direction,
-            kind,
-            path_prefix,
-            hops,
-            limit,
-            max_bytes,
-        } => recorder.print(&kernel.relationships(&RelationshipQuery {
-            symbol,
-            direction,
-            kind,
-            path_prefix,
-            hops,
-            limit,
-            max_bytes,
-        })?),
-        Command::Collections { action } => match action {
-            CollectionCommand::PrepareRebuild => recorder.print(&kernel.prepare_full_rebuild()?),
-            CollectionCommand::Diagnose { revision, after, max_files, max_bytes } => {
-                recorder.print(&kernel.diagnose_current(revision, after.as_deref(), max_files, max_bytes)?)
-            }
-            CollectionCommand::Vectors { action } => match action {
-                VectorCommand::Show => recorder.print(&kernel.vector_status()?),
-                VectorCommand::InstallBundled => recorder.print(&bundled_model::install(&kernel)?),
-                VectorCommand::Install { source } => recorder.print(&kernel.install_vector_model(&source)?),
-                VectorCommand::Set { enabled } => recorder.print(&kernel.configure_vectors(enabled)?),
-                VectorCommand::Selection { action } => match action {
-                    VectorSelectionCommand::Show => recorder.print(&kernel.vector_selection_status()?),
-                    VectorSelectionCommand::Validate { file, json } => recorder.print(&kernel.validate_vector_selection(&vector_selection_input(file, json)?)?),
-                    VectorSelectionCommand::Set { file, json } => recorder.print(&kernel.configure_vector_selection(vector_selection_input(file, json)?)?),
-                },
-            },
-            CollectionCommand::Extraction { action } => match action {
-                ExtractionCommand::Show => recorder.print(&kernel.extraction_policy()?),
-                ExtractionCommand::Detail { level } => recorder.print(&kernel.configure_index_detail(serde_json::from_value(serde_json::Value::String(level))?)?),
-                ExtractionCommand::Validate { file, json } => recorder.print(&kernel.validate_extraction_policy(&extraction_policy_input(file, json)?)?),
-                ExtractionCommand::Set { file, json } => recorder.print(&kernel.configure_extraction_policy(extraction_policy_input(file, json)?)?),
-            },
-            CollectionCommand::Limits { action } => match action {
-                LimitsCommand::Show => recorder.print(&kernel.scan_limits()?),
-                LimitsCommand::Describe => recorder.print(&kernel.describe_scan_limits()?),
-                LimitsCommand::Reset => recorder.print(&kernel.reset_scan_limits()?),
-                LimitsCommand::Validate { file } => {
-                    let limits: airk_kernel::limits::ScanLimits = serde_json::from_slice(&airk_kernel::usage::read_usage_input(&file,16_384)?)?;
-                    limits.validate()?;
-                    recorder.print(&limits)
-                }
-                LimitsCommand::Set { file, json, expected_json } => {
-                    let bytes = match (file, json) {
-                        (Some(file), None) => airk_kernel::usage::read_usage_input(&file,16_384)?,
-                        (None, Some(json)) => json.into_bytes(),
-                        _ => anyhow::bail!("provide exactly one limits file or --json"),
-                    };
-                    anyhow::ensure!(bytes.len() <= 16_384 && expected_json.as_ref().is_none_or(|json| json.len() <= 16_384), "scan configuration exceeds 16 KiB");
-                    let limits = serde_json::from_slice(&bytes)?;
-                    let expected = expected_json.map(|json| serde_json::from_str(&json)).transpose()?;
-                    recorder.print(&kernel.configure_scan_limits_if_current(limits, expected)?)
-                }
-            },
-            CollectionCommand::Quota { action } => match action {
-                QuotaCommand::Status => print_json(&kernel.quota_status()?),
-                QuotaCommand::Policy => print_json(&kernel.quota_policy()?),
-                QuotaCommand::Set { policy, json, expected_json } => {
-                    use std::io::Read;
-                    let mut bytes = Vec::new();
-                    if let Some(policy) = policy { std::fs::File::open(policy)?.take(65_537).read_to_end(&mut bytes)?; }
-                    else { bytes = json.unwrap_or_default().into_bytes(); }
-                    anyhow::ensure!(bytes.len() <= 65_536 && expected_json.as_ref().is_none_or(|value| value.len() <= 65_536), "quota policy exceeds 64 KiB");
-                    let expected = expected_json.map(|value| serde_json::from_str(&value)).transpose()?;
-                    print_json(&kernel.configure_quota_if_current(serde_json::from_slice(&bytes)?, expected.as_ref())?)
-                },
-            },
-            CollectionCommand::Roots { action } => match action {
-                RootsCommand::List => recorder.print(&kernel.roots()?),
-                RootsCommand::Add { alias, path } => recorder.print(&kernel.add_root(&alias, &path)?),
-                RootsCommand::Remove { alias } => recorder.print(&kernel.remove_root(&alias)?),
-                RootsCommand::Locate { path } => recorder.print(&kernel.source_location(&path)?),
-            },
-            CollectionCommand::Maintain => recorder.print(&kernel.maintain_current()?),
-            CollectionCommand::List => recorder.print(&kernel.collections()?),
-            CollectionCommand::Remove { id } => recorder.print(&kernel.remove_collection(&id)?),
-            CollectionCommand::Retention { action } => match action {
-                RetentionCommand::Continue => recorder.print(&kernel.continue_automatic_retention()?),
-                RetentionCommand::Show => recorder.print(&kernel.retention_status()?),
-                RetentionCommand::Preview { file, json } => {
-                    let bytes = retention_policy_bytes(file, json)?;
-                    let policy = bytes.as_ref().map(|bytes| serde_json::from_slice(bytes)).transpose()?;
-                    recorder.print(&kernel.retention_preview(policy.as_ref())?)
-                },
-                RetentionCommand::Set { file, json } => {
-                    let bytes = retention_policy_bytes(file, json)?.expect("clap requires policy input");
-                    recorder.print(&kernel.configure_retention(serde_json::from_slice(&bytes)?)?)
-                },
-                RetentionCommand::Run { apply, max_removal_bytes, max_duration_ms, max_metadata_bytes } => {
-                    let mut budget = airk_kernel::maintenance::MaintenanceBudget::default();
-                    if let Some(bytes) = max_removal_bytes { budget.max_removal_bytes = bytes; }
-                    if let Some(milliseconds) = max_duration_ms { budget.max_duration_ms = milliseconds; }
-                    if let Some(bytes) = max_metadata_bytes { budget.max_metadata_bytes = bytes; }
-                    if apply { recorder.print(&kernel.maintain_retention_with_budget(budget)?) }
-                    else { recorder.print(&kernel.retention_preview_with_budget(None, budget)?) }
-                },
-            },
-            CollectionCommand::History { action } => {
-                use airk_kernel::history_controls::*;
-                let budget = HistoryWorkBudget::default();
-                match action {
-                    HistoryCommand::Show => recorder.print(&kernel.history_policy()?),
-                    HistoryCommand::Set { json } => { let bytes = retention_policy_bytes(None, Some(json))?.unwrap(); recorder.print(&kernel.configure_history(serde_json::from_slice(&bytes)?)?) },
-                    HistoryCommand::Preview => recorder.print(&kernel.history_preview(&HistorySelectionRequest::default(), budget)?),
-                    HistoryCommand::Run { apply } => if apply { recorder.print(&kernel.maintain_history(budget)?) } else { recorder.print(&kernel.history_preview(&HistorySelectionRequest::default(), budget)?) },
-                    HistoryCommand::Available { revision, cursor, limit, max_bytes } => recorder.print(&kernel.history_availability(&airk_kernel::HistoryAvailabilityRequest {revision,cursor,limit,max_bytes})?),
-                    HistoryCommand::Purge { json, apply, expected_plan } => {
-                        let bytes = retention_policy_bytes(None, Some(json))?.unwrap();
-                        let request: PurgeRequest = serde_json::from_slice(&bytes)?;
-                        if apply {
-                            let expected_plan_digest = expected_plan.ok_or_else(|| anyhow::anyhow!("--apply requires --expected-plan from the preview"))?;
-                            recorder.print(&kernel.purge_history(&PurgeApplyRequest {request,expected_plan_digest}, budget)?)
-                        } else { recorder.print(&kernel.purge_history_preview(&request, budget)?) }
-                    },
-                }
-            },
-            CollectionCommand::Checkpoint { action } => {
-                use airk_kernel::history_controls::*;
-                match action {
-                    CheckpointCommand::List => recorder.print(&kernel.checkpoints()?),
-                    CheckpointCommand::Create { label, revision } => recorder.print(&kernel.create_checkpoint(&CreateCheckpoint {label,revision}, HistoryWorkBudget::default())?),
-                    CheckpointCommand::Remove { label, revision } => recorder.print(&kernel.remove_checkpoint(&RemoveCheckpoint {label,expected_revision: revision}, HistoryWorkBudget::default())?),
-                }
-            },
-            CollectionCommand::Prune { apply } => recorder.print(&kernel.prune_indexes(!apply)?),
-        },
-        Command::Host => {
-            eprintln!(
-                "AIRK container host ready; launch collection-scoped workers with docker exec"
-            );
-            #[cfg(unix)]
-            {
-                let mut terminate =
-                    tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
-                tokio::select! { result=tokio::signal::ctrl_c() => result?, _=terminate.recv() => {} }
-            }
-            #[cfg(not(unix))]
-            tokio::signal::ctrl_c().await?;
-            Ok(())
-        }
-        Command::Setup { client } => {
-            let report = kernel.index()?;
-            eprintln!(
-                "Indexed {} changed files, reused {}, removed {}; {} skipped",
-                report.indexed,
-                report.reused,
-                report.removed,
-                report.skipped.len()
-            );
-            let config = client_config(&kernel, client)?;
-            recorder.print_text(&config, Some(&serde_json::to_value(&report)?));
-            Ok(())
-        }
-        Command::Init => recorder.print(&kernel.initialize()?),
-        Command::Index { full, scheduled, automatic, progress, paths, coalesced, .. } => {
-            let kernel = if progress { kernel.clone().with_index_progress(|event| {
-                if let Ok(json) = serde_json::to_string(event) { eprintln!("{json}"); }
-            }) } else { kernel.clone() };
-            recorder.print(&if scheduled {
-            kernel.scheduled_index_selected(full, automatic, (!paths.is_empty()).then_some(paths.as_slice()), coalesced)?
-        } else if full {
-            kernel.reindex()?
-        } else if !paths.is_empty() {
-            kernel.index_paths(&paths)?
-        } else {
-            kernel.index()?
-        }) },
-        Command::Status => recorder.print(&kernel.status()?),
-        Command::Execution => recorder.print(&kernel.execution_status()?),
-        Command::Compression { action } => match action {
-            CompressionCommand::Show => recorder.print(&kernel.compression_status()?),
-            CompressionCommand::Set { mode } => recorder.print(&kernel.configure_compression(serde_json::from_value(serde_json::Value::String(mode))?)?),
-            CompressionCommand::Repack { after, max_files } => recorder.print(&kernel.repack_current(after.as_deref(), max_files as usize)?),
-        },
-        Command::Semantic { action } => match action {
-            SemanticCommand::Status => recorder.print(&kernel.status()?.semantic_readiness),
-            SemanticCommand::Run { scheduled: true, progress } => {
-                let worker = if progress { kernel.clone().with_index_progress(|event| {
-                    if let Ok(json) = serde_json::to_string(event) { eprintln!("{json}"); }
-                }) } else { kernel.clone() };
-                recorder.print(&worker.run_scheduled_enrichment_bounded(8, Some(std::time::Duration::from_secs(60)))?)
-            },
-            SemanticCommand::Run { scheduled: false, progress } => {
-                let worker = if progress { kernel.clone().with_index_progress(|event| {
-                    if let Ok(json) = serde_json::to_string(event) { eprintln!("{json}"); }
-                }) } else { kernel.clone() };
-                worker.resume_current_enrichment()?;
-                recorder.print(&worker.status()?.semantic_readiness)
-            }
-            SemanticCommand::Policy { mode } => {
-                let policy = match mode.as_str() {
-                    "partial_hybrid" => airk_core::readiness::DefaultSearchPolicy::PartialHybrid,
-                    "lexical_while_pending" => airk_core::readiness::DefaultSearchPolicy::LexicalWhilePending,
-                    "require_complete" => airk_core::readiness::DefaultSearchPolicy::RequireComplete,
-                    _ => unreachable!("validated by clap"),
-                };
-                recorder.print(&kernel.set_default_semantic_search_policy(policy)?)
-            }
-        },
+    }
+}
+fn evidence(mut value: Value, evidence: EvidenceOptions) -> Result<Value> {
+    value
+        .as_object_mut()
+        .context("tool arguments missing")?
+        .extend(
+            serde_json::to_value(evidence)?
+                .as_object()
+                .context("evidence options missing")?
+                .clone(),
+        );
+    Ok(value)
+}
+fn query(command: Command) -> Result<(&'static str, Value)> {
+    Ok(match command {
+        Command::Status => ("airk_status", json!({})),
         Command::Search {
             query,
             mode,
@@ -1960,71 +1075,80 @@ async fn main_async() -> anyhow::Result<()> {
             limit,
             max_bytes,
         } => {
-            let query = SearchQuery { text: query, path_prefix, limit, max_bytes };
-            recorder.print(&match mode {
-                Some(SearchMode::Lexical) => kernel.search(&query)?,
-                Some(SearchMode::Vector) => kernel.semantic_search(&query)?,
-                Some(SearchMode::Hybrid) => kernel.hybrid_search(&query)?,
-                None if semantic => kernel.semantic_search(&query)?,
-                None => kernel.default_search(&query)?,
-            })
-        },
+            let mode = if semantic {
+                Some("vector")
+            } else {
+                mode.map(|mode| match mode {
+                    SearchMode::Lexical => "lexical",
+                    SearchMode::Vector => "vector",
+                    SearchMode::Hybrid => "hybrid",
+                })
+            };
+            (
+                "airk_search",
+                json!({"query":query,"mode":mode,"path_prefix":path_prefix,"limit":limit,"max_bytes":max_bytes}),
+            )
+        }
         Command::Files {
             cursor,
             prefix,
             limit,
             max_bytes,
-        } => recorder.print(&kernel.list_files_page(&prefix, limit, max_bytes, &airk_core::discovery::DiscoveryOptions { minimal: false, cursor, compact: false })?),
+        } => (
+            "airk_list_files",
+            json!({"cursor":cursor,"prefix":prefix,"limit":limit,"max_bytes":max_bytes}),
+        ),
         Command::Read {
-            evidence,
+            evidence: options,
             path,
             start_line,
             end_line,
             max_bytes,
-        } => recorder.print(&kernel.read_file_conditional(&path, start_line, end_line, max_bytes, &evidence.into())?),
-        Command::Changes { since, selectors, paths, path_prefix, include_symbols, include_documents, include_suggestions, limit, max_bytes, cursor } => {
-            let mut selectors = selectors.iter().map(|value| serde_json::from_str(value)).collect::<Result<Vec<airk_core::changes::RememberedSelector>, _>>()?;
-            selectors.extend(paths.into_iter().map(|path| airk_core::changes::RememberedSelector::Path { path }));
-            recorder.print(&kernel.changes(&airk_core::changes::ChangesRequest { since, selectors, path_prefix, include_symbols, include_documents, include_suggestions, limit, max_bytes, cursor })?)
-        },
-        Command::Mcp => airk_mcp::serve(kernel.clone()).await,
-        Command::Info { path, evidence } => recorder.print(&kernel.file_info_conditional(&path, &evidence.into())?),
+        } => (
+            "airk_read_file",
+            evidence(
+                json!({"path":path,"start_line":start_line,"end_line":end_line,"max_bytes":max_bytes}),
+                options,
+            )?,
+        ),
+        Command::Info {
+            path,
+            evidence: options,
+        } => ("airk_file_info", evidence(json!({"path":path}), options)?),
         Command::Outline {
             cursor,
             compact,
-            evidence,
+            evidence: options,
             path,
             limit,
             max_bytes,
-        } => recorder.print(&kernel.outline_conditional_page(&path, limit, max_bytes, &evidence.into(), &airk_core::discovery::DiscoveryOptions { minimal: compact, cursor, compact: false })?),
+        } => (
+            "airk_outline",
+            evidence(
+                json!({"path":path,"cursor":cursor,"compact":compact,"limit":limit,"max_bytes":max_bytes}),
+                options,
+            )?,
+        ),
         Command::Symbol {
+            compact,
             cursor,
             name,
             language,
             path_prefix,
-        } => recorder.print(&kernel.facts_page(&FactQuery {
+        } => (
+            "airk_symbols",
+            json!({"compact":compact,"cursor":cursor,"name":name,"language":language,"path_prefix":path_prefix}),
+        ),
+        Command::Imports {
+            compact,
+            cursor,
             path_prefix,
-            name: Some(name),
-            kind: Some("definition".into()),
-            language,
-            exact_name: true,
-            limit: 50,
-            max_bytes: 8192,
-            path_exact: false,
-            document_only: false,
-        }, &airk_core::discovery::DiscoveryOptions { minimal: false, cursor, compact: false })?),
-        Command::Imports { path_prefix, cursor } => recorder.print(&kernel.facts_page(&FactQuery {
-            path_prefix,
-            name: None,
-            kind: Some("import".into()),
-            language: None,
-            exact_name: false,
-            limit: 50,
-            max_bytes: 8192,
-            path_exact: false,
-            document_only: false,
-        }, &airk_core::discovery::DiscoveryOptions { minimal: false, cursor, compact: false })?),
+        } => (
+            "airk_imports",
+            json!({"compact":compact,"cursor":cursor,"path_prefix":path_prefix}),
+        ),
         Command::Facts {
+            compact,
             cursor,
             document_key,
             path_prefix,
@@ -2032,33 +1156,275 @@ async fn main_async() -> anyhow::Result<()> {
             kind,
             limit,
             max_bytes,
-        } => if let Some(key) = document_key {
-            recorder.print(&kernel.continuity_facts(airk_core::continuity::ContinuityKey::Document(key), limit, max_bytes)?)
-        } else { recorder.print(&kernel.facts_page(&FactQuery {
+        } => (
+            "airk_document_facts",
+            json!({"compact":compact,"cursor":cursor,"document_key":document_key,"path_prefix":path_prefix,"name":name,"kind":kind,"limit":limit,"max_bytes":max_bytes}),
+        ),
+        Command::CodeFacts {
+            compact,
+            cursor,
+            symbol_key,
             path_prefix,
             name,
             kind,
-            language: None,
-            exact_name: false,
+            language,
             limit,
             max_bytes,
-            path_exact: false,
-            document_only: true,
-        }, &airk_core::discovery::DiscoveryOptions { minimal: false, cursor, compact: false })?) },
-        Command::Refs { name, path_prefix } => {
-            recorder.print(&kernel.references(&name, &path_prefix, 50, 8192)?)
-        }
+        } => (
+            "airk_code_facts",
+            json!({"compact":compact,"cursor":cursor,"symbol_key":symbol_key,"path_prefix":path_prefix,"name":name,"kind":kind,"language":language,"limit":limit,"max_bytes":max_bytes}),
+        ),
+        Command::Relationships {
+            symbol,
+            direction,
+            kind,
+            path_prefix,
+            hops,
+            limit,
+            max_bytes,
+        } => (
+            "airk_relationships",
+            json!({"symbol":symbol,"direction":direction,"kind":kind,"path_prefix":path_prefix,"hops":hops,"limit":limit,"max_bytes":max_bytes}),
+        ),
+        Command::Refs { name, path_prefix } => (
+            "airk_references",
+            json!({"name":name,"path_prefix":path_prefix}),
+        ),
         Command::Context {
-            evidence,
+            evidence: options,
             path,
             line,
             before,
             after,
             max_bytes,
-        } => recorder.print(&kernel.context_conditional(&path, line, before, after, max_bytes, &evidence.into())?),
-    }}.await;
-    if result.is_err() {
-        recorder.failure();
+        } => (
+            "airk_context",
+            evidence(
+                json!({"path":path,"line":line,"before":before,"after":after,"max_bytes":max_bytes}),
+                options,
+            )?,
+        ),
+        Command::Changes {
+            since,
+            selectors,
+            paths,
+            path_prefix,
+            include_symbols,
+            include_documents,
+            include_suggestions,
+            limit,
+            max_bytes,
+            cursor,
+        } => {
+            let mut selectors = selectors
+                .into_iter()
+                .map(|value| serde_json::from_str::<Value>(&value))
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            selectors.extend(
+                paths
+                    .into_iter()
+                    .map(|path| json!({"kind":"path","path":path})),
+            );
+            (
+                "airk_changes",
+                json!({"since":since,"selectors":selectors,"path_prefix":path_prefix,"include_symbols":include_symbols,"include_documents":include_documents,"include_suggestions":include_suggestions,"limit":limit,"max_bytes":max_bytes,"cursor":cursor}),
+            )
+        }
+        _ => anyhow::bail!("not a read-only tool alias"),
+    })
+}
+fn configuration(
+    command: &Path,
+    install: &Path,
+    project: &airk_core::service::ProjectRegistration,
+    client: SetupClient,
+) -> Result<String> {
+    let command = command.to_str().context("launcher path is not UTF-8")?;
+    let args = vec![
+        "runtime",
+        "launch",
+        "--install-dir",
+        install.to_str().context("installation path is not UTF-8")?,
+        "--",
+        "--root",
+        &project.root,
+        "--data-dir",
+        &project.data_root,
+        "--collection",
+        &project.collection,
+        "--service-project",
+        &project.binding.to_string(),
+        "mcp",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect::<Vec<_>>();
+    let name = format!("airk-{}", project.collection);
+    let mut server = json!({"command":command,"args":args});
+    let result = match client {
+        SetupClient::Codex => {
+            return Ok(format!(
+                "[mcp_servers.{name}]\ncommand = {}\nargs = {}",
+                serde_json::to_string(command)?,
+                serde_json::to_string(&args)?
+            ));
+        }
+        SetupClient::Vscode => {
+            server["type"] = json!("stdio");
+            json!({"servers":{name:server}})
+        }
+        SetupClient::Cursor => {
+            server["type"] = json!("stdio");
+            json!({"mcpServers":{name:server}})
+        }
+        SetupClient::CopilotCli => {
+            server["type"] = json!("local");
+            server["tools"] = json!(["*"]);
+            json!({"mcpServers":{name:server}})
+        }
+        SetupClient::Opencode | SetupClient::OpencodeV2 | SetupClient::Kilo => {
+            let mut full = vec![command.to_owned()];
+            full.extend(args);
+            let entry = json!({"type":"local","command":full});
+            if matches!(client, SetupClient::OpencodeV2) {
+                json!({"mcp":{"servers":{name:entry}}})
+            } else {
+                json!({"mcp":{name:entry}})
+            }
+        }
+        _ => json!({"mcpServers":{name:server}}),
+    };
+    Ok(serde_json::to_string_pretty(&result)?)
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn setup_formats_preserve_stable_launcher_and_opaque_scope() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let data = tempfile::tempdir()?;
+        let project =
+            airk_kernel::service_projects::registration(root.path(), data.path(), "setup-fixture")?;
+        let launcher = Path::new("/approved install/airk-launcher");
+        let install = Path::new("/approved install");
+        for client in [
+            SetupClient::Claude,
+            SetupClient::Codex,
+            SetupClient::Vscode,
+            SetupClient::Cursor,
+            SetupClient::Opencode,
+            SetupClient::OpencodeV2,
+            SetupClient::CopilotCli,
+            SetupClient::Kilo,
+        ] {
+            let text = configuration(launcher, install, &project, client)?;
+            assert!(
+                text.contains("airk-setup-fixture")
+                    && text.contains("--service-project")
+                    && text.contains(&project.binding.to_string())
+            );
+            if matches!(client, SetupClient::Codex) {
+                assert!(text.starts_with("[mcp_servers.airk-setup-fixture]"));
+            } else {
+                let value: Value = serde_json::from_str(&text)?;
+                let entry = match client {
+                    SetupClient::Vscode => &value["servers"]["airk-setup-fixture"],
+                    SetupClient::Opencode | SetupClient::Kilo => {
+                        &value["mcp"]["airk-setup-fixture"]
+                    }
+                    SetupClient::OpencodeV2 => &value["mcp"]["servers"]["airk-setup-fixture"],
+                    _ => &value["mcpServers"]["airk-setup-fixture"],
+                };
+                let args = entry
+                    .get("args")
+                    .unwrap_or(&entry["command"])
+                    .as_array()
+                    .context("separate launcher arguments")?;
+                assert_eq!(args.last(), Some(&json!("mcp")));
+                for path in [&project.root, &project.data_root] {
+                    assert!(args.contains(&json!(path)));
+                }
+            }
+        }
+        Ok(())
     }
-    result
+    #[test]
+    fn read_aliases_use_the_actual_mcp_argument_contracts() -> Result<()> {
+        macro_rules! check {
+            ($kind:ty,$args:expr) => {{
+                let cli = Cli::try_parse_from($args)?;
+                let (_, arguments) = query(cli.command)?;
+                serde_json::from_value::<$kind>(arguments)?;
+            }};
+        }
+        check!(airk_mcp::SearchArgs, ["airk", "search", "fixture"]);
+        check!(
+            airk_mcp::ReadArgs,
+            [
+                "airk",
+                "read",
+                "memo.txt",
+                "--start-line",
+                "1",
+                "--end-line",
+                "2"
+            ]
+        );
+        check!(airk_mcp::PathArgs, ["airk", "info", "memo.txt"]);
+        check!(airk_mcp::OutlineArgs, ["airk", "outline", "memo.txt"]);
+        check!(airk_mcp::FactArgs, ["airk", "symbol", "fixture"]);
+        check!(airk_mcp::FactArgs, ["airk", "imports"]);
+        check!(airk_mcp::DocumentFactArgs, ["airk", "facts"]);
+        check!(airk_mcp::CodeFactArgs, ["airk", "code-facts"]);
+        check!(
+            airk_mcp::RelationshipArgs,
+            ["airk", "relationships", "fixture"]
+        );
+        check!(airk_mcp::ReferenceArgs, ["airk", "refs", "fixture"]);
+        check!(airk_mcp::ContextArgs, ["airk", "context", "memo.txt", "1"]);
+        check!(airk_mcp::ListArgs, ["airk", "files"]);
+        check!(
+            airk_mcp::ChangesArgs,
+            ["airk", "changes", "--path", "memo.txt"]
+        );
+        Ok(())
+    }
+    #[test]
+    fn continuity_keys_keep_exact_identity_and_exclude_text_filters() {
+        let key = "01".repeat(16);
+        for (command, selector) in [("code-facts", "--symbol-key"), ("facts", "--document-key")] {
+            assert!(Cli::try_parse_from(["airk", command, selector, &key]).is_ok());
+            assert!(Cli::try_parse_from(["airk", command, selector, "short"]).is_err());
+            assert!(
+                Cli::try_parse_from(["airk", command, selector, &key, "--name", "original"])
+                    .is_err()
+            );
+        }
+    }
+    #[test]
+    fn retired_direct_writers_are_not_public_entry_points() {
+        for args in [
+            vec!["airk", "schedule", "run"],
+            vec![
+                "airk",
+                "collections",
+                "vectors",
+                "set",
+                "--enabled",
+                "false",
+            ],
+            vec!["airk", "storage", "relocate", "elsewhere"],
+        ] {
+            assert!(Cli::try_parse_from(args).is_err());
+        }
+    }
+    #[test]
+    fn opaque_service_bindings_and_native_metadata_are_independent_of_live_paths() {
+        let key = "ab".repeat(32);
+        assert!(Cli::try_parse_from(["airk", "--service-project", &key, "mcp"]).is_ok());
+        assert!(
+            Cli::try_parse_from(["airk", "--root", "/missing/source", "tools", "list"]).is_ok()
+        );
+        assert!(Cli::try_parse_from(["airk", "--service-project", "bad", "mcp"]).is_err());
+    }
 }

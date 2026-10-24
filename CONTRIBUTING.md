@@ -1,6 +1,6 @@
 # Contributing to AIRK
 
-Native builds embed the pinned FP32 MiniLM assets. Before Cargo checks/builds, run `python scripts/provision-local-model.py --destination target/local-vector-model --download`, or supply verified offline assets there (or through `AIRK_BUNDLED_MODEL_DIR`). Cargo never downloads model assets. See [model provisioning](docs/onnx-models.md).
+Inference-helper builds embed the pinned FP32 MiniLM assets; the default main CLI excludes inference/model weights. Before Cargo checks/builds, run `python scripts/provision-local-model.py --destination target/local-vector-model --download`, or supply verified offline assets there (or through `AIRK_BUNDLED_MODEL_DIR`). Cargo never downloads model assets. See [model provisioning](docs/onnx-models.md).
 
 Contributions to code, extraction fixtures, retrieval quality and documentation are welcome. Read the [architecture](docs/architecture.md) and [roadmap](docs/roadmap.md) before choosing a change. Small focused pull requests are easiest to review; discuss changes to collection identity, index formats, MCP contracts and default dependencies in an issue first.
 
@@ -11,17 +11,19 @@ Install Git, Rust as pinned in [rust-toolchain.toml](rust-toolchain.toml), nativ
 For the native Mac workflow and architecture-specific release steps, see [the macOS build guide](docs/macos-build.md). For the app and extension together, see [Windows build/review](docs/windows-local-build.md). Extension development also needs Node.js 24.15.0/npm; use `npm ci --ignore-scripts --no-audit --no-fund --prefix packages/vscode` and `npm test --prefix packages/vscode`.
 
 ```console
+python scripts/build-service-runtime.py --destination target/service-runtime --profile debug
 cargo build --workspace --locked
 cargo fmt --all --check
-cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo test --workspace --locked
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo test --workspace --all-features --locked
+python scripts/check-service-clients.py --runtime-dir target/service-runtime --files 16 --model
 pwsh -NoProfile -File scripts/check-repo.ps1
 python scripts/license-notices.py --output target/notices
 python -m unittest discover -s scripts/tests -v
 git diff --check
 ```
 
-Full CI uses pinned cargo-nextest 0.9.148 with the checked-in `ci` profile, followed by `cargo test --doc --workspace --locked`; local `cargo test` remains supported. CI builds/tests native binaries on Windows, macOS and Linux and checks the container recipe on Linux. Report what actually ran, including unavailable checks. The local Windows result alone does not qualify all platforms. See [CI and downloadable native candidates](docs/ci-and-builds.md) for the explicit architecture matrix, build credentials and spending controls.
+Full CI uses pinned cargo-nextest 0.9.148 with the checked-in `ci` profile and all features, followed by serial `cargo test --doc --workspace --locked`; local `cargo test` remains supported. Feature-enabled tests exercise the helper; the runtime builder separately verifies the lightweight main and inference payload. Kernel inference/cache performance regressions now live in `crates/airk-kernel/tests/vector_performance.rs`: run that target with `--features local-inference -- --ignored --test-threads=1` and `AIRK_TEST_MODEL_DIR` set to verified offline assets. They are component measurements, separate from the native client and helper qualification scripts. CI builds/tests native binaries on Windows, macOS and Linux and checks the container recipe on Linux. Report what actually ran, including unavailable checks. The local Windows result alone does not qualify all platforms. See [CI and downloadable native candidates](docs/ci-and-builds.md) for the explicit architecture matrix, build credentials and spending controls.
 
 With Docker available, use `docker build --target test -t airk:local-test .` for the Linux test stage, then `docker build -t airk:dev .` and `python scripts/check-container.py --image airk:dev` for an isolated one-container smoke test. It creates/removes only its uniquely named test container and volume.
 

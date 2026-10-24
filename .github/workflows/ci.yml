@@ -171,35 +171,41 @@ jobs:
       - name: Prepare pinned bundled model build inputs
         run: python scripts/provision-local-model.py --destination target/local-vector-model --download
       - name: Clippy for this native platform
-        run: python scripts/ci-metrics.py run --name clippy -- cargo clippy --workspace --all-targets --locked --target ${{ matrix.target }} -- -D warnings
+        run: python scripts/ci-metrics.py run --name clippy -- cargo clippy --workspace --all-targets --all-features --locked --target ${{ matrix.target }} -- -D warnings
       - name: Compile workspace tests
-        run: python scripts/ci-metrics.py run --name test-compile -- cargo nextest run --profile ci --workspace --locked --target ${{ matrix.target }} --no-run
+        run: python scripts/ci-metrics.py run --name test-compile -- cargo nextest run --profile ci --workspace --all-features --locked --target ${{ matrix.target }} --no-run
       - name: Run isolated workspace tests
-        run: python scripts/ci-metrics.py run --name test-execution -- cargo nextest run --profile ci --workspace --locked --target ${{ matrix.target }}
+        run: python scripts/ci-metrics.py run --name test-execution -- cargo nextest run --profile ci --workspace --all-features --locked --target ${{ matrix.target }}
       - name: Run documentation tests
         run: python scripts/ci-metrics.py run --name doctests -- cargo test --doc --workspace --locked --target ${{ matrix.target }}
+      - name: Kernel real-model cache and incremental-work regressions
+        env:
+          AIRK_TEST_MODEL_DIR: target/local-vector-model
+        run: cargo test -p airk-kernel --features local-inference --test vector_performance --locked --target ${{ matrix.target }} -- --ignored --test-threads=1
       - name: Build pinned native candidate
-        run: python scripts/ci-metrics.py run --name release-compile -- cargo build --release --locked -p airk-cli --target ${{ matrix.target }}
+        run: python scripts/ci-metrics.py run --name release-pair -- python scripts/build-service-runtime.py --profile release --destination artifacts/runtime/${{ matrix.target }}
+      - name: Native direct clients, retained reads and shared offline inference
+        run: python scripts/check-service-clients.py --runtime-dir artifacts/runtime/${{ matrix.target }} --files 16 --model --report artifacts/benchmarks/${{ matrix.target }}-clients.json
       - name: Real embedded model indexing and vector retrieval
-        run: python scripts/check-transformer-model.py --binary target/${{ matrix.target }}/release/${{ matrix.executable }}
+        run: python scripts/check-transformer-model.py --binary artifacts/runtime/${{ matrix.target }}/${{ matrix.executable }}
       - name: Bounded code indexing correctness and measurement smoke
-        run: python scripts/benchmark-code.py --binary target/${{ matrix.target }}/release/${{ matrix.executable }} --files 64 --output artifacts/benchmarks/${{ matrix.target }}.json
+        run: python scripts/benchmark-code.py --binary artifacts/runtime/${{ matrix.target }}/${{ matrix.executable }} --files 64 --output artifacts/benchmarks/${{ matrix.target }}.json
       - name: Persistent retrieval ranking and scoped recall receipts
-        run: python scripts/check-retrieval-quality.py --binary target/${{ matrix.target }}/release/${{ matrix.executable }} --output artifacts/benchmarks/${{ matrix.target }}-retrieval.json
+        run: python scripts/check-retrieval-quality.py --binary artifacts/runtime/${{ matrix.target }}/${{ matrix.executable }} --output artifacts/benchmarks/${{ matrix.target }}-retrieval.json
       - name: DOCX and XLSX table indexing through the public CLI
-        run: python scripts/check-document-tables.py --binary target/${{ matrix.target }}/release/${{ matrix.executable }}
+        run: python scripts/check-document-tables.py --binary artifacts/runtime/${{ matrix.target }}/${{ matrix.executable }}
       - name: Source aliases and storage quota lifecycle through the public CLI
-        run: python scripts/check-storage-lifecycle.py --binary target/${{ matrix.target }}/release/${{ matrix.executable }}
+        run: python scripts/check-storage-lifecycle.py --binary artifacts/runtime/${{ matrix.target }}/${{ matrix.executable }}
       - name: Validate usage imports and calibration
-        run: python scripts/check-usage-inputs.py --binary target/${{ matrix.target }}/release/${{ matrix.executable }}
+        run: python scripts/check-usage-inputs.py --binary artifacts/runtime/${{ matrix.target }}/${{ matrix.executable }}
       - name: Abrupt process termination preserves a coherent published revision
-        run: python scripts/check-publication-faults.py --binary target/${{ matrix.target }}/release/${{ matrix.executable }} --attempts 3 --output artifacts/benchmarks/${{ matrix.target }}-faults.json
+        run: python scripts/check-publication-faults.py --binary artifacts/runtime/${{ matrix.target }}/${{ matrix.executable }} --attempts 3 --output artifacts/benchmarks/${{ matrix.target }}-faults.json
       - name: Extension contracts and real native MCP adapter
         env:
-          AIRK_TEST_BINARY: ${{ github.workspace }}/target/${{ matrix.target }}/release/${{ matrix.executable }}
+          AIRK_TEST_BINARY: ${{ github.workspace }}/artifacts/runtime/${{ matrix.target }}/${{ matrix.executable }}
         run: npm test --prefix packages/vscode
       - name: Package and verify allowlisted native payload
-        run: python scripts/package-native.py --target ${{ matrix.target }}
+        run: python scripts/package-native.py --target ${{ matrix.target }} --runtime-dir artifacts/runtime/${{ matrix.target }}
       - name: Package and verify platform VSIX
         env:
           AIRK_CHANNEL: ${{ inputs.channel || 'stable' }}

@@ -2,7 +2,7 @@
 //! One changed-path publication across retained evidence, SQLite FTS5 and DiskANN.
 use airk_core::{
     embedding::{EmbeddingDescriptor, embedding_key},
-    graph_storage::{GraphRecordOverlay, PreparedGraphDelta},
+    graph_storage::{GraphRecordOverlay, GraphRecordReader, PreparedGraphDelta},
     identity::Sha256Digest,
     model_objects::ModelObjectSet,
     vector_selection::VectorSelectionPolicy,
@@ -106,6 +106,7 @@ struct VectorMembership {
 struct VectorPlan<'a> {
     read: &'a CurrentRead,
     replacing: bool,
+    recomputed_from: Option<u64>,
     registry: BTreeMap<Sha256Digest, Option<u32>>,
     memberships: BTreeMap<Sha256Digest, VectorMembership>,
     occurrences: Vec<PreparedOccurrence>,
@@ -224,7 +225,10 @@ impl VectorPlan<'_> {
                 "current vector registry work limit exceeded"
             );
             if let Some(id) = self.existing(key)?
-                && !semantic.cache.bypass
+                && (!semantic.cache.bypass
+                    || self
+                        .recomputed_from
+                        .is_some_and(|first_id| u64::from(id) >= first_id))
             {
                 self.registry.insert(key, Some(id));
             } else {
@@ -400,6 +404,12 @@ impl CurrentUpdater<'_> {
         semantic: SemanticUpdate<'_>,
         work: &mut super::enrichment::SemanticWork,
     ) -> Result<CurrentUpdateResult> {
+        ensure!(
+            semantic.cache.bypass == work.force_recompute
+                && semantic.objects.pipeline_digest == work.pipeline_digest
+                && semantic.selection.digest()? == work.selection_digest,
+            "semantic turn differs from its authenticated work policy"
+        );
         self.apply_resources_observed(
             &[],
             Some(semantic),
@@ -419,7 +429,7 @@ impl CurrentUpdater<'_> {
         resources: &[airk_store::current::resources::ResourceChange],
         moves: Option<&BTreeMap<String, String>>,
         semantic_inputs: Option<&[CapturedInput]>,
-        semantic_work: Option<&mut super::enrichment::SemanticWork>,
+        mut semantic_work: Option<&mut super::enrichment::SemanticWork>,
         observer: &mut dyn FnMut(CurrentUpdateStage),
     ) -> Result<CurrentUpdateResult> {
         crate::service_execution::progress_phase(airk_core::service_progress::WorkPhase::Preparing);
@@ -550,9 +560,34 @@ impl CurrentUpdater<'_> {
             GraphOverlay::new(self.reservation, read.clone(), graph_limits)
                 .context("open current graph overlay")?
         });
+        let recomputed_from = if let Some(work) = semantic_work.as_deref_mut()
+            && work.force_recompute
+        {
+            let graph = overlay.scope().graph_instance;
+            let count = overlay.counts()?.allocated_count;
+            if work
+                .recompute_boundary
+                .as_ref()
+                .is_none_or(|boundary| boundary.graph != graph)
+            {
+                work.recompute_boundary = Some(super::enrichment::RecomputeBoundary {
+                    graph,
+                    first_id: count,
+                });
+            }
+            let boundary = work.recompute_boundary.as_ref().expect("set above");
+            ensure!(
+                boundary.first_id <= count,
+                "forced semantic boundary exceeds authenticated graph"
+            );
+            Some(boundary.first_id)
+        } else {
+            None
+        };
         let mut plan = VectorPlan {
             read: &read,
             replacing,
+            recomputed_from,
             registry: BTreeMap::new(),
             memberships: BTreeMap::new(),
             occurrences: Vec::new(),

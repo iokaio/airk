@@ -40,3 +40,4 @@ mod user_paths;
 
 pub mod client_requests;
 pub mod console_client;
+pub mod usage_client;

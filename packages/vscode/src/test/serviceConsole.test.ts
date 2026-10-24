@@ -105,6 +105,49 @@ test('configuration requires an inspection before opening host choices or prepar
     assert.match(f.controller.state.message!,/Inspect this project/);f.controller.dispose();
 });
 
+test('usage configuration waits for native completion and preserves a lost acknowledgement without replay',async()=>{
+    for(const lost of [false,true]){
+        const f=fixture(),base=f.host.runtime.client({} as any),inspect='ab'.repeat(32);let configured=0;
+        f.host.runtime.prepareConfiguration=async(_binding,selected,draft)=>{
+            assert.equal(selected,project);return {incarnation:'cd'.repeat(16),settings:'ef'.repeat(32),configuration:draft};
+        };
+        f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){
+            const name=typeof method==='string'?method:Object.keys(method as object)[0];
+            if(name==='enqueue')return {status:'job',job:{id:inspect,project,kind:'inspect'}};
+            if(name==='configure_project'){
+                assert.ok([...f.values.keys()].some(key=>key.startsWith('airk.service.intent.')));configured++;
+                if(lost)throw new ServiceError('console_transport_closed',true);
+                return {status:'job',job:{id:job,project,kind:'configure'}};
+            }
+            if(name==='job'){
+                const id=(method as any).job.id;return {status:'job',job:{id,project,kind:id===inspect?'inspect':'configure',outcome:{state:'succeeded'}}};
+            }
+            if(name==='configuration_result')return {status:'configuration',job:{id:job,project,kind:'configure'},result:{cleared:true}};
+            return base.transport.request(method);
+        }});
+        if(lost)await assert.rejects(f.controller.projectConfiguration(project,{operation:'clear_usage'}),ServiceError);
+        else await f.controller.projectConfiguration(project,{operation:'clear_usage'});
+        assert.equal(configured,1);
+        assert.equal(f.controller.state.pending.length,lost?1:0);
+        await f.controller.refresh();assert.equal(configured,1,'read-only refresh must not replay a clear request');
+        f.controller.dispose();
+    }
+});
+
+test('closing or changing the usage scope during inspection prevents configuration dispatch',async()=>{
+    const f=fixture(),base=f.host.runtime.client({} as any);let valid=true,prepared=false,configured=false;
+    f.host.runtime.prepareConfiguration=async()=>{prepared=true;throw new Error('Stale selection');};
+    f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){
+        const name=typeof method==='string'?method:Object.keys(method as object)[0];
+        if(name==='enqueue')return {status:'job',job:{id:job,project,kind:'inspect'}};
+        if(name==='job'){valid=false;return {status:'job',job:{id:job,project,kind:'inspect',outcome:{state:'succeeded'}}};}
+        if(name==='configure_project'){configured=true;throw new Error('Must not dispatch');}
+        return base.transport.request(method);
+    }});
+    await assert.rejects(f.controller.projectConfiguration(project,{operation:'clear_usage'},()=>valid));
+    assert.equal(prepared,false);assert.equal(configured,false);f.controller.dispose();
+});
+
 test('disconnected snapshots retain bounded configuration results and Copy uses the exact saved value',async()=>{
     const f=fixture(),observation=await f.host.runtime.discover(),binding=await f.host.runtime.ensure();binding.payloadVerified=false;
     const result={summary:{baseline_tokens:42,returned_tokens:12},notice:'Explicit sample counts'};

@@ -52,6 +52,15 @@ pub enum VerificationBasis {
 
 #[derive(Subcommand)]
 pub enum RuntimeCommand {
+    /// Run one externally supervised Linux container service from an approved read-only image pair.
+    ContainerHost {
+        #[arg(long)]
+        source: PathBuf,
+        #[arg(long)]
+        approved_sha256: String,
+        #[arg(long, value_enum, default_value = "stable")]
+        channel: RuntimeChannel,
+    },
     /// Resolve the native user's stable-channel install location; no workspace settings or writes.
     Location {
         #[arg(long, value_enum, default_value = "stable")]
@@ -111,6 +120,11 @@ pub enum RuntimeCommand {
         state_dir: Option<PathBuf>,
         #[arg(long, value_enum, default_value = "stable")]
         channel: RuntimeChannel,
+    },
+    /// Create an owned lightweight client launcher, including for a read-only managed payload.
+    PrepareClient {
+        #[arg(long)]
+        install_dir: PathBuf,
     },
     /// Drain the selected service and select a staged runtime only after native health succeeds.
     Activate {
@@ -291,7 +305,13 @@ pub async fn bridge_installed(
 
 /// Verify the selected runtime and elected service without opening a collection.
 pub async fn installed_control(root: &Path) -> Result<PathBuf> {
-    let (selection, _, approval) = selected(root)?;
+    // External policy can be pinned before its supervisor starts the service.
+    // Selection is published only after matching health, so the first client
+    // must validate the pin before asking ensure to observe that health.
+    let approval = match managed::read(root)? {
+        Some(policy) => policy.verify()?.1,
+        None => selected(root)?.2,
+    };
     ensure!(
         approval.version == env!("CARGO_PKG_VERSION"),
         "matching runtime version required"
@@ -299,7 +319,7 @@ pub async fn installed_control(root: &Path) -> Result<PathBuf> {
     let health = ensure_running(root).await?;
     ensure!(
         health.version == approval.version
-            && health.runtime_sha256.as_deref() == Some(selection.active.as_str()),
+            && health.runtime_sha256.as_deref() == Some(approval.manifest_sha256.as_str()),
         "installed service changed; reconnect through the selected launcher"
     );
     layout::control(root)
@@ -791,6 +811,10 @@ fn prepare_launcher(root: &Path, main: &Path) -> Result<()> {
             .set_permissions(fs::Permissions::from_mode(0o700))?;
     }
     let sha256 = runtime_pair::digest_file(temporary.path())?;
+    ensure!(
+        sha256 == expected,
+        "approved main changed while preparing the client launcher"
+    );
     temporary.persist_noclobber(&destination)?;
     replace_json(
         root,

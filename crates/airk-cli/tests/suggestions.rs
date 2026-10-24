@@ -1,29 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result};
+mod common;
 use serde_json::Value;
-use std::{fs, path::Path, process::Command};
+use std::{fs, path::Path};
 
 fn call(root: &Path, data: &Path, args: &[&str]) -> Result<Value> {
-    let output = Command::new(env!("CARGO_BIN_EXE_airk"))
-        .arg("--root")
-        .arg(root)
-        .arg("--data-dir")
-        .arg(data)
-        .env("AIRK_USAGE_MODE", "disabled")
-        .args(args)
-        .output()?;
-    ensure!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    Ok(serde_json::from_slice(&output.stdout)?)
+    common::call(root, data, "default", args)
 }
 
 #[test]
 fn opt_in_similarity_flag_pages_with_shared_budgets_without_forwarding_reads() -> Result<()> {
     let root = tempfile::tempdir()?;
     let data = tempfile::tempdir()?;
+    let _service = common::Service::start(root.path(), data.path(), "default");
     let original: String = (0..40)
         .map(|i| format!("billing{i} records original invoice entry {i}.\n"))
         .collect();

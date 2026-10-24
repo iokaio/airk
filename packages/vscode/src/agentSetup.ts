@@ -2,7 +2,7 @@
 import * as vscode from 'vscode';
 import * as path from 'node:path';
 import { Client, LaunchSpec, configFor } from './model';
-import { installJsonConfig, isJsonClient, jsonConfigPath, readJsonConfig } from './agentConfig';
+import { installJsonConfig, isJsonClient, jsonConfigPath, readJsonConfig, reviewLegacyJsonConfig, replaceReviewedLegacyJsonConfig } from './agentConfig';
 import { agentChoices, codexConfigPath, connectionAction, createCodexConfig, renderConnectionGuide, verificationPrompt } from './agentConnections';
 import { McpVerification } from './sidebar';
 
@@ -66,6 +66,18 @@ export async function setupAgent(host: AgentSetupHost): Promise<void> {
             if (matches.some(document => document.isDirty)) { throw new Error('Agent configuration has unsaved edits. Save and review it before installing AIRK.'); }
             return matches[0];
         };
+        const saveConfiguration = async (destination: string, before: string, after: string) => {
+            const document = configDocument(destination) ?? await vscode.workspace.openTextDocument(vscode.Uri.file(destination));
+            const version = document.version;
+            if (document.isDirty || document.getText() !== before) { throw new Error('Configuration has unsaved or external changes. Review it before installing AIRK.'); }
+            const edit = new vscode.WorkspaceEdit();
+            edit.replace(document.uri, new vscode.Range(document.positionAt(0), document.positionAt(before.length)), after);
+            if (await readJsonConfig(destination) !== before) { throw new Error('Configuration changed on disk. Retry setup.'); }
+            checkCurrent(); configDocument(destination);
+            if (document.version !== version || !await vscode.workspace.applyEdit(edit)) { throw new Error('Configuration changed during setup. Review the file and retry.'); }
+            checkCurrent();
+            if (document.getText() !== after || !await document.save()) { throw new Error('Configuration was not saved. Review the editor’s changes and save manually.'); }
+        };
         render();
         const listener = panel.webview.onDidReceiveMessage(async value => {
             const action = connectionAction(value, client);
@@ -85,19 +97,23 @@ export async function setupAgent(host: AgentSetupHost): Promise<void> {
                 } else if (action === 'installJson' && isJsonClient(client)) {
                     if (vscode.env.remoteName) { throw new Error('Use manual configuration on the host running this agent.'); }
                     const checkInstall = () => { checkCurrent(); configDocument(jsonConfigPath(client, spec)); };
-                    await installJsonConfig(client, spec, checkInstall, async (destination, before, after) => {
-                        const document = configDocument(destination) ?? await vscode.workspace.openTextDocument(vscode.Uri.file(destination));
-                        const version = document.version;
-                        if (document.isDirty || document.getText() !== before) { throw new Error('Configuration has unsaved or external changes. Review it before installing AIRK.'); }
-                        const edit = new vscode.WorkspaceEdit();
-                        edit.replace(document.uri, new vscode.Range(document.positionAt(0), document.positionAt(before.length)), after);
-                        if (await readJsonConfig(destination) !== before) { throw new Error('Configuration changed on disk. Retry setup.'); }
-                        checkInstall();
-                        if (document.version !== version || !await vscode.workspace.applyEdit(edit)) { throw new Error('Configuration changed during setup. Review the file and retry.'); }
-                        checkCurrent();
-                        if (document.getText() !== after || !await document.save()) { throw new Error('Configuration was not saved. Review the editor’s changes and save manually.'); }
-                    });
+                    await installJsonConfig(client, spec, checkInstall, saveConfiguration);
                     status = `${selected.label} project configuration installed. Reload the agent and complete its trust prompts. Agent connection has not been verified.`;
+                } else if (action === 'reviewLegacy' && isJsonClient(client)) {
+                    if (vscode.env.remoteName) { throw new Error('Review the configuration on the host running this agent.'); }
+                    const checkReview = () => { checkCurrent(); configDocument(jsonConfigPath(client, spec)); };
+                    const review = await reviewLegacyJsonConfig(client, spec, checkReview);
+                    const proposal = await vscode.workspace.openTextDocument({ content: review.after, language: 'jsonc' });
+                    checkReview();
+                    await vscode.commands.executeCommand('vscode.diff', vscode.Uri.file(review.destination), proposal.uri, 'AIRK: review selected legacy server replacement');
+                    const approved = await vscode.window.showInformationMessage('Review the configuration diff. Replace this legacy AIRK server with the registered 1.4 connection?', 'Replace reviewed entry');
+                    if (approved !== 'Replace reviewed entry') { status = 'Legacy entry preserved. Review remains explicit.'; }
+                    else {
+                        checkReview();
+                        if (proposal.getText() !== review.after) { throw new Error('The proposed diff was edited. Review the original configuration again before replacing it.'); }
+                        await replaceReviewedLegacyJsonConfig(client, spec, review, checkReview, saveConfiguration);
+                        status = 'Reviewed AIRK entry replaced. Reload this agent and check for duplicates in its user configuration. Old processes and indexes were preserved.';
+                    }
                 } else if (action === 'openJson' && isJsonClient(client)) {
                     const document = await vscode.workspace.openTextDocument(vscode.Uri.file(jsonConfigPath(client, spec)));
                     await vscode.window.showTextDocument(document, { viewColumn: vscode.ViewColumn.Beside, preview: false });
@@ -121,11 +137,12 @@ export async function setupAgent(host: AgentSetupHost): Promise<void> {
                     await host.manageVscodeMcp();
                     status = `VS Code MCP controls opened. Registration is ${host.registrationEnabled() ? 'on' : 'off'}; enable it in the AIRK sidebar if needed. Other agents use their own configuration.`;
                 } else if (action === 'verify') {
-                    status = 'Checking AIRK helper…'; render();
+                    const target = spec.service ? 'AIRK MCP connection' : 'AIRK helper';
+                    status = `Checking ${target}…`; render();
                     await host.verify(spec);
                     const check = host.verification(spec);
-                    status = check?.phase === 'verified' ? `AIRK helper verified: ${check.tools?.length ?? 0} tools. Agent connection still needs the verification prompt below.`
-                        : `AIRK helper check did not succeed: ${check?.error ?? 'workspace or storage changed'}`;
+                    status = check?.phase === 'verified' ? `${target} verified: ${check.tools?.length ?? 0} tools. Agent connection still needs the verification prompt below.`
+                        : `${target} check did not succeed: ${check?.error ?? 'workspace or storage changed'}`;
                 }
             } catch (error) { status = error instanceof Error ? error.message : String(error); }
             finally { busy = false; if (!closed) { render(); } }

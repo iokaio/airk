@@ -5,10 +5,9 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { LaunchSpec, launchArgs } from './model';
-import { runJson, runText } from './native';
+import { runText } from './native';
 import { renderReport } from './report';
 import { usageAction } from './usageReport';
-import { withPolicySnapshot } from './extractionPolicy';
 
 async function withJson<T>(value: unknown, action: (file: string) => Promise<T>): Promise<T> {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'airk-usage-'));
@@ -37,15 +36,16 @@ async function prices(): Promise<object | undefined> {
 
 /** Each panel captures a collection; stale workspace/storage bindings reject all actions. */
 export async function openUsagePanel(spec: LaunchSpec, valid: () => boolean,
-    write: (args: string[]) => Promise<unknown>): Promise<void> {
+    write: (args: string[], valid?: () => boolean) => Promise<unknown>): Promise<void> {
     const panel = vscode.window.createWebviewPanel('airk.usage', `AIRK Usage & Savings: ${spec.name}`, vscode.ViewColumn.Active, { enableScripts: true, localResourceRoots: [] });
     let days = 30, price: object | undefined, report: object = {}, busy = false, disposed = false;
     const check = () => { if (disposed || !vscode.workspace.isTrusted || !valid()) { throw new Error('This collection or storage selection changed. Reopen Usage & Savings from the current collection.'); } };
+    const commit = (args:string[]) => { check();return write(args,()=>{try{check();return true;}catch{return false;}}); };
     const read = async (format = 'json', chosenPrice = price): Promise<string> => {
         check();
         const args = ['report', '--days', String(days), '--format', format];
-        return chosenPrice ? withJson(chosenPrice, file => runText(spec.command, [...launchArgs(spec, 'usage'), ...args, '--price-scenario', file], spec.root))
-            : runText(spec.command, [...launchArgs(spec, 'usage'), ...args], spec.root);
+        return chosenPrice ? withJson(chosenPrice, file => runText(spec.command, [...launchArgs(spec, 'usage'), ...args, '--price-scenario', file], path.dirname(spec.command),180000))
+            : runText(spec.command, [...launchArgs(spec, 'usage'), ...args], path.dirname(spec.command),180000);
     };
     const render = () => { check(); panel.webview.html = renderReport('Usage & Savings', 'usage', { ...report, days }); };
     const refresh = async () => { report = JSON.parse(await read()); render(); };
@@ -79,22 +79,23 @@ export async function openUsagePanel(spec: LaunchSpec, valid: () => boolean,
                         { label: 'Turn recording off', mode: 'disabled', description: 'Keep existing history; stop recording future requests.' },
                         { label: 'Record totals and short-lived diagnostics', mode: 'diagnostic-events', description: 'Content-free request measurements, bounded to 128 events and 24 hours.' }
                     ], { title: 'Local usage recording' });
-                    if (selected) { check(); await write(['configure', '--mode', selected.mode]); await refresh(); } break;
+                    if (selected) { check(); await commit(['configure', '--mode', selected.mode]); await refresh(); } break;
                 }
                 case 'clear': {
                     const answer = await vscode.window.showWarningMessage(`Clear all usage history for ${spec.name}? Daily totals, longer-term totals, imported measurements and feedback will be removed. Your source files and index stay intact.`, { modal: true }, 'Clear history');
-                    if (answer === 'Clear history') { check(); await write(['clear']); await refresh(); } break;
+                    if (answer === 'Clear history') { check(); await commit(['clear']); await refresh(); } break;
                 }
                 case 'import': {
                     const files = await vscode.window.showOpenDialog({ canSelectMany: false, filters: { 'Content-free measurement JSON': ['json'] }, title: 'Select an AIRK session or paired-task measurement' });
                     if (!files?.[0]) { break; }
-                    await withPolicySnapshot(files[0].fsPath, async snapshot => {
-                        check();
-                        const preview = await runJson<object>(spec, 'usage', ['import', snapshot, '--preview']);
+                    {
+                        check();const file=files[0].fsPath;
+                        const preview = JSON.parse(await runText(spec.command,[...launchArgs(spec,'usage'),'import',file,'--preview'],path.dirname(spec.command),180000));
+                        if(typeof preview.input_sha256!=='string'||!/^[a-f\d]{64}$/i.test(preview.input_sha256))throw new Error('Measurement preview identity is unavailable.');
                         await show(JSON.stringify(preview, null, 2), 'json');
                         const answer = await vscode.window.showInformationMessage(`Import the displayed measurement into ${spec.name}? It will remain labelled as supplied evidence. Request links, if present, must still be retained in this collection.`, { modal: true }, 'Import measurement');
-                        if (answer === 'Import measurement') { check(); await write(['import', snapshot]); await refresh(); }
-                    }, 'Usage measurement', 16_384); break;
+                        if (answer === 'Import measurement') { check(); await commit(['import',file,'--if-sha256',preview.input_sha256]); await refresh(); }
+                    } break;
                 }
                 case 'template': {
                     await show(JSON.stringify({ schema_version: 1, event_id: randomUUID().replace(/-/g, ''), unix_ms: Date.now(), client: 'unknown', content_kind: 'unknown', provenance: 'client_reported',
@@ -106,7 +107,7 @@ export async function openUsagePanel(spec: LaunchSpec, valid: () => boolean,
                     const id = await vscode.window.showInputBox({ title: 'Rate an AIRK result', prompt: 'Paste the request_id from the AIRK result (32 hexadecimal characters)', validateInput: value => /^[a-f\d]{32}$/i.test(value) ? undefined : 'Enter a 32-character request ID.' });
                     if (!id) { break; }
                     const rating = await vscode.window.showQuickPick([{ label: 'Useful', value: 'useful' }, { label: 'Partly useful', value: 'partly-useful' }, { label: 'Not useful', value: 'not-useful' }], { title: 'Did this result help?' });
-                    if (rating) { check(); await write(['feedback', id, '--usefulness', rating.value]); await refresh(); } break;
+                    if (rating) { check(); await commit(['feedback', id, '--usefulness', rating.value]); await refresh(); } break;
                 }
             }
         } catch (error) { void vscode.window.showErrorMessage(`AIRK usage: ${String(error)}`); }

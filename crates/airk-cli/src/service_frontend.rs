@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
 pub struct Project {
-    pub install: PathBuf,
+    pub install: Option<PathBuf>,
     pub control: PathBuf,
     pub registration: ProjectRegistration,
 }
@@ -32,7 +32,27 @@ pub async fn resolve(
     };
     let registration = saved(&control, binding, root, data, collection)?;
     Ok(Project {
-        install,
+        install: Some(install),
+        control,
+        registration,
+    })
+}
+
+/// Explicit development transport; it never selects or starts another service.
+pub async fn resolve_control(control: &Path, binding: ProjectBinding) -> Result<Project> {
+    let control = control.canonicalize()?;
+    crate::runtime_install::validate_control_root(&control)?;
+    anyhow::ensure!(
+        matches!(
+            crate::console_client::request(&control, airk_core::service::ControlMethod::Health)
+                .await?,
+            airk_core::service::ControlResponse::Health { .. }
+        ),
+        "native service health unavailable"
+    );
+    let registration = saved(&control, Some(binding), Path::new(""), Path::new(""), "")?;
+    Ok(Project {
+        install: None,
         control,
         registration,
     })

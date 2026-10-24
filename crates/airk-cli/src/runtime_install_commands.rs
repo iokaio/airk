@@ -4,6 +4,36 @@ use super::*;
 
 pub async fn run(command: &RuntimeCommand) -> Result<()> {
     let output = match command {
+        RuntimeCommand::ContainerHost {
+            source,
+            approved_sha256,
+            channel,
+        } => {
+            ensure!(
+                cfg!(target_os = "linux"),
+                "container host requires Linux; native desktop operation uses the installed runtime"
+            );
+            let source = source.canonicalize()?;
+            ensure!(
+                std::env::current_exe()?.canonicalize()?
+                    == source.join(main_name()).canonicalize()?,
+                "container host must run the approved image's own main executable"
+            );
+            let paths = crate::user_paths::UserPaths::discover(*channel)?;
+            managed::configure(
+                &source,
+                &paths.install,
+                approved_sha256,
+                VerificationBasis::TrustedDistribution,
+                ManagedLifecycle::External,
+                Some(&paths.state),
+                *channel,
+            )
+            .await?;
+            // The container is the explicit external supervisor. It starts this
+            // already verified image directly; on-demand/user login APIs remain disabled.
+            return service_runtime::serve(&layout::control(&paths.install)?).await;
+        }
         RuntimeCommand::Location { channel } => {
             let paths = crate::user_paths::UserPaths::discover(*channel)?;
             serde_json::json!({"install_dir":paths.install,"os":std::env::consts::OS,"arch":std::env::consts::ARCH,"channel":channel,"protocol":1,"user_paths":paths})
@@ -175,10 +205,26 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
             Some(preview) => payload_repair::apply(install_dir, source, approved_sha256, *preview)?,
             None => payload_repair::preview(install_dir, source, approved_sha256)?,
         },
+        RuntimeCommand::PrepareClient { install_dir } => {
+            let _lock = install_lock(install_dir)?;
+            activation::require_settled(install_dir)?;
+            launcher_repair::require_settled(install_dir)?;
+            ensure!(
+                !managed::detaching(install_dir)?,
+                "finish managed detachment before preparing a client launcher"
+            );
+            let (_, main, _) = selected(install_dir)?;
+            prepare_launcher(install_dir, &main)?;
+            serde_json::json!({"launcher":verified_launcher(install_dir)?,"service_lifecycle_changed":false})
+        }
         RuntimeCommand::Inspect { install_dir } => {
             let (selection, executable, approval) = selected(install_dir)?;
             let policy = managed::read(install_dir)?;
-            let launcher = policy.is_none().then(|| launcher_path(install_dir));
+            let launcher = if policy.is_none() || launcher_path(install_dir).try_exists()? {
+                Some(verified_launcher(install_dir)?)
+            } else {
+                None
+            };
             let control = layout::control(install_dir);
             let state_error = control
                 .as_ref()
@@ -339,21 +385,14 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
             launcher_repair::require_settled(install_dir)?;
             let (_, executable, _) = selected(install_dir)?;
             let mut command = Command::new(executable);
-            if args.iter().any(|value| {
-                value == "--service-project"
+            ensure!(
+                !args.iter().any(|value| value == "--service-install-dir"
                     || value
                         .to_str()
-                        .is_some_and(|value| value.starts_with("--service-project="))
-            }) {
-                ensure!(
-                    !args.iter().any(|value| value == "--service-install-dir"
-                        || value
-                            .to_str()
-                            .is_some_and(|value| value.starts_with("--service-install-dir="))),
-                    "launcher owns service installation context"
-                );
-                command.arg("--service-install-dir").arg(install_dir);
-            }
+                        .is_some_and(|value| value.starts_with("--service-install-dir="))),
+                "launcher owns service installation context"
+            );
+            command.arg("--service-install-dir").arg(install_dir);
             command.args(args);
             return forward(command);
         }

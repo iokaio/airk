@@ -93,7 +93,7 @@ async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
             Instant::now(),
             Duration::from_secs(60),
         )?;
-    let mut tools = match state.tools.session().await {
+    let mut tools = match state.tools.session_with_client(grant.client).await {
         Ok(tools) => tools,
         Err(error) => {
             state
@@ -125,19 +125,34 @@ async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
                 "project authorization expired"
             );
             ensure!(
-                !request.tool.is_empty() && request.tool.len() <= 128,
+                if request.native.is_some() { request.tool.is_empty() && request.arguments.is_empty() } else { !request.tool.is_empty() && request.tool.len() <= 128 },
                 "invalid tool name"
             );
             state.storage.check()?;
-            let request_id = state
+            let admission = state
                 .broker
                 .lock()
                 .map_err(|_| anyhow::anyhow!("query policy unavailable"))?
-                .begin_query(state.identity, session, MAX_FRAME_BYTES, Instant::now())?;
+                .begin_query(state.identity, session, MAX_FRAME_BYTES, Instant::now());
+            let request_id = match admission {
+                Ok(request) => request,
+                Err(error) => {
+                    let mut reply = admission_rejection(error);
+                    reply.status_receipt = tools.status_receipt();
+                    local_ipc::write_message(&mut stream, &reply, Duration::from_secs(5)).await?;
+                    if reply.rebind { return Ok(()); }
+                    continue;
+                }
+            };
             tools.restore_status_receipt(request.status_receipt);
             // The permit and revision materialization survive transport cancellation.
-            let response = match tokio::time::timeout(Duration::from_secs(125),
-                tools.call(request.tool, request.arguments)).await {
+            let native_read = request.native.is_some();
+            let response = match tokio::time::timeout(Duration::from_secs(125), async {
+                match request.native {
+                    Some(native) => tools.read_native(native, state.identity.project).await,
+                    None => Ok(serde_json::to_value(tools.call(request.tool, request.arguments).await?)?),
+                }
+            }).await {
                 Ok(response) => response,
                 Err(_) => {
                     // Cancelling a protocol future does not stop accepted native
@@ -146,9 +161,11 @@ async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
                     std::process::exit(75);
                 }
             };
-            let value = response.and_then(|response|Ok(serde_json::to_value(response)?))
-                .unwrap_or_else(|_|serde_json::json!({"content":[{"type":"text","text":"AIRK read-only tool failed or is unavailable."}],"isError":true}));
-            let reply = protocol::QueryResult { result: value, status_receipt: tools.status_receipt() };
+            let value = response.unwrap_or_else(|error| {
+                if native_read { serde_json::json!({"error":{"code":"native_read_failed","message":format!("{error:#}").chars().take(1024).collect::<String>()}}) }
+                else { serde_json::json!({"content":[{"type":"text","text":"AIRK read-only tool failed or is unavailable."}],"isError":true}) }
+            });
+            let reply = protocol::QueryResult { result: value, status_receipt: tools.status_receipt(), rebind: false };
             let result = local_ipc::write_message(&mut stream,&reply,Duration::from_secs(5)).await;
             state
                 .broker
@@ -166,6 +183,18 @@ async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
         .disconnect(state.identity, session, Instant::now())?;
     tools.close().await?;
     result
+}
+
+fn admission_rejection(error: airk_core::service::AdmissionError) -> protocol::QueryResult {
+    let busy = error == airk_core::service::AdmissionError::Busy;
+    let detail = serde_json::json!({"error":{"code":"direct_query_admission", "reason":error,
+        "query_submitted":false,"retryable":busy,"retry_after_ms":if busy {Some(25)} else {None},
+        "fresh_brokerage_required":!busy}});
+    protocol::QueryResult {
+        result: serde_json::json!({"content":[{"type":"text","text":detail.to_string()}],"isError":true}),
+        status_receipt: Default::default(),
+        rebind: !busy,
+    }
 }
 
 fn execute(
@@ -726,4 +755,36 @@ pub async fn run() -> Result<()> {
     state.tools.close().await?;
     drop(lease);
     Ok(())
+}
+
+#[cfg(test)]
+mod admission_tests {
+    #[test]
+    fn temporary_admission_keeps_the_session_and_expired_authority_requires_rebinding() {
+        use airk_core::service::AdmissionError;
+        for reason in [
+            AdmissionError::Busy,
+            AdmissionError::Expired,
+            AdmissionError::StaleIdentity,
+        ] {
+            let reply = super::admission_rejection(reason);
+            let detail: serde_json::Value =
+                serde_json::from_str(reply.result["content"][0]["text"].as_str().unwrap()).unwrap();
+            assert_eq!(detail["error"]["query_submitted"], false);
+            assert_eq!(
+                detail["error"]["reason"],
+                serde_json::to_value(reason).unwrap()
+            );
+            assert_eq!(reply.rebind, reason != AdmissionError::Busy);
+            assert_eq!(detail["error"]["retryable"], reason == AdmissionError::Busy);
+            assert_eq!(
+                detail["error"]["retry_after_ms"],
+                if reason == AdmissionError::Busy {
+                    serde_json::json!(25)
+                } else {
+                    serde_json::Value::Null
+                }
+            );
+        }
+    }
 }

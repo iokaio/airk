@@ -2,9 +2,9 @@
 
 **AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents**
 
-Start with the [1.3.2 empty-index progress release notes](release-1.3.2.md), [1.3.1 independent workers and offline model release notes](release-1.3.1.md) and [1.3.0 release notes](release-1.3.0.md), [published 1.2.4 diagnosis and recovery notes](release-1.2.4.md), [1.2.3 Agent Lean default and indexing fix](release-1.2.3.md), [1.2.2 semantic indexing fix](release-1.2.2.md) and [1.2.0 behavior and upgrade notes](release-1.2.0.md) for current defaults, upgrade steps and qualification limits. For setup, use [coding-agent integration](agent-integration.md) and [extension controls](vscode-extension.md); for indexing and disk use, use [ingestion limits and detail](ingestion-limits.md), [storage quotas](storage-quotas.md), [current-index operation](current-index-runtime.md) and [current-object cleanup](retention.md). The 1.1 release notes and v2 design records below are historical.
+The current working tree targets **1.4.0** and now defaults to service-backed extension and CLI operation. Container/package cutover, complete qualification and review remain in progress; no final service VSIX has been built. Start with the [1.4 development release record](release-1.4.0.md), [service plan](airkservice-architecture.md), [completion checklist](service-implementation-checklist.md), [project setup](service-project-setup.md) and [client adapters](service-client-adapters.md).
 
-The [1.3.0 release](release-1.3.0.md) retires the former `airk_history` MCP endpoint because the single-current-index design cannot serve retained history; see the [retirement record](unreleased-mcp-tool-retirement.md). It also includes early MCP availability during initial indexing, scoped path updates, deferred semantic inference, adaptive publication batches, revision-bound queue reports, pending-rescan coverage, guarded lexical snapshots with Linux write notifications, a qualified model catalog and SQLite FTS5 lexical storage. The extension detects recognized older 1.2 formats during indexing and starts the required full rebuild automatically, preserving original files, collection IDs and saved settings; CLI upgrades use `index --full`. The [dated follow-up](indexing-follow-up-2026-10-21.md) records cache integrity limits and validation. GitHub and Marketplace release workflow records establish their separate publication status.
+The 1.3.x/1.2.x release records and former direct-helper/window-scheduler guides are historical references. They do not describe the 1.4 default lifecycle or authorize opening legacy stores through the service. Native and extension source/lockfile versions are synchronized at 1.4.0; publication is a separate action.
 
 - [Architecture and code boundaries](architecture.md)
 - [AIRK 1.4.0 local service architecture and implementation plan](airkservice-architecture.md)
@@ -12,7 +12,10 @@ The [1.3.0 release](release-1.3.0.md) retires the former `airk_history` MCP endp
 - [Offline service installation, resumable activation, managed payloads and startup ownership](service-installation.md) Shutdown ownership checks also cover damaged payload files, and initialization receipts prevent silent registry replacement after control loss.
 - [Reviewed runtime upgrades, rollback, saved activation and version pins](service-runtime-transitions.md)
 - [Reviewed project setup, reserved storage and stable-launcher MCP bindings](service-project-setup.md)
+- [Explicit legacy agent-entry review and guarded JSON replacement](service-legacy-transition.md)
 - [Direct service client adapters and durable CLI request recovery](service-client-adapters.md)
+- [Direct usage/settings reads and guarded project management](service-native-management.md)
+- [Default-cutover development qualification and remaining gates](service-cutover-qualification.md)
 - [Service implementation completion checklist](service-implementation-checklist.md)
 - [Service publication, admitted sidecar lifetimes and bounded readers](service-publication.md)
 - [Service worker ownership, source/semantic phases and durable continuations](service-jobs.md)

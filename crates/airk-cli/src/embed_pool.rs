@@ -682,6 +682,11 @@ pub async fn run() -> Result<()> {
         }
     }
     closing.store(true, Ordering::Release);
+    // Idle peers may be waiting on a five-minute read deadline. Closing
+    // admission must also wake those transports before joining the engine.
+    // Aborting a connection never releases the process lease or its charged
+    // inference work: the engine drains and joins below before this owner exits.
+    connections.abort_all();
     while connections.join_next().await.is_some() {}
     drop(state);
     engine

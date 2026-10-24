@@ -41,17 +41,17 @@ jobs:
       - name: Prepare pinned bundled model build inputs
         run: python scripts/provision-local-model.py --destination target/local-vector-model --download
       - run: cargo fmt --all --check
-      - run: cargo clippy --workspace --all-targets --locked --target ${{ matrix.target }} -- -D warnings
-      - run: cargo test --workspace --locked --target ${{ matrix.target }}
+      - run: cargo clippy --workspace --all-targets --all-features --locked --target ${{ matrix.target }} -- -D warnings
+      - run: cargo test --workspace --all-features --locked --target ${{ matrix.target }}
       - run: python -m unittest discover -s scripts/tests -v
       - name: Repository checks
         shell: pwsh
         run: ./scripts/check-repo.ps1
       - run: git diff --check
-      - run: cargo build --release --locked -p airk-cli --target ${{ matrix.target }}
+      - run: python scripts/build-service-runtime.py --profile release --destination artifacts/runtime/${{ matrix.target }}
       - name: Extension contracts and real native MCP adapter
         env:
-          AIRK_TEST_BINARY: ${{ github.workspace }}/target/${{ matrix.target }}/release/airk
+          AIRK_TEST_BINARY: ${{ github.workspace }}/artifacts/runtime/${{ matrix.target }}/airk
         run: npm test --prefix packages/vscode
       - name: Sign and notarize using an isolated temporary keychain
         env:
@@ -59,12 +59,12 @@ jobs:
           MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-        run: python scripts/ci-macos-sign.py --target ${{ matrix.target }}
+        run: python scripts/ci-macos-sign.py --target ${{ matrix.target }} --pair
       - name: Remove temporary signing credentials even after failure
         if: ${{ always() }}
         run: python scripts/ci-macos-sign.py --cleanup
       - name: Package and reverify signed native candidate
-        run: python scripts/package-native.py --target ${{ matrix.target }} --signed-dir artifacts/signed/${{ matrix.target }}
+        run: python scripts/package-native.py --target ${{ matrix.target }} --runtime-dir artifacts/runtime/${{ matrix.target }} --signed-dir artifacts/signed/${{ matrix.target }}
       - name: Package matching stable VSIX
         run: python scripts/package-extension.py --target ${{ matrix.target }} --channel stable
       - name: Retain signed native candidate

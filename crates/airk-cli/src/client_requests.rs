@@ -97,29 +97,39 @@ fn entries(control: &Path) -> Result<Vec<PathBuf>> {
     Ok(entries)
 }
 fn fields(saved: &Saved) -> Result<(Incarnation, ProjectBinding, JobKind)> {
-    let ControlMethod::Enqueue {
-        project, key, kind, ..
-    } = &saved.request
-    else {
-        anyhow::bail!("unsupported saved CLI mutation")
+    let (key, project, kind) = match &saved.request {
+        ControlMethod::Enqueue {
+            project, key, kind, ..
+        } if matches!(
+            kind,
+            JobKind::Index
+                | JobKind::Inspect
+                | JobKind::Reconcile
+                | JobKind::Vectors
+                | JobKind::ModelSetup
+                | JobKind::Verify
+                | JobKind::Recover
+                | JobKind::Maintain
+        ) =>
+        {
+            (key, *project, *kind)
+        }
+        ControlMethod::ConfigureProject {
+            project,
+            key,
+            request,
+            ..
+        } => {
+            request.validate()?;
+            (key, *project, JobKind::Configure)
+        }
+        _ => anyhow::bail!("unsupported saved CLI mutation"),
     };
     ensure!(
-        saved.schema == 1
-            && key.namespace == saved.namespace
-            && matches!(
-                kind,
-                JobKind::Index
-                    | JobKind::Inspect
-                    | JobKind::Reconcile
-                    | JobKind::Vectors
-                    | JobKind::ModelSetup
-                    | JobKind::Verify
-                    | JobKind::Recover
-                    | JobKind::Maintain
-            ),
+        saved.schema == 1 && key.namespace == saved.namespace,
         "changed CLI request contract"
     );
-    Ok((key.nonce, *project, *kind))
+    Ok((key.nonce, project, kind))
 }
 fn read(control: &Path, nonce: Incarnation) -> Result<Saved> {
     let path = directory(control).join(format!("{nonce}.json"));
@@ -192,6 +202,32 @@ pub async fn prepare(
         ControlMethod::Enqueue {
             project,
             kind,
+            caller: airk_kernel::service_broker::new_instance_id()?,
+            key: RequestKey {
+                namespace,
+                epoch,
+                nonce: airk_kernel::service_broker::new_instance_id()?,
+            },
+        },
+    )
+}
+pub async fn prepare_configuration(
+    control: &Path,
+    project: ProjectBinding,
+    draft: crate::service_configuration::Draft,
+) -> Result<Incarnation> {
+    let control = control.canonicalize()?;
+    let request = crate::service_configuration::prepare(&control, project, draft).await?;
+    let ControlResponse::RequestEpoch { namespace, epoch } =
+        crate::console_client::request(&control, ControlMethod::RequestEpoch).await?
+    else {
+        anyhow::bail!("request epoch unavailable")
+    };
+    persist(
+        &control,
+        ControlMethod::ConfigureProject {
+            project,
+            request: Box::new(request),
             caller: airk_kernel::service_broker::new_instance_id()?,
             key: RequestKey {
                 namespace,

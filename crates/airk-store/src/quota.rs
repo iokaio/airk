@@ -86,7 +86,7 @@ impl QuotaPolicy {
             .copied()
             .unwrap_or(self.default_collection_bytes)
     }
-    fn validate(&self) -> Result<()> {
+    pub fn validate(&self) -> Result<()> {
         ensure!(
             self.collections.len() <= MAX_RESERVATIONS,
             "too many collection quota overrides"

@@ -1,6 +1,18 @@
 # AIRK 1.4.0 development release record
 
-This is a draft for the approved 1.4.0 clean break, updated October 24, 2026. Native, extension and lockfile versions remain 1.3.2 during opt-in implementation. It is not an available release or a qualification receipt. The [complete plan](airkservice-architecture.md) and [completion checklist](service-implementation-checklist.md) track remaining work.
+Native usage/settings management now uses exact bounded direct pages, explicit exports and supplied price assumptions. The Usage & Savings panel uses guarded durable jobs. Selected extraction/scan-limit files and shared quota policies use digest-bound preparation; stale quota previews cannot overwrite another project's change. See [native management](service-native-management.md). Final qualification and the VSIX gate remain open.
+
+Current cutover status: the working tree now defaults to the service-backed extension and native CLI, with synchronized **1.4.0** source and lockfiles. Direct public CLI store writers and the editor-owned scheduler are retired. Container/package cutover, all management/transition surfaces, full frozen qualification and review remain open. No final 1.4 VSIX has been built or published.
+
+The coding-agent guide now offers [explicit diff review for recognized legacy JSON entries](service-legacy-transition.md), with exact proposal/file guards and preserved unrelated settings. Other formats retain manual review. Native MCP verification is read-only. This does not establish ownership of old workers or authorize their automatic removal.
+
+The dated development checkpoints below retain their original artifact/version evidence; they are not claims of final release qualification.
+
+Current client/qualification follow-up: managed payloads support an explicitly prepared lightweight client launcher without provider writes or lifecycle takeover. Native source/semantic turns record actual numeric usage work independently of queue acceptance and waiting clients. Runtime packaging now preserves the paired inventory and legal files, rejects links and oversized inputs before hashing, and streams large archive payloads. See [development qualification](service-cutover-qualification.md); complete CI script ports, native Mac startup ownership and final review remain open.
+
+## Historical implementation checkpoints before default cutover
+
+Historical opt-in checkpoint, October 24, 2026: native/extension/lockfile versions were 1.3.2 before the default cutover. The artifact receipts below retain those original versions; they are not a release or final qualification receipt. The [complete plan](airkservice-architecture.md) and [completion checklist](service-implementation-checklist.md) track remaining work.
 
 Registry recovery now distinguishes interrupted first initialization from lost initialized metadata. Missing/empty ready databases and missing required tables are preserved and refused; legacy development receipts upgrade only with a complete matching ledger. Installer shutdown also fences the exact observed service instance while retaining the selected runtime's protocol version.
 

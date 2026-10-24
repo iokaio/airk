@@ -297,6 +297,32 @@ test('automatic bootstrap respects an approved same-version pin and a persistent
     }finally{await f.cleanup();}
 });
 
+test('managed agent setup prepares a user client launcher while preserving external lifecycle ownership',async()=>{
+    const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install);
+    const calls:string[][]=[];let launcher:string|null=null;
+    const approval={version:'1.4.0',manifest_sha256:f.digest,verification_basis:'organization_digest'};
+    const host=new RuntimeHost(f.root,'1.4.0',{channel:'stable',installDir:install,
+        managed:{source:f.source,approvedSha256:f.digest,lifecycle:'external'}},async(_command,args)=>{
+        calls.push(args);
+        switch(args[1]){
+            case 'self-test':return {protocol:1,version:'1.4.0',self_test:'passed',metadata_console:1};
+            case 'location':return {protocol:1,install_dir:install};
+            case 'inspect':return {selection:{active:f.digest},approval,executable:path.join(f.source,f.main),launcher,
+                control_dir:path.join(install,'control'),managed_policy:{source:f.source,approval,lifecycle:'external'}};
+            case 'diagnose':return {};
+            case 'ensure':return {};
+            case 'prepare-client':launcher=path.join(install,'airk-launcher');return {launcher,service_lifecycle_changed:false};
+            default:throw new Error('Managed client setup changed runtime ownership');
+        }
+    });
+    try{
+        const binding=await host.ensure();assert.equal(binding.lifecycle,'external');assert.equal(binding.launcher,launcher);
+        assert.ok(launcher);assert.equal(binding.executable,path.join(f.source,f.main));
+        assert.deepEqual(calls.filter(args=>['ensure','prepare-client'].includes(args[1])).map(args=>args[1]),['ensure','prepare-client']);
+        assert.ok(!calls.some(args=>['stage','activate','managed','start','login'].includes(args[1])));
+    }finally{await f.cleanup();}
+});
+
 test('native lifecycle sends a bounded saved intent over stdin and refuses a crossed acknowledgement',async()=>{
     const f=await fixture(),install=path.join(f.root,'install');const inputs:string[]=[];let crossed=false;
     const intent={lifecycle:{action:'restart' as const,caller:'12'.repeat(16),expected_instance:'34'.repeat(16),runtime:f.digest,

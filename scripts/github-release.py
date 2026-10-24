@@ -85,7 +85,9 @@ def candidate(directory):
 
 def verify_native(directory, target, commit, version, signed):
     receipt, archive = candidate(directory)
-    if (receipt.get("schema") != "airk-native-candidate/1"
+    paired = tuple(int(part) for part in version.split(".")[:2]) >= (1, 4)
+    schema = "airk-native-candidate/2" if paired else "airk-native-candidate/1"
+    if (receipt.get("schema") != schema
             or receipt.get("target") != target or receipt.get("vsix_target") != native.TARGETS[target]
             or receipt.get("commit") != commit or receipt.get("version") != version
             or receipt.get("dirty_checkout") is not False
@@ -95,7 +97,8 @@ def verify_native(directory, target, commit, version, signed):
             or archive.name != f"airk-{version}-{target}.zip"):
         raise ValueError("Native candidate provenance or signing state differs")
     executable = "airk.exe" if "windows" in target else "airk"
-    required = {executable, "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"}
+    helper = "airk-embed.exe" if "windows" in target else "airk-embed"
+    required = {executable, helper, "airk-runtime.json", "airk-build.json", "airk-install.json", "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"} if paired else {executable, "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"}
     payload = receipt["payload"]
     if not required.issubset(payload):
         raise ValueError("Native legal files or executable missing")
@@ -104,35 +107,60 @@ def verify_native(directory, target, commit, version, signed):
         if name not in required and not name.startswith("notices/"):
             raise ValueError("Unexpected native payload path")
     with zipfile.ZipFile(archive) as zipped:
-        if len(zipped.infolist()) > 15_000 or sum(p.file_size for p in zipped.infolist()) > 1_073_741_824:
+        if len(zipped.infolist()) > 15_000 or sum(p.file_size for p in zipped.infolist()) > 4_294_967_296:
             raise ValueError("Native archive exceeds verification budget")
         if any(stat.S_ISLNK(p.external_attr >> 16) or p.is_dir() for p in zipped.infolist()):
             raise ValueError("Native archive links/directories rejected")
-    native.verify_archive(archive, payload, executable)
+        if paired:
+            install = json.loads(zipped.read("airk-install.json"))
+            pair = json.loads(zipped.read("airk-runtime.json"))
+            build = json.loads(zipped.read("airk-build.json"))
+            os_name = "windows" if "windows" in target else "macos" if "apple" in target else "linux"
+            architecture = "aarch64" if target.startswith("aarch64-") else "x86_64"
+            if any(metadata.get("schema") != 1 or metadata.get("version") != version or metadata.get("os") != os_name or metadata.get("arch") != architecture for metadata in (install, pair)):
+                raise ValueError("Native pair installer platform/version differs")
+            if (install.get("files") != {name: value for name, value in payload.items() if name != "airk-install.json"}
+                    or receipt.get("install_manifest_sha256") != payload["airk-install.json"]
+                    or pair.get("airk_sha256") != payload[executable] or pair.get("embed_sha256") != payload[helper]
+                    or build.get("schema") != 1 or build.get("runtime") != pair or build.get("source") != receipt.get("source")):
+                raise ValueError("Native pair build/installer identities differ")
+    native.verify_archive(archive, payload, (executable, helper) if paired else executable)
     signing = receipt.get("signing")
     if signed:
-        if (not isinstance(signing, dict) or signing.get("schema") != "airk-native-signing/1"
-                or signing.get("target") != target or signing.get("commit") != commit
-                or signing.get("cargo_lock_sha256") != receipt["cargo_lock_sha256"]
-                or signing.get("binary_sha256") != payload[executable]
-                or not re.fullmatch(r"[0-9a-f]{64}", signing.get("source_sha256", ""))):
-            raise ValueError("Signing receipt does not bind this build")
-        verification = signing.get("verification", {})
-        if verification.get("timestamp_present") is not True:
-            raise ValueError("Trusted signing timestamp missing")
-        if "apple" in target:
-            if (signing.get("platform") != "Darwin" or signing.get("team_id") != "5PX7D99PXA"
-                    or verification.get("trust") != "apple_developer_id"
-                    or verification.get("team_id") != "5PX7D99PXA"
-                    or verification.get("hardened_runtime") is not True
-                    or (signing.get("notarization") or {}).get("status") != "Accepted"
-                    or not (signing.get("notarization") or {}).get("id")):
-                raise ValueError("Apple signature or accepted notarization missing")
-        elif (signing.get("platform") != "Windows" or signing.get("azure") != signer.AZURE_SIGNING
-              or verification.get("trust") != "authenticode_valid"
-              or not re.fullmatch(r"[0-9a-fA-F]{40}", signing.get("identity", ""))
-              or verification.get("signer_thumbprint") != signing["identity"]):
-            raise ValueError("Azure Authenticode identity missing")
+        if paired:
+            if (not isinstance(signing, dict) or signing.get("schema") != "airk-service-pair-signing/1"
+                    or signing.get("target") != target or signing.get("commit") != commit
+                    or signing.get("cargo_lock_sha256") != receipt["cargo_lock_sha256"]
+                    or signing.get("install_manifest_sha256") != payload["airk-install.json"]
+                    or not re.fullmatch(r"[0-9a-f]{64}", signing.get("source_install_sha256", ""))
+                    or set(signing.get("components", {})) != {executable, helper}):
+                raise ValueError("Pair signing receipt does not bind this build")
+            components = signing["components"]
+        else:
+            components = {executable: signing}
+        for component, signing in components.items():
+            if (not isinstance(signing, dict) or signing.get("schema") != "airk-native-signing/1"
+                    or signing.get("target") != target or signing.get("commit") != commit
+                    or signing.get("cargo_lock_sha256") != receipt["cargo_lock_sha256"]
+                    or signing.get("binary_sha256") != payload[component]
+                    or not re.fullmatch(r"[0-9a-f]{64}", signing.get("source_sha256", ""))):
+                raise ValueError("Signing receipt does not bind this build")
+            verification = signing.get("verification", {})
+            if verification.get("timestamp_present") is not True:
+                raise ValueError("Trusted signing timestamp missing")
+            if "apple" in target:
+                if (signing.get("platform") != "Darwin" or signing.get("team_id") != "5PX7D99PXA"
+                        or verification.get("trust") != "apple_developer_id"
+                        or verification.get("team_id") != "5PX7D99PXA"
+                        or verification.get("hardened_runtime") is not True
+                        or (signing.get("notarization") or {}).get("status") != "Accepted"
+                        or not (signing.get("notarization") or {}).get("id")):
+                    raise ValueError("Apple signature or accepted notarization missing")
+            elif (signing.get("platform") != "Windows" or signing.get("azure") != signer.AZURE_SIGNING
+                  or verification.get("trust") != "authenticode_valid"
+                  or not re.fullmatch(r"[0-9a-fA-F]{40}", signing.get("identity", ""))
+                  or verification.get("signer_thumbprint") != signing["identity"]):
+                raise ValueError("Azure Authenticode identity missing")
     elif signing is not None:
         raise ValueError("Unsigned native candidate contains signing metadata")
     return receipt, archive
@@ -142,13 +170,18 @@ def stage_signing(directory, target, commit, version):
     """Restore only the tested executable, never arbitrary artifact paths."""
     if target not in SIGNED_TARGETS:
         raise ValueError("Unsupported signing target")
-    _, archive = verify_native(directory, target, commit, version, False)
+    receipt, archive = verify_native(directory, target, commit, version, False)
+    paired = receipt["schema"] == "airk-native-candidate/2"
     executable = "airk.exe" if "windows" in target else "airk"
-    output = ROOT / "target" / target / "release"
+    output = ROOT / "artifacts" / "runtime" / target if paired else ROOT / "target" / target / "release"
     output.mkdir(parents=True, exist_ok=False)
     with zipfile.ZipFile(archive) as zipped:
-        (output / executable).write_bytes(zipped.read(executable))
-    (output / executable).chmod(0o755)
+        for name in receipt["payload"] if paired else (executable,):
+            destination = output / name
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(zipped.read(name))
+    for name in (executable, "airk-embed.exe" if "windows" in target else "airk-embed") if paired else (executable,):
+        (output / name).chmod(0o755)
 
 
 def assemble(directory, output, commit, version, tag, channel, run_id, attempt, producer=None):
@@ -173,7 +206,13 @@ def assemble(directory, output, commit, version, tag, channel, run_id, attempt, 
         if target in SIGNED_TARGETS:
             original, _ = verify_native(directory / f"airk-native-{target}-{producer_suffix}", target, commit, version, False)
             executable = "airk.exe" if "windows" in target else "airk"
-            if receipt["signing"]["source_sha256"] != original["payload"][executable]:
+            if receipt["schema"] == "airk-native-candidate/2":
+                if receipt["signing"]["source_install_sha256"] != original["payload"]["airk-install.json"]:
+                    raise ValueError("Signed pair did not originate in the tested candidate")
+                for name, component in receipt["signing"]["components"].items():
+                    if component["source_sha256"] != original["payload"][name]:
+                        raise ValueError("Signed component did not originate in the tested candidate")
+            elif receipt["signing"]["source_sha256"] != original["payload"][executable]:
                 raise ValueError("Signed binary did not originate in the tested candidate")
         elif producer is not None:
             original, _ = verify_native(directory / f"airk-native-{target}-{producer_suffix}", target, commit, version, False)

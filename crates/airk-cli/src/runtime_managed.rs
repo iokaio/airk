@@ -72,6 +72,10 @@ pub(super) fn is_configured(root: &Path) -> Result<bool> {
     Ok(exists(&root.join(POLICY))? || exists(&root.join(DETACH))?)
 }
 
+pub(super) fn detaching(root: &Path) -> Result<bool> {
+    exists(&root.join(DETACH))
+}
+
 impl Managed {
     pub(super) fn saved_executable(&self) -> PathBuf {
         self.source.join(main_name())

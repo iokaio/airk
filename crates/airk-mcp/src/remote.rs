@@ -13,6 +13,7 @@ use std::{future::Future, pin::Pin, sync::Arc};
 pub type RemoteFuture<'a> =
     Pin<Box<dyn Future<Output = anyhow::Result<serde_json::Value>> + Send + 'a>>;
 pub trait RemoteTools: Send + Sync + 'static {
+    fn client(&self, _client: airk_core::usage::ClientFamily) {}
     fn call(
         &self,
         tool: String,
@@ -53,7 +54,7 @@ impl ServerHandler for Bridge {
     async fn call_tool(
         &self,
         request: CallToolRequestParams,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
         let Ok(_permit) = self.permits.clone().try_acquire_owned() else {
             return Ok(CallToolResult::error(vec![ContentBlock::text(
@@ -62,6 +63,13 @@ impl ServerHandler for Bridge {
             .into());
         };
         let mut arguments = request.arguments.unwrap_or_default();
+        let client = context
+            .peer
+            .peer_info()
+            .map_or(airk_core::usage::ClientFamily::Unknown, |info| {
+                airk_core::usage::ClientFamily::from_label(&info.client_info.name)
+            });
+        self.backend.client(client);
         arguments.entry("response_mode").or_insert_with(|| {
             serde_json::to_value(self.response_mode).expect("scalar display mode")
         });

@@ -48,7 +48,20 @@ fn create_reserved_storage(project: &ProjectRegistration) -> Result<()> {
             "reserved storage ancestor redirected"
         );
         ancestor.push(name);
-        match fs::create_dir(&ancestor) {
+        let directory = {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::DirBuilderExt;
+                let mut builder = fs::DirBuilder::new();
+                builder.mode(0o700);
+                builder
+            }
+            #[cfg(not(unix))]
+            {
+                fs::DirBuilder::new()
+            }
+        };
+        match directory.create(&ancestor) {
             Ok(()) => (),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => (),
             Err(error) => return Err(error.into()),
@@ -76,6 +89,15 @@ mod tests {
         create_reserved_storage(&project)?;
         create_reserved_storage(&project)?;
         assert!(data.is_dir());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(fs::metadata(&data)?.permissions().mode() & 0o077, 0);
+            assert_eq!(
+                fs::metadata(data.parent().unwrap())?.permissions().mode() & 0o077,
+                0
+            );
+        }
         assert!(fs::read_dir(&root)?.next().is_none());
         Ok(())
     }

@@ -1,8 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Exercise explicit content-free usage inputs through the built public CLI."""
 import argparse
+from contextlib import ExitStack
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
+import importlib.util
 import json
 import os
 import queue
@@ -13,31 +15,50 @@ import threading
 import time
 import uuid
 
+spec = importlib.util.spec_from_file_location("airk_usage_fixture", Path(__file__).with_name("check-service-clients.py"))
+clients = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(clients)
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, required=True)
     binary = parser.parse_args().binary.resolve(strict=True)
-    with tempfile.TemporaryDirectory(prefix="airk-usage-inputs-") as temporary:
-        base = Path(temporary)
+    with tempfile.TemporaryDirectory(prefix="airk-usage-inputs-") as temporary, ExitStack() as stack:
+        base = Path(temporary).resolve(strict=True)
         root = base / "sources"
         root.mkdir()
         (root / "fixture.txt").write_text("Original bounded usage fixture.\n", encoding="utf-8")
         state = base / "state"
-        environment = dict(os.environ)
-        environment.pop("AIRK_USAGE_MODE", None)
+        state.mkdir()
+        fixture = clients.Fixture(binary.parent, base)
+        assert fixture.binary == binary
+        fixture.environment.pop("AIRK_USAGE_MODE", None)
+        stack.enter_context(fixture)
+        fixture.register("usage-fixture", root, state)
+        fixture.configure("usage-fixture", {"operation": "vectors", "enabled": False})
+        fixture.configure("usage-fixture", {"operation": "usage", "mode": "aggregates_only"})
+        environment = fixture.environment
 
         def run(*command, fails=False):
-            result = subprocess.run(
-                [str(binary), "--root", str(root), "--data-dir", str(state),
-                 "--collection", "usage-fixture", *map(str, command)],
-                capture_output=True, timeout=120, env=environment,
-            )
-            if fails:
-                assert result.returncode != 0, result.stdout
+            if command[0] not in ("index", "usage"):
+                assert not fails
+                return fixture.query("usage-fixture", *command)
+            result = fixture.run(*fixture.arguments("usage-fixture"), *command, check=False)
+            if result.returncode:
+                assert fails, result.stderr
                 return None
-            assert result.returncode == 0, result.stderr.decode(errors="replace")
-            return json.loads(result.stdout)
+            value = json.loads(result.stdout)
+            if "job" in value:
+                job = fixture.wait(value, "failed" if fails else "succeeded")
+                if fails:
+                    return None
+                if command[0] == "index":
+                    return fixture.tool("usage-fixture", "airk_status", {"response_mode": "full"})
+                value = fixture.rpc({"configuration_result": {"id": job["id"]}})["result"]
+            else:
+                assert not fails, (command, value)
+            return value
 
         def write_json(name, value):
             path = base / name
@@ -65,8 +86,7 @@ def main():
         # Exercise the actual stdio adapter, including a conditional response
         # with no evidence payload. No fake provider/token measurements.
         with (base / "mcp-errors.log").open("w", encoding="utf-8") as errors:
-            child = subprocess.Popen([str(binary), "--root", str(root), "--data-dir", str(state),
-                                      "--collection", "usage-fixture", "mcp"], stdin=subprocess.PIPE,
+            child = subprocess.Popen([str(binary), *fixture.arguments("usage-fixture"), "mcp"], stdin=subprocess.PIPE,
                                      stdout=subprocess.PIPE, stderr=errors, text=True, encoding="utf-8",
                                      env=dict(environment, AIRK_CLIENT="codex"))
             responses = queue.Queue()
@@ -84,10 +104,10 @@ def main():
 
             try:
                 rpc(1, "initialize", {"protocolVersion": "2025-11-25", "capabilities": {},
-                                      "clientInfo": {"name": "airk-usage-fixture", "version": "1"}})
+                                      "clientInfo": {"name": "codex", "version": "airk-native-fixture-1"}})
                 child.stdin.write(json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}) + "\n")
                 child.stdin.flush()
-                arguments = {"path": "fixture.txt", "start_line": 1, "end_line": 1, "max_bytes": 200}
+                arguments = {"path": "fixture.txt", "start_line": 1, "end_line": 1, "max_bytes": 200, "response_mode": "full"}
                 reply = rpc(2, "tools/call", {"name": "airk_read_file", "arguments": arguments})
                 assert not reply.get("isError"), reply
                 read = json.loads(reply["content"][0]["text"])
@@ -164,7 +184,7 @@ def main():
         assert scenario["session_input_equivalents"][0]["unpriced_input_tokens_unknown_cache_split"] == "120"
         assert scenario["session_input_equivalents"][0]["uncached_input_equivalent"] is None
         assert scenario["session_input_equivalents"][0]["output_equivalent"] == "0.000120000000"
-        ledger = state / "collections-1.2" / "usage-fixture" / "usage.sqlite3"
+        ledger = state / "collections-1.4" / "usage-fixture" / "usage.sqlite3"
         assert b"hellohello" not in ledger.read_bytes()
         run("usage", "configure", "--mode", "disabled")
         before = hashlib.sha256(ledger.read_bytes()).digest()
@@ -175,6 +195,7 @@ def main():
         run("usage", "clear")
         assert run("usage", "report")["supplemental"] == []
         assert run("usage", "report")["lifetime"] is None
+        assert (root / "fixture.txt").read_text(encoding="utf-8") == "Original bounded usage fixture.\n"
     print("Usage input CLI smoke passed: concurrent process accounting, separate imports, replay protection, exact local byte-BPE counts, signed price scenarios, unknown cache splits, disabled no-writes and clear.")
 
 

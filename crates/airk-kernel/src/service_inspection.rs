@@ -9,6 +9,7 @@ use airk_core::{
     },
 };
 use anyhow::{Context, Result, ensure};
+use sha2::Digest;
 
 #[derive(Debug)]
 pub struct InspectionChanged;
@@ -95,6 +96,14 @@ impl Kernel {
             incarnation,
             publication: None,
             settings_digest: settings.as_ref().ok().copied(),
+            quota_policy_digest: selected
+                .quota_policy()
+                .and_then(|policy| {
+                    Ok(airk_core::identity::Sha256Digest::from_bytes(
+                        sha2::Sha256::digest(serde_json::to_vec(&policy)?).into(),
+                    ))
+                })
+                .ok(),
             index_state: IndexState::Unavailable,
             source_state: match selected
                 .service_source_observation()
