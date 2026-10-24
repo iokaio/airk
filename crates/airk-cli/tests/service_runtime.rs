@@ -1207,6 +1207,7 @@ fn exercise_disappearing_stalled_and_malformed_clients(root: &Path) -> Result<()
             &mut incompatible,
             &ControlRequest {
                 protocol: u32::MAX,
+                expected_instance: None,
                 method: ControlMethod::Health,
             },
             Duration::from_secs(5),
@@ -2773,5 +2774,210 @@ fn failed_project_start_circuit_requires_explicit_restart_and_preserves_unknown_
             Ok::<_, anyhow::Error>(())
         })?;
     ensure!(wait_exit(&mut children.0[0])?, "service did not drain");
+    Ok(())
+}
+
+#[test]
+fn trusted_console_pipe_and_stdin_rpc_preserve_closed_projects_and_frame_bounds() -> Result<()> {
+    use airk_cli::console_client::{Request, Response as ConsoleResponse};
+    use airk_core::service::{ControlMethod as Method, ControlResponse as Response};
+    use std::io::Write;
+    let owner = tempfile::tempdir()?;
+    let runtime = owner.path().join("runtime");
+    let source = owner.path().join("source");
+    let data = owner.path().join("data");
+    fs::create_dir(&source)?;
+    fs::create_dir(&data)?;
+    let project = airk_kernel::service_projects::registration(&source, &data, "console")?;
+    let mut services = Children(vec![start(&runtime)?]);
+    wait_ready(&runtime)?;
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?
+        .block_on(airk_cli::service_runtime::request(
+            &runtime,
+            Method::Register {
+                project: project.clone(),
+            },
+        ))?;
+    let mut command = Command::new(env!("CARGO_BIN_EXE_airk"));
+    command
+        .args([
+            "--root",
+            "/console-must-not-open-source",
+            "service",
+            "console",
+            "--runtime-dir",
+        ])
+        .arg(&runtime)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    let mut consoles = Children(vec![command.spawn()?]);
+    let mut input = consoles.0[0]
+        .stdin
+        .take()
+        .context("console input missing")?;
+    let mut output = consoles.0[0]
+        .stdout
+        .take()
+        .context("console output missing")?;
+    {
+        let mut call = |method| -> Result<Response> {
+            let id = airk_kernel::service_broker::new_instance_id()?;
+            airk_cli::service_ipc::write_frame(&mut input, &Request { id, method })?;
+            let response: ConsoleResponse = airk_cli::service_ipc::read_frame(&mut output)?
+                .context("console closed before reply")?;
+            ensure!(response.id == id, "console crossed request identity");
+            Ok(response.response)
+        };
+        ensure!(
+            matches!(call(Method::Health)?, Response::Health { .. }),
+            "console health unavailable"
+        );
+        ensure!(
+            matches!(call(Method::Connect {project:project.binding})?,Response::Failure {code} if code=="console_brokerage_forbidden"),
+            "console exposed an evidence credential"
+        );
+        let mut pinned = command
+            .arg("--runtime-sha256")
+            .arg("f".repeat(64))
+            .spawn()?;
+        let mut pinned_input = pinned.stdin.take().unwrap();
+        let mut pinned_output = pinned.stdout.take().unwrap();
+        let pin_id = airk_kernel::service_broker::new_instance_id()?;
+        airk_cli::service_ipc::write_frame(
+            &mut pinned_input,
+            &Request {
+                id: pin_id,
+                method: Method::Health,
+            },
+        )?;
+        let mismatch: ConsoleResponse = airk_cli::service_ipc::read_frame(&mut pinned_output)?
+            .context("pinned console closed")?;
+        ensure!(
+            mismatch.id == pin_id
+                && matches!(mismatch.response,Response::Failure {code} if code=="service_rebind_required"),
+            "console ignored an approved payload identity mismatch"
+        );
+        drop(pinned_input);
+        drop(pinned_output);
+        ensure!(wait_exit(&mut pinned)?, "mismatched console did not drain");
+        let Response::Console { page } = call(Method::Console {
+            after: None,
+            revision: None,
+            limit: 32,
+        })?
+        else {
+            anyhow::bail!("console page unavailable")
+        };
+        ensure!(
+            page.cached
+                && page.projects.len() == 1
+                && page.projects[0].inspection.is_none()
+                && page.projects[0].progress.is_none(),
+            "closed project metadata was invented"
+        );
+        ensure!(
+            matches!(call(Method::Workers {projects:vec![project.binding]})?,Response::Workers {observations,..} if observations.len()==1&&observations[0].identity.is_none()),
+            "console started a closed project"
+        );
+        ensure!(
+            matches!(
+                call(Method::Workers {
+                    projects: vec![project.binding, project.binding]
+                })?,
+                Response::Failure { .. }
+            ),
+            "duplicate worker scope accepted"
+        );
+        ensure!(
+            fs::read_dir(&data)?.next().is_none(),
+            "console opened project state"
+        );
+        let mut rpc = Command::new(env!("CARGO_BIN_EXE_airk"))
+            .args([
+                "--root",
+                "/rpc-must-not-open-source",
+                "service",
+                "rpc",
+                "--runtime-dir",
+            ])
+            .arg(&runtime)
+            .arg("--stdin")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+        let mut body = serde_json::to_vec(&Method::Console {
+            after: None,
+            revision: None,
+            limit: 32,
+        })?;
+        body.resize(airk_core::service::MAX_FRAME_BYTES, b' ');
+        rpc.stdin.take().unwrap().write_all(&body)?;
+        let result = rpc.wait_with_output()?;
+        ensure!(
+            result.status.success(),
+            "bounded stdin RPC failed: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        ensure!(
+            serde_json::from_slice::<Value>(&result.stdout)?["status"] == "console",
+            "stdin RPC returned wrong result"
+        );
+        let mut oversized = Command::new(env!("CARGO_BIN_EXE_airk"))
+            .args(["service", "rpc", "--runtime-dir"])
+            .arg(&runtime)
+            .arg("--stdin")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()?;
+        oversized
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(&vec![b' '; airk_core::service::MAX_FRAME_BYTES + 1])?;
+        ensure!(
+            !oversized.wait()?.success(),
+            "oversized stdin management request accepted"
+        );
+        let rejected = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?
+            .block_on(airk_cli::service_runtime::request_for_instance(
+                &runtime,
+                Method::Shutdown,
+                airk_kernel::service_broker::new_instance_id()?,
+            ))?;
+        ensure!(
+            matches!(rejected,Response::Failure {code} if code=="service_instance_changed"),
+            "stale service identity authorized shutdown"
+        );
+        ensure!(
+            matches!(call(Method::Health)?, Response::Health { .. }),
+            "rejected stale shutdown stopped the service"
+        );
+        ensure!(
+            matches!(call(Method::Shutdown)?, Response::Stopping),
+            "console shutdown not acknowledged"
+        );
+        ensure!(wait_exit(&mut services.0[0])?, "service did not drain");
+        ensure!(
+            matches!(call(Method::Health)?,Response::Failure {code} if code=="service_unavailable"),
+            "down-service console invented live health"
+        );
+    }
+    drop(input);
+    drop(output);
+    ensure!(
+        wait_exit(&mut consoles.0[0])?,
+        "console did not exit at parent EOF"
+    );
+    ensure!(
+        fs::read_dir(&data)?.next().is_none(),
+        "console failure opened project state"
+    );
     Ok(())
 }

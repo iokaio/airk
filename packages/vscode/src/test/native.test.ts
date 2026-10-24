@@ -403,3 +403,11 @@ test('queue joins yield after a bounded number and Pause prevents another join',
     });
     assert.equal(calls, 1);
 });
+
+
+test('bounded native control stdin is separate from process arguments and closes at EOF',async()=>{
+    const input=JSON.stringify({fixture:'copper beacon'});
+    const output=await runText(process.execPath,['-e','let text="";process.stdin.on("data",bytes=>text+=bytes);process.stdin.on("end",()=>process.stdout.write(text));'],undefined,5000,undefined,0,input);
+    assert.equal(output,input);
+    await assert.rejects(runText(process.execPath,['-e','process.exit(7)'],undefined,5000,undefined,0,'é'.repeat(32769)),/64 KiB/);
+});

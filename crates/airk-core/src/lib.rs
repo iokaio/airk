@@ -401,3 +401,5 @@ pub trait EmbeddingProvider: Send + Sync {
     fn specification(&self) -> &str;
     fn embed(&self, text: &[String]) -> anyhow::Result<Vec<Vec<f32>>>;
 }
+
+pub mod service_console;

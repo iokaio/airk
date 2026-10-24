@@ -103,3 +103,5 @@ Contributor guidance: [CONTRIBUTING.md](../CONTRIBUTING.md). Implemented, propos
 Development helper recovery now preserves project workers and rebinds retained direct model sessions with bounded retries and explicit stop/start controls; see [shared embedding](service-embedding.md). Default adapter cutover and installed-platform qualification remain open.
 
 Native project controls now expose cached worker identity, queued restart and startup-circuit state. Explicit restart drains the expected worker before replacement, preserves other projects and supports retained evidence when sources are unavailable. See [native service control](service-protocol.md). Default client cutover and installed-platform qualification remain open.
+
+Native console metadata now uses bounded persistent framing, complete cached project pages and a trusted offline runtime client. The full console view and default adapter cutover remain in progress. See [the console foundation and development receipts](service-console.md).

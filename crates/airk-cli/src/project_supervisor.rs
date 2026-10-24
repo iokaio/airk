@@ -1335,6 +1335,35 @@ impl Supervisor {
             },
         }
     }
+    pub fn workers_status(&self, projects: &[ProjectBinding]) -> ControlResponse {
+        let unique: std::collections::BTreeSet<_> = projects.iter().copied().collect();
+        if projects.len() > 32 || unique.len() != projects.len() {
+            return ControlResponse::Failure {
+                code: "invalid_worker_observation_scope".into(),
+            };
+        }
+        match self.resources.lock() {
+            Ok(cache) => ControlResponse::Workers {
+                observations: projects
+                    .iter()
+                    .map(|project| airk_core::service_console::WorkerObservation {
+                        project: *project,
+                        identity: cache.workers.get(project).copied(),
+                        restarting: cache.restarting.contains(project),
+                        automatic_start_blocked: cache.blocked.contains(project),
+                    })
+                    .collect(),
+                age_ms: cache
+                    .observed
+                    .elapsed()
+                    .as_millis()
+                    .min(u128::from(u64::MAX)) as u64,
+            },
+            Err(_) => ControlResponse::Failure {
+                code: "worker_observation_unavailable".into(),
+            },
+        }
+    }
     pub fn worker_status(&self, project: ProjectBinding) -> ControlResponse {
         match self.resources.lock() {
             Ok(cache) => ControlResponse::Worker {

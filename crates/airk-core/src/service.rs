@@ -98,6 +98,14 @@ pub enum ControlMethod {
     Connect {
         project: ProjectBinding,
     },
+    Console {
+        after: Option<ProjectBinding>,
+        revision: Option<u64>,
+        limit: usize,
+    },
+    Workers {
+        projects: Vec<ProjectBinding>,
+    },
     Worker {
         project: ProjectBinding,
     },
@@ -123,6 +131,8 @@ pub enum ControlMethod {
 #[serde(deny_unknown_fields)]
 pub struct ControlRequest {
     pub protocol: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_instance: Option<Incarnation>,
     pub method: ControlMethod,
 }
 
@@ -216,6 +226,13 @@ pub enum ControlResponse {
     Connection {
         role: String,
         grant: ConnectionGrant,
+    },
+    Console {
+        page: crate::service_console::ConsolePage,
+    },
+    Workers {
+        observations: Vec<crate::service_console::WorkerObservation>,
+        age_ms: u64,
     },
     Worker {
         project: ProjectBinding,

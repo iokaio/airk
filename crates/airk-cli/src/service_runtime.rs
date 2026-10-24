@@ -17,6 +17,7 @@ use tokio::{
 };
 
 struct State {
+    instance: airk_core::identity::Incarnation,
     policy: Arc<Mutex<Broker>>,
     started: Instant,
     last_client_activity: Mutex<Instant>,
@@ -36,17 +37,26 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
     else {
         return Ok(());
     };
+    let instance_matches = request
+        .expected_instance
+        .is_none_or(|expected| expected == state.instance);
     if request.protocol == PROTOCOL_VERSION
+        && instance_matches
         && !matches!(request.method, ControlMethod::Health)
         && let Ok(mut activity) = state.last_client_activity.lock()
     {
         *activity = Instant::now();
     }
-    let shutdown =
-        request.protocol == PROTOCOL_VERSION && matches!(request.method, ControlMethod::Shutdown);
+    let shutdown = request.protocol == PROTOCOL_VERSION
+        && instance_matches
+        && matches!(request.method, ControlMethod::Shutdown);
     let response = if request.protocol != PROTOCOL_VERSION {
         ControlResponse::Incompatible {
             protocol: PROTOCOL_VERSION,
+        }
+    } else if !instance_matches {
+        ControlResponse::Failure {
+            code: "service_instance_changed".into(),
         }
     } else {
         match request.method {
@@ -74,6 +84,7 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
             }
             ControlMethod::Shutdown => ControlResponse::Stopping,
             ControlMethod::Connect { project } => state.supervisor.connect(project).await,
+            ControlMethod::Workers { projects } => state.supervisor.workers_status(&projects),
             ControlMethod::Worker { project } => state.supervisor.worker_status(project),
             ControlMethod::RestartProject { project, expected } => {
                 state.supervisor.restart_project(project, expected).await
@@ -129,6 +140,7 @@ pub async fn serve_with_idle(root: &Path, idle_grace: Option<Duration>) -> Resul
         log.clone(),
     )?;
     let state = Arc::new(State {
+        instance,
         policy: policy.clone(),
         started: Instant::now(),
         last_client_activity: Mutex::new(Instant::now()),
@@ -220,6 +232,21 @@ pub async fn request_for_version(
     method: ControlMethod,
     version: &str,
 ) -> Result<ControlResponse> {
+    request_scoped(root, method, version, None).await
+}
+pub async fn request_for_instance(
+    root: &Path,
+    method: ControlMethod,
+    expected: airk_core::identity::Incarnation,
+) -> Result<ControlResponse> {
+    request_scoped(root, method, env!("CARGO_PKG_VERSION"), Some(expected)).await
+}
+async fn request_scoped(
+    root: &Path,
+    method: ControlMethod,
+    version: &str,
+    expected_instance: Option<airk_core::identity::Incarnation>,
+) -> Result<ControlResponse> {
     let response_deadline = if matches!(method, ControlMethod::Connect { .. }) {
         Duration::from_secs(20)
     } else {
@@ -232,6 +259,7 @@ pub async fn request_for_version(
         &mut stream,
         &ControlRequest {
             protocol: PROTOCOL_VERSION,
+            expected_instance,
             method,
         },
         Duration::from_secs(5),

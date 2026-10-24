@@ -3,6 +3,7 @@ use airk_core::RelationshipQuery;
 use airk_core::SearchQuery;
 use airk_core::usage::{ClientFamily, RecordingMode, ResponseRepresentation, UsageOperation};
 use airk_kernel::{FactQuery, Kernel};
+use anyhow::Context;
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
@@ -456,6 +457,14 @@ enum CompressionCommand {
 
 #[derive(Subcommand)]
 enum ServiceCommand {
+    /// Trusted framed metadata adapter; never starts a service or forwards evidence.
+    Console {
+        #[arg(long)]
+        runtime_dir: PathBuf,
+        /// Pin the approved complete payload identity supplied by the trusted launcher.
+        #[arg(long)]
+        runtime_sha256: Option<airk_core::identity::Sha256Digest>,
+    },
     /// Read bounded cached process diagnostics even when the service is down.
     Logs {
         #[arg(long)]
@@ -474,8 +483,11 @@ enum ServiceCommand {
     Rpc {
         #[arg(long)]
         runtime_dir: PathBuf,
+        #[arg(long, required_unless_present = "stdin", conflicts_with = "stdin")]
+        request_file: Option<PathBuf>,
+        /// Read bounded management JSON from stdin instead of a request file.
         #[arg(long)]
-        request_file: PathBuf,
+        stdin: bool,
     },
     /// Inspect the native service without opening a project database.
     Health {
@@ -1206,7 +1218,7 @@ fn run_cli() -> anyhow::Result<()> {
         .map_err(|_| anyhow::anyhow!("AIRK CLI thread panicked"))?
 }
 
-#[tokio::main]
+#[tokio::main(worker_threads = 2)]
 async fn main_async() -> anyhow::Result<()> {
     let cli = Cli::parse();
     anyhow::ensure!(
@@ -1243,6 +1255,13 @@ async fn main_async() -> anyhow::Result<()> {
         .await;
     }
     if let Command::Service { action } = &cli.command {
+        if let ServiceCommand::Console {
+            runtime_dir,
+            runtime_sha256,
+        } = action
+        {
+            return airk_cli::console_client::run(runtime_dir, *runtime_sha256).await;
+        }
         if let ServiceCommand::Logs {
             runtime_dir,
             limit,
@@ -1273,11 +1292,21 @@ async fn main_async() -> anyhow::Result<()> {
         if let ServiceCommand::Rpc {
             runtime_dir,
             request_file,
+            stdin,
         } = action
         {
             use std::io::Read;
             let mut bytes = Vec::new();
-            std::fs::File::open(request_file)?
+            let input: Box<dyn Read> = if *stdin {
+                Box::new(std::io::stdin())
+            } else {
+                Box::new(std::fs::File::open(
+                    request_file
+                        .as_ref()
+                        .context("management request file missing")?,
+                )?)
+            };
+            input
                 .take(airk_core::service::MAX_FRAME_BYTES as u64 + 1)
                 .read_to_end(&mut bytes)?;
             anyhow::ensure!(
@@ -1371,7 +1400,7 @@ async fn main_async() -> anyhow::Result<()> {
                 ServiceCommand::Start => print_json(&manager.start()?),
                 ServiceCommand::Stop => print_json(&manager.stop()?),
                 ServiceCommand::Uninstall => print_json(&manager.uninstall()?),
-                ServiceCommand::Logs { .. } | ServiceCommand::Health { .. } | ServiceCommand::Shutdown { .. } | ServiceCommand::Rpc { .. } | ServiceCommand::Register { .. } => unreachable!("handled before opening kernel"),
+                ServiceCommand::Console { .. } | ServiceCommand::Logs { .. } | ServiceCommand::Health { .. } | ServiceCommand::Shutdown { .. } | ServiceCommand::Rpc { .. } | ServiceCommand::Register { .. } => unreachable!("handled before opening kernel"),
             }
         },
         Command::Schedule { action } => match action {

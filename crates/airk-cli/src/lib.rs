@@ -34,3 +34,5 @@ mod source_supervisor;
 #[cfg(unix)]
 pub mod unix_guardian;
 mod user_paths;
+
+pub mod console_client;

@@ -144,7 +144,8 @@ export class NativeProcessError extends Error {
 }
 
 export function runText(command: string, args: string[], cwd?: string, timeout = 300000,
-    onStderrLine?: (line: string) => boolean, idleTimeout = 0): Promise<string> {
+    onStderrLine?: (line: string) => boolean, idleTimeout = 0, input?: string): Promise<string> {
+    if (input !== undefined && Buffer.byteLength(input, 'utf8') > 65536) { return Promise.reject(new Error('AIRK native control input exceeds 64 KiB.')); }
     return new Promise((resolve, reject) => {
         const started = performance.now();
         let idleExpired = false;
@@ -155,6 +156,10 @@ export function runText(command: string, args: string[], cwd?: string, timeout =
             if (error) { reject(new NativeProcessError(command, error, stderr, Math.round(performance.now() - started), timeout)); }
             else { resolve(stdout); }
         });
+        if (input !== undefined) {
+            child.stdin?.on('error', () => { /* The exit result/deadline owns error reporting. */ });
+            child.stdin?.end(input);
+        }
         const armIdle = () => {
             if (!idleTimeout) { return; }
             if (idleTimer) { clearTimeout(idleTimer); }

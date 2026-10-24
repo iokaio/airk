@@ -80,6 +80,13 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
                 project: registry.get(project.binding)?,
             }
         }
+        ControlMethod::Console {
+            after,
+            revision,
+            limit,
+        } => ControlResponse::Console {
+            page: console_page(registry, after, revision, limit, now_ms)?,
+        },
         ControlMethod::Projects {
             after,
             revision,
@@ -159,6 +166,7 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
         | ControlMethod::EmbeddingStatus
         | ControlMethod::SourceStatus
         | ControlMethod::Resources
+        | ControlMethod::Workers { .. }
         | ControlMethod::Worker { .. }
         | ControlMethod::RestartProject { .. }
         | ControlMethod::StartEmbedding
@@ -167,6 +175,92 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
             anyhow::bail!("not a registry method")
         }
     })
+}
+
+fn observed<T>(
+    value: Result<T>,
+    kind: airk_core::service_console::ObservationKind,
+    failed: &mut Vec<airk_core::service_console::ObservationKind>,
+) -> Option<T> {
+    match value {
+        Ok(value) => Some(value),
+        Err(_) => {
+            failed.push(kind);
+            None
+        }
+    }
+}
+fn console_page(
+    registry: &mut ServiceRegistry,
+    after: Option<airk_core::service::ProjectBinding>,
+    revision: Option<u64>,
+    limit: usize,
+    now_ms: u64,
+) -> Result<airk_core::service_console::ConsolePage> {
+    use airk_core::service_console::{
+        ConsolePage, MAX_PAGE_BYTES, ObservationKind as Kind, ProjectObservation,
+    };
+    let source = registry.list(after, revision, limit)?;
+    let mut page = ConsolePage {
+        revision: source.revision,
+        observed_unix_ms: now_ms,
+        cached: true,
+        projects: Vec::new(),
+        after: source.after,
+    };
+    let source_after = source.after;
+    let mut overflow = false;
+    for project in source.projects {
+        let binding = project.registration.binding;
+        let mut failed = Vec::new();
+        let row = ProjectObservation {
+            watch: observed(
+                registry.watch(binding).map(|watch| watch.observation),
+                Kind::Watch,
+                &mut failed,
+            ),
+            progress: observed(
+                registry.progress_observation(binding),
+                Kind::Progress,
+                &mut failed,
+            )
+            .flatten(),
+            inspection: observed(registry.inspection(binding), Kind::Inspection, &mut failed)
+                .flatten(),
+            maintenance: observed(
+                registry.maintenance_observation(binding),
+                Kind::Maintenance,
+                &mut failed,
+            )
+            .flatten(),
+            maintenance_retrying: observed(
+                registry.maintenance_retrying(binding),
+                Kind::MaintenanceRetry,
+                &mut failed,
+            ),
+            failed_observations: failed,
+            project,
+        };
+        page.projects.push(row);
+        page.after = Some(binding);
+        if serde_json::to_vec(&page)?.len() > MAX_PAGE_BYTES {
+            page.projects.pop();
+            overflow = true;
+            break;
+        }
+    }
+    anyhow::ensure!(
+        !overflow || !page.projects.is_empty(),
+        "console project observation exceeds page budget"
+    );
+    page.after = if overflow || source_after.is_some() {
+        page.projects
+            .last()
+            .map(|row| row.project.registration.binding)
+    } else {
+        None
+    };
+    Ok(page)
 }
 
 impl Management {
@@ -316,5 +410,139 @@ impl Management {
     }
     pub fn can_idle_exit(&self) -> bool {
         self.pending.load(Ordering::Acquire) == 0 && !self.plans.load(Ordering::Acquire)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use airk_core::{
+        identity::Incarnation,
+        service::ProjectRegistration,
+        service_console::{MAX_PAGE_BYTES, ObservationKind},
+    };
+    #[test]
+    fn console_pages_bound_complete_rows_and_isolate_damaged_cached_observations() -> Result<()> {
+        let owner = tempfile::tempdir()?;
+        let root = owner.path().join("runtime");
+        crate::local_ipc::prepare_root(&root)?;
+        let service = Incarnation::from_bytes([77; 16]);
+        let mut registry = ServiceRegistry::open(&root, service)?;
+        let sql = rusqlite::Connection::open(root.join("service-1.4.sqlite3"))?;
+        let mut bindings = Vec::new();
+        for n in 0..32u8 {
+            let project = ProjectRegistration::new(
+                owner
+                    .path()
+                    .join("sources")
+                    .join("s".repeat(160))
+                    .join(format!("p-{n}"))
+                    .to_str()
+                    .unwrap()
+                    .into(),
+                owner
+                    .path()
+                    .join("data")
+                    .join("d".repeat(160))
+                    .join(format!("p-{n}"))
+                    .to_str()
+                    .unwrap()
+                    .into(),
+                format!("fixture-{n:02}-{}", "x".repeat(100)),
+            )?;
+            registry.register(&project)?;
+            let mut lease = airk_store::service::ProjectLease::acquire(&root, project.binding)?;
+            let epoch = registry.admit_worker(&mut lease)?;
+            let worker = airk_core::service::WorkerIdentity {
+                service,
+                worker: Incarnation::from_bytes([n + 1; 16]),
+                project: project.binding,
+                fencing_generation: epoch,
+            };
+            let observation = serde_json::json!({"worker":worker,"current_fencing_generation":epoch,"job":project.binding,"observed_unix_ms":1,
+                "snapshot":{"project":project.binding,"incarnation":worker.worker,"publication":null,"settings_digest":null,
+                "index_state":"unavailable","source_state":"unknown","recovery_required":null,
+                "indexed_files":u64::MAX,"indexed_vectors":u64::MAX,"vectors_enabled":true,
+                "semantic":{"state":"partial","selected_artifacts":u64::MAX,"completed_artifacts":u64::MAX-1,
+                    "selected_units":u64::MAX,"completed_units":u64::MAX-1,"failed":false},
+                "discovery":{"state":"ready","processed_artifacts":u64::MAX,"committed_artifacts":u64::MAX,"total_artifacts":u64::MAX,"failed":false},
+                "failure":"index_observation_failed","storage":{"collection_used_bytes":u64::MAX,"collection_reserved_bytes":u64::MAX,
+                    "collection_limit_bytes":u64::MAX,"root_available_bytes":u64::MAX,"physical_available_growth_bytes":u64::MAX,"replacement_estimate_bytes":u64::MAX}}});
+            let parsed: airk_core::service_inspection::InspectionObservation =
+                serde_json::from_value(observation)?;
+            parsed.snapshot.validate()?;
+            sql.execute(
+                "INSERT INTO service_inspections(project,payload) VALUES(?1,?2)",
+                rusqlite::params![project.binding.to_string(), serde_json::to_vec(&parsed)?],
+            )?;
+            bindings.push(project.binding);
+        }
+        let mut after = None;
+        let mut revision = None;
+        let mut seen = std::collections::BTreeSet::new();
+        let mut pages = 0;
+        loop {
+            let page = console_page(&mut registry, after, revision, 32, 100)?;
+            pages += 1;
+            assert!(page.cached);
+            assert_eq!(page.observed_unix_ms, 100);
+            assert!(serde_json::to_vec(&page)?.len() <= MAX_PAGE_BYTES);
+            for row in &page.projects {
+                assert!(seen.insert(row.project.registration.binding));
+                assert!(row.inspection.is_some());
+            }
+            revision = Some(page.revision);
+            match page.after {
+                Some(next) => {
+                    assert!(after.is_none_or(|previous| next > previous));
+                    after = Some(next);
+                }
+                None => break,
+            }
+            assert!(pages < 32);
+        }
+        assert_eq!(seen.len(), 32);
+        assert!(pages > 1, "fixture must exercise byte-budget continuation");
+        sql.execute(
+            "UPDATE service_inspections SET payload=?1 WHERE project=?2",
+            rusqlite::params![b"{broken".as_slice(), bindings[0].to_string()],
+        )?;
+        let mut after = None;
+        let mut found = false;
+        loop {
+            let page = console_page(&mut registry, after, revision, 32, 200)?;
+            if let Some(row) = page
+                .projects
+                .iter()
+                .find(|row| row.project.registration.binding == bindings[0])
+            {
+                assert!(row.inspection.is_none());
+                assert!(
+                    row.failed_observations
+                        .iter()
+                        .any(|kind| matches!(kind, ObservationKind::Inspection))
+                );
+                found = true;
+            }
+            match page.after {
+                Some(next) => after = Some(next),
+                None => break,
+            }
+        }
+        assert!(found);
+        assert!(
+            !owner.path().join("sources").exists() && !owner.path().join("data").exists(),
+            "console metadata created/opened project namespaces"
+        );
+        registry.register(&ProjectRegistration::new(
+            owner.path().join("fresh-source").to_str().unwrap().into(),
+            owner.path().join("fresh-data").to_str().unwrap().into(),
+            "fresh".into(),
+        )?)?;
+        assert!(
+            console_page(&mut registry, None, revision, 32, 300).is_err(),
+            "changed registry accepted old pagination identity"
+        );
+        Ok(())
     }
 }

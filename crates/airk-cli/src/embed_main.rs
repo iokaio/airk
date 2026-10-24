@@ -141,7 +141,11 @@ fn handle(
 
 fn main() -> Result<()> {
     if std::env::args().skip(1).eq(["pool"]) {
-        return tokio::runtime::Runtime::new()?.block_on(embed_pool::run());
+        return tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()?
+            .block_on(embed_pool::run());
     }
     if std::env::args().skip(1).eq(["--version"]) {
         println!("airk-embed {}", env!("CARGO_PKG_VERSION"));

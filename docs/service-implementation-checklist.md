@@ -51,3 +51,5 @@ If a concrete blocker cannot be resolved within existing authorization, record t
 Helper lifecycle integration now implements bounded native recovery, explicit stop/start controls and direct model-session rebinding for existing project workers. Completion evidence is tracked in [shared embedding](service-embedding.md); default cutover, console controls and installed-platform qualification remain outstanding.
 
 Native project controls now expose cached worker identity, queued restart and startup-circuit state. Explicit restart drains the expected worker before replacement, preserves other projects and supports retained evidence when sources are unavailable. See [native service control](service-protocol.md). Default client cutover and installed-platform qualification remain open.
+
+Native console metadata now uses bounded persistent framing, complete cached project pages and a trusted offline runtime client. The full console view and default adapter cutover remain in progress. See [the console foundation and development receipts](service-console.md).
