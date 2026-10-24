@@ -1,5 +1,7 @@
 # Proposed AIRK local service architecture and implementation plan
 
+Service query execution now matches its resident allowance: all clients share one native materialization permit, held through kernel work, rendering and accounting even after transport cancellation. Independent service health and cached resource observations remain outside that project budget. See [request execution](request-execution.md).
+
 Installed control initialization now records an independent state-level receipt before registry creation. Losing or redirecting that control directory fails startup/discovery without creating an empty registry; restoring its original state retains the durable namespace. Matching interrupted receipts resume only with the original directory, and verified external logs remain readable while control state is absent. See [installation recovery](service-installation.md).
 
 Status: opt-in native control, durable jobs, supervised workers, direct retrieval/MCP, shared inference, saved-source watching and ordinary/replacement publication implemented; complete maintenance integration, resource qualification and extension cutover remain in progress. Written October 22, 2026; implementation updated October 23.

@@ -32,7 +32,8 @@ impl LocalTools {
     }
 
     pub async fn with_client(kernel: Kernel, client: ClientFamily) -> anyhow::Result<Self> {
-        Self::with_admission(kernel, client, Default::default(), true).await
+        let admission = crate::execution::Admission::for_kernel(&kernel);
+        Self::with_admission(kernel, client, admission, true).await
     }
 
     async fn with_admission(
@@ -452,6 +453,48 @@ mod tests {
                 assert!(result.get(old).is_none(), "{tool}: {old}");
             }
         }
+        tools.close().await?;
+        Ok(())
+    }
+    #[tokio::test]
+    async fn service_clients_inherit_one_materialization_budget_and_close_independently()
+    -> anyhow::Result<()> {
+        let owner = tempfile::tempdir()?;
+        let root = owner.path().join("source");
+        let data = owner.path().join("data");
+        std::fs::create_dir(&root)?;
+        std::fs::create_dir(&data)?;
+        std::fs::write(root.join("fixture.rs"), "pub fn copper() {}\n")?;
+        let kernel = Kernel::open_service_collection(&root, Some(data), "fixture")?;
+        kernel.configure_vectors(false)?;
+        kernel.index()?;
+        let mut tools = LocalTools::new(kernel).await?;
+        let mut first = tools.session().await?;
+        let mut second = tools.session().await?;
+        for client in [&tools, &first, &second] {
+            assert_eq!(client.admission.status()["shared_execution_budget"], true);
+            assert_eq!(client.admission.status()["evidence_workers"], 1);
+        }
+        let args = serde_json::json!({"name":"copper"})
+            .as_object()
+            .unwrap()
+            .clone();
+        assert!(
+            !first
+                .call("airk_symbols".into(), args.clone())
+                .await?
+                .is_error
+                .unwrap_or(false)
+        );
+        first.close().await?;
+        assert!(
+            !second
+                .call("airk_symbols".into(), args)
+                .await?
+                .is_error
+                .unwrap_or(false)
+        );
+        second.close().await?;
         tools.close().await?;
         Ok(())
     }

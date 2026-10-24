@@ -46,3 +46,6 @@ Owned login Stop/Uninstall now authenticates saved shutdown identity independent
 
 
 Installed control initialization now has an independent state-level receipt, written under singleton ownership before registry creation. Missing or redirected initialized control directories cause startup/discovery to fail without making an empty replacement; restoring the original directory preserves the durable namespace. Matching interrupted receipts resume within their original directory. Diagnostic inspection reports the failure, and verified external native logs remain readable without recreating control state. Unknown or conflicting ownership is preserved.
+
+
+Service-bound MCP execution now uses one shared native materialization budget per project worker across all clients, evidence/status calls, rendering and usage accounting. Accepted work keeps that budget after transport cancellation until completion, and shared shutdown drains it once. Independent service health remains outside this project budget. The standalone 1.3.x adapter retains its existing separate four-evidence/two-control capacity until final cutover.

@@ -19,7 +19,7 @@ The [1.3.0 release](release-1.3.0.md) retires the former `airk_history` MCP endp
 - [Durable service maintenance plans](service-maintenance.md): guarded previews, frozen scope, approved execution and partial-failure receipts.
 - [Bounded process logs and down-service diagnostics](service-logging.md). Native placement is bound to install/state ownership and source isolation.
 - [Native service brokerage and direct query protocol](service-protocol.md)
-- [Service resource admission, presets and observations](service-resources.md)
+- [Service resource admission, presets and observations](service-resources.md), including one shared per-worker materialization budget through client cancellation.
 - [Native process ownership and provider cleanup](service-processes.md)
 - [MCP response modes, minimal navigation and fact result keys](mcp-response-modes.md)
 - [Indexed call candidates, read retries and physical repacks](service-retrieval.md)

@@ -22,6 +22,9 @@ pub(crate) struct Admission(Arc<State>);
 struct State {
     evidence: Arc<Semaphore>,
     control: Arc<Semaphore>,
+    evidence_workers: u32,
+    control_workers: u32,
+    shared: bool,
     closing: AtomicBool,
     queued: AtomicU64,
     rejected: AtomicU64,
@@ -32,6 +35,9 @@ impl Default for Admission {
         Self(Arc::new(State {
             evidence: Arc::new(Semaphore::new(EVIDENCE_WORKERS as usize)),
             control: Arc::new(Semaphore::new(CONTROL_WORKERS as usize)),
+            evidence_workers: EVIDENCE_WORKERS,
+            control_workers: CONTROL_WORKERS,
+            shared: false,
             closing: AtomicBool::new(false),
             queued: AtomicU64::new(0),
             rejected: AtomicU64::new(0),
@@ -40,6 +46,25 @@ impl Default for Admission {
 }
 
 impl Admission {
+    pub(crate) fn for_kernel(kernel: &airk_kernel::Kernel) -> Self {
+        if !kernel.is_service_collection() {
+            return Self::default();
+        }
+        // The resident grant includes one bounded native materialization. This
+        // inner permit survives transport cancellation and applies to status,
+        // rendering and accounting too; an outer IPC grant cannot replace it.
+        let materialization = Arc::new(Semaphore::new(1));
+        Self(Arc::new(State {
+            evidence: materialization.clone(),
+            control: materialization,
+            evidence_workers: 1,
+            control_workers: 1,
+            shared: true,
+            closing: AtomicBool::new(false),
+            queued: AtomicU64::new(0),
+            rejected: AtomicU64::new(0),
+        }))
+    }
     async fn admit(&self, control: bool) -> Result<OwnedSemaphorePermit, CallToolResult> {
         let semaphore = if control {
             &self.0.control
@@ -81,8 +106,9 @@ impl Admission {
 
     pub(crate) fn status(&self) -> serde_json::Value {
         serde_json::json!({
-            "evidence_workers": EVIDENCE_WORKERS,
-            "control_workers": CONTROL_WORKERS,
+            "evidence_workers": self.0.evidence_workers,
+            "control_workers": self.0.control_workers,
+            "shared_execution_budget": self.0.shared,
             "queued_requests": self.0.queued.load(Ordering::Acquire),
             "max_queued_requests": MAX_QUEUED_REQUESTS,
             "queue_timeout_ms": QUEUE_TIMEOUT.as_millis(),
@@ -100,14 +126,16 @@ impl Admission {
             .0
             .evidence
             .clone()
-            .acquire_many_owned(EVIDENCE_WORKERS)
+            .acquire_many_owned(self.0.evidence_workers)
             .await;
-        let _control = self
-            .0
-            .control
-            .clone()
-            .acquire_many_owned(CONTROL_WORKERS)
-            .await;
+        if !self.0.shared {
+            let _control = self
+                .0
+                .control
+                .clone()
+                .acquire_many_owned(self.0.control_workers)
+                .await;
+        }
     }
 }
 
@@ -304,5 +332,53 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(worker.await.is_ok());
+    }
+    #[tokio::test(flavor = "current_thread")]
+    async fn service_materialization_survives_cancelled_transport_and_shares_status_and_evidence()
+    -> anyhow::Result<()> {
+        let owner = tempfile::tempdir()?;
+        let source = owner.path().join("source");
+        let data = owner.path().join("data");
+        std::fs::create_dir(&source)?;
+        std::fs::create_dir(&data)?;
+        let kernel = airk_kernel::Kernel::open_service_collection(&source, Some(data), "fixture")?;
+        let server = AirkServer::new(kernel);
+        let admission = server.admission.clone();
+        assert_eq!(admission.status()["shared_execution_budget"], true);
+        assert_eq!(admission.status()["evidence_workers"], 1);
+        let (entered, started) = tokio::sync::oneshot::channel();
+        let (release, hold) = std::sync::mpsc::channel();
+        let call = tokio::spawn(async move {
+            server
+                .execute(UsageOperation::Status, move |_| {
+                    let _ = entered.send(());
+                    hold.recv()?;
+                    Ok(serde_json::json!({"fixture":"complete native work"}))
+                })
+                .await
+        });
+        started.await?;
+        call.abort();
+        assert!(call.await.unwrap_err().is_cancelled());
+        let waiting = admission.clone();
+        let status = tokio::spawn(async move { waiting.admit(true).await });
+        let waiting = admission.clone();
+        let evidence = tokio::spawn(async move { waiting.admit(false).await });
+        tokio::task::yield_now().await;
+        assert_eq!(admission.status()["queued_requests"], 2);
+        assert!(!status.is_finished() && !evidence.is_finished());
+        let draining = admission.clone();
+        let drain = tokio::spawn(async move { draining.shutdown().await });
+        tokio::task::yield_now().await;
+        assert!(
+            !drain.is_finished(),
+            "cancelled transport returned native memory credit"
+        );
+        release.send(())?;
+        tokio::time::timeout(Duration::from_secs(3), drain).await??;
+        assert!(status.await?.is_err());
+        assert!(evidence.await?.is_err());
+        assert_eq!(admission.status()["queued_requests"], 0);
+        Ok(())
     }
 }

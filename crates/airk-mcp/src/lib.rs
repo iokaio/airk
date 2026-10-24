@@ -386,11 +386,12 @@ pub struct AirkServer {
 #[tool_router]
 impl AirkServer {
     pub fn new(kernel: Kernel) -> Self {
+        let admission = execution::Admission::for_kernel(&kernel);
         Self {
             kernel,
             tool_router: Self::tool_router(),
             client: ClientFamily::Unknown,
-            admission: execution::Admission::default(),
+            admission,
             responses: Default::default(),
             response_mode: response::ResponseMode::from_environment(),
         }

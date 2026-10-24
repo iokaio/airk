@@ -341,6 +341,12 @@ impl Kernel {
         &self.root
     }
     /// Validate configured source locations before a service operation captures originals.
+    /// Native adapters must keep one resident materialization budget shared
+    /// across every client and across transport cancellation.
+    pub fn is_service_collection(&self) -> bool {
+        self.service_collection.is_some()
+    }
+
     pub fn require_service_sources(&self) -> Result<()> {
         if self.service_collection.is_some() {
             service_projects::require_source(&self.root)?;
