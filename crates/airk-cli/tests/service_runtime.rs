@@ -494,6 +494,13 @@ fn missing_registered_source_still_brokers_retained_evidence_and_reports_a_typed
             Ok(serde_json::from_str(value["content"][0]["text"].as_str().context("missing tool result")?)?)
         };
         ensure!(body(result)?.get("freshness").is_some(), "first client observation missing");
+        let stable_until = tokio::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let sampled = body(connection.call("airk_search".into(), serde_json::json!({"query":"copper harbor","mode":"lexical","include_status":true}).as_object().unwrap().clone()).await?)?;
+            if sampled["freshness"]["state"] == "unregistered" { break }
+            ensure!(tokio::time::Instant::now() < stable_until, "service freshness was not forwarded: {sampled}");
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
         let receipt = connection.status_receipt();
         ensure!(serde_json::to_vec(&receipt)?.len() <= 1024, "unbounded status receipt");
         drop(connection);
@@ -535,6 +542,17 @@ fn missing_registered_source_still_brokers_retained_evidence_and_reports_a_typed
                     matches!(outcome, JobOutcome::Failed { code } if code == "source_unavailable"),
                     "missing root did not report typed source failure"
                 );
+                let fresh_until = tokio::time::Instant::now() + Duration::from_secs(10);
+                let mut cached = airk_cli::project_client::Connection::connect(&runtime, project.binding).await?;
+                loop {
+                    let sampled = body(cached.call("airk_search".into(), serde_json::json!({"query":"copper harbor","mode":"lexical","include_status":true}).as_object().unwrap().clone()).await?)?;
+                    if sampled["freshness"]["state"] == "failed" {
+                        ensure!(sampled["freshness"]["source_job"] == job.id.to_string() && sampled["freshness"]["error"] == "source_unavailable", "source failure lost attempt identity: {sampled}");
+                        break;
+                    }
+                    ensure!(tokio::time::Instant::now() < fresh_until, "source failure was not cached: {sampled}");
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
                 break;
             }
             ensure!(
@@ -1923,6 +1941,7 @@ fn private_worker_channel_renews_only_the_live_scoped_generation() -> Result<()>
         service_ipc::write_frame(
             &mut input,
             &Control::WorkStatus {
+                freshness: None,
                 identity,
                 keep_for_maintenance: false,
                 control: Some(project_protocol::WorkControl {
@@ -1951,6 +1970,7 @@ fn private_worker_channel_renews_only_the_live_scoped_generation() -> Result<()>
         service_ipc::write_frame(
             &mut input,
             &Control::WorkStatus {
+                freshness: None,
                 identity,
                 keep_for_maintenance: false,
                 control: Some(project_protocol::WorkControl {

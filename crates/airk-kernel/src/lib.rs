@@ -32,6 +32,7 @@ pub mod roots;
 pub mod scheduler;
 pub mod service_broker;
 pub mod service_execution;
+mod service_freshness;
 pub mod service_inspection;
 pub mod service_projects;
 mod service_publication;
@@ -63,6 +64,7 @@ pub struct Kernel {
     store: FileStore,
     service_collection: Option<airk_store::service::collection::Collection>,
     service_selection: Option<Arc<airk_store::service::collection::Selection>>,
+    service_freshness: Option<Arc<service_freshness::Cache>>,
 }
 
 type ProgressObserver = Arc<dyn Fn(&airk_core::readiness::IndexProgress) + Send + Sync>;
@@ -298,6 +300,7 @@ impl Kernel {
             store,
             service_collection,
             service_selection: None,
+            service_freshness: None,
         };
         if recover {
             kernel.recover_runtime_bootstrap()?;

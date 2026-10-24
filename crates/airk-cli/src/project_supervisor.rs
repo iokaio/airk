@@ -216,6 +216,7 @@ impl ChildWorker {
         &mut self,
         control: Option<protocol::WorkControl>,
         keep_for_maintenance: bool,
+        freshness: Option<airk_core::changes::FreshnessObservation>,
     ) -> Result<protocol::WorkObservation> {
         let identity = self.identity.context("project identity missing")?;
         service_ipc::write_frame(
@@ -224,6 +225,7 @@ impl ChildWorker {
                 identity,
                 control,
                 keep_for_maintenance,
+                freshness: freshness.map(Box::new),
             },
         )?;
         let Reply::WorkStatus { observation } = self.output.recv_timeout(Duration::from_secs(3))?
@@ -791,7 +793,16 @@ impl Supervisor {
                         let keep_for_maintenance = registry.as_ref().is_some_and(|registry| {
                             registry.maintenance_retrying(*project).unwrap_or(false)
                         });
-                        match worker.work_status(control, keep_for_maintenance) {
+                        let freshness = registry.as_ref().and_then(|registry| {
+                            let now = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .ok()?
+                                .as_millis();
+                            registry
+                                .source_freshness(*project, u64::try_from(now).ok()?)
+                                .ok()
+                        });
+                        match worker.work_status(control, keep_for_maintenance, freshness) {
                             Ok(observation) => {
                                 if let Some(progress) = observation.progress.as_ref()
                                     && let Some(grant) = resources.running(*project)

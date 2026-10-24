@@ -6,6 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 impl Kernel {
     pub fn changes_freshness(&self) -> FreshnessObservation {
         let mut observation = FreshnessObservation {
+            source_job: None,
             observed_unix_ms: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .map_or(0, |value| {
@@ -25,9 +26,14 @@ impl Kernel {
             // Service source intents live in the user's service registry, not
             // the legacy per-root scheduler namespace. Never substitute that
             // unrelated queue for an unavailable service observation.
-            observation.state = FreshnessState::Unavailable;
-            observation.error = Some("service_freshness_observation_unavailable".into());
-            return observation;
+            return self.service_freshness.as_ref().map_or_else(
+                || {
+                    crate::service_freshness::unavailable(
+                        "service_freshness_observation_unavailable",
+                    )
+                },
+                |cache| cache.read(std::time::Instant::now()),
+            );
         }
         match airk_store::scheduler::Queue::new(&self.data_root)
             .status(&self.collection, &self.root_id())

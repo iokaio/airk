@@ -36,6 +36,7 @@ pub enum Command {
         identity: WorkerIdentity,
         control: Option<WorkControl>,
         keep_for_maintenance: bool,
+        freshness: Option<Box<airk_core::changes::FreshnessObservation>>,
     },
     Grant {
         caller: Incarnation,

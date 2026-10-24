@@ -52,7 +52,7 @@ Implemented diagnostic foundation: [bounded rotated process logs](service-loggin
 
 The [implementation completion checklist](service-implementation-checklist.md) tracks the remaining phases and final packaging gate. Stage commits are checkpoints; the implementation task remains open until the complete plan and its validation gates are satisfied.
 
-Implemented response policy: [terse defaults and Full selection](mcp-response-modes.md) now include the trusted panel preference, per-call override, bounded agent guidance, shared provenance and client-owned status receipts across connection renewal. Read validators, source bytes and exact revision selectors remain independent of display mode. Full compact discovery, consistent result keys and retained baselines remain separate Phase 7 work.
+Implemented response policy: [terse defaults and Full selection](mcp-response-modes.md) now include the trusted panel preference, per-call override, bounded agent guidance, shared provenance and client-owned status receipts across connection renewal. Read validators, source bytes and exact revision selectors remain independent of display mode. [Fenced service freshness](service-freshness.md) now reaches the worker through cached control metadata, preserving latest source failures across job-receipt rotation without querying the registry during retrieval. Full compact discovery, consistent result keys and retained baselines remain separate Phase 7 work.
 
 ## 1. Decision and purpose
 

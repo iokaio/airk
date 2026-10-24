@@ -28,7 +28,26 @@ pub(super) const SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS service_watch_events(
         project TEXT PRIMARY KEY REFERENCES projects(binding),worker TEXT NOT NULL,
         configuration_epoch INTEGER NOT NULL CHECK(configuration_epoch>=0),
-        sequence INTEGER NOT NULL CHECK(sequence>0)) WITHOUT ROWID;";
+        sequence INTEGER NOT NULL CHECK(sequence>0)) WITHOUT ROWID;
+    CREATE TABLE IF NOT EXISTS service_source_outcomes(
+        project TEXT PRIMARY KEY REFERENCES projects(binding) ON DELETE CASCADE,
+        seq INTEGER NOT NULL CHECK(typeof(seq)='integer' AND seq>0),
+        job TEXT NOT NULL CHECK(length(job)=64),
+        state TEXT NOT NULL CHECK(state IN('succeeded','failed','canceled')),
+        outcome BLOB NOT NULL CHECK(length(outcome)<=2048)) WITHOUT ROWID;
+    CREATE TRIGGER IF NOT EXISTS service_source_outcome_updated AFTER UPDATE OF state,outcome ON service_jobs
+    WHEN NEW.state IN('succeeded','failed','canceled') AND EXISTS(SELECT 1 FROM service_job_source WHERE job=NEW.id)
+    BEGIN
+        INSERT INTO service_source_outcomes(project,seq,job,state,outcome) VALUES(NEW.project,NEW.seq,NEW.id,NEW.state,NEW.outcome)
+        ON CONFLICT(project) DO UPDATE SET seq=excluded.seq,job=excluded.job,state=excluded.state,outcome=excluded.outcome
+        WHERE excluded.seq>=service_source_outcomes.seq;
+    END;
+    INSERT INTO service_source_outcomes(project,seq,job,state,outcome)
+        SELECT j.project,j.seq,j.id,j.state,j.outcome FROM service_jobs j JOIN service_job_source s ON s.job=j.id
+        WHERE j.seq IN(SELECT max(latest.seq) FROM service_jobs latest JOIN service_job_source ls ON ls.job=latest.id
+            WHERE latest.state IN('succeeded','failed','canceled') GROUP BY latest.project)
+        ON CONFLICT(project) DO UPDATE SET seq=excluded.seq,job=excluded.job,state=excluded.state,outcome=excluded.outcome
+        WHERE excluded.seq>service_source_outcomes.seq;";
 
 pub struct WatchProject {
     pub project: RegisteredProject,

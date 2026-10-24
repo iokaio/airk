@@ -33,6 +33,8 @@ mod watch;
 pub use watch::WatchProject;
 #[path = "service_events.rs"]
 mod events;
+#[path = "service_freshness.rs"]
+mod freshness;
 #[path = "service_inspection.rs"]
 mod inspection;
 #[path = "service_maintenance.rs"]

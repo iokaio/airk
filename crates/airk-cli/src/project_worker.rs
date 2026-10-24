@@ -290,7 +290,8 @@ pub async fn run() -> Result<()> {
         Path::new(&registration.root),
         Some((&registration.data_root).into()),
         &registration.collection,
-    )?;
+    )?
+    .with_service_freshness(identity)?;
     airk_kernel::service_execution::install(Path::new(&registration.data_root), identity)?;
     let receipt = kernel.service_rebuild_receipt()?;
     registry.recover_jobs_with_rebuild_receipt(&lease, receipt.as_ref())?;
@@ -365,6 +366,7 @@ pub async fn run() -> Result<()> {
         std::sync::mpsc::sync_channel::<airk_core::service_resources::WorkAllowance>(1);
     let work_status = Arc::new(Mutex::new(WorkState::default()));
     let job_status = work_status.clone();
+    let freshness_kernel = kernel.clone();
     let jobs = tokio::task::spawn_blocking(move || -> Result<()> {
         while !job_closing.load(Ordering::Acquire) {
             let allowance = match work_receiver.recv_timeout(Duration::from_millis(200)) {
@@ -560,7 +562,8 @@ pub async fn run() -> Result<()> {
                         service_ipc::write_frame(&mut std::io::stdout().lock(), &if accepted{Reply::WorkAccepted}else{Reply::Failed})?;
                         idle=Instant::now();
                     },
-                    Some(Command::WorkStatus{identity:expected,control,keep_for_maintenance})=>{
+                    Some(Command::WorkStatus{identity:expected,control,keep_for_maintenance,freshness})=>{
+                        if expected==identity {freshness_kernel.observe_service_freshness(identity, freshness.map(|sample| *sample))?;}
                         if expected==identity {maintenance_waiting.store(keep_for_maintenance,Ordering::Release);}
                         if expected==identity && let Some(control)=control {airk_kernel::service_execution::control(identity,control.grant,control.paused,control.canceled)?;}
                         let status=work_status.lock().map_err(|_|anyhow::anyhow!("work status unavailable"))?;
