@@ -27,7 +27,7 @@ The [1.3.0 release](release-1.3.0.md) retires the former `airk_history` MCP endp
 - [Service storage ownership](service-storage-ownership.md) — separate 1.4 quota, staging, lifecycle and recovery ownership.
 - [Fenced cached service source freshness](service-freshness.md) Includes unavailable-source reasons and retained reads.
 - [Service-owned saved-source watching and reconciliation](service-source-watching.md)
-- [Shared embedding runtime, global offline model setup and resource bounds](service-embedding.md)
+- [Shared embedding runtime, global offline model/calibration inputs and resource bounds](service-embedding.md)
 - [October 22 service publication mechanism spike](service-publication-spike.md)
 - [Historical architecture v2 implementation plan](architecture-v2.md)
 - [Proposed change tracing and bounded development indexes](change-tracing-plan.md)

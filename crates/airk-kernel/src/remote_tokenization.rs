@@ -5,6 +5,7 @@ use airk_core::usage::TokenizerIdentity;
 use airk_retrieval::embedding_worker::{self, RemoteSession, Request, Response};
 use anyhow::{Result, bail, ensure};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::{path::Path, sync::Arc};
 
 pub(crate) enum LocalTokenizer {
@@ -37,11 +38,20 @@ impl LocalTokenizer {
             Response::TokenizerOpened {
                 identity,
                 description,
-            } => Ok(Self::Remote {
-                session,
-                identity,
-                description,
-            }),
+            } => {
+                let mut hash = Sha256::new();
+                hash.update(b"airk-local-calibration/2\0tokenizers/0.23.2\0");
+                hash.update(&bytes);
+                ensure!(
+                    identity.definition_sha256 == format!("{:x}", hash.finalize()),
+                    "calibration definition changed during helper setup"
+                );
+                Ok(Self::Remote {
+                    session,
+                    identity,
+                    description,
+                })
+            }
             _ => bail!("invalid tokenizer worker response"),
         }
     }

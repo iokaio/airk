@@ -157,7 +157,7 @@ impl ServiceModelFiles {
             .try_lock()
             .context("shared model files still have an owner")?;
         let receipt = root.join("owner.txt");
-        if !receipt.try_exists()? {
+        if !entry_exists(&receipt)? {
             ensure!(
                 fs::read_dir(&root)?.count() == 1,
                 "unowned shared model directory"
@@ -196,13 +196,13 @@ impl ServiceModelFiles {
         let key = objects.shared.as_ref().unwrap().set;
         let path = self.root.join(format!("default-{key}.json"));
         let bytes = objects.canonical_bytes()?;
-        if path.try_exists()? {
+        if entry_exists(&path)? {
             verify_bytes(&path, &bytes)?;
             return Ok(objects);
         }
         let reservation = self.quota.reserve_root(bytes.len() as u64)?;
         let partial = self.root.join(format!("default-{key}.part"));
-        if partial.try_exists()? {
+        if entry_exists(&partial)? {
             verify_prefix(&partial, &bytes)?;
         }
         reservation.charge(bytes.len() as u64)?;
@@ -232,7 +232,7 @@ impl ServiceModelFiles {
             .canonicalize()?
             .join("model-files-1.4")
             .join(format!("default-{key}.json"));
-        if !path.try_exists()? {
+        if !entry_exists(&path)? {
             return Ok(None);
         }
         let objects = ModelObjectSet::from_bytes(&read_receipt(&path)?)?;
@@ -288,13 +288,13 @@ impl ServiceModelFiles {
         let marker = installed_bytes(set)?;
         let directory = lease.directory();
         let installed = directory.join("installed.json");
-        if installed.try_exists()? {
+        if entry_exists(&installed)? {
             verify_bytes(&installed, &marker)?;
             return Ok(lease);
         }
         let reservation = self.quota.reserve_root(marker.len() as u64)?;
         let partial = directory.join("installed.part");
-        if partial.try_exists()? {
+        if entry_exists(&partial)? {
             verify_prefix(&partial, &marker)?;
         }
         reservation.charge(marker.len() as u64)?;
@@ -323,7 +323,7 @@ impl ServiceModelFiles {
         let receipt = set.canonical_bytes()?;
         let digest = Sha256Digest::from_bytes(Sha256::digest(&receipt).into());
         let destination = self.root.join("sets").join(digest.to_string());
-        if destination.try_exists()? {
+        if entry_exists(&destination)? {
             validate_set(&destination, set, false)?;
             return Ok(self.pin(digest, destination));
         }
@@ -340,7 +340,7 @@ impl ServiceModelFiles {
             "shared model set limit reached"
         );
         let reservation = self.quota.reserve_root(required)?;
-        if !stage.try_exists()? {
+        if !entry_exists(&stage)? {
             fs::create_dir(&stage)?;
             reservation.charge(receipt.len() as u64)?;
             let mut file = OpenOptions::new()
@@ -355,7 +355,7 @@ impl ServiceModelFiles {
         validate_set(&stage, set, true)?;
         for (name, reference) in &set.assets {
             let target = stage.join(name.filename());
-            if target.try_exists()? {
+            if entry_exists(&target)? {
                 verify_asset(&target, reference)?;
                 continue;
             }
@@ -433,8 +433,8 @@ impl ServiceModelFiles {
             if self.pins.get(&digest).and_then(Weak::upgrade).is_some() {
                 continue;
             }
-            if directory.join("installed.json").try_exists()?
-                || directory.join("installed.part").try_exists()?
+            if entry_exists(&directory.join("installed.json"))?
+                || entry_exists(&directory.join("installed.part"))?
             {
                 let set = ModelObjectSet::from_bytes(&read_receipt(&directory.join("set.json"))?)?;
                 validate_set(&directory, &set, false)?;
@@ -501,8 +501,8 @@ impl ServiceModelFiles {
 
 fn finish_retirement(directory: &Path, digest: Sha256Digest) -> Result<()> {
     ensure!(
-        !directory.join("installed.json").try_exists()?
-            && !directory.join("installed.part").try_exists()?,
+        !entry_exists(&directory.join("installed.json"))?
+            && !entry_exists(&directory.join("installed.part"))?,
         "installed model cannot be retired as cache state"
     );
     // The atomic rename records retirement intent before the first unlink.
@@ -527,7 +527,7 @@ fn finish_retirement(directory: &Path, digest: Sha256Digest) -> Result<()> {
     }
     for name in set.assets.keys() {
         let path = directory.join(name.filename());
-        if path.try_exists()? {
+        if entry_exists(&path)? {
             fs::remove_file(path)?;
         }
     }
@@ -538,6 +538,13 @@ fn finish_retirement(directory: &Path, digest: Sha256Digest) -> Result<()> {
     Ok(())
 }
 
+fn entry_exists(path: &Path) -> Result<bool> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error.into()),
+    }
+}
 fn directories(path: &Path, missing: bool) -> Result<()> {
     for path in path.ancestors().filter(|path| !path.as_os_str().is_empty()) {
         match fs::symlink_metadata(path) {
@@ -689,6 +696,9 @@ fn validate_set(directory: &Path, set: &ModelObjectSet, partial: bool) -> Result
     }
     Ok(())
 }
+
+#[path = "service_calibration_files.rs"]
+mod calibration;
 
 #[cfg(test)]
 #[path = "service_model_files_tests.rs"]

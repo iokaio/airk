@@ -322,19 +322,20 @@ impl Engine {
                     !self.sessions.contains_key(&key) && self.sessions.len() < 64,
                     "pool session capacity"
                 );
-                let path = path.canonicalize()?;
-                ensure!(
-                    path.starts_with(Path::new(&grant.project.data_root)),
-                    "tokenizer outside admitted storage"
-                );
-                // Verify every opening, even if compatible native state is already resident.
-                let verified = airk_kernel::usage::OfflineTokenizer::open(&path)?;
+                // An explicitly selected calibration input is captured once in
+                // the service-owned finite cache; sessions never bind project files.
+                let path = self.model_files.retain_calibration(&path)?;
+                // Captured bytes verify on every opening. Reuse compatible
+                // native state and drop incompatible state before loading more.
+                self.select_tokenizer(&path)?;
+                let verified = self
+                    .tokenizer
+                    .as_ref()
+                    .context("calibration tokenizer missing")?;
                 let response = Response::TokenizerOpened {
                     identity: verified.identity().clone(),
                     description: verified.description(),
                 };
-                self.tokenizer = Some(verified);
-                self.tokenizer_path = Some(path.clone());
                 self.sessions.insert(
                     key,
                     Session {
@@ -384,7 +385,7 @@ impl Engine {
                     }
                     Binding::Tokenizer { path } => {
                         ensure!(
-                            matches!(&request,Request::TokenCount{text} if text.len()<=65536),
+                            matches!(&request,Request::TokenCount{text} if text.len()<=262144),
                             "invalid tokenizer input"
                         );
                         self.select_tokenizer(path)?;
@@ -1003,6 +1004,87 @@ mod tests {
                     .join("vocabulary.json")
             )?,
             before
+        );
+        Ok(())
+    }
+    #[test]
+    fn calibration_sessions_use_global_inputs_and_preserve_exact_identity_across_projects()
+    -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let (first, _, _) = fixture(root.path(), "calibration-first", "unused")?;
+        let (second, _, _) = fixture(root.path(), "calibration-second", "unused")?;
+        let source = root.path().canonicalize()?.join("selected-tokenizer");
+        std::fs::create_dir(&source)?;
+        let bytes = serde_json::to_vec(
+            &serde_json::json!({"version":"1.0","truncation":null,"padding":null,
+            "added_tokens":[],"normalizer":null,"pre_tokenizer":{"type":"Whitespace"},
+            "post_processor":null,"decoder":null,"model":{"type":"WordLevel","vocab":{"[UNK]":0,"copper":1},"unk_token":"[UNK]"}}),
+        )?;
+        std::fs::write(source.join("tokenizer.json"), &bytes)?;
+        let path = source.join("selected.json");
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&serde_json::json!({"schema":2,
+            "tokenizer_file":"tokenizer.json","tokenizer_sha256":format!("{:x}",Sha256::digest(&bytes)),
+            "model_revision_sha256":"a".repeat(64),"add_special_tokens":false,"framing":{"prefix":"copper ","suffix":" copper"}}))?,
+        )?;
+        let identity = airk_kernel::usage::OfflineTokenizer::open(&path)?
+            .identity()
+            .clone();
+        let mut engine = Engine::new(root.path())?;
+        let session = Incarnation::from_bytes([8; 16]);
+        for grant in [&first, &second] {
+            let Response::TokenizerOpened {
+                identity: actual, ..
+            } = engine.request(
+                grant,
+                session,
+                Request::TokenizerOpen {
+                    protocol: PROTOCOL,
+                    version: env!("CARGO_PKG_VERSION").into(),
+                    path: path.clone(),
+                },
+            )?
+            else {
+                anyhow::bail!("calibration open failed")
+            };
+            assert_eq!(actual, identity);
+            let Binding::Tokenizer { path: shared } =
+                &engine.sessions[&(grant.worker, session)].binding
+            else {
+                unreachable!()
+            };
+            assert!(
+                shared.starts_with(
+                    root.path()
+                        .canonicalize()?
+                        .join("model-files-1.4/calibration")
+                )
+            );
+        }
+        std::fs::rename(&source, source.with_file_name("original-inputs"))?;
+        // Force re-opening from the shared session binding, without its source directory.
+        engine.tokenizer = None;
+        engine.tokenizer_path = None;
+        for grant in [&second, &first] {
+            assert!(matches!(
+                engine.request(
+                    grant,
+                    session,
+                    Request::TokenCount {
+                        text: "copper copper".into()
+                    }
+                )?,
+                Response::TokenCount { count: 4 }
+            ));
+        }
+        assert_eq!(
+            std::fs::read(
+                source
+                    .with_file_name("original-inputs")
+                    .join("tokenizer.json")
+            )?,
+            bytes
         );
         Ok(())
     }

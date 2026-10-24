@@ -27,6 +27,7 @@ pub mod maintenance;
 /// Read-only native capability/catalog inspection; does not open collection state.
 pub use airk_retrieval::model_catalog::inspect_catalog as inspect_model_catalog;
 mod publication;
+mod remote_tokenization;
 mod resources;
 pub mod retrieval_retry;
 pub mod roots;
@@ -45,8 +46,7 @@ pub mod storage;
 #[cfg(feature = "local-inference")]
 mod tokenization;
 #[cfg(not(feature = "local-inference"))]
-#[path = "remote_tokenization.rs"]
-mod tokenization;
+use remote_tokenization as tokenization;
 pub mod usage;
 pub mod vectors;
 pub mod watcher;

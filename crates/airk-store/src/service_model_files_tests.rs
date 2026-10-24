@@ -275,3 +275,32 @@ fn installed_set_limit_refuses_new_assets_without_evicting_installed_inputs() ->
     assert_eq!(fs::read(source.join("model.json"))?, b"model fixture");
     Ok(())
 }
+
+#[cfg(unix)]
+#[test]
+fn dangling_install_and_default_intents_are_preserved_without_following_links() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let (source, set) = fixture(root.path())?;
+    let mut files = ServiceModelFiles::open(root.path())?;
+    let lease = files.retain(&set, |name| source.join(name.filename()))?;
+    let foreign = root.path().join("foreign-input");
+    let intent = lease.directory().join("installed.part");
+    std::os::unix::fs::symlink(&foreign, &intent)?;
+    assert!(
+        files
+            .install_readers(&set, |_| panic!("linked intent triggered a copy"))
+            .is_err()
+    );
+    assert!(!foreign.exists());
+    fs::remove_file(&intent)?;
+    drop(lease);
+    drop(files.install_readers(&set, |_| panic!("verified inputs copied again"))?);
+    let objects = files.installed_reference(&set)?;
+    let key = objects.shared.as_ref().unwrap().set;
+    let intent = files.root.join(format!("default-{key}.part"));
+    std::os::unix::fs::symlink(&foreign, &intent)?;
+    assert!(files.publish_default(&set).is_err());
+    assert!(!foreign.exists());
+    assert!(fs::symlink_metadata(intent)?.file_type().is_symlink());
+    Ok(())
+}

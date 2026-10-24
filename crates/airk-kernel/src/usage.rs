@@ -691,6 +691,50 @@ pub struct CalibrationRequest<'a> {
     pub record: bool,
 }
 
+// Service calibration always uses the direct helper, even when Cargo feature
+// unification also compiles native transformer tokenization into this process.
+enum CalibrationTokenizer {
+    Shared(crate::remote_tokenization::LocalTokenizer),
+    #[cfg(feature = "local-inference")]
+    Local(crate::tokenization::LocalTokenizer),
+}
+impl CalibrationTokenizer {
+    fn open(shared: bool, path: &std::path::Path) -> Result<Self> {
+        #[cfg(feature = "local-inference")]
+        if !shared {
+            return Ok(Self::Local(crate::tokenization::LocalTokenizer::open(
+                path,
+            )?));
+        }
+        #[cfg(not(feature = "local-inference"))]
+        let _ = shared;
+        Ok(Self::Shared(
+            crate::remote_tokenization::LocalTokenizer::open(path)?,
+        ))
+    }
+    fn identity(&self) -> &TokenizerIdentity {
+        match self {
+            Self::Shared(tokenizer) => tokenizer.identity(),
+            #[cfg(feature = "local-inference")]
+            Self::Local(tokenizer) => tokenizer.identity(),
+        }
+    }
+    fn count(&self, text: &str) -> Result<u64> {
+        match self {
+            Self::Shared(tokenizer) => tokenizer.count(text),
+            #[cfg(feature = "local-inference")]
+            Self::Local(tokenizer) => tokenizer.count(text),
+        }
+    }
+    fn description(&self) -> Value {
+        match self {
+            Self::Shared(tokenizer) => tokenizer.description(),
+            #[cfg(feature = "local-inference")]
+            Self::Local(tokenizer) => tokenizer.description(),
+        }
+    }
+}
+
 impl crate::Kernel {
     pub fn usage_import(&self, event: &SupplementalMeasurement) -> Result<Value> {
         ensure!(
@@ -728,7 +772,10 @@ impl crate::Kernel {
                 "usage recording is disabled"
             );
         }
-        let tokenizer = crate::tokenization::LocalTokenizer::open(request.tokenizer)?;
+        let tokenizer = CalibrationTokenizer::open(
+            self.store.shared_model_runtime().is_some(),
+            request.tokenizer,
+        )?;
         let baseline = String::from_utf8(read_usage_input(request.baseline, 262_144)?)?;
         let returned = String::from_utf8(read_usage_input(request.returned, 262_144)?)?;
         // The explicit inputs are logical JSON results; framing cannot be silently mixed.
@@ -1195,6 +1242,37 @@ mod tests {
             "The former full-text cap must not reject compact counters"
         );
         assert_eq!(baseline.unique_sources, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn shared_calibration_uses_helper_even_with_local_inference_compiled() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let bytes = serde_json::to_vec(
+            &serde_json::json!({"version":"1.0","truncation":null,"padding":null,
+            "added_tokens":[],"normalizer":null,"pre_tokenizer":{"type":"Whitespace"},
+            "post_processor":null,"decoder":null,"model":{"type":"WordLevel","vocab":{"[UNK]":0,"copper":1},"unk_token":"[UNK]"}}),
+        )?;
+        std::fs::write(directory.path().join("tokenizer.json"), &bytes)?;
+        let path = directory.path().join("definition.json");
+        use sha2::{Digest, Sha256};
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&serde_json::json!({"schema":2,
+            "tokenizer_file":"tokenizer.json","tokenizer_sha256":format!("{:x}",Sha256::digest(&bytes)),
+            "model_revision_sha256":"a".repeat(64),"add_special_tokens":false,"framing":{"prefix":"","suffix":""}}))?,
+        )?;
+        #[cfg(feature = "local-inference")]
+        assert_eq!(
+            CalibrationTokenizer::open(false, &path)?.count("copper copper")?,
+            2
+        );
+        let result = CalibrationTokenizer::open(true, &path);
+        let error = match result {
+            Ok(_) => anyhow::bail!("service bypassed absent helper"),
+            Err(error) => error,
+        };
+        assert!(format!("{error:#}").contains("native adapter not installed"));
         Ok(())
     }
 
