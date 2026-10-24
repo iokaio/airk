@@ -2,7 +2,7 @@
 //! Replacement coordination; selection, ownership and bytes stay in store.
 use crate::Kernel;
 use airk_core::identity::{RevisionToken, Sha256Digest};
-use airk_store::{quota::Quota, service::collection};
+use airk_store::service::collection;
 use anyhow::{Context, Result, ensure};
 use std::sync::Arc;
 
@@ -44,7 +44,7 @@ impl Kernel {
         };
         let recovered = crate::current::recover_current(
             &selected.store,
-            &Quota::open(&selected.data_root)?,
+            &selected.collection_quota()?,
             &scope,
         )?;
         Ok(Some(RevisionToken {
@@ -112,7 +112,7 @@ impl Kernel {
             &previous.store,
             &next.store,
             &self.root_id(),
-            &Quota::open(&self.data_root)?,
+            &self.collection_quota()?,
         )?;
         next.rebuild_extraction_policy()?;
         next.vector_selection()?;
@@ -388,7 +388,7 @@ mod tests {
             .publication
             .context("publication missing")?
             .token;
-        let quota = Quota::open(data.path())?;
+        let quota = airk_store::quota::Quota::open_service(data.path())?;
         let used = quota.status()?;
         let cap = used.used_bytes + used.reserved_bytes + (2 << 20);
         quota.configure(crate::storage::QuotaPolicy {

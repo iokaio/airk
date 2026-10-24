@@ -521,7 +521,7 @@ Never delete source trees, saved user settings or unknown directories. Old index
 
 The target release starts the service-backed family, with no optional 1.3 compatibility mode. No legacy direct-writer fallback, old scheduler participation, old index reader or in-place index conversion is required. Old helpers must not open service-owned state. Use the approved 1.4 storage namespace and synchronized 1.4.0 runtime/extension versions at cutover.
 
-Use a new versioned storage namespace and explicit format marker. Do not imply that the existing `collections-1.2` layout or current database schema is accepted by 1.4. A new registry may accept user-confirmed roots and supported settings from a reviewed export, but every index is rebuilt from sources. Do not carry old journals, running jobs, locks, revision tokens or verification claims into the new store.
+Use a new versioned storage namespace and explicit format marker. The implemented service layout now also separates quota/recovery ledgers, staging and lifecycle locks from legacy ownership; see [storage ownership](service-storage-ownership.md). Do not imply that the existing `collections-1.2` layout or current database schema is accepted by 1.4. A new registry may accept user-confirmed roots and supported settings from a reviewed export, but every index is rebuilt from sources. Do not carry old journals, running jobs, locks, revision tokens or verification claims into the new store.
 
 The first-run transition must:
 

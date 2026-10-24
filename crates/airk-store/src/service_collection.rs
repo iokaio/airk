@@ -265,7 +265,7 @@ fn prepare<T: Serialize>(collection: &Collection, value: &T) -> Result<PreparedM
         bytes.len() <= MAX_METADATA,
         "service collection metadata too large"
     );
-    let quota = Quota::open(Path::new(&collection.owner.data_root))?;
+    let quota = Quota::open_service(Path::new(&collection.owner.data_root))?;
     let reservation = quota.reserve(&collection.owner.collection, MAX_METADATA as u64 * 2)?;
     reservation.charge(bytes.len() as u64)?;
     let mut temporary = tempfile::Builder::new()
@@ -365,7 +365,7 @@ impl Collection {
                 for directory in directories {
                     fs::remove_dir(directory)?;
                 }
-                let quota = Quota::open(Path::new(&self.owner.data_root))?;
+                let quota = Quota::open_service(Path::new(&self.owner.data_root))?;
                 for grant in quota.current_grants(&writer)? {
                     if Some(grant.scope().incarnation) == retired.incarnation {
                         grant.release(&writer)?;

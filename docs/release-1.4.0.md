@@ -37,3 +37,5 @@ Native call discovery now indexes terminal written method names for receiver/cha
 Physical compression now preserves the prior capture’s posting format, and the native writer rejects a format change during physical-only repacking. This keeps later call-posting retirement compatible with older captures; source evidence remains byte-exact.
 
 The change feed now retains bounded authenticated parent/event metadata across publications, with independent coverage floors, whole-group pressure/age expiry and exact baseline/cursor checks. It coalesces delayed file and selected unit observations while preserving current-source-read expiry. See [retention contracts](service-change-retention.md).
+
+Service collections now use independent 1.4 quota policy, reservation/recovery ledgers, staging paths and lifecycle locks. Namespace-bound writers and cleanup reject cross-family ownership, and legacy relocation refuses service-owned roots. See [storage ownership](service-storage-ownership.md).

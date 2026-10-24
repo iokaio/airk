@@ -65,7 +65,7 @@ impl Kernel {
             self.vectors_enabled()?,
             "vector search is disabled for this collection"
         );
-        let quota = airk_store::quota::Quota::open(&self.data_root)?;
+        let quota = self.collection_quota()?;
         anyhow::ensure!(
             !self.root.starts_with(quota.root()),
             "index storage must not contain its source root"
@@ -90,7 +90,7 @@ impl Kernel {
             self.vectors_enabled()?,
             "vector search is disabled for this collection"
         );
-        let quota = airk_store::quota::Quota::open(&self.data_root)?;
+        let quota = self.collection_quota()?;
         anyhow::ensure!(
             !self.root.starts_with(quota.root()),
             "index storage must not contain its source root"
@@ -209,7 +209,7 @@ impl Kernel {
         })?;
         self.store.configure_vector_policy_bytes(
             &writer,
-            &airk_store::quota::Quota::open(&self.data_root)?,
+            &self.collection_quota()?,
             &self.root_id(),
             &serde_json::to_vec(&policy)?,
         )?;
@@ -327,7 +327,7 @@ impl Kernel {
         let status = self.selection_status(selection, "explicit")?;
         self.store.configure_vector_policy_bytes(
             &writer,
-            &airk_store::quota::Quota::open(&self.data_root)?,
+            &self.collection_quota()?,
             &self.root_id(),
             &serde_json::to_vec(&policy)?,
         )?;

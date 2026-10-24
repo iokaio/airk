@@ -298,8 +298,7 @@ impl FileStore {
         self.ensure_index_ready()?;
         let capacity = database::check_owner(self.directory(), scope)?;
         if super::wal::enabled(self.directory()) {
-            let root = self.managed_path()?.root;
-            crate::quota::Quota::open(root)?.verify_current_allowance(
+            crate::quota::Quota::for_store(self)?.verify_current_allowance(
                 &crate::quota::CurrentGrantScope {
                     collection: scope.collection.clone(),
                     incarnation: scope.incarnation,

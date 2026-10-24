@@ -10,7 +10,7 @@ use airk_store::{
     current::{
         ArtifactChange, CapturedInput, CurrentRead, MAX_PENDING_INPUTS, resources::ResourceChange,
     },
-    quota::{Quota, Reservation},
+    quota::Reservation,
 };
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
@@ -331,7 +331,7 @@ impl Kernel {
         policy: DefaultSearchPolicy,
     ) -> Result<SemanticReadiness> {
         let scope = self.current_scope()?.context("workspace is not indexed")?;
-        super::recover_current(&self.store, &Quota::open(&self.data_root)?, &scope)
+        super::recover_current(&self.store, &self.collection_quota()?, &scope)
             .context("recover current before semantic enrichment")?;
         let writer = self.store.lock()?;
         let read = self.store.current_read(&scope)?;
@@ -339,7 +339,7 @@ impl Kernel {
             return readiness(&read, &self.store);
         }
         drop(read);
-        let quota = Quota::open(&self.data_root)?;
+        let quota = self.collection_quota()?;
         let reservation = self.publication_reservation()?;
         let bytes = serde_json::to_vec(&SavedSearchPolicy { version: 1, policy })?;
         let reference = self.store.retain_current_resource(&bytes, &reservation)?;
@@ -376,7 +376,7 @@ impl Kernel {
         }
         work.failure = Some(format!("{error:#}").chars().take(1024).collect());
         drop(read);
-        let quota = Quota::open(&self.data_root)?;
+        let quota = self.collection_quota()?;
         let reservation = self.publication_reservation()?;
         CurrentUpdater {
             store: &self.store,
@@ -440,7 +440,7 @@ impl Kernel {
     /// Each batch publishes its vectors and reduced pending set in one transaction.
     pub fn resume_current_enrichment(&self) -> Result<Option<u64>> {
         let scope = self.current_scope()?.context("workspace is not indexed")?;
-        super::recover_current(&self.store, &Quota::open(&self.data_root)?, &scope)
+        super::recover_current(&self.store, &self.collection_quota()?, &scope)
             .context("recover current before semantic enrichment")?;
         let read = self.store.current_read(&scope)?;
         let Some(work) = read_work(&read, &self.store)? else {
@@ -510,7 +510,7 @@ impl Kernel {
         );
         let started = std::time::Instant::now();
         let scope = self.current_scope()?.context("workspace is not indexed")?;
-        super::recover_current(&self.store, &Quota::open(&self.data_root)?, &scope)?;
+        super::recover_current(&self.store, &self.collection_quota()?, &scope)?;
         let read = self.store.current_read(&scope)?;
         let Some(work) = read_work(&read, &self.store)? else {
             let report = self.semantic_report(&read, &EmbeddingCacheStats::default(), started)?;
@@ -612,7 +612,7 @@ impl Kernel {
         let execution = admission.execution;
         let deadline = admission.deadline;
         let writer = self.store.lock()?;
-        let quota = Quota::open(&self.data_root)?;
+        let quota = self.collection_quota()?;
         let captures = writer.capture_objects();
         let mut generation = None;
         for batch in 0..max_batches {

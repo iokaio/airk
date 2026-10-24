@@ -342,7 +342,7 @@ impl Kernel {
         );
         recipe.configuration.validate()?;
         let lock = self.store.lock()?;
-        let quota = Quota::open(&self.data_root)?;
+        let quota = self.collection_quota()?;
         let mut current = self
             .store
             .current_write(&lock, &quota, &recipe.head.scope, 16 << 20)?;
@@ -363,7 +363,7 @@ impl Kernel {
             return self.status();
         }
         let writer = self.store.lock()?;
-        let quota = Quota::open(&self.data_root)?;
+        let quota = self.collection_quota()?;
         let reservation = self.publication_reservation()?;
         let policy = self.rebuild_extraction_policy()?.policy;
         let directory = self.data_root.join("models/local");
@@ -579,7 +579,7 @@ impl Kernel {
         let Some(scope) = self.current_scope()? else {
             return Ok(false);
         };
-        let quota = Quota::open(&self.data_root)?;
+        let quota = self.collection_quota()?;
         let capacity = self.store.current_database_capacity(&scope)?;
         let current = self
             .store
@@ -596,7 +596,7 @@ impl Kernel {
         let writer = self.store.lock()?;
         self.store.rebuild_obsolete_index(
             &writer,
-            &Quota::open(&self.data_root)?,
+            &self.collection_quota()?,
             &self.root_id(),
             &self.collection,
         )
@@ -633,10 +633,10 @@ impl Kernel {
         execution.execution.validate()?;
         // Recovery takes its own writer lock, before this scan owns one.
         if let Some(scope) = self.current_scope()? {
-            super::recover_current(&self.store, &Quota::open(&self.data_root)?, &scope)?;
+            super::recover_current(&self.store, &self.collection_quota()?, &scope)?;
         }
         let writer = self.store.lock()?;
-        let quota = Quota::open(&self.data_root)?;
+        let quota = self.collection_quota()?;
         ensure!(
             !self.root.starts_with(quota.root()),
             "index storage must not contain sources"

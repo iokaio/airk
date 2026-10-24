@@ -8,7 +8,7 @@ use airk_store::{
     current::{
         ArtifactChange, CapturedInput, analysis::AnalysisEvidence, resources::ResourceChange,
     },
-    quota::{Quota, Reservation},
+    quota::Reservation,
 };
 use anyhow::{Context, Result, ensure};
 
@@ -98,7 +98,7 @@ impl Kernel {
                 working_memory_bytes: 256 << 20,
             },
         });
-        let quota = Quota::open(&self.data_root)?;
+        let quota = self.collection_quota()?;
         let result = CurrentUpdater {
             store: &self.store,
             quota: &quota,

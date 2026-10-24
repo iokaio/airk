@@ -2,12 +2,9 @@
 //! Explicit bounded physical repacking reuses the current publication journal.
 use crate::Kernel;
 use airk_core::compression::CompressionMode;
-use airk_store::{
-    current::{
-        graph::{GraphOverlay, GraphOverlayLimits},
-        postings::Lookup,
-    },
-    quota::Quota,
+use airk_store::current::{
+    graph::{GraphOverlay, GraphOverlayLimits},
+    postings::Lookup,
 };
 use anyhow::{Context, Result, ensure};
 use serde::Serialize;
@@ -36,7 +33,7 @@ impl Kernel {
         let writer = self.store.lock()?;
         self.store.configure_compression(
             &writer,
-            &Quota::open(&self.data_root)?,
+            &self.collection_quota()?,
             &self.root_id(),
             mode,
         )?;
@@ -121,7 +118,7 @@ impl Kernel {
         );
         let _execution = crate::execution::acquire(&self.data_root)?;
         let scope = self.current_scope()?.context("workspace is not indexed")?;
-        let quota = Quota::open(&self.data_root)?;
+        let quota = self.collection_quota()?;
         crate::current::recover_current(&self.store, &quota, &scope)?;
         let writer = self.store.lock()?;
         let reservation = quota.reserve_available(&self.collection, 256 << 20)?;

@@ -137,15 +137,9 @@ fn lock_with_budget(path: PathBuf, budget: Duration) -> Result<UsageLock> {
 }
 
 fn reserve_write(directory: &Path, bytes: u64) -> Result<crate::quota::Reservation> {
-    let root = directory
-        .parent()
-        .and_then(Path::parent)
-        .context("invalid usage data root")?;
-    let collection = directory
-        .file_name()
-        .and_then(|name| name.to_str())
-        .context("invalid usage collection")?;
-    let reservation = crate::quota::Quota::open(root)?.reserve(collection, bytes)?;
+    let store = crate::FileStore::new(directory);
+    let reservation =
+        crate::quota::Quota::for_store(&store)?.reserve(store.collection_id()?, bytes)?;
     reservation.charge(bytes)?;
     Ok(reservation)
 }
@@ -164,15 +158,9 @@ fn reserve_ledger(
         .saturating_sub(current)
         .max(16_384);
     if best_effort {
-        let root = directory
-            .parent()
-            .and_then(Path::parent)
-            .context("invalid usage data root")?;
-        let collection = directory
-            .file_name()
-            .and_then(|name| name.to_str())
-            .context("invalid usage collection")?;
-        let quota = crate::quota::Quota::open(root)?;
+        let store = crate::FileStore::new(directory);
+        let collection = store.collection_id()?;
+        let quota = crate::quota::Quota::for_store(&store)?;
         let started = Instant::now();
         let reservation = loop {
             match quota.try_reserve(

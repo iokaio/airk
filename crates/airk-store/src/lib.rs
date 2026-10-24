@@ -241,7 +241,11 @@ impl FileStore {
             }
             fs::create_dir_all(root)?;
         }
-        let lease = quota::lifecycle_lease(root, false)?;
+        let lease = if managed.namespace == "collections-1.4" {
+            quota::service_lifecycle_lease(root, false)?
+        } else {
+            quota::lifecycle_lease(root, false)?
+        };
         quota::ensure_current_root(root)?;
         Ok(Some(Arc::new(lease)))
     }

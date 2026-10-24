@@ -65,7 +65,7 @@ fn initialize(store: &FileStore, root: &str, slot: Incarnation) -> Result<Curren
         lexical_commit: lexical.digest()?,
         graph_head: graph,
     };
-    let quota = Quota::open(store.managed_path()?.root)?;
+    let quota = Quota::open_service(store.managed_path()?.root)?;
     let writer = store.lock()?;
     let mut current = store.current_write(&writer, &quota, &scope, 8 << 20)?;
     current.initialize(head.clone())?;

@@ -79,6 +79,10 @@ fn plain(path: &Path) -> Result<()> {
 fn canonical_source(source: &Path) -> Result<PathBuf> {
     let root = source.canonicalize()?;
     ensure!(
+        !root.join("collections-1.4").try_exists()? && !root.join(".quota-1.4").try_exists()?,
+        "legacy relocation cannot move service-owned state; use service lifecycle operations"
+    );
+    ensure!(
         root.to_str().is_some() && root.is_dir(),
         "invalid managed source directory"
     );

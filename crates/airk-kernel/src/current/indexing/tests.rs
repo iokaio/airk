@@ -522,7 +522,7 @@ fn applying_missing_capture_never_reconstructs_from_changed_live_source() -> Res
     let artifact = snapshot.artifacts["alpha.txt"].clone();
     let missing = retained_object_path(&kernel.store, &artifact, "sources");
     let scope = kernel.current_scope()?.unwrap();
-    let quota = Quota::open(&kernel.data_root)?;
+    let quota = kernel.collection_quota()?;
     let writer = kernel.store.lock()?;
     let reservation = kernel.publication_reservation()?;
     let interrupted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -1084,7 +1084,7 @@ fn many_progressive_publications_do_not_spend_the_capture_reservation() -> Resul
     let read = kernel.store.current_read(&scope)?;
     let configuration = read.collection_state()?.unwrap().configuration;
     drop(read);
-    let quota = Quota::open(&kernel.data_root)?;
+    let quota = kernel.collection_quota()?;
     let writer = kernel.store.lock()?;
     // Retain actual inputs with the scan allowance, then publish each batch.
     let capture = quota.reserve(kernel.collection(), 1 << 20)?;
@@ -1197,7 +1197,7 @@ fn progressive_flush_preserves_the_next_captured_input() -> Result<()> {
         let read = kernel.store.current_read(&scope)?;
         let configuration = read.collection_state()?.unwrap().configuration;
         drop(read);
-        let quota = Quota::open(&kernel.data_root)?;
+        let quota = kernel.collection_quota()?;
         let writer = kernel.store.lock()?;
         let captured_objects = writer.capture_objects();
         let reservation = quota.reserve(kernel.collection(), 16 << 20)?;

@@ -27,7 +27,7 @@ impl Fixture {
         let root = tempfile::tempdir()?;
         let collection = root.path().join(namespace).join("fixture");
         fs::create_dir_all(&collection)?;
-        let quota = Quota::open(root.path())?;
+        let quota = Quota::for_store(&crate::FileStore::new(&collection))?;
         let digest = Sha256Digest::from_bytes([1; 32]);
         let descriptor = EmbeddingDescriptor {
             version: 1,

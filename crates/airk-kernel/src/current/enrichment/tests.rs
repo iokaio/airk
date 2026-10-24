@@ -230,7 +230,7 @@ fn resolved_gate_contention_does_not_publish_failed_semantic_state() -> Result<(
     let read = kernel.current_reader()?;
     let token = read.token()?;
     let scope = read.head().scope.clone();
-    let quota = Quota::open(&kernel.data_root)?;
+    let quota = kernel.collection_quota()?;
     let writer = kernel.store.lock()?;
     let capacity = kernel.store.current_database_capacity(&scope)?;
     let original = kernel

@@ -21,7 +21,7 @@ impl std::error::Error for InspectionChanged {}
 
 impl Kernel {
     pub fn service_storage_summary(&self) -> Result<airk_core::service_inspection::StorageSummary> {
-        let quota = airk_store::quota::Quota::open(&self.data_root)?;
+        let quota = self.collection_quota()?;
         let status = quota.status()?;
         let collection = status.collections.get(&self.collection);
         let used = collection.map_or(0, |entry| entry.used_bytes);

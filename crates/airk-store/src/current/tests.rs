@@ -54,7 +54,11 @@ impl Fixture {
     fn empty_namespace(namespace: &str) -> Result<Self> {
         let directory = tempfile::tempdir()?;
         fs::create_dir(directory.path().join("source"))?;
-        let quota = Quota::open(directory.path().join("data"))?;
+        let quota = if namespace == "collections-1.4" {
+            Quota::open_service(directory.path().join("data"))?
+        } else {
+            Quota::open(directory.path().join("data"))?
+        };
         let store = FileStore::new(quota.root().join(namespace).join("project-current"));
         let scope = CurrentScope {
             root: directory
@@ -1890,11 +1894,15 @@ fn current_child_process() -> Result<()> {
     let Some(root) = std::env::var_os("AIRK_CURRENT_CHILD_DATA") else {
         return Ok(());
     };
-    let quota = Quota::open(root)?;
     let scope: CurrentScope = serde_json::from_str(&std::env::var("AIRK_CURRENT_CHILD_SCOPE")?)?;
     let namespace =
         std::env::var("AIRK_CURRENT_CHILD_NAMESPACE").unwrap_or_else(|_| "collections-1.2".into());
-    let store = FileStore::new(quota.root().join(namespace).join(&scope.collection));
+    let store = FileStore::new(
+        std::path::PathBuf::from(root)
+            .join(namespace)
+            .join(&scope.collection),
+    );
+    let quota = Quota::for_store(&store)?;
     let ready = std::env::var_os("AIRK_CURRENT_CHILD_READY").context("ready path missing")?;
     let mode = std::env::var("AIRK_CURRENT_CHILD_MODE")?;
     if mode == "read" {

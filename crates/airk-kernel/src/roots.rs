@@ -57,7 +57,8 @@ impl Kernel {
         self.load_optional()?; // validate the collection owner before mutating configuration
         let mut config = RootConfig::load(self.store.directory(), &self.root_id())?;
         config.add(alias, path, &self.root, &self.data_root)?;
-        let reservation = airk_store::quota::Quota::open(&self.data_root)?
+        let reservation = self
+            .collection_quota()?
             .reserve(&self.collection, 96 * 1024)?;
         reservation.charge(96 * 1024)?;
         config.save(self.store.directory())?;
@@ -70,7 +71,8 @@ impl Kernel {
         self.load_optional()?;
         let mut config = RootConfig::load(self.store.directory(), &self.root_id())?;
         config.remove(alias)?;
-        let reservation = airk_store::quota::Quota::open(&self.data_root)?
+        let reservation = self
+            .collection_quota()?
             .reserve(&self.collection, 96 * 1024)?;
         reservation.charge(96 * 1024)?;
         config.save(self.store.directory())?;

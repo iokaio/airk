@@ -26,7 +26,7 @@ pub(crate) fn envelope(read: &CurrentRead) -> Result<RevisionEnvelope> {
 impl Kernel {
     pub fn maintain_current(&self) -> Result<airk_store::current::maintenance::ReclamationReport> {
         let scope = self.current_scope()?.context("workspace is not indexed")?;
-        let quota = airk_store::quota::Quota::open(&self.data_root)?;
+        let quota = self.collection_quota()?;
         super::recover_current(&self.store, &quota, &scope)?;
         let writer = self.store.lock()?;
         let read = self.store.current_read(&scope)?;

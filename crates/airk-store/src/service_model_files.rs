@@ -82,7 +82,7 @@ impl ServiceModelFiles {
         let sets = root.join("sets");
         directories(&sets, true)?;
         fs::create_dir_all(&sets)?;
-        let quota = Quota::open(&root)?;
+        let quota = Quota::open_service(&root)?;
         quota.configure(QuotaPolicy {
             root_bytes: MAX_BYTES,
             default_collection_bytes: MAX_BYTES,

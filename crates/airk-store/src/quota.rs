@@ -123,6 +123,33 @@ pub struct QuotaStatus {
 #[derive(Clone)]
 pub struct Quota {
     root: PathBuf,
+    namespace: Namespace,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Namespace {
+    Legacy,
+    Service,
+}
+impl Namespace {
+    fn control(self) -> &'static str {
+        match self {
+            Self::Legacy => ".quota-1.2",
+            Self::Service => ".quota-1.4",
+        }
+    }
+    fn collections(self) -> &'static str {
+        match self {
+            Self::Legacy => "collections-1.2",
+            Self::Service => "collections-1.4",
+        }
+    }
+    fn lifecycle(self) -> &'static str {
+        match self {
+            Self::Legacy => ".lifecycle.lock",
+            Self::Service => ".lifecycle-1.4.lock",
+        }
+    }
 }
 pub(crate) struct LedgerLock {
     _file: File,
@@ -152,7 +179,7 @@ pub fn ensure_current_root(root: &Path) -> Result<()> {
 }
 
 pub(crate) fn lifecycle_lease(root: &Path, exclusive: bool) -> Result<File> {
-    acquire_lifecycle(root, exclusive, false)
+    acquire_lifecycle(root, exclusive, false, Namespace::Legacy.lifecycle())
 }
 
 /// Keep a storage root stable while execution slots are owned by a kernel.
@@ -162,7 +189,7 @@ pub fn indexing_lifecycle_lease(root: &Path) -> Result<File> {
 
 /// Only the initial relocation root lock may wait; callers hold no other locks.
 pub(crate) fn relocation_lifecycle_lease(root: &Path) -> Result<RelocationLease> {
-    acquire_lifecycle(root, true, true).map(RelocationLease)
+    acquire_lifecycle(root, true, true, Namespace::Legacy.lifecycle()).map(RelocationLease)
 }
 
 /// The exclusive lease belongs to this operation, not to incidental descriptors
@@ -178,8 +205,21 @@ impl Drop for RelocationLease {
     }
 }
 
-fn acquire_lifecycle(root: &Path, exclusive: bool, retry_readers: bool) -> Result<File> {
-    let path = root.join(".lifecycle.lock");
+pub(crate) fn service_lifecycle_lease(root: &Path, exclusive: bool) -> Result<File> {
+    acquire_lifecycle(root, exclusive, false, Namespace::Service.lifecycle())
+}
+
+pub fn service_indexing_lifecycle_lease(root: &Path) -> Result<File> {
+    service_lifecycle_lease(root, false)
+}
+
+fn acquire_lifecycle(
+    root: &Path,
+    exclusive: bool,
+    retry_readers: bool,
+    name: &str,
+) -> Result<File> {
+    let path = root.join(name);
     if fs::symlink_metadata(&path).is_ok() {
         unlinked(&path)?;
     }
@@ -285,15 +325,39 @@ fn inventory_read<T>(
 impl Quota {
     /// Canonicalizing aliases ensures all cooperating processes share one ledger.
     pub fn open(root: impl AsRef<Path>) -> Result<Self> {
-        ensure_current_root(root.as_ref())?;
-        fs::create_dir_all(root.as_ref())?;
-        let root = root.as_ref().canonicalize()?;
+        Self::open_namespace(root.as_ref(), Namespace::Legacy)
+    }
+    /// Fresh service ownership; never reads or retires the legacy ledger.
+    pub fn open_service(root: impl AsRef<Path>) -> Result<Self> {
+        Self::open_namespace(root.as_ref(), Namespace::Service)
+    }
+    pub fn for_store(store: &crate::FileStore) -> Result<Self> {
+        let managed = store.managed_path()?;
+        Self::open_namespace(
+            managed.root,
+            match managed.namespace {
+                "collections-1.4" => Namespace::Service,
+                "collections-1.2" => Namespace::Legacy,
+                _ => anyhow::bail!("unsupported quota namespace"),
+            },
+        )
+    }
+    pub(crate) fn collection_namespace(&self) -> &'static str {
+        self.namespace.collections()
+    }
+    fn control_path(&self) -> PathBuf {
+        self.root.join(self.namespace.control())
+    }
+    fn open_namespace(root: &Path, namespace: Namespace) -> Result<Self> {
+        ensure_current_root(root)?;
+        fs::create_dir_all(root)?;
+        let root = root.canonicalize()?;
         ensure!(
             root.to_str().is_some(),
             "non-UTF-8 quota root is unsupported"
         );
         ensure!(root.is_dir(), "quota root is not a directory");
-        let quota = Self { root };
+        let quota = Self { root, namespace };
         quota.control()?;
         Ok(quota)
     }
@@ -306,7 +370,7 @@ impl Quota {
             self.root.canonicalize()? == self.root,
             "quota root identity changed"
         );
-        let control = self.root.join(".quota-1.2");
+        let control = self.control_path();
         fs::create_dir_all(&control)?;
         unlinked(&control)?;
         let records = control.join("reservations");
@@ -320,7 +384,12 @@ impl Quota {
     fn lock_before(&self, deadline: Option<Instant>) -> Result<LedgerLock> {
         within_deadline(deadline)?;
         ensure_current_root(&self.root)?;
-        let lifecycle = Arc::new(lifecycle_lease(&self.root, false)?);
+        let lifecycle = Arc::new(acquire_lifecycle(
+            &self.root,
+            false,
+            false,
+            self.namespace.lifecycle(),
+        )?);
         ensure_current_root(&self.root)?;
         let path = self.control()?.join("ledger.lock");
         if fs::symlink_metadata(&path).is_ok() {
@@ -344,7 +413,7 @@ impl Quota {
                 Err(error) => return Err(error.into()),
             }
         }
-        for entry in fs::read_dir(self.root.join(".quota-1.2"))? {
+        for entry in fs::read_dir(self.control_path())? {
             within_deadline(deadline)?;
             let entry = entry?;
             let name = entry.file_name();
@@ -377,7 +446,7 @@ impl Quota {
         })
     }
     fn read_policy(&self) -> Result<QuotaPolicy> {
-        let path = self.root.join(".quota-1.2/policy.json");
+        let path = self.control_path().join("policy.json");
         let policy: QuotaPolicy = if fs::symlink_metadata(&path).is_ok() {
             json_read(&path, POLICY_MAX)?
         } else {
@@ -418,10 +487,10 @@ impl Quota {
         }
         let mut temporary = tempfile::Builder::new()
             .prefix("policy-")
-            .tempfile_in(self.root.join(".quota-1.2"))?;
+            .tempfile_in(self.control_path())?;
         serde_json::to_writer(temporary.as_file_mut(), &policy)?;
         temporary.as_file().sync_all()?;
-        temporary.persist(self.root.join(".quota-1.2/policy.json"))?;
+        temporary.persist(self.control_path().join("policy.json"))?;
         Ok(report)
     }
     pub fn status(&self) -> Result<QuotaStatus> {
@@ -557,7 +626,10 @@ impl Quota {
         }
         within_deadline(deadline)?;
         if !collection.is_empty() {
-            let target = self.root.join("collections-1.2").join(collection);
+            let target = self
+                .root
+                .join(self.namespace.collections())
+                .join(collection);
             if target.is_dir() {
                 crate::capacity::ensure_same_filesystem(&self.root, &target)?;
             }
@@ -567,7 +639,7 @@ impl Quota {
         crate::capacity::require_growth(&self.root, RECORD_MAX)?;
         let mut record_file = tempfile::Builder::new()
             .prefix("r-")
-            .tempfile_in(self.root.join(".quota-1.2/reservations"))?;
+            .tempfile_in(self.control_path().join("reservations"))?;
         let record_path = record_file.path().to_path_buf();
         let lease_path = record_path.with_extension("lease");
         let lease = OpenOptions::new()
@@ -599,7 +671,7 @@ impl Quota {
     }
     fn records_without_recovery(&self, deadline: Option<Instant>) -> Result<Vec<LiveRecord>> {
         let mut records = Vec::new();
-        for (visited, entry) in fs::read_dir(self.root.join(".quota-1.2/reservations"))?.enumerate()
+        for (visited, entry) in fs::read_dir(self.control_path().join("reservations"))?.enumerate()
         {
             within_deadline(deadline)?;
             ensure!(
@@ -633,7 +705,7 @@ impl Quota {
     }
     fn live_records(&self) -> Result<Vec<LiveRecord>> {
         let mut live = Vec::new();
-        let base = self.root.join(".quota-1.2/reservations");
+        let base = self.control_path().join("reservations");
         let entries = fs::read_dir(&base)?.collect::<std::io::Result<Vec<_>>>()?;
         ensure!(
             entries.len() <= MAX_RESERVATIONS * 2 + 2,
@@ -757,7 +829,21 @@ impl Quota {
                     "quota inventory entry limit exhausted; refusing allocation"
                 );
                 let path = entry.path();
-                if path == self.root.join(".quota-1.2") {
+                if path == self.control_path()
+                    || (directory == self.root
+                        && match self.namespace {
+                            Namespace::Legacy => {
+                                entry.file_name() == "collections-1.4"
+                                    || entry.file_name() == ".quota-1.4"
+                                    || entry.file_name() == ".lifecycle-1.4.lock"
+                            }
+                            Namespace::Service => {
+                                entry.file_name() == "collections-1.2"
+                                    || entry.file_name() == ".quota-1.2"
+                                    || entry.file_name() == ".lifecycle.lock"
+                            }
+                        })
+                {
                     continue;
                 }
                 let Some(kind) = inventory_read(deadline, || entry.file_type())
@@ -795,9 +881,8 @@ impl Quota {
                 };
                 let bytes = metadata.len();
                 result.used_bytes = checked_add(result.used_bytes, bytes)?;
-                if let Some(relative) = ["collections-1.2", "collections-1.4"]
-                    .iter()
-                    .find_map(|namespace| path.strip_prefix(self.root.join(namespace)).ok())
+                if let Ok(relative) =
+                    path.strip_prefix(self.root.join(self.namespace.collections()))
                     && let Some(Component::Normal(collection)) = relative.components().next()
                     && let Some(collection) = collection
                         .to_str()
@@ -895,11 +980,16 @@ impl Reservation {
     fn checked_destination(&self, path: &Path) -> Result<PathBuf> {
         crate::validate_collection(&self.0.collection)?;
         self.0.quota.control()?;
-        let base = ["collections-1.2", "collections-1.4"]
-            .iter()
-            .map(|namespace| self.0.quota.root.join(namespace).join(&self.0.collection))
-            .find(|base| path.starts_with(base))
-            .context("quota writer target is outside its collection")?;
+        let base = self
+            .0
+            .quota
+            .root
+            .join(self.0.quota.namespace.collections())
+            .join(&self.0.collection);
+        ensure!(
+            path.starts_with(&base),
+            "quota writer target is outside its namespace and collection"
+        );
         let relative = path
             .strip_prefix(&base)
             .context("quota writer target is outside its collection")?;
@@ -1173,7 +1263,7 @@ fn staging_path(quota: &Quota, collection: &str, record: &Path) -> Result<PathBu
     );
     Ok(quota
         .root
-        .join("collections-1.2")
+        .join(quota.namespace.collections())
         .join(collection)
         .join(format!(".quota-stage-{name}")))
 }
@@ -1186,8 +1276,11 @@ fn cleanup_staging(quota: &Quota, collection: &str, record: &Path) -> Result<()>
         return Ok(());
     }
     for path in [
-        quota.root.join("collections-1.2"),
-        quota.root.join("collections-1.2").join(collection),
+        quota.root.join(quota.namespace.collections()),
+        quota
+            .root
+            .join(quota.namespace.collections())
+            .join(collection),
         stage.clone(),
     ] {
         unlinked(&path)?;
@@ -1727,3 +1820,7 @@ mod tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "quota/namespaces_tests.rs"]
+mod namespaces_tests;

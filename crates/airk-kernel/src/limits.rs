@@ -136,8 +136,7 @@ impl Kernel {
             limits,
         };
         let bytes = serde_json::to_vec(&config)?;
-        let reservation =
-            airk_store::quota::Quota::open(&self.data_root)?.reserve(&self.collection, 16_384)?;
+        let reservation = self.collection_quota()?.reserve(&self.collection, 16_384)?;
         reservation.charge(bytes.len() as u64)?;
         let mut temporary = tempfile::NamedTempFile::new_in(self.store.directory())?;
         temporary.write_all(&bytes)?;

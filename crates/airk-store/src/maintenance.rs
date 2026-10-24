@@ -239,6 +239,10 @@ fn collection(store: &FileStore) -> Result<String> {
 }
 pub(crate) fn check_writer(store: &FileStore, writer: &WriterLock, quota: &Quota) -> Result<()> {
     ensure!(
+        store.collection_namespace()? == quota.collection_namespace(),
+        "maintenance quota namespace mismatch"
+    );
+    ensure!(
         writer.path == store.directory().canonicalize()?.join("writer.lock"),
         "foreign collection writer guard"
     );

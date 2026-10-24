@@ -321,11 +321,7 @@ impl Kernel {
                     Err(_) => true,
                 };
                 if needs_recovery {
-                    current::recover_current(
-                        &kernel.store,
-                        &airk_store::quota::Quota::open(&kernel.data_root)?,
-                        &scope,
-                    )?;
+                    current::recover_current(&kernel.store, &kernel.collection_quota()?, &scope)?;
                 }
             }
         }
@@ -334,6 +330,10 @@ impl Kernel {
 
     fn root_id(&self) -> String {
         self.root.to_string_lossy().into_owned()
+    }
+
+    fn collection_quota(&self) -> Result<airk_store::quota::Quota> {
+        airk_store::quota::Quota::for_store(&self.store)
     }
 
     pub fn root(&self) -> &Path {
@@ -489,7 +489,7 @@ impl Kernel {
         &self,
         maximum: u64,
     ) -> Result<airk_store::quota::Reservation> {
-        let quota = airk_store::quota::Quota::open(&self.data_root)?;
+        let quota = self.collection_quota()?;
         // The reservation includes temporary and retained bytes together. Each
         // provider charges before writes; exhausting it leaves the active pin intact.
         let status = quota.status()?;
