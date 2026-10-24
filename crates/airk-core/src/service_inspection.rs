@@ -55,6 +55,19 @@ pub struct DiscoverySummary {
     pub failed: bool,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StorageSummary {
+    pub collection_used_bytes: u64,
+    pub collection_reserved_bytes: u64,
+    pub collection_limit_bytes: u64,
+    pub root_available_bytes: u64,
+    pub physical_available_growth_bytes: u64,
+    /// Existing charged bytes plus a fresh SQLite/WAL allowance. Changed source
+    /// growth is unknown; this estimate is not a reservation or admission promise.
+    pub replacement_estimate_bytes: u64,
+}
+
 /// Every field is content-free. Registration paths are a separate trusted UI input.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -72,6 +85,8 @@ pub struct InspectionSnapshot {
     pub semantic: Option<SemanticSummary>,
     pub discovery: Option<DiscoverySummary>,
     pub failure: Option<InspectionFailure>,
+    #[serde(default)]
+    pub storage: Option<StorageSummary>,
 }
 impl InspectionSnapshot {
     pub fn validate(&self) -> Result<()> {

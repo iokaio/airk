@@ -22,6 +22,31 @@ pub enum ControlMethod {
         limit: usize,
     },
     RequestEpoch,
+    PlanCreate {
+        caller: Incarnation,
+        key: RequestKey,
+        request: crate::service_maintenance::RepairRequest,
+    },
+    Plan {
+        id: Sha256Digest,
+    },
+    PlanItems {
+        id: Sha256Digest,
+        after: Option<ProjectBinding>,
+        limit: usize,
+    },
+    PlanExecute {
+        id: Sha256Digest,
+        preview: Sha256Digest,
+        allow_fallback: bool,
+    },
+    PlanPause {
+        id: Sha256Digest,
+        paused: bool,
+    },
+    PlanCancel {
+        id: Sha256Digest,
+    },
     Events {
         project: Option<ProjectBinding>,
         cursor: Option<crate::service_events::EventCursor>,
@@ -156,6 +181,12 @@ pub enum ControlResponse {
     Events {
         page: crate::service_events::EventPage,
     },
+    Plan {
+        plan: crate::service_maintenance::MaintenancePlan,
+    },
+    PlanItems {
+        page: crate::service_maintenance::PlanPage,
+    },
     Job {
         job: JobRecord,
     },
@@ -263,6 +294,8 @@ pub struct ProjectPage {
 #[serde(rename_all = "snake_case")]
 pub enum JobKind {
     Inspect,
+    PlanInspect,
+    Repair,
     Index,
     Reconcile,
     Vectors,
@@ -276,6 +309,8 @@ impl JobKind {
     pub fn code(self) -> &'static str {
         match self {
             Self::Inspect => "inspect",
+            Self::PlanInspect => "plan_inspect",
+            Self::Repair => "repair",
             Self::Index => "index",
             Self::Reconcile => "reconcile",
             Self::Vectors => "vectors",

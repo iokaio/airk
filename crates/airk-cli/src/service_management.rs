@@ -11,7 +11,7 @@ use std::{
     sync::mpsc::{SyncSender, sync_channel},
     sync::{
         Arc,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::Duration,
 };
@@ -22,6 +22,7 @@ pub struct Management {
     sender: Option<SyncSender<Envelope>>,
     thread: Option<std::thread::JoinHandle<()>>,
     pending: Arc<AtomicUsize>,
+    plans: Arc<AtomicBool>,
 }
 
 impl Drop for Management {
@@ -35,7 +36,43 @@ impl Drop for Management {
 }
 
 fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<ControlResponse> {
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_millis()
+        .try_into()?;
     Ok(match method {
+        ControlMethod::PlanCreate {
+            caller,
+            key,
+            request,
+        } => ControlResponse::Plan {
+            plan: registry.create_maintenance_plan(
+                caller,
+                &key,
+                &request,
+                now_ms,
+                crate::runtime_pair::engine_identity()?,
+            )?,
+        },
+        ControlMethod::Plan { id } => ControlResponse::Plan {
+            plan: registry.maintenance_plan(id)?,
+        },
+        ControlMethod::PlanItems { id, after, limit } => ControlResponse::PlanItems {
+            page: registry.maintenance_plan_page(id, after, limit)?,
+        },
+        ControlMethod::PlanExecute {
+            id,
+            preview,
+            allow_fallback,
+        } => ControlResponse::Plan {
+            plan: registry.approve_maintenance_plan(id, preview, allow_fallback, now_ms)?,
+        },
+        ControlMethod::PlanPause { id, paused } => ControlResponse::Plan {
+            plan: registry.pause_maintenance_plan(id, paused, now_ms)?,
+        },
+        ControlMethod::PlanCancel { id } => ControlResponse::Plan {
+            plan: registry.cancel_maintenance_plan(id, now_ms)?,
+        },
         ControlMethod::Register { project } => {
             airk_kernel::service_projects::validate(&project)?;
             registry.register(&project)?;
@@ -136,16 +173,48 @@ impl Management {
         let (sender, receiver) = sync_channel::<Envelope>(32);
         let pending = Arc::new(AtomicUsize::new(0));
         let active = pending.clone();
+        let plans = Arc::new(AtomicBool::new(true));
+        let runnable_plans = plans.clone();
         let (ready, initialized) = sync_channel(1);
         let thread = std::thread::Builder::new()
             .name("airk-registry".into())
             .spawn(move || {
                 let mut registry = ServiceRegistry::open(&root, instance);
                 let _ = ready.send(());
-                while let Ok((method, reply)) = receiver.recv() {
+                let mut next_tick = std::time::Instant::now();
+                loop {
+                    if std::time::Instant::now() >= next_tick {
+                        let running = registry.as_mut().ok().and_then(|registry| {
+                            let now = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .ok()?;
+                            registry
+                                .advance_maintenance_plans(now.as_millis().try_into().ok()?)
+                                .ok()
+                        });
+                        // Unknown metadata state retains service ownership until a
+                        // later bounded turn can establish whether work remains.
+                        runnable_plans.store(running.unwrap_or(true), Ordering::Release);
+                        next_tick = std::time::Instant::now()
+                            + Duration::from_millis(if running.is_some() { 250 } else { 1000 });
+                    }
+                    let (method, reply) = match receiver.recv_timeout(
+                        next_tick.saturating_duration_since(std::time::Instant::now()),
+                    ) {
+                        Ok(envelope) => envelope,
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                    };
                     let source_changed = matches!(
                         method,
                         ControlMethod::ConfigureWatch { .. } | ControlMethod::Register { .. }
+                    );
+                    let plan_changed = matches!(
+                        method,
+                        ControlMethod::PlanCreate { .. }
+                            | ControlMethod::PlanExecute { .. }
+                            | ControlMethod::PlanPause { .. }
+                            | ControlMethod::PlanCancel { .. }
                     );
                     let response = match registry.as_mut() {
                         Ok(registry) => execute(registry, method).unwrap_or_else(|error| {
@@ -157,6 +226,11 @@ impl Management {
                                         .downcast_ref::<airk_core::service_events::EventError>()
                                         .map(ToString::to_string)
                                 })
+                                .or_else(|| {
+                                    error
+                                        .downcast_ref::<airk_core::service_maintenance::PlanError>()
+                                        .map(ToString::to_string)
+                                })
                                 .unwrap_or_else(|| "invalid_registry_request".into());
                             ControlResponse::Failure { code }
                         }),
@@ -166,6 +240,12 @@ impl Management {
                     };
                     if source_changed {
                         source.changed();
+                    }
+                    if plan_changed {
+                        // Accepted plan work must prevent idle exit immediately,
+                        // including the interval before its first dispatch turn.
+                        runnable_plans.store(true, Ordering::Release);
+                        next_tick = std::time::Instant::now();
                     }
                     // A timed-out/disconnected caller cannot release this charge
                     // while its accepted metadata operation can still commit.
@@ -180,6 +260,7 @@ impl Management {
             sender: Some(sender),
             thread: Some(thread),
             pending,
+            plans,
         })
     }
 
@@ -204,6 +285,6 @@ impl Management {
         }
     }
     pub fn can_idle_exit(&self) -> bool {
-        self.pending.load(Ordering::Acquire) == 0
+        self.pending.load(Ordering::Acquire) == 0 && !self.plans.load(Ordering::Acquire)
     }
 }

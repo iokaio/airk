@@ -42,6 +42,7 @@ struct EnqueueOptions {
     maintenance_now_ms: Option<u64>,
     source_request: Option<(u64, u64)>,
     manual_retry: Option<Sha256Digest>,
+    plan: Option<super::maintenance::PlannedJob>,
 }
 
 fn retry_origin(
@@ -126,7 +127,7 @@ impl ServiceRegistry {
             "invalid pending project page bound"
         );
         let mut statement = self.connection.prepare(
-            "SELECT j.project FROM service_jobs j JOIN projects p ON p.binding=j.project WHERE j.state='running' OR (j.state='pending' AND (p.paused=0 OR j.kind='inspect')) GROUP BY j.project ORDER BY min(j.seq) LIMIT ?1")?;
+            &format!("SELECT j.project FROM service_jobs j JOIN projects p ON p.binding=j.project WHERE j.state='running' OR (j.state='pending' AND (p.paused=0 OR j.kind IN('inspect','plan_inspect')) AND {}) GROUP BY j.project ORDER BY min(j.seq) LIMIT ?1",super::maintenance::ELIGIBLE))?;
         let rows = statement.query_map([limit as i64], |row| row.get::<_, String>(0))?;
         rows.map(|row| row?.parse()).collect()
     }
@@ -141,9 +142,9 @@ impl ServiceRegistry {
             "invalid pending project page bound"
         );
         let mut statement = self.connection.prepare(
-            "SELECT DISTINCT j.project FROM service_jobs j JOIN projects p ON p.binding=j.project
-             WHERE (j.state='running' OR (j.state='pending' AND (p.paused=0 OR j.kind='inspect')))
-             AND (?1 IS NULL OR j.project>?1) ORDER BY j.project LIMIT ?2",
+            &format!("SELECT DISTINCT j.project FROM service_jobs j JOIN projects p ON p.binding=j.project
+             WHERE (j.state='running' OR (j.state='pending' AND (p.paused=0 OR j.kind IN('inspect','plan_inspect')) AND {}))
+             AND (?1 IS NULL OR j.project>?1) ORDER BY j.project LIMIT ?2",super::maintenance::ELIGIBLE),
         )?;
         let rows = statement.query_map(
             params![after.map(|id| id.to_string()), limit as i64],
@@ -155,8 +156,8 @@ impl ServiceRegistry {
         let id: Option<String> = self
             .connection
             .query_row(
-                "SELECT j.id FROM service_jobs j JOIN projects p ON p.binding=j.project
-             WHERE j.project=?1 AND j.state='pending' AND (p.paused=0 OR j.kind='inspect') ORDER BY j.seq LIMIT 1",
+                &format!("SELECT j.id FROM service_jobs j JOIN projects p ON p.binding=j.project
+             WHERE j.project=?1 AND j.state='pending' AND (p.paused=0 OR j.kind IN('inspect','plan_inspect')) AND {} ORDER BY j.seq LIMIT 1",super::maintenance::ELIGIBLE),
                 [project.to_string()],
                 |row| row.get(0),
             )
@@ -277,7 +278,12 @@ impl ServiceRegistry {
             maintenance_now_ms,
             source_request,
             manual_retry,
+            plan,
         } = options;
+        ensure!(
+            plan.is_some() || !matches!(kind, JobKind::PlanInspect | JobKind::Repair),
+            airk_core::service_maintenance::PlanError::InvalidTransition
+        );
         let epoch = i64::try_from(key.epoch).map_err(|_| JobError::KeyExpired)?;
         // Accepted keys remain readable even when every queue slot is occupied.
         let existing: Option<String> = self.connection.query_row(
@@ -301,7 +307,7 @@ impl ServiceRegistry {
             "SELECT EXISTS(SELECT 1 FROM service_jobs WHERE project=?1 AND kind=?2 AND state='pending')",
             params![project.to_string(),kind.code()], |row| row.get(0),
         )?;
-        self.prune_job_receipts(!pending, manual_retry)?;
+        self.prune_job_receipts(!pending || plan.is_some(), manual_retry)?;
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -345,6 +351,10 @@ impl ServiceRegistry {
             |row| row.get(0),
         )?;
         ensure!(registered, "service project is not registered");
+        let planned_source = plan
+            .map(|link| super::maintenance::prepare_job(&transaction, link, project, kind))
+            .transpose()?
+            .unwrap_or(false);
         if let Some(source) = manual_retry {
             let original = record(&transaction, source)?;
             ensure!(
@@ -374,7 +384,7 @@ impl ServiceRegistry {
                 |row| row.get(0),
             )
             .optional()?;
-        let id = if let Some(id) = pending {
+        let id = if let Some(id) = pending.filter(|_| plan.is_none()) {
             id.parse()?
         } else {
             let jobs: i64 =
@@ -441,7 +451,8 @@ impl ServiceRegistry {
                 params![i64::try_from(next)?, project.to_string()],
             )?;
         }
-        if matches!(kind, JobKind::Index | JobKind::Reconcile | JobKind::Rebuild) {
+        if matches!(kind, JobKind::Index | JobKind::Reconcile | JobKind::Rebuild) || planned_source
+        {
             super::watch::ensure_row(&transaction, project)?;
             if manual_retry.is_some() {
                 transaction.execute("UPDATE service_watch SET attempts=0,next_ms=0,blocked_revision=NULL WHERE project=?1",[project.to_string()])?;
@@ -462,6 +473,9 @@ impl ServiceRegistry {
             }
             transaction.execute("INSERT INTO service_job_source(job,revision) SELECT ?1,requested FROM service_watch WHERE project=?2
                 ON CONFLICT(job) DO UPDATE SET revision=max(service_job_source.revision,excluded.revision)",params![id.to_string(),project.to_string()])?;
+        }
+        if let Some(link) = plan {
+            super::maintenance::associate_job(&transaction, link, id)?;
         }
         let accepted = record(&transaction, id)?;
         transaction.commit()?;
@@ -590,6 +604,44 @@ impl ServiceRegistry {
             kind,
         )
     }
+    pub(super) fn enqueue_planned(
+        &mut self,
+        link: super::maintenance::PlannedJob,
+    ) -> Result<JobRecord> {
+        let (namespace, epoch) = self.request_epoch()?;
+        let step = match link.step {
+            super::maintenance::PlanStep::Inspect => b"inspect".as_slice(),
+            super::maintenance::PlanStep::Action => b"action".as_slice(),
+        };
+        let digest = framed_digest(b"maintenance-job-caller/1.4", &[link.plan.as_bytes()]);
+        let caller = Incarnation::from_bytes(digest.as_bytes()[..16].try_into()?);
+        let nonce = framed_digest(
+            b"maintenance-job-request/1.4",
+            &[
+                link.plan.as_bytes(),
+                link.project.as_bytes(),
+                step,
+                &link.now_ms.to_le_bytes(),
+            ],
+        );
+        self.enqueue_impl(
+            link.project,
+            caller,
+            &RequestKey {
+                namespace,
+                epoch,
+                nonce: Incarnation::from_bytes(nonce.as_bytes()[..16].try_into()?),
+            },
+            match link.step {
+                super::maintenance::PlanStep::Inspect => JobKind::PlanInspect,
+                super::maintenance::PlanStep::Action => JobKind::Repair,
+            },
+            EnqueueOptions {
+                plan: Some(link),
+                ..Default::default()
+            },
+        )
+    }
     pub fn job(&self, id: Sha256Digest) -> Result<JobRecord> {
         record(&self.connection, id)
     }
@@ -616,7 +668,7 @@ impl ServiceRegistry {
                     revision: receipt.token.digest,
                 }),
             })?;
-            transaction.execute("UPDATE service_jobs SET state='succeeded',outcome=?1 WHERE id=?2 AND project=?3 AND kind='rebuild' AND state='running' AND epoch<>?4",
+            transaction.execute("UPDATE service_jobs SET state='succeeded',outcome=?1 WHERE id=?2 AND project=?3 AND kind IN('rebuild','repair') AND state='running' AND epoch<>?4",
                 params![outcome,receipt.job.to_string(),lease.binding.to_string(),i64::try_from(epoch)?])?;
         }
         let failed = serde_json::to_vec(&JobOutcome::Failed {
@@ -624,12 +676,17 @@ impl ServiceRegistry {
         })?;
         transaction.execute(
             "UPDATE service_jobs SET state='failed',outcome=?1 WHERE project=?2 AND state='running'
-            AND epoch<>?3 AND (kind='rebuild' OR attempts>=3)",
+            AND epoch<>?3 AND (kind IN('rebuild','repair') OR attempts>=3)",
             params![failed, lease.binding.to_string(), i64::try_from(epoch)?],
         )?;
         transaction.execute(
             "UPDATE service_jobs SET state='pending' WHERE project=?1 AND state='running' AND epoch<>?2",
             params![lease.binding.to_string(),i64::try_from(epoch)?],
+        )?;
+        super::maintenance::settle_project_jobs(
+            &transaction,
+            lease.binding,
+            super::maintenance::clock_ms()?,
         )?;
         transaction.commit()?;
         Ok(())
@@ -668,13 +725,14 @@ impl ServiceRegistry {
         if running {
             return Ok(None);
         }
-        let id: Option<String> = transaction.query_row("SELECT id FROM service_jobs WHERE project=?1 AND state='pending' AND (?2 IS NULL OR id=?2) AND (NOT ?3 OR kind='inspect') ORDER BY seq LIMIT 1", params![lease.binding.to_string(), selected.map(|id|id.to_string()),paused], |row| row.get(0)).optional()?;
+        let id: Option<String> = transaction.query_row(&format!("SELECT j.id FROM service_jobs j WHERE j.project=?1 AND j.state='pending' AND (?2 IS NULL OR j.id=?2) AND (NOT ?3 OR j.kind IN('inspect','plan_inspect')) AND {} ORDER BY j.seq LIMIT 1",super::maintenance::ELIGIBLE), params![lease.binding.to_string(), selected.map(|id|id.to_string()),paused], |row| row.get(0)).optional()?;
         let Some(id) = id else {
             return Ok(None);
         };
         transaction.execute("UPDATE service_jobs SET state='running',epoch=?1,attempts=attempts+1 WHERE id=?2 AND state='pending'",
             params![i64::try_from(epoch)?, id])?;
         let claimed = record(&transaction, id.parse()?)?;
+        super::maintenance::job_claimed(&transaction, claimed.id)?;
         transaction.commit()?;
         Ok(Some(claimed))
     }
@@ -685,7 +743,7 @@ impl ServiceRegistry {
         id: Sha256Digest,
         outcome: JobOutcome,
     ) -> Result<JobRecord> {
-        self.complete_job_observed(lease, id, outcome, None)
+        self.complete_job_observed(lease, id, outcome, None, None)
     }
 
     pub fn complete_job_at(
@@ -695,7 +753,18 @@ impl ServiceRegistry {
         outcome: JobOutcome,
         now_ms: u64,
     ) -> Result<JobRecord> {
-        self.complete_job_observed(lease, id, outcome, Some(now_ms))
+        self.complete_job_observed(lease, id, outcome, Some(now_ms), None)
+    }
+
+    pub fn complete_job_with_maintenance_at(
+        &mut self,
+        lease: &ProjectLease,
+        id: Sha256Digest,
+        outcome: JobOutcome,
+        now_ms: u64,
+        maintenance: Option<&airk_core::service::MaintenanceObservation>,
+    ) -> Result<JobRecord> {
+        self.complete_job_observed(lease, id, outcome, Some(now_ms), maintenance)
     }
 
     /// The supervisor may settle work that never started only while an exclusive
@@ -727,6 +796,11 @@ impl ServiceRegistry {
         );
         let bytes = serde_json::to_vec(&JobOutcome::Failed { code: code.into() })?;
         let failed=tx.execute("UPDATE service_jobs SET state='failed',outcome=?1 WHERE project=?2 AND state='pending'",params![bytes,lease.binding.to_string()])?;
+        super::maintenance::settle_project_jobs(
+            &tx,
+            lease.binding,
+            super::maintenance::clock_ms()?,
+        )?;
         tx.commit()?;
         Ok(failed)
     }
@@ -737,6 +811,7 @@ impl ServiceRegistry {
         id: Sha256Digest,
         outcome: JobOutcome,
         now_ms: Option<u64>,
+        maintenance: Option<&airk_core::service::MaintenanceObservation>,
     ) -> Result<JobRecord> {
         if let JobOutcome::Failed { code } = &outcome {
             ensure!(
@@ -790,6 +865,15 @@ impl ServiceRegistry {
             }
         }
         let completed = record(&transaction, id)?;
+        super::maintenance::job_completed(
+            &transaction,
+            id,
+            match now_ms {
+                Some(now) => now,
+                None => super::maintenance::clock_ms()?,
+            },
+            maintenance,
+        )?;
         transaction.commit()?;
         Ok(completed)
     }
@@ -827,6 +911,7 @@ impl ServiceRegistry {
             _ => {}
         }
         let result = record(&transaction, id)?;
+        super::maintenance::job_completed(&transaction, id, super::maintenance::clock_ms()?, None)?;
         transaction.commit()?;
         Ok(result)
     }
@@ -858,6 +943,7 @@ impl ServiceRegistry {
             params![serde_json::to_vec(&JobOutcome::Canceled)?, id.to_string()],
         )?;
         let canceled = record(&transaction, id)?;
+        super::maintenance::job_completed(&transaction, id, super::maintenance::clock_ms()?, None)?;
         if current.state == JobState::Pending {
             super::watch::block_source_retry(&transaction, id)?;
         }

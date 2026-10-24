@@ -161,7 +161,9 @@ fn execute(
     airk_kernel::service_execution::progress_phase(match kind {
         JobKind::Index | JobKind::Reconcile | JobKind::Rebuild => WorkPhase::Discovering,
         JobKind::Vectors => WorkPhase::Embedding,
-        JobKind::Inspect | JobKind::Verify => WorkPhase::Verifying,
+        JobKind::Inspect | JobKind::PlanInspect | JobKind::Repair | JobKind::Verify => {
+            WorkPhase::Verifying
+        }
         JobKind::Recover => WorkPhase::Recovering,
         JobKind::Maintain => WorkPhase::Retiring,
     });
@@ -203,7 +205,11 @@ fn execute(
                 );
             }
         }
-        JobKind::Recover | JobKind::Maintain | JobKind::Inspect => {
+        JobKind::Recover
+        | JobKind::Maintain
+        | JobKind::Inspect
+        | JobKind::PlanInspect
+        | JobKind::Repair => {
             unreachable!("handled outside ordinary execution")
         }
         JobKind::Rebuild => {
@@ -353,14 +359,42 @@ pub async fn run() -> Result<()> {
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
             };
             if let Some(job) = registry.claim_job_id(&job_lease, allowance.job)? {
+                let mut completed_maintenance = None;
                 let outcome = if registry.cancellation_requested(job.id)? {
                     Ok(JobOutcome::Canceled)
                 } else {
                     airk_kernel::service_execution::run(allowance.clone(), || {
-                        if matches!(
-                            job.kind,
-                            JobKind::Index | JobKind::Reconcile | JobKind::Rebuild
-                        ) {
+                        airk_kernel::service_execution::checkpoint()?;
+                        let kind = if job.kind == JobKind::Repair {
+                            use airk_core::service_maintenance::{PlanError, RepairOperation};
+                            let approved = registry.repair_work(&job_lease, job.id, init.engine)?;
+                            let observed = kernel.inspect_service(identity.project)?;
+                            ensure!(
+                                observed.guard_digest()? == approved.expected.guard_digest()?,
+                                PlanError::Stale
+                            );
+                            if matches!(
+                                approved.operation,
+                                RepairOperation::Reconcile | RepairOperation::Rebuild
+                            ) {
+                                ensure!(
+                                    observed.source_state
+                                        == airk_core::service_inspection::SourceState::Available,
+                                    PlanError::SourceUnavailable
+                                );
+                                kernel
+                                    .refresh_service_snapshot()?
+                                    .require_service_sources()
+                                    .map_err(|_| PlanError::SourceUnavailable)?;
+                            }
+                            approved
+                                .operation
+                                .job_kind()
+                                .context("unresolved approved repair operation")?
+                        } else {
+                            job.kind
+                        };
+                        if matches!(kind, JobKind::Index | JobKind::Reconcile | JobKind::Rebuild) {
                             let selected = kernel.refresh_service_snapshot()?;
                             selected.require_service_sources()?;
                             let roots = selected
@@ -369,7 +403,7 @@ pub async fn run() -> Result<()> {
                                 .collect::<Vec<_>>();
                             registry.record_watch_roots(&job_lease, &roots)?;
                         }
-                        if job.kind == JobKind::Inspect {
+                        if matches!(kind, JobKind::Inspect | JobKind::PlanInspect) {
                             airk_kernel::service_execution::progress_phase(
                                 airk_core::service_progress::WorkPhase::Verifying,
                             );
@@ -389,13 +423,14 @@ pub async fn run() -> Result<()> {
                                 revision: snapshot.publication,
                             });
                         }
-                        let outcome = execute(&kernel, job.kind, job.id)?;
+                        let outcome = execute(&kernel, kind, job.id)?;
                         airk_kernel::service_execution::progress_phase(
                             airk_core::service_progress::WorkPhase::Retiring,
                         );
                         let maintenance = observe_maintenance(&kernel);
                         let _ = registry.record_maintenance(&job_lease, &maintenance);
-                        let failed = job.kind == JobKind::Maintain && maintenance.failed;
+                        let failed = kind == JobKind::Maintain && maintenance.failed;
+                        completed_maintenance = Some(maintenance.clone());
                         job_status
                             .lock()
                             .map_err(|_| anyhow::anyhow!("work status unavailable"))?
@@ -413,11 +448,21 @@ pub async fn run() -> Result<()> {
                     if error
                         .downcast_ref::<airk_kernel::service_execution::Canceled>()
                         .is_some()
+                        || error.downcast_ref::<airk_core::service_maintenance::PlanError>()
+                            == Some(&airk_core::service_maintenance::PlanError::Canceled)
                     {
                         JobOutcome::Canceled
                     } else {
                         JobOutcome::Failed {
-                            code: if error.is::<airk_kernel::service_execution::WorkStalled>() {
+                            code: if let Some(code) =
+                                error.downcast_ref::<airk_core::service_maintenance::PlanError>()
+                            {
+                                return JobOutcome::Failed {
+                                    code: code.to_string(),
+                                };
+                            } else if airk_store::capacity::is_storage_pressure(&error) {
+                                "storage_pressure"
+                            } else if error.is::<airk_kernel::service_execution::WorkStalled>() {
                                 "work_stalled"
                             } else if error.is::<airk_kernel::service_projects::SourceUnavailable>()
                             {
@@ -427,7 +472,11 @@ pub async fn run() -> Result<()> {
                             } else if error
                                 .is::<airk_kernel::service_inspection::InspectionChanged>()
                             {
-                                "inspection_changed"
+                                if job.kind == JobKind::Repair {
+                                    "maintenance_plan_stale"
+                                } else {
+                                    "inspection_changed"
+                                }
                             } else {
                                 "project_operation_failed"
                             }
@@ -436,7 +485,7 @@ pub async fn run() -> Result<()> {
                     }
                 });
                 record_watch_roots(&kernel, &mut registry, &job_lease);
-                registry.complete_job_at(
+                registry.complete_job_with_maintenance_at(
                     &job_lease,
                     job.id,
                     outcome,
@@ -444,6 +493,7 @@ pub async fn run() -> Result<()> {
                         .duration_since(std::time::UNIX_EPOCH)?
                         .as_millis()
                         .try_into()?,
+                    completed_maintenance.as_ref(),
                 )?;
                 airk_kernel::service_execution::progress_phase(
                     airk_core::service_progress::WorkPhase::Finished,

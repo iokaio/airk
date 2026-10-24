@@ -88,6 +88,7 @@ impl ServiceRegistry {
         let bytes = serde_json::to_vec(&observation)?;
         ensure!(bytes.len() <= 4096, "work observation exceeds byte budget");
         tx.execute("INSERT INTO service_progress VALUES(?1,?2,?3) ON CONFLICT(project) DO UPDATE SET job=excluded.job,observation=excluded.observation",params![identity.project.to_string(),progress.job.to_string(),bytes])?;
+        super::maintenance::record_progress(&tx, &observation)?;
         tx.commit()?;
         Ok(())
     }

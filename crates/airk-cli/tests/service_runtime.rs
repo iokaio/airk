@@ -12,6 +12,265 @@ use std::{
 struct Children(Vec<Child>);
 
 #[test]
+fn maintenance_preview_survives_restart_and_rejects_changed_settings_before_mutation() -> Result<()>
+{
+    use airk_core::{
+        service::{ControlMethod as Method, ControlResponse as Response, RequestKey},
+        service_maintenance::{
+            PlanOutcome, PlanPhase, RepairOperation, RepairRequest, RepairSelection,
+        },
+    };
+    let owner = tempfile::tempdir()?;
+    let runtime = owner.path().join("runtime");
+    let source = owner.path().join("source");
+    let data = owner.path().join("data");
+    fs::create_dir(&source)?;
+    fs::create_dir(&data)?;
+    fs::write(
+        source.join("memo.md"),
+        "# Slate harbor\nRetained slate harbor fixture.\n",
+    )?;
+    let project = airk_kernel::service_projects::registration(&source, &data, "maintenance")?;
+    let kernel = airk_kernel::Kernel::open_service_collection(&source, Some(data), "maintenance")?;
+    kernel.configure_vectors(false)?;
+    kernel.index()?;
+    let token = kernel
+        .status()?
+        .publication
+        .context("initial publication missing")?
+        .token;
+    let mut children = Children(vec![start(&runtime)?]);
+    wait_ready(&runtime)?;
+    let executor = tokio::runtime::Runtime::new()?;
+    let id = executor.block_on(async {
+        let request = |method| airk_cli::service_runtime::request(&runtime, method);
+        ensure!(
+            matches!(
+                request(Method::Register {
+                    project: project.clone()
+                })
+                .await?,
+                Response::Registered { .. }
+            ),
+            "registration failed"
+        );
+        let Response::RequestEpoch { namespace, epoch } = request(Method::RequestEpoch).await?
+        else {
+            anyhow::bail!("request epoch unavailable")
+        };
+        let caller = airk_kernel::service_broker::new_instance_id()?;
+        let key = RequestKey {
+            namespace,
+            epoch,
+            nonce: airk_kernel::service_broker::new_instance_id()?,
+        };
+        let create = Method::PlanCreate {
+            caller,
+            key,
+            request: RepairRequest {
+                selection: RepairSelection::All,
+                operation: RepairOperation::Verify,
+            },
+        };
+        let until = tokio::time::Instant::now() + Duration::from_secs(60);
+        let plan = loop {
+            match request(create.clone()).await? {
+                Response::Plan { plan } => break plan,
+                Response::Failure { code }
+                    if code == "registry_response_unknown_retry_with_key" => {}
+                other => anyhow::bail!("plan creation failed: {}", serde_json::to_string(&other)?),
+            }
+            ensure!(
+                tokio::time::Instant::now() < until,
+                "plan creation did not settle"
+            );
+        };
+        loop {
+            let Response::Plan { plan: observed } = request(Method::Plan { id: plan.id }).await?
+            else {
+                anyhow::bail!("plan unavailable")
+            };
+            if observed.phase == PlanPhase::Ready {
+                break;
+            }
+            ensure!(
+                tokio::time::Instant::now() < until,
+                "preview did not become ready"
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        request(Method::Shutdown).await?;
+        Ok::<_, anyhow::Error>(plan.id)
+    })?;
+    ensure!(wait_exit(&mut children.0[0])?, "service did not drain");
+    // The next service must retain the exact original preview, then reject its
+    // guard after an independently saved setting changes. No source rebuild runs.
+    kernel.configure_vectors(true)?;
+    children.0.push(start(&runtime)?);
+    wait_ready(&runtime)?;
+    executor.block_on(async {
+        let request = |method| airk_cli::service_runtime::request(&runtime, method);
+        let Response::Plan { plan } = request(Method::Plan { id }).await? else {
+            anyhow::bail!("durable preview lost")
+        };
+        ensure!(
+            plan.phase == PlanPhase::Ready,
+            "restart executed an unapproved plan"
+        );
+        request(Method::PlanExecute {
+            id,
+            preview: plan.preview_digest.context("preview digest missing")?,
+            allow_fallback: false,
+        })
+        .await?;
+        let until = tokio::time::Instant::now() + Duration::from_secs(60);
+        loop {
+            let Response::Plan { plan } = request(Method::Plan { id }).await? else {
+                anyhow::bail!("execution receipt missing")
+            };
+            if plan.phase == PlanPhase::Finished {
+                ensure!(
+                    plan.outcome == Some(PlanOutcome::PartialFailure) && plan.counts.stale == 1,
+                    "changed settings were not rejected: {plan:?}"
+                );
+                break;
+            }
+            ensure!(
+                tokio::time::Instant::now() < until,
+                "maintenance execution did not settle"
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        ensure!(
+            kernel
+                .refresh_service_snapshot()?
+                .status()?
+                .publication
+                .context("retained publication missing")?
+                .token
+                == token,
+            "stale repair mutated publication"
+        );
+        kernel.configure_vectors(false)?;
+        for operation in [
+            RepairOperation::Verify,
+            RepairOperation::Reconcile,
+            RepairOperation::Rebuild,
+        ] {
+            if operation == RepairOperation::Reconcile {
+                fs::write(
+                    source.join("memo.md"),
+                    "# Slate harbor\nUpdated slate harbor fixture.\n",
+                )?;
+            }
+            let Response::RequestEpoch { namespace, epoch } = request(Method::RequestEpoch).await?
+            else {
+                anyhow::bail!("request epoch unavailable")
+            };
+            let Response::Plan { plan } = request(Method::PlanCreate {
+                caller: airk_kernel::service_broker::new_instance_id()?,
+                key: RequestKey {
+                    namespace,
+                    epoch,
+                    nonce: airk_kernel::service_broker::new_instance_id()?,
+                },
+                request: RepairRequest {
+                    selection: RepairSelection::Selected(vec![project.binding]),
+                    operation,
+                },
+            })
+            .await?
+            else {
+                anyhow::bail!("fresh repair plan unavailable")
+            };
+            let until = tokio::time::Instant::now() + Duration::from_secs(60);
+            let preview = loop {
+                let Response::Plan { plan: observed } =
+                    request(Method::Plan { id: plan.id }).await?
+                else {
+                    anyhow::bail!("fresh preview unavailable")
+                };
+                if observed.phase == PlanPhase::Ready {
+                    break observed
+                        .preview_digest
+                        .context("fresh preview digest missing")?;
+                }
+                ensure!(
+                    tokio::time::Instant::now() < until,
+                    "fresh preview did not settle"
+                );
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            };
+            request(Method::PlanExecute {
+                id: plan.id,
+                preview,
+                allow_fallback: false,
+            })
+            .await?;
+            loop {
+                let Response::Plan { plan: observed } =
+                    request(Method::Plan { id: plan.id }).await?
+                else {
+                    anyhow::bail!("fresh repair receipt unavailable")
+                };
+                if observed.phase == PlanPhase::Finished {
+                    ensure!(
+                        observed.outcome == Some(PlanOutcome::Succeeded),
+                        "approved {operation:?} failed: {observed:?}"
+                    );
+                    break;
+                }
+                ensure!(
+                    tokio::time::Instant::now() < until,
+                    "approved repair did not settle"
+                );
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            let Response::PlanItems { page } = request(Method::PlanItems {
+                id: plan.id,
+                after: None,
+                limit: 32,
+            })
+            .await?
+            else {
+                anyhow::bail!("project receipt unavailable")
+            };
+            ensure!(
+                page.items.len() == 1
+                    && page.items[0].availability == operation.availability()
+                    && page.items[0]
+                        .inspection
+                        .as_ref()
+                        .is_some_and(|observation| observation.snapshot.storage.is_some()),
+                "repair preview omitted availability/storage observations"
+            );
+        }
+        let updated = kernel
+            .refresh_service_snapshot()?
+            .status()?
+            .publication
+            .context("replacement publication missing")?
+            .token;
+        ensure!(
+            updated.incarnation != token.incarnation,
+            "approved rebuild did not replace the incarnation"
+        );
+        ensure!(
+            fs::read_to_string(source.join("memo.md"))?
+                == "# Slate harbor\nUpdated slate harbor fixture.\n",
+            "maintenance changed source bytes"
+        );
+        request(Method::Shutdown).await?;
+        Ok::<_, anyhow::Error>(())
+    })?;
+    ensure!(
+        wait_exit(&mut children.0[1])?,
+        "restarted service did not drain"
+    );
+    Ok(())
+}
+
+#[test]
 fn manually_changed_extra_roots_cannot_capture_another_projects_private_data() -> Result<()> {
     use airk_core::service::{
         ControlMethod as Method, ControlResponse as Response, JobKind, JobOutcome, RequestKey,
@@ -1386,6 +1645,7 @@ fn late_child_with_buffered_initialization_cannot_open_collection_without_activa
     service_ipc::write_frame(
         &mut input,
         &project_protocol::Init {
+            engine: airk_core::identity::Sha256Digest::from_bytes([0; 32]),
             runtime: root.clone(),
             project: project.binding,
             service: instance,
@@ -1456,6 +1716,7 @@ fn private_worker_channel_renews_only_the_live_scoped_generation() -> Result<()>
         service_ipc::write_frame(
             &mut input,
             &project_protocol::Init {
+                engine: airk_core::identity::Sha256Digest::from_bytes([0; 32]),
                 runtime: root.clone(),
                 project: project.binding,
                 service,

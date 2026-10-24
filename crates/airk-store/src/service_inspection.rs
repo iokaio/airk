@@ -37,7 +37,7 @@ impl ServiceRegistry {
         let record = super::jobs::record(&tx, job)?;
         ensure!(
             record.project == worker.project
-                && record.kind == JobKind::Inspect
+                && matches!(record.kind, JobKind::Inspect | JobKind::PlanInspect)
                 && record.state == JobState::Running
                 && record.fencing_generation == epoch,
             JobError::StaleWorker
@@ -59,6 +59,7 @@ impl ServiceRegistry {
             ON CONFLICT(project) DO UPDATE SET payload=excluded.payload",
             params![worker.project.to_string(), bytes],
         )?;
+        super::maintenance::record_inspection(&tx, &observation)?;
         tx.commit()?;
         Ok(())
     }
@@ -165,6 +166,7 @@ mod tests {
             semantic: None,
             discovery: None,
             failure: None,
+            storage: None,
         };
         assert!(
             registry

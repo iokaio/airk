@@ -14,6 +14,70 @@ use std::{
 // Hashing is streamed; the same finite ceiling also bounds a concurrently growing file.
 const MAX_EXECUTABLE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
+/// Bind a maintenance preview to executable behavior and the paired helper's
+/// expected identity. Missing/broken inference remains a separate availability
+/// observation; this function never loads a model or starts a helper.
+pub fn engine_identity() -> Result<airk_core::identity::Sha256Digest> {
+    static ID: std::sync::OnceLock<std::result::Result<airk_core::identity::Sha256Digest, String>> =
+        std::sync::OnceLock::new();
+    let result = ID.get_or_init(|| {
+        (|| -> Result<_> {
+            let main = std::env::current_exe()?.canonicalize()?;
+            let digest = digest_file(&main)?;
+            let manifest = main
+                .parent()
+                .context("runtime parent missing")?
+                .join("airk-runtime.json");
+            let bytes = match fs::symlink_metadata(&manifest) {
+                Ok(metadata) => {
+                    ensure!(
+                        metadata.is_file()
+                            && !metadata.file_type().is_symlink()
+                            && metadata.len() <= 4096,
+                        "invalid engine pair receipt"
+                    );
+                    #[cfg(windows)]
+                    {
+                        use std::os::windows::fs::MetadataExt;
+                        ensure!(
+                            metadata.file_attributes() & 0x400 == 0,
+                            "redirected engine pair receipt"
+                        );
+                    }
+                    let mut bytes = Vec::new();
+                    fs::File::open(manifest)?
+                        .take(4097)
+                        .read_to_end(&mut bytes)?;
+                    ensure!(bytes.len() <= 4096, "oversized engine pair receipt");
+                    let pair: RuntimePair = serde_json::from_slice(&bytes)?;
+                    ensure!(
+                        pair.schema == 1
+                            && pair.version == env!("CARGO_PKG_VERSION")
+                            && pair.os == std::env::consts::OS
+                            && pair.arch == std::env::consts::ARCH
+                            && pair.airk_sha256 == digest,
+                        "engine pair identity mismatch"
+                    );
+                    pair.embed_sha256
+                        .parse::<airk_core::identity::Sha256Digest>()?;
+                    serde_json::to_vec(&pair)?
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => digest.into_bytes(),
+                Err(error) => return Err(error.into()),
+            };
+            Ok(airk_core::identity::framed_digest(
+                b"airk-maintenance-engine/1.4",
+                &[&bytes],
+            ))
+        })()
+        .map_err(|error| error.to_string())
+    });
+    result
+        .as_ref()
+        .copied()
+        .map_err(|_| anyhow::anyhow!("verified runtime identity is unavailable for maintenance"))
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimePair {

@@ -20,6 +20,41 @@ impl std::fmt::Display for InspectionChanged {
 impl std::error::Error for InspectionChanged {}
 
 impl Kernel {
+    pub fn service_storage_summary(&self) -> Result<airk_core::service_inspection::StorageSummary> {
+        let quota = airk_store::quota::Quota::open(&self.data_root)?;
+        let status = quota.status()?;
+        let collection = status.collections.get(&self.collection);
+        let used = collection.map_or(0, |entry| entry.used_bytes);
+        let reserved = collection.map_or(0, |entry| entry.reserved_bytes);
+        let policy = quota.policy()?;
+        let limit = collection.map_or_else(
+            || {
+                policy
+                    .collections
+                    .get(&self.collection)
+                    .copied()
+                    .unwrap_or(policy.default_collection_bytes)
+            },
+            |entry| entry.limit_bytes,
+        );
+        // A comparable existing incarnation is the only measured corpus size.
+        // The estimate deliberately does not claim to bound future source growth.
+        let replacement_estimate_bytes = used
+            .checked_add((64 << 20) + (128 << 10) + (192 << 10))
+            .context("replacement storage estimate overflow")?;
+        Ok(airk_core::service_inspection::StorageSummary {
+            collection_used_bytes: used,
+            collection_reserved_bytes: reserved,
+            collection_limit_bytes: limit,
+            root_available_bytes: status
+                .root_limit_bytes
+                .saturating_sub(status.used_bytes)
+                .saturating_sub(status.reserved_bytes),
+            physical_available_growth_bytes: status.physical_capacity.available_growth_bytes,
+            replacement_estimate_bytes,
+        })
+    }
+
     pub fn inspect_service(&self, project: ProjectBinding) -> Result<InspectionSnapshot> {
         crate::service_execution::checkpoint()?;
         ensure!(
@@ -76,6 +111,7 @@ impl Kernel {
             semantic: None,
             discovery: None,
             failure: Some(InspectionFailure::IndexObservationFailed),
+            storage: selected.service_storage_summary().ok(),
         };
         if let Ok(status) = status {
             snapshot.publication = status.publication.map(|revision| revision.token);

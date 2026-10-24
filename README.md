@@ -2,7 +2,7 @@
 
 **Version 1.3.2.** See the [1.3.2 release notes](docs/release-1.3.2.md), [1.3.1 release notes](docs/release-1.3.1.md), [1.3.0 format changes](docs/release-1.3.0.md), and [1.2.4 diagnosis and recovery notes](docs/release-1.2.4.md). Download available [native ZIPs and platform VSIX packages](https://github.com/iokaio/airk/releases); publication is verified separately by the release workflows.
 
-The [1.4.0 service implementation](docs/airkservice-architecture.md) is in progress on this branch. Its opt-in native installer supports immutable offline payloads, separate writable state, resumable activation and approved organization-managed read-only payloads. Default extension cutover and release qualification remain pending; see the [draft release record](docs/release-1.4.0.md).
+The [1.4.0 service implementation](docs/airkservice-architecture.md) is in progress on this branch. Its opt-in native installer supports immutable offline payloads, separate writable state, resumable activation and approved organization-managed read-only payloads. Native maintenance has guarded durable repair previews and per-project receipts. Default extension cutover and release qualification remain pending; see the [draft release record](docs/release-1.4.0.md).
 
 **Give Claude Code, Codex, Gemini CLI/Antigravity, GitHub Copilot and other MCP-capable agents a shared, local index of your workspace.** AIRK indexes files and returns bounded facts and passages with source paths, hashes and original locations. The agent supplies the reasoning. Runtime storage uses memory and local disk.
 

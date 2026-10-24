@@ -114,6 +114,7 @@ impl ChildWorker {
         service_ipc::write_frame(
             process.input.as_mut().context("project input missing")?,
             &protocol::Init {
+                engine: crate::runtime_pair::engine_identity()?,
                 runtime: root.into(),
                 project,
                 service,
@@ -740,12 +741,19 @@ impl Supervisor {
                         }
                         let control = resources.running(*project).and_then(|grant| {
                             registry.as_ref().and_then(|registry| {
+                                let (plan_paused, plan_canceled) =
+                                    registry.maintenance_job_control(grant.job).ok()?;
                                 Some(protocol::WorkControl {
                                     grant: grant.id,
-                                    paused: registry.get(*project).ok()?.paused
-                                        && registry.job(grant.job).ok()?.kind
-                                            != airk_core::service::JobKind::Inspect,
-                                    canceled: registry.cancellation_requested(grant.job).ok()?,
+                                    paused: plan_paused
+                                        || (registry.get(*project).ok()?.paused
+                                            && !matches!(
+                                                registry.job(grant.job).ok()?.kind,
+                                                airk_core::service::JobKind::Inspect
+                                                    | airk_core::service::JobKind::PlanInspect
+                                            )),
+                                    canceled: plan_canceled
+                                        || registry.cancellation_requested(grant.job).ok()?,
                                 })
                             })
                         });

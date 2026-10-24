@@ -7,6 +7,35 @@ use std::path::{Path, PathBuf};
 /// Leave room for filesystem metadata and recovery. This is not an OS reservation.
 pub const SAFETY_HEADROOM_BYTES: u64 = 16 * 1024 * 1024;
 
+#[derive(Clone, Debug)]
+pub struct StoragePressure {
+    pub required_bytes: u64,
+    pub available_bytes: u64,
+    pub safety_headroom_bytes: u64,
+}
+impl std::fmt::Display for StoragePressure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "insufficient physical storage headroom: requested {} bytes, {} available after {} safety bytes; prior generation remains authoritative",
+            self.required_bytes, self.available_bytes, self.safety_headroom_bytes
+        )
+    }
+}
+impl std::error::Error for StoragePressure {}
+
+/// Keep SQLite/provider-specific pressure recognition in the storage adapter.
+/// No string matching: unrelated permission/corruption failures are not retried.
+pub fn is_storage_pressure(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause.is::<crate::quota::QuotaPressure>() || cause.is::<StoragePressure>()
+        || cause.downcast_ref::<std::io::Error>().is_some_and(|error|
+            error.kind()==std::io::ErrorKind::StorageFull)
+        || matches!(cause.downcast_ref::<rusqlite::Error>(),
+            Some(rusqlite::Error::SqliteFailure(error,_)) if error.code==rusqlite::ErrorCode::DiskFull)
+    })
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct Capacity {
     pub observed_path: PathBuf,
@@ -22,9 +51,11 @@ impl Capacity {
     pub fn require_growth(&self, bytes: u64) -> Result<()> {
         ensure!(
             bytes <= self.available_growth_bytes,
-            "insufficient physical storage headroom: requested {bytes} bytes, {} available after {} safety bytes; prior generation remains authoritative",
-            self.available_growth_bytes,
-            self.safety_headroom_bytes
+            StoragePressure {
+                required_bytes: bytes,
+                available_bytes: self.available_growth_bytes,
+                safety_headroom_bytes: self.safety_headroom_bytes
+            }
         );
         Ok(())
     }
@@ -196,5 +227,21 @@ mod tests {
         assert!(capacity.require_growth(10).is_ok());
         assert!(capacity.require_growth(11).is_err());
         assert!(capacity.require_growth(u64::MAX).is_err());
+        assert!(is_storage_pressure(
+            &capacity.require_growth(11).unwrap_err()
+        ));
+        assert!(!is_storage_pressure(&anyhow::anyhow!(
+            "storage quota exhausted"
+        )));
+        assert!(!is_storage_pressure(
+            &std::io::Error::from(std::io::ErrorKind::PermissionDenied).into()
+        ));
+        assert!(is_storage_pressure(
+            &rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_FULL),
+                None
+            )
+            .into()
+        ));
     }
 }

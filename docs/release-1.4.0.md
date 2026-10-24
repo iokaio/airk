@@ -22,4 +22,6 @@ Stage commits remain local and human DCO-signed. No push, publication or service
 
 The native management path now keeps a bounded transactional event log with restart-stable snapshot paging, explicit retention gaps and content-free failure codes. Explicit retry preserves the failed/canceled receipt and resets the applicable finite automatic policy only once per accepted key. The trusted console still needs to present these operations.
 
-Native project inspection now records bounded cached revision/settings observations with worker fencing and independent root availability. Explicit inspection can use an idle paused project while its source work remains paused. Repair-plan execution and the service console remain under implementation.
+Native project inspection now records bounded cached revision/settings observations with worker fencing and independent root availability. Explicit inspection can use an idle paused project while its source work remains paused. Native guarded plan execution is described below; service-console presentation and the complete qualification matrix remain open.
+
+Native maintenance now provides durable one/selected/all-project previews, engine/revision/settings guards, explicit fallback approval, private fenced execution, pause/cancel, bounded retry and independent partial-failure receipts. Storage estimates remain observations; actual writes use durable quota admission. Extension-console presentation and the complete qualification matrix remain open. See [maintenance contracts](service-maintenance.md).

@@ -10,6 +10,7 @@ use std::path::PathBuf;
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Init {
+    pub engine: airk_core::identity::Sha256Digest,
     pub runtime: PathBuf,
     pub project: ProjectBinding,
     pub service: Incarnation,
