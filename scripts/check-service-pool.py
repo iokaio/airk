@@ -50,9 +50,9 @@ class Bridge:
             raise RuntimeError("MCP bridge returned an invalid response")
         return response["result"]
 
-    def search(self, mode):
+    def search(self, mode, query="copper beacon"):
         result = self.call("tools/call", {"name": "airk_search", "arguments": {
-            "query": "copper beacon", "mode": mode, "max_bytes": 4096}})
+            "query": query, "mode": mode, "max_bytes": 4096}})
         if result.get("isError") or "memo.md" not in json.dumps(result):
             raise RuntimeError(f"{mode} retrieval lost the original collection citation: {result}")
 
@@ -121,14 +121,29 @@ def main():
                 document.write_text(original, encoding="utf-8")
                 originals.append((document, document.read_bytes()))
                 base = ["--root", source, "--data-dir", data, "--collection", f"pool-fixture-{number}"]
-                run(*base, "collections", "vectors", "install-bundled")
                 response = run(*base, "service", "register", "--runtime-dir", runtime)
                 if response.get("status") != "registered":
                     raise RuntimeError(f"Project registration failed: {response}")
                 projects.append(response["project"]["registration"])
-            print("Offline provisioning and canonical registration passed for two projects.", flush=True)
+            print("Canonical registration passed without project-local model provisioning.", flush=True)
 
             epoch = rpc("request_epoch")
+            # Explicit trusted setup is a durable service job. The helper installs
+            # one shared set directly from embedded bytes; no project owns weights.
+            for project in projects:
+                accepted = rpc({"enqueue": {"project": project["binding"], "caller": uuid.uuid4().hex,
+                    "key": {"namespace": epoch["namespace"], "epoch": epoch["epoch"], "nonce": uuid.uuid4().hex},
+                    "kind": "model_setup"}})
+                if accepted.get("status") != "job":
+                    raise RuntimeError(f"Model setup not accepted: {accepted}")
+                deadline = time.monotonic() + 180
+                while True:
+                    receipt = rpc({"job": {"id": accepted["job"]["id"]}})["job"]
+                    if receipt["state"] == "succeeded":
+                        break
+                    if receipt["state"] in ("failed", "canceled") or time.monotonic() >= deadline:
+                        raise RuntimeError(f"Shared offline setup failed: {receipt}")
+                    time.sleep(0.2)
             jobs = []
             for project in projects:
                 caller = uuid.uuid4().hex
@@ -189,7 +204,11 @@ def main():
                 time.sleep(0.2)
             sets = [path for path in (runtime / "model-files-1.4" / "sets").iterdir()
                     if len(path.name) == 64 and path.is_dir()]
-            if len(sets) != 1 or not (sets[0] / "model.onnx").is_file():
+            for project in projects:
+                data = Path(project["data_root"])
+                if (data / "models").exists() or any(data.glob("collections-1.4/**/objects/models/*")):
+                    raise RuntimeError("Project retained an unexpected model-weight copy")
+            if len(sets) != 1 or not (sets[0] / "model.onnx").is_file() or not (sets[0] / "installed.json").is_file():
                 raise RuntimeError("Compatible projects did not share one immutable model-file set")
             if rpc("embedding_status").get("loads") != 1:
                 raise RuntimeError("Retirement unnecessarily discarded the compatible loaded model")
@@ -202,6 +221,25 @@ def main():
                 bridge.search("lexical")
             if run("service", "health", "--runtime-dir", runtime)["status"] != "health":
                 raise RuntimeError("Embedding failure blocked independent service health")
+            # New lexical source work must also publish without the dead helper.
+            document, original = originals[0]
+            edited = original + b"\nQuartz lighthouse revised source fixture.\n"
+            document.write_bytes(edited)
+            originals[0] = (document, edited)
+            accepted = rpc({"enqueue": {"project": projects[0]["binding"], "caller": uuid.uuid4().hex,
+                "key": {"namespace": epoch["namespace"], "epoch": epoch["epoch"], "nonce": uuid.uuid4().hex},
+                "kind": "index"}})
+            if accepted.get("status") != "job":
+                raise RuntimeError("Post-failure source job was not accepted")
+            deadline = time.monotonic() + 180
+            while True:
+                receipt = rpc({"job": {"id": accepted["job"]["id"]}})["job"]
+                if receipt["state"] in ("succeeded", "failed"):
+                    break
+                if receipt["state"] == "canceled" or time.monotonic() >= deadline:
+                    raise RuntimeError(f"Post-failure source job did not finish: {receipt}")
+                time.sleep(0.2)
+            bridges[0].search("lexical", "quartz lighthouse")
             if any(document.read_bytes() != original for document, original in originals):
                 raise RuntimeError("Native service changed an original source document")
             print("Embedding-process failure preserved lexical retrieval, service health and original source bytes.", flush=True)

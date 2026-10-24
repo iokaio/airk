@@ -295,6 +295,10 @@ fn directory_ancestors(path: &Path, missing_allowed: bool) -> Result<()> {
 }
 
 fn unique(set: &ModelObjectSet) -> Result<Vec<ModelObjectRef>> {
+    ensure!(
+        set.shared.is_none(),
+        "shared model requires its scoped installed store"
+    );
     set.validate()?;
     Ok(set
         .assets
@@ -363,6 +367,7 @@ mod tests {
         }
         Ok(ModelObjectSet {
             version: 1,
+            shared: None,
             pipeline_digest: Sha256Digest::from_bytes([1; 32]),
             legacy_identity: Sha256Digest::from_bytes([2; 32]).to_string(),
             assets,

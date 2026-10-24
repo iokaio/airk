@@ -174,7 +174,7 @@ fn execute(
     use airk_core::service_progress::WorkPhase;
     airk_kernel::service_execution::progress_phase(match kind {
         JobKind::Index | JobKind::Reconcile | JobKind::Rebuild => WorkPhase::Discovering,
-        JobKind::Vectors => WorkPhase::Embedding,
+        JobKind::Vectors | JobKind::ModelSetup => WorkPhase::Embedding,
         JobKind::Inspect | JobKind::PlanInspect | JobKind::Repair | JobKind::Verify => {
             WorkPhase::Verifying
         }
@@ -197,6 +197,10 @@ fn execute(
         }
         JobKind::Vectors => {
             kernel.resume_current_enrichment()?;
+        }
+        JobKind::ModelSetup => {
+            kernel.install_service_default_vector_model()?;
+            return Ok(JobOutcome::Succeeded { revision: None });
         }
         JobKind::Verify => {
             let mut after = None;
@@ -282,16 +286,14 @@ pub async fn run() -> Result<()> {
             && allowance.response_bytes == allowance.concurrent_queries * MAX_FRAME_BYTES,
         "project activation identity or allowance mismatch"
     );
-    #[cfg(not(feature = "local-inference"))]
     crate::embedding_pool_client::install(pool.map(|access| *access))?;
-    #[cfg(feature = "local-inference")]
-    let _ = pool;
     let kernel = Kernel::open_service_collection_for_diagnostics(
         Path::new(&registration.root),
         Some((&registration.data_root).into()),
         &registration.collection,
     )?
-    .with_service_freshness(identity)?;
+    .with_service_freshness(identity)?
+    .with_service_models(&init.runtime, crate::bundled_assets::default_plan()?)?;
     airk_kernel::service_execution::install(Path::new(&registration.data_root), identity)?;
     let receipt = kernel.service_rebuild_receipt()?;
     registry.recover_jobs_with_rebuild_receipt(&lease, receipt.as_ref())?;

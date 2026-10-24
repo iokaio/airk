@@ -366,23 +366,14 @@ impl Kernel {
         let quota = self.collection_quota()?;
         let reservation = self.publication_reservation()?;
         let policy = self.rebuild_extraction_policy()?.policy;
-        let directory = self.data_root.join("models/local");
-        let model = if self.vectors_enabled()? && directory.try_exists()? {
-            Some(EmbeddingModel::open(&directory)?)
-        } else {
-            None
-        };
-        let objects = model
-            .as_ref()
-            .map(|_| airk_retrieval::model::inspect_object_plan(&directory))
-            .transpose()?;
+        let objects = self.configured_model_objects(false)?;
         if let Some(objects) = &objects {
-            airk_store::model_objects::ModelObjects::new(self.store.directory()).retain(
-                &directory,
-                objects,
-                &reservation,
-            )?;
+            self.retain_configured_model(objects, &reservation)?;
         }
+        let model = objects
+            .as_ref()
+            .map(|objects| self.open_configured_model(objects))
+            .transpose()?;
         let configuration = CollectionConfiguration {
             roots: self.configured_roots()?,
             extractor_version: airk_core::EXTRACTOR_VERSION.into(),
@@ -674,25 +665,16 @@ impl Kernel {
             &self.collection,
             (root_free.min(collection_free) / 2).min(MAX_INDEX_RESERVATION_BYTES),
         )?;
-        let model_directory = self.data_root.join("models/local");
         let model_started = std::time::Instant::now();
-        let model = if self.vectors_enabled()? && model_directory.try_exists()? {
-            Some(EmbeddingModel::open(&model_directory)?)
-        } else {
-            None
-        };
-        let model_load_us = u64::try_from(model_started.elapsed().as_micros()).unwrap_or(u64::MAX);
-        let objects = model
-            .as_ref()
-            .map(|_| airk_retrieval::model::inspect_object_plan(&model_directory))
-            .transpose()?;
+        let objects = self.configured_model_objects(false)?;
         if let Some(objects) = &objects {
-            airk_store::model_objects::ModelObjects::new(self.store.directory()).retain(
-                &model_directory,
-                objects,
-                &reservation,
-            )?;
+            self.retain_configured_model(objects, &reservation)?;
         }
+        let model = objects
+            .as_ref()
+            .map(|objects| self.open_configured_model(objects))
+            .transpose()?;
+        let model_load_us = u64::try_from(model_started.elapsed().as_micros()).unwrap_or(u64::MAX);
         let configuration = CollectionConfiguration {
             roots: roots.clone(),
             extractor_version: airk_core::EXTRACTOR_VERSION.into(),

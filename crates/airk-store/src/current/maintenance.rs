@@ -82,7 +82,11 @@ impl CurrentRead {
                     )));
             }
         }
-        if let Some(model) = state.configuration.model {
+        if let Some(model) = state
+            .configuration
+            .model
+            .filter(|model| model.shared.is_none())
+        {
             for asset in model.assets.values() {
                 retained.insert(PathBuf::from("objects/models").join(asset.sha256.to_string()));
             }

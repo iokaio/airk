@@ -120,7 +120,9 @@ impl Client {
         self.sender
             .try_send(Work {
                 session,
-                operation: protocol::Operation::Call { request },
+                operation: protocol::Operation::Call {
+                    request: Box::new(request),
+                },
                 reply: Some(reply),
             })
             .map_err(|_| anyhow::anyhow!("embedding pool client queue full"))?;
@@ -172,6 +174,27 @@ struct PoolConnector {
     client: Arc<Client>,
 }
 impl Connector for PoolConnector {
+    fn provision_model(&self, source: &Path) -> Result<airk_core::model_objects::ModelObjectSet> {
+        let source = source.canonicalize()?;
+        let session = Session::new(self.client.clone())?;
+        match session.request(Request::ProvisionModel { directory: source })? {
+            Response::Provisioned { objects } => {
+                objects.validate()?;
+                Ok(objects)
+            }
+            _ => anyhow::bail!("invalid custom model provisioning response"),
+        }
+    }
+    fn provision_bundled(&self) -> Result<airk_core::model_objects::ModelObjectSet> {
+        let session = Session::new(self.client.clone())?;
+        match session.request(Request::ProvisionBundled)? {
+            Response::Provisioned { objects } => {
+                objects.validate()?;
+                Ok(objects)
+            }
+            _ => anyhow::bail!("invalid shared model provisioning response"),
+        }
+    }
     fn tokenizer(&self, _path: &Path) -> Result<Arc<dyn RemoteSession>> {
         Ok(Arc::new(Session::new(self.client.clone())?))
     }
@@ -271,9 +294,7 @@ mod tests {
                     matches!(envelope.operation, protocol::Operation::Close),
                     matches!(
                         envelope.operation,
-                        protocol::Operation::Call {
-                            request: Request::Open { .. }
-                        }
+                        protocol::Operation::Call { ref request } if matches!(**request, Request::Open { .. })
                     ),
                 ));
                 local_ipc::write_message_limited(
@@ -300,7 +321,7 @@ mod tests {
             .try_send(Work {
                 session: first,
                 operation: protocol::Operation::Call {
-                    request: Request::Peak,
+                    request: Box::new(Request::Peak),
                 },
                 reply: None,
             })
@@ -327,7 +348,9 @@ mod tests {
                 .sender
                 .try_send(Work {
                     session,
-                    operation: protocol::Operation::Call { request },
+                    operation: protocol::Operation::Call {
+                        request: Box::new(request),
+                    },
                     reply: None,
                 })
                 .map_err(|_| anyhow::anyhow!("fixture queue fill failed"))?;

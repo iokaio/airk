@@ -73,7 +73,13 @@ fn main() {
         ));
     }
     let output = PathBuf::from(env::var_os("OUT_DIR").unwrap());
-    fs::write(output.join("model.json"), manifest).unwrap();
+    // Both executable roles expose the same canonical metadata bytes. The
+    // provisioned input's harmless whitespace must not change shared asset IDs.
+    fs::write(
+        output.join("model.json"),
+        serde_json::to_vec(&profile["manifest"]).unwrap(),
+    )
+    .unwrap();
     generated.push_str(&format!(
         "(\"model.json\", include_bytes!({:?})),\n];\n",
         output.join("model.json").to_str().unwrap()

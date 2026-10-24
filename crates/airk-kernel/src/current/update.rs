@@ -546,11 +546,8 @@ impl CurrentUpdater<'_> {
                 let descriptor = semantic.model.cache_descriptor()?;
                 ensure!(
                     descriptor.identity()? == semantic.objects.pipeline_digest
-                        && airk_retrieval::model::descriptor_from_objects_metadata(
-                            self.store.directory(),
-                            &semantic.objects
-                        )?
-                        .identity()?
+                        && crate::shared_models::descriptor(self.store, &semantic.objects)?
+                            .identity()?
                             == descriptor.identity()?,
                     "current model objects differ from loaded pipeline"
                 );

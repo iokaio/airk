@@ -83,7 +83,7 @@ impl Kernel {
         };
         let selection = Arc::new(collection.select()?);
         let mut selected = self.clone();
-        selected.store = selection.store.clone();
+        selected.store = self.inherit_shared_models(selection.store.clone())?;
         selected.service_selection = Some(selection);
         Ok(selected)
     }
@@ -106,7 +106,7 @@ impl Kernel {
         let mut replacement =
             collection.begin_replacement(crate::service_broker::new_instance_id()?, job)?;
         let mut next = self.clone();
-        next.store = replacement.store();
+        next.store = self.inherit_shared_models(replacement.store())?;
         next.service_selection = None;
         let settings = collection::copy_settings(
             &previous.store,

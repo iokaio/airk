@@ -180,7 +180,9 @@ pub(crate) fn embed(
     stats.plan_cache_peak_bytes = stats
         .plan_cache_peak_bytes
         .max(model.plan_cache_peak_bytes()?);
-    let EmbeddingModel::Onnx(onnx) = model else {
+    if !(matches!(model, EmbeddingModel::Onnx(_))
+        || matches!(model, EmbeddingModel::Remote(remote) if remote.is_onnx()))
+    {
         let inferences = stats.inferences;
         let result = texts
             .iter()
@@ -203,7 +205,13 @@ pub(crate) fn embed(
     let limit = memory_limited_workers(max_workers, 0, memory_budget).min(pending.len());
     let started = Instant::now();
     let texts: Vec<_> = pending.iter().map(|group| group.text).collect();
-    let (computed, execution) = onnx.embed_batch_measured(&texts, limit, memory_budget)?;
+    let (computed, execution) = match model {
+        EmbeddingModel::Onnx(onnx) => onnx.embed_batch_measured(&texts, limit, memory_budget)?,
+        EmbeddingModel::Remote(remote) => {
+            remote.embed_batch_measured(&texts, limit, memory_budget)?
+        }
+        _ => unreachable!("word models handled above"),
+    };
     stats.inference_us += elapsed_us(started);
     stats.add_execution(&execution);
     stats.workers = stats.workers.max(execution.workers);

@@ -469,7 +469,7 @@ impl Kernel {
                 && work.selection_digest == configuration.vector_selection.digest()?,
             "pending semantic work differs from current configuration"
         );
-        let model = match EmbeddingModel::open_objects(self.store.directory(), objects) {
+        let model = match self.open_configured_model(objects) {
             Ok(model) => model,
             Err(error) => {
                 drop(read);
@@ -536,7 +536,7 @@ impl Kernel {
             .as_ref()
             .context("pending semantic model missing")?;
         let model_started = std::time::Instant::now();
-        let model = match EmbeddingModel::open_objects(self.store.directory(), objects) {
+        let model = match self.open_configured_model(objects) {
             Ok(model) => model,
             Err(error) => {
                 drop(read);

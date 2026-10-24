@@ -42,6 +42,8 @@ mod verified_cache;
 #[derive(Clone, Debug)]
 pub struct FileStore {
     directory: PathBuf,
+    shared_model_runtime: Option<PathBuf>,
+    shared_model_default: Option<airk_core::model_objects::ModelObjectSet>,
 }
 
 /// Small metadata pin for disk retrieval, committed with the corresponding revision.
@@ -110,7 +112,55 @@ impl FileStore {
     pub fn new(directory: impl Into<PathBuf>) -> Self {
         Self {
             directory: directory.into(),
+            shared_model_runtime: None,
+            shared_model_default: None,
         }
+    }
+    pub fn with_service_models(
+        mut self,
+        runtime: &Path,
+        default: airk_core::model_objects::ModelObjectSet,
+    ) -> Result<Self> {
+        anyhow::ensure!(
+            self.collection_namespace()? == "collections-1.4" && default.shared.is_none(),
+            "shared models require service collection ownership"
+        );
+        default.validate()?;
+        self.shared_model_runtime = Some(runtime.canonicalize()?);
+        self.shared_model_default = Some(default);
+        Ok(self)
+    }
+    pub fn shared_model_runtime(&self) -> Option<&Path> {
+        self.shared_model_runtime.as_deref()
+    }
+    pub fn shared_model_default(&self) -> Option<&airk_core::model_objects::ModelObjectSet> {
+        self.shared_model_default.as_ref()
+    }
+    pub fn installed_model(
+        &self,
+        set: &airk_core::model_objects::ModelObjectSet,
+    ) -> Result<service::model_files::InstalledModel> {
+        service::model_files::InstalledModel::open(
+            self.shared_model_runtime()
+                .context("shared model runtime is not bound")?,
+            set,
+        )
+    }
+    pub fn validate_model_reference(
+        &self,
+        set: &airk_core::model_objects::ModelObjectSet,
+        maximum_local_bytes: u64,
+    ) -> Result<()> {
+        if set.shared.is_some() {
+            use airk_core::model_objects::ModelAssetSource;
+            // Publication captures installed identity, not live model availability.
+            // Inference and explicit verification hash their actual asset bytes.
+            self.installed_model(set)?
+                .read_asset(airk_core::model_objects::ModelAssetName::ModelJson, 16384)?;
+        } else {
+            model_objects::ModelObjects::new(self.directory()).verify(set, maximum_local_bytes)?;
+        }
+        Ok(())
     }
     pub fn directory(&self) -> &Path {
         &self.directory

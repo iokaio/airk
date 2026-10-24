@@ -77,9 +77,7 @@ impl Kernel {
             configuration
                 .model
                 .as_ref()
-                .map(|m| {
-                    airk_retrieval::model::EmbeddingModel::open_objects(self.store.directory(), m)
-                })
+                .map(|m| self.open_configured_model(m))
                 .transpose()?
         } else {
             None

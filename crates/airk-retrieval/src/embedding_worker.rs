@@ -15,6 +15,9 @@ pub const MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ModelLocation {
+    Shared {
+        objects: ModelObjectSet,
+    },
     Directory {
         path: PathBuf,
     },
@@ -27,6 +30,10 @@ pub enum ModelLocation {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "method", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {
+    ProvisionBundled,
+    ProvisionModel {
+        directory: PathBuf,
+    },
     TokenizerOpen {
         protocol: u32,
         version: String,
@@ -58,6 +65,9 @@ pub enum Request {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Response {
+    Provisioned {
+        objects: ModelObjectSet,
+    },
     TokenizerOpened {
         identity: airk_core::usage::TokenizerIdentity,
         description: serde_json::Value,
@@ -91,6 +101,12 @@ pub trait RemoteSession: Send + Sync {
 }
 
 pub trait Connector: Send + Sync {
+    fn provision_bundled(&self) -> Result<ModelObjectSet> {
+        anyhow::bail!("shared model provisioning is unavailable")
+    }
+    fn provision_model(&self, _source: &std::path::Path) -> Result<ModelObjectSet> {
+        anyhow::bail!("shared custom model provisioning is unavailable")
+    }
     fn tokenizer(&self, _path: &std::path::Path) -> Result<Arc<dyn RemoteSession>> {
         anyhow::bail!("tokenizer worker is unavailable")
     }

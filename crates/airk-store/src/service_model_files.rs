@@ -5,8 +5,8 @@ use crate::{
     quota::{Quota, QuotaPolicy},
 };
 use airk_core::{
-    identity::Sha256Digest,
-    model_objects::{ModelAssetName, ModelObjectRef, ModelObjectSet},
+    identity::{Sha256Digest, framed_digest},
+    model_objects::{ModelAssetName, ModelAssetSource, ModelObjectRef, ModelObjectSet},
 };
 use anyhow::{Context, Result, ensure};
 use sha2::{Digest, Sha256};
@@ -21,6 +21,98 @@ use std::{
 const MAX_SETS: usize = 16;
 const MAX_BYTES: u64 = 1024 * 1024 * 1024;
 const OWNER: &[u8] = b"airk-service-model-files-v1\n";
+
+/// A verified installed-set locator. It carries no lifetime claim on an
+/// evictable cache entry: installed sets are retained independently of sessions.
+pub struct InstalledModel {
+    directory: PathBuf,
+    set: ModelObjectSet,
+}
+pub fn model_scope(service_root: &Path) -> Result<Sha256Digest> {
+    let root = service_root.canonicalize()?;
+    directories(&root, false)?;
+    Ok(framed_digest(
+        b"airk-shared-model-owner/1.4",
+        &[root
+            .to_str()
+            .context("shared model runtime must be UTF-8")?
+            .as_bytes()],
+    ))
+}
+impl InstalledModel {
+    pub fn open(service_root: &Path, objects: &ModelObjectSet) -> Result<Self> {
+        objects.validate()?;
+        let shared = objects
+            .shared
+            .as_ref()
+            .context("model is not a shared installed reference")?;
+        ensure!(
+            shared.owner == model_scope(service_root)?,
+            "shared model belongs to another runtime"
+        );
+        let root = service_root.canonicalize()?.join("model-files-1.4");
+        directories(&root, false)?;
+        verify_bytes(&root.join("owner.txt"), OWNER)?;
+        let directory = root.join("sets").join(shared.set.to_string());
+        directories(&directory, false)?;
+        let bytes = read_receipt(&directory.join("set.json"))?;
+        ensure!(
+            Sha256Digest::from_bytes(Sha256::digest(&bytes).into()) == shared.set,
+            "shared installed set identity mismatch"
+        );
+        let set = ModelObjectSet::from_bytes(&bytes)?;
+        ensure!(
+            set == objects.local_set(),
+            "shared installed set differs from captured objects"
+        );
+        verify_bytes(&directory.join("installed.json"), &installed_bytes(&set)?)?;
+        Ok(Self { directory, set })
+    }
+    pub fn directory(&self) -> &Path {
+        &self.directory
+    }
+    pub fn verify(&self, maximum: u64) -> Result<()> {
+        let mut remaining = maximum;
+        for (name, asset) in &self.set.assets {
+            remaining = remaining
+                .checked_sub(asset.bytes)
+                .context("shared model verification budget exceeded")?;
+            verify_asset(&self.directory.join(name.filename()), asset)?;
+        }
+        Ok(())
+    }
+}
+impl ModelAssetSource for InstalledModel {
+    fn read_asset(&self, name: ModelAssetName, maximum: u64) -> Result<Vec<u8>> {
+        let asset = self
+            .set
+            .assets
+            .get(&name)
+            .context("shared model asset absent")?;
+        ensure!(
+            asset.bytes <= maximum.min(name.maximum_bytes()),
+            "shared model asset exceeds read budget"
+        );
+        directories(&self.directory, false)?;
+        let path = self.directory.join(name.filename());
+        let metadata = fs::symlink_metadata(&path)?;
+        reject_file_aliases(&path, &metadata)?;
+        ensure!(
+            metadata.len() == asset.bytes,
+            "shared model asset length changed"
+        );
+        let mut bytes = Vec::new();
+        File::open(path)?
+            .take(asset.bytes + 1)
+            .read_to_end(&mut bytes)?;
+        ensure!(
+            bytes.len() as u64 == asset.bytes
+                && Sha256Digest::from_bytes(Sha256::digest(&bytes).into()) == asset.sha256,
+            "shared model asset digest changed"
+        );
+        Ok(bytes)
+    }
+}
 
 pub struct ModelFileLease {
     path: PathBuf,
@@ -99,6 +191,74 @@ impl ServiceModelFiles {
         Ok(value)
     }
 
+    pub fn publish_default(&self, set: &ModelObjectSet) -> Result<ModelObjectSet> {
+        let objects = self.installed_reference(set)?;
+        let key = objects.shared.as_ref().unwrap().set;
+        let path = self.root.join(format!("default-{key}.json"));
+        let bytes = objects.canonical_bytes()?;
+        if path.try_exists()? {
+            verify_bytes(&path, &bytes)?;
+            return Ok(objects);
+        }
+        let reservation = self.quota.reserve_root(bytes.len() as u64)?;
+        let partial = self.root.join(format!("default-{key}.part"));
+        if partial.try_exists()? {
+            verify_prefix(&partial, &bytes)?;
+        }
+        reservation.charge(bytes.len() as u64)?;
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&partial)?;
+        file.write_all(&bytes)?;
+        file.sync_all()?;
+        drop(file);
+        fs::rename(partial, path)?;
+        sync_directory(&self.root)?;
+        Ok(objects)
+    }
+    pub fn default_reference(
+        runtime: &Path,
+        plan: &ModelObjectSet,
+    ) -> Result<Option<ModelObjectSet>> {
+        ensure!(
+            plan.shared.is_none(),
+            "default asset plan must be local metadata"
+        );
+        let expected = plan.shared_with(model_scope(runtime)?)?;
+        let key = expected.shared.as_ref().unwrap().set;
+        let path = runtime
+            .canonicalize()?
+            .join("model-files-1.4")
+            .join(format!("default-{key}.json"));
+        if !path.try_exists()? {
+            return Ok(None);
+        }
+        let objects = ModelObjectSet::from_bytes(&read_receipt(&path)?)?;
+        ensure!(
+            objects == expected,
+            "default installed model reference changed"
+        );
+        InstalledModel::open(runtime, &objects)?;
+        Ok(Some(objects))
+    }
+
+    pub fn installed_reference(&self, set: &ModelObjectSet) -> Result<ModelObjectSet> {
+        let runtime = self.root.parent().context("model runtime parent missing")?;
+        let objects = set.shared_with(model_scope(runtime)?)?;
+        let installed = InstalledModel::open(runtime, &objects)?;
+        validate_set(installed.directory(), &objects.local_set(), false)?;
+        Ok(objects)
+    }
+    pub fn installed(&mut self, objects: &ModelObjectSet) -> Result<Arc<ModelFileLease>> {
+        let runtime = self.root.parent().context("model runtime parent missing")?;
+        let installed = InstalledModel::open(runtime, objects)?;
+        validate_set(installed.directory(), &objects.local_set(), false)?;
+        let digest = objects.shared.as_ref().unwrap().set;
+        Ok(self.pin(digest, installed.directory))
+    }
+
     /// The caller verifies project scope and holds any collection object pin
     /// through this copy. Only fixed asset names from the exact set are read.
     pub fn retain(
@@ -106,6 +266,60 @@ impl ServiceModelFiles {
         set: &ModelObjectSet,
         source: impl Fn(ModelAssetName) -> PathBuf,
     ) -> Result<Arc<ModelFileLease>> {
+        self.retain_readers(set, |name| {
+            let input_path = source(name);
+            directories(
+                input_path.parent().context("model source parent missing")?,
+                false,
+            )?;
+            verify_asset(&input_path, &set.assets[&name])?;
+            Ok(Box::new(File::open(input_path)?) as Box<dyn Read>)
+        })
+    }
+
+    /// Provision directly from verified byte streams (including embedded assets).
+    /// No temporary input directory or collection-local weight copy is required.
+    pub fn install_readers(
+        &mut self,
+        set: &ModelObjectSet,
+        source: impl Fn(ModelAssetName) -> Result<Box<dyn Read>>,
+    ) -> Result<Arc<ModelFileLease>> {
+        let lease = self.retain_readers(set, source)?;
+        let marker = installed_bytes(set)?;
+        let directory = lease.directory();
+        let installed = directory.join("installed.json");
+        if installed.try_exists()? {
+            verify_bytes(&installed, &marker)?;
+            return Ok(lease);
+        }
+        let reservation = self.quota.reserve_root(marker.len() as u64)?;
+        let partial = directory.join("installed.part");
+        if partial.try_exists()? {
+            verify_prefix(&partial, &marker)?;
+        }
+        reservation.charge(marker.len() as u64)?;
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&partial)?;
+        file.write_all(&marker)?;
+        file.sync_all()?;
+        drop(file);
+        fs::rename(&partial, installed)?;
+        sync_directory(directory)?;
+        Ok(lease)
+    }
+
+    fn retain_readers(
+        &mut self,
+        set: &ModelObjectSet,
+        source: impl Fn(ModelAssetName) -> Result<Box<dyn Read>>,
+    ) -> Result<Arc<ModelFileLease>> {
+        ensure!(
+            set.shared.is_none(),
+            "shared provisioning requires the local asset description"
+        );
         let receipt = set.canonical_bytes()?;
         let digest = Sha256Digest::from_bytes(Sha256::digest(&receipt).into());
         let destination = self.root.join("sets").join(digest.to_string());
@@ -154,14 +368,8 @@ impl ServiceModelFiles {
                 );
                 fs::remove_file(&partial)?;
             }
-            let input_path = source(*name);
-            directories(
-                input_path.parent().context("model source parent missing")?,
-                false,
-            )?;
-            verify_asset(&input_path, reference)?;
             reservation.charge(reference.bytes)?;
-            let mut input = File::open(&input_path)?.take(reference.bytes + 1);
+            let mut input = source(*name)?.take(reference.bytes + 1);
             let mut output = OpenOptions::new()
                 .write(true)
                 .create_new(true)
@@ -225,6 +433,13 @@ impl ServiceModelFiles {
             if self.pins.get(&digest).and_then(Weak::upgrade).is_some() {
                 continue;
             }
+            if directory.join("installed.json").try_exists()?
+                || directory.join("installed.part").try_exists()?
+            {
+                let set = ModelObjectSet::from_bytes(&read_receipt(&directory.join("set.json"))?)?;
+                validate_set(&directory, &set, false)?;
+                continue; // Installed assets are persistent, not an inference-session cache.
+            }
             let bytes = read_receipt(&directory.join("set.json"))?;
             ensure!(
                 Sha256Digest::from_bytes(Sha256::digest(&bytes).into()) == digest,
@@ -285,6 +500,11 @@ impl ServiceModelFiles {
 }
 
 fn finish_retirement(directory: &Path, digest: Sha256Digest) -> Result<()> {
+    ensure!(
+        !directory.join("installed.json").try_exists()?
+            && !directory.join("installed.part").try_exists()?,
+        "installed model cannot be retired as cache state"
+    );
     // The atomic rename records retirement intent before the first unlink.
     // Remove the receipt last, so every partially removed set remains provable.
     if fs::read_dir(directory)?.next().is_none() {
@@ -401,6 +621,29 @@ fn verify_asset(path: &Path, reference: &ModelObjectRef) -> Result<()> {
     );
     Ok(())
 }
+fn installed_bytes(set: &ModelObjectSet) -> Result<Vec<u8>> {
+    Ok(serde_json::to_vec(
+        &serde_json::json!({"format":1,"set":Sha256Digest::from_bytes(Sha256::digest(set.canonical_bytes()?).into())}),
+    )?)
+}
+fn verify_prefix(path: &Path, expected: &[u8]) -> Result<()> {
+    let metadata = fs::symlink_metadata(path)?;
+    reject_file_aliases(path, &metadata)?;
+    ensure!(
+        metadata.len() <= expected.len() as u64,
+        "oversized installed model intent"
+    );
+    let mut bytes = Vec::new();
+    File::open(path)?
+        .take(expected.len() as u64 + 1)
+        .read_to_end(&mut bytes)?;
+    ensure!(
+        expected.starts_with(&bytes),
+        "unknown installed model intent preserved"
+    );
+    Ok(())
+}
+
 fn validate_set(directory: &Path, set: &ModelObjectSet, partial: bool) -> Result<()> {
     directories(directory, false)?;
     verify_bytes(&directory.join("set.json"), &set.canonical_bytes()?)?;
@@ -412,6 +655,14 @@ fn validate_set(directory: &Path, set: &ModelObjectSet, partial: bool) -> Result
         let name = entry.file_name();
         let name = name.to_str().context("invalid shared model asset name")?;
         if name == "set.json" {
+            continue;
+        }
+        if name == "installed.json" {
+            verify_bytes(&entry.path(), &installed_bytes(set)?)?;
+            continue;
+        }
+        if name == "installed.part" {
+            verify_prefix(&entry.path(), &installed_bytes(set)?)?;
             continue;
         }
         let asset = set

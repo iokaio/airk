@@ -97,6 +97,7 @@ fn model_objects(store: &FileStore) -> Result<ModelObjectSet> {
     }
     Ok(ModelObjectSet {
         version: 1,
+        shared: None,
         pipeline_digest: descriptor().identity()?,
         legacy_identity: digest(b"original model").to_string(),
         assets,

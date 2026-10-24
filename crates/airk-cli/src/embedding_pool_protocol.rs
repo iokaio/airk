@@ -68,7 +68,7 @@ pub enum Observation {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Operation {
-    Call { request: Request },
+    Call { request: Box<Request> },
     Close,
 }
 

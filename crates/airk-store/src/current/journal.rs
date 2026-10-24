@@ -10,7 +10,6 @@ use super::{
 };
 use crate::{
     FileStore, WriterLock,
-    model_objects::ModelObjects,
     quota::{CurrentGrant, CurrentGrantScope, Quota},
 };
 use airk_core::{
@@ -612,7 +611,7 @@ fn verify_model(store: &FileStore, model: &Option<ModelObjectSet>) -> Result<()>
             sum.checked_add(item.bytes)
                 .context("model verification budget overflow")
         })?;
-        ModelObjects::new(store.directory()).verify(model, maximum)?;
+        store.validate_model_reference(model, maximum)?;
     }
     Ok(())
 }
@@ -1211,7 +1210,8 @@ impl CurrentWriter<'_> {
         );
         committed_lexical_manifest(self.connection()?, &base)?;
         if let Some(model) = &configuration.model {
-            ModelObjects::new(self.store.directory()).verify(model, MAX_CAPTURED_OBJECT_BYTES)?;
+            self.store
+                .validate_model_reference(model, MAX_CAPTURED_OBJECT_BYTES)?;
         }
         let mut plan = map::MapPlan::new(self.connection()?, &self.scope, base.artifact_root)?;
         let collection =

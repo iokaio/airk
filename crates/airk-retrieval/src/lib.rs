@@ -10,6 +10,7 @@ mod onnx;
 #[cfg(not(feature = "local-inference"))]
 #[path = "remote_onnx.rs"]
 mod onnx;
+pub mod remote_model;
 pub mod vector;
 pub mod vector_units;
 use airk_core::{Citation, Hit, SearchQuery, SearchResponse, Snapshot};

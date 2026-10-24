@@ -16,6 +16,9 @@ fn handle(
     tokenizer: &mut Option<airk_kernel::usage::OfflineTokenizer>,
 ) -> Result<Response> {
     Ok(match request {
+        Request::ProvisionModel { .. } | Request::ProvisionBundled => {
+            anyhow::bail!("model provisioning requires the shared service role")
+        }
         Request::TokenizerOpen {
             protocol,
             version,
@@ -64,6 +67,9 @@ fn handle(
                 "invalid embedding handshake"
             );
             let opened = match location {
+                ModelLocation::Shared { .. } => {
+                    anyhow::bail!("shared model location requires the service pool")
+                }
                 ModelLocation::Directory { path } => EmbeddingModel::open(&path)?,
                 ModelLocation::Retained {
                     collection,

@@ -39,6 +39,7 @@ pub mod service_projects;
 mod service_publication;
 pub mod service_resource_observations;
 pub mod service_resources;
+mod shared_models;
 pub mod source_watch;
 pub mod storage;
 #[cfg(feature = "local-inference")]
@@ -472,6 +473,11 @@ impl Kernel {
     }
 
     fn configured_model(&self) -> Result<Option<String>> {
+        if self.store.shared_model_runtime().is_some() {
+            return Ok(self
+                .configured_model_objects(false)?
+                .map(|set| set.legacy_identity));
+        }
         if !self.vectors_enabled()? {
             return Ok(None);
         }

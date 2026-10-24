@@ -32,7 +32,7 @@ use tokio::{
 #[derive(Clone)]
 enum Binding {
     Model {
-        location: ModelLocation,
+        location: Box<ModelLocation>,
         identity: String,
         key: Sha256Digest,
         files: Arc<airk_store::service::model_files::ModelFileLease>,
@@ -45,6 +45,7 @@ struct Session {
     binding: Binding,
 }
 struct Engine {
+    runtime: PathBuf,
     owners: BTreeMap<Incarnation, Weak<AtomicBool>>,
     sessions: BTreeMap<(Incarnation, Incarnation), Session>,
     model: Option<EmbeddingModel>,
@@ -63,9 +64,18 @@ fn location_key(
     project: &ProjectRegistration,
     location: &ModelLocation,
     identity: &str,
+    runtime: &Path,
 ) -> Result<Sha256Digest> {
     let data = Path::new(&project.data_root);
     match location {
+        ModelLocation::Shared { objects } => {
+            ensure!(
+                objects.legacy_identity == identity,
+                "shared model identity mismatch"
+            );
+            let source = airk_store::service::model_files::InstalledModel::open(runtime, objects)?;
+            model::descriptor_from_asset_metadata(&source, objects)?.identity()
+        }
         ModelLocation::Directory { path } => {
             ensure!(
                 path.canonicalize()? == data.join("models/local").canonicalize()?,
@@ -103,6 +113,7 @@ fn location_key(
 impl Engine {
     fn new(runtime: &Path) -> Result<Self> {
         Ok(Self {
+            runtime: runtime.canonicalize()?,
             owners: BTreeMap::new(),
             sessions: BTreeMap::new(),
             model: None,
@@ -156,7 +167,7 @@ impl Engine {
             Request::Open {
                 protocol: PROTOCOL,
                 version: env!("CARGO_PKG_VERSION").into(),
-                location: location.clone(),
+                location: *location.clone(),
                 identity: identity.clone(),
             },
             &mut self.model,
@@ -196,6 +207,46 @@ impl Engine {
         let key = (grant.worker, session);
         self.used = Instant::now();
         match request {
+            Request::ProvisionModel { directory } => {
+                ensure!(
+                    directory.is_absolute() && directory.to_str().is_some_and(|p| p.len() <= 4096),
+                    "model source must be a bounded absolute path"
+                );
+                let directory = directory.canonicalize()?;
+                self.model = None;
+                self.model_lease = None;
+                self.model_key = None;
+                let set = model::inspect_object_plan(&directory)?;
+                let _lease = self
+                    .model_files
+                    .retain(&set, |name| directory.join(name.filename()))?;
+                let _installed = self.model_files.install_readers(&set, |_| {
+                    anyhow::bail!("verified model unexpectedly requires another copy")
+                })?;
+                Ok(Response::Provisioned {
+                    objects: self.model_files.installed_reference(&set)?,
+                })
+            }
+            Request::ProvisionBundled => {
+                let set = airk_cli::bundled_assets::EmbeddedAssets::plan()?;
+                if self.model_files.installed_reference(&set).is_ok() {
+                    // Reusing installed files must not unload a compatible resident model.
+                    return Ok(Response::Provisioned {
+                        objects: self.model_files.publish_default(&set)?,
+                    });
+                }
+                self.model = None;
+                self.model_lease = None;
+                self.model_key = None;
+                let _lease = self.model_files.install_readers(&set, |name| {
+                    Ok(Box::new(std::io::Cursor::new(
+                        airk_cli::bundled_assets::EmbeddedAssets::bytes(name)?,
+                    )))
+                })?;
+                Ok(Response::Provisioned {
+                    objects: self.model_files.publish_default(&set)?,
+                })
+            }
             Request::Open {
                 protocol,
                 version,
@@ -210,32 +261,39 @@ impl Engine {
                     !self.sessions.contains_key(&key) && self.sessions.len() < 64,
                     "pool session capacity or duplicate open"
                 );
-                let pipeline = location_key(&grant.project, &location, &identity)?;
+                let pipeline = location_key(&grant.project, &location, &identity, &self.runtime)?;
                 let _source_pin = match &location {
                     ModelLocation::Retained { collection, .. } => {
                         Some(airk_store::FileStore::new(collection).pin_service_objects()?)
                     }
-                    ModelLocation::Directory { .. } => None,
+                    ModelLocation::Directory { .. } | ModelLocation::Shared { .. } => None,
                 };
                 let set = match &location {
-                    ModelLocation::Retained { objects, .. } => objects.clone(),
+                    ModelLocation::Retained { objects, .. } | ModelLocation::Shared { objects } => {
+                        objects.clone()
+                    }
                     ModelLocation::Directory { path } => model::inspect_object_plan(path)?,
                 };
                 ensure!(
                     set.pipeline_digest == pipeline,
                     "model changed during shared-file planning"
                 );
-                let files = self.model_files.retain(&set, |name| match &location {
-                    ModelLocation::Directory { path } => path.join(name.filename()),
-                    ModelLocation::Retained { collection, .. } => collection
-                        .join("objects/models")
-                        .join(set.assets[&name].sha256.to_string()),
-                })?;
+                let files = if matches!(&location, ModelLocation::Shared { .. }) {
+                    self.model_files.installed(&set)?
+                } else {
+                    self.model_files.retain(&set, |name| match &location {
+                        ModelLocation::Directory { path } => path.join(name.filename()),
+                        ModelLocation::Retained { collection, .. } => collection
+                            .join("objects/models")
+                            .join(set.assets[&name].sha256.to_string()),
+                        ModelLocation::Shared { .. } => unreachable!("handled by installed store"),
+                    })?
+                };
                 drop(_source_pin);
                 let binding = Binding::Model {
-                    location: ModelLocation::Directory {
+                    location: Box::new(ModelLocation::Directory {
                         path: files.directory().into(),
-                    },
+                    }),
                     identity: identity.clone(),
                     key: pipeline,
                     files,
@@ -513,7 +571,7 @@ pub async fn run() -> Result<()> {
                             );
                             match envelope.operation {
                                 protocol::Operation::Call { request } => {
-                                    engine.request(&grant, envelope.session, request)
+                                    engine.request(&grant, envelope.session, *request)
                                 }
                                 protocol::Operation::Close => {
                                     engine.sessions.remove(&(grant.worker, envelope.session));
@@ -792,6 +850,160 @@ mod tests {
             anyhow::bail!("missing repeated vector")
         };
         assert_eq!(a, again);
+        Ok(())
+    }
+    #[test]
+    fn bundled_provision_is_global_persistent_and_does_not_unload_compatible_inference()
+    -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let (first, _, _) = fixture(root.path(), "bundled-first", "unused fixture")?;
+        let (second, _, _) = fixture(root.path(), "bundled-second", "unused fixture")?;
+        // Test projects have no per-project model input directories.
+        for grant in [&first, &second] {
+            std::fs::remove_dir_all(Path::new(&grant.project.data_root).join("models"))?;
+        }
+        let mut engine = Engine::new(root.path())?;
+        let session = Incarnation::from_bytes([9; 16]);
+        let Response::Provisioned { objects } =
+            engine.request(&first, session, Request::ProvisionBundled)?
+        else {
+            anyhow::bail!("default model provisioning failed")
+        };
+        assert_eq!(
+            objects.local_set(),
+            airk_cli::bundled_assets::default_plan()?
+        );
+        let Response::Provisioned { objects: other } =
+            engine.request(&second, session, Request::ProvisionBundled)?
+        else {
+            anyhow::bail!("second default model provisioning failed")
+        };
+        assert_eq!(objects, other);
+        engine.request(
+            &first,
+            session,
+            open(
+                ModelLocation::Shared {
+                    objects: objects.clone(),
+                },
+                objects.legacy_identity.clone(),
+            ),
+        )?;
+        engine.request(
+            &second,
+            session,
+            open(
+                ModelLocation::Shared { objects: other },
+                objects.legacy_identity.clone(),
+            ),
+        )?;
+        assert_eq!((engine.loads, engine.reuses), (1, 1));
+        engine.request(
+            &second,
+            Incarnation::from_bytes([10; 16]),
+            Request::ProvisionBundled,
+        )?;
+        assert!(engine.model.is_some());
+        assert_eq!(engine.loads, 1);
+        assert_eq!(
+            std::fs::read_dir(root.path().join("model-files-1.4/sets"))?.count(),
+            1
+        );
+        for grant in [&first, &second] {
+            assert!(!Path::new(&grant.project.data_root).join("models").exists());
+        }
+        drop(engine);
+        let mut engine = Engine::new(root.path())?;
+        assert_eq!(
+            airk_store::service::model_files::ServiceModelFiles::default_reference(
+                root.path(),
+                &objects.local_set()
+            )?,
+            Some(objects.clone())
+        );
+        engine.request(
+            &first,
+            session,
+            open(
+                ModelLocation::Shared {
+                    objects: objects.clone(),
+                },
+                objects.legacy_identity.clone(),
+            ),
+        )?;
+        assert_eq!(engine.loads, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn custom_provision_captures_once_and_shared_sessions_reject_other_runtime() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let (first, location, identity) = fixture(root.path(), "custom-first", "custom fixture")?;
+        let (second, _, _) = fixture(root.path(), "custom-second", "unused fixture")?;
+        let ModelLocation::Directory { path } = location else {
+            unreachable!()
+        };
+        let before = std::fs::read(path.join("vocabulary.json"))?;
+        let mut engine = Engine::new(root.path())?;
+        let session = Incarnation::from_bytes([9; 16]);
+        let Response::Provisioned { objects } = engine.request(
+            &first,
+            session,
+            Request::ProvisionModel {
+                directory: path.clone(),
+            },
+        )?
+        else {
+            anyhow::bail!("custom model provisioning failed")
+        };
+        assert!(
+            airk_store::service::model_files::ServiceModelFiles::default_reference(
+                root.path(),
+                &objects.local_set()
+            )?
+            .is_none()
+        );
+        // Captured installed assets no longer depend on the original selected directory.
+        std::fs::rename(&path, path.with_file_name("selected-original"))?;
+        engine.request(
+            &first,
+            session,
+            open(
+                ModelLocation::Shared {
+                    objects: objects.clone(),
+                },
+                identity.clone(),
+            ),
+        )?;
+        engine.request(
+            &second,
+            session,
+            open(
+                ModelLocation::Shared {
+                    objects: objects.clone(),
+                },
+                identity.clone(),
+            ),
+        )?;
+        assert_eq!((engine.loads, engine.reuses), (1, 1));
+        let foreign = tempfile::tempdir()?;
+        let mut other = Engine::new(foreign.path())?;
+        assert!(
+            other
+                .request(
+                    &first,
+                    session,
+                    open(ModelLocation::Shared { objects }, identity)
+                )
+                .is_err()
+        );
+        assert_eq!(
+            std::fs::read(
+                path.with_file_name("selected-original")
+                    .join("vocabulary.json")
+            )?,
+            before
+        );
         Ok(())
     }
 }
