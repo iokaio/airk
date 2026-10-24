@@ -337,6 +337,44 @@ pub(super) async fn resume(root: &Path) -> Result<()> {
     }
 }
 
+/// Called under the installer lock, before any drain, launcher repair or start.
+/// A completed exact replay only acknowledges its receipt, including after Stop.
+pub(super) fn reviewed_request(root: &Path, candidate: &str, expected: &str) -> Result<bool> {
+    digest(candidate)?;
+    digest(expected)?;
+    managed::require_unmanaged(root)?;
+    if let Some(intent) = pending(root)? {
+        ensure!(
+            intent.candidate == candidate
+                && intent
+                    .prior
+                    .as_ref()
+                    .is_some_and(|prior| prior.active == expected),
+            "pending activation differs from the reviewed request"
+        );
+        intent.validate(root)?;
+        return Ok(false);
+    }
+    let active = selection(root)?.context("reviewed activation requires an existing selection")?;
+    if active.active == expected {
+        ensure!(
+            candidate != expected,
+            "reviewed runtime is already selected"
+        );
+        return Ok(false);
+    }
+    if active.active == candidate
+        && let Some(receipt) = result(root)?
+        && receipt.candidate == candidate
+        && receipt.preceding.as_deref() == Some(expected)
+        && matches!(receipt.outcome, Outcome::Selected)
+    {
+        verify_runtime(root, candidate)?;
+        return Ok(true);
+    }
+    bail!("runtime selection changed since review")
+}
+
 pub(super) async fn begin(root: &Path, candidate: &str) -> Result<Selection> {
     managed::require_unmanaged(root)?;
     ensure!(

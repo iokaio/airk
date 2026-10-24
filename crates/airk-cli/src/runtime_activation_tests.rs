@@ -62,6 +62,41 @@ fn fixture() -> Result<(tempfile::TempDir, PathBuf, Intent)> {
 }
 
 #[test]
+fn reviewed_activation_refuses_a_changed_selection_and_crossed_pending_intent() -> Result<()> {
+    let (_owner, root, intent) = fixture()?;
+    let expected = &intent.prior.as_ref().unwrap().active;
+    assert!(!reviewed_request(&root, &intent.candidate, expected)?);
+    assert!(reviewed_request(&root, &intent.candidate, &"f".repeat(64)).is_err());
+    assert!(!root.join(INTENT).exists());
+    assert!(selection(&root)? == intent.prior);
+    intent.save(&root)?;
+    assert!(!reviewed_request(&root, &intent.candidate, expected)?);
+    assert!(reviewed_request(&root, &intent.candidate, &"f".repeat(64)).is_err());
+    assert!(selection(&root)? == intent.prior);
+    Ok(())
+}
+
+#[tokio::test]
+async fn completed_reviewed_activation_acknowledges_without_starting_or_reinitializing_state()
+-> Result<()> {
+    let (_owner, root, intent) = fixture()?;
+    let expected = &intent.prior.as_ref().unwrap().active;
+    replace_json(&root, "selected.json", &intent.selected())?;
+    record(&root, &intent, Outcome::Selected)?;
+    let sentinel = b"Original invalid startup marker must not be interpreted by a completed replay";
+    fs::write(root.join("bootstrap.json"), sentinel)?;
+    assert!(reviewed_request(&root, &intent.candidate, expected)?);
+    assert!(
+        super::super::activate_reviewed(&root, &intent.candidate, expected).await?
+            == intent.selected()
+    );
+    assert_eq!(fs::read(root.join("bootstrap.json"))?, sentinel);
+    assert!(!layout::control(&root)?.join("service-1.4.sqlite3").exists());
+    assert!(reviewed_request(&root, &intent.candidate, &"f".repeat(64)).is_err());
+    Ok(())
+}
+
+#[test]
 fn foreground_follows_only_probing_or_restoring_intents_without_advancing_public_selection()
 -> Result<()> {
     let (_owner, root, mut intent) = fixture()?;

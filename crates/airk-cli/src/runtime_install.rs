@@ -118,6 +118,16 @@ pub enum RuntimeCommand {
         install_dir: PathBuf,
         #[arg(long)]
         runtime_sha256: String,
+        /// Refuse if the reviewed preceding selection changed; exact completed replay does not start a service.
+        #[arg(long)]
+        expected_active: Option<String>,
+    },
+    /// Verify one immutable approved candidate without selecting or executing it.
+    InspectCandidate {
+        #[arg(long)]
+        install_dir: PathBuf,
+        #[arg(long)]
+        runtime_sha256: String,
     },
     /// Launch the selected service on demand, without registering login startup.
     Ensure {
@@ -1225,7 +1235,24 @@ fn quiescent(root: &Path) -> Result<Quiescence> {
 }
 
 pub async fn activate(root: &Path, identity: &str) -> Result<Selection> {
+    activate_with_expected(root, identity, None).await
+}
+
+pub async fn activate_reviewed(root: &Path, identity: &str, expected: &str) -> Result<Selection> {
+    activate_with_expected(root, identity, Some(expected)).await
+}
+
+async fn activate_with_expected(
+    root: &Path,
+    identity: &str,
+    expected: Option<&str>,
+) -> Result<Selection> {
     let _lock = install_lock(root)?;
+    if let Some(expected) = expected
+        && activation::reviewed_request(root, identity, expected)?
+    {
+        return selection_record(root);
+    }
     payload_repair::require_settled(root)?;
     lifecycle::require_settled(root)?;
     lifecycle::require_start_allowed(root)?;

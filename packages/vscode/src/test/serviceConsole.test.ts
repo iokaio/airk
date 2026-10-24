@@ -29,7 +29,8 @@ function fixture(){
         }
     }});
     const host:ConsoleHost={version:'1.4.0',authority:'local-test',storage:{keys:()=>[...values.keys()],get:<T>(key:string)=>values.get(key) as T|undefined,update:async(key,value)=>{if(value===undefined)values.delete(key);else values.set(key,structuredClone(value));}},
-        runtime:{discover:async()=>({bundle:{main:'/main',helper:'/helper',source:'/bundle',digest:binding.runtimeSha256,version:'1.4.0',platform:'test'},installDir:'/install',installed:true,inspection:{control_dir:'/control'},location:{}}),binding:()=>binding,ensure:async()=>binding,client:()=>client,snapshot:async()=>({}),repair:async()=>({}),prepareConfiguration:async()=>({incarnation:namespace,settings:'ab'.repeat(32),configuration:{operation:'vectors',enabled:false}})},
+        runtime:{discover:async()=>({bundle:{main:'/main',helper:'/helper',source:'/bundle',digest:binding.runtimeSha256,version:'1.4.0',platform:'test'},installDir:'/install',installed:true,inspection:{control_dir:'/control'},location:{}}),binding:()=>binding,ensure:async()=>binding,client:()=>client,snapshot:async()=>({}),repair:async()=>({}),prepareConfiguration:async()=>({incarnation:namespace,settings:'ab'.repeat(32),configuration:{operation:'vectors',enabled:false}}),
+            reviewTransition:async(_binding,action)=>({action,installDir:binding.installDir,controlDir:binding.controlDir,observedActive:binding.runtimeSha256,expectedActive:binding.runtimeSha256,target:'cd'.repeat(32),version:'1.4.0'}),transition:async()=>({})},
         trusted:()=>trusted,changed(){},confirm:async()=>true,copy:async text=>{copied.push(text);},logs:async()=>{},resources:async()=>undefined,lifecycle:async()=>({status:'lifecycle'})};
     const controller=new ServiceConsoleController(host);
     const action=async(name:string,extra:RecordValue={})=>controller.action({type:'service',revision:controller.state.revision,action:name,...extra});
@@ -187,6 +188,44 @@ test('runtime repair requires Stop and approves only the native reviewed preview
     await f.action('repairRuntime');assert.deepEqual(calls,[undefined,undefined,preview]);
     assert.match(f.controller.state.message!,/Runtime payload repaired/);
     assert.equal(consoleAction({type:'service',revision:f.controller.state.revision,action:'repairRuntime',preview},f.controller.state),undefined);
+    f.controller.dispose();
+});
+
+test('runtime activation reviews the exact target and requires host confirmation before applying it',async()=>{
+    const f=fixture();let applied=0;
+    const review=await f.host.runtime.reviewTransition(await f.host.runtime.ensure(),'upgrade');
+    f.host.runtime.reviewTransition=async()=>review;
+    f.host.runtime.transition=async(_binding,actual)=>{assert.equal(actual,review);applied++;return {schema:1,active:review.target};};
+    await f.controller.refresh();f.host.confirm=async message=>{assert.match(message,new RegExp(review.target));assert.match(message,/changed selection invalidates/);return false;};
+    await f.action('upgradeRuntime');assert.equal(applied,0);
+    f.host.confirm=async()=>true;await f.action('upgradeRuntime');assert.equal(applied,1);
+    assert.equal(consoleAction({type:'service',revision:f.controller.state.revision,action:'upgradeRuntime',target:review.target},f.controller.state),undefined);
+    f.controller.dispose();
+});
+
+test('a different native version keeps installer observations without executing its console',async()=>{
+    const f=fixture(),binding=await f.host.runtime.ensure();binding.version='1.4.1';
+    f.host.runtime.client=()=>{throw new Error('Mismatched console must not execute');};
+    f.host.runtime.snapshot=async()=>({selection:{active:binding.runtimeSha256},approval:{version:'1.4.1',verification_basis:'trusted_distribution'},payload_verified:false});
+    await f.controller.refresh();assert.equal(f.controller.state.connected,false);
+    assert.match(f.controller.state.message!,/pin is preserved/);
+    assert.equal(f.controller.state.bootstrap.value?.selectedVersion,'1.4.1');
+    assert.match(renderConsole(f.controller.state),/Review bundled runtime upgrade/);
+    assert.equal(f.sent.length,0);f.controller.dispose();
+});
+
+test('trust loss during activation confirmation prevents mutation and unknown activation exposes its saved native phase',async()=>{
+    const f=fixture();let applied=0;
+    f.host.runtime.transition=async()=>{applied++;throw new ServiceError('native_activation_unknown',true);};
+    await f.controller.refresh();f.host.confirm=async()=>{f.setTrusted(false);return true;};
+    await f.action('rollbackRuntime');assert.equal(applied,0);
+    f.setTrusted(true);f.host.confirm=async()=>true;
+    const observation=await f.host.runtime.discover();observation.diagnosis={pending_activation:{candidate:'cd'.repeat(32),phase:'probe'}};
+    f.host.runtime.discover=async()=>observation;
+    await f.action('rollbackRuntime');assert.equal(applied,1);
+    assert.equal(f.controller.state.message,'native_activation_unknown');
+    assert.match(renderConsole(f.controller.state),/Review saved runtime activation/);
+    assert.equal(JSON.parse(diagnosticPreview(f.controller.state,false)).runtimeActivation.phase,'probe');
     f.controller.dispose();
 });
 

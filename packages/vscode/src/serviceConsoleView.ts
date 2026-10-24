@@ -15,7 +15,7 @@ export interface ServiceConsoleState {
     pending:{id:string;title:string;unknown:boolean;lifecycle?:boolean;forceAvailable?:boolean}[]; preview?:string; includePaths:boolean; message?:string;
 }
 export type ConsoleAction = {type:'service';revision:string;action:string;project?:string;id?:string;selected?:boolean;scope?:'one'|'selected'|'all';operation?:RepairOperation;includePaths?:boolean;allowFallback?:boolean};
-const simple=['refresh','connect','start','stop','restart','repairRuntime','logs','resources','responseMode','recoverLifecycle','abandonLifecycle','startEmbedding','stopEmbedding','forceEmbedding','firstPage','nextPage','morePlan','refreshPlan','pausePlan','resumePlan','cancelPlan','approvePlan','previewReport','copyReport'];
+const simple=['refresh','connect','start','stop','restart','repairRuntime','upgradeRuntime','rollbackRuntime','resumeActivation','logs','resources','responseMode','recoverLifecycle','abandonLifecycle','startEmbedding','stopEmbedding','forceEmbedding','firstPage','nextPage','morePlan','refreshPlan','pausePlan','resumePlan','cancelPlan','approvePlan','previewReport','copyReport'];
 const projects=['inspect','index','pause','resume','restartProject','watch','modelSetup','configureProject','copyConfiguration'];
 const operations=['auto','verify','recover','reconcile','vectors','rebuild'];
 /** Messages select fixed host-owned operations; no paths, commands, tokens or RPC bodies are accepted. */
@@ -127,6 +127,9 @@ export function consoleContent(state:ServiceConsoleState):string {
     const lifecycle=obj(state.bootstrap.value?.lifecycle),pending=obj(lifecycle.pending);
     const manager=obj(state.bootstrap.value?.startupManager);
     const repair=obj(state.bootstrap.value?.payloadRepair);
+    const activation=obj(obj(state.bootstrap.value?.diagnosis).pending_activation);
+    const installer=obj(state.bootstrap.value?.diagnosis);
+    const activationResult=obj(installer.activation_result);
     return `<h1>AIRK Service Console</h1><p>${e(state.authority)} · extension ${e(state.version)} · ${state.connected?'Connected':'Disconnected'}${state.busy?' · Working':''}</p>
         ${!state.trusted?'<p role="alert">Trust the workspace before connecting AIRK or requesting work.</p>':''}
         ${state.message?`<p role="status">${e(state.message)}</p>`:''}
@@ -136,10 +139,19 @@ export function consoleContent(state:ServiceConsoleState):string {
         ${button('stop','Stop service','',unavailable||(!state.connected||state.health.state!=='live')&&typeof lifecycle.recorded_instance!=='string'||state.lifecycle==='external')}${button('logs','Open service logs','',state.busy)}${button('resources','Resource settings','',unavailable||!state.connected)}</div>
         ${state.lifecycle==='external'?'<p>Startup, stop and restart are controlled by the external service manager.</p>':''}
         ${button('repairRuntime','Review runtime payload repair','',unavailable||state.lifecycle!=='on-demand'||lifecycle.explicitly_stopped!==true)}
+        <div class="controls">${button('upgradeRuntime','Review bundled runtime upgrade','',unavailable||state.lifecycle!=='on-demand'||lifecycle.explicitly_stopped===true)}
+        ${button('rollbackRuntime','Review previous runtime','',unavailable||state.lifecycle!=='on-demand'||lifecycle.explicitly_stopped===true)}
+        ${activation.candidate?button('resumeActivation','Review saved runtime activation','',unavailable||state.lifecycle!=='on-demand'):''}</div>
+        ${state.lifecycle&&state.lifecycle!=='on-demand'?'<p>The organization controls runtime upgrades and rollback.</p>':lifecycle.explicitly_stopped===true?'<p>Start the service before upgrading or rolling back; activation verifies startup of the selected runtime.</p>':''}
+        ${facts([['Pending runtime activation',activation.candidate],['Activation phase',activation.phase],
+            ['Pending runtime copies',Array.isArray(installer.pending_stages)?installer.pending_stages.length:undefined],
+            ['Runtime staging error',installer.staging_error],['Runtime activation error',installer.activation_error],
+            ['Last activation target',activationResult.candidate],['Last activation outcome',activationResult.outcome],['Last activation observed',activationResult.observed_unix_ms]])}
         <p>MCP response mode: <strong>${e(state.responseMode??'terse')}</strong>. Full adds diagnostic provenance, readiness and coverage details. Agents can request Full for one call when those details are needed.</p>
         ${button('responseMode','Choose terse / full responses','',unavailable)}
         <h2>Runtime and observations</h2>${observation('Service',state.health)}${observation('Bootstrap',state.bootstrap)}
         ${facts([['Lifecycle',state.lifecycle],['Installation',state.bootstrap.value?.installDir],['Bundled runtime',state.bootstrap.value?.bundleDigest],['Execution platform',state.bootstrap.value?.platform],['Bootstrap failure',state.bootstrap.value?.error]])}
+        ${facts([['Selected runtime',state.bootstrap.value?.selectedRuntime],['Selected runtime version',state.bootstrap.value?.selectedVersion],['Payload approval basis',state.bootstrap.value?.verificationBasis]])}
         ${facts([['Selected payload verified',state.bootstrap.value?.payloadVerified],['Cached registry failure',state.bootstrap.value?.registryError],
             ['Startup manager observation',manager.mode],['Login registration installed',manager.installed],['Manager reports running',manager.running],
             ['Registration definition matches',manager.registered_definition_matches],['Registration verification failed',manager.verification_failed]])}
@@ -192,9 +204,13 @@ export function diagnosticPreview(state:ServiceConsoleState,includePaths:boolean
     const report:RecordValue={schemaVersion:1,capturedAt:new Date().toISOString(),authority:includePaths?state.authority:'selected execution host',extensionVersion:state.version,
         observations:Object.fromEntries(['health','resources','model','sources','bootstrap'].map(name=>{const observation=state[name as 'health'];return [name,{state:observation.state,checkedAt:observation.checkedAt,code:observation.code}];})),
         service:fields(health,['instance','version','protocol','process_id','executable_sha256','runtime_sha256','uptime_ms',...(includePaths?['user']:[])]),
-        bootstrap:fields(obj(state.bootstrap.value),['installed','payloadVerified','registryError','error','platform','bundleDigest',...(includePaths?['installDir']:[])]),
+        bootstrap:fields(obj(state.bootstrap.value),['installed','payloadVerified','registryError','error','platform','bundleDigest','selectedRuntime','selectedVersion','verificationBasis',...(includePaths?['installDir']:[])]),
         startupManager:fields(obj(state.bootstrap.value?.startupManager),['mode','id','platform','installed','loaded','running','registered_definition_matches','verification_failed']),
         runtimeRepair:fields(obj(state.bootstrap.value?.payloadRepair),['phase','runtime','preview',...(includePaths?['preserved_directory']:[])]),
+        runtimeActivation:fields(obj(obj(state.bootstrap.value?.diagnosis).pending_activation),['candidate','phase']),
+        runtimeActivationResult:fields(obj(obj(state.bootstrap.value?.diagnosis).activation_result),['candidate','preceding','outcome','observed_unix_ms']),
+        runtimeInstaller:{pendingCopies:Array.isArray(obj(state.bootstrap.value?.diagnosis).pending_stages)?(obj(state.bootstrap.value?.diagnosis).pending_stages as unknown[]).length:null,
+            stagingFailed:typeof obj(state.bootstrap.value?.diagnosis).staging_error==='string',activationFailed:typeof obj(state.bootstrap.value?.diagnosis).activation_error==='string'},
         lifecycle:fields(obj(state.bootstrap.value?.lifecycle),['explicitly_stopped','recorded_instance']),
         resources:fields(resources,['resident_workers','resident_limit','running_jobs','waiting_projects','logical_cpus','extraction_threads_limit','extraction_threads_reserved','inference_threads_limit','memory_limit_bytes','memory_reserved_bytes','observed_rss_bytes','available_memory_bytes','telemetry_complete','pressure','pending_provider_drains','provider_drain_error']),
         resourceConfiguration:fields(obj(resources.configuration),['preset','extraction_threads','inference_threads','memory_bytes','background_io_bytes_per_second']),

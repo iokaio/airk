@@ -27,8 +27,16 @@ export interface BootstrapObservation {
     bundle: VerifiedBundle; installDir: string; location: RecordValue;
     installed: boolean; inspection?: RecordValue; diagnosis?: RecordValue; error?: string;
 }
+export interface RuntimeTransitionReview {
+    readonly action:'upgrade'|'rollback'|'resume'; readonly installDir:string; readonly controlDir:string;
+    readonly observedActive:string; readonly expectedActive:string; readonly target:string; readonly version:string;
+}
 function safePath(value: unknown): string {
     if(typeof value!=='string'||value.length>4096||!path.isAbsolute(value)||/[\u0000-\u001f\u007f]/.test(value)){throw new ServiceError('invalid_runtime_path');}
+    return value;
+}
+function runtimeVersion(value:unknown):string {
+    if(typeof value!=='string'||value.length>64||!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(value))throw new ServiceError('invalid_runtime_version');
     return value;
 }
 function relativeFile(value: string): string[] {
@@ -118,6 +126,7 @@ export async function verifyBundledRuntime(extensionPath:string,version:string,
 export class RuntimeHost {
     private bundle?:Promise<VerifiedBundle>;
     private preparing?:Promise<RuntimeBinding>;
+    private readonly transitionReviews=new WeakSet<RuntimeTransitionReview>();
     constructor(private readonly extensionPath:string,private readonly version:string,readonly options:RuntimeOptions,
         private readonly run:NativeRunner=nativeRunner, private readonly canContinue:()=>boolean=()=>true) {
         this.options=structuredClone(options);
@@ -184,16 +193,17 @@ export class RuntimeHost {
                     }else {const args=['runtime','managed','--source',managed.source,'--install-dir',installDir,
                         '--approved-sha256',managed.approvedSha256,'--verification-basis','organization-digest','--lifecycle',managed.lifecycle,'--channel',this.options.channel];
                         if(managed.stateDir)args.push('--state-dir',managed.stateDir);await this.invoke(bundle.main,args,180000);}
-                }else if(!selection?.active||record(inspected?.approval).version!==this.version){
+                }else if(!selection?.active){
                     await this.invoke(bundle.main,['runtime','stage','--source',bundle.source,'--install-dir',installDir,
                         '--approved-sha256',bundle.digest,'--verification-basis','trusted-distribution','--channel',this.options.channel],180000);
                     await this.invoke(bundle.main,['runtime','activate','--install-dir',installDir,'--runtime-sha256',bundle.digest],180000);
                 }
+                if(selection?.active&&runtimeVersion(record(inspected?.approval).version)!==this.version)throw new ServiceError('explicit_runtime_upgrade_or_matching_extension_required');
                 await this.invoke(bundle.main,['runtime',explicitStart?'start':'ensure','--install-dir',installDir],180000);
                 const inspection=await this.invoke(bundle.main,['runtime','inspect','--install-dir',installDir]);
                 return this.binding(inspection,installDir);
             }catch(error){
-                if(error instanceof ServiceError&&['runtime_client_no_longer_authorized','managed_runtime_policy_mismatch','managed_runtime_state_mismatch','service_explicitly_stopped','selected_runtime_payload_unverified'].includes(error.code))throw error;
+                if(error instanceof ServiceError&&['runtime_client_no_longer_authorized','managed_runtime_policy_mismatch','managed_runtime_state_mismatch','service_explicitly_stopped','selected_runtime_payload_unverified','explicit_runtime_upgrade_or_matching_extension_required'].includes(error.code))throw error;
                 lastError=error;if(attempt<2)await new Promise(resolve=>setTimeout(resolve,1000*(attempt+1)));
             }
         }
@@ -201,18 +211,19 @@ export class RuntimeHost {
     }
     binding(inspection:RecordValue,installDir:string):RuntimeBinding {
         const selection=record(inspection.selection),approval=record(inspection.approval),managed=inspection.managed_policy?record(inspection.managed_policy):undefined;
-        if(approval.version!==this.version){throw new ServiceError('service_runtime_version_mismatch');}
+        const version=runtimeVersion(approval.version);
         const runtimeSha256=identifier(selection.active,32);
         if(approval.manifest_sha256!==runtimeSha256){throw new ServiceError('runtime_selection_approval_mismatch');}
         if(!['trusted_distribution','organization_digest'].includes(String(approval.verification_basis))){throw new ServiceError('runtime_verification_policy_unavailable');}
         return {installDir:safePath(installDir),controlDir:safePath(inspection.control_dir),executable:safePath(inspection.executable),
-            launcher:inspection.launcher===null?null:safePath(inspection.launcher),runtimeSha256,version:this.version,
+            launcher:inspection.launcher===null?null:safePath(inspection.launcher),runtimeSha256,version,
             lifecycle:managed?.lifecycle==='external'?'external':managed?'user-on-demand':'on-demand',
             verificationBasis:typeof approval.verification_basis==='string'?approval.verification_basis:'unknown',
             payloadVerified:inspection.payload_verified!==false&&inspection.metadata_only!==true};
     }
     client(binding:RuntimeBinding):ServiceClient {
         this.active();
+        if(binding.version!==this.version)throw new ServiceError('service_runtime_version_mismatch');
         if(binding.payloadVerified===false)throw new ServiceError('selected_runtime_payload_unverified');
         return new ServiceClient(new NativeControlTransport(binding.executable,['service','console','--runtime-dir',binding.controlDir,
             '--runtime-sha256',binding.runtimeSha256]));
@@ -244,10 +255,63 @@ export class RuntimeHost {
     }
     async prepareConfiguration(binding:RuntimeBinding,project:string,draft:RecordValue):Promise<ProjectConfigurationRequest>{
         this.active();identifier(project,32);
+        if(binding.version!==this.version)throw new ServiceError('service_runtime_version_mismatch');
         const input=JSON.stringify(draft);
         if(Buffer.byteLength(input)>16384)throw new ServiceError('configuration_draft_exceeds_budget');
         const bundle=await this.verified();
         return validateConfigurationRequest(await this.invoke(bundle.main,['service','prepare-configuration','--runtime-dir',binding.controlDir,'--project',project],60000,input));
+    }
+    async reviewTransition(binding:RuntimeBinding,action:RuntimeTransitionReview['action']):Promise<RuntimeTransitionReview>{
+        this.active();
+        if(binding.lifecycle!=='on-demand'||this.options.managed)throw new ServiceError('runtime_payload_managed_externally');
+        if(!['upgrade','rollback','resume'].includes(action))throw new ServiceError('invalid_runtime_transition');
+        const observed=await this.discover();
+        if(path.relative(binding.installDir,observed.installDir)!==''||!observed.inspection)throw new ServiceError('runtime_installation_changed');
+        const current=this.binding(observed.inspection,observed.installDir);
+        if(current.payloadVerified===false)throw new ServiceError('repair_selected_payload_before_activation');
+        if(current.runtimeSha256!==binding.runtimeSha256||path.relative(current.controlDir,binding.controlDir)!=='')throw new ServiceError('runtime_selection_changed_review_again');
+        const selection=record(observed.inspection.selection),pending=observed.diagnosis?.pending_activation;
+        let expectedActive=current.runtimeSha256,target:string,version=this.version;
+        if(action==='resume'){
+            const saved=record(pending);expectedActive=identifier(record(saved.prior).active,32);target=identifier(saved.candidate,32);
+            const [savedInstall,installed,savedControl,control]=await Promise.all([
+                fs.realpath(safePath(saved.install)),fs.realpath(binding.installDir),fs.realpath(safePath(saved.control)),fs.realpath(binding.controlDir),
+            ]);
+            this.active();
+            if(path.relative(savedInstall,installed)!==''||path.relative(savedControl,control)!=='')throw new ServiceError('crossed_runtime_activation');
+        }else{
+            if(pending)throw new ServiceError('resume_pending_runtime_activation');
+            if(action==='rollback'&&!selection.previous)throw new ServiceError('runtime_previous_selection_unavailable');
+            target=action==='upgrade'?observed.bundle.digest:identifier(selection.previous,32);
+            if(target===current.runtimeSha256)throw new ServiceError('runtime_already_selected');
+        }
+        if(action!=='upgrade'){
+            const candidate=await this.invoke(observed.bundle.main,['runtime','inspect-candidate','--install-dir',binding.installDir,'--runtime-sha256',target]);
+            const approval=record(candidate.approval);
+            version=runtimeVersion(approval.version);
+            if(candidate.metadata_only!==true||candidate.selection_changed!==false||candidate.executed!==false||candidate.runtime_sha256!==target||approval.manifest_sha256!==target
+                ||version.split('.').slice(0,2).join('.')!==this.version.split('.').slice(0,2).join('.')
+                ||!['trusted_distribution','organization_digest'].includes(String(approval.verification_basis)))throw new ServiceError('candidate_not_compatible_with_this_extension');
+        }
+        const review:RuntimeTransitionReview=Object.freeze({action,installDir:binding.installDir,controlDir:binding.controlDir,
+            observedActive:current.runtimeSha256,expectedActive,target,version});
+        this.transitionReviews.add(review);return review;
+    }
+    async transition(binding:RuntimeBinding,review:RuntimeTransitionReview):Promise<RecordValue>{
+        this.active();
+        if(!this.transitionReviews.has(review)||review.installDir!==binding.installDir||review.controlDir!==binding.controlDir
+            ||review.observedActive!==binding.runtimeSha256)throw new ServiceError('runtime_transition_not_reviewed');
+        if(binding.lifecycle!=='on-demand'||this.options.managed)throw new ServiceError('runtime_payload_managed_externally');
+        const bundle=await this.verified();
+        if(review.action==='upgrade'){
+            if(bundle.digest!==review.target)throw new ServiceError('reviewed_distribution_changed');
+            await this.invoke(bundle.main,['runtime','stage','--source',bundle.source,'--install-dir',binding.installDir,
+                '--approved-sha256',bundle.digest,'--verification-basis','trusted-distribution','--channel',this.options.channel],180000);
+        }
+        const selected=await this.invoke(bundle.main,['runtime','activate','--install-dir',binding.installDir,
+            '--runtime-sha256',review.target,'--expected-active',review.expectedActive],180000);
+        if(selected.schema!==1||selected.active!==review.target)throw new ServiceError('crossed_runtime_activation_receipt',true);
+        this.transitionReviews.delete(review);return selected;
     }
     async lifecycle(binding:RuntimeBinding,intent:LifecycleIntent,force=false):Promise<RecordValue>{
         this.active();

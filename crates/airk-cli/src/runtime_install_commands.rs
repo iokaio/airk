@@ -125,7 +125,19 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
         RuntimeCommand::Activate {
             install_dir,
             runtime_sha256,
-        } => serde_json::to_value(activate(install_dir, runtime_sha256).await?)?,
+            expected_active,
+        } => serde_json::to_value(match expected_active {
+            Some(expected) => activate_reviewed(install_dir, runtime_sha256, expected).await?,
+            None => activate(install_dir, runtime_sha256).await?,
+        })?,
+        RuntimeCommand::InspectCandidate {
+            install_dir,
+            runtime_sha256,
+        } => {
+            managed::require_unmanaged(install_dir)?;
+            let (main, approval) = verify_runtime(install_dir, runtime_sha256)?;
+            serde_json::json!({"runtime_sha256":runtime_sha256,"executable":main,"approval":approval,"metadata_only":true,"selection_changed":false,"executed":false})
+        }
         RuntimeCommand::Ensure { install_dir } => {
             serde_json::to_value(ensure_running(install_dir).await?)?
         }
@@ -178,11 +190,8 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
                 .ok()
                 .filter(|path| path.join("service-1.4.sqlite3").is_file())
                 .map(|path| {
-                    airk_store::service::registry::ServiceRegistry::open(
-                        path,
-                        airk_kernel::service_broker::new_instance_id()?,
-                    )
-                    .and_then(|registry| registry.incarnation())
+                    airk_store::service::registry::ServiceRegistry::open_saved(path)
+                        .and_then(|registry| registry.incarnation())
                 })
                 .transpose()?;
             serde_json::json!({"selection":selection,"executable":executable,"approval":approval,"launcher":launcher,"managed_policy":policy,"control_dir":control.ok(),"state_error":state_error,"lifecycle":lifecycle,"registry_namespace":registry_namespace,"payload_verified":true,"payload_repair":payload_repair::status(install_dir)?})

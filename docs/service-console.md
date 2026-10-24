@@ -64,6 +64,8 @@ A bounded native self-test must advertise metadata console capability 1. Native 
 
 An explicitly configured organization source requires its independently supplied digest and lifecycle policy. Existing source/pin/lifecycle/state mismatches fail without staging an alternative or changing the policy. The native external-supervisor contract refuses competing startup. Configuration is copied/frozen for an in-flight preparation, and execution authorization is rechecked before and after every asynchronous native invocation.
 
+[Reviewed runtime transitions](service-runtime-transitions.md) now expose bundled upgrade, previous-candidate rollback and exact saved activation recovery. The native installer fences the reviewed predecessor under its lock. Reconnect preserves different-version pins and displays installer metadata while refusing a mismatched console. Installer previews read completed registry state without migration.
+
 Job, retry and repair-plan requests expose a complete prepared intent before submission. The extension host must persist that exact caller/key/scope before sending it. Unknown transport or registry outcomes must retain the intent for inspection or exact-key retry; they never cause a fresh mutation key to be generated automatically. The view/controller supplies the persistent journal and review controls described above.
 
 Native main/bridge/project/service roles and the shared inference helper pool now use two Tokio I/O worker threads each. Dedicated inference/extraction budgets remain unchanged; this does not increase model batch parallelism or create another executable. The standalone Unix provider guardian continues to bypass Tokio.

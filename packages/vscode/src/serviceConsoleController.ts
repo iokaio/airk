@@ -7,7 +7,7 @@ import { consoleAction, ConsoleObservation, diagnosticPreview, ServiceConsoleSta
 
 export interface ConsoleHost {
     version:string; authority:string; storage:IntentStorage;
-    runtime:Pick<RuntimeHost,'discover'|'binding'|'ensure'|'client'|'snapshot'|'repair'|'prepareConfiguration'>;
+    runtime:Pick<RuntimeHost,'discover'|'binding'|'ensure'|'client'|'snapshot'|'repair'|'prepareConfiguration'|'reviewTransition'|'transition'>;
     trusted():boolean;
     changed(state:ServiceConsoleState):void;
     confirm(message:string):Promise<boolean>;
@@ -69,16 +69,23 @@ export class ServiceConsoleController {
                 this.cachedSnapshot(this.bootstrap.inspection);return;
             }
             this.binding=this.host.runtime.binding(this.bootstrap.inspection,this.bootstrap.installDir);
-            if(this.binding.payloadVerified!==false)this.client=this.host.runtime.client(this.binding);
+            if(this.binding.payloadVerified!==false&&this.binding.version===this.host.version)this.client=this.host.runtime.client(this.binding);
             this.state.lifecycle=this.binding.lifecycle;
             if(typeof this.bootstrap.inspection.registry_namespace==='string')this.restoreJournal(this.bootstrap.inspection.registry_namespace);
             this.cachedSnapshot(this.bootstrap.inspection);
+            if(this.binding.version!==this.host.version){
+                try{const snapshot=await this.host.runtime.snapshot(this.binding);this.authorized();this.cachedSnapshot(snapshot);}catch{/* Installer observations remain usable without readable cached project metadata. */}
+                this.state.message='Selected native runtime differs from this extension. Review the bundled upgrade or use the matching extension; the pin is preserved.';
+            }
         }
     }
     private cachedSnapshot(snapshot:RecordValue):void{
         if(this.bootstrap)this.bootstrap.inspection={...this.bootstrap.inspection,...snapshot};
         this.state.bootstrap={...this.state.bootstrap,value:{...this.state.bootstrap.value,lifecycle:snapshot.lifecycle,
-            payloadVerified:snapshot.payload_verified,registryError:snapshot.registry_error,startupManager:snapshot.startup_manager,payloadRepair:snapshot.payload_repair}};
+            payloadVerified:snapshot.payload_verified,registryError:snapshot.registry_error,startupManager:snapshot.startup_manager,payloadRepair:snapshot.payload_repair,
+            selectedRuntime:snapshot.selection?record(snapshot.selection).active:undefined,
+            selectedVersion:snapshot.approval?record(snapshot.approval).version:undefined,
+            verificationBasis:snapshot.approval?record(snapshot.approval).verification_basis:undefined}};
         if(snapshot.console)this.state.page=parseConsolePage(snapshot.console);
         this.state.configurationResultsOmitted=snapshot.configuration_results_omitted===true;
         if(snapshot.configuration_results!==undefined){
@@ -281,6 +288,16 @@ export class ServiceConsoleController {
             }
             this.authorized();
             if(action.action==='responseMode'){await this.host.chooseResponseMode?.();return;}
+            if(['upgradeRuntime','rollbackRuntime','resumeActivation'].includes(action.action)){
+                if(!this.binding)throw new ServiceError('runtime_binding_not_observed');
+                const kind=action.action==='upgradeRuntime'?'upgrade':action.action==='rollbackRuntime'?'rollback':'resume';
+                const review=await this.host.runtime.reviewTransition(this.binding,kind);this.authorized();
+                if(!await this.host.confirm(`${kind==='upgrade'?'Use the bundled runtime':kind==='rollback'?'Roll back the runtime':'Resume the saved native activation'} on ${this.host.authority}? Reviewed selection ${review.expectedActive}; target ${review.target}, version ${review.version}. Native activation drains affected work and starts the selected service. Requests can disconnect. Other clients have not been counted. A changed selection invalidates this review.`))return;
+                this.authorized();this.client?.dispose();this.client=undefined;this.disconnected();
+                try{await this.host.runtime.transition(this.binding,review);this.authorized();}
+                catch(error){try{await this.discover();}catch{/* Preserve the native intent for explicit recovery. */}throw error;}
+                await this.discover();await this.observe();return;
+            }
             if(action.action==='repairRuntime'){
                 if(!this.binding)throw new ServiceError('runtime_binding_not_observed');
                 const lifecycle=this.bootstrap?.inspection?.lifecycle;

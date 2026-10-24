@@ -6,7 +6,7 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { NativeRunner, RuntimeHost, RuntimeOptions, verifyBundledRuntime } from '../serviceBootstrap';
-import { RecordValue, ServiceError } from '../serviceClient';
+import { RecordValue, ServiceError, record } from '../serviceClient';
 const sha=(bytes:Buffer|string)=>createHash('sha256').update(bytes).digest('hex');
 test('configuration preparation uses bounded stdin and the verified bundled command without launching the selected image',async()=>{
     const f=await fixture(),calls:string[][]=[];const project='12'.repeat(32);
@@ -39,6 +39,85 @@ async function fixture(){
     async function cleanup(){const target=path.resolve(root),base=path.resolve(os.tmpdir());assert.equal(path.dirname(target),base);assert.ok(path.basename(target).startsWith('airk-runtime-bootstrap-'));await fs.rm(target,{recursive:true,force:true});}
     return {root,source,main,helper,digest,wrapper,cleanup};
 }
+
+async function transitionFixture(){
+    const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install);
+    await fs.mkdir(path.join(install,'control'));
+    const calls:string[][]=[];let active='ab'.repeat(32),pending:RecordValue|null=null,candidateVersion='1.4.0',selectedVersion='1.4.0';
+    const inspection=()=>({selection:{active,previous:'cd'.repeat(32)},executable:path.join(install,'runtimes',active,f.main),launcher:path.join(install,'airk-launcher'),
+        control_dir:path.join(install,'control'),managed_policy:null,approval:{version:selectedVersion,manifest_sha256:active,verification_basis:'trusted_distribution'}});
+    const run:NativeRunner=async(command,args)=>{
+        assert.equal(command,path.join(f.source,f.main));calls.push([...args]);
+        switch(args[1]){
+            case 'self-test':return {protocol:1,version:'1.4.0',self_test:'passed',metadata_console:1};
+            case 'location':return {protocol:1,install_dir:install};
+            case 'inspect':return inspection();
+            case 'diagnose':return {pending_activation:pending};
+            case 'inspect-candidate':{const target=args[args.indexOf('--runtime-sha256')+1];return {runtime_sha256:target,metadata_only:true,selection_changed:false,executed:false,
+                approval:{version:candidateVersion,manifest_sha256:target,verification_basis:'trusted_distribution'}};}
+            case 'stage':return {};
+            case 'activate':{
+                const expected=args[args.indexOf('--expected-active')+1],target=args[args.indexOf('--runtime-sha256')+1];
+                if(active!==expected&&!(pending?.candidate===target&&record(pending.prior).active===expected))throw new ServiceError('runtime_selection_changed_since_review');
+                active=target;return {schema:1,active,previous:expected};
+            }
+            default:throw new Error('Unexpected transition action');
+        }
+    };
+    const host=new RuntimeHost(f.root,'1.4.0',{channel:'stable',installDir:install},run);
+    return {f,host,calls,install,binding:()=>host.binding(inspection(),install),setActive:(value:string)=>{active=value;},
+        setPending:(value:RecordValue)=>{pending=value;},setCandidateVersion:(value:string)=>{candidateVersion=value;},setSelectedVersion:(value:string)=>{selectedVersion=value;}};
+}
+
+test('a selected different native version stays pinned until explicit review and cannot open a mismatched console',async()=>{
+    const t=await transitionFixture();
+    try{
+        t.setSelectedVersion('1.4.1');const binding=t.binding();assert.equal(binding.version,'1.4.1');
+        assert.throws(()=>t.host.client(binding),/service_runtime_version_mismatch/);
+        await assert.rejects(t.host.ensure(),/explicit_runtime_upgrade_or_matching_extension_required/);
+        await assert.rejects(t.host.ensure(true),/explicit_runtime_upgrade_or_matching_extension_required/);
+        assert.ok(t.calls.every(args=>['self-test','location','inspect','diagnose'].includes(args[1])));
+        const reviewed=await t.host.reviewTransition(binding,'upgrade');assert.equal(reviewed.target,t.f.digest);assert.equal(reviewed.version,'1.4.0');
+        t.setCandidateVersion('1.4.1');const rollback=await t.host.reviewTransition(binding,'rollback');assert.equal(rollback.version,'1.4.1');
+    }finally{await t.f.cleanup();}
+});
+
+test('runtime upgrade uses only its host-owned review and supplies the exact native selection guard',async()=>{
+    const t=await transitionFixture();
+    try{
+        const binding=t.binding(),review=await t.host.reviewTransition(binding,'upgrade');assert.ok(Object.isFrozen(review));
+        const before=t.calls.length;
+        await assert.rejects(t.host.transition(binding,{...review}),/runtime_transition_not_reviewed/);
+        await assert.rejects(t.host.reviewTransition({...binding,lifecycle:'external'},'upgrade'),/runtime_payload_managed_externally/);
+        assert.equal(t.calls.length,before);
+        const result=await t.host.transition(binding,review);assert.equal(result.active,t.f.digest);
+        const mutations=t.calls.slice(before);assert.deepEqual(mutations.map(args=>args[1]),['stage','activate']);
+        assert.equal(mutations[0][mutations[0].indexOf('--approved-sha256')+1],t.f.digest);
+        assert.equal(mutations[1][mutations[1].indexOf('--expected-active')+1],binding.runtimeSha256);
+        await assert.rejects(t.host.transition(binding,review),/runtime_transition_not_reviewed/);
+    }finally{await t.f.cleanup();}
+});
+
+test('selection changes invalidate reviewed activation and rollback/resume inspect exact approved candidates',async()=>{
+    const t=await transitionFixture();
+    try{
+        const binding=t.binding(),upgrade=await t.host.reviewTransition(binding,'upgrade');t.setActive('ef'.repeat(32));
+        await assert.rejects(t.host.transition(binding,upgrade),/runtime_selection_changed_since_review/);
+        assert.equal(t.binding().runtimeSha256,'ef'.repeat(32));
+        await assert.rejects(t.host.reviewTransition(binding,'rollback'),/runtime_selection_changed_review_again/);
+        const current=t.binding();t.setCandidateVersion('1.3.2');
+        await assert.rejects(t.host.reviewTransition(current,'rollback'),/candidate_not_compatible_with_this_extension/);
+        t.setCandidateVersion('1.4.0');const rollback=await t.host.reviewTransition(current,'rollback');
+        assert.equal(rollback.target,'cd'.repeat(32));const start=t.calls.length;
+        await t.host.transition(current,rollback);assert.deepEqual(t.calls.slice(start).map(args=>args[1]),['activate']);
+        const selected=t.binding();t.setPending({candidate:selected.runtimeSha256,prior:{active:current.runtimeSha256},install:path.toNamespacedPath(t.install),control:path.toNamespacedPath(selected.controlDir),phase:'probe'});
+        await assert.rejects(t.host.reviewTransition(selected,'upgrade'),/resume_pending_runtime_activation/);
+        const resumed=await t.host.reviewTransition(selected,'resume');assert.equal(resumed.expectedActive,current.runtimeSha256);
+        assert.equal(resumed.observedActive,selected.runtimeSha256);const next=t.calls.length;
+        await t.host.transition(selected,resumed);assert.deepEqual(t.calls.slice(next).map(args=>args[1]),['activate']);
+        assert.equal(t.calls.at(-1)![t.calls.at(-1)!.indexOf('--expected-active')+1],current.runtimeSha256);
+    }finally{await t.f.cleanup();}
+});
 test('bundled runtime verification binds both executables, complete topology and the installed VSIX pin',async()=>{
     const f=await fixture();
     try {

@@ -49,12 +49,14 @@ pub(super) fn inspect(root: &Path) -> Result<serde_json::Value> {
         );
         return Ok(serde_json::json!({"explicitly_stopped":false,"pending":null}));
     }
-    let registry = registry(root)?;
+    layout::validate_control(&control)?;
+    let registry = ServiceRegistry::open_saved(&control)?;
     Ok(
         serde_json::json!({"explicitly_stopped":registry.service_explicitly_stopped()?,"pending":registry.pending_lifecycle()?,
             "recorded_instance":registry.recorded_service_instance()?,"namespace":registry.incarnation()?,"epoch":registry.saved_request_epoch()?.1}),
     )
 }
+
 pub(super) fn require_start_allowed(root: &Path) -> Result<()> {
     let state = inspect(root)?;
     ensure!(
@@ -294,4 +296,45 @@ async fn resume(root: &Path, mut record: LifecycleRecord, force: bool) -> Result
         "lifecycle_restarted_registry_unavailable"
     );
     registry(root)?.advance_lifecycle(&record, LifecyclePhase::Complete)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn lifecycle_observation_preserves_an_older_completed_registry_without_migration() -> Result<()>
+    {
+        let owner = tempfile::tempdir()?;
+        let root = owner.path().join("install");
+        local_ipc::prepare_root(&root)?;
+        layout::initialize(
+            &root,
+            Some(&owner.path().join("state")),
+            RuntimeChannel::Stable,
+        )?;
+        let control = layout::control(&root)?;
+        local_ipc::prepare_root(&control)?;
+        let lease = airk_store::service::ServiceLease::acquire(&control)?;
+        layout::record_control(&lease)?;
+        let registry =
+            ServiceRegistry::open(&control, airk_kernel::service_broker::new_instance_id()?)?;
+        let namespace = registry.incarnation()?;
+        layout::record_registry(&lease, namespace)?;
+        drop(registry);
+        let database = control.join("service-1.4.sqlite3");
+        rusqlite::Connection::open(&database)?
+            .execute_batch("DROP TABLE service_configuration; PRAGMA user_version=2;")?;
+        let before = fs::read(&database)?;
+        let observation = inspect(&root)?;
+        assert_eq!(observation["explicitly_stopped"], false);
+        assert_eq!(observation["namespace"], namespace.to_string());
+        assert_eq!(fs::read(&database)?, before);
+        let version: i64 = rusqlite::Connection::open(&database)?.pragma_query_value(
+            None,
+            "user_version",
+            |row| row.get(0),
+        )?;
+        assert_eq!(version, 2);
+        Ok(())
+    }
 }
