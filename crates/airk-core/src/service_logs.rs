@@ -17,6 +17,7 @@ pub enum LogKind {
     ConnectionFailed,
     WorkerFailed,
     ModelFailed,
+    ModelStopped,
     SourceWorkerFailed,
     MetadataUnavailable,
     RecordsDropped,

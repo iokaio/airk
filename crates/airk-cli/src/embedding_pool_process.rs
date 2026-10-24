@@ -51,6 +51,17 @@ impl Drop for Pool {
     }
 }
 impl Pool {
+    pub fn terminate(&mut self) -> Result<()> {
+        if self.child.try_wait()?.is_none() {
+            self.child.kill()?;
+        }
+        self._containment.drain();
+        self.child.wait()?;
+        Ok(())
+    }
+    pub fn identity(&self) -> Incarnation {
+        self.instance
+    }
     pub fn process_id(&self) -> u32 {
         self.child.id()
     }

@@ -25,6 +25,17 @@ pub(super) fn clock_ms() -> Result<u64> {
         .as_millis()
         .try_into()?)
 }
+pub(super) fn job_control(connection: &Connection, job: Sha256Digest) -> Result<(bool, bool)> {
+    let owners = linked_items(connection, job)?;
+    ensure!(owners.len() <= 1, "maintenance job has multiple owners");
+    match owners.first() {
+        Some((id, _, _)) => {
+            let current = plan(connection, *id)?;
+            Ok((current.paused, current.phase == PlanPhase::Canceling))
+        }
+        None => Ok((false, false)),
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum PlanStep {
@@ -670,15 +681,7 @@ impl ServiceRegistry {
     /// other plans are never canceled or paused through semantic job joining.
     pub fn maintenance_job_control(&self, job: Sha256Digest) -> Result<(bool, bool)> {
         let tx = self.connection.unchecked_transaction()?;
-        let owners = linked_items(&tx, job)?;
-        ensure!(owners.len() <= 1, "maintenance job has multiple owners");
-        match owners.first() {
-            Some((id, _, _)) => {
-                let current = plan(&tx, *id)?;
-                Ok((current.paused, current.phase == PlanPhase::Canceling))
-            }
-            None => Ok((false, false)),
-        }
+        job_control(&tx, job)
     }
 
     /// One bounded metadata turn. Index opening and work remain worker-owned.

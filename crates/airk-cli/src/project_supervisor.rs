@@ -279,6 +279,11 @@ enum Envelope {
     EmbeddingStatus {
         reply: oneshot::Sender<ControlResponse>,
     },
+    StopEmbedding {
+        worker: Incarnation,
+        force: bool,
+        reply: oneshot::Sender<ControlResponse>,
+    },
 }
 pub struct Supervisor {
     resources: Arc<Mutex<ResourceCache>>,
@@ -441,6 +446,7 @@ impl Supervisor {
                 let mut configuration_error = configuration_error;
                 let mut pending_after = None;
                 let mut source_after = None;
+                let mut background_after = None;
                 let mut endpoints_ready = false;
                 loop {
                     if registry.is_none() {
@@ -505,6 +511,7 @@ impl Supervisor {
                                 registry
                                     .pending_projects(1)
                                     .is_ok_and(|page| page.is_empty())
+                                    && registry.has_background_work().is_ok_and(|pending| !pending)
                                     && registry
                                         .due_source_projects(None, i64::MAX as u64, 1)
                                         .is_ok_and(|page| page.is_empty())
@@ -714,6 +721,7 @@ impl Supervisor {
                                 ))) => ControlResponse::EmbeddingStatus {
                                     available: true,
                                     process_id: Some(id),
+                                    worker: pool.as_ref().map(Pool::identity),
                                     loads,
                                     reuses,
                                     sessions,
@@ -722,6 +730,7 @@ impl Supervisor {
                                 None => ControlResponse::EmbeddingStatus {
                                     available: false,
                                     process_id: None,
+                                    worker: None,
                                     loads: 0,
                                     reuses: 0,
                                     sessions: 0,
@@ -733,10 +742,57 @@ impl Supervisor {
                             };
                             let _ = reply.send(response);
                         }
+                        Ok(Envelope::StopEmbedding {
+                            worker,
+                            force,
+                            reply,
+                        }) => {
+                            let response = if pool
+                                .as_ref()
+                                .is_some_and(|pool| pool.identity() == worker)
+                            {
+                                // The actual native owner drains its child/job.
+                                // Caller-supplied numerical PIDs never authorize a signal.
+                                let failed = force
+                                    && pool.as_mut().is_some_and(|pool| pool.terminate().is_err());
+                                drop(pool.take());
+                                log.record(
+                                    airk_core::service_logs::LogKind::ModelStopped,
+                                    None,
+                                    None,
+                                );
+                                if failed {
+                                    ControlResponse::Failure {
+                                        code: "embedding_stop_outcome_unknown".into(),
+                                    }
+                                } else {
+                                    ControlResponse::EmbeddingStopped { worker }
+                                }
+                            } else {
+                                ControlResponse::Failure {
+                                    code: "embedding_worker_changed".into(),
+                                }
+                            };
+                            let _ = reply.send(response);
+                        }
                         Err(mpsc::RecvTimeoutError::Disconnected) => break,
                         Err(mpsc::RecvTimeoutError::Timeout) => {}
                     }
                     if let Some(registry) = registry.as_mut() {
+                        if let Ok(due) = registry.due_background_jobs(background_after, 8) {
+                            background_after = if due.len() == 8 {
+                                due.last().map(|item| item.0)
+                            } else {
+                                None
+                            };
+                            for (project, revision, kind) in due {
+                                if let Ok(nonce) = new_instance_id() {
+                                    let _ = registry.enqueue_background_job(
+                                        project, revision, kind, instance, nonce,
+                                    );
+                                }
+                            }
+                        }
                         let now_ms = std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
                             .map_or(0, |time| time.as_millis().min(u64::MAX as u128) as u64);
@@ -1001,6 +1057,28 @@ impl Supervisor {
             Ok(Ok(response)) => response,
             _ => ControlResponse::Failure {
                 code: "embedding_observation_busy".into(),
+            },
+        }
+    }
+    pub async fn stop_embedding(&self, worker: Incarnation, force: bool) -> ControlResponse {
+        let (reply, receiver) = oneshot::channel();
+        if self.sender.as_ref().is_none_or(|queue| {
+            queue
+                .try_send(Envelope::StopEmbedding {
+                    worker,
+                    force,
+                    reply,
+                })
+                .is_err()
+        }) {
+            return ControlResponse::Failure {
+                code: "broker_busy".into(),
+            };
+        }
+        match tokio::time::timeout(Duration::from_secs(4), receiver).await {
+            Ok(Ok(response)) => response,
+            _ => ControlResponse::Failure {
+                code: "embedding_stop_outcome_unknown".into(),
             },
         }
     }

@@ -195,10 +195,10 @@ fn execute(
     let kernel = &selected;
     match kind {
         JobKind::Index | JobKind::Reconcile => {
-            kernel.index()?;
+            kernel.index_service_sources()?;
         }
         JobKind::Vectors => {
-            kernel.resume_current_enrichment()?;
+            kernel.service_enrichment_turn()?;
         }
         JobKind::ModelSetup => {
             kernel.install_service_default_vector_model()?;
@@ -520,6 +520,49 @@ pub async fn run() -> Result<()> {
                         }
                     }
                 });
+                // Persist the next phase before acknowledging this one. These
+                // bounded flags survive public queue saturation and owner exit.
+                if matches!(outcome, JobOutcome::Succeeded { .. }) {
+                    if job.kind == JobKind::ModelSetup {
+                        registry.set_background_pending(&job_lease, JobKind::Index, true)?;
+                    } else if matches!(
+                        job.kind,
+                        JobKind::Index
+                            | JobKind::Reconcile
+                            | JobKind::Rebuild
+                            | JobKind::Repair
+                            | JobKind::Recover
+                            | JobKind::Vectors
+                    ) {
+                        let readiness = kernel
+                            .refresh_service_snapshot()?
+                            .status()?
+                            .semantic_readiness;
+                        registry.set_background_pending(
+                            &job_lease,
+                            JobKind::Vectors,
+                            matches!(
+                                readiness.state,
+                                airk_core::readiness::SemanticState::Pending
+                                    | airk_core::readiness::SemanticState::Partial
+                            ),
+                        )?;
+                    }
+                } else if job.kind == JobKind::Vectors
+                    || matches!(outcome, JobOutcome::Canceled)
+                        && matches!(
+                            job.kind,
+                            JobKind::Index
+                                | JobKind::Reconcile
+                                | JobKind::Rebuild
+                                | JobKind::Repair
+                                | JobKind::Recover
+                        )
+                {
+                    // A failed/canceled semantic phase requires explicit retry.
+                    // Source failures leave independent older enrichment intact.
+                    registry.set_background_pending(&job_lease, JobKind::Vectors, false)?;
+                }
                 record_watch_roots(&kernel, &mut registry, &job_lease);
                 registry.complete_job_with_maintenance_at(
                     &job_lease,

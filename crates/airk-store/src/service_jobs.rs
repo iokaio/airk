@@ -39,6 +39,7 @@ const MAX_REQUESTS: i64 = 4096;
 
 #[derive(Default)]
 struct EnqueueOptions {
+    background_revision: Option<u64>,
     maintenance_now_ms: Option<u64>,
     source_request: Option<(u64, u64)>,
     manual_retry: Option<Sha256Digest>,
@@ -275,6 +276,7 @@ impl ServiceRegistry {
         options: EnqueueOptions,
     ) -> Result<JobRecord> {
         let EnqueueOptions {
+            background_revision,
             maintenance_now_ms,
             source_request,
             manual_retry,
@@ -431,6 +433,9 @@ impl ServiceRegistry {
                     [project.to_string()],
                 )?;
             }
+        }
+        if let Some(revision) = background_revision {
+            super::background::debit(&transaction, project, kind, revision, id)?;
         }
         if let Some(now_ms) = maintenance_now_ms {
             // Admission and retry debit share this transaction. Replaying an accepted
@@ -651,6 +656,34 @@ impl ServiceRegistry {
     pub fn recover_jobs(&mut self, lease: &ProjectLease) -> Result<()> {
         self.recover_jobs_with_rebuild_receipt(lease, None)
     }
+    pub fn enqueue_background_job(
+        &mut self,
+        project: ProjectBinding,
+        revision: u64,
+        kind: JobKind,
+        caller: Incarnation,
+        nonce: Incarnation,
+    ) -> Result<JobRecord> {
+        ensure!(
+            matches!(kind, JobKind::Index | JobKind::Vectors),
+            "unsupported background continuation"
+        );
+        let (namespace, epoch) = self.request_epoch()?;
+        self.enqueue_impl(
+            project,
+            caller,
+            &RequestKey {
+                namespace,
+                epoch,
+                nonce,
+            },
+            kind,
+            EnqueueOptions {
+                background_revision: Some(revision),
+                ..Default::default()
+            },
+        )
+    }
     pub fn recover_jobs_with_rebuild_receipt(
         &mut self,
         lease: &ProjectLease,
@@ -668,8 +701,14 @@ impl ServiceRegistry {
                     revision: receipt.token.digest,
                 }),
             })?;
-            transaction.execute("UPDATE service_jobs SET state='succeeded',outcome=?1 WHERE id=?2 AND project=?3 AND kind IN('rebuild','repair') AND state='running' AND epoch<>?4",
+            let completed=transaction.execute("UPDATE service_jobs SET state='succeeded',outcome=?1 WHERE id=?2 AND project=?3 AND kind IN('rebuild','repair') AND state='running' AND epoch<>?4",
                 params![outcome,receipt.job.to_string(),lease.binding.to_string(),i64::try_from(epoch)?])?;
+            if completed == 1 {
+                // The manifest switch may precede the worker's continuation
+                // receipt. Recover both in this transaction; a ready model
+                // simply completes a no-op semantic turn without loading it.
+                super::background::set(&transaction, lease.binding, JobKind::Vectors, true)?;
+            }
         }
         let failed = serde_json::to_vec(&JobOutcome::Failed {
             code: "interrupted_maintenance_or_retry_exhausted".into(),
@@ -732,6 +771,15 @@ impl ServiceRegistry {
         transaction.execute("UPDATE service_jobs SET state='running',epoch=?1,attempts=attempts+1 WHERE id=?2 AND state='pending'",
             params![i64::try_from(epoch)?, id])?;
         let claimed = record(&transaction, id.parse()?)?;
+        if matches!(
+            claimed.kind,
+            JobKind::Index | JobKind::Reconcile | JobKind::Rebuild
+        ) {
+            // An explicit source pass can satisfy an already requested model
+            // follow-up too. Capture that intent at claim, preserving any new
+            // request that arrives while the pass is running.
+            super::background::set(&transaction, lease.binding, JobKind::Index, false)?;
+        }
         super::maintenance::job_claimed(&transaction, claimed.id)?;
         transaction.commit()?;
         Ok(Some(claimed))
@@ -862,6 +910,29 @@ impl ServiceRegistry {
                     super::watch::block_source_retry(&transaction, id)?;
                 }
                 JobOutcome::Failed { .. } => {}
+            }
+        }
+        let canceled: bool = transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM service_job_cancellation WHERE job=?1)",
+            [id.to_string()],
+            |row| row.get(0),
+        )?;
+        if canceled || super::maintenance::job_control(&transaction, id)?.1 {
+            // Cancellation can arrive after atomic publication but before this
+            // receipt. Preserve the successful publication and stop its next
+            // phase in the same transaction that acknowledges completion.
+            let next = match current.kind {
+                JobKind::ModelSetup => Some(JobKind::Index),
+                JobKind::Index
+                | JobKind::Reconcile
+                | JobKind::Rebuild
+                | JobKind::Repair
+                | JobKind::Recover
+                | JobKind::Vectors => Some(JobKind::Vectors),
+                _ => None,
+            };
+            if let Some(kind) = next {
+                super::background::set(&transaction, current.project, kind, false)?;
             }
         }
         let completed = record(&transaction, id)?;
@@ -1673,6 +1744,16 @@ mod tests {
         registry.admit_worker(&mut replacement)?;
         registry.recover_jobs_with_rebuild_receipt(&replacement, Some(&receipt))?;
         assert_eq!(registry.job(job.id)?.state, JobState::Succeeded);
+        assert_eq!(
+            registry.due_background_jobs(None, 1)?[0].2,
+            JobKind::Vectors
+        );
+        registry.set_background_pending(&replacement, JobKind::Vectors, false)?;
+        registry.recover_jobs_with_rebuild_receipt(&replacement, Some(&receipt))?;
+        assert!(
+            !registry.has_background_work()?,
+            "receipt replay rescheduled completed or canceled enrichment"
+        );
         assert!(registry.claim_job(&replacement)?.is_none());
         assert_eq!(
             registry

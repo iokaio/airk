@@ -33,6 +33,7 @@ pub mod retrieval_retry;
 pub mod roots;
 pub mod scheduler;
 pub mod service_broker;
+mod service_enrichment;
 pub mod service_execution;
 mod service_freshness;
 pub mod service_inspection;

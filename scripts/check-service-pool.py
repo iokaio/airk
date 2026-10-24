@@ -5,7 +5,6 @@ import json
 import os
 from pathlib import Path
 import queue
-import signal
 import subprocess
 import tempfile
 import threading
@@ -55,6 +54,25 @@ class Bridge:
             "query": query, "mode": mode, "max_bytes": 4096}})
         if result.get("isError") or "memo.md" not in json.dumps(result):
             raise RuntimeError(f"{mode} retrieval lost the original collection citation: {result}")
+
+    def readiness(self):
+        for attempt in range(3):
+            result = self.call("tools/call", {"name": "airk_status", "arguments": {"response_mode": "full"}})
+            if not result.get("isError"):
+                return json.loads(result["content"][0]["text"])["semantic_readiness"]
+            if attempt == 2:
+                raise RuntimeError(f"Native readiness query failed: {result}")
+            time.sleep(0.05)
+
+    def wait_semantics(self, expected="ready"):
+        deadline = time.monotonic() + 180
+        while True:
+            readiness = self.readiness()
+            if readiness["state"] == expected:
+                return
+            if readiness["state"] == "failed" or time.monotonic() >= deadline:
+                raise RuntimeError(f"Independent semantic phase did not reach {expected}: {readiness}")
+            time.sleep(0.2)
 
     def close(self):
         self.process.stdin.close()
@@ -169,6 +187,7 @@ def main():
             for project in projects:
                 bridge = Bridge(binary, runtime, project["binding"], environment)
                 bridges.append(bridge)
+                bridge.wait_semantics()
                 bridge.search("hybrid")
             observation = rpc("embedding_status")
             if (not observation.get("available") or observation.get("loads") != 1
@@ -190,6 +209,7 @@ def main():
                     raise RuntimeError(f"Supervised replacement did not complete: {receipt}")
                 time.sleep(0.2)
             for bridge in bridges:
+                bridge.wait_semantics()
                 bridge.search("hybrid")
             observation = rpc("embedding_status")
             if not observation.get("available") or observation.get("loads") != 1:
@@ -214,9 +234,15 @@ def main():
                 raise RuntimeError("Retirement unnecessarily discarded the compatible loaded model")
             print("Replacement preserved direct clients and one MiniLM load; old incarnation retired while shared files stayed pinned.", flush=True)
 
-            # This PID comes from our private authenticated service's supervised helper.
-            os.kill(observation["process_id"], signal.SIGTERM)
-            time.sleep(0.3)
+            # Ask the native owner to drain its exact opaque worker identity.
+            # A stale/foreign identity must never stop the current helper.
+            observation = rpc("embedding_status")
+            rejected = rpc({"stop_embedding": {"worker": uuid.uuid4().hex, "force": True}})
+            if rejected.get("code") != "embedding_worker_changed":
+                raise RuntimeError(f"Foreign helper stop was not rejected: {rejected}")
+            stopped = rpc({"stop_embedding": {"worker": observation["worker"], "force": True}})
+            if stopped.get("status") != "embedding_stopped":
+                raise RuntimeError(f"Owned embedding worker did not confirm native drain: {stopped}")
             for bridge in bridges:
                 bridge.search("lexical")
             if run("service", "health", "--runtime-dir", runtime)["status"] != "health":
@@ -234,12 +260,17 @@ def main():
             deadline = time.monotonic() + 180
             while True:
                 receipt = rpc({"job": {"id": accepted["job"]["id"]}})["job"]
-                if receipt["state"] in ("succeeded", "failed"):
+                if receipt["state"] == "succeeded":
                     break
+                if receipt["state"] == "failed":
+                    raise RuntimeError(f"Semantic helper loss failed independent source publication: {receipt}")
                 if receipt["state"] == "canceled" or time.monotonic() >= deadline:
                     raise RuntimeError(f"Post-failure source job did not finish: {receipt}")
                 time.sleep(0.2)
             bridges[0].search("lexical", "quartz lighthouse")
+            bridges[0].wait_semantics("failed")
+            if rpc({"job": {"id": accepted["job"]["id"]}})["job"]["state"] != "succeeded":
+                raise RuntimeError("Later semantic failure changed the successful source receipt")
             if any(document.read_bytes() != original for document, original in originals):
                 raise RuntimeError("Native service changed an original source document")
             print("Embedding-process failure preserved lexical retrieval, service health and original source bytes.", flush=True)

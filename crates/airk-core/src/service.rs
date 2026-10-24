@@ -99,6 +99,11 @@ pub enum ControlMethod {
         project: ProjectBinding,
     },
     EmbeddingStatus,
+    StopEmbedding {
+        worker: Incarnation,
+        #[serde(default)]
+        force: bool,
+    },
     SourceStatus,
     Resources,
     ConfigureResources {
@@ -207,10 +212,14 @@ pub enum ControlResponse {
     EmbeddingStatus {
         available: bool,
         process_id: Option<u32>,
+        worker: Option<Incarnation>,
         loads: u64,
         reuses: u64,
         sessions: usize,
         observation_age_ms: Option<u64>,
+    },
+    EmbeddingStopped {
+        worker: Incarnation,
     },
 }
 

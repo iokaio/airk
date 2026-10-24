@@ -118,7 +118,7 @@ impl Kernel {
         next.vector_selection()?;
         next.scan_limits()?;
         next.configured_roots()?;
-        next.reindex()?;
+        next.index_current(true, true)?;
         // Bounded pages authenticate retained sources/extractions and identify
         // one exact target revision. No live-source substitution is permitted.
         let mut after = None;
