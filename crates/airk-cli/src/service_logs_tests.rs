@@ -1,6 +1,25 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
 
+struct PrivateRoot {
+    _owner: tempfile::TempDir,
+    root: PathBuf,
+}
+impl PrivateRoot {
+    fn path(&self) -> &Path {
+        &self.root
+    }
+}
+fn private_root() -> Result<PrivateRoot> {
+    let owner = tempfile::tempdir()?;
+    let root = owner.path().join("private-control");
+    crate::local_ipc::prepare_root(&root)?;
+    Ok(PrivateRoot {
+        _owner: owner,
+        root,
+    })
+}
+
 fn record(time: u64) -> LogRecord {
     let mut record = make_record(
         Incarnation::from_bytes([1; 16]),
@@ -15,7 +34,7 @@ fn record(time: u64) -> LogRecord {
 #[test]
 fn cached_reads_create_nothing_and_partial_records_are_preserved_but_never_exported() -> Result<()>
 {
-    let owner = tempfile::tempdir()?;
+    let owner = private_root()?;
     let root = owner.path().join("missing");
     assert!(recent(&root, 32).is_err());
     assert!(!root.exists());
@@ -36,7 +55,7 @@ fn cached_reads_create_nothing_and_partial_records_are_preserved_but_never_expor
 }
 #[test]
 fn rotation_stays_within_four_files_and_bounded_export_preserves_recent_order() -> Result<()> {
-    let root = tempfile::tempdir()?;
+    let root = private_root()?;
     let mut sink = Sink::open(root.path())?;
     for (n, name) in FILES.iter().enumerate() {
         let mut line = serde_json::to_vec(&record(n as u64))?;
@@ -57,7 +76,7 @@ fn rotation_stays_within_four_files_and_bounded_export_preserves_recent_order() 
 }
 #[test]
 fn foreign_oversized_or_aliased_log_files_are_preserved_and_disable_writing() -> Result<()> {
-    let root = tempfile::tempdir()?;
+    let root = private_root()?;
     let sink = Sink::open(root.path())?;
     let directory = sink.directory.clone();
     drop(sink);
@@ -100,7 +119,7 @@ fn finite_queue_accounts_loss_and_flush_finishes_even_with_live_publisher_clones
     blocked.record(LogKind::ControlFailed, None, None);
     assert!(start.elapsed() < std::time::Duration::from_secs(1));
     assert_eq!(blocked.telemetry().dropped_records, 1);
-    let root = tempfile::tempdir()?;
+    let root = private_root()?;
     let (log, guard) = Log::start(root.path().into(), Incarnation::from_bytes([2; 16]));
     // A deterministic loss receipt exercises the same pending counter as a full
     // queue, without depending on filesystem speed or racing a timed producer.

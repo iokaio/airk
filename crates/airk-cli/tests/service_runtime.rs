@@ -2240,3 +2240,127 @@ fn denied_registered_source_keeps_direct_queries_and_fails_new_work_without_data
     })?;
     Ok(())
 }
+
+#[test]
+fn installed_log_binding_places_the_ring_outside_control_and_missing_ownership_never_falls_back()
+-> Result<()> {
+    use airk_core::{
+        identity::Incarnation,
+        service::{ControlMethod as Method, ControlResponse as Response},
+        service_logs::LogKind,
+    };
+    let owner = tempfile::tempdir()?;
+    let base = owner.path().canonicalize()?;
+    let install = base.join("install");
+    let state = base.join("state");
+    let logs = base.join("native-logs");
+    for path in [&install, &state] {
+        airk_cli::local_ipc::prepare_root(path)?;
+    }
+    let binding = serde_json::to_vec(
+        &serde_json::json!({"schema":1,"install":install,"state":state,"logs":logs,"channel":"stable","ready":true}),
+    )?;
+    fs::write(install.join("runtime-layout.json"), &binding)?;
+    fs::write(state.join("airk-state-1.4.owner.json"), &binding)?;
+    fs::write(state.join("airk-state-1.4.lock"), [])?;
+    let root = state.join("control");
+    let mut children = Children(vec![start(&root)?]);
+    wait_ready(&root)?;
+    let executor = tokio::runtime::Runtime::new()?;
+    executor.block_on(async {
+        let until = tokio::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let Response::Health { observation } =
+                airk_cli::service_runtime::request(&root, Method::Health).await?
+            else {
+                anyhow::bail!("health unavailable")
+            };
+            if observation.logs.available {
+                break;
+            }
+            ensure!(
+                tokio::time::Instant::now() < until,
+                "native log binding unavailable"
+            );
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        let source = base.join("source");
+        let data = base.join("data");
+        fs::create_dir(&source)?;
+        fs::create_dir(&data)?;
+        let project = airk_kernel::service_projects::registration(&source, &data, "logs")?;
+        ensure!(
+            matches!(
+                airk_cli::service_runtime::request(&root, Method::Register { project }).await?,
+                Response::Registered { .. }
+            ),
+            "safe registration failed"
+        );
+        let private = airk_kernel::service_projects::registration(&logs, &data, "private")?;
+        ensure!(
+            matches!(
+                airk_cli::service_runtime::request(&root, Method::Register { project: private })
+                    .await?,
+                Response::Failure { .. }
+            ),
+            "native log location was admitted as source"
+        );
+        airk_cli::service_runtime::request(&root, Method::Shutdown).await?;
+        Ok::<_, anyhow::Error>(())
+    })?;
+    ensure!(wait_exit(&mut children.0[0])?, "service did not stop");
+    let page = airk_cli::service_logs::recent(&root, 32)?;
+    ensure!(
+        page.records
+            .iter()
+            .any(|r| r.kind == LogKind::ServiceStopped),
+        "down-service export lost final lifecycle record"
+    );
+    ensure!(
+        logs.join("logs-1.4/current.jsonl").is_file() && !root.join("logs-1.4").exists(),
+        "ring used the control directory instead of the pinned native location"
+    );
+    let original = fs::read(logs.join("logs-1.4/current.jsonl"))?;
+    fs::remove_file(state.join("airk-state-1.4.owner.json"))?;
+    ensure!(
+        airk_cli::service_logs::recent(&root, 32).is_err(),
+        "missing binding redirected cached export"
+    );
+    children.0.push(start(&root)?);
+    wait_ready(&root)?;
+    executor.block_on(async {
+        let until = tokio::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let Response::Health { observation } =
+                airk_cli::service_runtime::request(&root, Method::Health).await?
+            else {
+                anyhow::bail!("health unavailable after binding loss")
+            };
+            if observation.logs.write_failures > 0 {
+                ensure!(
+                    !observation.logs.available
+                        && observation.instance != Incarnation::from_bytes([0; 16]),
+                    "logging failure disabled health or was hidden"
+                );
+                break;
+            }
+            ensure!(
+                tokio::time::Instant::now() < until,
+                "missing ownership was not observed"
+            );
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        airk_cli::service_runtime::request(&root, Method::Shutdown).await?;
+        Ok::<_, anyhow::Error>(())
+    })?;
+    ensure!(
+        wait_exit(children.0.last_mut().unwrap())?,
+        "service failed to stop after log binding loss"
+    );
+    ensure!(
+        fs::read(logs.join("logs-1.4/current.jsonl"))? == original
+            && !root.join("logs-1.4").exists(),
+        "unknown ownership created another ring or changed retained logs"
+    );
+    Ok(())
+}

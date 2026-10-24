@@ -14,6 +14,8 @@ struct StateBinding {
     schema: u32,
     install: std::path::PathBuf,
     state: std::path::PathBuf,
+    #[serde(default)]
+    logs: Option<std::path::PathBuf>,
     channel: String,
     ready: bool,
 }
@@ -62,7 +64,18 @@ fn private_paths(connection: &Connection, runtime: &Path) -> Result<Vec<std::pat
                 binding(&owner.install.join("runtime-layout.json"))? == owner,
                 "install/state source-isolation receipts disagree"
             );
-            for path in [&owner.install, &owner.state] {
+            for path in [&owner.install, &owner.state]
+                .into_iter()
+                .chain(owner.logs.as_ref())
+            {
+                ensure!(
+                    path.is_absolute()
+                        && !path.components().any(|part| matches!(
+                            part,
+                            std::path::Component::ParentDir | std::path::Component::CurDir
+                        )),
+                    "invalid private runtime path"
+                );
                 let path = path
                     .to_str()
                     .ok_or_else(|| anyhow::anyhow!("non-UTF-8 private runtime path"))?;

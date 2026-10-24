@@ -53,15 +53,21 @@ fn exists(path: &Path) -> Result<bool> {
     }
 }
 fn owner(root: &Path, create: bool) -> Result<PathBuf> {
-    let directory = root.join(DIRECTORY);
-    let receipt = root.join(OWNER);
+    let parent = crate::runtime_install::log_parent(root)?;
+    if !exists(&parent)? {
+        ensure!(create, "diagnostic log location missing");
+        crate::local_ipc::prepare_root(&parent)?;
+    }
+    crate::local_ipc::prepare_root(&parent)?;
+    let directory = parent.join(DIRECTORY);
+    let receipt = parent.join(OWNER);
     let expected = expected_owner(root)?;
     if !exists(&receipt)? {
         ensure!(
             create && !exists(&directory)?,
             "diagnostic logs have no ownership receipt"
         );
-        let mut temporary = tempfile::NamedTempFile::new_in(root)?;
+        let mut temporary = tempfile::NamedTempFile::new_in(&parent)?;
         temporary.write_all(&serde_json::to_vec(&expected)?)?;
         temporary.as_file().sync_all()?;
         temporary.persist_noclobber(&receipt)?;

@@ -93,6 +93,7 @@ fn interrupted_state_claim_never_falls_back_and_resumes_before_and_after_lock_cr
     let (_owner, root, state) = fixture()?;
     let layout = Layout {
         schema: 1,
+        logs: None,
         install: root.clone(),
         state: state.clone(),
         channel: RuntimeChannel::Stable,
@@ -196,6 +197,7 @@ fn process_death_during_owner_write_resumes_only_a_matching_owned_prefix() -> Re
     let (_owner, root, state) = fixture()?;
     let layout = Layout {
         schema: 1,
+        logs: None,
         install: root.clone(),
         state: state.clone(),
         channel: RuntimeChannel::Stable,
@@ -236,6 +238,7 @@ fn foreign_or_modified_owner_partials_are_preserved_and_exclusive_rename_never_r
     assert!(!root.join(LAYOUT).exists());
     let layout = Layout {
         schema: 1,
+        logs: None,
         install: root.clone(),
         state: state.clone(),
         channel: RuntimeChannel::Stable,
@@ -291,6 +294,187 @@ fn existing_control_state_requires_explicit_transition_instead_of_silent_relocat
     assert_eq!(
         fs::read(old.join("original-owned-fixture"))?,
         b"Preserve existing control state."
+    );
+    Ok(())
+}
+
+#[test]
+fn pinned_external_logs_are_written_and_exported_without_control_fallback_or_source_capture()
+-> Result<()> {
+    let (owner, root, state) = fixture()?;
+    let logs = crate::user_paths::canonical_location(&owner.path().join("native-global-logs"))?;
+    let layout = Layout {
+        schema: 1,
+        install: root.clone(),
+        state: state.clone(),
+        logs: Some(logs.clone()),
+        channel: RuntimeChannel::Stable,
+        ready: false,
+    };
+    replace_json(&root, LAYOUT, &layout)?;
+    initialize(&root, None, RuntimeChannel::Stable)?;
+    let control = control(&root)?;
+    local_ipc::prepare_root(&control)?;
+    assert_eq!(log_parent(&control)?, logs);
+    assert!(!logs.exists(), "binding inspection created log storage");
+    assert!(crate::service_logs::recent(&control, 32).is_err());
+    assert!(!logs.exists(), "cached export created log storage");
+    let (log, guard) = crate::service_logs::Log::start(
+        control.clone(),
+        airk_kernel::service_broker::new_instance_id()?,
+    );
+    log.record(airk_core::service_logs::LogKind::ServiceStarted, None, None);
+    drop(guard);
+    assert!(log.telemetry().available);
+    assert!(logs.join("logs-1.4/current.jsonl").is_file());
+    assert!(!control.join("logs-1.4").exists());
+    assert!(!control.join("logs-1.4.owner.json").exists());
+    assert_eq!(crate::service_logs::recent(&control, 32)?.records.len(), 1);
+    let mut registry = airk_store::service::registry::ServiceRegistry::open(
+        &control,
+        airk_kernel::service_broker::new_instance_id()?,
+    )?;
+    let safe = airk_core::service::ProjectRegistration::new(
+        owner
+            .path()
+            .canonicalize()?
+            .join("source")
+            .to_str()
+            .unwrap()
+            .into(),
+        owner
+            .path()
+            .canonicalize()?
+            .join("data")
+            .to_str()
+            .unwrap()
+            .into(),
+        "fixture".into(),
+    )?;
+    registry.register(&safe)?;
+    let forbidden = airk_core::service::ProjectRegistration::new(
+        logs.to_str().unwrap().into(),
+        safe.data_root.clone(),
+        "private".into(),
+    )?;
+    assert!(
+        registry
+            .register(&forbidden)
+            .unwrap_err()
+            .is::<airk_store::service::registry::SourceBoundary>()
+    );
+    let receipt = state.join(OWNER);
+    let original = fs::read(&receipt)?;
+    let mut changed: serde_json::Value = serde_json::from_slice(&original)?;
+    changed["logs"] = serde_json::to_value(state.join("other-logs"))?;
+    fs::write(&receipt, serde_json::to_vec(&changed)?)?;
+    assert!(log_parent(&control).is_err());
+    assert!(crate::service_logs::recent(&control, 32).is_err());
+    assert!(!control.join("logs-1.4").exists());
+    assert!(!state.join("other-logs").exists());
+    fs::remove_file(&receipt)?;
+    assert!(
+        log_parent(&control).is_err(),
+        "missing ownership fell back to a new ring"
+    );
+    assert!(
+        registry
+            .register(&forbidden)
+            .unwrap_err()
+            .is::<airk_store::service::registry::SourceBoundary>()
+    );
+    fs::write(&receipt, original)?;
+    assert_eq!(crate::service_logs::recent(&control, 32)?.records.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn new_custom_layout_pins_state_logs_and_old_development_bindings_do_not_move_silently()
+-> Result<()> {
+    let (_owner, root, state) = fixture()?;
+    initialize(&root, Some(&state), RuntimeChannel::Stable)?;
+    let layout = Layout::read(&root)?.unwrap();
+    assert_eq!(layout.logs.as_deref(), Some(state.join("logs").as_path()));
+    initialize(&root, None, RuntimeChannel::Stable)?;
+    assert!(Layout::read(&root)? == Some(layout));
+    let (_old_owner, old_root, old_state) = fixture()?;
+    let old = Layout {
+        schema: 1,
+        install: old_root.clone(),
+        state: old_state,
+        logs: None,
+        channel: RuntimeChannel::Stable,
+        ready: false,
+    };
+    replace_json(&old_root, LAYOUT, &old)?;
+    initialize(&old_root, None, RuntimeChannel::Stable)?;
+    let control = control(&old_root)?;
+    local_ipc::prepare_root(&control)?;
+    assert_eq!(log_parent(&control)?, control);
+    assert!(Layout::read(&old_root)?.unwrap().logs.is_none());
+    Ok(())
+}
+
+#[test]
+fn adopting_existing_development_control_never_creates_logs_in_a_prior_source_root() -> Result<()> {
+    let (owner, root, _state) = fixture()?;
+    let old_control = root.join("control");
+    local_ipc::prepare_root(&old_control)?;
+    let prior_source = root.join("logs");
+    let data = owner.path().canonicalize()?.join("data");
+    for path in [&prior_source, &data] {
+        local_ipc::prepare_root(path)?;
+    }
+    fs::write(
+        prior_source.join("memo.txt"),
+        b"Original source must remain read-only.",
+    )?;
+    let mut registry = airk_store::service::registry::ServiceRegistry::open(
+        &old_control,
+        airk_kernel::service_broker::new_instance_id()?,
+    )?;
+    let project =
+        airk_kernel::service_projects::registration(&prior_source, &data, "prior-source")?;
+    registry.register(&project)?;
+    initialize(&root, Some(&root), RuntimeChannel::Stable)?;
+    assert_eq!(log_parent(&old_control)?, old_control);
+    let (log, guard) = crate::service_logs::Log::start(
+        old_control.clone(),
+        airk_kernel::service_broker::new_instance_id()?,
+    );
+    log.record(airk_core::service_logs::LogKind::ServiceStarted, None, None);
+    drop(guard);
+    assert!(log.telemetry().available);
+    assert_eq!(fs::read_dir(&prior_source)?.count(), 1);
+    assert_eq!(
+        fs::read(prior_source.join("memo.txt"))?,
+        b"Original source must remain read-only."
+    );
+    assert!(old_control.join("logs-1.4/current.jsonl").is_file());
+    Ok(())
+}
+
+#[test]
+fn log_filesystem_failure_does_not_disable_the_owned_control_binding() -> Result<()> {
+    let (_owner, root, state) = fixture()?;
+    initialize(&root, Some(&state), RuntimeChannel::Stable)?;
+    let control = control(&root)?;
+    local_ipc::prepare_root(&control)?;
+    let logs = state.join("logs");
+    fs::write(&logs, b"Preserve a conflicting user-created file.")?;
+    assert!(log_parent(&control).is_err());
+    assert_eq!(super::control(&root)?, control);
+    let (log, guard) = crate::service_logs::Log::start(
+        control.clone(),
+        airk_kernel::service_broker::new_instance_id()?,
+    );
+    log.record(airk_core::service_logs::LogKind::ServiceStarted, None, None);
+    drop(guard);
+    assert!(!log.telemetry().available && log.telemetry().write_failures > 0);
+    assert!(!control.join("logs-1.4").exists());
+    assert_eq!(
+        fs::read(logs)?,
+        b"Preserve a conflicting user-created file."
     );
     Ok(())
 }

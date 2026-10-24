@@ -14,6 +14,8 @@ struct Layout {
     schema: u32,
     install: PathBuf,
     state: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    logs: Option<PathBuf>,
     channel: RuntimeChannel,
     ready: bool,
 }
@@ -93,6 +95,22 @@ impl Layout {
                 && !layout.state.starts_with(layout.install.join("runtimes")),
             "runtime layout state is redirected or inside an immutable payload"
         );
+        if let Some(logs) = &layout.logs {
+            let text = logs.to_str().context("non-UTF-8 log location")?;
+            ensure!(
+                logs.is_absolute()
+                    && text.len() <= 4096
+                    && !text.chars().any(char::is_control)
+                    && !logs
+                        .components()
+                        .any(|part| matches!(part, Component::ParentDir | Component::CurDir))
+                    && !layout.install.starts_with(logs)
+                    && !layout.state.starts_with(logs)
+                    && !logs.starts_with(layout.install.join("runtimes"))
+                    && !logs.starts_with(layout.state.join("control")),
+                "runtime log location is redirected or overlaps protected execution/control state"
+            );
+        }
         Ok(Some(layout))
     }
     fn owner(&self) -> Self {
@@ -242,10 +260,38 @@ pub(super) fn initialize(
             "existing control state requires an explicit transition; it cannot be silently relocated"
         );
     }
+    let logs = if let Some(existing) = &existing {
+        existing.logs.clone()
+    } else if state == install
+        && exists(&install.join("control"))?
+        && fs::read_dir(install.join("control"))?
+            .next()
+            .transpose()?
+            .is_some()
+    {
+        // Explicit adoption of an earlier raw development namespace must keep
+        // its already protected log location. Registered source paths may exist
+        // elsewhere under this installation; never start writing into them.
+        None
+    } else {
+        let native = crate::user_paths::UserPaths::discover(channel).ok();
+        let native_logs = native
+            .as_ref()
+            .filter(|native| {
+                crate::user_paths::canonical_location(&native.install).is_ok_and(|p| p == install)
+                    && crate::user_paths::canonical_location(&native.state)
+                        .is_ok_and(|p| p == state)
+            })
+            .map(|native| native.logs.clone());
+        Some(crate::user_paths::canonical_location(
+            &native_logs.unwrap_or_else(|| state.join("logs")),
+        )?)
+    };
     let mut layout = Layout {
         schema: 1,
         install,
         state,
+        logs,
         channel,
         ready: false,
     };
@@ -304,6 +350,36 @@ pub(super) fn control(root: &Path) -> Result<PathBuf> {
             Ok(layout.state.join("control"))
         }
     }
+}
+
+pub(super) fn log_parent(control: &Path) -> Result<PathBuf> {
+    let control = control.canonicalize()?;
+    let state = control.parent().context("control parent missing")?;
+    let owner_path = state.join(OWNER);
+    if !exists(&owner_path)? {
+        ensure!(
+            !exists(&state.join(CLAIM))? && !exists(&state.join(OWNER_PART))?,
+            "service state ownership is incomplete; log location cannot fall back"
+        );
+        return Ok(control); // Explicit raw development namespace, no installer binding.
+    }
+    let owner: Layout = serde_json::from_slice(&read_bounded(&owner_path, MAX_LAYOUT)?)?;
+    ensure!(
+        owner.ready && owner.state == state && control == state.join("control"),
+        "log location does not belong to this control namespace"
+    );
+    let layout = Layout::read(&owner.install)?.context("log installation binding missing")?;
+    ensure!(
+        layout == owner && layout.claimed()?,
+        "log install/state ownership differs"
+    );
+    // Earlier development layouts keep their existing ring until explicitly replaced.
+    let logs = layout.logs.unwrap_or(control);
+    ensure!(
+        crate::user_paths::canonical_location(&logs)? == logs,
+        "native log location is unavailable or redirected"
+    );
+    Ok(logs)
 }
 
 pub(super) fn inspect(root: &Path) -> Result<serde_json::Value> {

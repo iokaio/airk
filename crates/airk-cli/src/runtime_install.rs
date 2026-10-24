@@ -178,6 +178,10 @@ pub enum RuntimeCommand {
     SelfTest,
 }
 
+pub(crate) fn log_parent(control: &Path) -> Result<PathBuf> {
+    layout::log_parent(control)
+}
+
 pub fn default_install_root() -> Result<PathBuf> {
     Ok(crate::user_paths::UserPaths::discover(RuntimeChannel::Stable)?.install)
 }
