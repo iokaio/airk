@@ -124,11 +124,28 @@ fn error(message: &str) -> CallToolResult {
 }
 
 impl AirkServer {
+    #[cfg(test)]
     pub(crate) async fn execute<T, F>(&self, operation: UsageOperation, work: F) -> CallToolResult
     where
         T: Serialize + Send + 'static,
         F: FnOnce(airk_kernel::Kernel) -> anyhow::Result<T> + Send + 'static,
     {
+        self.execute_response(operation, Default::default(), work)
+            .await
+    }
+
+    pub(crate) async fn execute_response<T, F>(
+        &self,
+        operation: UsageOperation,
+        options: crate::response::ResponseArgs,
+        work: F,
+    ) -> CallToolResult
+    where
+        T: Serialize + Send + 'static,
+        F: FnOnce(airk_kernel::Kernel) -> anyhow::Result<T> + Send + 'static,
+    {
+        let responses = self.responses.clone();
+        let mode = options.response_mode.unwrap_or(self.response_mode);
         let control = matches!(
             operation,
             UsageOperation::Status | UsageOperation::Capabilities
@@ -150,7 +167,7 @@ impl AirkServer {
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| work(kernel.clone())))
                     .unwrap_or_else(|_| Err(anyhow::anyhow!("retrieval worker failed")));
             // Serialization and all optional usage I/O stay off the protocol executor.
-            crate::render(&kernel, span, result)
+            crate::render(&kernel, span, result, &responses, mode, options.include_status || control)
         })
         .await
         .unwrap_or_else(|_| error("retrieval worker failed"))

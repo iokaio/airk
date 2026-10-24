@@ -490,6 +490,23 @@ fn missing_registered_source_still_brokers_retained_evidence_and_reports_a_typed
                 && result.to_string().contains("memo.md"),
             "missing source blocked retained evidence: {result}"
         );
+        let body = |value: Value| -> Result<Value> {
+            Ok(serde_json::from_str(value["content"][0]["text"].as_str().context("missing tool result")?)?)
+        };
+        ensure!(body(result)?.get("freshness").is_some(), "first client observation missing");
+        let receipt = connection.status_receipt();
+        ensure!(serde_json::to_vec(&receipt)?.len() <= 1024, "unbounded status receipt");
+        drop(connection);
+        let arguments = serde_json::json!({"query":"copper harbor", "mode":"lexical"}).as_object().unwrap().clone();
+        let mut renewed = airk_cli::project_client::Connection::connect(&runtime, project.binding).await?;
+        renewed.restore_status_receipt(receipt);
+        let repeated = body(renewed.call("airk_search".into(), arguments.clone()).await?)?;
+        ensure!(repeated.get("freshness").is_none(), "renewal forgot client observations");
+        let mut independent = airk_cli::project_client::Connection::connect(&runtime, project.binding).await?;
+        let independent = body(independent.call("airk_search".into(), arguments).await?)?;
+        ensure!(independent.get("freshness").is_some(), "another client suppressed initial status");
+        ensure!(repeated["publication"]["token"] == independent["publication"]["token"], "display state changed revision identity");
+        drop(renewed);
         let Response::RequestEpoch { namespace, epoch } = request(Method::RequestEpoch).await?
         else {
             anyhow::bail!("request epoch missing")

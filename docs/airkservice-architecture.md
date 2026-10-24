@@ -52,6 +52,8 @@ Implemented diagnostic foundation: [bounded rotated process logs](service-loggin
 
 The [implementation completion checklist](service-implementation-checklist.md) tracks the remaining phases and final packaging gate. Stage commits are checkpoints; the implementation task remains open until the complete plan and its validation gates are satisfied.
 
+Implemented response policy: [terse defaults and Full selection](mcp-response-modes.md) now include the trusted panel preference, per-call override, bounded agent guidance, shared provenance and client-owned status receipts across connection renewal. Read validators, source bytes and exact revision selectors remain independent of display mode. Full compact discovery, consistent result keys and retained baselines remain separate Phase 7 work.
+
 ## 1. Decision and purpose
 
 Replace independently launched indexing helpers with one user-owned local AIRK service per execution environment and release channel. The service owns the project registry, durable work requests, resource admission and worker lifecycle. Separate project workers own independent project indexes. VS Code windows, CLI commands and coding-agent MCP connections become clients of that service. This is an architectural choice for explicit ownership, shared resource policy and a consistent client lifecycle, independent of whether incremental changes could improve 1.3.x performance.

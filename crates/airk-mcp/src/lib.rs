@@ -13,17 +13,28 @@ use rmcp::{
 use serde::{Deserialize, Serialize};
 
 mod execution;
+pub mod response;
+use response::ResponseArgs;
 pub mod local;
 pub mod remote;
 
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CapabilitiesArgs {
+    #[serde(flatten)]
+    pub response: ResponseArgs,
     /// One exact adapter ID; omit for supported-format summary.
     pub adapter: Option<String>,
     /// Include full adapter profiles and limitations instead of the compact summary.
     #[serde(default)]
     pub rich: bool,
+}
+
+#[derive(Default, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct StatusArgs {
+    #[serde(flatten)]
+    pub response: ResponseArgs,
 }
 
 #[derive(Default, Deserialize, Serialize, schemars::JsonSchema)]
@@ -59,6 +70,8 @@ pub enum SelectorArgs {
 #[derive(Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ChangesArgs {
+    #[serde(flatten, skip_serializing)]
+    pub response: ResponseArgs,
     pub since: Option<String>,
     /// Up to 64 remembered selectors totaling at most 32 KiB.
     #[serde(default)]
@@ -89,6 +102,8 @@ impl ChangesArgs {
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SearchArgs {
+    #[serde(flatten)]
+    pub response: ResponseArgs,
     /// Default hybrid retrieval; explicit lexical uses AND terms.
     pub query: String,
     /// Omit for the saved collection policy; pending vectors are disclosed in the response.
@@ -119,6 +134,8 @@ pub enum SearchMode {
 #[serde(deny_unknown_fields)]
 pub struct ReadArgs {
     #[serde(flatten)]
+    pub response: ResponseArgs,
+    #[serde(flatten)]
     pub evidence: EvidenceArgs,
     /// Collection-relative indexed path returned by AIRK, never an absolute path.
     pub path: String,
@@ -133,6 +150,8 @@ pub struct ReadArgs {
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ListArgs {
+    #[serde(flatten)]
+    pub response: ResponseArgs,
     /// Continuation returned by this tool; repeat the same filters and representation.
     pub cursor: Option<String>,
     /// Literal collection-relative path prefix, not a glob. Empty lists from the collection root.
@@ -155,6 +174,8 @@ fn default_budget() -> usize {
 #[serde(deny_unknown_fields)]
 pub struct PathArgs {
     #[serde(flatten)]
+    pub response: ResponseArgs,
+    #[serde(flatten)]
     pub evidence: EvidenceArgs,
     /// Collection-relative indexed path returned by AIRK, never an absolute path.
     pub path: String,
@@ -163,6 +184,8 @@ pub struct PathArgs {
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OutlineArgs {
+    #[serde(flatten)]
+    pub response: ResponseArgs,
     /// Continuation returned by this tool; repeat the same filters and representation.
     pub cursor: Option<String>,
     /// Return compact names, kinds, spans and durable keys; rich facts remain the default.
@@ -181,6 +204,8 @@ pub struct OutlineArgs {
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct FactArgs {
+    #[serde(flatten)]
+    pub response: ResponseArgs,
     /// Continuation returned by this tool; repeat the same filters and representation.
     pub cursor: Option<String>,
     /// Literal collection-relative path prefix, not a glob. Empty searches the active collection.
@@ -215,6 +240,8 @@ impl FactArgs {
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DocumentFactArgs {
+    #[serde(flatten)]
+    pub response: ResponseArgs,
     /// Compact statement/location evidence; defaults on for Agent Lean. False requests rich details.
     pub compact: Option<bool>,
     /// Continuation returned by this tool; repeat the same filters and representation.
@@ -239,6 +266,8 @@ pub struct DocumentFactArgs {
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ReferenceArgs {
+    #[serde(flatten)]
+    pub response: ResponseArgs,
     /// Exact-case whole identifier to locate textually, not a regex or semantic symbol ID.
     pub name: String,
     #[serde(default)]
@@ -252,6 +281,8 @@ pub struct ReferenceArgs {
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ContextArgs {
+    #[serde(flatten)]
+    pub response: ResponseArgs,
     #[serde(flatten)]
     pub evidence: EvidenceArgs,
     /// Collection-relative indexed file path returned with evidence.
@@ -272,6 +303,8 @@ fn default_radius() -> usize {
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CodeFactArgs {
+    #[serde(flatten)]
+    pub response: ResponseArgs,
     /// Compact signatures, locations and provenance; defaults on for Agent Lean. False requests rich details.
     pub compact: Option<bool>,
     /// Continuation returned by this tool; repeat the same filters and representation.
@@ -294,6 +327,8 @@ pub struct CodeFactArgs {
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RelationshipArgs {
+    #[serde(flatten)]
+    pub response: ResponseArgs,
     /// Use code.symbol_id from code facts/symbols, a file:path owner, or an exact written syntax target (e.g. db.query). Syntax targets are not resolved symbol IDs.
     pub symbol: String,
     /// incoming for callers/implementation candidates; outgoing for dependencies/containment. Defaults incoming.
@@ -343,6 +378,8 @@ pub struct AirkServer {
     tool_router: ToolRouter<Self>,
     client: ClientFamily,
     admission: execution::Admission,
+    responses: std::sync::Arc<response::Session>,
+    response_mode: response::ResponseMode,
 }
 
 #[tool_router]
@@ -353,12 +390,14 @@ impl AirkServer {
             tool_router: Self::tool_router(),
             client: ClientFamily::Unknown,
             admission: execution::Admission::default(),
+            responses: Default::default(),
+            response_mode: response::ResponseMode::from_environment(),
         }
     }
 
     #[tool(
         name = "airk_code_facts",
-        description = "Retrieve compact code evidence by exact name, qualified name, symbol ID, or a durable symbol_key exclusive of textual filters. Includes scopes, signatures and written types, call/framework candidates, and optional hash-bound SCIP producer assertions. Check code.basis/coverage; syntax does not resolve targets or establish runtime behavior. Use symbol IDs with airk_relationships.",
+        description = "Retrieve compact code evidence by exact name, qualified name, symbol ID, or a durable symbol_key exclusive of textual filters. Includes scopes, signatures and written types, call/framework candidates, and optional hash-bound SCIP producer assertions. Check code.basis/coverage; syntax does not resolve targets or establish runtime behavior. Use symbol IDs with airk_relationships. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -366,10 +405,13 @@ impl AirkServer {
         )
     )]
     async fn code_facts(&self, Parameters(args): Parameters<CodeFactArgs>) -> CallToolResult {
-        self.execute(UsageOperation::CodeFacts, move |kernel| {
+        let full = args.response.response_mode.unwrap_or(self.response_mode)
+            == response::ResponseMode::Full;
+        self.execute_response(UsageOperation::CodeFacts, args.response, move |kernel| {
             let compact = args.compact.unwrap_or(
-                kernel.applied_index_detail()?
-                    == Some(airk_core::extraction::IndexDetail::AgentLean),
+                !full
+                    && kernel.applied_index_detail()?
+                        == Some(airk_core::extraction::IndexDetail::AgentLean),
             );
             if let Some(key) = continuity_selector(
                 args.symbol_key.as_deref(),
@@ -405,7 +447,7 @@ impl AirkServer {
 
     #[tool(
         name = "airk_relationships",
-        description = "Investigate available structural links and candidate impact through incoming/outgoing edges, scoped paths and 1..3 hops. Agent Lean and Rich Structure retain supported call occurrences, but written syntax targets remain unresolved candidates; SCIP assertions are not calls. Check coverage; absent edges do not prove no impact.",
+        description = "Investigate available structural links and candidate impact through incoming/outgoing edges, scoped paths and 1..3 hops. Agent Lean and Rich Structure retain supported call occurrences, but written syntax targets remain unresolved candidates; SCIP assertions are not calls. Check coverage; absent edges do not prove no impact. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -416,23 +458,27 @@ impl AirkServer {
         &self,
         Parameters(args): Parameters<RelationshipArgs>,
     ) -> CallToolResult {
-        self.execute(UsageOperation::Relationships, move |kernel| {
-            kernel.relationships(&RelationshipQuery {
-                symbol: args.symbol,
-                direction: args.direction,
-                kind: args.kind,
-                path_prefix: args.path_prefix,
-                hops: args.hops,
-                limit: args.limit,
-                max_bytes: args.max_bytes,
-            })
-        })
+        self.execute_response(
+            UsageOperation::Relationships,
+            args.response,
+            move |kernel| {
+                kernel.relationships(&RelationshipQuery {
+                    symbol: args.symbol,
+                    direction: args.direction,
+                    kind: args.kind,
+                    path_prefix: args.path_prefix,
+                    hops: args.hops,
+                    limit: args.limit,
+                    max_bytes: args.max_bytes,
+                })
+            },
+        )
         .await
     }
 
     #[tool(
         name = "airk_search",
-        description = "Find code or documents. Use path_prefix when the question concerns one project or component; a relevant document does not prove application behavior. Omitted mode uses hybrid, or lexical after vector opt-out. Lexical uses AND terms; vector/hybrid need an indexed local model. semantic=true aliases vector. Results default to focused snippets with exact citations; full_chunks requests complete indexed chunks.",
+        description = "Find code or documents. Use path_prefix when the question concerns one project or component; a relevant document does not prove application behavior. Omitted mode uses hybrid, or lexical after vector opt-out. Lexical uses AND terms; vector/hybrid need an indexed local model. semantic=true aliases vector. Results default to focused snippets with exact citations; full_chunks requests complete indexed chunks. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -440,7 +486,7 @@ impl AirkServer {
         )
     )]
     async fn search(&self, Parameters(args): Parameters<SearchArgs>) -> CallToolResult {
-        self.execute(UsageOperation::Search, move |kernel| {
+        self.execute_response(UsageOperation::Search, args.response, move |kernel| {
             anyhow::ensure!(
                 !args.semantic || args.mode.is_none(),
                 "choose mode or semantic, not both"
@@ -466,7 +512,7 @@ impl AirkServer {
 
     #[tool(
         name = "airk_read_file",
-        description = "Inspect a specific code or document excerpt after locating it. Read an inclusive 1-based indexed line range from an inventory path; this is the last successful snapshot, not a live filesystem read. For PDF/DOCX/PPTX, use extracted lines within one page/block/slide.",
+        description = "Inspect a specific code or document excerpt after locating it. Read an inclusive 1-based indexed line range from an inventory path; this is the last successful snapshot, not a live filesystem read. For PDF/DOCX/PPTX, use extracted lines within one page/block/slide. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -474,7 +520,7 @@ impl AirkServer {
         )
     )]
     async fn read_file(&self, Parameters(args): Parameters<ReadArgs>) -> CallToolResult {
-        self.execute(UsageOperation::ReadFile, move |kernel| {
+        self.execute_response(UsageOperation::ReadFile, args.response, move |kernel| {
             kernel.read_file_conditional(
                 &args.path,
                 args.start_line,
@@ -488,7 +534,7 @@ impl AirkServer {
 
     #[tool(
         name = "airk_list_files",
-        description = "Discover indexed files before choosing paths for outlines or reads. Filter by literal relative-path prefix, not glob; count and bytes are bounded. Lists the snapshot inventory, not all live workspace files or indexing coverage.",
+        description = "Discover indexed files before choosing paths for outlines or reads. Filter by literal relative-path prefix, not glob; count and bytes are bounded. Lists the snapshot inventory, not all live workspace files or indexing coverage. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -496,7 +542,7 @@ impl AirkServer {
         )
     )]
     async fn list_files(&self, Parameters(args): Parameters<ListArgs>) -> CallToolResult {
-        self.execute(UsageOperation::ListFiles, move |kernel| {
+        self.execute_response(UsageOperation::ListFiles, args.response, move |kernel| {
             kernel.list_files_page(
                 &args.prefix,
                 args.limit,
@@ -512,21 +558,23 @@ impl AirkServer {
 
     #[tool(
         name = "airk_status",
-        description = "Check collection index readiness, active generation, file/chunk counts and extractor version. Counts describe the snapshot, not live workspace coverage or freshness. Request indexing through the CLI/extension when sources change.",
+        description = "Check collection index readiness, active generation, file/chunk counts and extractor version. Counts describe the snapshot, not live workspace coverage or freshness. Request indexing through the CLI/extension when sources change. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
             open_world_hint = false
         )
     )]
-    async fn status(&self) -> CallToolResult {
-        self.execute(UsageOperation::Status, move |kernel| kernel.status())
-            .await
+    async fn status(&self, Parameters(args): Parameters<StatusArgs>) -> CallToolResult {
+        self.execute_response(UsageOperation::Status, args.response, move |kernel| {
+            kernel.status()
+        })
+        .await
     }
 
     #[tool(
         name = "airk_file_info",
-        description = "Check a file's indexed language/profile, extraction method, syntax quality, hash and line basis before interpreting evidence. Distinguishes source lines from extracted document coordinates; does not compare the live file for freshness.",
+        description = "Check a file's indexed language/profile, extraction method, syntax quality, hash and line basis before interpreting evidence. Distinguishes source lines from extracted document coordinates; does not compare the live file for freshness. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -534,7 +582,7 @@ impl AirkServer {
         )
     )]
     async fn file_info(&self, Parameters(args): Parameters<PathArgs>) -> CallToolResult {
-        self.execute(UsageOperation::FileInfo, move |kernel| {
+        self.execute_response(UsageOperation::FileInfo, args.response, move |kernel| {
             kernel.file_info_conditional(&args.path, &args.evidence.options()?)
         })
         .await
@@ -542,7 +590,7 @@ impl AirkServer {
 
     #[tool(
         name = "airk_outline",
-        description = "Understand a file's structure before reading broad text: bounded language-specific definitions, imports or structured document facts with locations. Takes one exact indexed file path. Check airk_file_info for partial syntax; no runtime or type resolution.",
+        description = "Understand a file's structure before reading broad text: bounded language-specific definitions, imports or structured document facts with locations. Takes one exact indexed file path. Check airk_file_info for partial syntax; no runtime or type resolution. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -550,7 +598,7 @@ impl AirkServer {
         )
     )]
     async fn outline(&self, Parameters(args): Parameters<OutlineArgs>) -> CallToolResult {
-        self.execute(UsageOperation::Outline, move |kernel| {
+        self.execute_response(UsageOperation::Outline, args.response, move |kernel| {
             kernel.outline_conditional_page(
                 &args.path,
                 args.limit,
@@ -567,7 +615,7 @@ impl AirkServer {
 
     #[tool(
         name = "airk_symbols",
-        description = "Locate function/class/type and other supported code definitions by exact name, language/profile or literal path prefix. Omit name to list grammar-derived definitions. Use airk_search for keyword discovery. Does not resolve dynamic or cross-file names.",
+        description = "Locate function/class/type and other supported code definitions by exact name, language/profile or literal path prefix. Omit name to list grammar-derived definitions. Use airk_search for keyword discovery. Does not resolve dynamic or cross-file names. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -575,7 +623,7 @@ impl AirkServer {
         )
     )]
     async fn symbols(&self, Parameters(args): Parameters<FactArgs>) -> CallToolResult {
-        self.execute(UsageOperation::Symbols, move |kernel| {
+        self.execute_response(UsageOperation::Symbols, args.response, move |kernel| {
             let options = airk_core::discovery::DiscoveryOptions {
                 cursor: args.cursor.clone(),
                 compact: false,
@@ -587,7 +635,7 @@ impl AirkServer {
 
     #[tool(
         name = "airk_imports",
-        description = "Inspect static code dependencies through grammar-derived import/use/include declarations. Filter by language/profile, literal path prefix and optional name substring. Returns syntax evidence, not a resolved dependency graph or transitive/dynamic dependencies.",
+        description = "Inspect static code dependencies through grammar-derived import/use/include declarations. Filter by language/profile, literal path prefix and optional name substring. Returns syntax evidence, not a resolved dependency graph or transitive/dynamic dependencies. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -595,7 +643,7 @@ impl AirkServer {
         )
     )]
     async fn imports(&self, Parameters(args): Parameters<FactArgs>) -> CallToolResult {
-        self.execute(UsageOperation::Imports, move |kernel| {
+        self.execute_response(UsageOperation::Imports, args.response, move |kernel| {
             let options = airk_core::discovery::DiscoveryOptions {
                 cursor: args.cursor.clone(),
                 compact: false,
@@ -607,7 +655,7 @@ impl AirkServer {
 
     #[tool(
         name = "airk_document_facts",
-        description = "Find repository requirements, dates, features, architecture/design/decision language, headings, configuration keys and asset facts. Select a durable document_key alone, or filter by exact kind, language/profile, literal path prefix or statement/name substring. Prose cues include heading context, written bounds/units and modality; they are evidence candidates, not inferred obligations. Documents retain original locations; explicitly published local OCR evidence carries its own provenance and recognition limitations.",
+        description = "Find repository requirements, dates, features, architecture/design/decision language, headings, configuration keys and asset facts. Select a durable document_key alone, or filter by exact kind, language/profile, literal path prefix or statement/name substring. Prose cues include heading context, written bounds/units and modality; they are evidence candidates, not inferred obligations. Documents retain original locations; explicitly published local OCR evidence carries its own provenance and recognition limitations. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -618,46 +666,53 @@ impl AirkServer {
         &self,
         Parameters(args): Parameters<DocumentFactArgs>,
     ) -> CallToolResult {
-        self.execute(UsageOperation::DocumentFacts, move |kernel| {
-            let compact = args.compact.unwrap_or(
-                kernel.applied_index_detail()?
-                    == Some(airk_core::extraction::IndexDetail::AgentLean),
-            );
-            if let Some(key) = continuity_selector(
-                args.document_key.as_deref(),
-                false,
-                args.name.is_some()
-                    || args.kind.is_some()
-                    || args.language.is_some()
-                    || !args.path_prefix.is_empty()
-                    || args.cursor.is_some(),
-            )? {
-                return kernel.continuity_facts(key, args.limit, args.max_bytes);
-            }
-            kernel.facts_page(
-                &FactQuery {
-                    path_prefix: args.path_prefix,
-                    name: args.name,
-                    language: args.language,
-                    kind: args.kind,
-                    exact_name: false,
-                    limit: args.limit,
-                    max_bytes: args.max_bytes,
-                    path_exact: false,
-                    document_only: true,
-                },
-                &airk_core::discovery::DiscoveryOptions {
-                    cursor: args.cursor,
-                    compact,
-                },
-            )
-        })
+        let full = args.response.response_mode.unwrap_or(self.response_mode)
+            == response::ResponseMode::Full;
+        self.execute_response(
+            UsageOperation::DocumentFacts,
+            args.response,
+            move |kernel| {
+                let compact = args.compact.unwrap_or(
+                    !full
+                        && kernel.applied_index_detail()?
+                            == Some(airk_core::extraction::IndexDetail::AgentLean),
+                );
+                if let Some(key) = continuity_selector(
+                    args.document_key.as_deref(),
+                    false,
+                    args.name.is_some()
+                        || args.kind.is_some()
+                        || args.language.is_some()
+                        || !args.path_prefix.is_empty()
+                        || args.cursor.is_some(),
+                )? {
+                    return kernel.continuity_facts(key, args.limit, args.max_bytes);
+                }
+                kernel.facts_page(
+                    &FactQuery {
+                        path_prefix: args.path_prefix,
+                        name: args.name,
+                        language: args.language,
+                        kind: args.kind,
+                        exact_name: false,
+                        limit: args.limit,
+                        max_bytes: args.max_bytes,
+                        path_exact: false,
+                        document_only: true,
+                    },
+                    &airk_core::discovery::DiscoveryOptions {
+                        cursor: args.cursor,
+                        compact,
+                    },
+                )
+            },
+        )
         .await
     }
 
     #[tool(
         name = "airk_references",
-        description = "Locate exact-case whole-identifier textual occurrences using indexed lexical candidates verified against retained source, including CamelCase. Includes definitions, strings and comments, never resolved semantic references. Check truncation before impact analysis and verify live source.",
+        description = "Locate exact-case whole-identifier textual occurrences using indexed lexical candidates verified against retained source, including CamelCase. Includes definitions, strings and comments, never resolved semantic references. Check truncation before impact analysis and verify live source. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -665,7 +720,7 @@ impl AirkServer {
         )
     )]
     async fn references(&self, Parameters(args): Parameters<ReferenceArgs>) -> CallToolResult {
-        self.execute(UsageOperation::References, move |kernel| {
+        self.execute_response(UsageOperation::References, args.response, move |kernel| {
             kernel.references(&args.name, &args.path_prefix, args.limit, args.max_bytes)
         })
         .await
@@ -673,7 +728,7 @@ impl AirkServer {
 
     #[tool(
         name = "airk_context",
-        description = "Expand a search/fact hit with bounded neighboring indexed lines around its line coordinate. PDF/DOCX/PPTX lines are extracted-text coordinates; keep the request within one original page/block/slide. Evidence reflects the last successful index.",
+        description = "Expand a search/fact hit with bounded neighboring indexed lines around its line coordinate. PDF/DOCX/PPTX lines are extracted-text coordinates; keep the request within one original page/block/slide. Evidence reflects the last successful index. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -681,7 +736,7 @@ impl AirkServer {
         )
     )]
     async fn context(&self, Parameters(args): Parameters<ContextArgs>) -> CallToolResult {
-        self.execute(UsageOperation::Context, move |kernel| {
+        self.execute_response(UsageOperation::Context, args.response, move |kernel| {
             kernel.context_conditional(
                 &args.path,
                 args.line,
@@ -696,7 +751,7 @@ impl AirkServer {
 
     #[tool(
         name = "airk_changes",
-        description = "Inspect bounded observed indexed changes since an exact token and validate remembered evidence. Supply since or selectors. Check independent coverage and freshness; this does not verify live source. Consume every needed cursor page before advancing the baseline. Moves are content-based candidates, not proof of filesystem intent.",
+        description = "Inspect bounded observed indexed changes since an exact token and validate remembered evidence. Supply since or selectors. Check independent coverage and freshness; this does not verify live source. Consume every needed cursor page before advancing the baseline. Moves are content-based candidates, not proof of filesystem intent. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -704,7 +759,7 @@ impl AirkServer {
         )
     )]
     async fn changes(&self, Parameters(args): Parameters<ChangesArgs>) -> CallToolResult {
-        self.execute(UsageOperation::Changes, move |kernel| {
+        self.execute_response(UsageOperation::Changes, args.response, move |kernel| {
             kernel.changes(&args.request()?)
         })
         .await
@@ -712,7 +767,7 @@ impl AirkServer {
 
     #[tool(
         name = "airk_capabilities",
-        description = "Check native formats, explicitly provisioned local model/OCR/code-provider adapters and their limits before planning exploration. Works before indexing. Reports available capabilities, not whether optional providers or this collection are ready.",
+        description = "Check native formats, explicitly provisioned local model/OCR/code-provider adapters and their limits before planning exploration. Works before indexing. Reports available capabilities, not whether optional providers or this collection are ready. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -721,7 +776,7 @@ impl AirkServer {
     )]
     async fn capabilities(&self, Parameters(args): Parameters<CapabilitiesArgs>) -> CallToolResult {
         let admission = self.admission.status();
-        self.execute(UsageOperation::Capabilities, move |_| {
+        self.execute_response(UsageOperation::Capabilities, args.response, move |_| {
             anyhow::ensure!(args.adapter.as_ref().is_none_or(|id| id.len() <= 128), "adapter ID too long");
             let adapters = Kernel::extraction_adapters().into_iter()
                 .filter(|item| args.adapter.as_ref().is_none_or(|id| &item.profile.adapter_id == id))
@@ -762,34 +817,39 @@ fn render<T: Serialize>(
     kernel: &Kernel,
     span: airk_kernel::usage::RequestSpan,
     result: anyhow::Result<T>,
+    responses: &response::Session,
+    mode: response::ResponseMode,
+    include_status: bool,
 ) -> CallToolResult {
     let mut logical = result
         .as_ref()
         .ok()
         .and_then(|value| serde_json::to_value(value).ok());
-    if let Some(object) = logical.as_mut().and_then(serde_json::Value::as_object_mut)
-        && object
-            .get("indexing")
-            .and_then(|v| v.get("level"))
-            .and_then(serde_json::Value::as_str)
-            == Some("agent_lean")
-        && let Some(publication) = object.get("publication").and_then(|value| {
+    if let Some(object) = logical.as_mut().and_then(serde_json::Value::as_object_mut) {
+        let publication = [
+            object.get("publication"),
+            object
+                .get("read")
+                .and_then(|r| r.get("current_publication")),
+            object.get("read").and_then(|r| r.get("publication")),
+        ]
+        .into_iter()
+        .flatten()
+        .find_map(|value| {
             serde_json::from_value::<airk_core::evidence::RevisionEnvelope>(value.clone()).ok()
-        })
-    {
-        if !object.contains_key("freshness") {
-            object.insert(
-                "freshness".into(),
-                serde_json::to_value(kernel.changes_freshness()).unwrap_or(serde_json::Value::Null),
-            );
-        }
-        if !object.contains_key("discovery_readiness") {
-            match kernel.discovery_observation(publication.token) {
-                Ok(Some(discovery)) => {
-                    object.insert(
-                        "discovery_readiness".into(),
-                        serde_json::to_value(discovery).unwrap_or(serde_json::Value::Null),
-                    );
+        });
+        if let Some(publication) = publication {
+            object.entry("freshness").or_insert_with(|| {
+                serde_json::to_value(kernel.changes_freshness()).unwrap_or(serde_json::Value::Null)
+            });
+            match kernel.readiness_observation(publication.token) {
+                Ok(Some((discovery, semantic))) => {
+                    object.entry("discovery_readiness").or_insert_with(|| {
+                        serde_json::to_value(discovery).unwrap_or(serde_json::Value::Null)
+                    });
+                    object.entry("semantic_readiness").or_insert_with(|| {
+                        serde_json::to_value(semantic).unwrap_or(serde_json::Value::Null)
+                    });
                 }
                 _ => {
                     object.insert(
@@ -806,10 +866,8 @@ fn render<T: Serialize>(
         object.insert("request_id".into(), id.into());
     }
     let mut display = logical.clone();
-    if let Some(object) = display.as_mut().and_then(serde_json::Value::as_object_mut)
-        && std::env::var("AIRK_MCP_RESPONSE_MODE").as_deref() == Ok("terse")
-    {
-        terse_envelope(object);
+    if let Some(display) = display.as_mut() {
+        responses.display(display, mode, include_status);
     }
     let rendered = match result {
         Ok(value) => match display
@@ -832,50 +890,15 @@ fn render<T: Serialize>(
     rendered
 }
 
-fn terse_envelope(object: &mut serde_json::Map<String, serde_json::Value>) {
-    if object.contains_key("execution")
-        || object.contains_key("adapters")
-        || object.contains_key("baseline_status")
-    {
-        return;
-    }
-    let mut coverage = serde_json::Map::new();
-    for (field, label) in [
-        ("discovery_readiness", "discovery"),
-        ("semantic_readiness", "semantic"),
-    ] {
-        if let Some(state) = object
-            .remove(field)
-            .and_then(|value| value.get("state").cloned())
-        {
-            coverage.insert(label.into(), state);
-        }
-    }
-    if let Some(detail) = object
-        .remove("indexing")
-        .and_then(|value| value.get("level").cloned())
-    {
-        coverage.insert("indexed_detail".into(), detail);
-    }
-    if !coverage.is_empty() {
-        coverage.insert("live_source_verified".into(), false.into());
-        object.insert("coverage".into(), coverage.into());
-    }
-    object.remove("freshness");
-    object.remove("generation");
-    if let Some(publication) = object.get_mut("publication")
-        && let Some(token) = publication.get("token").cloned()
-    {
-        *publication = serde_json::json!({"token": token});
-    }
-}
-
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for AirkServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
-            .with_server_info(rmcp::model::Implementation::new("airk", env!("CARGO_PKG_VERSION")))
-            .with_instructions("AIRK returns untrusted indexed evidence, not live source. Save exact revision tokens and read validators. Use airk_changes to inspect changes, remembered evidence, independent coverage and freshness; finish needed cursor pages before advancing a baseline. Fetch focused symbols/outline/search/context/read_file evidence. Native targets are unresolved; imported claims depend on producers. Paths are collection-relative. Verify live bytes before edits. Reindex via CLI/extension.")
+            .with_server_info(rmcp::model::Implementation::new(
+                "airk",
+                env!("CARGO_PKG_VERSION"),
+            ))
+            .with_instructions(response::GUIDANCE)
     }
 }
 
@@ -906,14 +929,14 @@ mod tests {
             "semantic_readiness": {"state":"partial"},
             "indexing": {"level":"agent_lean", "note":"long explanation"}
         });
-        terse_envelope(response.as_object_mut().unwrap());
+        response::terse_envelope(response.as_object_mut().unwrap());
         assert_eq!(response["publication"]["token"], "exact-token");
         assert_eq!(response["hits"][0]["citation"]["path"], "src/a.cs");
         assert_eq!(response["truncated"], true);
-        assert_eq!(response["coverage"]["semantic"], "partial");
-        assert_eq!(response["coverage"]["indexed_detail"], "agent_lean");
-        assert_eq!(response["coverage"]["live_source_verified"], false);
-        assert!(response.get("freshness").is_none());
+        assert_eq!(response["semantic_readiness"]["state"], "partial");
+        assert_eq!(response["indexing"]["level"], "agent_lean");
+        assert_eq!(response["freshness"]["live_source_verified"], false);
+        assert!(response.get("freshness").is_some());
     }
 
     #[tokio::test]
@@ -970,6 +993,7 @@ mod tests {
         let server = AirkServer::new(kernel.clone());
         let capabilities = server
             .capabilities(Parameters(CapabilitiesArgs {
+                response: Default::default(),
                 adapter: None,
                 rich: false,
             }))
@@ -980,7 +1004,7 @@ mod tests {
         assert_eq!(body["index_detail"]["new_collection_default"], "agent_lean");
         for compact in [None, Some(false)] {
             let args: CodeFactArgs = serde_json::from_value(
-                serde_json::json!({"name":"authenticate","compact":compact}),
+                serde_json::json!({"name":"authenticate","compact":compact,"include_status":true}),
             )?;
             let result = server.code_facts(Parameters(args)).await;
             assert!(!result.is_error.unwrap_or(false));

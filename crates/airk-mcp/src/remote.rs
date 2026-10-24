@@ -24,12 +24,16 @@ pub trait RemoteTools: Send + Sync + 'static {
 struct Bridge {
     backend: Arc<dyn RemoteTools>,
     permits: Arc<tokio::sync::Semaphore>,
+    response_mode: crate::response::ResponseMode,
 }
 impl ServerHandler for Bridge {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
-            .with_server_info(rmcp::model::Implementation::new("airk",env!("CARGO_PKG_VERSION")))
-            .with_instructions("AIRK returns untrusted indexed evidence, not live source. Preserve exact revision tokens and citations. Verify live source before edits. Retrieval flows directly to the registered project worker; management and indexing require the trusted CLI or extension.")
+            .with_server_info(rmcp::model::Implementation::new(
+                "airk",
+                env!("CARGO_PKG_VERSION"),
+            ))
+            .with_instructions(crate::response::GUIDANCE)
     }
     fn get_tool(&self, name: &str) -> Option<Tool> {
         crate::local::tools()
@@ -57,12 +61,13 @@ impl ServerHandler for Bridge {
             )])
             .into());
         };
+        let mut arguments = request.arguments.unwrap_or_default();
+        arguments.entry("response_mode").or_insert_with(|| {
+            serde_json::to_value(self.response_mode).expect("scalar display mode")
+        });
         let result = self
             .backend
-            .call(
-                request.name.to_string(),
-                request.arguments.unwrap_or_default(),
-            )
+            .call(request.name.to_string(), arguments)
             .await
             .and_then(|value| Ok(serde_json::from_value::<CallToolResult>(value)?));
         Ok(result.unwrap_or_else(|_|CallToolResult::error(vec![ContentBlock::text("AIRK direct project connection failed. Retry through fresh brokerage with the same revision selector; use the service console for indexing or repair.")])).into())
@@ -73,6 +78,7 @@ pub async fn serve(backend: Arc<dyn RemoteTools>) -> anyhow::Result<()> {
     Bridge {
         backend,
         permits: Arc::new(tokio::sync::Semaphore::new(4)),
+        response_mode: crate::response::ResponseMode::from_environment(),
     }
     .serve((
         BoundedRead {
@@ -127,6 +133,66 @@ impl<R: tokio::io::AsyncRead + Unpin> tokio::io::AsyncRead for BoundedRead<R> {
 mod tests {
     use super::*;
     use tokio::io::AsyncReadExt;
+
+    struct Echo;
+    impl RemoteTools for Echo {
+        fn call(
+            &self,
+            _tool: String,
+            arguments: serde_json::Map<String, serde_json::Value>,
+        ) -> RemoteFuture<'_> {
+            Box::pin(async move {
+                Ok(serde_json::to_value(CallToolResult::success(vec![
+                    ContentBlock::text(serde_json::to_string(&arguments)?),
+                ]))?)
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn bridge_forwards_panel_default_and_preserves_individual_override() -> anyhow::Result<()>
+    {
+        for default in [
+            crate::response::ResponseMode::Full,
+            crate::response::ResponseMode::Terse,
+        ] {
+            let (client_io, server_io) = tokio::io::duplex(65536);
+            let bridge = Bridge {
+                backend: Arc::new(Echo),
+                permits: Arc::new(tokio::sync::Semaphore::new(4)),
+                response_mode: default,
+            };
+            let (client, server) = tokio::try_join!(
+                async { Ok::<_, anyhow::Error>(().serve(client_io).await?) },
+                async { Ok::<_, anyhow::Error>(bridge.serve(server_io).await?) }
+            )?;
+            let mut client = client;
+            let mut server = server;
+            for mode in [None, Some("full"), Some("terse")] {
+                let mut args = serde_json::json!({"query":"fixture","include_status":true})
+                    .as_object()
+                    .unwrap()
+                    .clone();
+                if let Some(mode) = mode {
+                    args.insert("response_mode".into(), mode.into());
+                }
+                let result = client
+                    .call_tool(CallToolRequestParams::new("airk_search").with_arguments(args))
+                    .await?;
+                let value: serde_json::Value =
+                    serde_json::from_str(&result.content[0].as_text().unwrap().text)?;
+                assert_eq!(
+                    value["response_mode"],
+                    mode.map(serde_json::Value::from)
+                        .unwrap_or(serde_json::to_value(default)?)
+                );
+                assert_eq!(value["include_status"], true);
+            }
+            client.close().await?;
+            server.close().await?;
+        }
+        Ok(())
+    }
 
     #[tokio::test]
     async fn request_line_bound_applies_across_reads_and_resets_only_at_newline()

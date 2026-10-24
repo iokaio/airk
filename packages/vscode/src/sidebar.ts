@@ -31,6 +31,7 @@ export interface SidebarState {
     trusted: boolean; paused: boolean; mode: IndexMode; changingStorage: boolean;
     collections: SidebarCollection[]; groups: ControlGroup[];
     registrationEnabled?: boolean;
+    responseMode?: 'terse' | 'full';
     cliStatus?: 'ready' | 'failed' | 'disabled';
 }
 export function semanticCompletion(vectors?: VectorStatus, progress?: SidebarCollection['semanticProgress']):
@@ -46,6 +47,7 @@ export function semanticCompletion(vectors?: VectorStatus, progress?: SidebarCol
         Math.round(100 * completed / total)) };
 }
 export type SidebarAction = { type: 'vectors'; collection: string; dataDir: string; enabled: boolean } | { type: 'detail'; collection: string; dataDir: string; level: IndexDetail } | { type: 'ready' } | { type: 'mode'; value: IndexMode }
+    | { type: 'responseMode'; value: 'terse' | 'full' }
     | { type: 'registration'; enabled: boolean }
     | { type: 'command'; command: string }
     | { type: 'collection'; action: 'index' | 'reindex' | 'status' | 'usage' | 'verify' | 'mcpDetails' | 'tools' | 'compression' | 'diagnose'; collection: string; dataDir: string };
@@ -60,6 +62,7 @@ export function sidebarAction(value: unknown, allowed: Set<string>): SidebarActi
         && typeof item.level === 'string' && ['agent_lean', 'essential', 'balanced', 'detailed'].includes(item.level)) {
         return { type: 'detail', collection: item.collection, dataDir: item.dataDir, level: item.level as IndexDetail };
     }
+    if (item.type === 'responseMode' && (item.value === 'terse' || item.value === 'full')) { return { type: 'responseMode', value: item.value }; }
     if (item.type === 'ready') { return { type: 'ready' }; }
     if (item.type === 'registration' && typeof item.enabled === 'boolean') { return { type: 'registration', enabled: item.enabled }; }
     if (item.type === 'mode' && typeof item.value === 'string' && ['manual', 'onSave', 'debounced', 'idle'].includes(item.value)) {
@@ -192,7 +195,7 @@ export function sidebarContent(state: SidebarState): string {
         ${capacityBlocked && !state.paused ? '<p class="notice">A collection reached its storage limit. Reclaim eligible space or adjust its quota, then Resume.</p>' : ''}
         ${state.changingStorage ? '<p class="notice" role="status">Choosing storage. New indexing jobs are held until this finishes.</p>' : ''}</section>
         ${collections || '<section><h2>No workspace collection</h2><p>Open a folder and trust the workspace to start indexing.</p></section>'}
-        <section><h2>Agent connections</h2><label class="toggle"><input id="registration" type="checkbox" role="switch"${state.registrationEnabled !== false ? ' checked' : ''}${disabled ? ' disabled' : ''}> VS Code registration: ${state.registrationEnabled !== false ? 'On' : 'Off'}</label>
+        <section><h2>Agent connections</h2><label for="response-mode">MCP response mode</label><select id="response-mode"${disabled ? ' disabled' : ''}><option value="terse"${state.responseMode !== 'full' ? ' selected' : ''}>Terse response mode (default)</option><option value="full"${state.responseMode === 'full' ? ' selected' : ''}>Full response mode</option></select><p class="muted">Use Full to investigate provenance, coverage or unexpected results. Reload the agent’s MCP connection after changing this setting.</p><label class="toggle"><input id="registration" type="checkbox" role="switch"${state.registrationEnabled !== false ? ' checked' : ''}${disabled ? ' disabled' : ''}> VS Code registration: ${state.registrationEnabled !== false ? 'On' : 'Off'}</label>
         <p class="muted">Automatically offer AIRK collections to VS Code on this extension host. This is not a connection status or a global MCP kill switch.</p>
         ${button('Connect coding agent…', 'airk.manageMcp', disabled, false)}
         ${button('VS Code / Copilot MCP controls', 'airk.manageVscodeMcp', disabled)}
@@ -219,7 +222,7 @@ export function renderSidebar(state: SidebarState): string {
     setInterval(()=>{document.querySelectorAll('[data-semantic-started]').forEach(el=>{const started=Number(el.getAttribute('data-semantic-started'));if(!Number.isFinite(started))return;const seconds=Math.max(0,Math.floor((Date.now()-started)/1000));el.textContent=Math.floor(seconds/60)+'m '+seconds%60+'s';});},1000);
     dashboard.addEventListener('toggle',remember,true);window.addEventListener('scroll',remember);
     dashboard.addEventListener('click',event=>{const button=event.target.closest('button');if(!button||button.disabled)return;if(button.dataset.action){vscode.postMessage({type:'collection',action:button.dataset.action,collection:button.dataset.collection,dataDir:button.dataset.storage});}else if(button.dataset.command){vscode.postMessage({type:'command',command:button.dataset.command});}});
-    dashboard.addEventListener('change',event=>{if(event.target.dataset.vectors)vscode.postMessage({type:'vectors',collection:event.target.dataset.collection,dataDir:event.target.dataset.storage,enabled:event.target.checked});if(event.target.dataset.detail)vscode.postMessage({type:'detail',collection:event.target.dataset.collection,dataDir:event.target.dataset.storage,level:event.target.value});if(event.target.id==='mode')vscode.postMessage({type:'mode',value:event.target.value});if(event.target.id==='registration')vscode.postMessage({type:'registration',enabled:event.target.checked});});
+    dashboard.addEventListener('change',event=>{if(event.target.dataset.vectors)vscode.postMessage({type:'vectors',collection:event.target.dataset.collection,dataDir:event.target.dataset.storage,enabled:event.target.checked});if(event.target.dataset.detail)vscode.postMessage({type:'detail',collection:event.target.dataset.collection,dataDir:event.target.dataset.storage,level:event.target.value});if(event.target.id==='response-mode')vscode.postMessage({type:'responseMode',value:event.target.value});if(event.target.id==='mode')vscode.postMessage({type:'mode',value:event.target.value});if(event.target.id==='registration')vscode.postMessage({type:'registration',enabled:event.target.checked});});
     window.addEventListener('message',event=>{if(event.data.type!=='render')return;remember();const state=vscode.getState(),focus=document.activeElement?.id;dashboard.innerHTML=event.data.html;restore(state);if(focus)document.getElementById(focus)?.focus({preventScroll:true});});
     vscode.postMessage({type:'ready'});
     </script></body></html>`;

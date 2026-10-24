@@ -68,6 +68,15 @@ pub enum Reply {
 pub struct Query {
     pub tool: String,
     pub arguments: serde_json::Map<String, serde_json::Value>,
+    #[serde(default)]
+    pub status_receipt: airk_mcp::response::StatusReceipt,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QueryResult {
+    pub result: serde_json::Value,
+    pub status_receipt: airk_mcp::response::StatusReceipt,
 }
 
 #[derive(Serialize, Deserialize)]

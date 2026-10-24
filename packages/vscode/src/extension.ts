@@ -468,6 +468,7 @@ class Controller implements vscode.Disposable {
         const known = vscode.workspace.isTrusted ? this.context.globalState.get<Record<string, KnownCollection>>('collections-1.2', {}) : {};
         return { trusted: vscode.workspace.isTrusted, paused: this.scheduler.isPaused || states.some(state => state.state === 'paused'),
             registrationEnabled: this.registrationEnabled(),
+            responseMode: this.responseMode(),
             cliStatus: this.cliStatus,
             mode: this.options().mode, changingStorage: !!this.storageChoice, groups: this.controlGroups(),
             collections: vscode.workspace.isTrusted ? [...this.specs.values()].map(spec => ({ ...spec,
@@ -495,6 +496,10 @@ class Controller implements vscode.Disposable {
             await vscode.commands.executeCommand(action.command).then(undefined, () => undefined); return;
         }
         this.trusted();
+        if (action.type === 'responseMode') {
+            await vscode.workspace.getConfiguration('airk').update('mcp.responseMode', action.value, vscode.ConfigurationTarget.Global);
+            this.registrationChanged(); return;
+        }
         if (action.type === 'registration') {
             await vscode.workspace.getConfiguration('airk').update('mcp.registrationEnabled', action.enabled, vscode.ConfigurationTarget.Global);
             this.registrationChanged(); return;
@@ -1093,6 +1098,7 @@ class Controller implements vscode.Disposable {
         });
     }
     private mcpKey(spec: LaunchSpec): string { return JSON.stringify([spec.collection, spec.root, spec.dataDir, spec.command]); }
+    responseMode(): 'terse' | 'full' { return this.machineValue<string>('mcp.responseMode', 'terse') === 'full' ? 'full' : 'terse'; }
     registrationEnabled(): boolean { return this.machineValue('mcp.registrationEnabled', true) === true; }
     registrationChanged(): void { this.definitions.fire(); this.updateStatus(); }
     async manageMcp(): Promise<void> { await this.setupAgent(); }
@@ -1140,8 +1146,8 @@ class Controller implements vscode.Disposable {
         await this.refresh();
         if (!vscode.workspace.isTrusted || !this.registrationEnabled()) { return []; }
         return [...this.specs.values()].map(spec => {
-            const definition = new vscode.McpStdioServerDefinition(`AIRK: ${spec.name} (${spec.collection})`, spec.command, launchArgs(spec), { AIRK_CLIENT: 'vscode' },
-                `${this.context.extension.packageJSON.version}:${spec.dataDir}`);
+            const definition = new vscode.McpStdioServerDefinition(`AIRK: ${spec.name} (${spec.collection})`, spec.command, launchArgs(spec), { AIRK_CLIENT: 'vscode', AIRK_MCP_RESPONSE_MODE: this.responseMode() },
+                `${this.context.extension.packageJSON.version}:${spec.dataDir}:${this.responseMode()}`);
             definition.cwd = vscode.Uri.file(spec.root);
             return definition;
         });
@@ -1225,7 +1231,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<{ getS
         vscode.workspace.onDidGrantWorkspaceTrust(safe(() => controller.refresh())),
         vscode.workspace.onDidChangeWorkspaceFolders(safe(() => controller.refresh())),
         vscode.workspace.onDidChangeConfiguration(event => {
-            if (event.affectsConfiguration('airk.mcp.registrationEnabled')) { controller.registrationChanged(); }
+            if (event.affectsConfiguration('airk.mcp.registrationEnabled') || event.affectsConfiguration('airk.mcp.responseMode')) { controller.registrationChanged(); }
             if (event.affectsConfiguration('airk')) { controller.configure(); void safe(() => controller.refresh())(); }
         }));
     await safe(() => controller.refresh())();

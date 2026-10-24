@@ -374,6 +374,14 @@
       {
         "title": "AIRK: Command Line",
         "properties": {
+          "airk.mcp.responseMode": {
+            "type": "string",
+            "enum": ["terse", "full"],
+            "enumDescriptions": ["Compact evidence for routine discovery and navigation.", "Detailed provenance, coverage limitations and readiness for investigation."],
+            "default": "terse",
+            "scope": "machine",
+            "markdownDescription": "MCP response detail. Terse is the default. Choose Full for provenance audits, parser/coverage limitations or missing/surprising results. Reload the MCP connection after changing this setting. Agents can override a single call with `response_mode`."
+          },
           "airk.cli.autoInstall": {
             "type": "boolean",
             "default": true,

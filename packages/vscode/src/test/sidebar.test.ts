@@ -12,6 +12,15 @@ const state: SidebarState = { trusted: true, paused: false, changingStorage: fal
     collections: [{ collection: 'a', name: 'Project A', root: '/project/a', dataDir: '/data', state: 'indexing',
         coverage: { report, scanning: false, pending: false }, diskBytes: 1048576 }] };
 
+test('MCP response mode defaults terse, offers Full and validates trusted panel actions', () => {
+    assert.match(sidebarContent(state), /value="terse" selected>Terse response mode \(default\)/);
+    assert.match(sidebarContent({ ...state, responseMode: 'full' }), /value="full" selected>Full response mode/);
+    assert.match(sidebarContent({ ...state, trusted: false }), /id="response-mode" disabled/);
+    assert.match(sidebarContent(state), /Full to investigate provenance, coverage or unexpected results/);
+    assert.deepEqual(sidebarAction({ type: 'responseMode', value: 'full' }, new Set()), { type: 'responseMode', value: 'full' });
+    assert.equal(sidebarAction({ type: 'responseMode', value: 'verbose' }, new Set()), undefined);
+});
+
 test('semantic progress uses committed batches and never reports 100% before readiness', () => {
     const vectors = { enabled: true, published: true, indexed_vectors: 0, pending_reindex: false,
         default_search_mode: 'hybrid' as const, semantic_readiness: {

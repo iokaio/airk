@@ -18,6 +18,7 @@ pub struct Connection {
     authorized_until: Instant,
     last_finished: Instant,
     healthy: bool,
+    status_receipt: airk_mcp::response::StatusReceipt,
 }
 impl Connection {
     pub async fn connect(root: &Path, project: ProjectBinding) -> Result<Self> {
@@ -58,6 +59,7 @@ impl Connection {
             authorized_until: setup_started + Duration::from_secs(55),
             last_finished: Instant::now(),
             healthy: true,
+            status_receipt: Default::default(),
         })
     }
     fn reusable(&self, now: Instant) -> bool {
@@ -80,25 +82,44 @@ impl Connection {
         self.healthy = false;
         local_ipc::write_message(
             &mut self.stream,
-            &Query { tool, arguments },
+            &Query {
+                tool,
+                arguments,
+                status_receipt: self.status_receipt,
+            },
             Duration::from_secs(5),
         )
         .await?;
-        let result = local_ipc::read_message(&mut self.stream, Duration::from_secs(120))
-            .await?
-            .ok_or_else(|| {
-                anyhow::anyhow!("project query disconnected; retry through fresh brokerage")
-            })?;
+        let result: protocol::QueryResult =
+            local_ipc::read_message(&mut self.stream, Duration::from_secs(120))
+                .await?
+                .ok_or_else(|| {
+                    anyhow::anyhow!("project query disconnected; retry through fresh brokerage")
+                })?;
         self.last_finished = Instant::now();
         self.healthy = true;
-        Ok(result)
+        self.status_receipt = result.status_receipt;
+        Ok(result.result)
     }
+
+    pub fn status_receipt(&self) -> airk_mcp::response::StatusReceipt {
+        self.status_receipt
+    }
+    pub fn restore_status_receipt(&mut self, receipt: airk_mcp::response::StatusReceipt) {
+        self.status_receipt = receipt;
+    }
+}
+
+#[derive(Default)]
+struct ClientState {
+    connection: Option<Connection>,
+    status_receipt: airk_mcp::response::StatusReceipt,
 }
 
 struct Backend {
     root: PathBuf,
     project: ProjectBinding,
-    connection: tokio::sync::Mutex<Option<Connection>>,
+    state: tokio::sync::Mutex<ClientState>,
 }
 impl airk_mcp::remote::RemoteTools for Backend {
     fn call(
@@ -107,22 +128,31 @@ impl airk_mcp::remote::RemoteTools for Backend {
         arguments: serde_json::Map<String, serde_json::Value>,
     ) -> airk_mcp::remote::RemoteFuture<'_> {
         Box::pin(async move {
-            let mut connection = self.connection.lock().await;
-            if connection
+            let mut state = self.state.lock().await;
+            if state
+                .connection
                 .as_ref()
                 .is_none_or(|connection| !connection.reusable(Instant::now()))
             {
-                *connection = None;
-                *connection = Some(Connection::connect(&self.root, self.project).await?);
+                state.connection = None;
+                let mut connection = Connection::connect(&self.root, self.project).await?;
+                connection.restore_status_receipt(state.status_receipt);
+                state.connection = Some(connection);
             }
-            let result = connection
+            let result = state
+                .connection
                 .as_mut()
                 .ok_or_else(|| anyhow::anyhow!("project connection unavailable"))?
                 .call(tool, arguments)
                 .await;
             if result.is_err() {
-                *connection = None;
+                state.connection = None;
+            } else if let Some(connection) = &state.connection {
+                // Only a completely received result advances this client's
+                // observations. Cancellation/reconnect retains its older receipt.
+                state.status_receipt = connection.status_receipt();
             }
+
             result
         })
     }
@@ -132,7 +162,7 @@ pub async fn bridge(root: PathBuf, project: ProjectBinding) -> Result<()> {
     airk_mcp::remote::serve(Arc::new(Backend {
         root,
         project,
-        connection: tokio::sync::Mutex::new(None),
+        state: tokio::sync::Mutex::new(Default::default()),
     }))
     .await
 }
@@ -176,6 +206,7 @@ mod tests {
             authorized_until: now + Duration::from_secs(55),
             last_finished: now,
             healthy: true,
+            status_receipt: Default::default(),
         };
         assert!(connection.reusable(now + Duration::from_secs(24)));
         assert!(!connection.reusable(now + Duration::from_secs(25)));

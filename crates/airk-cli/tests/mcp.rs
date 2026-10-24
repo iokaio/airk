@@ -16,7 +16,21 @@ struct Session {
 }
 impl Session {
     fn start(root: &std::path::Path, state: &std::path::Path) -> anyhow::Result<Self> {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_airk"))
+        // Existing rich-payload parity and publication tests explicitly use Full.
+        Self::with_mode(root, state, Some("full"))
+    }
+    fn with_mode(
+        root: &std::path::Path,
+        state: &std::path::Path,
+        mode: Option<&str>,
+    ) -> anyhow::Result<Self> {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_airk"));
+        if let Some(mode) = mode {
+            command.env("AIRK_MCP_RESPONSE_MODE", mode);
+        } else {
+            command.env_remove("AIRK_MCP_RESPONSE_MODE");
+        }
+        let mut child = command
             .args([
                 "--root",
                 root.to_str().expect("test root"),
@@ -72,6 +86,67 @@ impl Drop for Session {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
+}
+
+#[test]
+fn default_terse_stdio_supports_full_and_requested_status_without_changing_revision()
+-> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let state = tempfile::tempdir()?;
+    fs::write(
+        root.path().join("one.rs"),
+        "fn response_fixture() -> bool { true }\n",
+    )?;
+    let indexed = Command::new(env!("CARGO_BIN_EXE_airk"))
+        .arg("--root")
+        .arg(root.path())
+        .arg("--data-dir")
+        .arg(state.path())
+        .args(["--collection", "project-a", "index"])
+        .output()?;
+    anyhow::ensure!(
+        indexed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&indexed.stderr)
+    );
+    let mut session = Session::with_mode(root.path(), state.path(), None)?;
+    session.send(json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"response-mode-fixture","version":"1"}}}))?;
+    let initialized = session.receive(1)?;
+    let instructions = initialized["result"]["instructions"].as_str().unwrap();
+    assert!(instructions.len() <= 512 && instructions.contains("response_mode=full"));
+    session.send(json!({"jsonrpc":"2.0","method":"notifications/initialized"}))?;
+    let mut values = Vec::new();
+    for (id, args) in [
+        (2, json!({"query":"response_fixture","mode":"lexical"})),
+        (3, json!({"query":"response_fixture","mode":"lexical"})),
+        (
+            4,
+            json!({"query":"response_fixture","mode":"lexical","response_mode":"full"}),
+        ),
+        (
+            5,
+            json!({"query":"response_fixture","mode":"lexical","include_status":true}),
+        ),
+    ] {
+        let response = session.call(id, "airk_search", args)?;
+        anyhow::ensure!(response["result"]["isError"] != true, "{response}");
+        values.push(serde_json::from_str::<Value>(
+            response["result"]["content"][0]["text"].as_str().unwrap(),
+        )?);
+    }
+    assert!(values[0].get("generation").is_none());
+    assert!(values[0].get("freshness").is_some());
+    assert!(values[1].get("freshness").is_none());
+    assert!(values[2]["publication"]["generation"].is_u64());
+    assert!(values[3].get("freshness").is_some());
+    for value in &values[1..] {
+        assert_eq!(
+            value["publication"]["token"],
+            values[0]["publication"]["token"]
+        );
+        assert_eq!(value["hits"], values[0]["hits"]);
+    }
+    Ok(())
 }
 
 #[test]
@@ -172,6 +247,7 @@ fn durable_key_reads_match_cli_and_mcp_and_reject_filter_combinations() -> anyho
             .arg(state.path())
             .args(["--collection", "project-a"])
             .env("AIRK_USAGE_MODE", "disabled")
+            .env("AIRK_MCP_RESPONSE_MODE", "full")
             .args(args)
             .output()
     };
@@ -234,6 +310,10 @@ fn durable_key_reads_match_cli_and_mcp_and_reject_filter_combinations() -> anyho
         )?;
         for response in [&mut expected, &mut actual] {
             response.as_object_mut().unwrap().remove("request_id");
+            // MCP adds independently observed status around the same evidence.
+            for field in ["freshness", "discovery_readiness", "semantic_readiness"] {
+                response.as_object_mut().unwrap().remove(field);
+            }
         }
         assert_eq!(actual, expected);
         assert!(!actual["facts"].as_array().unwrap().is_empty());
@@ -307,6 +387,11 @@ fn changes_cli_and_mcp_share_results_and_conditional_validators() -> anyhow::Res
             .as_object_mut()
             .unwrap()
             .remove("observed_unix_ms");
+    }
+    for value in [&mut expected, &mut actual] {
+        for field in ["discovery_readiness", "semantic_readiness"] {
+            value.as_object_mut().unwrap().remove(field);
+        }
     }
     assert_eq!(actual, expected);
     let info = cli(&["info", "aurora.py"])?;
@@ -712,6 +797,7 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
                 &args.to_string(),
             ])
             .env("AIRK_USAGE_MODE", "disabled")
+            .env("AIRK_MCP_RESPONSE_MODE", "full")
             .output()?;
         assert!(
             direct.status.success(),

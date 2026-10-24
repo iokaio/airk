@@ -21,6 +21,14 @@ impl Kernel {
             last_inventory_unix_ms: None,
             last_index: None,
         };
+        if self.service_collection.is_some() {
+            // Service source intents live in the user's service registry, not
+            // the legacy per-root scheduler namespace. Never substitute that
+            // unrelated queue for an unavailable service observation.
+            observation.state = FreshnessState::Unavailable;
+            observation.error = Some("service_freshness_observation_unavailable".into());
+            return observation;
+        }
         match airk_store::scheduler::Queue::new(&self.data_root)
             .status(&self.collection, &self.root_id())
         {
@@ -81,5 +89,24 @@ impl Kernel {
             &read,
             &self.store,
         )?))
+    }
+
+    pub fn readiness_observation(
+        &self,
+        expected: airk_core::identity::RevisionToken,
+    ) -> anyhow::Result<
+        Option<(
+            airk_core::readiness::DiscoveryReadiness,
+            airk_core::readiness::SemanticReadiness,
+        )>,
+    > {
+        let read = self.current_reader()?;
+        if crate::current::runtime::revision(read.token()?) != expected {
+            return Ok(None);
+        }
+        Ok(Some((
+            crate::current::progress::readiness(&read, &self.store)?,
+            crate::current::enrichment::readiness(&read, &self.store)?,
+        )))
     }
 }

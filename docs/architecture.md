@@ -95,6 +95,8 @@ Failed preparation retains its durable allowance until rollback/recovery is prov
 
 Changed-component counters measure localized publication work. Scanning, manifest verification and complete ownership checks still grow with corpus size. Large batches have explicit admission limits; no constant total update latency, complete language understanding, power-loss durability or cross-platform qualification is implied.
 
+The 1.4.0 development MCP adapter now defaults to [terse responses](mcp-response-modes.md), with explicit Full overrides and a trusted panel preference. It keeps response observation memory per client, including across direct-worker connection renewal, while sharing native work admission. Evidence retains exact revision identity, read validators and original citations; display policy does not add agent reasoning to the kernel.
+
 ## Local usage and reporting boundary
 
 [Local usage reporting](usage-reporting.md) uses core contracts, a bounded transactional store ledger and kernel estimation/report services. CLI/MCP serialization hooks record one observation per outer request. Aggregate counters are the default, scoped by collection/root binding without query/source content or external telemetry; diagnostic events require opt-in. The CLI exports JSON/CSV/Markdown and the extension displays the selected collection's report. Signed context estimates identify their baseline and response framing. Historical recording loss, provider consumption and billed savings remain unobserved; nonempty reports are labeled partial.
