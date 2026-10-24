@@ -145,6 +145,12 @@ pub async fn serve_with_idle(root: &Path, idle_grace: Option<Duration>) -> Resul
         sources,
         log: log.clone(),
     });
+    // Initialization hashes the executable and opens native adapters. None of
+    // that time is idle service time: begin the grace only when control can run.
+    *state
+        .last_client_activity
+        .lock()
+        .map_err(|_| anyhow::anyhow!("service activity unavailable"))? = Instant::now();
     let admission = Arc::new(Semaphore::new(64));
     let mut connections = JoinSet::new();
     let mut idle_tick = tokio::time::interval(Duration::from_secs(1));

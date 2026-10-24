@@ -82,7 +82,9 @@ fn opt_in_similarity_flag_pages_with_shared_budgets_without_forwarding_reads() -
         &["changes", "--since", token, "--include-suggestions"],
     )?;
     assert_eq!(unavailable["suggestion_coverage"]["status"], "unavailable");
-    assert_eq!(unavailable["baseline_status"], "baseline_unavailable");
+    // Retained change metadata verifies this baseline even though historical
+    // source payloads needed for similarity suggestions remain unavailable.
+    assert_eq!(unavailable["baseline_status"], "verified");
     let read = call(
         root.path(),
         data.path(),

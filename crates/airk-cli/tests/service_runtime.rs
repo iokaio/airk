@@ -931,9 +931,15 @@ fn control(root: &Path, action: &str) -> Result<Value> {
 fn wait_ready(root: &Path) -> Result<Value> {
     // Debug ELF images include large DWARF sections; full identity hashing is part of startup.
     let deadline = Instant::now() + Duration::from_secs(60);
+    let client = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
     loop {
-        if let Ok(response) = control(root, "health") {
-            return Ok(response);
+        if let Ok(response) = client.block_on(airk_cli::service_runtime::request(
+            root,
+            airk_core::service::ControlMethod::Health,
+        )) {
+            return Ok(serde_json::to_value(response)?);
         }
         if Instant::now() >= deadline {
             use std::io::Read;

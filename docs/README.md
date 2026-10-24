@@ -7,7 +7,7 @@ Start with the [1.3.2 empty-index progress release notes](release-1.3.2.md), [1.
 The [1.3.0 release](release-1.3.0.md) retires the former `airk_history` MCP endpoint because the single-current-index design cannot serve retained history; see the [retirement record](unreleased-mcp-tool-retirement.md). It also includes early MCP availability during initial indexing, scoped path updates, deferred semantic inference, adaptive publication batches, revision-bound queue reports, pending-rescan coverage, guarded lexical snapshots with Linux write notifications, a qualified model catalog and SQLite FTS5 lexical storage. The extension detects recognized older 1.2 formats during indexing and starts the required full rebuild automatically, preserving original files, collection IDs and saved settings; CLI upgrades use `index --full`. The [dated follow-up](indexing-follow-up-2026-10-21.md) records cache integrity limits and validation. GitHub and Marketplace release workflow records establish their separate publication status.
 
 - [Architecture and code boundaries](architecture.md)
-- [Proposed AIRK 1.4.0 local service architecture and implementation plan](airkservice-architecture.md)
+- [AIRK 1.4.0 local service architecture and implementation plan](airkservice-architecture.md)
 - [Draft 1.4.0 development release record](release-1.4.0.md)
 - [Offline service installation, resumable activation, managed payloads and startup ownership](service-installation.md) Shutdown ownership checks also cover damaged payload files, and initialization receipts prevent silent registry replacement after control loss.
 - [Service implementation completion checklist](service-implementation-checklist.md)
@@ -20,6 +20,7 @@ The [1.3.0 release](release-1.3.0.md) retires the former `airk_history` MCP endp
 - [Bounded process logs and down-service diagnostics](service-logging.md). Native placement is bound to install/state ownership and source isolation.
 - [Native service brokerage and direct query protocol](service-protocol.md)
 - [Service resource admission, presets and observations](service-resources.md), including one shared per-worker materialization budget through client cancellation.
+- [Service provider lifetime, surviving Unix guardians and durable crash recovery](service-provider-lifetime.md)
 - [Native process ownership and provider cleanup](service-processes.md)
 - [MCP response modes, minimal navigation and fact result keys](mcp-response-modes.md)
 - [Indexed call candidates, read retries and physical repacks](service-retrieval.md)

@@ -1549,6 +1549,10 @@ impl CurrentWriter<'_> {
             "changed-artifact publication base expired"
         );
         let mut plan = map::MapPlan::new(self.connection()?, &self.scope, base.artifact_root)?;
+        // Validate bootstrap configuration against the committed base. Retained
+        // change metadata below mutates the plan even when no artifacts exist.
+        let mut collection =
+            super::collection::CollectionPlan::load(&plan, &self.scope, update.configuration)?;
         let recent_observation = super::recent_events::observe(
             &self.store,
             &self.scope,
@@ -1564,8 +1568,6 @@ impl CurrentWriter<'_> {
             recent_observation,
             super::recent::unix_seconds(),
         )?);
-        let mut collection =
-            super::collection::CollectionPlan::load(&plan, &self.scope, update.configuration)?;
         if base.graph_head.scope != target.graph_head.scope {
             collection.require_all_previous()?;
         }

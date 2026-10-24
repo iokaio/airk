@@ -91,35 +91,13 @@ impl Process {
             command.env("RAYON_NUM_THREADS", "1");
         }
         #[cfg(unix)]
-        {
-            use std::os::unix::process::CommandExt;
-            if let Some(limits) = limits {
-                // SAFETY: only async-signal-safe setrlimit calls run between fork and exec.
-                unsafe {
-                    command.pre_exec(move || {
-                        #[cfg(not(target_os = "macos"))]
-                        let resources = [
-                            (libc::RLIMIT_AS, limits.memory_bytes as libc::rlim_t),
-                            (libc::RLIMIT_CPU, limits.cpu_seconds as libc::rlim_t),
-                        ];
-                        // Darwin rejects a finite RLIMIT_AS below the inherited
-                        // parent's existing VM mappings. Observe physical footprint
-                        // from the parent instead; CPU remains a kernel-enforced limit.
-                        #[cfg(target_os = "macos")]
-                        let resources = [(libc::RLIMIT_CPU, limits.cpu_seconds as libc::rlim_t)];
-                        for (resource, value) in resources {
-                            let limit = libc::rlimit {
-                                rlim_cur: value,
-                                rlim_max: value,
-                            };
-                            if libc::setrlimit(resource, &limit) != 0 {
-                                return Err(std::io::Error::last_os_error());
-                            }
-                        }
-                        Ok(())
-                    });
-                }
-            }
+        let native_limits = limits.map(|limits| airk_process::child_group::ProviderLimits {
+            memory_bytes: limits.memory_bytes,
+            cpu_seconds: limits.cpu_seconds,
+        });
+        #[cfg(unix)]
+        if let Some(limits) = native_limits {
+            limits.configure(&mut command);
         }
         #[cfg(windows)]
         {
@@ -134,7 +112,7 @@ impl Process {
             .spawn()
             .context("start explicitly provisioned local provider")?;
         #[cfg(unix)]
-        let child = airk_process::GroupChild::spawn(&mut command)
+        let child = airk_process::GroupChild::spawn_provider(&mut command, native_limits)
             .context("start explicitly provisioned local provider")?;
         #[cfg(windows)]
         {

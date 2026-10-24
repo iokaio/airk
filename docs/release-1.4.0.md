@@ -52,3 +52,5 @@ Service-bound MCP execution now uses one shared native materialization budget pe
 
 
 Each native 1.4 data root now belongs to one canonical control directory and durable registry namespace. Registration and activated workers reject foreign/recreated registry ownership; active workers recheck their saved authority before queries and jobs. Finite quota-admitted receipts resume exact interrupted claims. Legacy storage remains separate; populated unbound 1.4 development state requires its old runtime or fresh storage instead of implicit adoption.
+
+Unix native development now uses the main executable as a surviving per-provider guardian, with direct provider/worker pipes, shared project-lease pins and bounded durable crash records. Restart never releases uncertain provider capacity by timeout or signals a remembered unowned PID. Cached resources include pending drains and bounded provider RSS observations. See [provider lifetime and qualification limits](service-provider-lifetime.md). This adds no deployed executable; macOS runtime qualification remains open.

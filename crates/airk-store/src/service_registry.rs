@@ -40,6 +40,10 @@ mod inspection;
 #[path = "service_maintenance.rs"]
 mod maintenance;
 
+#[path = "service_provider_drains.rs"]
+mod provider_drains;
+pub use provider_drains::{MAX_PROVIDER_DRAINS, ProviderBoot, ProviderDrain};
+
 pub struct ServiceRegistry {
     root: PathBuf,
     connection: Connection,
@@ -228,6 +232,7 @@ impl ServiceRegistry {
             "service registry identity disagrees with owner"
         );
         registry.connection.execute_batch(jobs::SCHEMA)?;
+        registry.connection.execute_batch(provider_drains::SCHEMA)?;
         registry.connection.execute_batch(watch::SCHEMA)?;
         registry.connection.execute_batch(events::SCHEMA)?;
         registry.connection.execute_batch(inspection::SCHEMA)?;

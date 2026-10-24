@@ -58,6 +58,10 @@ impl Drop for ChildWorker {
             }
         }
         self._containment.drain();
+        #[cfg(unix)]
+        if let Some(identity) = self.identity {
+            crate::unix_guardian::wait_for_worker(&self.runtime, identity);
+        }
         let _ = local_ipc::remove_exited_endpoint(&self.runtime, &self.role);
         if let Some(reader) = self.reader.take() {
             let _ = reader.join();
@@ -439,6 +443,35 @@ impl Supervisor {
                 let mut source_after = None;
                 let mut endpoints_ready = false;
                 loop {
+                    if registry.is_none() {
+                        registry = ServiceRegistry::open(&root, instance).ok();
+                    }
+                    #[cfg(unix)]
+                    let provider_drain = registry.as_mut().map(|registry| {
+                        let active = workers
+                            .values_mut()
+                            .filter_map(|worker| {
+                                matches!(worker.child.try_wait(), Ok(None))
+                                    .then_some(worker.identity)
+                                    .flatten()
+                            })
+                            .collect::<Vec<_>>();
+                        crate::unix_guardian::recover(registry, &active)
+                    });
+                    #[cfg(unix)]
+                    let (pending_providers, provider_error) = match provider_drain {
+                        Some(Ok(pending)) => (pending, false),
+                        _ => (0, true),
+                    };
+                    #[cfg(not(unix))]
+                    let (pending_providers, provider_error) = (0, false);
+                    resources.observe_provider_drains(pending_providers, provider_error);
+                    #[cfg(unix)]
+                    let provider_rss = registry
+                        .as_ref()
+                        .and_then(|registry| crate::unix_guardian::rss(registry).ok());
+                    #[cfg(not(unix))]
+                    let provider_rss = Some(Vec::new());
                     let observations = std::iter::once(std::process::id())
                         .chain(workers.values().map(|worker| worker.child.id()))
                         .chain(pool.as_ref().map(Pool::process_id))
@@ -447,21 +480,27 @@ impl Supervisor {
                                 .filter(|pid| *pid != 0),
                         )
                         .map(airk_kernel::service_resource_observations::rss)
+                        .chain(provider_rss.clone().unwrap_or_default())
                         .collect::<Vec<_>>();
                     let complete = observations.iter().all(Option::is_some)
-                        && source_telemetry.load(std::sync::atomic::Ordering::Acquire);
+                        && source_telemetry.load(std::sync::atomic::Ordering::Acquire)
+                        && provider_rss.is_some();
                     let rss = observations
                         .into_iter()
                         .flatten()
                         .reduce(u64::saturating_add);
                     let available = airk_kernel::service_resource_observations::available_memory();
-                    resources.block_admission(configuration_error);
+                    resources.block_admission(
+                        configuration_error || provider_error || pending_providers > 0,
+                    );
                     resources.observe(rss, available, complete && available.is_some());
                     if let Ok(mut cache) = resource_cache.lock() {
                         cache.snapshot = resources.snapshot();
                         cache.observed = Instant::now();
                         cache.configuration_error = configuration_error;
                         cache.idle_safe = workers.is_empty()
+                            && !provider_error
+                            && pending_providers == 0
                             && registry.as_ref().is_some_and(|registry| {
                                 registry
                                     .pending_projects(1)
@@ -474,9 +513,6 @@ impl Supervisor {
                     if pool.as_mut().is_some_and(Pool::exited) {
                         log.record(airk_core::service_logs::LogKind::ModelFailed, None, None);
                         pool = None;
-                    }
-                    if registry.is_none() {
-                        registry = ServiceRegistry::open(&root, instance).ok();
                     }
                     if predecessors.is_none()
                         && let Some(registry) = registry.as_ref()
@@ -504,7 +540,10 @@ impl Supervisor {
                         endpoints_ready =
                             local_ipc::cleanup_predecessor_endpoints(&root).unwrap_or(false);
                     }
-                    let may_allocate = predecessors_released && endpoints_ready;
+                    let may_allocate = predecessors_released
+                        && endpoints_ready
+                        && !provider_error
+                        && pending_providers == 0;
                     let finished: Vec<_> = workers
                         .iter_mut()
                         .filter_map(|(project, worker)| match worker.child.try_wait() {

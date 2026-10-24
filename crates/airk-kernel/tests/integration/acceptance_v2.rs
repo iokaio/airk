@@ -128,7 +128,16 @@ fn readmission(cause: ChangeCause) -> Result<()> {
         );
         assert_ne!(validation.artifact_id, Some(current.state.artifact_id));
     }
-    assert!(changes.changes.is_empty());
+    assert_eq!(
+        changes.baseline_status,
+        airk_core::changes::BaselineStatus::Verified
+    );
+    assert!(changes.changes.iter().any(|change|
+        matches!(change.subject, airk_core::changes::ChangeSubject::Artifact { artifact_id } if artifact_id == file.state.artifact_id)
+            && change.before.is_some() && change.after.is_none()));
+    assert!(changes.changes.iter().any(|change|
+        matches!(change.subject, airk_core::changes::ChangeSubject::Artifact { artifact_id } if artifact_id == current.state.artifact_id)
+            && change.before.is_none() && change.after.is_some()));
     assert!(after.token.generation > gap_token.generation);
     assert_eq!(fs::read_to_string(root.path().join("original.rs"))?, SOURCE);
     Ok(())

@@ -108,10 +108,14 @@ fn chained_moves_follow_exact_handles_then_terminal_deletion_and_live_path_reuse
         max_bytes: 65_536,
         ..Default::default()
     })?;
-    assert!(changes.changes.is_empty());
+    assert!(changes.changes.iter().any(|change|
+        matches!(change.subject, airk_core::changes::ChangeSubject::Artifact { artifact_id } if artifact_id == original.state.artifact_id)
+            && change.before.as_ref().is_some_and(|before| before.path == "a.txt")
+            && change.after.as_ref().is_some_and(|after| after.path == "c.txt")
+            && change.dimensions.contains(&airk_core::changes::ChangeDimension::Path)));
     assert_eq!(
         changes.baseline_status,
-        airk_core::changes::BaselineStatus::BaselineUnavailable
+        airk_core::changes::BaselineStatus::Verified
     );
     fs::write(root.path().join("a.txt"), OTHER)?;
     kernel.index()?;

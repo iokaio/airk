@@ -97,6 +97,8 @@ enum Command {
     ProjectWorker,
     #[command(hide = true)]
     SourceWorker,
+    #[command(hide = true)]
+    ProcessGuardian,
     /// Read-only MCP bridge to an already registered service project.
     Bridge {
         #[arg(long)]
@@ -581,6 +583,7 @@ impl Command {
             | Self::Runtime { .. }
             | Self::ProjectWorker
             | Self::SourceWorker
+            | Self::ProcessGuardian
             | Self::Bridge { .. }
             | Self::Storage { .. } => return None,
             Self::Collections {
@@ -1177,6 +1180,19 @@ fn main() -> std::process::ExitCode {
 }
 
 fn run_cli() -> anyhow::Result<()> {
+    if std::env::args_os()
+        .nth(1)
+        .is_some_and(|arg| arg == "process-guardian")
+    {
+        anyhow::ensure!(
+            std::env::args_os().count() == 2,
+            "invalid guardian invocation"
+        );
+        #[cfg(unix)]
+        return airk_cli::unix_guardian::serve();
+        #[cfg(not(unix))]
+        anyhow::bail!("provider guardians require Unix");
+    }
     if airk_kernel::dispatch_pdf_worker()? {
         return Ok(());
     }
@@ -1193,6 +1209,10 @@ fn run_cli() -> anyhow::Result<()> {
 #[tokio::main]
 async fn main_async() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    anyhow::ensure!(
+        !matches!(cli.command, Command::ProcessGuardian),
+        "guardian requires its standalone private invocation"
+    );
     if matches!(cli.command, Command::SourceWorker) {
         return airk_cli::source_worker::run();
     }
@@ -1338,7 +1358,7 @@ async fn main_async() -> anyhow::Result<()> {
     };
     let result = async { match cli.command {
         Command::Tools { action } => tools::run(action, kernel.clone()).await,
-        Command::Storage { .. } | Command::Runtime { .. } | Command::ModelCatalog | Command::Serve { .. } | Command::ProjectWorker | Command::SourceWorker | Command::Bridge { .. } => unreachable!("handled before opening kernel"),
+        Command::Storage { .. } | Command::Runtime { .. } | Command::ModelCatalog | Command::Serve { .. } | Command::ProjectWorker | Command::SourceWorker | Command::ProcessGuardian | Command::Bridge { .. } => unreachable!("handled before opening kernel"),
         Command::Service { action } => {
             let manager = airk_cli::service_manager::ServiceManager::for_kernel(&kernel)?;
             match action {

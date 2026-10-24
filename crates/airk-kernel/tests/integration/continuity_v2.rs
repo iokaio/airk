@@ -110,10 +110,12 @@ fn durable_keys_preserve_body_stamps_across_location_edits_and_reopen() -> Resul
         changes.validations[0].outcome,
         airk_core::changes::ValidationOutcome::Current
     );
-    assert!(changes.changes.is_empty());
+    assert!(changes.changes.iter().any(|change|
+        matches!(change.subject, airk_core::changes::ChangeSubject::Symbol { symbol_key: key, .. } if key == symbol_key)
+            && change.dimensions.contains(&ChangeDimension::CodeBody) && change.observations >= 2));
     assert_eq!(
         changes.baseline_status,
-        airk_core::changes::BaselineStatus::BaselineUnavailable
+        airk_core::changes::BaselineStatus::Verified
     );
     fs::remove_file(root.path().join("sample.rs"))?;
     reopened.index()?;
@@ -124,7 +126,9 @@ fn durable_keys_preserve_body_stamps_across_location_edits_and_reopen() -> Resul
         limit: 100,
         ..Default::default()
     })?;
-    assert!(removed.changes.is_empty());
+    assert!(removed.changes.iter().any(|change|
+        matches!(change.subject, airk_core::changes::ChangeSubject::Symbol { symbol_key: key, .. } if key == symbol_key)
+            && change.before.is_some() && change.after.is_none()));
     Ok(())
 }
 

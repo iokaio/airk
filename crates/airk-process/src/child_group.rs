@@ -2,20 +2,99 @@
 //! Private Unix process groups for trusted providers that remain in their group.
 //! Peeking never reaps the leader: its PID cannot be reused before group drain.
 use std::{
+    fs::File,
     io,
-    os::unix::process::{CommandExt, ExitStatusExt},
-    process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus},
+    os::{
+        fd::{FromRawFd, IntoRawFd},
+        unix::process::{CommandExt, ExitStatusExt},
+    },
+    process::{Child, Command, ExitStatus},
+    sync::{Arc, OnceLock},
     time::{Duration, Instant},
 };
 
+/// Native adapters can keep the actual parent in a surviving guardian. The
+/// process crate owns no service state, registry policy or serialized payloads.
+pub trait GroupOwner: Send {
+    fn id(&self) -> u32;
+    fn try_wait(&mut self) -> io::Result<Option<ExitStatus>>;
+    fn kill(&mut self) -> io::Result<()>;
+    fn terminate_and_wait(&mut self, timeout: Duration) -> io::Result<ExitStatus>;
+}
+#[derive(Clone, Copy)]
+pub struct ProviderLimits {
+    pub memory_bytes: usize,
+    pub cpu_seconds: u64,
+}
+impl ProviderLimits {
+    pub fn configure(self, command: &mut Command) {
+        // SAFETY: only async-signal-safe resource calls run before exec.
+        unsafe {
+            command.pre_exec(move || {
+                #[cfg(not(target_os = "macos"))]
+                let resources = [
+                    (libc::RLIMIT_AS, self.memory_bytes as libc::rlim_t),
+                    (libc::RLIMIT_CPU, self.cpu_seconds as libc::rlim_t),
+                ];
+                #[cfg(target_os = "macos")]
+                let resources = [(libc::RLIMIT_CPU, self.cpu_seconds as libc::rlim_t)];
+                for (resource, value) in resources {
+                    let limit = libc::rlimit {
+                        rlim_cur: value,
+                        rlim_max: value,
+                    };
+                    if libc::setrlimit(resource, &limit) != 0 {
+                        return Err(io::Error::last_os_error());
+                    }
+                }
+                Ok(())
+            });
+        }
+    }
+}
+pub trait ProviderSpawner: Send + Sync {
+    /// Called only by the explicit provider adapter, with piped standard I/O.
+    fn spawn(&self, command: &Command, limits: Option<ProviderLimits>) -> io::Result<GroupChild>;
+}
+static PROVIDER_SPAWNER: OnceLock<Arc<dyn ProviderSpawner>> = OnceLock::new();
+pub fn install_provider_spawner(spawner: Arc<dyn ProviderSpawner>) -> io::Result<()> {
+    PROVIDER_SPAWNER
+        .set(spawner)
+        .map_err(|_| io::Error::other("provider guardian already installed"))
+}
+fn pipe_file(handle: impl IntoRawFd) -> File {
+    // SAFETY: transfer exactly this owned pipe descriptor to the File.
+    unsafe { File::from_raw_fd(handle.into_raw_fd()) }
+}
+
 pub struct GroupChild {
-    child: Child,
+    child: Option<Child>,
+    remote: Option<Box<dyn GroupOwner>>,
     reaped: Option<ExitStatus>,
-    pub stdin: Option<ChildStdin>,
-    pub stdout: Option<ChildStdout>,
-    pub stderr: Option<ChildStderr>,
+    pub stdin: Option<File>,
+    pub stdout: Option<File>,
+    pub stderr: Option<File>,
 }
 impl GroupChild {
+    pub fn spawn_provider(
+        command: &mut Command,
+        limits: Option<ProviderLimits>,
+    ) -> io::Result<Self> {
+        if let Some(spawner) = PROVIDER_SPAWNER.get() {
+            return spawner.spawn(command, limits);
+        }
+        Self::spawn(command)
+    }
+    pub fn from_owner(owner: Box<dyn GroupOwner>, stdin: File, stdout: File, stderr: File) -> Self {
+        Self {
+            child: None,
+            remote: Some(owner),
+            reaped: None,
+            stdin: Some(stdin),
+            stdout: Some(stdout),
+            stderr: Some(stderr),
+        }
+    }
     pub fn spawn(command: &mut Command) -> io::Result<Self> {
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         return Err(io::Error::new(
@@ -46,19 +125,26 @@ impl GroupChild {
         command.process_group(0);
         let mut child = command.spawn()?;
         Ok(Self {
-            stdin: child.stdin.take(),
-            stdout: child.stdout.take(),
-            stderr: child.stderr.take(),
-            child,
+            stdin: child.stdin.take().map(pipe_file),
+            stdout: child.stdout.take().map(pipe_file),
+            stderr: child.stderr.take().map(pipe_file),
+            child: Some(child),
+            remote: None,
             reaped: None,
         })
     }
     pub fn id(&self) -> u32 {
-        self.child.id()
+        self.remote.as_ref().map_or_else(
+            || self.child.as_ref().expect("owned child missing").id(),
+            |owner| owner.id(),
+        )
     }
     pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
         if let Some(status) = self.reaped {
             return Ok(Some(status));
+        }
+        if let Some(owner) = self.remote.as_mut() {
+            return owner.try_wait();
         }
         peek(self.id())
     }
@@ -68,6 +154,9 @@ impl GroupChild {
                 io::ErrorKind::InvalidInput,
                 "process group already reaped",
             ));
+        }
+        if let Some(owner) = self.remote.as_mut() {
+            return owner.kill();
         }
         // A successful peek (including None) proves this is still our unreaped
         // child. ECHILD is never permission to signal a possibly reused number.
@@ -89,6 +178,11 @@ impl GroupChild {
         if let Some(status) = self.reaped {
             return Ok(status);
         }
+        if let Some(owner) = self.remote.as_mut() {
+            let status = owner.terminate_and_wait(timeout)?;
+            self.reaped = Some(status);
+            return Ok(status);
+        }
         let deadline = Instant::now()
             .checked_add(timeout)
             .ok_or_else(|| io::Error::other("group drain deadline overflow"))?;
@@ -97,7 +191,7 @@ impl GroupChild {
             if peek(self.id())?.is_some() && !has_live_members(self.id(), deadline)? {
                 // The leader is already waitable and no group member can still
                 // hold working memory or pipes. Only now release its PID.
-                let status = self.child.wait()?;
+                let status = self.child.as_mut().expect("owned child missing").wait()?;
                 self.reaped = Some(status);
                 return Ok(status);
             }

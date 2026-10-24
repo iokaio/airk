@@ -90,6 +90,8 @@ pub struct ResourceSnapshot {
     pub observed_rss_bytes: Option<u64>,
     pub available_memory_bytes: Option<u64>,
     pub telemetry_complete: bool,
+    pub pending_provider_drains: usize,
+    pub provider_drain_error: bool,
     pub pressure: bool,
     pub running_jobs: usize,
     pub waiting_projects: usize,

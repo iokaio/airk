@@ -107,3 +107,5 @@ Version 1.1.4 stores per-source full-context JSON byte counts in each new immuta
 
 
 The opt-in native 1.4 worker binds its data root to the canonical control directory and durable service registry namespace before collection access. Store owns bounded receipt validation, serialized first claims and quota-admitted persistence. The global registry performs metadata-only conflict checks; it does not open project evidence. CLI workers retain that authority and recheck it before queries/jobs. The legacy quota ignores the exact new service receipt/partial/lock names. Final extension/CLI/container cutover remains pending.
+
+The Unix service worker installs a CLI-owned provider guardian adapter through neutral process traits. The existing main executable supplies the actual provider parent; source/result pipes remain direct to the worker. Store owns bounded durable drain metadata, kernel owns retained resource admission, and CLI owns socket descriptor transfer, native boot/process-scope evidence and recovery observations. No service dependency enters the process or ingestion crates. See [provider lifetime](service-provider-lifetime.md).

@@ -294,6 +294,14 @@ pub async fn run() -> Result<()> {
         &init.runtime,
         registry.incarnation()?,
     )?;
+    #[cfg(unix)]
+    crate::unix_guardian::install(
+        &init.runtime,
+        registry.incarnation()?,
+        identity,
+        &lease,
+        &std::env::current_exe()?,
+    )?;
     let kernel = Kernel::open_service_collection_for_diagnostics(
         Path::new(&registration.root),
         Some((&registration.data_root).into()),

@@ -4,6 +4,7 @@ use anyhow::{Context, Result, ensure};
 use std::{
     fs::{self, File, OpenOptions},
     path::{Path, PathBuf},
+    sync::atomic::{AtomicBool, Ordering},
 };
 
 #[path = "service_data_scope.rs"]
@@ -16,12 +17,14 @@ pub mod model_files;
 #[path = "service_registry.rs"]
 pub mod registry;
 
-struct OwnershipFile(File);
+struct OwnershipFile(File, AtomicBool);
 impl Drop for OwnershipFile {
     fn drop(&mut self) {
-        // Release this owner's lock before close: a concurrent Unix fork may
-        // briefly retain the open-file description until its CLOEXEC processing.
-        let _ = self.0.unlock();
+        // Unpinned owners unlock before close so an unrelated concurrent fork
+        // cannot extend ownership until CLOEXEC. Guardian pins require last close.
+        if !self.1.load(Ordering::Relaxed) {
+            let _ = self.0.unlock();
+        }
     }
 }
 
@@ -61,7 +64,7 @@ fn acquire_file(root: &Path, name: &str) -> Result<OwnershipFile> {
             path.display()
         )
     })?;
-    Ok(OwnershipFile(file))
+    Ok(OwnershipFile(file, AtomicBool::new(false)))
 }
 
 pub struct ProjectLease {
@@ -72,6 +75,17 @@ pub struct ProjectLease {
 }
 
 impl ProjectLease {
+    /// The Unix guardian retains this same open-file-description ownership pin.
+    /// A raw File closes on drop without explicitly unlocking the shared lease.
+    #[cfg(unix)]
+    pub fn duplicate_native_pin(&self) -> Result<File> {
+        let pin = self._file.0.try_clone()?;
+        // flock belongs to the shared open-file description. Explicit unlock
+        // would release the guardian's pin too; after pinning, only last close
+        // may release this project lease.
+        self._file.1.store(true, Ordering::Relaxed);
+        Ok(pin)
+    }
     pub fn acquire(root: &Path, binding: airk_core::service::ProjectBinding) -> Result<Self> {
         let root = root.canonicalize()?;
         let file = acquire_file(&root, &format!("worker-1.4-{binding}.lock"))?;

@@ -43,6 +43,8 @@ pub struct Resources {
     available: Option<u64>,
     complete: bool,
     blocked: bool,
+    pending_provider_drains: usize,
+    provider_drain_error: bool,
 }
 impl Resources {
     pub fn detect(configuration: ResourceConfiguration) -> Result<Self> {
@@ -106,6 +108,8 @@ impl Resources {
             available: None,
             complete: false,
             blocked: false,
+            pending_provider_drains: 0,
+            provider_drain_error: false,
         })
     }
     pub fn reconfigure(&mut self, configuration: ResourceConfiguration) -> Result<()> {
@@ -311,10 +315,16 @@ impl Resources {
             observed_rss_bytes: self.rss,
             available_memory_bytes: self.available,
             telemetry_complete: self.complete,
+            pending_provider_drains: self.pending_provider_drains,
+            provider_drain_error: self.provider_drain_error,
             pressure: self.pressure(),
             running_jobs: self.running.len(),
             waiting_projects: self.waiting.len(),
         }
+    }
+    pub fn observe_provider_drains(&mut self, pending: usize, error: bool) {
+        self.pending_provider_drains = pending;
+        self.provider_drain_error = error;
     }
 }
 
