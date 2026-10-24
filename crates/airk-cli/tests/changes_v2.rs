@@ -103,7 +103,7 @@ fn four_conditional_reads_and_remembered_paths_preserve_exact_identity() -> Resu
         &["changes", "--since", token, "--path", "weather.py"],
     )?;
     assert_eq!(unchanged["baseline_status"], "verified");
-    assert_eq!(unchanged["validations"][0]["outcome"], "current");
+    assert_eq!(unchanged["validations"][0]["outcome"], "index-current");
     assert!(
         unchanged["changes"]
             .as_array()
@@ -124,8 +124,9 @@ fn four_conditional_reads_and_remembered_paths_preserve_exact_identity() -> Resu
         &["changes", "--since", token, "--path", "weather.py"],
     )?;
     assert_ne!(changed["to"], token);
-    assert_eq!(changed["baseline_status"], "baseline_unavailable");
-    assert_eq!(changed["validations"][0]["outcome"], "current");
+    assert_eq!(changed["baseline_status"], "verified");
+    assert!(!changed["changes"].as_array().unwrap().is_empty());
+    assert_eq!(changed["validations"][0]["outcome"], "index-current");
     Ok(())
 }
 

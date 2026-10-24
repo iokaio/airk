@@ -33,7 +33,7 @@ Implement and validate these during Phase 7 MCP/extension cutover, after the wor
 - [x] Minimal outline/symbol/import records with shared original file/provenance bindings and consistent `items` across fact tools, empty and conditional results. Windows/Linux native budget/cursor checks, MCP transport, CLI cursor parity, document locations and usage-accounting evidence are recorded in the response-mode guide. Installed-editor qualification remains part of the final gate.
 - [x] Committed-generation reads during publication plus structured retry hints on safe temporary rejection. Typed native read/selection rejection, exact-request retry and MCP error rendering have Windows/Linux evidence in the retrieval guide.
 - [x] Terminal method-name postings for receiver/chained calls, explicitly labeled candidates. Windows/Linux native, kernel and MCP tests cover case, chained targets, compatible retirement of older memberships, updates, budgets and reopen; see the retrieval guide.
-- [ ] Authenticated bounded multi-generation/time-window change baselines and explicit `index-current` validation outcomes.
+- [x] Authenticated bounded multi-generation/time-window change baselines and explicit `index-current` validation outcomes. Metadata-only retention, exact parent/cursor identity, pressure/age floors, rebuild isolation, restart/replay and physical-repack preservation have Windows/Linux development evidence in the retention guide; historical source reads remain unavailable.
 
 ## Final gate
 

@@ -16,6 +16,8 @@ pub mod postings;
 mod publication_spike_tests;
 mod read;
 mod rebuild;
+pub mod recent;
+mod recent_events;
 pub mod relationships;
 pub mod resources;
 pub mod vector_map;
@@ -163,7 +165,8 @@ impl CurrentHead {
     }
 }
 
-/// Equality is the only supported revision relationship. There is no ancestry API.
+/// Exact source reads remain single-current. Bounded older parent identities
+/// are available only through authenticated recent-change metadata.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CurrentToken {

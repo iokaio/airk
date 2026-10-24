@@ -23,6 +23,8 @@ use std::{
 mod grants_tests;
 #[path = "postings_tests.rs"]
 mod postings_tests;
+#[path = "recent_tests.rs"]
+mod recent_tests;
 #[path = "service_publication_tests.rs"]
 mod service_publication_tests;
 
@@ -942,7 +944,7 @@ fn prepared_map_and_graph_replay_commit_one_authenticated_head() -> Result<()> {
         br#"{"engine":"test","version":2}"#,
     )?;
     // Includes file metadata and source-size measurement retirement.
-    assert_eq!(deletion.map_count, 8);
+    assert_eq!(deletion.map_count, 10);
     current.mark_applying(&deletion)?;
     drop(current);
     drop(writer);
@@ -1106,7 +1108,7 @@ fn changed_path_retires_only_its_share_of_a_live_vector() -> Result<()> {
         None,
         br#"{"engine":"test","version":2}"#,
     )?;
-    assert_eq!(pending.map_count, 8);
+    assert_eq!(pending.map_count, 10);
     current.mark_applying(&pending)?;
     current.commit(&pending, pending.target.lexical_commit)?;
     drop(current);
@@ -1369,8 +1371,8 @@ fn changed_artifact_and_lexical_manifest_share_one_replayed_head() -> Result<()>
         None,
         &next,
     )?;
-    // Includes metadata retirement, source-size measurement and posting-format marker.
-    assert_eq!(pending.map_count, 6);
+    // Includes metadata retirement, source measurement, posting format and retained change metadata.
+    assert_eq!(pending.map_count, 8);
     assert_eq!(pending.inputs_count, 1);
     assert_eq!(pending.lexical_manifest_bytes, next.len() as u64);
     drop(current);
@@ -1378,6 +1380,12 @@ fn changed_artifact_and_lexical_manifest_share_one_replayed_head() -> Result<()>
     let before = fixture.store.current_read(&fixture.scope)?;
     assert!(before.artifact(&input.artifact.path)?.is_none());
     assert_eq!(before.lexical_manifest()?, initial);
+    assert!(
+        before
+            .recent_changes(recent::unix_seconds())?
+            .parents
+            .is_empty()
+    );
     drop(before);
     let writer = fixture.store.lock()?;
     let mut current =
@@ -1391,6 +1399,14 @@ fn changed_artifact_and_lexical_manifest_share_one_replayed_head() -> Result<()>
     let after = fixture.store.current_read(&fixture.scope)?;
     assert_eq!(after.head(), &pending.target);
     assert_eq!(after.lexical_manifest()?, next);
+    assert_eq!(
+        after.recent_changes(recent::unix_seconds())?.parents,
+        vec![airk_core::identity::RevisionToken {
+            incarnation: fixture.head.scope.incarnation,
+            generation: fixture.head.sequence,
+            revision: fixture.head.token()?.digest,
+        }]
+    );
     assert_eq!(
         after.artifact(&input.artifact.path)?.unwrap().content_hash,
         input.artifact.content_hash
@@ -1573,7 +1589,7 @@ fn catalog_only_artifact_updates_are_atomic_authenticated_and_revision_bound() -
         serde_json::to_value(Some(&original.artifact))?
     );
     assert!(read.artifact("missing.txt")?.is_none());
-    assert_eq!(read.map_entries(map::MapVisitLimits::default())?.len(), 4);
+    assert_eq!(read.map_entries(map::MapVisitLimits::default())?.len(), 6);
     drop(read);
     fs::write(&source, "Later live edit")?;
     assert_eq!(
@@ -1616,7 +1632,7 @@ fn catalog_only_artifact_updates_are_atomic_authenticated_and_revision_bound() -
     let read = fixture.store.current_read(&fixture.scope)?;
     assert!(read.artifact("evidence.txt")?.is_none());
     assert!(read.terminal_call_postings_complete()?);
-    assert_eq!(read.map_entries(map::MapVisitLimits::default())?.len(), 1);
+    assert_eq!(read.map_entries(map::MapVisitLimits::default())?.len(), 5);
     Ok(())
 }
 

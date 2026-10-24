@@ -330,6 +330,15 @@ mod tests {
             token
         );
         assert!(!current.search(&query("cobalt"))?.hits.is_empty());
+        let historical = current.changes(&airk_core::changes::ChangesRequest {
+            since: Some(old_token),
+            ..Default::default()
+        })?;
+        assert_eq!(
+            historical.baseline_status,
+            airk_core::changes::BaselineStatus::BaselineUnavailable
+        );
+        assert!(historical.changes.is_empty());
         assert!(current.search(&query("amber"))?.hits.is_empty());
         assert!(!old.search(&query("amber"))?.hits.is_empty());
         assert!(!current.vectors_enabled()?);

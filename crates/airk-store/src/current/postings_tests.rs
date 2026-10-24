@@ -750,7 +750,7 @@ fn catalog_postings_follow_replacement_deletion_and_exact_case() -> Result<()> {
             .is_empty()
     );
     assert!(read.terminal_call_postings_complete()?);
-    assert_eq!(read.map_entries(map::MapVisitLimits::default())?.len(), 1);
+    assert_eq!(read.map_entries(map::MapVisitLimits::default())?.len(), 7);
     Ok(())
 }
 

@@ -1229,9 +1229,27 @@ impl CurrentWriter<'_> {
         &mut self,
         expected: &CurrentToken,
         base: CurrentHead,
-        changes: Vec<map::MapChange>,
+        mut changes: Vec<map::MapChange>,
         planned_root: Sha256Digest,
     ) -> Result<CurrentCommit> {
+        let planned_root = {
+            let mut plan = map::MapPlan::new(self.connection()?, &self.scope, base.artifact_root)?;
+            for change in &changes {
+                plan.put(change.key(), change.value())?;
+            }
+            ensure!(
+                plan.root()? == planned_root,
+                "catalog changes differ before change retention"
+            );
+            changes.extend(super::recent::prepare(
+                &self.scope,
+                &mut plan,
+                &base,
+                super::recent::Observation::omitted(),
+                super::recent::unix_seconds(),
+            )?);
+            plan.root()?
+        };
         let id = framed_digest(
             b"current-catalog-only-update/2",
             &[&serde_json::to_vec(expected)?, planned_root.as_bytes()],
@@ -1531,6 +1549,21 @@ impl CurrentWriter<'_> {
             "changed-artifact publication base expired"
         );
         let mut plan = map::MapPlan::new(self.connection()?, &self.scope, base.artifact_root)?;
+        let recent_observation = super::recent_events::observe(
+            &self.store,
+            &self.scope,
+            &plan,
+            &base,
+            changes,
+            metadata,
+        )?;
+        map_changes.extend(super::recent::prepare(
+            &self.scope,
+            &mut plan,
+            &base,
+            recent_observation,
+            super::recent::unix_seconds(),
+        )?);
         let mut collection =
             super::collection::CollectionPlan::load(&plan, &self.scope, update.configuration)?;
         if base.graph_head.scope != target.graph_head.scope {
@@ -1756,6 +1789,13 @@ impl CurrentWriter<'_> {
             .sequence
             .checked_add(1)
             .context("repack sequence overflow")?;
+        changes.extend(super::recent::prepare(
+            &self.scope,
+            &mut plan,
+            &base,
+            super::recent::Observation::empty(),
+            super::recent::unix_seconds(),
+        )?);
         target.artifact_root = plan.root()?;
         drop(plan);
         ensure!(

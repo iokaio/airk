@@ -23,6 +23,7 @@ The [1.3.0 release](release-1.3.0.md) retires the former `airk_history` MCP endp
 - [Native process ownership and provider cleanup](service-processes.md)
 - [MCP response modes, minimal navigation and fact result keys](mcp-response-modes.md)
 - [Indexed call candidates, read retries and physical repacks](service-retrieval.md)
+- [Retained indexed changes and `index-current` validation](service-change-retention.md)
 - [Fenced cached service source freshness](service-freshness.md)
 - [Service-owned saved-source watching and reconciliation](service-source-watching.md)
 - [Shared embedding runtime and resource bounds](service-embedding.md)

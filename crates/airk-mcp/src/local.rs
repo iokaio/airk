@@ -190,6 +190,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn retained_changes_page_across_response_modes_with_index_current_validation()
+    -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let root = directory.path().join("source");
+        std::fs::create_dir(&root)?;
+        std::fs::write(root.join("one.rs"), "fn alpha() -> u32 { 1 }\n")?;
+        let kernel = Kernel::open(&root, Some(directory.path().join("data")))?;
+        kernel.configure_vectors(false)?;
+        kernel.index()?;
+        let baseline = kernel.status()?.publication.unwrap().token;
+        for value in [2, 3] {
+            std::fs::write(
+                root.join("one.rs"),
+                format!("fn alpha() -> u32 {{ {value} }}\n"),
+            )?;
+            kernel.index()?;
+        }
+        let mut tools = LocalTools::new(kernel).await?;
+        let mut args = serde_json::json!({"since":baseline,"selectors":[{"kind":"path","path":"one.rs"}],"limit":1,"max_bytes":65536,"response_mode":"full"}).as_object().unwrap().clone();
+        let first = body(tools.call("airk_changes".into(), args.clone()).await?)?;
+        assert_eq!(first["baseline_status"], "verified");
+        assert_eq!(first["changes"][0]["observations"], 2);
+        assert!(first["cursor"].is_string());
+        args.insert("cursor".into(), first["cursor"].clone());
+        args.insert("response_mode".into(), "terse".into());
+        let second = body(tools.call("airk_changes".into(), args).await?)?;
+        assert_eq!(second["validations"][0]["outcome"], "index-current");
+        assert_eq!(
+            first["publication"]["token"],
+            second["publication"]["token"]
+        );
+        assert_eq!(second["truncated"], false);
+        assert_eq!(second["freshness"]["live_source_verified"], false);
+        tools.close().await?;
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn terminal_call_names_keep_written_targets_and_candidate_labels() -> anyhow::Result<()> {
         let directory = tempfile::tempdir()?;
         let root = directory.path().join("source");

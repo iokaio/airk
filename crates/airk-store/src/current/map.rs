@@ -37,6 +37,7 @@ pub enum MapDomain {
     SourceMeasurement,
     ArtifactHandle,
     UnitHandle,
+    RecentChanges,
 }
 
 #[derive(Clone, Debug)]
@@ -87,6 +88,7 @@ impl MapDomain {
             Self::SourceMeasurement => b"source-measurement",
             Self::ArtifactHandle => b"artifact-handle",
             Self::UnitHandle => b"unit-handle",
+            Self::RecentChanges => b"recent-changes/1",
         }
     }
 }

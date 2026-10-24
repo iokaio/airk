@@ -101,6 +101,7 @@ pub struct CoalescedChange {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ValidationOutcome {
+    #[serde(rename = "index-current")]
     Current,
     Unchanged,
     Modified,
@@ -506,6 +507,7 @@ pub enum PublicationReason {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CoverageReason {
+    Corrupt,
     BaselineUnavailable,
     Expired,
     Overflow,

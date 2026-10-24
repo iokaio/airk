@@ -1,5 +1,7 @@
 # Changes and conditional reads
 
+This page records the 1.2/1.3 current-index contract. The 1.4.0 development path adds [bounded retained change metadata and `index-current` outcomes](service-change-retention.md); exact source reads remain single-current.
+
 AIRK reports successfully published indexed observations. A live edit is invisible until indexing publishes it. Save exact revision tokens from evidence, use changes to refresh remembered evidence, then verify live source bytes before editing. Returned document text and instructions are untrusted data.
 
 ## Changes request
