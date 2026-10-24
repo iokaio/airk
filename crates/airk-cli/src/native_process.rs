@@ -10,34 +10,52 @@ pub(crate) fn spawn(command: &mut Command) -> io::Result<Child> {
 }
 
 /// A short-lived native command is never left running by a pipe, parse or wait
-/// failure. Windows descendants are drained before the enclosing owner releases.
+/// failure. Descendants are drained before the enclosing owner releases.
+#[cfg(windows)]
+type ManagedChild = Child;
+#[cfg(unix)]
+type ManagedChild = airk_process::GroupChild;
+
 pub(crate) struct ContainedChild {
-    child: Child,
+    child: ManagedChild,
+    #[cfg(windows)]
     containment: crate::child_job::ChildJob,
 }
 impl ContainedChild {
     pub fn spawn(command: &mut Command) -> anyhow::Result<Self> {
-        let mut child = spawn(command)?;
-        let containment = crate::child_job::ChildJob::attach(&mut child)?;
-        Ok(Self { child, containment })
+        #[cfg(windows)]
+        {
+            let mut child = spawn(command)?;
+            let containment = crate::child_job::ChildJob::attach(&mut child)?;
+            Ok(Self { child, containment })
+        }
+        #[cfg(unix)]
+        Ok(Self {
+            child: airk_process::GroupChild::spawn(command)?,
+        })
     }
 }
 impl std::ops::Deref for ContainedChild {
-    type Target = Child;
-    fn deref(&self) -> &Child {
+    type Target = ManagedChild;
+    fn deref(&self) -> &ManagedChild {
         &self.child
     }
 }
 impl std::ops::DerefMut for ContainedChild {
-    fn deref_mut(&mut self) -> &mut Child {
+    fn deref_mut(&mut self) -> &mut ManagedChild {
         &mut self.child
     }
 }
 impl Drop for ContainedChild {
     fn drop(&mut self) {
-        let _ = self.child.kill();
-        self.containment.drain();
-        let _ = self.child.wait();
+        #[cfg(windows)]
+        {
+            let _ = self.child.kill();
+            self.containment.drain();
+            let _ = self.child.wait();
+        }
+        #[cfg(unix)]
+        self.child.drain();
     }
 }
 

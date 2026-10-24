@@ -1025,6 +1025,31 @@ mod tests {
         };
         match mode.as_str() {
             "blocked-input" => thread::sleep(Duration::from_secs(60)),
+            #[cfg(target_os = "linux")]
+            "leave-descendant" => {
+                let descendant = Command::new(std::env::current_exe()?)
+                    .args([
+                        "--exact",
+                        "service_manager::tests::manager_command_fixture",
+                        "--nocapture",
+                    ])
+                    .env("AIRK_MANAGER_COMMAND_FIXTURE", "blocked-input")
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn()?;
+                fs::write(
+                    std::env::var_os("AIRK_MANAGER_TEST_PID").unwrap(),
+                    descendant.id().to_string(),
+                )?;
+                let release = std::env::var_os("AIRK_MANAGER_TEST_RELEASE").unwrap();
+                let until = Instant::now() + Duration::from_secs(10);
+                while !Path::new(&release).exists() {
+                    ensure!(Instant::now() < until, "fixture release expired");
+                    thread::sleep(Duration::from_millis(5));
+                }
+                // Test owner must prove this child's death despite closed pipes.
+            }
             "oversized-output" => std::io::stdout().write_all(&vec![b'x'; 70 * 1024])?,
             "echo" => {
                 let mut bytes = Vec::new();
@@ -1050,6 +1075,50 @@ mod tests {
             .env
             .insert("AIRK_MANAGER_COMMAND_FIXTURE".into(), mode.into());
         Ok(invocation)
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn manager_command_completion_drains_descendants_with_closed_pipes() -> Result<()> {
+        use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+        let directory = tempfile::tempdir()?;
+        let pid_path = directory.path().join("pid");
+        let release = directory.path().join("release");
+        let mut invocation = command_fixture("leave-descendant")?;
+        invocation.env.insert(
+            "AIRK_MANAGER_TEST_PID".into(),
+            pid_path.display().to_string(),
+        );
+        invocation.env.insert(
+            "AIRK_MANAGER_TEST_RELEASE".into(),
+            release.display().to_string(),
+        );
+        let execution =
+            thread::spawn(move || execute_with_timeout(&invocation, Duration::from_secs(10)));
+        let until = Instant::now() + Duration::from_secs(5);
+        let pid = loop {
+            if let Ok(text) = fs::read_to_string(&pid_path)
+                && let Ok(pid) = text.parse::<libc::pid_t>()
+            {
+                break pid;
+            }
+            ensure!(Instant::now() < until, "fixture did not create descendant");
+            thread::sleep(Duration::from_millis(5));
+        };
+        let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) };
+        ensure!(fd >= 0, "native descendant handle unavailable");
+        let handle = unsafe { OwnedFd::from_raw_fd(fd as i32) };
+        let mut observation = libc::pollfd {
+            fd: handle.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        assert_eq!(unsafe { libc::poll(&mut observation, 1, 0) }, 0);
+        fs::write(release, b"release")?;
+        assert!(execution.join().unwrap()?.success);
+        assert_eq!(unsafe { libc::poll(&mut observation, 1, 0) }, 1);
+        assert_ne!(observation.revents & libc::POLLIN, 0);
+        Ok(())
     }
 
     #[test]

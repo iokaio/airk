@@ -20,6 +20,7 @@ The [1.3.0 release](release-1.3.0.md) retires the former `airk_history` MCP endp
 - [Bounded process logs and down-service diagnostics](service-logging.md).
 - [Native service brokerage and direct query protocol](service-protocol.md)
 - [Service resource admission, presets and observations](service-resources.md)
+- [Native process ownership and provider cleanup](service-processes.md)
 - [Service-owned saved-source watching and reconciliation](service-source-watching.md)
 - [Shared embedding runtime and resource bounds](service-embedding.md)
 - [October 22 service publication mechanism spike](service-publication-spike.md)

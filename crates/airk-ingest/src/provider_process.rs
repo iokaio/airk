@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     io::{Read, Write},
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
+    process::{Command, Stdio},
     sync::mpsc,
     thread,
     time::{Duration, Instant},
@@ -47,7 +47,10 @@ impl ProviderCommand {
 }
 
 pub(crate) struct Process {
-    pub child: Child,
+    #[cfg(windows)]
+    pub child: std::process::Child,
+    #[cfg(unix)]
+    pub child: airk_process::GroupChild,
     #[cfg(target_os = "macos")]
     memory_limit: Option<usize>,
     #[cfg(windows)]
@@ -90,7 +93,6 @@ impl Process {
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt;
-            command.process_group(0);
             if let Some(limits) = limits {
                 // SAFETY: only async-signal-safe setrlimit calls run between fork and exec.
                 unsafe {
@@ -127,8 +129,12 @@ impl Process {
         }
         #[cfg(windows)]
         let job = airk_process::ChildJob::unassigned()?;
+        #[cfg(windows)]
         let child = command
             .spawn()
+            .context("start explicitly provisioned local provider")?;
+        #[cfg(unix)]
+        let child = airk_process::GroupChild::spawn(&mut command)
             .context("start explicitly provisioned local provider")?;
         #[cfg(windows)]
         {
@@ -187,7 +193,7 @@ impl Process {
     fn check_memory_budget(&mut self) -> Result<()> {
         #[cfg(target_os = "macos")]
         if let Some(limit) = self.memory_limit {
-            // A reaped child has no further allocations. A concurrent exit between
+            // An exited leader has no further allocations. A concurrent exit between
             // this check and proc_pid_rusage is handled by the second try_wait.
             if self.child.try_wait()?.is_some() {
                 return Ok(());
@@ -276,15 +282,12 @@ impl Drop for Process {
         #[cfg(windows)]
         self.job.drain();
         #[cfg(unix)]
+        self.child.drain();
+        #[cfg(windows)]
         {
-            // SAFETY: a negative child PID addresses the private process group created
-            // above; the provider never shares AIRK's process group.
-            unsafe {
-                libc::kill(-(self.child.id() as i32), libc::SIGKILL);
-            }
+            let _ = self.child.kill();
+            let _ = self.child.wait();
         }
-        let _ = self.child.kill();
-        let _ = self.child.wait();
     }
 }
 
