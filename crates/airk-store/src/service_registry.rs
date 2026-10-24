@@ -2,7 +2,7 @@
 //! Bounded service-only registry. It never opens collection indexes or source files.
 use super::ProjectLease;
 use airk_core::{
-    identity::Incarnation,
+    identity::{Incarnation, Sha256Digest, framed_digest},
     service::{
         MAX_PROJECT_REGISTRATION_BYTES, ProjectBinding, ProjectPage, ProjectRegistration,
         RegisteredProject,
@@ -57,6 +57,34 @@ struct Owner {
     format: u32,
     root: String,
     incarnation: Incarnation,
+    #[serde(default)]
+    ready: bool,
+    #[serde(default)]
+    digest: Option<Sha256Digest>,
+}
+
+impl Owner {
+    fn checksum(&self) -> Sha256Digest {
+        framed_digest(
+            b"airk/service-registry-owner/2",
+            &[
+                self.root.as_bytes(),
+                self.incarnation.as_bytes(),
+                &[u8::from(self.ready)],
+            ],
+        )
+    }
+
+    fn complete(mut self, root: &Path) -> Result<()> {
+        self.format = 2;
+        self.ready = true;
+        self.digest = Some(self.checksum());
+        let mut temporary = tempfile::NamedTempFile::new_in(root)?;
+        temporary.write_all(&serde_json::to_vec(&self)?)?;
+        temporary.as_file().sync_all()?;
+        temporary.persist(root.join("service-1.4.owner.json"))?;
+        crate::maintenance::sync_parent(root)
+    }
 }
 
 fn owner(root: &Path, existed: bool, incarnation: Incarnation) -> Result<Owner> {
@@ -90,18 +118,26 @@ fn owner(root: &Path, existed: bool, incarnation: Incarnation) -> Result<Owner> 
             );
             let owner: Owner = serde_json::from_slice(&bytes)?;
             ensure!(
-                owner.format == 1 && owner.root == root_text,
+                owner.root == root_text
+                    && match owner.format {
+                        1 => !owner.ready && owner.digest.is_none(),
+                        2 => owner.digest == Some(owner.checksum()),
+                        _ => false,
+                    },
                 "foreign service registry owner"
             );
             Ok(owner)
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             ensure!(!existed, "service registry has no ownership receipt");
-            let owner = Owner {
-                format: 1,
+            let mut owner = Owner {
+                format: 2,
                 root: root_text.into(),
                 incarnation,
+                ready: false,
+                digest: None,
             };
+            owner.digest = Some(owner.checksum());
             let mut temporary = tempfile::NamedTempFile::new_in(root)?;
             temporary.write_all(&serde_json::to_vec(&owner)?)?;
             temporary.as_file().sync_all()?;
@@ -148,6 +184,8 @@ impl ServiceRegistry {
     /// Incarnation is allocated by the kernel; existing ledgers preserve their saved identity.
     pub fn open(root: &Path, incarnation: Incarnation) -> Result<Self> {
         let root = root.canonicalize()?;
+        let _initialization =
+            super::acquire_file_for(&root, "service-1.4.initialize.lock", Duration::from_secs(2))?;
         let path = root.join("service-1.4.sqlite3");
         let existed = path.try_exists()?;
         if let Ok(metadata) = fs::symlink_metadata(&path) {
@@ -175,6 +213,13 @@ impl ServiceRegistry {
             );
         }
         let owner = owner(&root, existed, incarnation)?;
+        // A format-one receipt cannot prove that an empty database is a crashed
+        // first initialization. Never reuse its namespace after metadata loss.
+        let must_exist = owner.ready || owner.format == 1;
+        ensure!(
+            !must_exist || existed,
+            "initialized service registry is missing"
+        );
         let mut connection = Connection::open(&path)?;
         connection.busy_timeout(Duration::from_secs(2))?;
         let mut initialize = !existed;
@@ -184,6 +229,7 @@ impl ServiceRegistry {
             let version: i64 =
                 connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
             if application == 0 && version == 0 {
+                ensure!(!must_exist, "initialized service registry is empty");
                 let tables: i64 = connection.query_row(
                     "SELECT count(*) FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%'",
                     [],
@@ -204,6 +250,36 @@ impl ServiceRegistry {
                 ensure!(
                     actual.parse::<Incarnation>()? == owner.incarnation,
                     "service registry ownership mismatch"
+                );
+            }
+        }
+        let schemas = [
+            jobs::SCHEMA,
+            background::SCHEMA,
+            provider_drains::SCHEMA,
+            watch::SCHEMA,
+            events::SCHEMA,
+            inspection::SCHEMA,
+            maintenance::SCHEMA,
+            progress::SCHEMA,
+            source_isolation::SCHEMA,
+        ];
+        if must_exist {
+            // These names come only from our compiled schema, never from input.
+            for name in ["service_meta", "projects"].into_iter().chain(
+                schemas
+                    .iter()
+                    .flat_map(|schema| schema.split("CREATE TABLE IF NOT EXISTS ").skip(1))
+                    .map(|tail| tail.split('(').next().unwrap().trim()),
+            ) {
+                let exists: bool = connection.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?1)",
+                    [name],
+                    |row| row.get(0),
+                )?;
+                ensure!(
+                    exists,
+                    "initialized service registry table is missing: {name}"
                 );
             }
         }
@@ -233,17 +309,12 @@ impl ServiceRegistry {
             registry.incarnation()? == owner.incarnation,
             "service registry identity disagrees with owner"
         );
-        registry.connection.execute_batch(jobs::SCHEMA)?;
-        registry.connection.execute_batch(background::SCHEMA)?;
-        registry.connection.execute_batch(provider_drains::SCHEMA)?;
-        registry.connection.execute_batch(watch::SCHEMA)?;
-        registry.connection.execute_batch(events::SCHEMA)?;
-        registry.connection.execute_batch(inspection::SCHEMA)?;
-        registry.connection.execute_batch(maintenance::SCHEMA)?;
-        registry.connection.execute_batch(progress::SCHEMA)?;
-        registry
-            .connection
-            .execute_batch(source_isolation::SCHEMA)?;
+        for schema in schemas {
+            registry.connection.execute_batch(schema)?;
+        }
+        if !owner.ready {
+            owner.complete(&registry.root)?;
+        }
         Ok(registry)
     }
 
@@ -469,6 +540,88 @@ mod tests {
             fs::metadata(foreign.path().join("service-1.4.sqlite3"))?.len(),
             0
         );
+        Ok(())
+    }
+    #[test]
+    fn completed_registry_loss_is_refused_without_recreating_metadata() -> Result<()> {
+        for damage in ["missing", "empty", "requests", "projects"] {
+            let directory = tempfile::tempdir()?;
+            let instance = Incarnation::from_bytes([3; 16]);
+            let mut registry = ServiceRegistry::open(directory.path(), instance)?;
+            registry.register(&project("retained"))?;
+            drop(registry);
+            let path = directory.path().join("service-1.4.sqlite3");
+            match damage {
+                "missing" => fs::remove_file(&path)?,
+                "empty" => fs::write(&path, [])?,
+                "requests" => {
+                    Connection::open(&path)?.execute_batch("DROP TABLE service_requests")?
+                }
+                "projects" => Connection::open(&path)?.execute_batch("DROP TABLE projects")?,
+                _ => unreachable!(),
+            }
+            let before = fs::read(&path).ok();
+            let receipt = fs::read(directory.path().join("service-1.4.owner.json"))?;
+            assert!(
+                ServiceRegistry::open(directory.path(), instance).is_err(),
+                "{damage}"
+            );
+            assert_eq!(fs::read(&path).ok(), before, "{damage}");
+            assert_eq!(
+                fs::read(directory.path().join("service-1.4.owner.json"))?,
+                receipt
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn legacy_owner_upgrades_only_with_complete_database_and_preserves_namespace() -> Result<()> {
+        for complete in [true, false] {
+            let directory = tempfile::tempdir()?;
+            let instance = Incarnation::from_bytes([4; 16]);
+            let mut registry = ServiceRegistry::open(directory.path(), instance)?;
+            registry.register(&project("retained"))?;
+            drop(registry);
+            let root = directory.path().canonicalize()?;
+            fs::write(
+                root.join("service-1.4.owner.json"),
+                serde_json::to_vec(&serde_json::json!({
+                    "format":1,"root":root.to_str().unwrap(),"incarnation":instance,
+                }))?,
+            )?;
+            if !complete {
+                fs::remove_file(root.join("service-1.4.sqlite3"))?;
+            }
+            let result = ServiceRegistry::open(&root, Incarnation::from_bytes([5; 16]));
+            if complete {
+                let registry = result?;
+                assert_eq!(registry.incarnation()?, instance);
+                assert_eq!(
+                    registry.get(project("retained").binding)?.registration,
+                    project("retained")
+                );
+                assert!(owner(&root, true, instance)?.ready);
+            } else {
+                assert!(result.is_err());
+                assert!(!root.join("service-1.4.sqlite3").exists());
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn damaged_initialization_phase_does_not_allow_empty_ledger_recovery() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let instance = Incarnation::from_bytes([6; 16]);
+        drop(ServiceRegistry::open(directory.path(), instance)?);
+        let path = directory.path().join("service-1.4.owner.json");
+        let mut receipt: serde_json::Value = serde_json::from_slice(&fs::read(&path)?)?;
+        receipt["ready"] = false.into();
+        fs::write(&path, serde_json::to_vec(&receipt)?)?;
+        fs::remove_file(directory.path().join("service-1.4.sqlite3"))?;
+        assert!(ServiceRegistry::open(directory.path(), instance).is_err());
+        assert!(!directory.path().join("service-1.4.sqlite3").exists());
         Ok(())
     }
     #[test]

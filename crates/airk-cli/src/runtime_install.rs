@@ -1104,13 +1104,14 @@ async fn drain_identity(root: &Path, approval: &Approval, expected_sha256: &str)
     local_ipc::prepare_root(&control)?;
     if airk_store::service::ServiceLease::acquire(&control).is_err() {
         // Authenticate exact executable identity before requesting shutdown.
-        health(root, approval, expected_sha256).await?;
+        let observed = health(root, approval, expected_sha256).await?;
         ensure!(
             matches!(
-                service_runtime::request_for_version(
+                service_runtime::request_for_version_and_instance(
                     &control,
                     ControlMethod::Shutdown,
-                    &approval.version
+                    &approval.version,
+                    observed.instance
                 )
                 .await?,
                 ControlResponse::Stopping

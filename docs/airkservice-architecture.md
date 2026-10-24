@@ -1,5 +1,7 @@
 # AIRK local service architecture and implementation plan
 
+Registry recovery refinement, October 24: completed initialization is now distinct from an interrupted first claim. A checksummed ready receipt and required-table checks refuse lost database files, empty replacements and missing tables without silently resetting the request namespace. Earlier development receipts require a complete matching database before upgrade. See [durable registry ownership](service-jobs.md). Console controller and global lifecycle integration are still in progress.
+
 Native 1.4 data roots now bind one canonical control directory and durable registry namespace. Registration and activated workers reject a foreign or recreated service authority, and active queries/jobs recheck the saved receipt. Legacy storage is preserved; populated unbound 1.4 development state is not implicitly adopted. See [storage ownership](service-storage-ownership.md).
 
 Service query execution now matches its resident allowance: all clients share one native materialization permit, held through kernel work, rendering and accounting even after transport cancellation. Independent service health and cached resource observations remain outside that project budget. See [request execution](request-execution.md).

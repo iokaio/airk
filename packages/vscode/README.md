@@ -376,3 +376,5 @@ More detail: [extension behavior and limits](https://github.com/iokaio/airk/blob
 AIRK stands for Artifact Indexing and Retrieval Kernel. Licensed under Apache-2.0; bundled dependency notices in THIRD_PARTY_NOTICES.md retain their respective terms.
 
 Version 1.3.0 scopes progress to each collection and yields long queue waits as **still queued**, allowing other collections to run. It resumes the same durable request and honors Pause between joins. A format upgrade performs a full rebuild, including retained source copies, extraction payloads and captured model objects; original files and saved settings are preserved. Search snippets are focused before their response budget is charged.
+
+Registry recovery in the opt-in 1.4 development service now refuses lost initialized databases and missing required tables instead of recreating an empty request ledger. Native and extension versions remain 1.3.2 until the complete service cutover; see the [development release record](https://github.com/iokaio/airk/blob/main/docs/release-1.4.0.md).

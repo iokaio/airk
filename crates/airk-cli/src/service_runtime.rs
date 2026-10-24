@@ -241,6 +241,14 @@ pub async fn request_for_instance(
 ) -> Result<ControlResponse> {
     request_scoped(root, method, env!("CARGO_PKG_VERSION"), Some(expected)).await
 }
+pub async fn request_for_version_and_instance(
+    root: &Path,
+    method: ControlMethod,
+    version: &str,
+    expected: airk_core::identity::Incarnation,
+) -> Result<ControlResponse> {
+    request_scoped(root, method, version, Some(expected)).await
+}
 async fn request_scoped(
     root: &Path,
     method: ControlMethod,

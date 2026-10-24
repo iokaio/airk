@@ -29,6 +29,14 @@ impl Drop for OwnershipFile {
 }
 
 fn acquire_file(root: &Path, name: &str) -> Result<OwnershipFile> {
+    acquire_file_for(root, name, std::time::Duration::ZERO)
+}
+
+fn acquire_file_for(
+    root: &Path,
+    name: &str,
+    timeout: std::time::Duration,
+) -> Result<OwnershipFile> {
     let path = root.join(name);
     if let Ok(metadata) = fs::symlink_metadata(&path) {
         ensure!(
@@ -58,12 +66,23 @@ fn acquire_file(root: &Path, name: &str) -> Result<OwnershipFile> {
             "redirected service ownership file"
         );
     }
-    file.try_lock().with_context(|| {
-        format!(
-            "another AIRK process owns service resource: {}",
-            path.display()
-        )
-    })?;
+    let started = std::time::Instant::now();
+    loop {
+        match file.try_lock() {
+            Ok(()) => break,
+            Err(std::fs::TryLockError::WouldBlock) if started.elapsed() < timeout => {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "another AIRK process owns service resource: {}",
+                        path.display()
+                    )
+                });
+            }
+        }
+    }
     Ok(OwnershipFile(file, AtomicBool::new(false)))
 }
 
