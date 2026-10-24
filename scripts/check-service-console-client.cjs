@@ -21,7 +21,7 @@ const {ServiceConsoleController}=require('../packages/vscode/out/serviceConsoleC
     const digest=crypto.createHash('sha256').update(bytes).digest('hex');
     await fs.writeFile(path.join(native,'manifest.json'),JSON.stringify({schema:2,version:inventory.version,vsix_target:`${process.platform}-${process.arch}`,
         runtime_dir:'runtime',install_manifest_sha256:digest,payload:{[main]:inventory.files[main],[helper]:inventory.files[helper]}}));
-    const values=new Map(),copies=[],install=path.join(fixture,'installation');let trusted=true,binding,removed=false;
+    const values=new Map(),copies=[],install=path.join(fixture,'installation');let trusted=true,binding,removed=false,missingHelper;
     const runtime=new RuntimeHost(fixture,inventory.version,{channel:'stable',installDir:install},undefined,()=>trusted);
     const controller=new ServiceConsoleController({version:inventory.version,authority:'Owned native controller fixture',runtime,
         trusted:()=>trusted,storage:{keys:()=>[...values.keys()],get:key=>values.get(key),update:async(key,value)=>{if(value===undefined)values.delete(key);else values.set(key,structuredClone(value));}},
@@ -71,8 +71,24 @@ const {ServiceConsoleController}=require('../packages/vscode/out/serviceConsoleC
         assert.equal(await fs.readFile(path.join(source,'memo.txt'),'utf8'),original);
         assert.equal([...values.keys()].filter(key=>key.startsWith('airk.service.intent.')).length,0);
         console.log('Captured redacted report, trust refusal, native stop acknowledgement, explicit start and original-source preservation passed.');
+
+        const selectedHelper=path.join(path.dirname(binding.executable),helper),backup=path.join(fixture,'saved-helper');
+        assert.equal(path.relative(fixture,selectedHelper).startsWith('..'),false);
+        await fs.rename(selectedHelper,backup);missingHelper={selectedHelper,backup};
+        await action('connect');assert.equal(controller.state.connected,false);
+        assert.equal(controller.state.bootstrap.value.payloadVerified,false);
+        assert.equal(controller.state.page.projects[0].project.registration.binding,project);
+        assert.equal(controller.state.resources.state,'cached');
+        await action('stop');assert.equal(controller.state.pending.length,0);
+        await assert.rejects(nativeRunner(path.join(native,'runtime',main),['service','health','--runtime-dir',binding.controlDir]));
+        await fs.rename(backup,selectedHelper);missingHelper=undefined;
+        await assert.rejects(runtime.ensure(),/service_explicitly_stopped/);
+        await action('start');assert.equal(controller.state.connected,true);
+        assert.equal(await fs.readFile(path.join(source,'memo.txt'),'utf8'),original);
+        console.log('Missing-helper discovery, cached projects/resources, saved-instance Stop and repaired explicit Start passed.');
     }finally{
         controller.dispose();
+        if(missingHelper)await fs.rename(missingHelper.backup,missingHelper.selectedHelper);
         try{
             await fs.stat(install);
             await nativeRunner(path.join(native,'runtime',main),['runtime','uninstall','--install-dir',install],180000);

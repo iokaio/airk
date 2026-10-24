@@ -62,6 +62,32 @@ test('invalid trusted payloads fail before any native invocation or user install
         await assert.rejects(host.discover(),/runtime_payload_digest_mismatch/);assert.equal(calls,0);
     } finally {await f.cleanup();}
 });
+
+test('damaged selected payload exposes saved metadata but cannot be launched or silently restaged',async()=>{
+    const f=await fixture(),install=path.join(f.root,'install'),calls:string[][]=[];await fs.mkdir(install);
+    const run:NativeRunner=async(command,args)=>{
+        assert.equal(command,path.join(f.source,f.main),'only the verified distribution runs');calls.push(args);
+        switch(args[1]){
+            case 'self-test':return {protocol:1,version:'1.4.0',self_test:'passed',metadata_console:1};
+            case 'location':return {protocol:1,install_dir:install};
+            case 'inspect':throw new Error('Selected helper missing');
+            case 'snapshot':return {schema:1,metadata_only:true,payload_verified:false,selection:{active:f.digest},
+                approval:{version:'1.4.0',manifest_sha256:f.digest,verification_basis:'trusted_distribution'},
+                executable:path.join(install,'missing-main'),launcher:null,control_dir:path.join(install,'control')};
+            case 'diagnose':return {};
+            default:throw new Error('Unexpected repair or execution');
+        }
+    };
+    try{
+        const host=new RuntimeHost(f.root,'1.4.0',{channel:'stable',installDir:install},run),saved=await host.discover();
+        assert.equal(saved.error,'selected_runtime_payload_unverified');
+        const binding=host.binding(saved.inspection!,install);assert.equal(binding.payloadVerified,false);
+        assert.throws(()=>host.client(binding),/selected_runtime_payload_unverified/);
+        await assert.rejects(host.ensure(),/selected_runtime_payload_unverified/);
+        await assert.rejects(host.ensure(true),/selected_runtime_payload_unverified/);
+        assert.ok(calls.every(args=>['self-test','location','inspect','snapshot','diagnose'].includes(args[1])));
+    }finally{await f.cleanup();}
+});
 test('discovery does not install/start and concurrent first use shares one approved activation',async()=>{
     const f=await fixture(),install=path.join(f.root,'install'),calls:string[][]=[];let selected=false;
     const inspection=()=>({selection:{active:f.digest,previous:null},executable:path.join(install,'runtimes',f.digest,f.main),launcher:path.join(install,'airk-launcher'),

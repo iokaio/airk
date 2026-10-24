@@ -214,6 +214,39 @@ fn decode(bytes: &[u8], epoch: i64, paused: bool) -> Result<RegisteredProject> {
 }
 
 impl ServiceRegistry {
+    /// Observe only an existing completed registry. Never initialize, migrate,
+    /// prune receipts, or acquire service ownership for down-service diagnostics.
+    pub fn open_saved(root: &Path) -> Result<Self> {
+        let root = root.canonicalize()?;
+        let namespace = retained_namespace(&root)?;
+        let path = root.join("service-1.4.sqlite3");
+        for suffix in ["-wal", "-shm"] {
+            ensure!(
+                !path
+                    .with_file_name(format!("service-1.4.sqlite3{suffix}"))
+                    .try_exists()?,
+                "unexpected service registry overlay"
+            );
+        }
+        let connection =
+            Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        connection.busy_timeout(Duration::from_secs(2))?;
+        connection.execute_batch("PRAGMA query_only=ON; PRAGMA cache_size=-8192;")?;
+        let application: i64 =
+            connection.pragma_query_value(None, "application_id", |row| row.get(0))?;
+        let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
+        ensure!(
+            application == APPLICATION && version == 2,
+            "unsupported saved service registry format"
+        );
+        let registry = Self { root, connection };
+        ensure!(
+            registry.incarnation()? == namespace,
+            "service registry ownership mismatch"
+        );
+        Ok(registry)
+    }
+
     /// Native adapter establishes owner-only directory permissions before opening this ledger.
     /// Incarnation is allocated by the kernel; existing ledgers preserve their saved identity.
     pub fn open(root: &Path, incarnation: Incarnation) -> Result<Self> {
@@ -580,6 +613,30 @@ impl ServiceRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn saved_registry_never_initializes_migrates_or_permits_mutation() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        assert!(ServiceRegistry::open_saved(directory.path()).is_err());
+        assert!(fs::read_dir(directory.path())?.next().is_none());
+        let namespace = Incarnation::from_bytes([7; 16]);
+        let registration = project("saved");
+        let mut writer = ServiceRegistry::open(directory.path(), namespace)?;
+        writer.register(&registration)?;
+        drop(writer);
+        let path = directory.path().join("service-1.4.sqlite3");
+        let before = fs::read(&path)?;
+        let mut reader = ServiceRegistry::open_saved(directory.path())?;
+        assert_eq!(reader.list(None, None, 16)?.projects.len(), 1);
+        assert_eq!(reader.saved_request_epoch()?.0, namespace);
+        assert!(reader.pause(registration.binding, true).is_err());
+        drop(reader);
+        assert_eq!(fs::read(&path)?, before);
+        Connection::open(&path)?.pragma_update(None, "user_version", 1)?;
+        let earlier = fs::read(&path)?;
+        assert!(ServiceRegistry::open_saved(directory.path()).is_err());
+        assert_eq!(fs::read(&path)?, earlier);
+        Ok(())
+    }
     #[test]
     fn retained_namespace_is_read_only_and_refuses_linked_ownership() -> Result<()> {
         let directory = tempfile::tempdir()?;

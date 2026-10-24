@@ -29,7 +29,7 @@ function fixture(){
         }
     }});
     const host:ConsoleHost={version:'1.4.0',authority:'local-test',storage:{keys:()=>[...values.keys()],get:<T>(key:string)=>values.get(key) as T|undefined,update:async(key,value)=>{if(value===undefined)values.delete(key);else values.set(key,structuredClone(value));}},
-        runtime:{discover:async()=>({bundle:{main:'/main',helper:'/helper',source:'/bundle',digest:binding.runtimeSha256,version:'1.4.0',platform:'test'},installDir:'/install',installed:true,inspection:{},location:{}}),binding:()=>binding,ensure:async()=>binding,client:()=>client},
+        runtime:{discover:async()=>({bundle:{main:'/main',helper:'/helper',source:'/bundle',digest:binding.runtimeSha256,version:'1.4.0',platform:'test'},installDir:'/install',installed:true,inspection:{control_dir:'/control'},location:{}}),binding:()=>binding,ensure:async()=>binding,client:()=>client,snapshot:async()=>({})},
         trusted:()=>trusted,changed(){},confirm:async()=>true,copy:async text=>{copied.push(text);},logs:async()=>{},resources:async()=>undefined,lifecycle:async()=>({status:'lifecycle'})};
     const controller=new ServiceConsoleController(host);
     const action=async(name:string,extra:RecordValue={})=>controller.action({type:'service',revision:controller.state.revision,action:name,...extra});
@@ -82,4 +82,41 @@ test('background refresh preserves the exact report reviewed before Copy',async(
     const preview=f.controller.state.preview;assert.ok(preview);
     await f.controller.refresh();assert.equal(f.controller.state.preview,preview);
     await f.action('copyReport');assert.equal(f.copied[0],preview);f.controller.dispose();
+});
+
+test('damaged payload uses cached pages and persists an instance-fenced Stop without launching it',async()=>{
+    const f=fixture(),binding=await f.host.runtime.ensure();binding.payloadVerified=false;
+    const page=(id:string,after:string|null)=>({revision:3,cached:true,observed_unix_ms:10,
+        projects:[{project:{registration:{binding:id,collection:'offline',root:'/missing',data_root:'/saved'},paused:false}}],after});
+    const second='ab'.repeat(32),requests:unknown[]=[];
+    const lifecycle={recorded_instance:instance,namespace,epoch:7,pending:null,explicitly_stopped:false};
+    const observation=await f.host.runtime.discover();
+    observation.inspection={schema:1,metadata_only:true,payload_verified:false,control_dir:'/control',lifecycle,registry_namespace:namespace,console:page(project,project)};
+    f.host.runtime.discover=async()=>observation;
+    f.host.runtime.client=()=>{throw new Error('Damaged payload must never execute');};
+    f.host.runtime.snapshot=async(_binding,after,revision)=>{
+        requests.push({after,revision});return {...observation.inspection,console:after?page(second,null):page(project,project)};
+    };
+    f.host.lifecycle=async(_binding,intent)=>{
+        assert.equal(f.controller.state.pending.length,1,'durably saved before native Stop');
+        assert.equal(intent.lifecycle.action,'stop');assert.equal(intent.lifecycle.expected_instance,instance);
+        assert.equal(intent.lifecycle.key.namespace,namespace);assert.equal(intent.lifecycle.key.epoch,7);
+        return {status:'lifecycle',record:{phase:'complete',request:{...intent.lifecycle,manager:false}}};
+    };
+    await f.controller.refresh();assert.equal(f.controller.state.connected,false);
+    assert.equal(f.controller.state.page?.projects[0].project&&((f.controller.state.page.projects[0].project as RecordValue).registration as RecordValue).binding,project);
+    assert.doesNotMatch(renderConsole(f.controller.state),/data-action="stop"[^>]*disabled/);
+    await f.action('nextPage');assert.deepEqual(requests.at(-1),{after:project,revision:3});
+    assert.equal(((f.controller.state.page!.projects[0].project as RecordValue).registration as RecordValue).binding,second);
+    await f.action('stop');assert.equal(f.controller.state.pending.length,0);assert.equal(f.controller.state.message,undefined);
+    assert.equal(f.sent.length,0);f.controller.dispose();
+});
+
+test('a failed health check changes previously live resource and work observations to cached',async()=>{
+    const f=fixture();await f.controller.refresh();assert.equal(f.controller.state.resources.state,'live');
+    f.host.runtime.client=()=>new ServiceClient({dispose(){},request:async()=>{throw new ServiceError('service_down');}});
+    await f.action('connect');assert.equal(f.controller.state.connected,false);
+    assert.equal(f.controller.state.resources.state,'cached');assert.equal(f.controller.state.model.state,'cached');
+    const html=renderConsole(f.controller.state);assert.match(html,/Cached sample/);assert.doesNotMatch(html,/Current generation/);
+    f.controller.dispose();
 });

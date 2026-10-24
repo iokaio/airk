@@ -129,6 +129,13 @@ export function validateMutationIntent(input:unknown): MutationIntent {
     return input as MutationIntent;
 }
 export interface ConsolePage { revision: number; cached: true; observed_unix_ms: number; projects: RecordValue[]; after: string | null }
+export function parseConsolePage(input:unknown,limit=32):ConsolePage{
+    const page=record(input);count(page.revision);count(page.observed_unix_ms);
+    if(page.cached!==true||!Array.isArray(page.projects)||page.projects.length>limit)throw new ServiceError('invalid_console_page');
+    const projects=page.projects.map(value=>{const row=record(value);identifier(record(record(row.project).registration).binding,32);return row;});
+    if(page.after!==null)identifier(page.after,32);
+    return {revision:page.revision as number,observed_unix_ms:page.observed_unix_ms as number,cached:true,projects,after:page.after as string|null};
+}
 export class ServiceClient {
     private readonly caller = randomUUID().replaceAll('-', '');
     constructor(readonly transport: ControlTransport) {}
@@ -144,12 +151,7 @@ export class ServiceClient {
     async projects(after: string | null = null, revision: number | null = null, limit = 16): Promise<ConsolePage> {
         if (after !== null) { identifier(after,32); } if (revision !== null) { count(revision); }
         if (!Number.isInteger(limit) || limit < 1 || limit > 32) { throw new ServiceError('invalid_project_page_limit'); }
-        const page = record((await this.rpc({ console: { after, revision, limit } }, 'console')).page);
-        count(page.revision); count(page.observed_unix_ms);
-        if (page.cached !== true || !Array.isArray(page.projects) || page.projects.length > limit) { throw new ServiceError('invalid_console_page'); }
-        const projects = page.projects.map(value => { const row = record(value); identifier(record(record(row.project).registration).binding,32); return row; });
-        if (page.after !== null) { identifier(page.after,32); }
-        return { revision: page.revision as number, observed_unix_ms: page.observed_unix_ms as number, cached: true, projects, after: page.after as string | null };
+        return parseConsolePage((await this.rpc({ console: { after, revision, limit } }, 'console')).page,limit);
     }
     async workers(projects: string[]): Promise<RecordValue> {
         if (projects.length > 32 || new Set(projects).size !== projects.length) { throw new ServiceError('invalid_worker_observation_scope'); }

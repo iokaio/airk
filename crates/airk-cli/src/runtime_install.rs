@@ -31,6 +31,8 @@ pub use managed::ManagedLifecycle;
 mod lifecycle;
 #[path = "runtime_retirement.rs"]
 mod retirement;
+#[path = "runtime_snapshot.rs"]
+mod snapshot;
 #[path = "runtime_staging.rs"]
 mod staging;
 
@@ -141,6 +143,17 @@ pub enum RuntimeCommand {
     Inspect {
         #[arg(long)]
         install_dir: PathBuf,
+    },
+    /// Read saved bootstrap/project metadata without executing or trusting selected payload files.
+    Snapshot {
+        #[arg(long)]
+        install_dir: PathBuf,
+        #[arg(long)]
+        after: Option<airk_core::service::ProjectBinding>,
+        #[arg(long)]
+        revision: Option<u64>,
+        #[arg(long, default_value_t = 16)]
+        limit: usize,
     },
     /// Remove one unused owned runtime; preserve active/rollback selections and unknown files.
     Remove {

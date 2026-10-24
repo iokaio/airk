@@ -147,6 +147,12 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
             let input = serde_json::from_slice(&bytes)?;
             serde_json::json!({"status":"lifecycle","record":lifecycle::run(install_dir,input).await?})
         }
+        RuntimeCommand::Snapshot {
+            install_dir,
+            after,
+            revision,
+            limit,
+        } => snapshot::read(install_dir, *after, *revision, *limit)?,
         RuntimeCommand::Inspect { install_dir } => {
             let (selection, executable, approval) = selected(install_dir)?;
             let policy = managed::read(install_dir)?;
@@ -169,7 +175,7 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
                     .and_then(|registry| registry.incarnation())
                 })
                 .transpose()?;
-            serde_json::json!({"selection":selection,"executable":executable,"approval":approval,"launcher":launcher,"managed_policy":policy,"control_dir":control.ok(),"state_error":state_error,"lifecycle":lifecycle,"registry_namespace":registry_namespace})
+            serde_json::json!({"selection":selection,"executable":executable,"approval":approval,"launcher":launcher,"managed_policy":policy,"control_dir":control.ok(),"state_error":state_error,"lifecycle":lifecycle,"registry_namespace":registry_namespace,"payload_verified":true})
         }
         RuntimeCommand::Remove {
             install_dir,

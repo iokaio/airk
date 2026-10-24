@@ -190,7 +190,7 @@ fn observed<T>(
         }
     }
 }
-fn console_page(
+pub(crate) fn console_page(
     registry: &mut ServiceRegistry,
     after: Option<airk_core::service::ProjectBinding>,
     revision: Option<u64>,

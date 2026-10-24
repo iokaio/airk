@@ -61,22 +61,25 @@ function projectRow(row:RecordValue,state:ServiceConsoleState):string {
     const inspection=obj(row.inspection),snapshot=obj(inspection.snapshot),progress=obj(row.progress),work=obj(progress.progress),job=obj(progress.job),watch=obj(row.watch);
     const workers=Array.isArray(state.workers?.observations)?state.workers!.observations:[];
     const worker=obj(workers.find(value=>obj(value).project===binding)),identity=obj(worker.identity);
-    const prior=progress.worker&&obj(progress.worker).fencing_generation!==progress.current_fencing_generation;
+    const sampled=obj(progress.worker);
+    const current=state.connected&&typeof sampled.worker==='string'&&typeof sampled.service==='string'&&sampled.worker===identity.worker&&sampled.service===identity.service
+        &&sampled.project===identity.project
+        &&sampled.fencing_generation===identity.fencing_generation&&sampled.fencing_generation===progress.current_fencing_generation;
     const semantic=obj(snapshot.semantic),discovery=obj(snapshot.discovery);
     const attr=`data-project="${e(binding)}"`;
     const unavailable=state.busy||!state.connected||!state.trusted;
     return `<article><h3><label><input type="checkbox" data-action="select" ${attr}${state.selected.has(binding)?' checked':''}${unavailable?' disabled':''}> ${e(registration.collection)}</label></h3>
         ${facts([['Source',registration.root],['Index data',registration.data_root],['Project identity',binding],
             ['Worker',identity.worker??(worker.restarting?'Restart queued':worker.identity===null?'No resident worker observed':'Worker identity not observed')],['Worker fence',identity.fencing_generation],
-            ['Worker observation age (ms)',state.workers?.age_ms],['Startup circuit blocked',worker.automatic_start_blocked],
+            ['Worker age at sample (ms)',state.workers?.age_ms],['Worker observation',state.connected?'Connected sample':'Cached sample'],['Startup circuit blocked',worker.automatic_start_blocked],
             ['Paused',project.paused],['Source watcher',watch.enabled],['Source observation',watch.failure??watch.backend],
             ['Pending source changes',typeof watch.requested_revision==='number'&&typeof watch.completed_revision==='number'?Math.max(0,watch.requested_revision-watch.completed_revision):undefined],
             ['Last inspected revision',snapshot.publication],['Inspection time (cached)',inspection.observed_unix_ms],['Source availability (cached)',snapshot.source_state],
             ['Discovery (cached)',discovery.state],['Indexed files (cached)',snapshot.indexed_files],['Semantic coverage (cached)',semantic.state],
             ['Completed semantic artifacts',semantic.completed_artifacts],['Selected semantic artifacts',semantic.selected_artifacts],
-            ['Work observation',prior?'Earlier worker':progress.worker?'Current generation':'Not observed'],['Phase',work.phase],
+            ['Work observation',current?'Observed worker generation':progress.worker?'Cached worker sample':'Not observed'],['Phase',work.phase],
             ['Captured files',work.captured_files],['Extracted files',work.extracted_files],['Prepared changes',work.prepared_changes],['Committed changes',work.committed_changes],
-            ['Published batches',work.publications],['Total files',work.total_files],['Last real work advance age (ms)',work.last_advance_age_ms],
+            ['Published batches',work.publications],['Total files',work.total_files],['Last real work advance age at sample (ms)',work.last_advance_age_ms],
             ['Unpaused time without progress (ms)',work.unpaused_idle_ms],['Phase elapsed (ms)',work.phase_elapsed_ms],['Job state',job.state],
             ['Last job failure code',obj(job.outcome).code],['Inspection failure (cached)',snapshot.failure],
             ['Last observed publication',work.publication],['Unavailable cached fields',Array.isArray(row.failed_observations)?row.failed_observations.join(', '):undefined]])}
@@ -113,17 +116,21 @@ export function consoleContent(state:ServiceConsoleState):string {
     const unavailable=state.busy||!state.trusted;
     const projects=state.page?.projects.map(row=>projectRow(row,state)).join('')??'<p>No project page has been observed.</p>';
     const lifecycle=obj(state.bootstrap.value?.lifecycle),pending=obj(lifecycle.pending);
+    const manager=obj(state.bootstrap.value?.startupManager);
     return `<h1>AIRK Service Console</h1><p>${e(state.authority)} · extension ${e(state.version)} · ${state.connected?'Connected':'Disconnected'}${state.busy?' · Working':''}</p>
         ${!state.trusted?'<p role="alert">Trust the workspace before connecting AIRK or requesting work.</p>':''}
         ${state.message?`<p role="status">${e(state.message)}</p>`:''}
         <div class="controls">${button('refresh','Refresh','',state.busy)}${button('connect','Connect / reconnect','',unavailable)}
         ${button('start','Start service','',unavailable||state.lifecycle==='external')}${button('restart','Restart service','',unavailable||!state.connected||state.lifecycle==='external')}
-        ${button('stop','Stop service','',unavailable||!state.connected||state.lifecycle==='external')}${button('logs','Open service logs','',state.busy)}${button('resources','Resource settings','',unavailable||!state.connected)}</div>
+        ${button('stop','Stop service','',unavailable||(!state.connected||state.health.state!=='live')&&typeof lifecycle.recorded_instance!=='string'||state.lifecycle==='external')}${button('logs','Open service logs','',state.busy)}${button('resources','Resource settings','',unavailable||!state.connected)}</div>
         ${state.lifecycle==='external'?'<p>Startup, stop and restart are controlled by the external service manager.</p>':''}
         <p>MCP response mode: <strong>${e(state.responseMode??'terse')}</strong>. Full adds diagnostic provenance, readiness and coverage details. Agents can request Full for one call when those details are needed.</p>
         ${button('responseMode','Choose terse / full responses','',unavailable)}
         <h2>Runtime and observations</h2>${observation('Service',state.health)}${observation('Bootstrap',state.bootstrap)}
         ${facts([['Lifecycle',state.lifecycle],['Installation',state.bootstrap.value?.installDir],['Bundled runtime',state.bootstrap.value?.bundleDigest],['Execution platform',state.bootstrap.value?.platform],['Bootstrap failure',state.bootstrap.value?.error]])}
+        ${facts([['Selected payload verified',state.bootstrap.value?.payloadVerified],['Cached registry failure',state.bootstrap.value?.registryError],
+            ['Startup manager observation',manager.mode],['Login registration installed',manager.installed],['Manager reports running',manager.running],
+            ['Registration definition matches',manager.registered_definition_matches],['Registration verification failed',manager.verification_failed]])}
         ${facts([['Explicitly stopped',lifecycle.explicitly_stopped],['Pending native lifecycle request',pending.id],['Native lifecycle phase',pending.phase]])}
         ${pending.id?button('recoverLifecycle','Resume saved native lifecycle','',unavailable)+button('abandonLifecycle','Abandon saved native lifecycle intent','',unavailable):''}
         ${facts([['Service instance',health.instance],['Native version',health.version],['Protocol',health.protocol],['Service process',health.process_id],

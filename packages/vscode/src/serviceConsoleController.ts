@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 import { randomUUID } from 'node:crypto';
 import { BootstrapObservation, RuntimeBinding, RuntimeHost } from './serviceBootstrap';
-import { count, identifier, record, RecordValue, ServiceClient, ServiceError } from './serviceClient';
+import { count, identifier, parseConsolePage, record, RecordValue, ServiceClient, ServiceError } from './serviceClient';
 import { ConsoleIntent, IntentJournal, IntentStorage, LifecycleIntent } from './serviceIntents';
 import { consoleAction, ConsoleObservation, diagnosticPreview, ServiceConsoleState } from './serviceConsoleView';
 
 export interface ConsoleHost {
     version:string; authority:string; storage:IntentStorage;
-    runtime:Pick<RuntimeHost,'discover'|'binding'|'ensure'|'client'>;
+    runtime:Pick<RuntimeHost,'discover'|'binding'|'ensure'|'client'|'snapshot'>;
     trusted():boolean;
     changed(state:ServiceConsoleState):void;
     confirm(message:string):Promise<boolean>;
@@ -62,11 +62,37 @@ export class ServiceConsoleController {
             error:this.bootstrap.error,diagnosis:this.bootstrap.diagnosis,
             lifecycle:this.bootstrap.inspection?.lifecycle,
         }};
+        this.client?.dispose();this.client=undefined;this.binding=undefined;this.disconnected();
         if(this.bootstrap.inspection){
+            if(typeof this.bootstrap.inspection.control_dir!=='string'){
+                this.cachedSnapshot(this.bootstrap.inspection);return;
+            }
             this.binding=this.host.runtime.binding(this.bootstrap.inspection,this.bootstrap.installDir);
-            this.client?.dispose();this.client=this.host.runtime.client(this.binding);
+            if(this.binding.payloadVerified!==false)this.client=this.host.runtime.client(this.binding);
             this.state.lifecycle=this.binding.lifecycle;
             if(typeof this.bootstrap.inspection.registry_namespace==='string')this.restoreJournal(this.bootstrap.inspection.registry_namespace);
+            this.cachedSnapshot(this.bootstrap.inspection);
+        }
+    }
+    private cachedSnapshot(snapshot:RecordValue):void{
+        if(this.bootstrap)this.bootstrap.inspection={...this.bootstrap.inspection,...snapshot};
+        this.state.bootstrap={...this.state.bootstrap,value:{...this.state.bootstrap.value,lifecycle:snapshot.lifecycle,
+            payloadVerified:snapshot.payload_verified,registryError:snapshot.registry_error,startupManager:snapshot.startup_manager}};
+        if(snapshot.console)this.state.page=parseConsolePage(snapshot.console);
+        if(snapshot.logs)this.state.serviceEvents={state:'cached',checkedAt:Date.now(),value:record(snapshot.logs)};
+    }
+    private async savedSnapshot(after:string|null=null,revision:number|null=null):Promise<void>{
+        if(!this.binding)return;
+        const snapshot=await this.host.runtime.snapshot(this.binding,after,revision);this.authorized();
+        if(snapshot.registry_namespace)this.restoreJournal(identifier(snapshot.registry_namespace,16));
+        this.cachedSnapshot(snapshot);this.pending();
+        if(snapshot.registry_error)throw new ServiceError('cached_registry_unavailable_or_cursor_expired');
+    }
+    private disconnected():void{
+        this.state.connected=false;
+        if(this.state.health.state==='live')this.state.health={...this.state.health,state:'cached'};
+        for(const name of ['resources','model','sources'] as const){
+            if(this.state[name].value)this.state[name]={...this.state[name],state:'cached'};
         }
     }
     async refresh():Promise<void>{
@@ -77,13 +103,15 @@ export class ServiceConsoleController {
         finally{this.state.busy=false;this.publish();this.releaseIdle();}
     }
     private async observe():Promise<void>{
-        if(!this.client)return;
+        if(!this.client){await this.savedSnapshot(this.pageStart.after,this.pageStart.revision);return;}
         try{
             const value=await this.rpc('health','health');
             this.state.health={state:'live',value,checkedAt:Date.now()};this.state.connected=true;
         }catch(error){
             this.state.health={...this.state.health,state:'failed',code:code(error),checkedAt:Date.now()};
-            this.state.connected=false;this.client.dispose();this.client=undefined;throw error;
+            this.disconnected();this.client.dispose();this.client=undefined;
+            try{await this.savedSnapshot(this.pageStart.after,this.pageStart.revision);}catch{/* Retain the original health failure. */}
+            throw error;
         }
         for(const [name,method,expected] of [['resources','resources','resources'],['model','embedding_status','embedding_status'],['sources','source_status','source_status']] as const){
             try{this.state[name]={state:'live',value:await this.rpc(method,expected),checkedAt:Date.now()};}
@@ -126,9 +154,9 @@ export class ServiceConsoleController {
             forceAvailable:request?.manager===true&&record(request.key).nonce===entry.id}))??[];
     }
     private async page(next:boolean,first=false):Promise<void>{
-        if(!this.client)return;
         const prior=this.state.page;
         const start=first?{after:null,revision:null}:next?{after:prior?.after??null,revision:prior?.revision??null}:this.pageStart;
+        if(!this.client){await this.savedSnapshot(start.after,start.after?start.revision:null);this.pageStart=start;return;}
         const page=await this.client.projects(start.after,start.after?start.revision:null);
         this.pageStart=start;
         this.authorized();this.state.page=page;
@@ -217,7 +245,7 @@ export class ServiceConsoleController {
                     await this.journal.forget(intent.lifecycle.key.nonce);
                     this.state.message='Native lifecycle intent abandoned. Automatic starts remain disabled until Start service.';
                 }
-                this.client?.dispose();this.client=undefined;this.state.connected=false;return;
+                this.client?.dispose();this.client=undefined;this.disconnected();return;
             }
             if(action.action==='retryIntent'||action.action==='forceIntent'){
                 if(!this.journal)await this.discover();
@@ -225,7 +253,7 @@ export class ServiceConsoleController {
                     if(!this.state.pending.some(intent=>intent.id===action.id&&intent.lifecycle&&intent.forceAvailable))throw new ServiceError('lifecycle_force_stop_ownership_unavailable');
                     if(!await this.host.confirm(`Force-stop the verified OS-managed AIRK service on ${this.host.authority}? This can terminate its owned processes and interrupt active requests or publication. Native ownership is rechecked, and the saved request key is retained for recovery.`))return;
                 }
-                await this.submit(action.id!,action.action==='forceIntent');this.client?.dispose();this.client=undefined;this.state.connected=false;
+                await this.submit(action.id!,action.action==='forceIntent');this.client?.dispose();this.client=undefined;this.disconnected();
                 return;
             }
             if(action.action==='forgetIntent'){
@@ -246,16 +274,21 @@ export class ServiceConsoleController {
                 if(!this.client)await this.discover();
             }else if(action.action==='stop'||action.action==='restart'){
                 if(!this.binding||this.binding.lifecycle==='external')throw new ServiceError('lifecycle_managed_externally');
-                const health=record(this.state.health.value?.observation),instance=identifier(health.instance,16);
+                if(action.action==='restart'&&this.binding.payloadVerified===false)throw new ServiceError('selected_runtime_payload_unverified');
+                const saved=this.bootstrap?.inspection?.lifecycle?record(this.bootstrap.inspection.lifecycle):{};
+                const health=this.state.connected?record(this.state.health.value?.observation):{};
+                const instance=identifier(health.instance??saved.recorded_instance,16);
                 if(!await this.host.confirm(`${action.action==='stop'?'Stop':'Restart'} AIRK on ${this.host.authority}? Instance ${instance}; ${this.state.page?.projects.length??'unknown'} projects on the displayed page. Active requests may disconnect; native work will drain. Other connected clients have not been counted.`))return;
                 this.authorized();
-                if(!this.client)throw new ServiceError('console_not_connected');
                 const intent:LifecycleIntent={lifecycle:{action:action.action,expected_instance:instance,runtime:this.binding.runtimeSha256,
-                    caller:randomUUID().replaceAll('-',''),key:await this.client.key()}};
+                    caller:randomUUID().replaceAll('-',''),key:this.client?await this.client.key():{
+                        namespace:identifier(saved.namespace,16),epoch:count(saved.epoch),nonce:randomUUID().replaceAll('-','')}}};
                 await this.mutation(`${action.action} service ${instance}`,intent);
-                this.client?.dispose();this.client=undefined;this.state.connected=false;
+                this.client?.dispose();this.client=undefined;this.disconnected();
                 if(action.action==='stop')return;
                 await this.discover();
+            }else if(action.action==='firstPage'||action.action==='nextPage'){
+                await this.page(action.action==='nextPage',action.action==='firstPage');return;
             }else{
                 if(!this.client||!this.state.connected)throw new ServiceError('console_not_connected');
                 await this.connectedAction(action);

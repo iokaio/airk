@@ -441,6 +441,15 @@ pub(super) fn validate_control(control: &Path) -> Result<()> {
     control_binding(&control_location(control)?)?;
     Ok(())
 }
+/// Log lookup may use verified layout ownership even when registry authority is unavailable.
+pub(super) fn saved_control(root: &Path) -> Result<PathBuf> {
+    let layout = Layout::read(root)?.context("runtime state layout missing")?;
+    ensure!(
+        layout.ready && layout.claimed()?,
+        "runtime state layout is not claimed"
+    );
+    Ok(layout.state.join("control"))
+}
 /// Record initialization before any registry creation, under singleton ownership.
 pub(super) fn record_control(lease: &airk_store::service::ServiceLease) -> Result<()> {
     let control = control_location(lease.root())?;

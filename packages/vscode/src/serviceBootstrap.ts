@@ -21,6 +21,7 @@ export interface RuntimeBinding {
     installDir: string; controlDir: string; executable: string; launcher: string | null;
     runtimeSha256: string; version: string; lifecycle: 'on-demand' | 'external' | 'user-on-demand';
     verificationBasis: string;
+    payloadVerified?:boolean;
 }
 export interface BootstrapObservation {
     bundle: VerifiedBundle; installDir: string; location: RecordValue;
@@ -147,6 +148,11 @@ export class RuntimeHost {
         observation.installed=true;
         try {observation.inspection=await this.invoke(bundle.main,['runtime','inspect','--install-dir',installDir]);}
         catch {observation.error='runtime_selection_unavailable';}
+        if(!observation.inspection){
+            try{const snapshot=await this.invoke(bundle.main,['runtime','snapshot','--install-dir',installDir]);
+                if(snapshot.schema===1&&snapshot.metadata_only===true&&snapshot.payload_verified===false){observation.inspection=snapshot;observation.error='selected_runtime_payload_unverified';}}
+            catch{/* Preserve unavailable state without nominating a different installation. */}
+        }
         try {observation.diagnosis=await this.invoke(bundle.main,['runtime','diagnose','--install-dir',installDir]);}
         catch {observation.error??='runtime_diagnostics_unavailable';}
         return observation;
@@ -160,6 +166,7 @@ export class RuntimeHost {
             try {
                 const observed=await this.discover(),{bundle,installDir}=observed,managed=this.options.managed;
                 const inspected=observed.inspection,selection=inspected?record(inspected.selection):undefined;
+                if(inspected?.payload_verified===false)throw new ServiceError('selected_runtime_payload_unverified');
                 if(!explicitStart&&inspected?.lifecycle&&record(inspected.lifecycle).explicitly_stopped===true)throw new ServiceError('service_explicitly_stopped');
                 if(managed){
                     if(inspected){
@@ -186,7 +193,7 @@ export class RuntimeHost {
                 const inspection=await this.invoke(bundle.main,['runtime','inspect','--install-dir',installDir]);
                 return this.binding(inspection,installDir);
             }catch(error){
-                if(error instanceof ServiceError&&['runtime_client_no_longer_authorized','managed_runtime_policy_mismatch','managed_runtime_state_mismatch','service_explicitly_stopped'].includes(error.code))throw error;
+                if(error instanceof ServiceError&&['runtime_client_no_longer_authorized','managed_runtime_policy_mismatch','managed_runtime_state_mismatch','service_explicitly_stopped','selected_runtime_payload_unverified'].includes(error.code))throw error;
                 lastError=error;if(attempt<2)await new Promise(resolve=>setTimeout(resolve,1000*(attempt+1)));
             }
         }
@@ -201,12 +208,23 @@ export class RuntimeHost {
         return {installDir:safePath(installDir),controlDir:safePath(inspection.control_dir),executable:safePath(inspection.executable),
             launcher:inspection.launcher===null?null:safePath(inspection.launcher),runtimeSha256,version:this.version,
             lifecycle:managed?.lifecycle==='external'?'external':managed?'user-on-demand':'on-demand',
-            verificationBasis:typeof approval.verification_basis==='string'?approval.verification_basis:'unknown'};
+            verificationBasis:typeof approval.verification_basis==='string'?approval.verification_basis:'unknown',
+            payloadVerified:inspection.payload_verified!==false&&inspection.metadata_only!==true};
     }
     client(binding:RuntimeBinding):ServiceClient {
         this.active();
+        if(binding.payloadVerified===false)throw new ServiceError('selected_runtime_payload_unverified');
         return new ServiceClient(new NativeControlTransport(binding.executable,['service','console','--runtime-dir',binding.controlDir,
             '--runtime-sha256',binding.runtimeSha256]));
+    }
+    async snapshot(binding:RuntimeBinding,after:string|null=null,revision:number|null=null):Promise<RecordValue>{
+        this.active();const bundle=await this.verified();
+        const args=['runtime','snapshot','--install-dir',binding.installDir];
+        if(after!==null){identifier(after,32);args.push('--after',after);}
+        if(revision!==null){if(!Number.isSafeInteger(revision)||revision<0)throw new ServiceError('invalid_registry_revision');args.push('--revision',String(revision));}
+        const value=await this.invoke(bundle.main,args);
+        if(value.schema!==1||value.metadata_only!==true||value.payload_verified!==false)throw new ServiceError('invalid_bootstrap_snapshot');
+        return value;
     }
     async lifecycle(binding:RuntimeBinding,intent:LifecycleIntent,force=false):Promise<RecordValue>{
         this.active();

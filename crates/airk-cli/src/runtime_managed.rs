@@ -73,6 +73,12 @@ pub(super) fn is_configured(root: &Path) -> Result<bool> {
 }
 
 impl Managed {
+    pub(super) fn saved_executable(&self) -> PathBuf {
+        self.source.join(main_name())
+    }
+    pub(super) fn saved_executable_sha256(&self) -> &str {
+        &self.executable_sha256
+    }
     pub(super) fn verify(&self) -> Result<(PathBuf, Approval)> {
         ensure!(
             self.source.canonicalize()? == self.source,

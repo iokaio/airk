@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 import * as vscode from 'vscode';
+import * as path from 'node:path';
 import { BootstrapObservation, nativeRunner, RuntimeHost, RuntimeOptions } from './serviceBootstrap';
 import { RecordValue, ServiceError } from './serviceClient';
 import { ServiceConsoleController } from './serviceConsoleController';
 import { consoleContent, renderConsole, ServiceConsoleState } from './serviceConsoleView';
-export type ConsoleRuntime=Pick<RuntimeHost,'discover'|'binding'|'ensure'|'client'|'lifecycle'|'abandonLifecycle'>;
+export type ConsoleRuntime=Pick<RuntimeHost,'discover'|'binding'|'ensure'|'client'|'snapshot'|'lifecycle'|'abandonLifecycle'>;
 
 /** Machine/user settings only. A repository cannot nominate an executable or approval. */
 export function serviceRuntimeOptions():RuntimeOptions {
@@ -88,8 +89,9 @@ export class ServiceConsole implements vscode.WebviewViewProvider,vscode.Disposa
         if(!vscode.workspace.isTrusted)throw new ServiceError('runtime_client_no_longer_authorized');
         const bootstrap=observation??await this.runtime.discover();
         if(!bootstrap.inspection){this.output.appendLine('No selected runtime is available. Inspect installation settings and bootstrap diagnostics.');this.output.show(true);return;}
-        const binding=this.runtime.binding(bootstrap.inspection,bootstrap.installDir);
-        const result=await nativeRunner(bootstrap.bundle.main,['service','logs','--runtime-dir',binding.controlDir,'--limit','256']);
+        const control=bootstrap.inspection.log_control_dir??bootstrap.inspection.control_dir;
+        if(typeof control!=='string'||!path.isAbsolute(control)||control.length>4096||/[\u0000-\u001f\u007f]/.test(control))throw new ServiceError('log_control_binding_unavailable');
+        const result=await nativeRunner(bootstrap.bundle.main,['service','logs','--runtime-dir',control,'--limit','256']);
         if(!vscode.workspace.isTrusted||this.disposed)return;
         this.output.appendLine(JSON.stringify(result,null,2));this.output.show(true);
     }

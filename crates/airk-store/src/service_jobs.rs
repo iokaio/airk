@@ -204,6 +204,11 @@ impl ServiceRegistry {
 
     pub fn request_epoch(&mut self) -> Result<(Incarnation, u64)> {
         self.prune_job_receipts(false, None)?;
+        self.saved_request_epoch()
+    }
+
+    /// Observe an existing epoch without rotating or pruning accepted receipts.
+    pub fn saved_request_epoch(&self) -> Result<(Incarnation, u64)> {
         let epoch: i64 = self.connection.query_row(
             "SELECT request_epoch FROM service_meta WHERE id=1",
             [],

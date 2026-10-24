@@ -51,7 +51,8 @@ pub(super) fn inspect(root: &Path) -> Result<serde_json::Value> {
     }
     let registry = registry(root)?;
     Ok(
-        serde_json::json!({"explicitly_stopped":registry.service_explicitly_stopped()?,"pending":registry.pending_lifecycle()?}),
+        serde_json::json!({"explicitly_stopped":registry.service_explicitly_stopped()?,"pending":registry.pending_lifecycle()?,
+            "recorded_instance":registry.recorded_service_instance()?,"namespace":registry.incarnation()?,"epoch":registry.saved_request_epoch()?.1}),
     )
 }
 pub(super) fn require_start_allowed(root: &Path) -> Result<()> {
@@ -140,12 +141,15 @@ pub(super) async fn run(root: &Path, input: Input) -> Result<LifecycleRecord> {
     if let Some(record) = ledger.lifecycle_record(&request)? {
         return resume(root, record, input.force).await;
     }
-    let (selection, _, approval) = selected(root)?;
+    let saved = snapshot::identity(root)?;
     ensure!(
-        selection.active == request.runtime.to_string(),
+        saved.selection.active == request.runtime.to_string(),
         "lifecycle_runtime_selection_changed"
     );
-    match observation(root, &approval).await {
+    if request.action == LifecycleAction::Restart {
+        verify_runtime(root, &saved.selection.active)?;
+    }
+    match observation(root, &saved.approval, &saved.executable_sha256).await {
         Ok(current) => ensure!(
             current.instance == request.expected_instance,
             "service_instance_changed"
@@ -164,12 +168,11 @@ pub(super) async fn run(root: &Path, input: Input) -> Result<LifecycleRecord> {
     let record = ledger.begin_lifecycle(&request)?;
     resume(root, record, input.force).await
 }
-async fn observation(root: &Path, approval: &Approval) -> Result<ServiceHealth> {
-    let hash = if let Some(policy) = managed::read(root)? {
-        runtime_pair::digest_file(&policy.verify()?.0)?
-    } else {
-        stop_identity(root)?.1
-    };
+async fn observation(
+    root: &Path,
+    approval: &Approval,
+    expected_sha256: &str,
+) -> Result<ServiceHealth> {
     let ControlResponse::Health { observation } = service_runtime::request_for_version(
         &layout::control(root)?,
         ControlMethod::Health,
@@ -180,7 +183,7 @@ async fn observation(root: &Path, approval: &Approval) -> Result<ServiceHealth> 
         bail!("lifecycle_health_unavailable")
     };
     ensure!(
-        observation.executable_sha256 == hash
+        observation.executable_sha256 == expected_sha256
             && observation.runtime_sha256.as_deref() == Some(approval.manifest_sha256.as_str()),
         "lifecycle_runtime_identity_mismatch"
     );
@@ -197,11 +200,17 @@ async fn resume(root: &Path, mut record: LifecycleRecord, force: bool) -> Result
         owner(root)? == record.request.manager,
         "lifecycle_startup_ownership_changed"
     );
-    let (selection, main, approval) = selected(root)?;
+    let saved = snapshot::identity(root)?;
     ensure!(
-        selection.active == record.request.runtime.to_string(),
+        saved.selection.active == record.request.runtime.to_string(),
         "lifecycle_runtime_selection_changed"
     );
+    let main = if record.request.action == LifecycleAction::Restart {
+        verify_runtime(root, &saved.selection.active)?.0
+    } else {
+        saved.executable
+    };
+    let approval = saved.approval;
     let control = layout::control(root)?;
     let manager = record
         .request
@@ -209,7 +218,7 @@ async fn resume(root: &Path, mut record: LifecycleRecord, force: bool) -> Result
         .then(|| crate::service_manager::ServiceManager::for_runtime(root))
         .transpose()?;
     if record.phase == LifecyclePhase::Draining {
-        match observation(root, &approval).await {
+        match observation(root, &approval, &saved.executable_sha256).await {
             Ok(current) => {
                 ensure!(
                     current.instance == record.request.expected_instance,
