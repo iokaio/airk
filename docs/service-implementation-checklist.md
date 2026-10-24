@@ -49,3 +49,5 @@ Implement and validate these during Phase 7 MCP/extension cutover, after the wor
 If a concrete blocker cannot be resolved within existing authorization, record the affected requirement and required input. Completing a stage, a long test run or a convenient subset is not a stopping condition.
 
 Helper lifecycle integration now implements bounded native recovery, explicit stop/start controls and direct model-session rebinding for existing project workers. Completion evidence is tracked in [shared embedding](service-embedding.md); default cutover, console controls and installed-platform qualification remain outstanding.
+
+Native project controls now expose cached worker identity, queued restart and startup-circuit state. Explicit restart drains the expected worker before replacement, preserves other projects and supports retained evidence when sources are unavailable. See [native service control](service-protocol.md). Default client cutover and installed-platform qualification remain open.

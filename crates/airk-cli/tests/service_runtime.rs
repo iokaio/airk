@@ -2548,3 +2548,230 @@ fn separate_services_cannot_register_the_same_owned_data_root_or_change_its_evid
     }
     Ok(())
 }
+
+#[test]
+fn identity_bound_project_restart_preserves_other_workers_and_unavailable_source_evidence()
+-> Result<()> {
+    use airk_core::service::{
+        ControlMethod as Method, ControlResponse as Response, JobKind, JobState, RequestKey,
+    };
+    let owner = tempfile::tempdir()?;
+    let runtime = owner.path().join("runtime");
+    let mut projects = Vec::new();
+    for n in 0..2 {
+        let source = owner.path().join(format!("source-{n}"));
+        let data = owner.path().join(format!("data-{n}"));
+        fs::create_dir(&source)?;
+        fs::create_dir(&data)?;
+        fs::write(
+            source.join("memo.txt"),
+            b"Copper beacon original restart fixture.\n",
+        )?;
+        projects.push(airk_kernel::service_projects::registration(
+            &source,
+            &data,
+            &format!("restart-{n}"),
+        )?);
+    }
+    let mut children = Children(vec![start(&runtime)?]);
+    wait_ready(&runtime)?;
+    tokio::runtime::Builder::new_current_thread().enable_all().build()?.block_on(async {
+        let request = |method| airk_cli::service_runtime::request(&runtime,method);
+        let Response::RequestEpoch { namespace, epoch } = request(Method::RequestEpoch).await? else { anyhow::bail!("epoch missing") };
+        for project in &projects {
+            request(Method::Register { project: project.clone() }).await?;
+            ensure!(matches!(request(Method::Worker { project: project.binding }).await?, Response::Worker { identity: None, restarting: false, .. }), "observation started a closed project");
+            ensure!(fs::read_dir(&project.data_root)?.next().is_none(), "worker observation opened project data");
+            let caller = airk_kernel::service_broker::new_instance_id()?;
+            let Response::Job { job } = request(Method::Enqueue { project: project.binding, caller,
+                key: RequestKey { namespace, epoch, nonce: caller }, kind: JobKind::Index }).await? else { anyhow::bail!("index not accepted") };
+            let deadline = Instant::now()+Duration::from_secs(30);
+            loop {
+                let Response::Job { job } = request(Method::Job { id: job.id }).await? else { anyhow::bail!("job lost") };
+                if job.state == JobState::Succeeded { break; }
+                ensure!(job.state != JobState::Failed && Instant::now()<deadline,"source job failed or stalled: {:?}", job.outcome);
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        }
+        let mut identities = Vec::new();
+        for project in &projects {
+            let Response::Connection { grant, .. } = request(Method::Connect { project: project.binding }).await? else { anyhow::bail!("worker not connected") };
+            identities.push(grant.identity);
+        }
+        let mut unaffected = airk_cli::project_client::Connection::connect(&runtime,projects[1].binding).await?;
+        let moved = owner.path().join("offline-source");
+        fs::rename(&projects[0].root,&moved)?;
+        let old = identities[0];
+        let mut foreign = old;
+        foreign.worker = airk_kernel::service_broker::new_instance_id()?;
+        ensure!(matches!(request(Method::RestartProject { project: old.project, expected: Some(foreign) }).await?, Response::Failure { code } if code=="project_worker_changed"),"foreign identity authorized restart");
+        ensure!(matches!(request(Method::RestartProject { project: old.project, expected: Some(old) }).await?, Response::ProjectRestarting { previous: Some(identity), .. } if identity==old),"restart not accepted");
+        let deadline = Instant::now()+Duration::from_secs(30);
+        let replacement = loop {
+            if let Response::Worker { identity: Some(identity), restarting: false, .. } = request(Method::Worker { project: old.project }).await?
+                && identity.worker != old.worker { break identity; }
+            if Instant::now() >= deadline {
+                anyhow::bail!("replacement worker did not become ready: worker={}, resources={}, logs={}",
+                    serde_json::to_string(&request(Method::Worker { project: old.project }).await?)?,
+                    serde_json::to_string(&request(Method::Resources).await?)?,
+                    serde_json::to_string(&request(Method::Logs { limit:32 }).await?)?);
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        };
+        ensure!(replacement.service==old.service && replacement.project==old.project && replacement.fencing_generation>old.fencing_generation,"restart lost service/project fencing");
+        ensure!(matches!(request(Method::Worker { project: projects[1].binding }).await?, Response::Worker { identity: Some(identity), .. } if identity==identities[1]),"restart changed unrelated worker");
+        ensure!(matches!(request(Method::RestartProject { project: old.project, expected: Some(old) }).await?, Response::Failure { code } if code=="project_worker_changed"),"stale restart stopped a replacement");
+        let mut retained = airk_cli::project_client::Connection::connect(&runtime,old.project).await?;
+        let arguments = serde_json::json!({"query":"copper beacon","mode":"lexical"}).as_object().unwrap().clone();
+        for connection in [&mut unaffected,&mut retained] {
+            let result = connection.call("airk_search".into(),arguments.clone()).await?;
+            ensure!(result.get("isError").and_then(Value::as_bool)!=Some(true) && result.to_string().contains("memo.txt"),"restart lost retained citation: {result}");
+        }
+        ensure!(fs::read(moved.join("memo.txt"))?==b"Copper beacon original restart fixture.\n","restart changed source bytes");
+        drop(retained); drop(unaffected);
+        request(Method::Shutdown).await?;
+        Ok::<_,anyhow::Error>(())
+    })?;
+    ensure!(wait_exit(&mut children.0[0])?, "service did not drain");
+    Ok(())
+}
+
+#[test]
+fn failed_project_start_circuit_requires_explicit_restart_and_preserves_unknown_data() -> Result<()>
+{
+    use airk_core::service::{
+        ControlMethod as Method, ControlResponse as Response, JobKind, JobState, RequestKey,
+    };
+    let owner = tempfile::tempdir()?;
+    let runtime = owner.path().join("runtime");
+    let source = owner.path().join("source");
+    let data = owner.path().join("data");
+    fs::create_dir(&source)?;
+    fs::create_dir(&data)?;
+    fs::write(source.join("memo.txt"), b"Original circuit fixture.")?;
+    let namespace_dir = data.join("collections-1.4");
+    let foreign = namespace_dir.join("unclaimed.txt");
+    let project = airk_kernel::service_projects::registration(&source, &data, "circuit")?;
+    let mut children = Children(vec![start(&runtime)?]);
+    wait_ready(&runtime)?;
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?
+        .block_on(async {
+            let request = |method| airk_cli::service_runtime::request(&runtime, method);
+            request(Method::Register {
+                project: project.clone(),
+            })
+            .await?;
+            fs::create_dir(&namespace_dir)?;
+            fs::write(&foreign, b"Preserve unclaimed fixture data.")?;
+            let Response::RequestEpoch { namespace, epoch } = request(Method::RequestEpoch).await?
+            else {
+                anyhow::bail!("epoch missing")
+            };
+            for _ in 0..3 {
+                let caller = airk_kernel::service_broker::new_instance_id()?;
+                let Response::Job { job } = request(Method::Enqueue {
+                    project: project.binding,
+                    caller,
+                    key: RequestKey {
+                        namespace,
+                        epoch,
+                        nonce: caller,
+                    },
+                    kind: JobKind::Index,
+                })
+                .await?
+                else {
+                    anyhow::bail!("job not accepted")
+                };
+                let deadline = Instant::now() + Duration::from_secs(30);
+                loop {
+                    let Response::Job { job } = request(Method::Job { id: job.id }).await? else {
+                        anyhow::bail!("job lost")
+                    };
+                    if job.state == JobState::Failed {
+                        break;
+                    }
+                    ensure!(Instant::now() < deadline, "failed startup was not settled");
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+            }
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                if matches!(
+                    request(Method::Worker {
+                        project: project.binding
+                    })
+                    .await?,
+                    Response::Worker {
+                        identity: None,
+                        automatic_start_blocked: true,
+                        ..
+                    }
+                ) {
+                    break;
+                }
+                ensure!(Instant::now() < deadline, "start circuit did not open");
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            for _ in 0..2 {
+                ensure!(
+                    matches!(
+                        request(Method::Connect {
+                            project: project.binding
+                        })
+                        .await?,
+                        Response::Failure { .. }
+                    ),
+                    "ordinary connection reset start circuit"
+                );
+            }
+            ensure!(
+                fs::read(&foreign)? == b"Preserve unclaimed fixture data.",
+                "failed startup changed unknown data"
+            );
+            fs::remove_file(&foreign)?; // Remove only the exact file created by this isolated fixture.
+            ensure!(
+                matches!(
+                    request(Method::RestartProject {
+                        project: project.binding,
+                        expected: None
+                    })
+                    .await?,
+                    Response::ProjectRestarting { .. }
+                ),
+                "explicit reset rejected"
+            );
+            let deadline = Instant::now() + Duration::from_secs(30);
+            loop {
+                if matches!(
+                    request(Method::Worker {
+                        project: project.binding
+                    })
+                    .await?,
+                    Response::Worker {
+                        identity: Some(_),
+                        restarting: false,
+                        automatic_start_blocked: false,
+                        ..
+                    }
+                ) {
+                    break;
+                }
+                ensure!(
+                    Instant::now() < deadline,
+                    "explicit restart did not clear start circuit"
+                );
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            ensure!(
+                fs::read(source.join("memo.txt"))? == b"Original circuit fixture.",
+                "restart changed original source"
+            );
+            request(Method::Shutdown).await?;
+            Ok::<_, anyhow::Error>(())
+        })?;
+    ensure!(wait_exit(&mut children.0[0])?, "service did not drain");
+    Ok(())
+}

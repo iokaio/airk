@@ -30,10 +30,15 @@ fn group_fixture() {
             }
             std::thread::sleep(Duration::from_secs(60));
         }
-        "auto_reap" => {
+        "auto_reap" | "custom_reap" => {
             // Signal policy changes are confined to this isolated test process.
             let mut action = unsafe { std::mem::zeroed::<libc::sigaction>() };
-            action.sa_sigaction = libc::SIG_IGN;
+            extern "C" fn handler(_: libc::c_int) {}
+            action.sa_sigaction = if mode == "auto_reap" {
+                libc::SIG_IGN
+            } else {
+                handler as *const () as usize
+            };
             assert_eq!(
                 unsafe { libc::sigaction(libc::SIGCHLD, &action, std::ptr::null_mut()) },
                 0
@@ -192,4 +197,9 @@ fn timeout_retains_unreaped_leader_for_later_drain() {
 #[test]
 fn refuses_auto_reaping_host_before_starting_provider() {
     assert!(fixture("auto_reap").status().unwrap().success());
+}
+
+#[test]
+fn custom_child_reaper_is_rejected_before_provider_spawn() {
+    assert!(fixture("custom_reap").status().unwrap().success());
 }

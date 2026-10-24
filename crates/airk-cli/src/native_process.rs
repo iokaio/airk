@@ -6,6 +6,8 @@ use std::{
 };
 
 pub(crate) fn spawn(command: &mut Command) -> io::Result<Child> {
+    #[cfg(unix)]
+    airk_process::child_group::require_waitable_children()?;
     without_error_dialogs(|| command.spawn())
 }
 

@@ -101,3 +101,5 @@ The [1.3.0 release](release-1.3.0.md) retires the former `airk_history` MCP endp
 Contributor guidance: [CONTRIBUTING.md](../CONTRIBUTING.md). Implemented, proposed and unqualified behavior must remain distinguishable.
 
 Development helper recovery now preserves project workers and rebinds retained direct model sessions with bounded retries and explicit stop/start controls; see [shared embedding](service-embedding.md). Default adapter cutover and installed-platform qualification remain open.
+
+Native project controls now expose cached worker identity, queued restart and startup-circuit state. Explicit restart drains the expected worker before replacement, preserves other projects and supports retained evidence when sources are unavailable. See [native service control](service-protocol.md). Default client cutover and installed-platform qualification remain open.

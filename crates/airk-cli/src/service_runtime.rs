@@ -74,6 +74,10 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
             }
             ControlMethod::Shutdown => ControlResponse::Stopping,
             ControlMethod::Connect { project } => state.supervisor.connect(project).await,
+            ControlMethod::Worker { project } => state.supervisor.worker_status(project),
+            ControlMethod::RestartProject { project, expected } => {
+                state.supervisor.restart_project(project, expected).await
+            }
             ControlMethod::StartEmbedding => state.supervisor.start_embedding().await,
             ControlMethod::EmbeddingStatus => state.supervisor.embedding_status().await,
             ControlMethod::StopEmbedding { worker, force } => {

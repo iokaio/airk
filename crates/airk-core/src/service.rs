@@ -98,6 +98,13 @@ pub enum ControlMethod {
     Connect {
         project: ProjectBinding,
     },
+    Worker {
+        project: ProjectBinding,
+    },
+    RestartProject {
+        project: ProjectBinding,
+        expected: Option<WorkerIdentity>,
+    },
     EmbeddingStatus,
     StartEmbedding,
     StopEmbedding {
@@ -209,6 +216,17 @@ pub enum ControlResponse {
     Connection {
         role: String,
         grant: ConnectionGrant,
+    },
+    Worker {
+        project: ProjectBinding,
+        identity: Option<WorkerIdentity>,
+        restarting: bool,
+        automatic_start_blocked: bool,
+        age_ms: u64,
+    },
+    ProjectRestarting {
+        project: ProjectBinding,
+        previous: Option<WorkerIdentity>,
     },
     EmbeddingStatus {
         available: bool,

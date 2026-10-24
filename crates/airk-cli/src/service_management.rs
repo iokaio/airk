@@ -159,6 +159,8 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
         | ControlMethod::EmbeddingStatus
         | ControlMethod::SourceStatus
         | ControlMethod::Resources
+        | ControlMethod::Worker { .. }
+        | ControlMethod::RestartProject { .. }
         | ControlMethod::StartEmbedding
         | ControlMethod::StopEmbedding { .. }
         | ControlMethod::ConfigureResources { .. } => {

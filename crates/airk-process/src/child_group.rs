@@ -75,6 +75,22 @@ pub struct GroupChild {
     pub stdout: Option<File>,
     pub stderr: Option<File>,
 }
+/// Native supervisors must retain their children until the exact owner waits.
+/// A custom handler could reap an unrelated child and invalidate PID ownership.
+pub fn require_waitable_children() -> io::Result<()> {
+    let mut action = unsafe { std::mem::zeroed::<libc::sigaction>() };
+    // SAFETY: read-only native disposition query with correctly sized output.
+    if unsafe { libc::sigaction(libc::SIGCHLD, std::ptr::null(), &mut action) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if action.sa_sigaction != libc::SIG_DFL || action.sa_flags & libc::SA_NOCLDWAIT != 0 {
+        return Err(io::Error::other(
+            "external child reaping prevents native process ownership",
+        ));
+    }
+    Ok(())
+}
+
 impl GroupChild {
     pub fn spawn_provider(
         command: &mut Command,
@@ -101,18 +117,7 @@ impl GroupChild {
             io::ErrorKind::Unsupported,
             "native process-group observation unavailable",
         ));
-        // An embedding host that auto-reaps children cannot reserve a PID for
-        // later group signaling. Refuse before starting any provider code.
-        let mut action = unsafe { std::mem::zeroed::<libc::sigaction>() };
-        // SAFETY: read-only native signal-disposition query and sized output.
-        if unsafe { libc::sigaction(libc::SIGCHLD, std::ptr::null(), &mut action) } != 0 {
-            return Err(io::Error::last_os_error());
-        }
-        if action.sa_sigaction == libc::SIG_IGN || action.sa_flags & libc::SA_NOCLDWAIT != 0 {
-            return Err(io::Error::other(
-                "automatic child reaping prevents owned process-group drain",
-            ));
-        }
+        require_waitable_children()?;
         #[cfg(target_os = "linux")]
         {
             use std::os::fd::{FromRawFd, OwnedFd};

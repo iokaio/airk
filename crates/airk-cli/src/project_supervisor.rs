@@ -34,7 +34,6 @@ struct ChildWorker {
     identity: Option<WorkerIdentity>,
     role: String,
     runtime: PathBuf,
-    started: Instant,
     last_renewal: Instant,
     pool_binding: Option<Incarnation>,
     last_status: Instant,
@@ -49,8 +48,11 @@ impl Drop for ChildWorker {
         loop {
             match self.child.try_wait() {
                 Ok(Some(_)) => break,
-                _ if Instant::now() < until => std::thread::sleep(Duration::from_millis(25)),
-                _ => {
+                // Unknown wait state never authorizes a numerical PID signal.
+                // Retain ownership/admission until native exit is observable.
+                Err(_) => std::thread::sleep(Duration::from_millis(25)),
+                Ok(None) if Instant::now() < until => std::thread::sleep(Duration::from_millis(25)),
+                Ok(None) => {
                     let _ = self.child.kill();
                     let _ = self.child.wait();
                     break;
@@ -99,7 +101,6 @@ impl ChildWorker {
             identity: None,
             role: protocol::role(worker),
             runtime: root.into(),
-            started: Instant::now(),
             last_renewal: Instant::now(),
             pool_binding: None,
             last_status: Instant::now(),
@@ -315,6 +316,9 @@ struct ResourceCache {
     observed: Instant,
     configuration_error: bool,
     idle_safe: bool,
+    workers: BTreeMap<ProjectBinding, WorkerIdentity>,
+    restarting: std::collections::BTreeSet<ProjectBinding>,
+    blocked: std::collections::BTreeSet<ProjectBinding>,
 }
 enum Envelope {
     ConfigureResources {
@@ -326,6 +330,11 @@ enum Envelope {
         reply: oneshot::Sender<ControlResponse>,
     },
     EmbeddingStatus {
+        reply: oneshot::Sender<ControlResponse>,
+    },
+    RestartProject {
+        project: ProjectBinding,
+        expected: Option<WorkerIdentity>,
         reply: oneshot::Sender<ControlResponse>,
     },
     StartEmbedding {
@@ -349,6 +358,20 @@ impl Drop for Supervisor {
             let _ = thread.join();
         }
     }
+}
+
+fn worker_failed(
+    backoff: &mut BTreeMap<ProjectBinding, (Instant, u32)>,
+    project: ProjectBinding,
+    now: Instant,
+) {
+    let attempts = backoff
+        .get(&project)
+        .map_or(1, |(_, attempts)| attempts.saturating_add(1).min(3));
+    backoff.insert(
+        project,
+        (now + Duration::from_secs(1 << attempts), attempts),
+    );
 }
 
 struct WorkerAdmission<'a> {
@@ -388,7 +411,7 @@ fn start_worker(
     ensure!(
         backoff
             .get(&project)
-            .is_none_or(|(until, _)| Instant::now() >= *until),
+            .is_none_or(|(until, attempts)| *attempts < 3 && Instant::now() >= *until),
         "project restart backoff"
     );
     let mut worker = match ChildWorker::spawn(root, project, instance) {
@@ -396,7 +419,7 @@ fn start_worker(
         Err(error) => {
             let attempt = backoff
                 .get(&project)
-                .map_or(1, |(_, attempt)| attempt.saturating_add(1).min(6));
+                .map_or(1, |(_, attempt)| attempt.saturating_add(1).min(3));
             backoff.insert(
                 project,
                 (Instant::now() + Duration::from_secs(1 << attempt), attempt),
@@ -440,7 +463,7 @@ fn start_worker(
             .process_exited(identity)?;
         let attempt = backoff
             .get(&project)
-            .map_or(1, |(_, attempt)| attempt.saturating_add(1).min(6));
+            .map_or(1, |(_, attempt)| attempt.saturating_add(1).min(3));
         backoff.insert(
             project,
             (Instant::now() + Duration::from_secs(1 << attempt), attempt),
@@ -480,6 +503,9 @@ impl Supervisor {
             observed: Instant::now(),
             configuration_error,
             idle_safe: false,
+            workers: BTreeMap::new(),
+            restarting: Default::default(),
+            blocked: Default::default(),
         }));
         let resource_cache = resources.clone();
         let thread = std::thread::Builder::new()
@@ -490,6 +516,7 @@ impl Supervisor {
                 let mut pool_recovery = PoolRecovery::new(Instant::now());
                 let mut registry: Option<ServiceRegistry> = None;
                 let mut backoff = BTreeMap::<ProjectBinding, (Instant, u32)>::new();
+                let mut restarting = BTreeMap::<ProjectBinding, Option<WorkerIdentity>>::new();
                 let mut predecessors: Option<Vec<ProjectBinding>> = None;
                 let mut predecessor_pool = None;
                 let mut resources = initial;
@@ -501,6 +528,27 @@ impl Supervisor {
                 loop {
                     if registry.is_none() {
                         registry = ServiceRegistry::open(&root, instance).ok();
+                    }
+                    // Stop only the exact accepted incarnation. Admission remains charged
+                    // through descendant drain; a newer worker is never stopped by replay.
+                    for (project, expected) in &mut restarting {
+                        if let Some(worker) = workers.get(project)
+                            && worker.identity == *expected
+                        {
+                            let worker = workers.remove(project).expect("observed restart worker");
+                            let identity = worker.identity;
+                            drop(worker);
+                            if let Some(identity) = identity {
+                                let _ = resources.process_exited(identity);
+                                if let Ok(mut policy) = policy.lock() {
+                                    let _ = policy.process_exited(identity);
+                                }
+                                if let Some(pool) = pool.as_mut() {
+                                    let _ = pool.revoke(identity.worker);
+                                }
+                            }
+                        }
+                        *expected = None;
                     }
                     #[cfg(unix)]
                     let provider_drain = registry.as_mut().map(|registry| {
@@ -551,10 +599,24 @@ impl Supervisor {
                     );
                     resources.observe(rss, available, complete && available.is_some());
                     if let Ok(mut cache) = resource_cache.lock() {
+                        cache.workers = workers
+                            .iter()
+                            .filter_map(|(project, worker)| {
+                                worker.identity.map(|identity| (*project, identity))
+                            })
+                            .collect();
+                        cache.restarting = restarting.keys().copied().collect();
+                        cache.blocked = backoff
+                            .iter()
+                            .filter_map(|(project, (_, attempts))| {
+                                (*attempts >= 3).then_some(*project)
+                            })
+                            .collect();
                         cache.snapshot = resources.snapshot();
                         cache.observed = Instant::now();
                         cache.configuration_error = configuration_error;
                         cache.idle_safe = workers.is_empty()
+                            && restarting.is_empty()
                             && !provider_error
                             && pending_providers == 0
                             && registry.as_ref().is_some_and(|registry| {
@@ -636,18 +698,15 @@ impl Supervisor {
                         })
                         .collect();
                     for project in finished {
-                        if let Some(worker) = workers.get(&project) {
-                            if worker.started.elapsed() < Duration::from_secs(5) {
-                                let attempt = backoff
-                                    .get(&project)
-                                    .map_or(1, |(_, attempt)| attempt.saturating_add(1).min(6));
-                                backoff.insert(
-                                    project,
-                                    (Instant::now() + Duration::from_secs(1 << attempt), attempt),
-                                );
-                            } else {
-                                backoff.remove(&project);
-                            }
+                        if workers.get_mut(&project).is_some_and(|worker| {
+                            worker
+                                .child
+                                .try_wait()
+                                .is_ok_and(|status| status.is_some_and(|status| status.success()))
+                        }) {
+                            backoff.remove(&project);
+                        } else {
+                            worker_failed(&mut backoff, project, Instant::now());
                         }
                         if let Some(worker) = workers.remove(&project) {
                             let identity = worker.identity;
@@ -733,6 +792,7 @@ impl Supervisor {
                         log.record(airk_core::service_logs::LogKind::ModelFailed, None, None);
                     }
                     for project in failed_renewals {
+                        worker_failed(&mut backoff, project, Instant::now());
                         log.record(
                             airk_core::service_logs::LogKind::WorkerFailed,
                             Some(project),
@@ -853,6 +913,44 @@ impl Supervisor {
                             };
                             let _ = reply.send(response);
                         }
+                        Ok(Envelope::RestartProject {
+                            project,
+                            expected,
+                            reply,
+                        }) => {
+                            let current = workers.get(&project).and_then(|worker| worker.identity);
+                            let response = if current != expected {
+                                ControlResponse::Failure {
+                                    code: "project_worker_changed".into(),
+                                }
+                            } else if registry
+                                .as_ref()
+                                .is_none_or(|registry| registry.get(project).is_err())
+                            {
+                                ControlResponse::Failure {
+                                    code: "project_unavailable".into(),
+                                }
+                            } else if restarting.len() >= 32 && !restarting.contains_key(&project) {
+                                ControlResponse::Failure {
+                                    code: "project_restart_queue_full".into(),
+                                }
+                            } else {
+                                if let std::collections::btree_map::Entry::Vacant(entry) =
+                                    restarting.entry(project)
+                                {
+                                    entry.insert(expected);
+                                    backoff.remove(&project);
+                                }
+                                if let Ok(mut cache) = resource_cache.lock() {
+                                    cache.restarting.insert(project);
+                                }
+                                ControlResponse::ProjectRestarting {
+                                    project,
+                                    previous: expected,
+                                }
+                            };
+                            let _ = reply.send(response);
+                        }
                         Ok(Envelope::StartEmbedding { reply }) => {
                             let response = if pool.is_some() {
                                 ControlResponse::Failure {
@@ -944,11 +1042,43 @@ impl Supervisor {
                         }
                     }
                     if may_allocate
+                        && let Some(project) = restarting
+                            .iter()
+                            .find_map(|(project, expected)| expected.is_none().then_some(*project))
+                        && let Some(registry) = registry.as_ref()
+                    {
+                        if let Ok(record) = registry.get(project) {
+                            let _ = start_worker(
+                                &mut workers,
+                                &root,
+                                record.registration,
+                                instance,
+                                &mut backoff,
+                                WorkerAdmission {
+                                    log: &log,
+                                    policy: &policy,
+                                    pool: &mut pool,
+                                    resources: &mut resources,
+                                },
+                            );
+                        }
+                        if workers.contains_key(&project)
+                            || backoff
+                                .get(&project)
+                                .is_some_and(|(_, attempts)| *attempts >= 3)
+                        {
+                            restarting.remove(&project);
+                        }
+                    }
+                    if may_allocate
                         && let Some(registry) = registry.as_ref()
                         && let Ok(pending) = registry.pending_project_page(pending_after, 32)
                     {
                         pending_after = pending.last().copied();
                         for project in pending {
+                            if restarting.contains_key(&project) {
+                                continue;
+                            }
                             let Ok(registration) =
                                 registry.get(project).map(|record| record.registration)
                             else {
@@ -972,6 +1102,10 @@ impl Supervisor {
                     // Read only bounded metadata candidates. Direct query payloads never enter this loop.
                     if let Some(registry) = registry.as_ref() {
                         for project in workers.keys().copied() {
+                            if restarting.contains_key(&project) {
+                                resources.forget_pending(project);
+                                continue;
+                            }
                             match registry.next_pending_job(project) {
                                 Ok(Some(job)) => {
                                     // A newly admitted worker may precede the first helper turn.
@@ -1087,6 +1221,7 @@ impl Supervisor {
                         }
                     }
                     for project in failed {
+                        worker_failed(&mut backoff, project, Instant::now());
                         log.record(
                             airk_core::service_logs::LogKind::WorkerFailed,
                             Some(project),
@@ -1200,6 +1335,50 @@ impl Supervisor {
             },
         }
     }
+    pub fn worker_status(&self, project: ProjectBinding) -> ControlResponse {
+        match self.resources.lock() {
+            Ok(cache) => ControlResponse::Worker {
+                project,
+                identity: cache.workers.get(&project).copied(),
+                restarting: cache.restarting.contains(&project),
+                automatic_start_blocked: cache.blocked.contains(&project),
+                age_ms: cache
+                    .observed
+                    .elapsed()
+                    .as_millis()
+                    .min(u128::from(u64::MAX)) as u64,
+            },
+            Err(_) => ControlResponse::Failure {
+                code: "worker_observation_unavailable".into(),
+            },
+        }
+    }
+    pub async fn restart_project(
+        &self,
+        project: ProjectBinding,
+        expected: Option<WorkerIdentity>,
+    ) -> ControlResponse {
+        let (reply, receiver) = oneshot::channel();
+        if self.sender.as_ref().is_none_or(|queue| {
+            queue
+                .try_send(Envelope::RestartProject {
+                    project,
+                    expected,
+                    reply,
+                })
+                .is_err()
+        }) {
+            return ControlResponse::Failure {
+                code: "broker_busy".into(),
+            };
+        }
+        match tokio::time::timeout(Duration::from_secs(4), receiver).await {
+            Ok(Ok(response)) => response,
+            _ => ControlResponse::Failure {
+                code: "project_restart_outcome_unknown".into(),
+            },
+        }
+    }
     pub async fn start_embedding(&self) -> ControlResponse {
         let (reply, receiver) = oneshot::channel();
         if self
@@ -1245,6 +1424,20 @@ impl Supervisor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn project_failure_budget_stays_exhausted_until_explicit_reset() {
+        let now = Instant::now();
+        let project = airk_core::identity::Sha256Digest::from_bytes([1; 32]);
+        let mut failures = BTreeMap::new();
+        for expected in [1, 2, 3, 3] {
+            worker_failed(&mut failures, project, now);
+            assert_eq!(failures[&project].1, expected);
+            assert!(failures[&project].0 > now);
+        }
+        failures.remove(&project);
+        worker_failed(&mut failures, project, now);
+        assert_eq!(failures[&project].1, 1);
+    }
     #[test]
     fn helper_recovery_is_bounded_and_manual_stop_remains_stopped() {
         let now = Instant::now();

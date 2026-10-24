@@ -34,8 +34,11 @@ impl Drop for Pool {
         loop {
             match self.child.try_wait() {
                 Ok(Some(_)) => break,
-                _ if Instant::now() < until => std::thread::sleep(Duration::from_millis(25)),
-                _ => {
+                // Unknown wait state never authorizes a numerical PID signal.
+                // Retain ownership/admission until native exit is observable.
+                Err(_) => std::thread::sleep(Duration::from_millis(25)),
+                Ok(None) if Instant::now() < until => std::thread::sleep(Duration::from_millis(25)),
+                Ok(None) => {
                     let _ = self.child.kill();
                     let _ = self.child.wait();
                     break;

@@ -57,12 +57,17 @@ impl Drop for WatchChild {
     fn drop(&mut self) {
         self.sender.take();
         let until = Instant::now() + Duration::from_secs(5);
-        while !matches!(self.process.try_wait(), Ok(Some(_))) && Instant::now() < until {
-            std::thread::sleep(Duration::from_millis(25));
-        }
-        if !matches!(self.process.try_wait(), Ok(Some(_))) {
-            let _ = self.process.kill();
-            let _ = self.process.wait();
+        loop {
+            match self.process.try_wait() {
+                Ok(Some(_)) => break,
+                Err(_) => std::thread::sleep(Duration::from_millis(25)),
+                Ok(None) if Instant::now() < until => std::thread::sleep(Duration::from_millis(25)),
+                Ok(None) => {
+                    let _ = self.process.kill();
+                    let _ = self.process.wait();
+                    break;
+                }
+            }
         }
         self._containment.drain();
         // Killing owned descendants also releases inherited pipe endpoints.
