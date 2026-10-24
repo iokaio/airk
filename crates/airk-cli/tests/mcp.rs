@@ -315,8 +315,10 @@ fn durable_key_reads_match_cli_and_mcp_and_reject_filter_combinations() -> anyho
                 response.as_object_mut().unwrap().remove(field);
             }
         }
+        let facts = expected.as_object_mut().unwrap().remove("facts").unwrap();
+        expected["items"] = facts;
         assert_eq!(actual, expected);
-        assert!(!actual["facts"].as_array().unwrap().is_empty());
+        assert!(!actual["items"].as_array().unwrap().is_empty());
         assert!(
             !run(&[command, option, key, "--name", "original"])?
                 .status
@@ -830,25 +832,22 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
             );
         }
         if name == "airk_symbols" {
-            assert_eq!(payload["facts"][0]["name"], "authenticate");
+            assert_eq!(payload["items"][0]["name"], "authenticate");
         }
         if name == "airk_document_facts" {
-            assert_eq!(payload["facts"][0]["name"], "id=logo");
+            assert_eq!(payload["items"][0]["name"], "id=logo");
         }
         if name == "airk_code_facts" {
-            assert_eq!(payload["facts"][0]["code"]["basis"], "syntax");
+            assert_eq!(payload["items"][0]["code"]["basis"], "syntax");
             assert!(
-                payload["facts"][0]["code"]["signature"]
+                payload["items"][0]["code"]["signature"]
                     .as_str()
                     .expect("signature")
                     .contains("authenticate")
             );
         }
         if name == "airk_relationships" {
-            assert_eq!(
-                payload["relationships"][0]["resolution"],
-                "syntax_candidate"
-            );
+            assert_eq!(payload["items"][0]["resolution"], "syntax_candidate");
         }
     }
     let budget = session.call(
@@ -880,17 +879,17 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
             .as_str()
             .expect("JSON"),
     )?;
-    assert_eq!(payload["facts"].as_array().expect("facts").len(), 1);
-    assert_eq!(payload["facts"][0]["document"]["requirement_id"], "REQ-1");
+    assert_eq!(payload["items"].as_array().expect("facts").len(), 1);
+    assert_eq!(payload["items"][0]["document"]["requirement_id"], "REQ-1");
     assert_eq!(
-        payload["facts"][0]["document"]["quantities"][0]["comparator"],
+        payload["items"][0]["document"]["quantities"][0]["comparator"],
         "lte"
     );
     assert_eq!(
-        payload["facts"][0]["document"]["dates"][0]["normalized"],
+        payload["items"][0]["document"]["dates"][0]["normalized"],
         "2026-10-13"
     );
-    assert_eq!(payload["facts"][0]["citation"]["start_line"], 5);
+    assert_eq!(payload["items"][0]["citation"]["start_line"], 5);
     Ok(())
 }
 

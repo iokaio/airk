@@ -320,7 +320,7 @@ enum Command {
         /// Continue the same revision-bound discovery with unchanged filters.
         #[arg(long)]
         cursor: Option<String>,
-        /// Return names, kinds, original locations, spans and durable keys.
+        /// Return minimal names/kinds/lines/signatures with shared original file/provenance bindings.
         #[arg(long)]
         compact: bool,
         #[command(flatten)]
@@ -1482,7 +1482,7 @@ async fn main_async() -> anyhow::Result<()> {
             max_bytes,
             path_exact: false,
             document_only: false,
-        }, &airk_core::discovery::DiscoveryOptions { cursor, compact: false })?) },
+        }, &airk_core::discovery::DiscoveryOptions { minimal: false, cursor, compact: false })?) },
         Command::Relationships {
             symbol,
             direction,
@@ -1710,7 +1710,7 @@ async fn main_async() -> anyhow::Result<()> {
             prefix,
             limit,
             max_bytes,
-        } => recorder.print(&kernel.list_files_page(&prefix, limit, max_bytes, &airk_core::discovery::DiscoveryOptions { cursor, compact: false })?),
+        } => recorder.print(&kernel.list_files_page(&prefix, limit, max_bytes, &airk_core::discovery::DiscoveryOptions { minimal: false, cursor, compact: false })?),
         Command::Read {
             evidence,
             path,
@@ -1732,7 +1732,7 @@ async fn main_async() -> anyhow::Result<()> {
             path,
             limit,
             max_bytes,
-        } => recorder.print(&kernel.outline_conditional_page(&path, limit, max_bytes, &evidence.into(), &airk_core::discovery::DiscoveryOptions { cursor, compact })?),
+        } => recorder.print(&kernel.outline_conditional_page(&path, limit, max_bytes, &evidence.into(), &airk_core::discovery::DiscoveryOptions { minimal: compact, cursor, compact: false })?),
         Command::Symbol {
             cursor,
             name,
@@ -1748,7 +1748,7 @@ async fn main_async() -> anyhow::Result<()> {
             max_bytes: 8192,
             path_exact: false,
             document_only: false,
-        }, &airk_core::discovery::DiscoveryOptions { cursor, compact: false })?),
+        }, &airk_core::discovery::DiscoveryOptions { minimal: false, cursor, compact: false })?),
         Command::Imports { path_prefix, cursor } => recorder.print(&kernel.facts_page(&FactQuery {
             path_prefix,
             name: None,
@@ -1759,7 +1759,7 @@ async fn main_async() -> anyhow::Result<()> {
             max_bytes: 8192,
             path_exact: false,
             document_only: false,
-        }, &airk_core::discovery::DiscoveryOptions { cursor, compact: false })?),
+        }, &airk_core::discovery::DiscoveryOptions { minimal: false, cursor, compact: false })?),
         Command::Facts {
             cursor,
             document_key,
@@ -1780,7 +1780,7 @@ async fn main_async() -> anyhow::Result<()> {
             max_bytes,
             path_exact: false,
             document_only: true,
-        }, &airk_core::discovery::DiscoveryOptions { cursor, compact: false })?) },
+        }, &airk_core::discovery::DiscoveryOptions { minimal: false, cursor, compact: false })?) },
         Command::Refs { name, path_prefix } => {
             recorder.print(&kernel.references(&name, &path_prefix, 50, 8192)?)
         }

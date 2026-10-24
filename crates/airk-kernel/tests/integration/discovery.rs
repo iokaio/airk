@@ -90,6 +90,7 @@ fn keyset_discovery_enumerates_flat_files_facts_and_compact_outlines() -> Result
     assert_eq!(definitions.len(), 137);
 
     let mut page = DiscoveryOptions {
+        minimal: false,
         compact: true,
         cursor: None,
     };
@@ -136,6 +137,7 @@ fn discovery_binds_revision_filters_representation_and_reports_oversized_records
     let duplicate_second = kernel.facts_page(
         &duplicates,
         &DiscoveryOptions {
+            minimal: false,
             cursor: duplicate_first.page.cursor.clone(),
             compact: false,
         },
@@ -171,6 +173,7 @@ fn discovery_binds_revision_filters_representation_and_reports_oversized_records
     let token = first.publication.context("publication")?.token;
     let cursor = first.page.cursor.context("list continuation")?;
     let continued = DiscoveryOptions {
+        minimal: false,
         cursor: Some(cursor.clone()),
         compact: false,
     };
@@ -188,6 +191,7 @@ fn discovery_binds_revision_filters_representation_and_reports_oversized_records
                 1,
                 8192,
                 &DiscoveryOptions {
+                    minimal: false,
                     cursor: Some(tampered),
                     compact: false
                 }
@@ -216,6 +220,7 @@ fn discovery_binds_revision_filters_representation_and_reports_oversized_records
     let fact = kernel.facts(&q)?;
     assert_eq!(fact.facts.len(), 1);
     let fact_cursor = DiscoveryOptions {
+        minimal: false,
         cursor: fact.page.cursor,
         compact: false,
     };
@@ -223,6 +228,7 @@ fn discovery_binds_revision_filters_representation_and_reports_oversized_records
     assert!(kernel.facts_page(&q, &fact_cursor).is_err());
 
     let compact = DiscoveryOptions {
+        minimal: false,
         compact: true,
         cursor: None,
     };
@@ -247,6 +253,7 @@ fn discovery_binds_revision_filters_representation_and_reports_oversized_records
         EvidenceReadStatus::Content
     );
     let outline_cursor = DiscoveryOptions {
+        minimal: false,
         cursor: outline.content.context("outline")?.page.cursor,
         compact: true,
     };
@@ -258,6 +265,7 @@ fn discovery_binds_revision_filters_representation_and_reports_oversized_records
                 8192,
                 &Default::default(),
                 &DiscoveryOptions {
+                    minimal: false,
                     compact: false,
                     ..outline_cursor.clone()
                 }

@@ -286,6 +286,7 @@ impl Kernel {
             ))
         });
         let mut payload = FactsResponse {
+            minimal: None,
             page: Default::default(),
             outline: Vec::new(),
             indexing: catalog

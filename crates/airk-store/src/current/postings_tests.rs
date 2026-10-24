@@ -647,6 +647,7 @@ fn fact_pages_bind_filters_revision_and_retained_evidence() -> Result<()> {
     assert_eq!(first.facts[0].name, "Alpha");
     assert!(first.truncated);
     let options = DiscoveryOptions {
+        minimal: false,
         cursor: first.page.cursor,
         compact: false,
     };
@@ -657,6 +658,7 @@ fn fact_pages_bind_filters_revision_and_retained_evidence() -> Result<()> {
         &q,
         false,
         &DiscoveryOptions {
+            minimal: false,
             cursor: second.page.cursor,
             compact: false,
         },
@@ -700,6 +702,7 @@ fn fact_pages_bind_filters_revision_and_retained_evidence() -> Result<()> {
         &q,
         false,
         &DiscoveryOptions {
+            minimal: false,
             cursor: None,
             compact: true,
         },
@@ -724,6 +727,98 @@ fn fact_pages_bind_filters_revision_and_retained_evidence() -> Result<()> {
     assert!(
         read.native_facts_page(&fixture.store, &query(), false, &options)
             .is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn minimal_fact_pages_charge_bindings_and_keep_cursor_evidence_identity() -> Result<()> {
+    use airk_core::discovery::DiscoveryOptions;
+    let fixture = Fixture::new()?;
+    let mut facts = vec![fact("Alpha", "heading"), fact("Beta", "label")];
+    facts[1].id = 1;
+    let input = retained_input_with_facts(&fixture, "evidence.txt", "body", facts)?;
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    current.commit_artifact(&fixture.head.token()?, &input.artifact.path, Some(&input))?;
+    drop(current);
+    drop(writer);
+    let read = fixture.store.current_read(&fixture.scope)?;
+    let options = DiscoveryOptions {
+        minimal: true,
+        ..Default::default()
+    };
+    let mut q = query();
+    q.limit = 100;
+    let all = read.native_facts_page(&fixture.store, &q, false, &options)?;
+    let page = all.minimal.as_ref().unwrap();
+    assert_eq!(page.items.len(), 2);
+    assert_eq!(page.files.len(), 1);
+    assert_eq!(page.provenance.len(), 1);
+    assert_eq!(page.files[0].content_hash, input.artifact.content_hash);
+    assert_eq!(page.items[1].file, Some(0));
+    let charged = page
+        .items
+        .iter()
+        .map(serde_json::to_vec)
+        .collect::<Result<Vec<_>, _>>()?
+        .iter()
+        .map(Vec::len)
+        .sum::<usize>()
+        + serde_json::to_vec(&page.files[0])?.len()
+        + serde_json::to_vec(&page.provenance[0])?.len();
+    assert_eq!(all.page.record_bytes, Some(charged));
+    q.max_bytes = 1;
+    let empty = read.native_facts_page(&fixture.store, &q, false, &options)?;
+    let page = empty.minimal.unwrap();
+    assert!(page.items.is_empty() && page.files.is_empty() && page.provenance.is_empty());
+    let required = empty.page.required_record_bytes.unwrap();
+    q.max_bytes = required;
+    let first = read.native_facts_page(&fixture.store, &q, false, &options)?;
+    assert_eq!(first.minimal.as_ref().unwrap().items.len(), 1);
+    assert_eq!(first.page.record_bytes, Some(required));
+    let cursor = first.page.cursor.unwrap();
+    q.max_bytes = 16_384;
+    let next = DiscoveryOptions {
+        cursor: Some(cursor.clone()),
+        ..options
+    };
+    let second = read.native_facts_page(&fixture.store, &q, false, &next)?;
+    assert_eq!(second.minimal.unwrap().items[0].name, "Beta");
+    assert!(!second.truncated);
+    assert!(
+        read.native_facts_page(
+            &fixture.store,
+            &q,
+            false,
+            &DiscoveryOptions {
+                cursor: Some(cursor),
+                ..Default::default()
+            }
+        )
+        .is_err()
+    );
+    q.path_exact = true;
+    q.path_prefix = "evidence.txt".into();
+    let exact = read.native_facts_page(
+        &fixture.store,
+        &q,
+        false,
+        &DiscoveryOptions {
+            minimal: true,
+            ..Default::default()
+        },
+    )?;
+    assert!(
+        exact
+            .minimal
+            .unwrap()
+            .items
+            .iter()
+            .all(|row| row.file.is_none())
     );
     Ok(())
 }
@@ -908,6 +1003,7 @@ fn empty_fact_pages_make_bounded_progress_without_skipping_later_matches() -> Re
         &query(),
         false,
         &airk_core::discovery::DiscoveryOptions {
+            minimal: false,
             cursor: first.page.cursor,
             compact: false,
         },

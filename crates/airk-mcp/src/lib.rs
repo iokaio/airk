@@ -188,9 +188,8 @@ pub struct OutlineArgs {
     pub response: ResponseArgs,
     /// Continuation returned by this tool; repeat the same filters and representation.
     pub cursor: Option<String>,
-    /// Return compact names, kinds, spans and durable keys; rich facts remain the default.
-    #[serde(default)]
-    pub compact: bool,
+    /// Minimal navigation by default. False requests rich facts, IDs and details; independent of response_mode.
+    pub compact: Option<bool>,
     #[serde(flatten)]
     pub evidence: EvidenceArgs,
     /// Exact collection-relative indexed file path, not a prefix or glob.
@@ -206,6 +205,8 @@ pub struct OutlineArgs {
 pub struct FactArgs {
     #[serde(flatten)]
     pub response: ResponseArgs,
+    /// Minimal navigation by default. False requests rich facts and symbol IDs; independent of response_mode.
+    pub compact: Option<bool>,
     /// Continuation returned by this tool; repeat the same filters and representation.
     pub cursor: Option<String>,
     /// Literal collection-relative path prefix, not a glob. Empty searches the active collection.
@@ -405,13 +406,10 @@ impl AirkServer {
         )
     )]
     async fn code_facts(&self, Parameters(args): Parameters<CodeFactArgs>) -> CallToolResult {
-        let full = args.response.response_mode.unwrap_or(self.response_mode)
-            == response::ResponseMode::Full;
         self.execute_response(UsageOperation::CodeFacts, args.response, move |kernel| {
             let compact = args.compact.unwrap_or(
-                !full
-                    && kernel.applied_index_detail()?
-                        == Some(airk_core::extraction::IndexDetail::AgentLean),
+                kernel.applied_index_detail()?
+                    == Some(airk_core::extraction::IndexDetail::AgentLean),
             );
             if let Some(key) = continuity_selector(
                 args.symbol_key.as_deref(),
@@ -437,6 +435,7 @@ impl AirkServer {
                     document_only: false,
                 },
                 &airk_core::discovery::DiscoveryOptions {
+                    minimal: false,
                     cursor: args.cursor,
                     compact,
                 },
@@ -548,6 +547,7 @@ impl AirkServer {
                 args.limit,
                 args.max_bytes,
                 &airk_core::discovery::DiscoveryOptions {
+                    minimal: false,
                     cursor: args.cursor,
                     compact: false,
                 },
@@ -605,8 +605,9 @@ impl AirkServer {
                 args.max_bytes,
                 &args.evidence.options()?,
                 &airk_core::discovery::DiscoveryOptions {
+                    minimal: args.compact.unwrap_or(true),
                     cursor: args.cursor,
-                    compact: args.compact,
+                    compact: false,
                 },
             )
         })
@@ -625,6 +626,7 @@ impl AirkServer {
     async fn symbols(&self, Parameters(args): Parameters<FactArgs>) -> CallToolResult {
         self.execute_response(UsageOperation::Symbols, args.response, move |kernel| {
             let options = airk_core::discovery::DiscoveryOptions {
+                minimal: args.compact.unwrap_or(true),
                 cursor: args.cursor.clone(),
                 compact: false,
             };
@@ -645,6 +647,7 @@ impl AirkServer {
     async fn imports(&self, Parameters(args): Parameters<FactArgs>) -> CallToolResult {
         self.execute_response(UsageOperation::Imports, args.response, move |kernel| {
             let options = airk_core::discovery::DiscoveryOptions {
+                minimal: args.compact.unwrap_or(true),
                 cursor: args.cursor.clone(),
                 compact: false,
             };
@@ -666,16 +669,13 @@ impl AirkServer {
         &self,
         Parameters(args): Parameters<DocumentFactArgs>,
     ) -> CallToolResult {
-        let full = args.response.response_mode.unwrap_or(self.response_mode)
-            == response::ResponseMode::Full;
         self.execute_response(
             UsageOperation::DocumentFacts,
             args.response,
             move |kernel| {
                 let compact = args.compact.unwrap_or(
-                    !full
-                        && kernel.applied_index_detail()?
-                            == Some(airk_core::extraction::IndexDetail::AgentLean),
+                    kernel.applied_index_detail()?
+                        == Some(airk_core::extraction::IndexDetail::AgentLean),
                 );
                 if let Some(key) = continuity_selector(
                     args.document_key.as_deref(),
@@ -701,6 +701,7 @@ impl AirkServer {
                         document_only: true,
                     },
                     &airk_core::discovery::DiscoveryOptions {
+                        minimal: false,
                         cursor: args.cursor,
                         compact,
                     },
@@ -788,7 +789,7 @@ impl AirkServer {
             anyhow::ensure!(args.adapter.is_none() || !adapters.is_empty(), "unknown adapter ID");
             Ok(serde_json::json!({
             "request_admission": admission,
-            "discovery": {"cursor_tools":["airk_list_files","airk_outline","airk_symbols","airk_imports","airk_code_facts","airk_document_facts"], "binding":"exact publication, filters and representation", "compact_outline":true, "budget":"complete serialized records; framing is additional", "expired_cursor":"restart discovery"},
+            "discovery": {"cursor_tools":["airk_list_files","airk_outline","airk_symbols","airk_imports","airk_code_facts","airk_document_facts"], "binding":"exact publication, filters and representation", "compact_outline":true, "compact_symbols":true, "fact_result_key":"items", "compact_false":"rich facts with symbol IDs; independent of response mode", "budget":"complete serialized records plus new file/provenance bindings; framing is additional", "expired_cursor":"restart discovery"},
             "adapters": adapters,
             "index_detail": {"new_collection_default":"agent_lean", "levels":["agent_lean","essential","balanced","detailed"], "labels":{"agent_lean":"Agent Lean","balanced":"Rich Structure","essential":"Search Only","detailed":"Detailed"}, "coverage":"Fact and relationship responses report their published indexing level and deliberate omissions. Configured changes apply only after a successful index. Optional provider imports preserve their source and producer binding."},
             "history": {"supported":false,"exact_reads":[],"optional_retention":false,"search":false,"live_fallback":false,"checkpoints":false,"reason":"AIRK 1.2 retains one current index"},
@@ -820,6 +821,7 @@ fn render<T: Serialize>(
     responses: &response::Session,
     mode: response::ResponseMode,
     include_status: bool,
+    operation: UsageOperation,
 ) -> CallToolResult {
     let mut logical = result
         .as_ref()
@@ -867,6 +869,7 @@ fn render<T: Serialize>(
     }
     let mut display = logical.clone();
     if let Some(display) = display.as_mut() {
+        response::fact_items(display, operation);
         responses.display(display, mode, include_status);
     }
     let rendered = match result {
@@ -1012,16 +1015,16 @@ mod tests {
             let body: serde_json::Value =
                 serde_json::from_str(outer["content"][0]["text"].as_str().unwrap())?;
             if compact.is_none() {
-                assert_eq!(body["outline"][0]["qualified_name"], "authenticate");
+                assert_eq!(body["items"][0]["qualified_name"], "authenticate");
                 assert!(
-                    body["outline"][0]["signature"]
+                    body["items"][0]["signature"]
                         .as_str()
                         .unwrap()
                         .contains("-> bool")
                 );
-                assert_eq!(body["outline"][0]["basis"], "syntax");
+                assert_eq!(body["items"][0]["basis"], "syntax");
             } else {
-                assert_eq!(body["facts"][0]["name"], "authenticate");
+                assert_eq!(body["items"][0]["name"], "authenticate");
             }
             assert_eq!(body["freshness"]["live_source_verified"], false);
         }

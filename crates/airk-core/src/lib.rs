@@ -370,6 +370,8 @@ pub struct FactHit {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FactsResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub minimal: Option<discovery::MinimalFacts>,
     #[serde(flatten)]
     pub page: discovery::DiscoveryPage,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

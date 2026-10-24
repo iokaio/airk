@@ -56,9 +56,9 @@ fn cli_and_mcp_resume_the_same_compact_outline_and_fact_pages() -> Result<()> {
         "airk_outline",
         json!({"path":"many.rs","compact":true,"limit":1,"cursor":first["cursor"]}),
     )?;
-    assert_eq!(first["outline"][0]["name"], "alpha");
-    assert_eq!(next["outline"][0]["name"], "beta");
-    assert_eq!(next["facts"], json!([]));
+    assert_eq!(first["minimal"]["items"][0]["name"], "alpha");
+    assert_eq!(next["items"][0]["name"], "beta");
+    assert!(next.get("facts").is_none());
     assert_eq!(next["truncated"], false);
     let direct = cli(&[
         "outline",
@@ -69,7 +69,7 @@ fn cli_and_mcp_resume_the_same_compact_outline_and_fact_pages() -> Result<()> {
         "--cursor",
         first["cursor"].as_str().context("outline cursor")?,
     ])?;
-    assert_eq!(next["outline"], direct["outline"]);
+    assert_eq!(next["items"], direct["minimal"]["items"]);
 
     let first = cli(&["code-facts", "--kind", "definition", "--limit", "1"])?;
     let next = tool(
@@ -77,7 +77,7 @@ fn cli_and_mcp_resume_the_same_compact_outline_and_fact_pages() -> Result<()> {
         json!({"kind":"definition","compact":false,"limit":1,"cursor":first["cursor"]}),
     )?;
     assert_eq!(first["facts"][0]["name"], "alpha");
-    assert_eq!(next["facts"][0]["name"], "beta");
+    assert_eq!(next["items"][0]["name"], "beta");
     assert_eq!(next["truncated"], false);
     let schema = cli(&["tools", "help", "airk_outline", "--json"])?;
     // The public help schema exposes the additive inputs used above.

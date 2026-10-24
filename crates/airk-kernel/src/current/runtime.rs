@@ -282,6 +282,7 @@ impl Kernel {
             .collection_state()?
             .context("current configuration missing")?;
         Ok(FactsResponse {
+            minimal: page.minimal,
             page: page.page,
             outline: page.outline,
             indexing: state.configuration.index_detail.into(),

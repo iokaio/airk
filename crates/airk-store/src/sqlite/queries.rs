@@ -24,7 +24,7 @@ impl FileStore {
     ) -> Result<Option<FactsResponse>> {
         use airk_core::discovery::{self, DiscoveryKey};
         ensure!(
-            !options.compact,
+            !options.compact && !options.minimal,
             "compact representation is supported by outline only"
         );
         let _lifecycle = self.lifecycle(false)?;
@@ -35,6 +35,7 @@ impl FileStore {
         let tx = &conn;
         let generation = identity(tx, root, collection)?;
         let mut response = FactsResponse {
+            minimal: None,
             page: Default::default(),
             outline: Vec::new(),
             indexing: conn.detail.into(),

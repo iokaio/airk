@@ -149,8 +149,9 @@ mod tests {
         assert!(requested.get("freshness").is_some());
         let mut full = args;
         full.insert("response_mode".into(), "full".into());
+        full.insert("compact".into(), false.into());
         let full = body(second.call("airk_code_facts".into(), full).await?)?;
-        assert!(full["facts"][0]["code"].get("producer").is_some());
+        assert!(full["items"][0]["code"].get("producer").is_some());
         assert!(full.get("freshness").is_some());
         assert_eq!(
             initial["publication"]["token"],
@@ -186,5 +187,197 @@ mod tests {
             );
             assert!(tool.description.unwrap().contains("response_mode=full"));
         }
+    }
+
+    #[tokio::test]
+    async fn mixed_tools_measure_terse_bytes_without_changing_evidence() -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let root = directory.path().join("source");
+        std::fs::create_dir(&root)?;
+        let source = format!(
+            "import os\n{}",
+            (0..12)
+                .map(|n| format!("def item_{n}(value):\n    return os.path.exists(value)\n\n"))
+                .collect::<String>()
+        );
+        std::fs::write(root.join("one.py"), source)?;
+        std::fs::write(
+            root.join("notes.md"),
+            "# Local fixture\n\nThe client must preserve original source locations.\n",
+        )?;
+        let kernel = Kernel::open(&root, Some(directory.path().join("data")))?;
+        kernel.configure_vectors(false)?;
+        kernel.index()?;
+        let mut tools = LocalTools::new(kernel).await?;
+        let mut full_bytes = 0;
+        let mut terse_bytes = 0;
+        for (tool, args) in [
+            (
+                "airk_outline",
+                serde_json::json!({"path":"one.py","compact":false}),
+            ),
+            ("airk_symbols", serde_json::json!({"compact":false})),
+            ("airk_imports", serde_json::json!({"compact":false})),
+            (
+                "airk_code_facts",
+                serde_json::json!({"kind":"call","compact":false}),
+            ),
+            ("airk_document_facts", serde_json::json!({"compact":false})),
+            (
+                "airk_relationships",
+                serde_json::json!({"symbol":"file:one.py"}),
+            ),
+            (
+                "airk_search",
+                serde_json::json!({"query":"preserve","mode":"lexical"}),
+            ),
+            (
+                "airk_read_file",
+                serde_json::json!({"path":"one.py","start_line":1,"end_line":3}),
+            ),
+            (
+                "airk_context",
+                serde_json::json!({"path":"one.py","line":2}),
+            ),
+        ] {
+            let mut results = Vec::new();
+            let mut bytes = Vec::new();
+            for mode in ["full", "terse"] {
+                let mut args = args.as_object().unwrap().clone();
+                args.insert("response_mode".into(), mode.into());
+                let result = tools.call(tool.into(), args).await?;
+                bytes.push(serde_json::to_vec(&result)?.len());
+                results.push(body(result)?);
+            }
+            assert_eq!(
+                results[0]["publication"]["token"],
+                results[1]["publication"]["token"]
+            );
+            if results[0].get("read").is_some() {
+                assert_eq!(
+                    results[0]["read"]["validator"],
+                    results[1]["read"]["validator"]
+                );
+            }
+            for key in ["items", "hits"] {
+                if let Some(rows) = results[0][key].as_array() {
+                    assert_eq!(rows.len(), results[1][key].as_array().unwrap().len());
+                    for (full, terse) in rows.iter().zip(results[1][key].as_array().unwrap()) {
+                        for field in ["name", "citation", "text", "resolution"] {
+                            assert_eq!(full.get(field), terse.get(field), "{tool}: {field}");
+                        }
+                    }
+                }
+            }
+            assert!(bytes[1] < bytes[0], "{tool}: {bytes:?}");
+            eprintln!(
+                "mixed response fixture {tool}: full={} terse={}",
+                bytes[0], bytes[1]
+            );
+            full_bytes += bytes[0];
+            terse_bytes += bytes[1];
+        }
+        let rich = body(
+            tools
+                .call(
+                    "airk_symbols".into(),
+                    serde_json::json!({"compact":false,"response_mode":"terse","limit":100,"max_bytes":65536})
+                        .as_object()
+                        .unwrap()
+                        .clone(),
+                )
+                .await?,
+        )?;
+        let minimal = body(
+            tools
+                .call(
+                    "airk_symbols".into(),
+                    serde_json::json!({"response_mode":"terse","limit":100,"max_bytes":65536})
+                        .as_object()
+                        .unwrap()
+                        .clone(),
+                )
+                .await?,
+        )?;
+        assert_eq!(
+            rich["items"].as_array().unwrap().len(),
+            minimal["items"].as_array().unwrap().len()
+        );
+        assert!(serde_json::to_vec(&minimal)?.len() < serde_json::to_vec(&rich)?.len());
+        eprintln!(
+            "minimal symbol fixture: rich={} minimal={}",
+            serde_json::to_vec(&rich)?.len(),
+            serde_json::to_vec(&minimal)?.len()
+        );
+        eprintln!("mixed response fixture total: full={full_bytes} terse={terse_bytes}");
+        tools.close().await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn minimal_navigation_keeps_validators_and_has_one_fact_result_key() -> anyhow::Result<()>
+    {
+        let directory = tempfile::tempdir()?;
+        let root = directory.path().join("source");
+        std::fs::create_dir(&root)?;
+        std::fs::write(
+            root.join("one.rs"),
+            "fn alpha() -> bool { true }\nfn beta() {}\n",
+        )?;
+        let kernel = Kernel::open(&root, Some(directory.path().join("data")))?;
+        kernel.configure_vectors(false)?;
+        kernel.index()?;
+        let mut tools = LocalTools::new(kernel).await?;
+        let mut validators = Vec::new();
+        for mode in ["terse", "full"] {
+            let args = serde_json::json!({"path":"one.rs","response_mode":mode})
+                .as_object()
+                .unwrap()
+                .clone();
+            let outline = body(tools.call("airk_outline".into(), args).await?)?;
+            assert_eq!(outline["representation"], "minimal");
+            assert_eq!(outline["items"][0]["name"], "alpha");
+            assert!(outline["items"][0].get("qualified_name").is_none());
+            assert!(outline["items"][0].get("file").is_none());
+            assert_eq!(outline["files"][0]["path"], "one.rs");
+            validators.push(outline["read"]["validator"].clone());
+            assert!(validators.last().unwrap().is_string());
+        }
+        assert_eq!(validators[0], validators[1]);
+        let conditional = body(
+            tools
+                .call(
+                    "airk_outline".into(),
+                    serde_json::json!({"path":"one.rs","if_evidence":validators[0]})
+                        .as_object()
+                        .unwrap()
+                        .clone(),
+                )
+                .await?,
+        )?;
+        assert!(conditional["items"].as_array().unwrap().is_empty());
+        for (tool, args) in [
+            ("airk_symbols", serde_json::json!({})),
+            ("airk_imports", serde_json::json!({})),
+            ("airk_code_facts", serde_json::json!({})),
+            ("airk_document_facts", serde_json::json!({})),
+            ("airk_relationships", serde_json::json!({"symbol":"absent"})),
+            (
+                "airk_outline",
+                serde_json::json!({"path":"one.rs","compact":false}),
+            ),
+        ] {
+            let result = body(
+                tools
+                    .call(tool.into(), args.as_object().unwrap().clone())
+                    .await?,
+            )?;
+            assert!(result["items"].is_array(), "{tool}: {result}");
+            for old in ["facts", "outline", "relationships", "minimal"] {
+                assert!(result.get(old).is_none(), "{tool}: {old}");
+            }
+        }
+        tools.close().await?;
+        Ok(())
     }
 }

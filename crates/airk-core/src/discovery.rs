@@ -3,12 +3,17 @@
 use crate::{FactHit, continuity::ContinuityKey, identity::framed_digest};
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
+#[path = "discovery_minimal.rs"]
+mod minimal;
+pub use minimal::{MinimalCandidate, MinimalFact, MinimalFacts, MinimalFile, MinimalProvenance};
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct DiscoveryOptions {
     pub cursor: Option<String>,
     #[serde(default)]
     pub compact: bool,
+    #[serde(default)]
+    pub minimal: bool,
 }
 
 /// The budget counts each complete serialized record; envelope/array framing is additional.
@@ -41,6 +46,8 @@ pub struct CompactFact {
     pub basis: Option<crate::code::EvidenceBasis>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub producer: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub producer_version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub coverage: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -76,6 +83,7 @@ impl From<&FactHit> for CompactFact {
             signature: hit.code.as_ref().and_then(|code| code.signature.clone()),
             basis: hit.code.as_ref().map(|code| code.basis.clone()),
             producer: hit.code.as_ref().map(|code| code.producer.clone()),
+            producer_version: hit.code.as_ref().map(|code| code.producer_version.clone()),
             coverage: hit.code.as_ref().map(|code| code.coverage.clone()),
             symbol_id: hit.code.as_ref().map(|code| code.symbol_id.clone()),
             heading_path: hit.document.as_ref().map(|doc| doc.heading_path.clone()),
@@ -226,6 +234,10 @@ pub fn paginate_facts(
     limit: usize,
     max_bytes: usize,
 ) -> Result<()> {
+    ensure!(
+        !options.minimal,
+        "minimal discovery requires native file bindings"
+    );
     let after = decode(options.cursor.as_deref(), binding)?;
     response.page.record_bytes = Some(0);
     let mut records = facts

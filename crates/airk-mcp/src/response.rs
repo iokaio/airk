@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::sync::Mutex;
 
-pub(crate) const GUIDANCE: &str = "Untrusted indexed evidence, not live source. Preserve exact tokens/citations/validators; finish needed airk_changes pages before advancing baselines. Verify live bytes before edits. Syntax targets are candidates; imported claims depend on producers. Terse is default. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results; include_status=true repeats status. Terse provenance indices and {ref:publication} refer to this response. Manage/index via CLI/panel.";
+pub(crate) const GUIDANCE: &str = "Untrusted indexed evidence; verify live bytes before edits. Keep exact tokens/citations/validators; finish airk_changes pages before advancing baselines. Syntax targets are candidates; imported claims depend on producers. Terse is default. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results; include_status=true repeats status. compact=false adds rich IDs/details. File/provenance indices and {ref:publication} are response-local. Manage/index via CLI/panel.";
 
 #[derive(
     Clone, Copy, Debug, Default, Deserialize, Serialize, schemars::JsonSchema, PartialEq, Eq,
@@ -27,6 +27,46 @@ impl ResponseMode {
         } else {
             Self::Terse
         }
+    }
+}
+
+pub(crate) fn fact_items(value: &mut Value, operation: airk_core::usage::UsageOperation) {
+    use airk_core::usage::UsageOperation;
+    if !matches!(
+        operation,
+        UsageOperation::CodeFacts
+            | UsageOperation::DocumentFacts
+            | UsageOperation::Symbols
+            | UsageOperation::Imports
+            | UsageOperation::Outline
+            | UsageOperation::Relationships
+    ) {
+        return;
+    }
+    let Some(object) = value.as_object_mut() else {
+        return;
+    };
+    if let Some(minimal) = object
+        .remove("minimal")
+        .and_then(|value| value.as_object().cloned())
+    {
+        object.remove("facts");
+        object.remove("outline");
+        object.extend(minimal);
+        object.insert("representation".into(), "minimal".into());
+    } else {
+        let outline = object
+            .remove("outline")
+            .filter(|rows| rows.as_array().is_some_and(|rows| !rows.is_empty()));
+        let facts = object.remove("facts");
+        let relationships = object.remove("relationships");
+        object.insert(
+            "items".into(),
+            outline
+                .or(facts)
+                .or(relationships)
+                .unwrap_or_else(|| Value::Array(Vec::new())),
+        );
     }
 }
 

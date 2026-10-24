@@ -28,6 +28,7 @@ impl crate::Kernel {
             .collection_state()?
             .ok_or_else(|| anyhow::anyhow!("current configuration missing"))?;
         let mut response = airk_core::FactsResponse {
+            minimal: None,
             page: Default::default(),
             outline: Vec::new(),
             indexing: state.configuration.index_detail.into(),

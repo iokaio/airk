@@ -167,7 +167,7 @@ impl AirkServer {
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| work(kernel.clone())))
                     .unwrap_or_else(|_| Err(anyhow::anyhow!("retrieval worker failed")));
             // Serialization and all optional usage I/O stay off the protocol executor.
-            crate::render(&kernel, span, result, &responses, mode, options.include_status || control)
+            crate::render(&kernel, span, result, &responses, mode, options.include_status || control, operation)
         })
         .await
         .unwrap_or_else(|_| error("retrieval worker failed"))

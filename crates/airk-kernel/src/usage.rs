@@ -258,7 +258,10 @@ impl crate::Kernel {
             let result = logical.and_then(|v| v.get("evidence")).or(logical);
             let returned_items = result
                 .and_then(|v| {
-                    v.get("hits")
+                    v.get("minimal")
+                        .and_then(|minimal| minimal.get("items"))
+                        .or_else(|| v.get("items"))
+                        .or_else(|| v.get("hits"))
                         .or_else(|| {
                             v.get("outline").filter(|value| {
                                 value.as_array().is_some_and(|items| !items.is_empty())
@@ -397,6 +400,15 @@ impl crate::Kernel {
         fn citations<'a>(value: &'a Value, sources: &mut BTreeSet<(&'a str, &'a str)>) {
             match value {
                 Value::Object(object) => {
+                    if let Some(files) = object.get("files").and_then(Value::as_array) {
+                        for file in files {
+                            if let (Some(path), Some(hash)) =
+                                (file["path"].as_str(), file["content_hash"].as_str())
+                            {
+                                sources.insert((path, hash));
+                            }
+                        }
+                    }
                     if let Some(citation) = object.get("citation")
                         && let (Some(path), Some(hash)) =
                             (citation["path"].as_str(), citation["content_hash"].as_str())
@@ -978,6 +990,55 @@ mod tests {
         )?;
         assert!(span.enabled && span.store.is_some());
         Ok(span)
+    }
+
+    #[test]
+    fn minimal_file_bindings_use_authenticated_source_baselines() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        std::fs::write(root.path().join("one.rs"), "fn alpha() {}\nfn beta() {}\n")?;
+        let kernel = crate::Kernel::open(root.path(), None)?;
+        kernel.configure_vectors(false)?;
+        kernel.index()?;
+        let response = kernel.outline_conditional_page(
+            "one.rs",
+            100,
+            65536,
+            &Default::default(),
+            &airk_core::discovery::DiscoveryOptions {
+                minimal: true,
+                ..Default::default()
+            },
+        )?;
+        let mut value = serde_json::to_value(response.content.unwrap())?;
+        let generation = value["generation"].as_u64();
+        let (baseline, _) = kernel
+            .usage_baseline(
+                &value,
+                generation,
+                ResponseRepresentation::McpToolResultJson,
+            )
+            .map_err(|reason| anyhow::anyhow!("{reason:?}"))?;
+        assert_eq!(baseline.unique_sources, 1);
+        let file = value["minimal"]["files"][0].clone();
+        value["minimal"]["files"].as_array_mut().unwrap().push(file);
+        let (deduplicated, _) = kernel
+            .usage_baseline(
+                &value,
+                generation,
+                ResponseRepresentation::McpToolResultJson,
+            )
+            .map_err(|reason| anyhow::anyhow!("{reason:?}"))?;
+        assert_eq!(deduplicated.utf8_bytes, baseline.utf8_bytes);
+        value["minimal"]["files"][0]["content_hash"] = "b".repeat(64).into();
+        assert!(matches!(
+            kernel.usage_baseline(
+                &value,
+                generation,
+                ResponseRepresentation::McpToolResultJson
+            ),
+            Err(BaselineUnavailable::SourceMismatch)
+        ));
+        Ok(())
     }
 
     #[test]
