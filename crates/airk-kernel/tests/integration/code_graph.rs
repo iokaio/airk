@@ -33,6 +33,59 @@ fn edges(symbol: &str, kind: Option<&str>) -> RelationshipQuery {
 }
 
 #[test]
+fn terminal_method_names_find_receiver_and_chained_calls_without_resolution() -> anyhow::Result<()>
+{
+    let root = tempfile::tempdir()?;
+    let state = tempfile::tempdir()?;
+    for (path, source) in [
+        (
+            "one.py",
+            "def run(x):\n    x.reclaim_objects()\n    x.next().reclaim_objects()\n    x.Reclaim_objects()\n    # x.reclaim_objects()\n    label = 'reclaim_objects'\n",
+        ),
+        (
+            "one.rs",
+            "fn run(x: &Thing) { x.reclaim_objects(); x.next().reclaim_objects(); x.Reclaim_objects(); }\n",
+        ),
+        (
+            "one.ts",
+            "function run(x) { x.reclaim_objects(); x.next().reclaim_objects(); x.Reclaim_objects(); }\n",
+        ),
+    ] {
+        fs::write(root.path().join(path), source)?;
+    }
+    let kernel = Kernel::open(root.path(), Some(state.path().into()))?;
+    kernel.configure_vectors(false)?;
+    kernel.index()?;
+    let query = fact_query(Some("reclaim_objects"), Some("call"));
+    let found = kernel.code_facts(&query)?;
+    assert_eq!(found.facts.len(), 6);
+    assert!(
+        found
+            .facts
+            .iter()
+            .all(|hit| hit.candidate && hit.code.as_ref().unwrap().basis == EvidenceBasis::Syntax)
+    );
+    assert!(found.facts.iter().any(|hit| hit.name.contains("next()")));
+    let mut scoped = query.clone();
+    scoped.path_prefix = "one.py".into();
+    assert_eq!(kernel.code_facts(&scoped)?.facts.len(), 2);
+    let mut small = query.clone();
+    small.max_bytes = 1;
+    let small = kernel.code_facts(&small)?;
+    assert!(small.facts.is_empty() && small.truncated);
+    fs::remove_file(root.path().join("one.py"))?;
+    fs::write(
+        root.path().join("one.rs"),
+        "fn run(x: &Thing) { x.release_objects(); }\n",
+    )?;
+    kernel.index()?;
+    assert_eq!(kernel.code_facts(&query)?.facts.len(), 2);
+    let reopened = Kernel::open(root.path(), Some(state.path().into()))?;
+    assert_eq!(reopened.code_facts(&query)?.facts.len(), 2);
+    Ok(())
+}
+
+#[test]
 fn call_candidates_are_available_at_each_structured_detail() -> anyhow::Result<()> {
     for detail in [
         airk_core::extraction::IndexDetail::AgentLean,

@@ -54,6 +54,10 @@ impl crate::Kernel {
                 continue;
             }
             let hit = airk_core::FactHit {
+                candidate: fact
+                    .code
+                    .as_ref()
+                    .is_some_and(|code| code.is_call_candidate(&fact.kind)),
                 continuity_key: Some(key),
                 name: fact.name.clone(),
                 kind: fact.kind.clone(),
@@ -105,6 +109,7 @@ impl crate::Kernel {
                     .filter(|byte| *byte == b'\n')
                     .count();
             let hit = airk_core::FactHit {
+                candidate: false,
                 continuity_key: Some(key),
                 name: text.into(),
                 kind: record.descriptor.category.clone(),

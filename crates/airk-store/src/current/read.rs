@@ -13,6 +13,26 @@ use anyhow::{Context, Result, ensure};
 use rusqlite::Connection;
 use std::sync::{Arc, Mutex};
 
+/// Only a read-only SQLite operation returning BUSY/LOCKED carries this marker.
+/// Corruption, expired revisions, permissions and other I/O errors never do.
+#[derive(Clone, Copy, Debug)]
+pub struct CurrentReadContention;
+impl std::fmt::Display for CurrentReadContention {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("current publication read is temporarily busy")
+    }
+}
+impl std::error::Error for CurrentReadContention {}
+
+fn read_error(error: anyhow::Error) -> anyhow::Error {
+    if matches!(error.downcast_ref::<rusqlite::Error>(), Some(rusqlite::Error::SqliteFailure(code, _)) if matches!(code.code, rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked))
+    {
+        error.context(CurrentReadContention)
+    } else {
+        error
+    }
+}
+
 /// The connection/read transaction drops before the gate. Providers may clone
 /// the Arc for one request, but neither a kernel cache nor a sealed delta owns it.
 pub struct CurrentRead {
@@ -233,7 +253,7 @@ impl CurrentRead {
             .connection
             .lock()
             .map_err(|_| anyhow::anyhow!("current reader connection poisoned"))?;
-        let result = f(&connection)?;
+        let result = f(&connection).map_err(read_error)?;
         self.live()?;
         Ok(result)
     }
@@ -288,7 +308,8 @@ impl FileStore {
             std::fs::metadata(self.directory().join("current.sqlite3"))?.len() <= capacity,
             "current database exceeds captured capacity"
         );
-        let connection = database::open_reader(&self.directory().join("current.sqlite3"))?;
+        let connection =
+            database::open_reader(&self.directory().join("current.sqlite3")).map_err(read_error)?;
         if let Some(deadline) = deadline {
             connection
                 .progress_handler(1000, Some(move || std::time::Instant::now() >= deadline))?;
@@ -299,6 +320,7 @@ impl FileStore {
                 [],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
+            .map_err(|error| read_error(error.into()))
             .context("current index metadata missing")?;
         ensure!(
             phase == "ready"
@@ -315,5 +337,35 @@ impl FileStore {
             deadline,
             _gate: gate,
         }))
+    }
+}
+
+#[cfg(test)]
+mod retry_tests {
+    use super::*;
+    #[test]
+    fn only_sqlite_busy_and_locked_read_errors_gain_a_retry_marker() {
+        for (code, retryable) in [
+            (rusqlite::ffi::SQLITE_BUSY, true),
+            (rusqlite::ffi::SQLITE_LOCKED, true),
+            (rusqlite::ffi::SQLITE_CORRUPT, false),
+            (rusqlite::ffi::SQLITE_IOERR, false),
+            (rusqlite::ffi::SQLITE_PERM, false),
+            (rusqlite::ffi::SQLITE_READONLY, false),
+        ] {
+            let error = rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error::new(code),
+                Some("busy fixture wording".into()),
+            );
+            let marked = read_error(anyhow::Error::new(error).context("read-only query"));
+            assert_eq!(
+                marked.downcast_ref::<CurrentReadContention>().is_some(),
+                retryable
+            );
+            assert!(marked.downcast_ref::<rusqlite::Error>().is_some());
+        }
+        let io =
+            read_error(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "busy").into());
+        assert!(io.downcast_ref::<CurrentReadContention>().is_none());
     }
 }

@@ -341,7 +341,7 @@ fn retained_input_with_facts(
         Some(text.as_bytes()),
         Some(&reservation),
     )?;
-    Ok(CapturedInput { artifact })
+    Ok(CapturedInput::new(artifact))
 }
 
 fn prepared_occurrence(
@@ -823,7 +823,7 @@ fn prepared_map_and_graph_replay_commit_one_authenticated_head() -> Result<()> {
         &fixture.scope,
         &fixture.store,
         None,
-        Some(&input.artifact),
+        Some(&input),
     )?;
     changes.extend(postings.finish(&mut plan, &fixture.scope)?);
     changes.sort_by_key(map::MapChange::key);
@@ -1054,13 +1054,7 @@ fn changed_path_retires_only_its_share_of_a_live_vector() -> Result<()> {
     }
     let mut postings = postings::PostingChanges::default();
     for input in [&first, &second] {
-        postings.update(
-            &mut plan,
-            &fixture.scope,
-            &fixture.store,
-            None,
-            Some(&input.artifact),
-        )?;
+        postings.update(&mut plan, &fixture.scope, &fixture.store, None, Some(input))?;
     }
     changes.extend(postings.finish(&mut plan, &fixture.scope)?);
     changes.sort_by_key(map::MapChange::key);
@@ -1375,8 +1369,8 @@ fn changed_artifact_and_lexical_manifest_share_one_replayed_head() -> Result<()>
         None,
         &next,
     )?;
-    // Includes metadata retirement and the source-size measurement.
-    assert_eq!(pending.map_count, 5);
+    // Includes metadata retirement, source-size measurement and posting-format marker.
+    assert_eq!(pending.map_count, 6);
     assert_eq!(pending.inputs_count, 1);
     assert_eq!(pending.lexical_manifest_bytes, next.len() as u64);
     drop(current);
@@ -1522,6 +1516,28 @@ fn changed_pending_map_bytes_block_applying_and_commit_without_advancing_head() 
 }
 
 #[test]
+fn temporary_read_lock_is_typed_and_retry_preserves_the_exact_revision() -> Result<()> {
+    let fixture = Fixture::new()?;
+    let token = fixture.store.current_read(&fixture.scope)?.token()?;
+    let blocker = rusqlite::Connection::open(fixture.store.directory().join("current.sqlite3"))?;
+    blocker.execute_batch("BEGIN EXCLUSIVE;")?;
+    let error = match fixture.store.current_read(&fixture.scope) {
+        Ok(_) => anyhow::bail!("exclusive SQLite fixture did not reject the read"),
+        Err(error) => error,
+    };
+    assert!(
+        error.downcast_ref::<CurrentReadContention>().is_some(),
+        "{error:#}"
+    );
+    blocker.execute_batch("ROLLBACK;")?;
+    drop(blocker);
+    let retried = fixture.store.current_read(&fixture.scope)?;
+    retried.require_token(&token)?;
+    assert_eq!(retried.token()?, token);
+    Ok(())
+}
+
+#[test]
 fn catalog_only_artifact_updates_are_atomic_authenticated_and_revision_bound() -> Result<()> {
     let fixture = Fixture::new()?;
     let source = std::path::Path::new(&fixture.scope.root).join("evidence.txt");
@@ -1557,7 +1573,7 @@ fn catalog_only_artifact_updates_are_atomic_authenticated_and_revision_bound() -
         serde_json::to_value(Some(&original.artifact))?
     );
     assert!(read.artifact("missing.txt")?.is_none());
-    assert_eq!(read.map_entries(map::MapVisitLimits::default())?.len(), 3);
+    assert_eq!(read.map_entries(map::MapVisitLimits::default())?.len(), 4);
     drop(read);
     fs::write(&source, "Later live edit")?;
     assert_eq!(
@@ -1599,7 +1615,8 @@ fn catalog_only_artifact_updates_are_atomic_authenticated_and_revision_bound() -
     drop(writer);
     let read = fixture.store.current_read(&fixture.scope)?;
     assert!(read.artifact("evidence.txt")?.is_none());
-    assert!(read.map_entries(map::MapVisitLimits::default())?.is_empty());
+    assert!(read.terminal_call_postings_complete()?);
+    assert_eq!(read.map_entries(map::MapVisitLimits::default())?.len(), 1);
     Ok(())
 }
 

@@ -535,7 +535,9 @@ fn applying_missing_capture_never_reconstructs_from_changed_live_source() -> Res
             configuration: None,
         }
         .apply_observed(
-            &[ArtifactChange::Upsert(Box::new(CapturedInput { artifact }))],
+            &[ArtifactChange::Upsert(Box::new(CapturedInput::new(
+                artifact,
+            )))],
             None,
             &mut |stage| {
                 if stage == super::super::CurrentUpdateStage::Applying {
@@ -1142,7 +1144,7 @@ fn many_progressive_publications_do_not_spend_the_capture_reservation() -> Resul
         progressive.processed += 1;
         progressive.batch.insert(
             artifact.path.clone(),
-            ArtifactChange::Upsert(Box::new(CapturedInput { artifact: retained })),
+            ArtifactChange::Upsert(Box::new(CapturedInput::new(retained))),
         );
         progressive.flush()?;
         assert_eq!(

@@ -139,9 +139,7 @@ impl ProgressiveBase<'_> {
                 .insert(artifact.path.clone(), artifact.clone());
             self.batch.insert(
                 artifact.path.clone(),
-                ArtifactChange::Upsert(Box::new(CapturedInput {
-                    artifact: artifact.clone(),
-                })),
+                ArtifactChange::Upsert(Box::new(CapturedInput::new(artifact.clone()))),
             );
             self.batch_bytes = self.batch_bytes.saturating_add(artifact.bytes);
             if self.batch.len() >= self.next_batch || self.batch_bytes >= 64 << 20 {
@@ -993,9 +991,7 @@ impl Kernel {
             if ((full || configuration_changed) && !progressive_enabled) || !same {
                 changes.insert(
                     path.clone(),
-                    ArtifactChange::Upsert(Box::new(CapturedInput {
-                        artifact: artifact.clone(),
-                    })),
+                    ArtifactChange::Upsert(Box::new(CapturedInput::new(artifact.clone()))),
                 );
             }
         }

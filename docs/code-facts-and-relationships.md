@@ -2,6 +2,8 @@
 
 AIRK uses bundled embedded SQLite for collection revisions, exact facts and relationships. Runtime installation still requires only the native helper. SQLite also owns FTS5 lexical retrieval and the storage used by DiskANN vector retrieval through AIRK's portable disk provider. Vector/hybrid search additionally requires deliberately provisioned local model assets; see [local models](local-models.md).
 
+The 1.4.0 development path also matches terminal written method names in native call discovery, preserves complete targets and labels calls as candidates. See [posting compatibility and temporary read retries](service-retrieval.md), and [MCP response modes and minimal navigation](mcp-response-modes.md).
+
 ## Native evidence
 
 Language profiles now emit qualified display names, containing scopes/owner IDs, signatures before grammar body nodes, written parameters/return annotations, selected modifiers/attributes and nearby comments. Explicit declaration/occurrence and signature spans use zero-based UTF-8 byte offsets with exclusive ends in retained source. Syntax IDs include path, span and node kind, separating repeated/nested/overloaded declarations without claiming stable compiler identity after edits. Absent fields mean selected grammar fields did not provide them. Individual details are capped at 1024 UTF-8 bytes and scope walks at 128 ancestors. This is an initial extraction slice, not complete language analysis or inferred typing.

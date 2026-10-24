@@ -346,6 +346,7 @@ mod original {
                 index_sha256: None,
             }),
             imported_facts: vec![airk_core::FactHit {
+                candidate: false,
                 continuity_key: None,
                 name: "original_provider_fact".into(),
                 kind: "function".into(),

@@ -716,7 +716,7 @@ impl Kernel {
                             == pending.extraction_object,
                     "pending semantic input binding expired"
                 );
-                changes.push(CapturedInput { artifact });
+                changes.push(CapturedInput::new(artifact));
             }
             drop(read);
             self.emit_progress(airk_core::readiness::IndexProgress {

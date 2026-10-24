@@ -190,6 +190,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn terminal_call_names_keep_written_targets_and_candidate_labels() -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let root = directory.path().join("source");
+        std::fs::create_dir(&root)?;
+        std::fs::write(
+            root.join("one.py"),
+            "def run(x):\n    x.next().reclaim_objects()\n",
+        )?;
+        let kernel = Kernel::open(&root, Some(directory.path().join("data")))?;
+        kernel.configure_vectors(false)?;
+        kernel.index()?;
+        let mut tools = LocalTools::new(kernel).await?;
+        for mode in ["terse", "full"] {
+            for compact in [true, false] {
+                let args = serde_json::json!({"name":"reclaim_objects","kind":"call","compact":compact,"response_mode":mode});
+                let result = body(
+                    tools
+                        .call("airk_code_facts".into(), args.as_object().unwrap().clone())
+                        .await?,
+                )?;
+                assert_eq!(result["items"].as_array().unwrap().len(), 1);
+                assert_eq!(result["items"][0]["name"], "x.next().reclaim_objects");
+                assert_eq!(result["items"][0]["candidate"], true);
+                if !compact {
+                    assert_eq!(
+                        result["items"][0]["code"]["target"],
+                        "x.next().reclaim_objects"
+                    );
+                    assert_eq!(result["items"][0]["code"]["basis"], "syntax");
+                }
+            }
+        }
+        tools.close().await?;
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn mixed_tools_measure_terse_bytes_without_changing_evidence() -> anyhow::Result<()> {
         let directory = tempfile::tempdir()?;
         let root = directory.path().join("source");

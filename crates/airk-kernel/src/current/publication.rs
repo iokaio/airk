@@ -40,9 +40,7 @@ impl Kernel {
             {
                 changes.insert(
                     path.clone(),
-                    ArtifactChange::Upsert(Box::new(CapturedInput {
-                        artifact: artifact.clone(),
-                    })),
+                    ArtifactChange::Upsert(Box::new(CapturedInput::new(artifact.clone()))),
                 );
             }
         }

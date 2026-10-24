@@ -157,6 +157,8 @@ impl TransactionPhase {
 #[serde(deny_unknown_fields)]
 pub struct CapturedInput {
     pub artifact: Artifact,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub postings_version: u32,
 }
 
 /// A changed source path in a single current-index publication. Upserts carry
@@ -194,8 +196,22 @@ pub(crate) fn valid_current_path(path: &str) -> bool {
         && path.split('/').all(|part| !matches!(part, "" | "." | ".."))
 }
 
+fn is_zero(value: &u32) -> bool {
+    *value == 0
+}
+
 impl CapturedInput {
+    pub fn new(artifact: Artifact) -> Self {
+        Self {
+            artifact,
+            postings_version: 1,
+        }
+    }
     pub(super) fn bytes(&self) -> Result<Vec<u8>> {
+        ensure!(
+            self.postings_version <= 1,
+            "unsupported captured posting version"
+        );
         let artifact = &self.artifact;
         ensure!(
             valid_current_path(&artifact.path),
@@ -1159,13 +1175,15 @@ impl CurrentWriter<'_> {
                 previous.as_ref().map(|input| &input.artifact),
                 input.map(|input| &input.artifact),
             )?;
-            let mut postings = super::postings::PostingChanges::default();
+            let mut postings = super::postings::PostingChanges::new(
+                base.sequence == 0 && input.is_some_and(|value| value.postings_version == 1),
+            );
             postings.update(
                 &mut plan,
                 &self.scope,
                 &self.store,
-                previous.as_ref().map(|input| &input.artifact),
-                input.map(|input| &input.artifact),
+                previous.as_ref(),
+                input,
             )?;
             plan.put(identity, changes[0].value())?;
             changes.extend(postings.finish(&mut plan, &self.scope)?);
@@ -1198,10 +1216,11 @@ impl CurrentWriter<'_> {
         let mut plan = map::MapPlan::new(self.connection()?, &self.scope, base.artifact_root)?;
         let collection =
             super::collection::CollectionPlan::load(&plan, &self.scope, Some(configuration))?;
-        let changes = collection
+        let mut changes = collection
             .finish(&mut plan, &self.scope)?
             .into_iter()
-            .collect();
+            .collect::<Vec<_>>();
+        changes.extend(super::postings::PostingChanges::new(true).finish(&mut plan, &self.scope)?);
         let root = plan.root()?;
         self.commit_catalog_changes(expected, base, changes, root)
     }
@@ -1518,7 +1537,13 @@ impl CurrentWriter<'_> {
             collection.require_all_previous()?;
         }
         collection.verify_model(&model)?;
-        let mut postings = super::postings::PostingChanges::default();
+        let mut postings = super::postings::PostingChanges::new(
+            base.sequence == 0
+                && changes.iter().all(|change| match change {
+                    ArtifactChange::Upsert(input) => input.postings_version == 1,
+                    ArtifactChange::Delete(_) => true,
+                }),
+        );
         for change in changes {
             let key = map::key(
                 &self.scope,
@@ -1531,7 +1556,7 @@ impl CurrentWriter<'_> {
                     previous.artifact.path == change.path() && previous.bytes()? == bytes,
                     "changed artifact has invalid prior catalog binding"
                 );
-                Some(previous.artifact)
+                Some(previous)
             } else {
                 None
             };
@@ -1539,11 +1564,11 @@ impl CurrentWriter<'_> {
                 change.path().to_owned(),
                 previous
                     .as_ref()
-                    .map(|a| a.content_hash.parse::<Sha256Digest>())
+                    .map(|a| a.artifact.content_hash.parse::<Sha256Digest>())
                     .transpose()?,
             );
             collection.update(
-                previous.as_ref(),
+                previous.as_ref().map(|input| &input.artifact),
                 match change {
                     ArtifactChange::Upsert(input) => Some(&input.artifact),
                     ArtifactChange::Delete(_) => None,
@@ -1555,7 +1580,7 @@ impl CurrentWriter<'_> {
                 &self.store,
                 previous.as_ref(),
                 match change {
-                    ArtifactChange::Upsert(input) => Some(&input.artifact),
+                    ArtifactChange::Upsert(input) => Some(input.as_ref()),
                     ArtifactChange::Delete(_) => None,
                 },
             )?;

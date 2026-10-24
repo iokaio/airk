@@ -54,7 +54,9 @@ fn crash_child() -> Result<()> {
         configuration: Some(&configuration),
     }
     .apply_observed(
-        &[ArtifactChange::Upsert(Box::new(CapturedInput { artifact }))],
+        &[ArtifactChange::Upsert(Box::new(CapturedInput::new(
+            artifact,
+        )))],
         None,
         &mut |stage| {
             if stage

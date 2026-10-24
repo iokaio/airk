@@ -155,7 +155,7 @@ impl MinimalFacts {
             candidate: hit
                 .code
                 .as_ref()
-                .is_some_and(|code| code.basis != EvidenceBasis::Imported && code.target.is_some()),
+                .is_some_and(|code| code.is_call_candidate(&hit.kind)),
             details_truncated: hit.code.as_ref().is_some_and(|code| code.details_truncated)
                 || hit
                     .document
@@ -216,7 +216,8 @@ mod tests {
             facts: vec![],
             retained: None,
         };
-        let hit = FactHit { continuity_key: None, name: "alpha".into(), kind: "definition".into(), syntax_kind: "function_item".into(), language: "rust".into(), citation: crate::Citation { path: artifact.path.clone(), content_hash: artifact.content_hash.clone(), start_line: 1, end_line: 2, location: DocumentLocation::Lines { start: 1, end: 2 } }, document: None, code: Some(serde_json::from_value(serde_json::json!({"symbol_id":"symbol", "qualified_name":"scope.alpha", "scope":["scope"], "owner_id":null, "signature":"fn alpha()", "parameters":null, "return_type":null, "modifiers":[], "documentation":null, "target":null, "basis":"syntax", "producer":"tree-sitter", "producer_version":"1", "coverage":"partial syntax", "details_truncated":false})).unwrap()) };
+        let hit = FactHit { candidate: false,
+                continuity_key: None, name: "alpha".into(), kind: "definition".into(), syntax_kind: "function_item".into(), language: "rust".into(), citation: crate::Citation { path: artifact.path.clone(), content_hash: artifact.content_hash.clone(), start_line: 1, end_line: 2, location: DocumentLocation::Lines { start: 1, end: 2 } }, document: None, code: Some(serde_json::from_value(serde_json::json!({"symbol_id":"symbol", "qualified_name":"scope.alpha", "scope":["scope"], "owner_id":null, "signature":"fn alpha()", "parameters":null, "return_type":null, "modifiers":[], "documentation":null, "target":null, "basis":"syntax", "producer":"tree-sitter", "producer_version":"1", "coverage":"partial syntax", "details_truncated":false})).unwrap()) };
         (artifact, hit)
     }
     #[test]
@@ -245,6 +246,15 @@ mod tests {
         let (artifact, mut hit) = fixture();
         let mut page = MinimalFacts::default();
         hit.code.as_mut().unwrap().target = Some("receiver.alpha".into());
+        hit.kind = "import".into();
+        assert!(
+            !page
+                .candidate(&hit, &artifact, false)?
+                .unwrap()
+                .row
+                .candidate
+        );
+        hit.kind = "call".into();
         page.admit(page.candidate(&hit, &artifact, false)?.unwrap())?;
         assert!(page.items[0].candidate);
         let code = hit.code.as_mut().unwrap();

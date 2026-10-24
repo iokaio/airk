@@ -43,10 +43,12 @@ fn matches(artifact: &Artifact, fact: &Fact, q: &FactQuery, code_only: bool) -> 
         && q.name.as_ref().is_none_or(|name| {
             if q.exact_name {
                 &fact.name == name
-                    || fact
-                        .code
-                        .as_ref()
-                        .is_some_and(|code| &code.qualified_name == name || &code.symbol_id == name)
+                    || fact.code.as_ref().is_some_and(|code| {
+                        &code.qualified_name == name
+                            || &code.symbol_id == name
+                            || airk_core::code::terminal_call_name(code, &fact.kind)
+                                == Some(name.as_str())
+                    })
             } else {
                 fact.name.to_lowercase().contains(&name.to_lowercase())
             }
@@ -66,6 +68,10 @@ fn order_key(artifact: &Artifact, ordinal: usize) -> DiscoveryKey {
 
 pub(crate) fn fact_hit(artifact: &Artifact, fact: &Fact) -> FactHit {
     FactHit {
+        candidate: fact
+            .code
+            .as_ref()
+            .is_some_and(|code| code.is_call_candidate(&fact.kind)),
         continuity_key: None,
         name: fact.name.clone(),
         kind: fact.kind.clone(),
@@ -134,7 +140,15 @@ impl CurrentRead {
             );
         }
         let lookup = if let Some(name) = query.name.as_deref().filter(|_| query.exact_name) {
-            Lookup::FactName(name)
+            if self.terminal_call_postings_complete()?
+                || query.kind.as_deref().is_some_and(|kind| kind != "call")
+            {
+                Lookup::FactName(name)
+            } else if query.kind.as_deref() == Some("call") {
+                Lookup::FactKind("call")
+            } else {
+                Lookup::Files
+            }
         } else if let Some(kind) = query.kind.as_deref() {
             Lookup::FactKind(kind)
         } else if let Some(language) = query.language.as_deref() {

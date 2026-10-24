@@ -31,8 +31,8 @@ Implement and validate these during Phase 7 MCP/extension cutover, after the wor
 - [x] Terse by default, extension-panel Full selection, per-call override and agent guidance in MCP instructions/tool descriptions. Native schemas, real stdio, bounded instructions, panel rendering/actions and direct-worker receipt renewal have Windows/Linux development evidence; installed-editor acceptance remains in the final matrix.
 - [x] One revision token, changed/requested status only, preserved candidate/import distinctions, no repeated static provenance, and measured bounded payload comparisons. Shared provenance, independent client receipts and cached service-registry freshness are integrated; the nine-tool rich/Terse matrix verifies preserved evidence and measures serialized bytes without claiming universal token savings.
 - [x] Minimal outline/symbol/import records with shared original file/provenance bindings and consistent `items` across fact tools, empty and conditional results. Windows/Linux native budget/cursor checks, MCP transport, CLI cursor parity, document locations and usage-accounting evidence are recorded in the response-mode guide. Installed-editor qualification remains part of the final gate.
-- [ ] Committed-generation reads during publication plus structured retry hints on safe temporary rejection.
-- [ ] Terminal method-name postings for receiver/chained calls, explicitly labeled candidates.
+- [x] Committed-generation reads during publication plus structured retry hints on safe temporary rejection. Typed native read/selection rejection, exact-request retry and MCP error rendering have Windows/Linux evidence in the retrieval guide.
+- [x] Terminal method-name postings for receiver/chained calls, explicitly labeled candidates. Windows/Linux native, kernel and MCP tests cover case, chained targets, compatible retirement of older memberships, updates, budgets and reopen; see the retrieval guide.
 - [ ] Authenticated bounded multi-generation/time-window change baselines and explicit `index-current` validation outcomes.
 
 ## Final gate

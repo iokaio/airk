@@ -312,7 +312,7 @@ pub struct CodeFactArgs {
     pub cursor: Option<String>,
     /// Durable symbol key from indexed evidence; exclusive of name/kind/language/path filters.
     pub symbol_key: Option<String>,
-    /// Exact written name, qualified name or symbol_id; omit to list.
+    /// Exact written name, qualified name, symbol_id or terminal native call method name; case-sensitive. Omit to list.
     pub name: Option<String>,
     /// Exact category: definition, import, call, inherits, reference, route_registration, route_annotation, database_call, dependency_injection, test_registration, test_declaration or exception_handler.
     pub kind: Option<String>,
@@ -398,7 +398,7 @@ impl AirkServer {
 
     #[tool(
         name = "airk_code_facts",
-        description = "Retrieve compact code evidence by exact name, qualified name, symbol ID, or a durable symbol_key exclusive of textual filters. Includes scopes, signatures and written types, call/framework candidates, and optional hash-bound SCIP producer assertions. Check code.basis/coverage; syntax does not resolve targets or establish runtime behavior. Use symbol IDs with airk_relationships. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
+        description = "Retrieve compact code evidence by exact name (including terminal native call method names), qualified name, symbol ID, or a durable symbol_key exclusive of textual filters. Includes scopes, signatures and written types, call/framework candidates, and optional hash-bound SCIP producer assertions. Check code.basis/coverage; syntax does not resolve targets or establish runtime behavior. Use symbol IDs with airk_relationships. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -880,7 +880,7 @@ fn render<T: Serialize>(
             Ok(text) => CallToolResult::success(vec![ContentBlock::text(text)]),
             Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),
         },
-        Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),
+        Err(error) => response::error_result(&error),
     };
     let bytes = serde_json::to_vec(&rendered).map_or(0, |v| v.len());
     kernel.finish_usage(

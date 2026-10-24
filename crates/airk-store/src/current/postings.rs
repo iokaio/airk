@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Authenticated path postings, updated only for changed artifact selectors.
 //! Posting entries are candidates; retained objects remain the evidence authority.
-use super::{CurrentRead, CurrentScope, journal::valid_current_path, map};
+use super::{CapturedInput, CurrentRead, CurrentScope, journal::valid_current_path, map};
 use crate::FileStore;
 use airk_core::{
     Artifact,
@@ -15,6 +15,7 @@ const MAX_PATHS_PER_SHARD: usize = 4096;
 const MAX_SELECTORS_PER_ARTIFACT: usize = 65_536;
 const MAX_CHANGED_BYTES: usize = super::MAX_PENDING_MAP_BYTES;
 const MAX_CHANGED_KEYS: usize = super::MAX_PENDING_MAP_CHANGES;
+const TERMINAL_NAMES: &[u8] = b"terminal-call-postings/1";
 
 /// Exact names include written names, qualified names and bound symbol IDs.
 /// Substring queries use another selective filter or the complete file roster.
@@ -93,7 +94,11 @@ impl Posting {
     }
 }
 
-fn selectors(store: &FileStore, compact: &Artifact) -> Result<BTreeSet<Sha256Digest>> {
+fn selectors(
+    store: &FileStore,
+    compact: &Artifact,
+    version: u32,
+) -> Result<BTreeSet<Sha256Digest>> {
     let artifact = store.load_retained(compact)?;
     let mut selectors = BTreeSet::from([
         Lookup::Files.identity(),
@@ -103,6 +108,11 @@ fn selectors(store: &FileStore, compact: &Artifact) -> Result<BTreeSet<Sha256Dig
         selectors.insert(Lookup::FactName(&fact.name).identity());
         selectors.insert(Lookup::FactKind(&fact.kind).identity());
         if let Some(code) = &fact.code {
+            if version == 1
+                && let Some(name) = airk_core::code::terminal_call_name(code, &fact.kind)
+            {
+                selectors.insert(Lookup::FactName(name).identity());
+            }
             selectors.insert(Lookup::FactName(&code.qualified_name).identity());
             selectors.insert(Lookup::FactName(&code.symbol_id).identity());
             if let Some(owner) = &code.owner_id {
@@ -136,6 +146,7 @@ pub(crate) struct PostingChanges {
     missing: BTreeMap<String, MissingPosting>,
     recovery_selectors: usize,
     recovery_bytes: usize,
+    complete: bool,
 }
 
 struct MissingPosting {
@@ -145,6 +156,12 @@ struct MissingPosting {
 }
 
 impl PostingChanges {
+    pub(crate) fn new(complete: bool) -> Self {
+        Self {
+            complete,
+            ..Default::default()
+        }
+    }
     fn defer_missing(&mut self, previous: &Artifact, next: BTreeSet<Sha256Digest>) -> Result<()> {
         ensure!(
             self.missing.len() < super::MAX_PENDING_INPUTS
@@ -251,9 +268,22 @@ impl PostingChanges {
         plan: &mut map::MapPlan<'_>,
         scope: &CurrentScope,
         store: &FileStore,
-        previous: Option<&Artifact>,
-        next: Option<&Artifact>,
+        previous: Option<&CapturedInput>,
+        next: Option<&CapturedInput>,
     ) -> Result<()> {
+        if plan
+            .get(map::key(scope, map::MapDomain::Metadata, TERMINAL_NAMES)?)?
+            .is_some()
+        {
+            ensure!(
+                next.is_none_or(|input| input.postings_version == 1),
+                "legacy postings require a current-version capture"
+            );
+        }
+        let previous_version = previous.map_or(0, |input| input.postings_version);
+        let next_version = next.map_or(0, |input| input.postings_version);
+        let previous = previous.map(|input| &input.artifact);
+        let next = next.map(|input| &input.artifact);
         let path = &next
             .or(previous)
             .context("posting change has no artifact")?
@@ -263,10 +293,13 @@ impl PostingChanges {
             "posting artifact path mismatch"
         );
         let new = next
-            .map(|a| selectors(store, a))
+            .map(|a| selectors(store, a, next_version))
             .transpose()?
             .unwrap_or_default();
-        let old = match previous.map(|a| selectors(store, a)).transpose() {
+        let old = match previous
+            .map(|a| selectors(store, a, previous_version))
+            .transpose()
+        {
             Ok(old) => old.unwrap_or_default(),
             Err(error)
                 if error
@@ -347,6 +380,16 @@ impl PostingChanges {
         scope: &CurrentScope,
     ) -> Result<impl Iterator<Item = map::MapChange>> {
         self.recover_missing(plan, scope)?;
+        if self.complete {
+            let change = map::MapChange::new(
+                scope,
+                map::MapDomain::Metadata,
+                TERMINAL_NAMES,
+                Some(b"1".to_vec()),
+            )?;
+            plan.put(change.key(), change.value())?;
+            self.values.insert(change.key(), change);
+        }
         Ok(self.values.into_values())
     }
 }
@@ -358,6 +401,14 @@ pub struct PathPage {
 }
 
 impl CurrentRead {
+    pub fn terminal_call_postings_complete(&self) -> Result<bool> {
+        let value = self.map_get(map::MapDomain::Metadata, TERMINAL_NAMES)?;
+        ensure!(
+            value.as_deref().is_none_or(|bytes| bytes == b"1"),
+            "invalid terminal call posting marker"
+        );
+        Ok(value.is_some())
+    }
     /// Authenticates all fixed shards before deciding absence or pagination.
     /// Only at most limit+1 matching paths are retained in memory. A caller's
     /// continuation must additionally bind the exact current token and filters.

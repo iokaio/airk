@@ -175,7 +175,7 @@ impl Kernel {
                 mode,
             )?;
             if serde_json::to_vec(&updated)? != serde_json::to_vec(&artifact)? {
-                inputs.push(CapturedInput { artifact: updated });
+                inputs.push(CapturedInput::new(updated));
             }
             report.examined += 1;
             report.next_after = Some(path.clone());

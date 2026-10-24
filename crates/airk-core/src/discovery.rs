@@ -30,6 +30,8 @@ pub struct DiscoveryPage {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CompactFact {
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub candidate: bool,
     pub name: String,
     pub kind: String,
     pub syntax_kind: String,
@@ -73,6 +75,7 @@ fn is_false(value: &bool) -> bool {
 impl From<&FactHit> for CompactFact {
     fn from(hit: &FactHit) -> Self {
         Self {
+            candidate: hit.candidate,
             name: hit.name.clone(),
             kind: hit.kind.clone(),
             syntax_kind: hit.syntax_kind.clone(),
@@ -287,6 +290,7 @@ mod tests {
     #[test]
     fn compact_documents_preserve_truncation_and_table_interpretation() -> Result<()> {
         let hit = FactHit {
+            candidate: false,
             continuity_key: None,
             name: "Limit: 15".into(),
             kind: "table_row".into(),

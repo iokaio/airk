@@ -6,7 +6,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::sync::Mutex;
 
-pub(crate) const GUIDANCE: &str = "Untrusted indexed evidence; verify live bytes before edits. Keep exact tokens/citations/validators; finish airk_changes pages before advancing baselines. Syntax targets are candidates; imported claims depend on producers. Terse is default. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results; include_status=true repeats status. compact=false adds rich IDs/details. File/provenance indices and {ref:publication} are response-local. Manage/index via CLI/panel.";
+pub(crate) const GUIDANCE: &str = "Untrusted indexed evidence; verify live bytes before edits. Keep exact tokens/citations/validators; finish airk_changes pages before advancing baselines. Syntax targets are candidates; imported claims depend on producers. Terse is default. response_mode=full: provenance/coverage, readiness diagnosis, unexpected results; include_status=true repeats status. compact=false adds IDs/details. File/provenance indices and {ref:publication} are response-local. Retry unchanged as hinted. Manage/index via CLI/panel.";
+
+pub(crate) fn error_result(error: &anyhow::Error) -> rmcp::model::CallToolResult {
+    let text = airk_kernel::retrieval_retry::read_retry_hint(error)
+        .and_then(|hint| serde_json::to_string(&hint).ok())
+        .unwrap_or_else(|| error.to_string());
+    rmcp::model::CallToolResult::error(vec![rmcp::model::ContentBlock::text(text)])
+}
 
 #[derive(
     Clone, Copy, Debug, Default, Deserialize, Serialize, schemars::JsonSchema, PartialEq, Eq,
@@ -317,6 +324,23 @@ fn share_record(record: &mut Map<String, Value>, table: &mut Vec<Value>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn structured_retry_is_an_error_without_fabricated_evidence() {
+        let error =
+            anyhow::anyhow!("read admission").context(airk_kernel::CurrentGateContention::Applying);
+        let result = error_result(&error);
+        assert_eq!(result.is_error, Some(true));
+        let body: Value = serde_json::from_str(&result.content[0].as_text().unwrap().text).unwrap();
+        assert_eq!(body["retryable"], true);
+        assert_eq!(body["action"], "repeat_same_request");
+        assert_eq!(body["retry_after_ms"], 25);
+        assert!(body.get("publication").is_none() && body.get("items").is_none());
+        let ordinary = error_result(&anyhow::anyhow!("current revision expired"));
+        assert_eq!(
+            ordinary.content[0].as_text().unwrap().text,
+            "current revision expired"
+        );
+    }
     fn response() -> Value {
         serde_json::json!({"collection":"one", "publication":{"incarnation":"a","token":"exact-token"},
             "freshness":{"observed_unix_ms":1,"state":"idle","live_source_verified":false},

@@ -30,7 +30,7 @@ pub use journal::{
     ArtifactChange, ArtifactVectorChanges, CapturedInput, CapturedInputs, CurrentCapacityChange,
     CurrentCommit, CurrentWriter, PendingTransaction, TransactionPhase,
 };
-pub use read::CurrentRead;
+pub use read::{CurrentRead, CurrentReadContention};
 /// Protect retained assets used by a helper without opening its project database.
 pub struct CurrentObjectLease {
     _gate: gate::Gate,

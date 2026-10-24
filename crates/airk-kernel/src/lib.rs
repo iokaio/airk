@@ -28,6 +28,7 @@ pub mod maintenance;
 pub use airk_retrieval::model_catalog::inspect_catalog as inspect_model_catalog;
 mod publication;
 mod resources;
+pub mod retrieval_retry;
 pub mod roots;
 pub mod scheduler;
 pub mod service_broker;

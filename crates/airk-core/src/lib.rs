@@ -353,8 +353,14 @@ pub struct DocumentQuantity {
     pub unit: String,
 }
 
+fn is_false(value: &bool) -> bool {
+    !value
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FactHit {
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub candidate: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub continuity_key: Option<continuity::ContinuityKey>,
     pub name: String,
