@@ -23,7 +23,7 @@ function validate(input:unknown):ConsoleIntent {
     return input as LifecycleIntent;
 }
 function request(intent:ConsoleIntent){
-    return 'enqueue' in intent?intent.enqueue:'retry' in intent?intent.retry:'plan_create' in intent?intent.plan_create:intent.lifecycle;
+    return 'enqueue' in intent?intent.enqueue:'retry' in intent?intent.retry:'plan_create' in intent?intent.plan_create:'configure_project' in intent?intent.configure_project:intent.lifecycle;
 }
 const PREFIX = 'airk.service.intent.1.';
 const LIMIT = 64;

@@ -1,6 +1,10 @@
 # Trusted service console
 
-This is the development console for the [1.4 plan](airkservice-architecture.md). Its native transport, trusted extension host, view, request journal and basic installed lifecycle are implemented. Complete configuration actions, failure qualification and default adapter cutover remain in progress. The packaged extension and native versions remain 1.3.2 until that cutover; these development receipts do not describe a released VSIX.
+This is the development console for the [1.4 plan](airkservice-architecture.md). Its native transport, trusted extension host, view, request journal, guarded project configuration and basic installed lifecycle are implemented. Failure qualification and default adapter cutover remain in progress. The packaged extension and native versions remain 1.3.2 until that cutover; these development receipts do not describe a released VSIX.
+
+The [Project settings contract](service-configuration.md) covers typed native preparation, exact incarnation/settings guards, trusted model/root/calibration choices, durable result reservations and explicit uncertain-outcome recovery. The view keeps the last configuration receipt independently of later background progress and supports bounded result Copy while disconnected.
+
+The configuration checkpoint's complete real native/controller workload passed on Windows, including missing-helper repair, with its fixture uninstalled. Windows/Linux checks and exact pair identities are recorded in the configuration contract. Default adapter cutover and installed-editor/native Mac qualification remain open.
 
 ## View and trusted host
 

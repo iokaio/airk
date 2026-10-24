@@ -13,6 +13,7 @@ The [1.3.0 release](release-1.3.0.md) retires the former `airk_history` MCP endp
 - [Service implementation completion checklist](service-implementation-checklist.md)
 - [Service publication, admitted sidecar lifetimes and bounded readers](service-publication.md)
 - [Service worker ownership, source/semantic phases and durable continuations](service-jobs.md)
+- [Guarded service project configuration, bounded results and uncertain-outcome recovery](service-configuration.md)
 - [Service job progress, phase timing and stall handling](service-progress.md)
 - [Retained service events, bounded paging and explicit retry](service-events.md)
 - [Cached project inspection and maintenance guards](service-inspection.md)

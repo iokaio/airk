@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { runText } from './native';
-import { NativeControlTransport, ServiceClient, ServiceError, record, RecordValue, identifier } from './serviceClient';
+import { NativeControlTransport, ServiceClient, ServiceError, record, RecordValue, identifier, ProjectConfigurationRequest, validateConfigurationRequest } from './serviceClient';
 import type { LifecycleIntent } from './serviceIntents';
 export type RuntimeChannel = 'stable' | 'preview';
 export interface RuntimeOptions {
@@ -241,6 +241,13 @@ export class RuntimeHost {
                 ||!Number.isSafeInteger(value.preserved_files)||Number(value.preserved_files)<0||Number(value.preserved_files)>2050
                 ||value.starts_service!==false||value.requires_stopped_owners!==true)throw new ServiceError('invalid_payload_repair_preview');}
         return value;
+    }
+    async prepareConfiguration(binding:RuntimeBinding,project:string,draft:RecordValue):Promise<ProjectConfigurationRequest>{
+        this.active();identifier(project,32);
+        const input=JSON.stringify(draft);
+        if(Buffer.byteLength(input)>16384)throw new ServiceError('configuration_draft_exceeds_budget');
+        const bundle=await this.verified();
+        return validateConfigurationRequest(await this.invoke(bundle.main,['service','prepare-configuration','--runtime-dir',binding.controlDir,'--project',project],60000,input));
     }
     async lifecycle(binding:RuntimeBinding,intent:LifecycleIntent,force=false):Promise<RecordValue>{
         this.active();

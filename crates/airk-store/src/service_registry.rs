@@ -45,6 +45,8 @@ mod provider_drains;
 pub use provider_drains::{MAX_PROVIDER_DRAINS, ProviderBoot, ProviderDrain};
 #[path = "service_background.rs"]
 mod background;
+#[path = "service_configuration.rs"]
+mod configuration;
 #[path = "service_lifecycle.rs"]
 mod lifecycle;
 
@@ -236,7 +238,7 @@ impl ServiceRegistry {
             connection.pragma_query_value(None, "application_id", |row| row.get(0))?;
         let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
         ensure!(
-            application == APPLICATION && version == 2,
+            application == APPLICATION && (2..=4).contains(&version),
             "unsupported saved service registry format"
         );
         let registry = Self { root, connection };
@@ -307,7 +309,7 @@ impl ServiceRegistry {
                 initialize = true;
             } else {
                 ensure!(
-                    application == APPLICATION && (1..=2).contains(&version),
+                    application == APPLICATION && (1..=4).contains(&version),
                     "unsupported service registry format"
                 );
                 schema_version = version;
@@ -369,6 +371,14 @@ impl ServiceRegistry {
                     |row| row.get(0),
                 )?;
             }
+            if schema_version >= 3 {
+                let exists: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='service_configuration')", [], |row| row.get(0))?;
+                ensure!(exists, "initialized service configuration table is missing");
+            }
+            if schema_version >= 4 {
+                let invalid: i64 = connection.query_row("SELECT count(*) FROM service_configuration WHERE result IS NULL OR length(result)<>16392", [], |row| row.get(0))?;
+                ensure!(invalid == 0, "invalid configuration result state");
+            }
         }
         connection.execute_batch(
             "PRAGMA page_size=4096; PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL;
@@ -410,6 +420,31 @@ impl ServiceRegistry {
             );
             transaction.execute_batch(lifecycle::SCHEMA)?;
             transaction.pragma_update(None, "user_version", 2)?;
+            transaction.commit()?;
+        }
+        if schema_version < 3 {
+            let transaction = registry
+                .connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let foreign: bool = transaction.query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE name='service_configuration')",
+                [],
+                |row| row.get(0),
+            )?;
+            ensure!(
+                !foreign,
+                "unexpected configuration state in an earlier registry format"
+            );
+            transaction.execute_batch(configuration::SCHEMA)?;
+            transaction.pragma_update(None, "user_version", 4)?;
+            transaction.commit()?;
+        }
+        if schema_version == 3 {
+            let transaction = registry
+                .connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)?;
+            configuration::migrate_v3(&transaction)?;
+            transaction.pragma_update(None, "user_version", 4)?;
             transaction.commit()?;
         }
         if !owner.ready {

@@ -37,7 +37,10 @@ impl ServiceRegistry {
         let record = super::jobs::record(&tx, job)?;
         ensure!(
             record.project == worker.project
-                && matches!(record.kind, JobKind::Inspect | JobKind::PlanInspect)
+                && matches!(
+                    record.kind,
+                    JobKind::Inspect | JobKind::PlanInspect | JobKind::Configure
+                )
                 && record.state == JobState::Running
                 && record.fencing_generation == epoch,
             JobError::StaleWorker

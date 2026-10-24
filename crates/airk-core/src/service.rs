@@ -71,6 +71,15 @@ pub enum ControlMethod {
         project: ProjectBinding,
         enabled: bool,
     },
+    ConfigureProject {
+        project: ProjectBinding,
+        caller: Incarnation,
+        key: RequestKey,
+        request: Box<crate::service_configuration::ConfigurationRequest>,
+    },
+    ConfigurationResult {
+        id: Sha256Digest,
+    },
     Enqueue {
         project: ProjectBinding,
         caller: Incarnation,
@@ -155,6 +164,10 @@ pub struct ServiceHealth {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ControlResponse {
+    Configuration {
+        job: JobRecord,
+        result: Option<serde_json::Value>,
+    },
     Logs {
         page: crate::service_logs::LogPage,
     },
@@ -353,6 +366,7 @@ pub enum JobKind {
     Reconcile,
     Vectors,
     ModelSetup,
+    Configure,
     Verify,
     Rebuild,
     Recover,
@@ -369,6 +383,7 @@ impl JobKind {
             Self::Reconcile => "reconcile",
             Self::Vectors => "vectors",
             Self::ModelSetup => "model_setup",
+            Self::Configure => "configure",
             Self::Verify => "verify",
             Self::Rebuild => "rebuild",
             Self::Recover => "recover",

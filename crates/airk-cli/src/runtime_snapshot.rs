@@ -4,6 +4,26 @@ use super::*;
 use airk_core::service::ProjectBinding;
 use airk_store::service::registry::ServiceRegistry;
 
+fn configuration_results(
+    registry: &ServiceRegistry,
+    page: &airk_core::service_console::ConsolePage,
+) -> Result<(Vec<serde_json::Value>, bool)> {
+    let mut results = Vec::new();
+    for row in &page.projects {
+        let Some(job) = &row.configuration else {
+            continue;
+        };
+        let result = registry.configuration_result(job.id);
+        let unavailable = result.is_err();
+        results.push(serde_json::json!({"project":row.project.registration.binding,"job":job.id,"result":result.ok().flatten(),"unavailable":unavailable}));
+        if serde_json::to_vec_pretty(&results)?.len() > 64 * 1024 {
+            results.pop();
+            return Ok((results, true));
+        }
+    }
+    Ok((results, false))
+}
+
 pub(super) struct SavedRuntime {
     pub selection: Selection,
     pub executable: PathBuf,
@@ -60,6 +80,7 @@ pub(super) fn read(
     let mut lifecycle = None;
     let mut console = None;
     let mut registry_error = None;
+    let mut configuration = (Vec::new(), false);
     if let Ok(control) = &control {
         if control.join("service-1.4.sqlite3").try_exists()? {
             let observed = (|| -> Result<_> {
@@ -74,10 +95,15 @@ pub(super) fn read(
                     limit,
                     unix_ms()?,
                 );
-                Ok((identity, current_epoch, lifecycle, page))
+                let configuration = match &page {
+                    Ok(page) => configuration_results(&registry, page)?,
+                    Err(_) => (Vec::new(), false),
+                };
+                Ok((identity, current_epoch, lifecycle, page, configuration))
             })();
             match observed {
-                Ok((identity, current_epoch, observed, page)) => {
+                Ok((identity, current_epoch, observed, page, results)) => {
+                    configuration = results;
                     namespace = Some(identity);
                     epoch = Some(current_epoch);
                     lifecycle = Some(observed);
@@ -113,12 +139,25 @@ pub(super) fn read(
         .as_ref()
         .and_then(|control| crate::service_logs::recent(control, 32).ok());
     let launcher = policy.is_none().then(|| launcher_path(root));
-    let value = serde_json::json!({"schema":1,"metadata_only":true,"payload_verified":false,"observed_unix_ms":unix_ms()?,
+    let mut value = serde_json::json!({"schema":1,"metadata_only":true,"payload_verified":false,"observed_unix_ms":unix_ms()?,
         "selection":saved.selection,"executable":saved.executable,"approval":saved.approval,"executable_sha256":saved.executable_sha256,
         "managed_policy":policy,"launcher":launcher,"control_dir":control.ok(),"state_error":state_error,
         "registry_namespace":namespace,"request_epoch":epoch,"lifecycle":lifecycle,"registry_error":registry_error,
         "console":console,"startup_manager":startup_manager,"logs":logs,"log_control_dir":log_control,
+        "configuration_results":configuration.0,"configuration_results_omitted":configuration.1,
         "payload_repair":payload_repair::status(root).unwrap_or_else(|_|serde_json::json!({"phase":"unavailable"}))});
+    for _ in 0..32 {
+        if serde_json::to_vec_pretty(&value)?.len() < 256 * 1024 {
+            break;
+        }
+        let results = value["configuration_results"]
+            .as_array_mut()
+            .context("invalid saved configuration results")?;
+        if results.pop().is_none() {
+            break;
+        }
+        value["configuration_results_omitted"] = true.into();
+    }
     ensure!(
         serde_json::to_vec_pretty(&value)?.len() < 256 * 1024,
         "bootstrap snapshot exceeds budget"
@@ -129,6 +168,74 @@ pub(super) fn read(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn saved_configuration_results_have_an_independent_budget_without_losing_project_rows()
+    -> Result<()> {
+        use airk_core::{
+            identity::{Incarnation, Sha256Digest},
+            service::{JobOutcome, ProjectRegistration, RequestKey},
+            service_configuration::{ConfigurationRequest, ProjectConfiguration},
+        };
+        let owner = tempfile::tempdir()?;
+        let caller = Incarnation::from_bytes([1; 16]);
+        let control = owner.path().join("control");
+        local_ipc::prepare_root(&control)?;
+        let mut registry = ServiceRegistry::open(&control, caller)?;
+        for index in 0..5u8 {
+            let project = ProjectRegistration::new(
+                owner
+                    .path()
+                    .join(format!("source-{index}"))
+                    .to_str()
+                    .unwrap()
+                    .into(),
+                owner
+                    .path()
+                    .join(format!("data-{index}"))
+                    .to_str()
+                    .unwrap()
+                    .into(),
+                format!("configuration-{index}"),
+            )?;
+            registry.register(&project)?;
+            let (namespace, epoch) = registry.request_epoch()?;
+            let job = registry.enqueue_configuration(
+                project.binding,
+                caller,
+                &RequestKey {
+                    namespace,
+                    epoch,
+                    nonce: Incarnation::from_bytes([index + 1; 16]),
+                },
+                &ConfigurationRequest {
+                    incarnation: caller,
+                    settings: Sha256Digest::from_bytes([2; 32]),
+                    configuration: ProjectConfiguration::Usage {
+                        mode: airk_core::usage::RecordingMode::Disabled,
+                    },
+                },
+                Sha256Digest::from_bytes([3; 32]),
+            )?;
+            let mut lease = airk_store::service::ProjectLease::acquire(&control, project.binding)?;
+            registry.admit_worker(&mut lease)?;
+            registry.claim_job_id(&lease, job.id)?.unwrap();
+            registry.record_configuration_result(
+                &lease,
+                job.id,
+                &serde_json::json!({"metadata":"x".repeat(16_000)}),
+            )?;
+            registry.complete_job(&lease, job.id, JobOutcome::Succeeded { revision: None })?;
+        }
+        let page = crate::service_management::console_page(&mut registry, None, None, 16, 1)?;
+        assert_eq!(page.projects.len(), 5);
+        let (results, omitted) = configuration_results(&registry, &page)?;
+        assert!(omitted);
+        assert!(!results.is_empty());
+        assert!(results.len() < page.projects.len());
+        assert!(serde_json::to_vec_pretty(&results)?.len() <= 64 * 1024);
+        assert_eq!(page.projects.len(), 5);
+        Ok(())
+    }
     #[test]
     fn saved_snapshot_survives_missing_payload_and_does_not_open_project_data() -> Result<()> {
         let owner = tempfile::tempdir()?;

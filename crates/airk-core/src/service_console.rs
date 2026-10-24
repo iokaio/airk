@@ -16,6 +16,7 @@ pub enum ObservationKind {
     Inspection,
     Maintenance,
     MaintenanceRetry,
+    Configuration,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -23,6 +24,8 @@ pub struct ProjectObservation {
     pub project: RegisteredProject,
     pub watch: Option<WatchObservation>,
     pub progress: Option<ProgressObservation>,
+    #[serde(default)]
+    pub configuration: Option<crate::service::JobRecord>,
     pub inspection: Option<InspectionObservation>,
     pub maintenance: Option<MaintenanceObservation>,
     pub maintenance_retrying: Option<bool>,

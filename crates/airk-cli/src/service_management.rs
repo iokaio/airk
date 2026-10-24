@@ -133,6 +133,24 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
         } => ControlResponse::Events {
             page: registry.events(project, cursor.as_ref(), limit)?,
         },
+        ControlMethod::ConfigurationResult { id } => ControlResponse::Configuration {
+            job: registry.job(id)?,
+            result: registry.configuration_result(id)?,
+        },
+        ControlMethod::ConfigureProject {
+            project,
+            caller,
+            key,
+            request,
+        } => ControlResponse::Job {
+            job: registry.enqueue_configuration(
+                project,
+                caller,
+                &key,
+                &request,
+                crate::runtime_pair::engine_identity()?,
+            )?,
+        },
         ControlMethod::Enqueue {
             project,
             caller,
@@ -214,6 +232,12 @@ pub(crate) fn console_page(
         let binding = project.registration.binding;
         let mut failed = Vec::new();
         let row = ProjectObservation {
+            configuration: observed(
+                registry.latest_configuration(binding),
+                Kind::Configuration,
+                &mut failed,
+            )
+            .flatten(),
             watch: observed(
                 registry.watch(binding).map(|watch| watch.observation),
                 Kind::Watch,

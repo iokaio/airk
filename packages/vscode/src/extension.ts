@@ -1207,6 +1207,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<{ getS
         binding:(inspection,installDir)=>runtime().binding(inspection,installDir),client:binding=>runtime().client(binding),
         snapshot:(binding,after,revision)=>runtime().snapshot(binding,after,revision),
         repair:(binding,preview)=>runtime().repair(binding,preview),
+        prepareConfiguration:(binding,project,draft)=>runtime().prepareConfiguration(binding,project,draft),
         lifecycle:(binding,intent,force)=>runtime().lifecycle(binding,intent,force),
         abandonLifecycle:(binding,intent,id)=>runtime().abandonLifecycle(binding,intent,id)};
     serviceConsole=new ServiceConsole(context,serviceRuntime);

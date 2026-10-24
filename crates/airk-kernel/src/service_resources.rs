@@ -238,7 +238,11 @@ impl Resources {
                     0
                 } else {
                     match waiting.kind {
-                        JobKind::Index | JobKind::Rebuild | JobKind::Recover | JobKind::Repair => 1,
+                        JobKind::Index
+                        | JobKind::Rebuild
+                        | JobKind::Recover
+                        | JobKind::Repair
+                        | JobKind::Configure => 1,
                         JobKind::Reconcile => 2,
                         JobKind::Vectors | JobKind::ModelSetup => 3,
                         JobKind::Inspect | JobKind::PlanInspect | JobKind::Verify => 4,

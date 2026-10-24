@@ -21,11 +21,12 @@ const {ServiceConsoleController}=require('../packages/vscode/out/serviceConsoleC
     const digest=crypto.createHash('sha256').update(bytes).digest('hex');
     await fs.writeFile(path.join(native,'manifest.json'),JSON.stringify({schema:2,version:inventory.version,vsix_target:`${process.platform}-${process.arch}`,
         runtime_dir:'runtime',install_manifest_sha256:digest,payload:{[main]:inventory.files[main],[helper]:inventory.files[helper]}}));
-    const values=new Map(),copies=[],install=path.join(fixture,'installation');let trusted=true,binding,removed=false,missingHelper;
+    const values=new Map(),copies=[],install=path.join(fixture,'installation');let trusted=true,binding,removed=false,missingHelper,configurationDraft;
     const runtime=new RuntimeHost(fixture,inventory.version,{channel:'stable',installDir:install},undefined,()=>trusted);
     const controller=new ServiceConsoleController({version:inventory.version,authority:'Owned native controller fixture',runtime,
         trusted:()=>trusted,storage:{keys:()=>[...values.keys()],get:key=>values.get(key),update:async(key,value)=>{if(value===undefined)values.delete(key);else values.set(key,structuredClone(value));}},
         changed(){},confirm:async()=>true,copy:async text=>{copies.push(text);},logs:async()=>{},resources:async()=>undefined,
+        configuration:async()=>configurationDraft,
         lifecycle:(selected,intent,force)=>runtime.lifecycle(selected,intent,force),abandonLifecycle:(selected,intent,id)=>runtime.abandonLifecycle(selected,intent,id)});
     const action=async(name,extra={})=>{
         await controller.action({type:'service',revision:controller.state.revision,action:name,...extra});
@@ -57,10 +58,44 @@ const {ServiceConsoleController}=require('../packages/vscode/out/serviceConsoleC
         await action('refreshPlan');assert.equal(controller.state.plan.items[0].phase,'succeeded');
         console.log('Real controller indexing, persisted native requests, guarded repair preview and terminal receipts passed.');
 
+        const configure=async(draft,expected='succeeded')=>{
+            const previous=controller.state.page.projects[0].configuration?.id;configurationDraft=draft;
+            await action('configureProject',{project});
+            await wait(()=>{const job=controller.state.page?.projects[0]?.configuration;
+                return job&&job.id!==previous&&['succeeded','failed','canceled'].includes(job.state);},'Configuration did not reach a terminal receipt');
+            const job=controller.state.page.projects[0].configuration;
+            assert.equal(job.state,expected,JSON.stringify(job));assert.equal(controller.state.pending.length,0);
+            return controller.state.configurationResults.get(project)?.value;
+        };
+        assert.equal((await configure({operation:'detail',level:'agent_lean'})).configured_level,'agent_lean');
+        assert.equal((await configure({operation:'vectors',enabled:false})).enabled,false);
+        await configure({operation:'add_root',alias:'protected',path:binding.controlDir},'failed');
+        assert.equal(controller.state.page.projects[0].configuration.outcome.code,'protected_source_boundary');
+        const extra=path.join(fixture,'extra-source');await fs.mkdir(extra);await fs.writeFile(path.join(extra,'extra.txt'),'Original extra amber fixture.\n');
+        await configure({operation:'add_root',alias:'extra',path:extra});await configure({operation:'remove_root',alias:'extra'});
+        await configure({operation:'vectors',enabled:true});
+        const model=path.join(fixture,'custom-model');await fs.mkdir(model);
+        const vocabulary=Buffer.from(JSON.stringify({copper:[1,0],beacon:[0,1]}));
+        await fs.writeFile(path.join(model,'vocabulary.json'),vocabulary);
+        await fs.writeFile(path.join(model,'model.json'),JSON.stringify({schema:1,name:'Original controller model',license:'Apache-2.0',
+            sha256:crypto.createHash('sha256').update(vocabulary).digest('hex'),dimensions:2}));
+        await configure({operation:'install_model',directory:model});
+        await configure({operation:'usage',mode:'aggregates_only'});
+        const tokenizer=path.join(fixture,'tokenizer.json'),baseline=path.join(fixture,'baseline.json'),returned=path.join(fixture,'returned.json');
+        await fs.writeFile(tokenizer,JSON.stringify({schema:1,model_revision_sha256:'12'.repeat(32),merges:[]}));
+        const baselineText=JSON.stringify({value:'Private amber calibration sample must never enter result metadata'});
+        await fs.writeFile(baseline,baselineText);await fs.writeFile(returned,JSON.stringify({value:'short'}));
+        const calibrated=await configure({operation:'calibrate',tokenizer,baseline,returned,generation:1,content_kind:'plain_text',record:true});
+        assert.ok(calibrated.summary);assert.equal(calibrated.recording.recorded,true);
+        assert.ok(!JSON.stringify(calibrated).includes('Private amber calibration sample'));
+        await action('copyConfiguration',{project});assert.equal(copies.at(-1),JSON.stringify(calibrated,null,2));
+        assert.equal(await fs.readFile(baseline,'utf8'),baselineText);assert.equal(await fs.readFile(path.join(source,'memo.txt'),'utf8'),original);
+        console.log('Guarded detail/vector/root/custom-model settings, protected-root refusal, durable calibration and exact result Copy passed.');
+
         await action('previewReport',{includePaths:false});const preview=controller.state.preview;
         assert.ok(preview);assert.ok(!preview.includes(source)&&!preview.includes(original));
         await controller.refresh();assert.equal(controller.state.preview,preview);
-        await action('copyReport');assert.equal(copies[0],preview);
+        await action('copyReport');assert.equal(copies.at(-1),preview);
         trusted=false;await controller.action({type:'service',revision:controller.state.revision,action:'index',project});
         assert.equal(controller.state.message,'runtime_client_no_longer_authorized');trusted=true;
         const oldInstance=controller.state.health.value.observation.instance;

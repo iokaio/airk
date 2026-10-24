@@ -8,6 +8,21 @@ import * as path from 'node:path';
 import { NativeRunner, RuntimeHost, RuntimeOptions, verifyBundledRuntime } from '../serviceBootstrap';
 import { RecordValue, ServiceError } from '../serviceClient';
 const sha=(bytes:Buffer|string)=>createHash('sha256').update(bytes).digest('hex');
+test('configuration preparation uses bounded stdin and the verified bundled command without launching the selected image',async()=>{
+    const f=await fixture(),calls:string[][]=[];const project='12'.repeat(32);
+    const request={incarnation:'34'.repeat(16),settings:'56'.repeat(32),configuration:{operation:'vectors',enabled:false}};
+    const host=new RuntimeHost(f.root,'1.4.0',{channel:'stable'},async(command,args,_timeout,input)=>{
+        assert.equal(command,path.join(f.source,f.main));assert.deepEqual(JSON.parse(input!),{operation:'vectors',enabled:false});calls.push(args);return request;
+    });
+    const binding={installDir:f.root,controlDir:path.join(f.root,'control'),executable:path.join(f.root,'selected-main'),launcher:null,
+        runtimeSha256:f.digest,version:'1.4.0',lifecycle:'on-demand' as const,verificationBasis:'trusted_distribution'};
+    try{
+        assert.deepEqual(await host.prepareConfiguration(binding,project,{operation:'vectors',enabled:false}),request);
+        assert.deepEqual(calls[0],['service','prepare-configuration','--runtime-dir',binding.controlDir,'--project',project]);
+        await assert.rejects(host.prepareConfiguration(binding,project,{operation:'vectors',text:'x'.repeat(20000)}),/configuration_draft_exceeds_budget/);
+        assert.equal(calls.length,1);
+    }finally{await f.cleanup();}
+});
 async function fixture(){
     const root=await fs.mkdtemp(path.join(os.tmpdir(),'airk-runtime-bootstrap-'));
     const source=path.join(root,'native','runtime');await fs.mkdir(source,{recursive:true});

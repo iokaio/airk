@@ -103,20 +103,59 @@ export interface JobIntent { project: string; caller: string; key: RequestKey; k
 export type JobKind = 'index' | 'reconcile' | 'vectors' | 'model_setup' | 'verify' | 'inspect' | 'recover' | 'maintain';
 export interface RetryIntent { id: string; caller: string; key: RequestKey }
 export interface PlanIntent { caller: string; key: RequestKey; request: { selection: 'all' | { selected: string[] }; operation: RepairOperation } }
-export type MutationIntent = { enqueue: JobIntent } | { retry: RetryIntent } | { plan_create: PlanIntent };
+export interface ProjectConfigurationRequest { incarnation:string;settings:string;configuration:RecordValue }
+export interface ConfigurationIntent {project:string;caller:string;key:RequestKey;request:ProjectConfigurationRequest}
+export type MutationIntent = { enqueue: JobIntent } | { retry: RetryIntent } | { plan_create: PlanIntent } | {configure_project:ConfigurationIntent};
+export function validateConfigurationRequest(input:unknown):ProjectConfigurationRequest {
+    const value=record(input),configuration=record(value.configuration),operation=configuration.operation;
+    if(Object.keys(value).sort().join(',')!=='configuration,incarnation,settings'||Buffer.byteLength(JSON.stringify(value))>16384)throw new ServiceError('invalid_project_configuration');
+    identifier(value.incarnation,16);identifier(value.settings,32);
+    const names:Record<string,string[]>={bundled_model:[],vectors:['enabled'],detail:['level'],vector_selection:['policy'],
+        add_root:['alias','path'],remove_root:['alias'],install_model:['directory','manifest_sha256'],usage:['mode'],
+        calibrate:['tokenizer','baseline','returned','generation','content_kind','record']};
+    if(typeof operation!=='string'||!Object.hasOwn(names,operation)||Object.keys(configuration).sort().join(',')!==['operation',...names[operation]].sort().join(','))throw new ServiceError('invalid_project_configuration');
+    const filePath=(input:unknown)=>{if(typeof input!=='string'||!path.isAbsolute(input)||input.length>4096||/[\u0000-\u001f\u007f]/.test(input))throw new ServiceError('invalid_configuration_path');};
+    if(operation==='vectors'&&typeof configuration.enabled!=='boolean')throw new ServiceError('invalid_project_configuration');
+    if(operation==='detail'&&!['essential','agent_lean','balanced','detailed'].includes(String(configuration.level)))throw new ServiceError('invalid_project_configuration');
+    if(operation==='usage'&&!['disabled','aggregates_only','diagnostic_events'].includes(String(configuration.mode)))throw new ServiceError('invalid_project_configuration');
+    if(operation==='add_root'||operation==='remove_root'){
+        if(typeof configuration.alias!=='string'||!/^[A-Za-z0-9_-]{1,64}$/.test(configuration.alias))throw new ServiceError('invalid_configuration_alias');
+        if(operation==='add_root')filePath(configuration.path);
+    }
+    if(operation==='install_model'){filePath(configuration.directory);identifier(configuration.manifest_sha256,32);}
+    if(operation==='calibrate'){
+        for(const name of ['tokenizer','baseline','returned']){const file=record(configuration[name]);
+            if(Object.keys(file).sort().join(',')!=='path,sha256')throw new ServiceError('invalid_configuration_file');filePath(file.path);identifier(file.sha256,32);}
+        if(count(configuration.generation)===0||typeof configuration.record!=='boolean'||!['code','structured_text','markdown','pdf','docx','xlsx','pptx','svg','plain_text','mixed','unknown'].includes(String(configuration.content_kind)))throw new ServiceError('invalid_calibration_configuration');
+    }
+    if(operation==='vector_selection'){
+        const policy=record(configuration.policy);
+        if(policy.version!==1||Object.keys(policy).some(key=>!['version','exclusions','inclusions','agent_defaults'].includes(key))
+            ||!Array.isArray(policy.exclusions)||policy.agent_defaults!==undefined&&typeof policy.agent_defaults!=='boolean')throw new ServiceError('invalid_vector_selection_configuration');
+        for(const rules of [policy.exclusions,policy.inclusions??[]]){
+            if(!Array.isArray(rules)||rules.length>128)throw new ServiceError('invalid_vector_selection_configuration');
+            for(const value of rules){const rule=record(value);
+                if(typeof rule.id!=='string'||!rule.id||rule.id.length>128||Object.keys(rule).some(key=>!['id','path_prefix','basename','suffix','adapter','language'].includes(key)))throw new ServiceError('invalid_vector_selection_configuration');
+                for(const [key,value] of Object.entries(rule))if(key!=='id'&&value!==null&&(typeof value!=='string'||value.length>4096||/[\u0000-\u001f\u007f]/.test(value)))throw new ServiceError('invalid_vector_selection_configuration');
+            }
+        }
+    }
+    return input as ProjectConfigurationRequest;
+}
 export type RepairOperation = 'auto' | 'verify' | 'recover' | 'reconcile' | 'vectors' | 'rebuild';
 export function validateMutationIntent(input:unknown): MutationIntent {
     const intent=record(input),variants=Object.keys(intent);
-    if(variants.length!==1||!['enqueue','retry','plan_create'].includes(variants[0]))throw new ServiceError('invalid_mutation_intent');
+    if(variants.length!==1||!['enqueue','retry','plan_create','configure_project'].includes(variants[0]))throw new ServiceError('invalid_mutation_intent');
     const kind=variants[0],value=record(intent[kind]),key=record(value.key);
     identifier(value.caller,16);identifier(key.namespace,16);identifier(key.nonce,16);count(key.epoch);
     if(Object.keys(key).sort().join(',')!=='epoch,namespace,nonce')throw new ServiceError('invalid_mutation_key');
-    const keys=kind==='enqueue'?'caller,key,kind,project':kind==='retry'?'caller,id,key':'caller,key,request';
+    const keys=kind==='enqueue'?'caller,key,kind,project':kind==='retry'?'caller,id,key':kind==='configure_project'?'caller,key,project,request':'caller,key,request';
     if(Object.keys(value).sort().join(',')!==keys)throw new ServiceError('invalid_mutation_fields');
     if(kind==='enqueue'){
         identifier(value.project,32);
         if(!['index','reconcile','vectors','model_setup','verify','inspect','recover','maintain'].includes(String(value.kind)))throw new ServiceError('invalid_job_intent');
     }else if(kind==='retry'){identifier(value.id,32);}
+    else if(kind==='configure_project'){identifier(value.project,32);validateConfigurationRequest(value.request);}
     else {
         const request=record(value.request);
         if(Object.keys(request).sort().join(',')!=='operation,selection'||!['auto','verify','recover','reconcile','vectors','rebuild'].includes(String(request.operation)))throw new ServiceError('invalid_repair_intent');
@@ -183,6 +222,10 @@ export class ServiceClient {
     async prepareRetry(id: string): Promise<MutationIntent> {
         return { retry: { id: identifier(id,32), caller: this.caller, key: await this.key() } };
     }
+    async prepareConfiguration(project:string,request:ProjectConfigurationRequest):Promise<MutationIntent>{
+        validateConfigurationRequest(request);
+        return {configure_project:{project:identifier(project,32),caller:this.caller,key:await this.key(),request:structuredClone(request)}};
+    }
     async preparePlan(selection: 'all' | string[], operation: RepairOperation): Promise<MutationIntent> {
         if (selection !== 'all') {
             if (!selection.length || selection.length > 256 || new Set(selection).size !== selection.length) { throw new ServiceError('invalid_repair_selection'); }
@@ -197,6 +240,7 @@ export class ServiceClient {
         // retires it only after receiving a complete, matching native result.
         const response = await this.rpc(intent, 'plan_create' in intent ? 'plan' : 'job');
         if ('enqueue' in intent && record(response.job).project !== intent.enqueue.project) { throw new ServiceError('crossed_job_receipt',true); }
+        if ('configure_project' in intent && record(response.job).project !== intent.configure_project.project) { throw new ServiceError('crossed_job_receipt',true); }
         identifier(record('plan_create' in intent ? response.plan : response.job).id,32);
         return response;
     }

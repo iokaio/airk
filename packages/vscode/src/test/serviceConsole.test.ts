@@ -20,7 +20,7 @@ function fixture(){
             case 'console':return {status:'console',page:{revision:1,cached:true,observed_unix_ms:1,projects:[row],after:null}};
             case 'workers':return {status:'workers',observations:[{project,identity:null,restarting:false,automatic_start_blocked:false}],age_ms:1};
             case 'events':assert.ok((method as {events:{limit:number}}).events.limit<=32);return {status:'events',page:{namespace,retained_prefix_lost:false,events:[],next:null,tail:{namespace,project:null,after:0,through:null}}};
-            case 'enqueue':{
+            case 'enqueue':case 'configure_project':{
                 assert.equal([...values.keys()].filter(key=>key.startsWith('airk.service.intent.')).length,1,'persist before send');
                 if(fail)throw new ServiceError('console_transport_closed',true);
                 return {status:'job',job:{id:job,project}};
@@ -29,7 +29,7 @@ function fixture(){
         }
     }});
     const host:ConsoleHost={version:'1.4.0',authority:'local-test',storage:{keys:()=>[...values.keys()],get:<T>(key:string)=>values.get(key) as T|undefined,update:async(key,value)=>{if(value===undefined)values.delete(key);else values.set(key,structuredClone(value));}},
-        runtime:{discover:async()=>({bundle:{main:'/main',helper:'/helper',source:'/bundle',digest:binding.runtimeSha256,version:'1.4.0',platform:'test'},installDir:'/install',installed:true,inspection:{control_dir:'/control'},location:{}}),binding:()=>binding,ensure:async()=>binding,client:()=>client,snapshot:async()=>({}),repair:async()=>({})},
+        runtime:{discover:async()=>({bundle:{main:'/main',helper:'/helper',source:'/bundle',digest:binding.runtimeSha256,version:'1.4.0',platform:'test'},installDir:'/install',installed:true,inspection:{control_dir:'/control'},location:{}}),binding:()=>binding,ensure:async()=>binding,client:()=>client,snapshot:async()=>({}),repair:async()=>({}),prepareConfiguration:async()=>({incarnation:namespace,settings:'ab'.repeat(32),configuration:{operation:'vectors',enabled:false}})},
         trusted:()=>trusted,changed(){},confirm:async()=>true,copy:async text=>{copied.push(text);},logs:async()=>{},resources:async()=>undefined,lifecycle:async()=>({status:'lifecycle'})};
     const controller=new ServiceConsoleController(host);
     const action=async(name:string,extra:RecordValue={})=>controller.action({type:'service',revision:controller.state.revision,action:name,...extra});
@@ -44,6 +44,59 @@ test('console messages reject stale revisions, injected bodies and out-of-scope 
         {type:'service',revision:state.revision,action:'rpc',body:{shutdown:{}}},
     ])assert.equal(consoleAction(message,state),undefined);
     assert.ok(consoleAction({type:'service',revision:state.revision,action:'index',project},state));
+    f.controller.dispose();
+});
+
+test('project configuration is journaled before send and uncertain retry preserves the complete guarded request',async()=>{
+    const f=fixture();let choices=0;
+    f.host.configuration=async()=>{choices++;return {operation:'vectors',enabled:false};};
+    await f.controller.refresh();f.controller.state.page!.projects[0].inspection={snapshot:{settings_digest:'ab'.repeat(32)}};f.setFail(true);await f.action('configureProject',{project});
+    assert.equal(f.controller.state.pending.length,1);
+    const original=f.sent.find(value=>value&&typeof value==='object'&&'configure_project' in value);
+    assert.ok(original);f.setFail(false);await f.action('retryIntent',{id:f.controller.state.pending[0].id});
+    assert.equal(f.controller.state.pending.length,0);assert.equal(choices,1);
+    assert.deepEqual(f.sent.filter(value=>value&&typeof value==='object'&&'configure_project' in value),[original,original]);
+    f.controller.dispose();
+});
+
+test('trust loss during a project setting dialog prevents native preparation and submission',async()=>{
+    const f=fixture();let prepared=false;f.host.configuration=async()=>{f.setTrusted(false);return {operation:'vectors',enabled:false};};
+    f.host.runtime.prepareConfiguration=async()=>{prepared=true;throw new Error('Must not prepare');};
+    await f.controller.refresh();f.controller.state.page!.projects[0].inspection={snapshot:{settings_digest:'ab'.repeat(32)}};const before=f.sent.length;await f.action('configureProject',{project});
+    assert.equal(prepared,false);assert.equal(f.sent.length,before);assert.equal(f.controller.state.pending.length,0);f.controller.dispose();
+});
+
+test('configuration requires an inspection before opening host choices or preparing work',async()=>{
+    const f=fixture();let prompted=false,prepared=false;
+    f.host.configuration=async()=>{prompted=true;return {operation:'vectors',enabled:false};};
+    f.host.runtime.prepareConfiguration=async()=>{prepared=true;throw new Error('Must inspect first');};
+    await f.controller.refresh();await f.action('configureProject',{project});
+    assert.equal(prompted,false);assert.equal(prepared,false);assert.equal(f.controller.state.pending.length,0);
+    assert.match(f.controller.state.message!,/Inspect this project/);f.controller.dispose();
+});
+
+test('disconnected snapshots retain bounded configuration results and Copy uses the exact saved value',async()=>{
+    const f=fixture(),observation=await f.host.runtime.discover(),binding=await f.host.runtime.ensure();binding.payloadVerified=false;
+    const result={summary:{baseline_tokens:42,returned_tokens:12},notice:'Explicit sample counts'};
+    const row={project:{registration:{binding:project,collection:'fixture',root:'/source',data_root:'/data'}},
+        configuration:{id:job,project,kind:'configure',state:'succeeded'}};
+    observation.inspection={control_dir:'/control',payload_verified:false,registry_namespace:namespace,
+        console:{revision:1,cached:true,observed_unix_ms:1,projects:[row],after:null},
+        configuration_results:[{project,job,result,unavailable:false}]};
+    observation.inspection.configuration_results_omitted=true;
+    f.host.runtime.discover=async()=>observation;
+    f.host.runtime.client=()=>{throw new Error('No selected executable may run');};
+    f.host.runtime.snapshot=async()=>observation.inspection!;
+    await f.controller.refresh();assert.equal(f.controller.state.connected,false);
+    assert.deepEqual(f.controller.state.configurationResults?.get(project)?.value,result);
+    await f.action('copyConfiguration',{project});assert.equal(f.copied[0],JSON.stringify(result,null,2));
+    assert.match(renderConsole(f.controller.state),/Last configuration result \(cached\)/);
+    assert.match(renderConsole(f.controller.state),/Some configuration results were omitted/);
+    const report=JSON.parse(diagnosticPreview(f.controller.state,false));
+    assert.equal(report.configurationResultsOmitted,true);
+    assert.equal(report.projects[0].configuration.id,job);
+    assert.equal(report.projects[0].configurationResult.job,job);
+    assert.doesNotMatch(JSON.stringify(report),/baseline_tokens|Explicit sample counts/);
     f.controller.dispose();
 });
 test('console persists before enqueue and exposes exact-key recovery after an uncertain outcome',async()=>{

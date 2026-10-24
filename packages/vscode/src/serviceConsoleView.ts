@@ -9,12 +9,14 @@ export interface ServiceConsoleState {
     health:ConsoleObservation; resources:ConsoleObservation; model:ConsoleObservation; sources:ConsoleObservation;
     bootstrap:ConsoleObservation; page?:ConsolePage; workers?:RecordValue; events:RecordValue[]; historyOmitted:boolean;
     serviceEvents?:ConsoleObservation;
+    configurationResults?:Map<string,{job:string;jobState:string;value?:RecordValue;code?:string;checkedAt:number}>;
+    configurationResultsOmitted?:boolean;
     selected:Set<string>; plan?:{value:RecordValue;items:RecordValue[];after:string|null};
     pending:{id:string;title:string;unknown:boolean;lifecycle?:boolean;forceAvailable?:boolean}[]; preview?:string; includePaths:boolean; message?:string;
 }
 export type ConsoleAction = {type:'service';revision:string;action:string;project?:string;id?:string;selected?:boolean;scope?:'one'|'selected'|'all';operation?:RepairOperation;includePaths?:boolean;allowFallback?:boolean};
 const simple=['refresh','connect','start','stop','restart','repairRuntime','logs','resources','responseMode','recoverLifecycle','abandonLifecycle','startEmbedding','stopEmbedding','forceEmbedding','firstPage','nextPage','morePlan','refreshPlan','pausePlan','resumePlan','cancelPlan','approvePlan','previewReport','copyReport'];
-const projects=['inspect','index','pause','resume','restartProject','watch','modelSetup'];
+const projects=['inspect','index','pause','resume','restartProject','watch','modelSetup','configureProject','copyConfiguration'];
 const operations=['auto','verify','recover','reconcile','vectors','rebuild'];
 /** Messages select fixed host-owned operations; no paths, commands, tokens or RPC bodies are accepted. */
 export function consoleAction(value:unknown,current:ServiceConsoleState):ConsoleAction|undefined {
@@ -66,6 +68,8 @@ function projectRow(row:RecordValue,state:ServiceConsoleState):string {
         &&sampled.project===identity.project
         &&sampled.fencing_generation===identity.fencing_generation&&sampled.fencing_generation===progress.current_fencing_generation;
     const semantic=obj(snapshot.semantic),discovery=obj(snapshot.discovery);
+    const configuration=obj(row.configuration),result=state.configurationResults?.get(binding);
+    const resultValue=result&&result.job===configuration.id?result.value:undefined;
     const attr=`data-project="${e(binding)}"`;
     const unavailable=state.busy||!state.connected||!state.trusted;
     return `<article><h3><label><input type="checkbox" data-action="select" ${attr}${state.selected.has(binding)?' checked':''}${unavailable?' disabled':''}> ${e(registration.collection)}</label></h3>
@@ -82,14 +86,19 @@ function projectRow(row:RecordValue,state:ServiceConsoleState):string {
             ['Published batches',work.publications],['Total files',work.total_files],['Last real work advance age at sample (ms)',work.last_advance_age_ms],
             ['Unpaused time without progress (ms)',work.unpaused_idle_ms],['Phase elapsed (ms)',work.phase_elapsed_ms],['Job state',job.state],
             ['Last job failure code',obj(job.outcome).code],['Inspection failure (cached)',snapshot.failure],
+            ['Last configuration job',configuration.id],['Configuration state (cached)',configuration.state],['Configuration failure',obj(configuration.outcome).code],
+            ['Configuration result failure',result?.code],['Configuration result checked',result?new Date(result.checkedAt).toISOString():undefined],
             ['Last observed publication',work.publication],['Unavailable cached fields',Array.isArray(row.failed_observations)?row.failed_observations.join(', '):undefined]])}
         <div class="controls">${button('inspect','Inspect',attr,unavailable)}${button('index','Index now',attr,unavailable)}
         ${button(project.paused?'resume':'pause',project.paused?'Resume project':'Pause project',attr,unavailable)}
         ${button('restartProject','Restart project worker',attr,unavailable)}${button('modelSetup','Install bundled model',attr,unavailable)}
+        ${button('configureProject','Project settings',attr,unavailable)}
         ${button('repair','Diagnose & repair',`${attr} data-scope="one" data-operation="auto"`,unavailable)}</div>
+        ${obj(configuration.outcome).code==='configuration_outcome_unknown_reinspect'?'<p>The configuration effect is uncertain. Inspect the current settings before deliberately requesting another change.</p>':''}
         <label><input type="checkbox" data-action="watch" ${attr}${watch.enabled?' checked':''}${unavailable?' disabled':''}> Continue automatic source watching when workspaces are closed</label>
         ${job.state==='failed'||job.state==='canceled'?button('retryJob','Retry job',`data-id="${e(job.id)}"`,unavailable):''}
         ${job.state==='running'||job.state==='pending'?button('cancelJob','Cancel job',`data-id="${e(job.id)}"`,unavailable):''}
+        ${resultValue?`<details><summary>Last configuration result (cached)</summary><pre>${e(JSON.stringify(resultValue,null,2))}</pre>${JSON.stringify(resultValue,null,2).length>4096?'<p>Display truncated at 4,096 characters; Copy keeps the complete bounded result.</p>':''}${button('copyConfiguration','Copy configuration result',attr,state.busy)}</details>`:''}
     </article>`;
 }
 function planView(state:ServiceConsoleState):string {
@@ -121,6 +130,7 @@ export function consoleContent(state:ServiceConsoleState):string {
     return `<h1>AIRK Service Console</h1><p>${e(state.authority)} · extension ${e(state.version)} · ${state.connected?'Connected':'Disconnected'}${state.busy?' · Working':''}</p>
         ${!state.trusted?'<p role="alert">Trust the workspace before connecting AIRK or requesting work.</p>':''}
         ${state.message?`<p role="status">${e(state.message)}</p>`:''}
+        ${state.configurationResultsOmitted?'<p>Some configuration results were omitted from this bounded snapshot. Reconnect to retrieve an individual result.</p>':''}
         <div class="controls">${button('refresh','Refresh','',state.busy)}${button('connect','Connect / reconnect','',unavailable)}
         ${button('start','Start service','',unavailable||state.lifecycle==='external')}${button('restart','Restart service','',unavailable||!state.connected||state.lifecycle==='external')}
         ${button('stop','Stop service','',unavailable||(!state.connected||state.health.state!=='live')&&typeof lifecycle.recorded_instance!=='string'||state.lifecycle==='external')}${button('logs','Open service logs','',state.busy)}${button('resources','Resource settings','',unavailable||!state.connected)}</div>
@@ -194,12 +204,15 @@ export function diagnosticPreview(state:ServiceConsoleState,includePaths:boolean
             fencingGeneration:project.fencing_generation,paused:project.paused,inspectionObservedAt:inspection.observed_unix_ms,
             inspection:fields(snapshot,['incarnation','publication','index_state','source_state','recovery_required','indexed_files','indexed_vectors','vectors_enabled','failure']),
             progress:fields(work,['phase','paused','stalled','elapsed_ms','phase_elapsed_ms','last_advance_age_ms','unpaused_idle_ms','captured_files','extracted_files','prepared_changes','committed_changes','publications','total_files','completed_semantic_units','publication']),
-            job:fields(job,['id','kind','state','attempts','fencing_generation']),failedObservations:row.failed_observations};}),
+            job:fields(job,['id','kind','state','attempts','fencing_generation']),
+            configuration:fields(obj(row.configuration),['id','kind','state','attempts','fencing_generation']),
+            configurationResult:fields(obj(state.configurationResults?.get(String(registration.binding))),['job','jobState','code','checkedAt']),
+            failedObservations:row.failed_observations};}),
         events:state.events.slice(-32).map(event=>fields(event,['sequence','observed_unix_ms','project','kind','job','job_kind','fencing_generation','attempts','code'])),
         processLogs:{state:state.serviceEvents?.state??'unavailable',checkedAt:state.serviceEvents?.checkedAt,
             malformedRecords:state.serviceEvents?.value?.malformed_records,tailTruncated:state.serviceEvents?.value?.tail_truncated,
             records:(Array.isArray(state.serviceEvents?.value?.records)?state.serviceEvents!.value!.records:[]).slice(-32).map(value=>fields(obj(value),['instance','kind','project','job','count','observed_unix_ms']))},
-        historyOmitted:state.historyOmitted,moreProjects:!!state.page?.after,pendingRequestCount:state.pending.length,pathsRedacted:!includePaths,truncated:false};
+        historyOmitted:state.historyOmitted,configurationResultsOmitted:state.configurationResultsOmitted??false,moreProjects:!!state.page?.after,pendingRequestCount:state.pending.length,pathsRedacted:!includePaths,truncated:false};
     let text=JSON.stringify(report,null,2);
     while(Buffer.byteLength(text)>65536){report.truncated=true;const projects=report.projects as unknown[],events=report.events as unknown[];
         if(events.length)events.shift();else if(projects.length)projects.pop();else break;text=JSON.stringify(report,null,2);}

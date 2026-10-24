@@ -2,7 +2,7 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { IntentJournal, IntentStorage } from '../serviceIntents';
-import { JobIntent, MutationIntent, ServiceClient, ServiceError } from '../serviceClient';
+import { JobIntent, MutationIntent, ServiceClient, ServiceError, validateConfigurationRequest } from '../serviceClient';
 class Memory implements IntentStorage {
     values=new Map<string,unknown>(); fail=false;
     keys():string[]{return [...this.values.keys()];}
@@ -14,6 +14,17 @@ class Memory implements IntentStorage {
 }
 const namespace='ab'.repeat(16),project='cd'.repeat(32),caller='ef'.repeat(16);
 const intent=(index:number):MutationIntent=>({enqueue:{project,caller,kind:'index',key:{namespace,epoch:7,nonce:index.toString(16).padStart(32,'0')}}});
+test('configuration journal rejects raw input fields, stale body reuse and oversized configuration',async()=>{
+    const storage=new Memory(),journal=new IntentJournal(storage,'/control',namespace);
+    const request={incarnation:namespace,settings:'12'.repeat(32),configuration:{operation:'vectors',enabled:false}};
+    const input:MutationIntent={configure_project:{project,caller,key:{namespace,epoch:7,nonce:'01'.repeat(16)},request}};
+    const id=await journal.prepare('Disable vectors',input);
+    const changed=structuredClone(input);changed.configure_project.request.configuration.enabled=true;
+    await assert.rejects(journal.prepare('Enable vectors',changed),/local_intent_key_conflict/);
+    assert.equal(journal.list()[0].id,id);
+    assert.throws(()=>validateConfigurationRequest({...request,configuration:{...request.configuration,baseline_text:'Private source text'}}));
+    assert.throws(()=>validateConfigurationRequest({...request,configuration:{operation:'install_model',directory:'x'.repeat(20000),manifest_sha256:'12'.repeat(32)}}));
+});
 test('prepared requests survive reload and uncertain submission uses the exact original intent',async()=>{
     const storage=new Memory(),journal=new IntentJournal(storage,'/control',namespace);
     const original=intent(1),id=await journal.prepare('Index project',original);

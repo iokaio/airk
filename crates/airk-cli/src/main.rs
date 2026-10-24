@@ -457,6 +457,13 @@ enum CompressionCommand {
 
 #[derive(Subcommand)]
 enum ServiceCommand {
+    /// Prepare exact file selectors and cached settings guard from a bounded JSON draft on stdin.
+    PrepareConfiguration {
+        #[arg(long)]
+        runtime_dir: PathBuf,
+        #[arg(long)]
+        project: airk_core::service::ProjectBinding,
+    },
     /// Trusted framed metadata adapter; never starts a service or forwards evidence.
     Console {
         #[arg(long)]
@@ -1255,6 +1262,25 @@ async fn main_async() -> anyhow::Result<()> {
         .await;
     }
     if let Command::Service { action } = &cli.command {
+        if let ServiceCommand::PrepareConfiguration {
+            runtime_dir,
+            project,
+        } = action
+        {
+            use std::io::Read;
+            let mut bytes = Vec::new();
+            std::io::stdin()
+                .take(airk_core::service_configuration::MAX_CONFIGURATION_BYTES as u64 + 1)
+                .read_to_end(&mut bytes)?;
+            anyhow::ensure!(
+                bytes.len() <= airk_core::service_configuration::MAX_CONFIGURATION_BYTES,
+                "configuration draft exceeds budget"
+            );
+            let draft = serde_json::from_slice(&bytes)?;
+            return print_json(
+                &airk_cli::service_configuration::prepare(runtime_dir, *project, draft).await?,
+            );
+        }
         if let ServiceCommand::Console {
             runtime_dir,
             runtime_sha256,
@@ -1400,7 +1426,7 @@ async fn main_async() -> anyhow::Result<()> {
                 ServiceCommand::Start => print_json(&manager.start()?),
                 ServiceCommand::Stop => print_json(&manager.stop()?),
                 ServiceCommand::Uninstall => print_json(&manager.uninstall()?),
-                ServiceCommand::Console { .. } | ServiceCommand::Logs { .. } | ServiceCommand::Health { .. } | ServiceCommand::Shutdown { .. } | ServiceCommand::Rpc { .. } | ServiceCommand::Register { .. } => unreachable!("handled before opening kernel"),
+                ServiceCommand::PrepareConfiguration { .. } | ServiceCommand::Console { .. } | ServiceCommand::Logs { .. } | ServiceCommand::Health { .. } | ServiceCommand::Shutdown { .. } | ServiceCommand::Rpc { .. } | ServiceCommand::Register { .. } => unreachable!("handled before opening kernel"),
             }
         },
         Command::Schedule { action } => match action {

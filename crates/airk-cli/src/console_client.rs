@@ -59,6 +59,8 @@ async fn handle(
         | ControlMethod::Progress { .. }
         | ControlMethod::Inspection { .. }
         | ControlMethod::ConfigureWatch { .. }
+        | ControlMethod::ConfigureProject { .. }
+        | ControlMethod::ConfigurationResult { .. }
         | ControlMethod::Enqueue { .. }
         | ControlMethod::Job { .. }
         | ControlMethod::Retry { .. }

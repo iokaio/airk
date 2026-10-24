@@ -1111,13 +1111,23 @@ impl Supervisor {
                                     // A newly admitted worker may precede the first helper turn.
                                     // Wait through finite recovery, then expose failure normally;
                                     // source jobs never depend on this inference-only gate.
-                                    if matches!(
+                                    let needs_pool = matches!(
                                         job.kind,
                                         airk_core::service::JobKind::ModelSetup
                                             | airk_core::service::JobKind::Vectors
-                                    ) && workers
-                                        .get(&project)
-                                        .is_some_and(|worker| worker.pool_binding.is_none())
+                                    ) || job.kind
+                                        == airk_core::service::JobKind::Configure
+                                        && registry
+                                            .configuration_work(job.id)
+                                            .ok()
+                                            .flatten()
+                                            .is_some_and(|work| {
+                                                work.request.configuration.needs_inference()
+                                            });
+                                    if needs_pool
+                                        && workers
+                                            .get(&project)
+                                            .is_some_and(|worker| worker.pool_binding.is_none())
                                         && !pool_recovery.suppressed
                                         && pool_recovery.attempts < 3
                                     {

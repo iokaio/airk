@@ -110,6 +110,26 @@ impl Kernel {
     }
 
     pub fn install_vector_model(&self, source: &std::path::Path) -> Result<VectorStatus> {
+        self.install_vector_model_checked(source, None)
+    }
+
+    pub fn install_service_vector_model(
+        &self,
+        source: &std::path::Path,
+        manifest: Sha256Digest,
+    ) -> Result<VectorStatus> {
+        anyhow::ensure!(
+            self.store.shared_model_runtime().is_some(),
+            "service model binding required"
+        );
+        self.install_vector_model_checked(source, Some(manifest))
+    }
+
+    fn install_vector_model_checked(
+        &self,
+        source: &std::path::Path,
+        expected: Option<Sha256Digest>,
+    ) -> Result<VectorStatus> {
         let _writer = self.store.lock()?;
         anyhow::ensure!(
             self.vectors_enabled()?,
@@ -123,6 +143,13 @@ impl Kernel {
         if self.store.shared_model_runtime().is_some() {
             let objects = airk_retrieval::embedding_worker::connector()?
                 .provision_model(&source.canonicalize()?)?;
+            anyhow::ensure!(
+                expected.is_none_or(|expected| objects
+                    .assets
+                    .get(&airk_core::model_objects::ModelAssetName::ModelJson)
+                    .is_some_and(|manifest| manifest.sha256 == expected)),
+                "selected model definition changed during setup"
+            );
             self.store.installed_model(&objects)?;
             let mut policy = self.vector_policy()?;
             policy.model = Some(objects);
@@ -136,6 +163,38 @@ impl Kernel {
         }
         let set = airk_retrieval::model::inspect_object_plan(source)?;
         airk_store::model_objects::install_input_model(source, &set, &quota, &self.collection)?;
+        self.vector_status()
+    }
+
+    /// Explicitly replace a custom selection with the paired bundled default.
+    pub fn select_service_bundled_model(&self) -> Result<VectorStatus> {
+        anyhow::ensure!(
+            self.store.shared_model_runtime().is_some(),
+            "service model binding required"
+        );
+        let writer = self.store.lock()?;
+        anyhow::ensure!(
+            self.vectors_enabled()?,
+            "vector search is disabled for this collection"
+        );
+        let objects = airk_retrieval::embedding_worker::connector()?.provision_bundled()?;
+        anyhow::ensure!(
+            objects.shared.is_some()
+                && self
+                    .store
+                    .shared_model_default()
+                    .is_some_and(|default| *default == objects.local_set()),
+            "shared helper default model differs from paired metadata"
+        );
+        self.store.installed_model(&objects)?;
+        let mut policy = self.vector_policy()?;
+        policy.model = Some(objects);
+        self.store.configure_vector_policy_bytes(
+            &writer,
+            &self.collection_quota()?,
+            &self.root_id(),
+            &serde_json::to_vec(&policy)?,
+        )?;
         self.vector_status()
     }
 

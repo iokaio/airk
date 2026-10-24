@@ -177,6 +177,7 @@ fn execute(
     airk_kernel::service_execution::progress_phase(match kind {
         JobKind::Index | JobKind::Reconcile | JobKind::Rebuild => WorkPhase::Discovering,
         JobKind::Vectors | JobKind::ModelSetup => WorkPhase::Embedding,
+        JobKind::Configure => WorkPhase::Starting,
         JobKind::Inspect | JobKind::PlanInspect | JobKind::Repair | JobKind::Verify => {
             WorkPhase::Verifying
         }
@@ -226,6 +227,7 @@ fn execute(
             }
         }
         JobKind::Recover
+        | JobKind::Configure
         | JobKind::Maintain
         | JobKind::Inspect
         | JobKind::PlanInspect
@@ -401,6 +403,35 @@ pub async fn run() -> Result<()> {
                     airk_kernel::service_execution::run(allowance.clone(), || {
                         job_storage.check()?;
                         airk_kernel::service_execution::checkpoint()?;
+                        if job.kind == JobKind::Configure {
+                            let work = registry
+                                .configuration_work(job.id)?
+                                .context("configuration work missing")?;
+                            ensure!(
+                                work.engine == init.engine,
+                                airk_kernel::service_configuration::ConfigurationChanged
+                            );
+                            kernel
+                                .validate_service_configuration(identity.project, &work.request)?;
+                            if let Some(roots) =
+                                kernel.service_configuration_roots(&work.request)?
+                            {
+                                registry.record_watch_roots(&job_lease, &roots)?;
+                            }
+                            let result = kernel
+                                .configure_service_project(identity.project, &work.request)?;
+                            registry.record_configuration_result(&job_lease, job.id, &result)?;
+                            if let Ok(snapshot) = kernel.inspect_service(identity.project) {
+                                let observed = std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)?
+                                    .as_millis()
+                                    .try_into()?;
+                                let _ = registry.record_inspection(
+                                    &job_lease, identity, job.id, observed, &snapshot,
+                                );
+                            }
+                            return Ok(JobOutcome::Succeeded { revision: None });
+                        }
                         let kind = if job.kind == JobKind::Repair {
                             use airk_core::service_maintenance::{PlanError, RepairOperation};
                             let approved = registry.repair_work(&job_lease, job.id, init.engine)?;
@@ -513,6 +544,12 @@ pub async fn run() -> Result<()> {
                                 } else {
                                     "inspection_changed"
                                 }
+                            } else if error
+                                .is::<airk_kernel::service_configuration::ConfigurationChanged>()
+                            {
+                                "configuration_settings_or_engine_changed"
+                            } else if job.kind == JobKind::Configure {
+                                "configuration_failed_reinspect"
                             } else {
                                 "project_operation_failed"
                             }

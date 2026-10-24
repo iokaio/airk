@@ -39,6 +39,7 @@ const MAX_REQUESTS: i64 = 4096;
 
 #[derive(Default)]
 struct EnqueueOptions {
+    configuration: Option<Box<airk_core::service_configuration::ConfigurationWork>>,
     background_revision: Option<u64>,
     maintenance_now_ms: Option<u64>,
     source_request: Option<(u64, u64)>,
@@ -56,6 +57,17 @@ fn retry_origin(
         params![key.namespace.to_string(),i64::try_from(key.epoch).map_err(|_|JobError::KeyExpired)?,key.nonce.to_string(),caller.to_string()],
         |row|row.get(0)).optional()?;
     source.map(|id| id.parse()).transpose()
+}
+fn metadata_pressure(connection: &Connection) -> Result<bool> {
+    let pages: i64 = connection.pragma_query_value(None, "page_count", |row| row.get(0))?;
+    let free: i64 = connection.pragma_query_value(None, "freelist_count", |row| row.get(0))?;
+    let limit: i64 = connection.pragma_query_value(None, "max_page_count", |row| row.get(0))?;
+    ensure!(
+        pages >= free && free >= 0 && limit > 0,
+        "invalid service metadata capacity"
+    );
+    let margin = (limit / 8).clamp(1, 1024);
+    Ok(pages - free + margin >= limit)
 }
 
 pub(super) fn record(connection: &Connection, id: Sha256Digest) -> Result<JobRecord> {
@@ -182,21 +194,24 @@ impl ServiceRegistry {
             transaction.query_row("SELECT count(*) FROM service_requests", [], |row| {
                 row.get(0)
             })?;
-        if (needs_job && jobs >= MAX_JOBS) || requests >= MAX_REQUESTS {
+        let count_full = (needs_job && jobs >= MAX_JOBS) || requests >= MAX_REQUESTS;
+        if count_full || metadata_pressure(&transaction)? {
             let deleted = transaction.execute("DELETE FROM service_jobs WHERE seq IN(
                 SELECT seq FROM service_jobs WHERE state IN('succeeded','failed','canceled') AND (?1 IS NULL OR id<>?1) ORDER BY seq LIMIT 64)", [protected.map(|id|id.to_string())])?;
-            ensure!(deleted > 0, JobError::Capacity);
-            let epoch: i64 = transaction.query_row(
-                "SELECT request_epoch FROM service_meta WHERE id=1",
-                [],
-                |row| row.get(0),
-            )?;
-            transaction.execute(
-                "UPDATE service_meta SET request_epoch=?1 WHERE id=1",
-                [epoch
-                    .checked_add(1)
-                    .context("service request epoch exhausted")?],
-            )?;
+            ensure!(deleted > 0 || !count_full, JobError::Capacity);
+            if deleted > 0 {
+                let epoch: i64 = transaction.query_row(
+                    "SELECT request_epoch FROM service_meta WHERE id=1",
+                    [],
+                    |row| row.get(0),
+                )?;
+                transaction.execute(
+                    "UPDATE service_meta SET request_epoch=?1 WHERE id=1",
+                    [epoch
+                        .checked_add(1)
+                        .context("service request epoch exhausted")?],
+                )?;
+            }
         }
         transaction.commit()?;
         Ok(())
@@ -267,6 +282,32 @@ impl ServiceRegistry {
             original.kind,
             EnqueueOptions {
                 manual_retry: Some(id),
+                configuration: self.configuration_work(id)?.map(Box::new),
+                ..Default::default()
+            },
+        )
+    }
+
+    pub fn enqueue_configuration(
+        &mut self,
+        project: ProjectBinding,
+        caller: Incarnation,
+        key: &RequestKey,
+        request: &airk_core::service_configuration::ConfigurationRequest,
+        engine: Sha256Digest,
+    ) -> Result<JobRecord> {
+        request.validate()?;
+        let request: airk_core::service_configuration::ConfigurationRequest =
+            serde_json::from_slice(&serde_json::to_vec(request)?)?;
+        self.enqueue_impl(
+            project,
+            caller,
+            key,
+            JobKind::Configure,
+            EnqueueOptions {
+                configuration: Some(Box::new(
+                    airk_core::service_configuration::ConfigurationWork { engine, request },
+                )),
                 ..Default::default()
             },
         )
@@ -281,12 +322,17 @@ impl ServiceRegistry {
         options: EnqueueOptions,
     ) -> Result<JobRecord> {
         let EnqueueOptions {
+            configuration,
             background_revision,
             maintenance_now_ms,
             source_request,
             manual_retry,
             plan,
         } = options;
+        ensure!(
+            (kind == JobKind::Configure) == configuration.is_some(),
+            "configuration jobs require a complete typed request"
+        );
         ensure!(
             plan.is_some() || !matches!(kind, JobKind::PlanInspect | JobKind::Repair),
             airk_core::service_maintenance::PlanError::InvalidTransition
@@ -304,6 +350,11 @@ impl ServiceRegistry {
                 JobError::KeyConflict
             );
             let existing = record(&self.connection, id.parse()?)?;
+            super::configuration::same_request(
+                &self.connection,
+                existing.id,
+                configuration.as_deref(),
+            )?;
             ensure!(
                 existing.project == project && existing.kind == kind,
                 JobError::KeyConflict
@@ -337,6 +388,11 @@ impl ServiceRegistry {
                 JobError::KeyConflict
             );
             let existing = record(&transaction, id.parse()?)?;
+            super::configuration::same_request(
+                &transaction,
+                existing.id,
+                configuration.as_deref(),
+            )?;
             ensure!(
                 existing.project == project && existing.kind == kind,
                 JobError::KeyConflict
@@ -358,6 +414,7 @@ impl ServiceRegistry {
             |row| row.get(0),
         )?;
         ensure!(registered, "service project is not registered");
+        ensure!(!metadata_pressure(&transaction)?, JobError::Capacity);
         let planned_source = plan
             .map(|link| super::maintenance::prepare_job(&transaction, link, project, kind))
             .transpose()?
@@ -391,6 +448,13 @@ impl ServiceRegistry {
                 |row| row.get(0),
             )
             .optional()?;
+        let pending = pending
+            .map(|id| -> Result<Option<String>> {
+                let saved = super::configuration::work(&transaction, id.parse()?)?;
+                Ok((saved.as_ref() == configuration.as_deref()).then_some(id))
+            })
+            .transpose()?
+            .flatten();
         let id = if let Some(id) = pending.filter(|_| plan.is_none()) {
             id.parse()?
         } else {
@@ -409,6 +473,9 @@ impl ServiceRegistry {
             );
             transaction.execute("INSERT INTO service_jobs(id,project,kind,state,epoch,attempts) VALUES(?1,?2,?3,'pending',0,0)",
                 params![id.to_string(),project.to_string(),kind.code()])?;
+            if let Some(configuration) = &configuration {
+                super::configuration::insert(&transaction, id, configuration)?;
+            }
             id
         };
         transaction.execute(
@@ -718,6 +785,12 @@ impl ServiceRegistry {
         let failed = serde_json::to_vec(&JobOutcome::Failed {
             code: "interrupted_maintenance_or_retry_exhausted".into(),
         })?;
+        let uncertain = serde_json::to_vec(&JobOutcome::Failed {
+            code: "configuration_outcome_unknown_reinspect".into(),
+        })?;
+        super::configuration::recover_results(&transaction, lease, epoch)?;
+        transaction.execute("UPDATE service_jobs SET state='failed',outcome=?1 WHERE project=?2 AND kind='configure' AND state='running' AND epoch<>?3",
+            params![uncertain,lease.binding.to_string(),i64::try_from(epoch)?])?;
         transaction.execute(
             "UPDATE service_jobs SET state='failed',outcome=?1 WHERE project=?2 AND state='running'
             AND epoch<>?3 AND (kind IN('rebuild','repair') OR attempts>=3)",

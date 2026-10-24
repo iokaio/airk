@@ -19,7 +19,19 @@ pub(crate) enum LocalTokenizer {
 
 impl LocalTokenizer {
     pub(crate) fn open(path: &Path) -> Result<Self> {
+        Self::open_checked(path, None)
+    }
+    pub(crate) fn open_checked(
+        path: &Path,
+        expected: Option<airk_core::identity::Sha256Digest>,
+    ) -> Result<Self> {
         let bytes = read_usage_input(path, 1_048_576)?;
+        ensure!(
+            expected.is_none_or(|expected| airk_core::identity::Sha256Digest::from_bytes(
+                Sha256::digest(&bytes).into()
+            ) == expected),
+            "selected calibration definition changed before setup"
+        );
         let value: Value = serde_json::from_slice(&bytes)?;
         if value["schema"] == 1 {
             return Ok(Self::Byte(LocalByteBpe::parse(&bytes)?));

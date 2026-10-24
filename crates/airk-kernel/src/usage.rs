@@ -765,6 +765,24 @@ impl crate::Kernel {
     }
 
     pub fn usage_calibrate(&self, request: CalibrationRequest<'_>) -> Result<Value> {
+        self.usage_calibrate_inner(request, None)
+    }
+    pub fn usage_calibrate_verified(
+        &self,
+        request: CalibrationRequest<'_>,
+        hashes: [airk_core::identity::Sha256Digest; 3],
+    ) -> Result<Value> {
+        ensure!(
+            self.store.shared_model_runtime().is_some(),
+            "service calibration binding required"
+        );
+        self.usage_calibrate_inner(request, Some(hashes))
+    }
+    fn usage_calibrate_inner(
+        &self,
+        request: CalibrationRequest<'_>,
+        hashes: Option<[airk_core::identity::Sha256Digest; 3]>,
+    ) -> Result<Value> {
         // Opt-out prohibits persistence, not an explicitly requested transient calculation.
         if request.record {
             ensure!(
@@ -772,12 +790,30 @@ impl crate::Kernel {
                 "usage recording is disabled"
             );
         }
-        let tokenizer = CalibrationTokenizer::open(
-            self.store.shared_model_runtime().is_some(),
-            request.tokenizer,
-        )?;
         let baseline = String::from_utf8(read_usage_input(request.baseline, 262_144)?)?;
         let returned = String::from_utf8(read_usage_input(request.returned, 262_144)?)?;
+        if let Some(hashes) = hashes {
+            ensure!(
+                airk_core::identity::Sha256Digest::from_bytes(
+                    Sha256::digest(baseline.as_bytes()).into()
+                ) == hashes[1]
+                    && airk_core::identity::Sha256Digest::from_bytes(
+                        Sha256::digest(returned.as_bytes()).into()
+                    ) == hashes[2],
+                "selected calibration samples changed before execution"
+            );
+        }
+        let tokenizer = if let Some(hashes) = hashes {
+            CalibrationTokenizer::Shared(crate::remote_tokenization::LocalTokenizer::open_checked(
+                request.tokenizer,
+                Some(hashes[0]),
+            )?)
+        } else {
+            CalibrationTokenizer::open(
+                self.store.shared_model_runtime().is_some(),
+                request.tokenizer,
+            )?
+        };
         // The explicit inputs are logical JSON results; framing cannot be silently mixed.
         let _: Value = serde_json::from_str(&baseline)?;
         let _: Value = serde_json::from_str(&returned)?;
@@ -815,7 +851,9 @@ impl crate::Kernel {
             None
         };
         Ok(
-            serde_json::json!({"summary":summary,"recording":recording,"tokenization":tokenizer.description(),"notice":"Exact counts for the digest-bound local tokenizer and explicit framing, with truncation and padding disabled. User-supplied logical JSON samples; same-generation comparability and provider framing compatibility require independent verification. No source text or sample hash is retained. This is not provider token usage."}),
+            serde_json::json!({"summary":summary,"recording":recording,"tokenization":tokenizer.description(),"notice":if hashes.is_some() {
+                "Exact local-tokenizer counts for explicit logical JSON samples. Provider framing and same-generation comparability need independent verification. Usage records retain no sample text; durable configuration requests retain exact file selectors and hashes. This is not provider token usage."
+            } else { "Exact counts for the digest-bound local tokenizer and explicit framing, with truncation and padding disabled. User-supplied logical JSON samples; same-generation comparability and provider framing compatibility require independent verification. No source text or sample hash is retained. This is not provider token usage." }}),
         )
     }
 

@@ -7,13 +7,14 @@ import { consoleAction, ConsoleObservation, diagnosticPreview, ServiceConsoleSta
 
 export interface ConsoleHost {
     version:string; authority:string; storage:IntentStorage;
-    runtime:Pick<RuntimeHost,'discover'|'binding'|'ensure'|'client'|'snapshot'|'repair'>;
+    runtime:Pick<RuntimeHost,'discover'|'binding'|'ensure'|'client'|'snapshot'|'repair'|'prepareConfiguration'>;
     trusted():boolean;
     changed(state:ServiceConsoleState):void;
     confirm(message:string):Promise<boolean>;
     copy(text:string):Promise<void>;
     logs(observation?:BootstrapObservation):Promise<void>;
     resources(current:RecordValue):Promise<RecordValue|undefined>;
+    configuration?(row:RecordValue):Promise<RecordValue|undefined>;
     lifecycle(binding:RuntimeBinding,intent:LifecycleIntent,force?:boolean):Promise<RecordValue>;
     abandonLifecycle?(binding:RuntimeBinding,intent:LifecycleIntent,id:string):Promise<RecordValue>;
     responseMode?():'terse'|'full';
@@ -79,6 +80,21 @@ export class ServiceConsoleController {
         this.state.bootstrap={...this.state.bootstrap,value:{...this.state.bootstrap.value,lifecycle:snapshot.lifecycle,
             payloadVerified:snapshot.payload_verified,registryError:snapshot.registry_error,startupManager:snapshot.startup_manager,payloadRepair:snapshot.payload_repair}};
         if(snapshot.console)this.state.page=parseConsolePage(snapshot.console);
+        this.state.configurationResultsOmitted=snapshot.configuration_results_omitted===true;
+        if(snapshot.configuration_results!==undefined){
+            const items=snapshot.configuration_results;
+            if(!Array.isArray(items)||items.length>32||Buffer.byteLength(JSON.stringify(items))>65536)throw new ServiceError('invalid_saved_configuration_results');
+            const visible=new Map((this.state.page?.projects??[]).filter(row=>row.configuration).map(row=>[
+                String(record(record(row.project).registration).binding),record(row.configuration)]));
+            const results:NonNullable<ServiceConsoleState['configurationResults']>=new Map();
+            for(const [project,job] of visible){const prior=this.state.configurationResults?.get(project);if(prior&&prior.job===job.id)results.set(project,prior);}
+            for(const value of items){const item=record(value),project=identifier(item.project,32),job=identifier(item.job,32),observed=visible.get(project);
+                if(observed?.id!==job)throw new ServiceError('crossed_configuration_result');
+                results.set(project,{job,jobState:String(observed.state),checkedAt:Date.now(),value:item.result===null?undefined:record(item.result),
+                    ...(item.unavailable===true?{code:'configuration_result_unavailable'}:{})});
+            }
+            this.state.configurationResults=results;
+        }
         if(snapshot.logs)this.state.serviceEvents={state:'cached',checkedAt:Date.now(),value:record(snapshot.logs)};
     }
     private async savedSnapshot(after:string|null=null,revision:number|null=null):Promise<void>{
@@ -139,6 +155,7 @@ export class ServiceConsoleController {
         if(this.journal?.scope!==journal.scope){
             this.journal=journal;this.state.selected.clear();this.eventCursor=null;this.state.events=[];this.state.page=undefined;
             this.state.preview=undefined;
+            this.state.configurationResults=undefined;
             this.pageStart={after:null,revision:null};
             const saved=this.host.storage.get<string>(`airk.service.plan.${journal.scope}`);
             this.state.plan=saved?{value:{id:identifier(saved,32)},items:[],after:null}:undefined;
@@ -161,6 +178,23 @@ export class ServiceConsoleController {
         this.pageStart=start;
         this.authorized();this.state.page=page;
         this.state.workers=await this.client.workers(page.projects.map(row=>String(record(record(row.project).registration).binding)));
+        const results:NonNullable<ServiceConsoleState['configurationResults']>=new Map();
+        for(const row of page.projects){
+            if(!row.configuration)continue;
+            const job=record(row.configuration),project=identifier(record(record(row.project).registration).binding,32),id=identifier(job.id,32);
+            const prior=this.state.configurationResults?.get(project);
+            if(prior?.job===id&&prior.jobState===job.state&&!prior.code){results.set(project,prior);continue;}
+            if(job.state==='pending'||job.state==='running')continue;
+            try{
+                const response=await this.rpc({configuration_result:{id}},'configuration'),observed=record(response.job);
+                if(observed.id!==id||observed.project!==project||observed.kind!=='configure')throw new ServiceError('crossed_configuration_result');
+                const value=response.result===null?undefined:record(response.result);
+                if(value&&Buffer.byteLength(JSON.stringify(value))>16384)throw new ServiceError('configuration_result_exceeds_budget');
+                results.set(project,{job:id,jobState:String(observed.state),value,checkedAt:Date.now()});
+            }catch(error){results.set(project,{job:id,jobState:String(job.state),code:code(error),checkedAt:Date.now()});}
+        }
+        this.state.configurationResults=results;
+        this.state.configurationResultsOmitted=false;
     }
     private async events():Promise<void>{
         const page=record((await this.rpc({events:{project:null,cursor:this.eventCursor,limit:32}},'events')).page);
@@ -239,6 +273,12 @@ export class ServiceConsoleController {
             }
             if(action.action==='copyReport'){if(requestedPreview)await this.host.copy(requestedPreview);this.state.preview=requestedPreview;return;}
             if(action.action==='logs'){await this.host.logs(this.bootstrap);return;}
+            if(action.action==='copyConfiguration'){
+                const row=this.state.page?.projects.find(row=>record(record(row.project).registration).binding===action.project);
+                const saved=this.state.configurationResults?.get(action.project!);
+                if(!saved?.value||!row?.configuration||record(row.configuration).id!==saved.job)throw new ServiceError('configuration_result_not_observed');
+                await this.host.copy(JSON.stringify(saved.value,null,2));return;
+            }
             this.authorized();
             if(action.action==='responseMode'){await this.host.chooseResponseMode?.();return;}
             if(action.action==='repairRuntime'){
@@ -329,6 +369,16 @@ export class ServiceConsoleController {
     private async connectedAction(action:NonNullable<ReturnType<typeof consoleAction>>):Promise<void>{
         const project=action.project!,id=action.id!;
         switch(action.action){
+            case 'configureProject':{
+                const row=this.state.page?.projects.find(row=>record(record(row.project).registration).binding===project);
+                if(!row||!this.binding||!this.host.configuration)throw new ServiceError('project_configuration_unavailable');
+                if(!row.inspection||!record(record(row.inspection).snapshot).settings_digest){
+                    this.state.message='Inspect this project before configuring it so the request can bind its current settings.';return;
+                }
+                const draft=await this.host.configuration(row);this.authorized();if(!draft)return;
+                const request=await this.host.runtime.prepareConfiguration(this.binding,project,draft);this.authorized();
+                await this.mutation(`Configure ${String(request.configuration.operation)} ${project}`,await this.client!.prepareConfiguration(project,request));break;
+            }
             case 'firstPage':await this.page(false,true);return;
             case 'nextPage':if(this.state.page?.after)await this.page(true);return;
             case 'morePlan':await this.plan(true);return;
