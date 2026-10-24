@@ -4,7 +4,7 @@ This is the working completion record for the [service plan](airkservice-archite
 
 User authorization: implement the entire plan, make human DCO-signed local stage commits, do not push, and build a new VSIX only after implementation, testing and review. The approved release is 1.4.0.
 
-Qualification follow-up: one earlier broad Windows run reported an intermittent managed-file alias validation error. Isolated/concurrent reproduction and the next broad executable run passed; path/link-count diagnostics are retained. Standalone passes do not establish its cause. Preserve alias validation while investigating during remaining workload qualification.
+Qualification follow-up: the earlier intermittent managed-file validation error now has a deterministic Windows mechanism regression: SQLite final close can unlink a WAL file after its validation handle opens, producing a zero-link handle. Format-140 connections now retain admitted WAL/SHM names, with native identity/reopen and real-hard-link rejection tests. Historical attribution is not certain; retain the diagnostics and workload regression while completing qualification. See [sidecar-lifetime evidence](service-publication.md).
 
 ## Implementation and validation
 

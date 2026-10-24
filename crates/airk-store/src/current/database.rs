@@ -250,11 +250,15 @@ pub(crate) fn open_reader(path: &Path) -> Result<Connection> {
         "current index requires writer recovery before reads"
     );
     let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX;
-    let connection = if super::wal::enabled(path.parent().context("database parent missing")?) {
+    let service = super::wal::enabled(path.parent().context("database parent missing")?);
+    let mut connection = if service {
         Connection::open_with_flags_and_vfs(path, flags, super::wal::vfs()?.as_str())?
     } else {
         Connection::open_with_flags(path, flags)?
     };
+    if service {
+        super::wal::retain_sidecars(&mut connection)?;
+    }
     connection.set_limit(rusqlite::limits::Limit::SQLITE_LIMIT_LENGTH, 64 << 20)?;
     connection.busy_timeout(Duration::ZERO)?;
     connection.execute_batch("PRAGMA query_only=ON; PRAGMA trusted_schema=OFF; PRAGMA temp_store=MEMORY; PRAGMA cache_size=-4096; BEGIN;")?;
@@ -287,11 +291,14 @@ fn open_writer_mode(
         flags |= OpenFlags::SQLITE_OPEN_CREATE;
     }
     let service = super::wal::enabled(path.parent().context("database parent missing")?);
-    let connection = if service {
+    let mut connection = if service {
         Connection::open_with_flags_and_vfs(path, flags, super::wal::vfs()?.as_str())?
     } else {
         open_writer_connection(path, flags)?
     };
+    if service {
+        super::wal::retain_sidecars(&mut connection)?;
+    }
     ensure!(
         !connection.is_readonly("main")?,
         "SQLite writer opened read-only"

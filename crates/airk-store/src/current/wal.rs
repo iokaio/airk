@@ -109,6 +109,31 @@ pub(super) fn vfs() -> Result<String> {
     wal_budget::register(WAL_BYTES, SHM_BYTES)
 }
 
+/// Retain already admitted sidecar names across the last connection's close.
+/// This flag belongs to a connection, so every service reader/writer must set it.
+/// SQLite still performs its final checkpoint; normal size limits still apply.
+pub(super) fn retain_sidecars(connection: &mut rusqlite::Connection) -> Result<()> {
+    use rusqlite::ffi;
+    for requested in [1, -1] {
+        let mut setting: std::ffi::c_int = requested;
+        // SAFETY: this exclusive connection borrow precedes statements. SQLite
+        // accepts a writable int for PERSIST_WAL; no pointer escapes the call.
+        let status = unsafe {
+            ffi::sqlite3_file_control(
+                connection.handle(),
+                c"main".as_ptr(),
+                ffi::SQLITE_FCNTL_PERSIST_WAL,
+                (&mut setting as *mut std::ffi::c_int).cast(),
+            )
+        };
+        ensure!(
+            status == ffi::SQLITE_OK && setting == 1,
+            "service SQLite VFS cannot retain admitted WAL sidecars"
+        );
+    }
+    Ok(())
+}
+
 pub(super) fn version(directory: &Path) -> u32 {
     if enabled(directory) {
         VERSION

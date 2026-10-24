@@ -11,7 +11,7 @@ The [1.3.0 release](release-1.3.0.md) retires the former `airk_history` MCP endp
 - [Draft 1.4.0 development release record](release-1.4.0.md)
 - [Offline service installation, resumable activation, managed payloads and startup ownership](service-installation.md)
 - [Service implementation completion checklist](service-implementation-checklist.md)
-- [Service publication, disk admission and bounded readers](service-publication.md)
+- [Service publication, admitted sidecar lifetimes and bounded readers](service-publication.md)
 - [Service worker ownership and durable job storage contract](service-jobs.md)
 - [Service job progress, phase timing and stall handling](service-progress.md)
 - [Retained service events, bounded paging and explicit retry](service-events.md)

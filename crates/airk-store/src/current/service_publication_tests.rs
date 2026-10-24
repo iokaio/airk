@@ -13,6 +13,93 @@ fn service_fixture() -> Result<Fixture> {
 }
 
 #[test]
+#[cfg(any(unix, windows))]
+fn service_publication_retains_admitted_sidecar_identities_across_last_close_and_reopen()
+-> Result<()> {
+    fn identity(path: &std::path::Path) -> Result<(u64, u64)> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let metadata = fs::metadata(path)?;
+            assert_eq!(metadata.nlink(), 1);
+            Ok((metadata.dev(), metadata.ino()))
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::io::AsRawHandle;
+            use windows_sys::Win32::Storage::FileSystem::{
+                BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
+            };
+            let file = fs::File::open(path)?;
+            let mut information = std::mem::MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::uninit();
+            // SAFETY: exact live read handle and correctly sized writable output.
+            ensure!(
+                unsafe {
+                    GetFileInformationByHandle(file.as_raw_handle(), information.as_mut_ptr())
+                } != 0,
+                "cannot inspect sidecar identity"
+            );
+            let info = unsafe { information.assume_init() };
+            assert_eq!(info.nNumberOfLinks, 1);
+            Ok((
+                u64::from(info.dwVolumeSerialNumber),
+                (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow),
+            ))
+        }
+    }
+    let fixture = service_fixture()?;
+    let path = fixture.store.directory().join("current.sqlite3");
+    let wal = fixture.store.directory().join("current.sqlite3-wal");
+    let shm = fixture.store.directory().join("current.sqlite3-shm");
+    let mut identities = None;
+    let mut handles = Vec::new();
+    for _ in 0..8 {
+        let connection = database::open_writer(&path, CAPACITY, false)?;
+        connection.pragma_update(None, "user_version", wal::VERSION)?;
+        let current = (identity(&wal)?, identity(&shm)?);
+        if let Some(expected) = identities {
+            assert_eq!(current, expected);
+        } else {
+            identities = Some(current);
+            handles.push(fs::File::open(&wal)?);
+            handles.push(fs::File::open(&shm)?);
+        }
+        drop(connection);
+        assert_eq!((identity(&wal)?, identity(&shm)?), current);
+        let reader = database::open_reader(&path)?;
+        assert!(
+            reader.query_row("SELECT count(*) FROM sqlite_schema", [], |row| row
+                .get::<_, i64>(0))?
+                > 0
+        );
+        drop(reader);
+        assert_eq!((identity(&wal)?, identity(&shm)?), current);
+        wal::validate_files(fixture.store.directory(), CAPACITY)?;
+        assert_eq!(
+            fixture.store.current_read(&fixture.scope)?.token()?,
+            fixture.head.token()?
+        );
+    }
+    drop(handles);
+    let alias = fixture.directory.path().join("unapproved-wal-alias");
+    fs::hard_link(&wal, &alias)?;
+    assert!(
+        fixture.store.current_read(&fixture.scope).is_err(),
+        "actual hard link was admitted"
+    );
+    fs::remove_file(alias)?;
+    assert_eq!(
+        fixture.store.current_read(&fixture.scope)?.token()?,
+        fixture.head.token()?
+    );
+    let writer = fixture.store.lock()?;
+    let grants = fixture.quota.current_grants(&writer)?;
+    assert_eq!(grants.len(), 1);
+    assert_eq!(grants[0].scope().transaction, wal::id(&fixture.scope));
+    Ok(())
+}
+
+#[test]
 fn service_publication_keeps_old_snapshot_and_graph_coherent_through_replay() -> Result<()> {
     let fixture = service_fixture()?;
     let old = fixture.store.current_read(&fixture.scope)?;
