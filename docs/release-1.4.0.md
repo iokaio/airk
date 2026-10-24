@@ -8,7 +8,7 @@ The default extension/CLI/container cutover, service console, complete maintenan
 
 Interrupted first installations can now be removed before activation, with exclusive owner checks. Retirement validates ancillary receipts before deletion and completes cleanup after the payload directory is already gone, preserving changed or unknown state.
 
-Registered projects with missing source roots can serve existing ownership-matched retained evidence. New scans and rebuilds fail explicitly without publishing root-wide deletions; status reports source availability independently of index identity and readiness.
+Registered projects with missing, denied, redirected or non-directory source roots can serve existing ownership-matched retained evidence. Status distinguishes these availability reasons. New scans and rebuilds fail explicitly without publishing root-wide deletions; status reports source availability independently of index identity and readiness.
 
 Source admission now rejects overlaps with service control, verified installer state/install directories and all registered project data roots. Transactional checks cover additional-root changes and registration races; native indexing rechecks pending configuration before capture.
 

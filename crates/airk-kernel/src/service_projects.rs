@@ -24,63 +24,154 @@ pub enum SourceState {
 pub struct SourceObservation {
     pub state: SourceState,
     pub observed_unix_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<SourceProblem>,
 }
 
-/// Missing roots may select already-bound retained state. Resolve the nearest
-/// existing ancestor to reject path aliases and redirected parents without
-/// creating the root or treating its absence as observed file deletions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceProblem {
+    Missing,
+    PermissionDenied,
+    Redirected,
+    NotDirectory,
+    IoUnavailable,
+}
+impl std::fmt::Display for SourceProblem {
+    fn fmt(&self, output: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        output.write_str(match self {
+            Self::Missing => "registered source is missing",
+            Self::PermissionDenied => "registered source permission denied",
+            Self::Redirected => "registered source location is redirected",
+            Self::NotDirectory => "registered source is no longer a directory",
+            Self::IoUnavailable => "registered source filesystem is unavailable",
+        })
+    }
+}
+impl std::error::Error for SourceProblem {}
+pub(crate) fn problem(error: &anyhow::Error) -> SourceProblem {
+    if let Some(reason) = error.downcast_ref::<SourceProblem>() {
+        return *reason;
+    }
+    match error
+        .downcast_ref::<std::io::Error>()
+        .map(std::io::Error::kind)
+    {
+        Some(std::io::ErrorKind::NotFound) => SourceProblem::Missing,
+        Some(std::io::ErrorKind::PermissionDenied) => SourceProblem::PermissionDenied,
+        Some(std::io::ErrorKind::NotADirectory) => SourceProblem::NotDirectory,
+        _ => SourceProblem::IoUnavailable,
+    }
+}
+
+fn same_spelling(a: &Path, b: &Path) -> bool {
+    if a == b {
+        return true;
+    }
+    #[cfg(windows)]
+    if let (Some(a), Some(b)) = (a.to_str(), b.to_str()) {
+        return a.strip_prefix(r"\\?\").unwrap_or(a) == b.strip_prefix(r"\\?\").unwrap_or(b);
+    }
+    false
+}
+
+/// Resolve availability for a saved binding. An unavailable path is never a
+/// new registration: the caller must verify its existing collection owner before
+/// opening retained evidence. No source path is created or followed for capture.
 pub(crate) fn retained_root(root: &Path) -> Result<(PathBuf, bool)> {
     match root.canonicalize() {
-        Ok(canonical) => {
-            ensure!(canonical.is_dir(), SourceUnavailable);
-            Ok((canonical, true))
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            ensure!(
-                root.is_absolute()
-                    && !root.components().any(|component| matches!(
-                        component,
-                        Component::CurDir | Component::ParentDir
-                    )),
-                "missing retained source requires its exact absolute registered path"
-            );
-            let mut ancestor = root.to_path_buf();
-            let mut missing = Vec::new();
-            loop {
-                match std::fs::symlink_metadata(&ancestor) {
-                    Ok(metadata) => {
-                        ensure!(
-                            metadata.is_dir() && !metadata.file_type().is_symlink(),
-                            SourceUnavailable
-                        );
-                        let mut resolved = ancestor.canonicalize().context(SourceUnavailable)?;
-                        for name in missing.into_iter().rev() {
-                            resolved.push(name);
-                        }
-                        ensure!(resolved == root, SourceUnavailable);
-                        return Ok((resolved, false));
-                    }
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                        missing.push(
-                            ancestor
-                                .file_name()
-                                .context(SourceUnavailable)?
-                                .to_os_string(),
-                        );
-                        ensure!(ancestor.pop(), SourceUnavailable);
-                    }
-                    Err(error) => return Err(error).context(SourceUnavailable),
-                }
+        Ok(canonical) if same_spelling(root, &canonical) => match std::fs::read_dir(&canonical) {
+            Ok(_) => Ok((canonical, true)),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::PermissionDenied
+                        | std::io::ErrorKind::NotFound
+                        | std::io::ErrorKind::NotADirectory
+                ) =>
+            {
+                unavailable_path(root)
             }
+            Err(error) => Err(error).context(SourceUnavailable),
+        },
+        Ok(_) => unavailable_path(root),
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::NotFound
+                    | std::io::ErrorKind::PermissionDenied
+                    | std::io::ErrorKind::NotADirectory
+            ) =>
+        {
+            unavailable_path(root)
         }
         Err(error) => Err(error).context(SourceUnavailable),
     }
 }
 
+fn unavailable_path(root: &Path) -> Result<(PathBuf, bool)> {
+    ensure!(
+        root.is_absolute()
+            && !root
+                .components()
+                .any(|component| matches!(component, Component::CurDir | Component::ParentDir)),
+        "unavailable retained source requires its exact absolute registered path"
+    );
+    let mut ancestor = root.to_path_buf();
+    let mut suffix = Vec::new();
+    loop {
+        match std::fs::symlink_metadata(&ancestor) {
+            Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {
+                match ancestor.canonicalize() {
+                    Ok(mut resolved) => {
+                        for name in suffix.into_iter().rev() {
+                            resolved.push(name);
+                        }
+                        // Redirected ancestors must not change the saved owner.
+                        return Ok((
+                            if same_spelling(root, &resolved) {
+                                resolved
+                            } else {
+                                root.into()
+                            },
+                            false,
+                        ));
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => (),
+                    Err(error) => return Err(error).context(SourceUnavailable),
+                }
+            }
+            Ok(_) => (),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound
+                        | std::io::ErrorKind::PermissionDenied
+                        | std::io::ErrorKind::NotADirectory
+                ) => {}
+            Err(error) => return Err(error).context(SourceUnavailable),
+        }
+        suffix.push(
+            ancestor
+                .file_name()
+                .context(SourceUnavailable)?
+                .to_os_string(),
+        );
+        ensure!(ancestor.pop(), SourceUnavailable);
+    }
+}
+
 pub(crate) fn require_source(root: &Path) -> Result<()> {
-    let canonical = root.canonicalize().context(SourceUnavailable)?;
-    ensure!(canonical == root && canonical.is_dir(), SourceUnavailable);
-    Ok(())
+    (|| -> Result<()> {
+        let canonical = root.canonicalize()?;
+        ensure!(same_spelling(&canonical, root), SourceProblem::Redirected);
+        ensure!(canonical.is_dir(), SourceProblem::NotDirectory);
+        // Canonicalization/stat can succeed while directory access is denied.
+        // Open the root without enumerating it; failed scans never imply deletion.
+        drop(std::fs::read_dir(root)?);
+        Ok(())
+    })()
+    .context(SourceUnavailable)
 }
 
 /// Only for a saved authenticated registration. New registration still requires
@@ -132,3 +223,7 @@ pub fn validate(project: &ProjectRegistration) -> Result<()> {
     );
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "service_source_availability_tests.rs"]
+mod tests;

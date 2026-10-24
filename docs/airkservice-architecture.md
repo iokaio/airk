@@ -614,3 +614,5 @@ Run repository-required formatting, clippy, workspace tests, extension tests, pa
 Implementation progress is recorded at the start of this document. The plan itself does not authorize a version bump, commit, PR, publication or release. Each implemented phase needs its own validation evidence; a service process alone does not establish that indexing failures are fixed.
 
 Development shutdown refinement: login Stop/Uninstall authenticates saved inventory identity independently of launchable payload validation and requires exact OS registration proof for fallback stopping. Full removal preserves damaged payloads for explicit follow-up after stopping owned startup; see [installation contracts](service-installation.md).
+
+Development availability refinement: retained reads keep the exact saved source binding through missing roots, permission denial, redirection and non-directory replacement. Status reports the reason independently; new capture remains blocked and unbound collections are never initialized. See [source freshness and availability](service-freshness.md).

@@ -2074,3 +2074,169 @@ fn resource_configuration_failure_is_distinct_from_memory_and_cached_status_stay
     ensure!(wait_exit(&mut children.0[0])?, "service did not stop");
     Ok(())
 }
+
+#[cfg(windows)]
+#[test]
+fn denied_registered_source_keeps_direct_queries_and_fails_new_work_without_data_loss() -> Result<()>
+{
+    use airk_core::service::{
+        ControlMethod as Method, ControlResponse as Response, JobKind, JobOutcome, RequestKey,
+    };
+    use std::{
+        os::windows::{ffi::OsStringExt, process::CommandExt},
+        path::PathBuf,
+    };
+    let mut buffer = vec![0u16; 32768];
+    // SAFETY: writable UTF-16 output buffer with its exact capacity.
+    let length = unsafe {
+        windows_sys::Win32::System::SystemInformation::GetSystemDirectoryW(
+            buffer.as_mut_ptr(),
+            buffer.len() as u32,
+        )
+    } as usize;
+    ensure!(
+        length > 0 && length < buffer.len(),
+        "system tool directory unavailable"
+    );
+    let tool = PathBuf::from(std::ffi::OsString::from_wide(&buffer[..length])).join("icacls.exe");
+    struct Restore {
+        tool: PathBuf,
+        source: PathBuf,
+        sid: String,
+    }
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let _ = Command::new(&self.tool)
+                .arg(&self.source)
+                .args(["/remove:d", &self.sid])
+                .creation_flags(0x08000000)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
+    }
+    let owner = tempfile::tempdir()?;
+    let source = owner.path().join("source");
+    let data = owner.path().join("data");
+    let runtime = owner.path().join("runtime");
+    fs::create_dir(&source)?;
+    fs::create_dir(&data)?;
+    let original = "Original copper permission fixture.\n";
+    fs::write(source.join("memo.txt"), original)?;
+    let project = airk_kernel::service_projects::registration(&source, &data, "denied-source")?;
+    let kernel =
+        airk_kernel::Kernel::open_service_collection(&source, Some(data), "denied-source")?;
+    kernel.configure_vectors(false)?;
+    kernel.index()?;
+    let token = kernel
+        .status()?
+        .publication
+        .context("initial publication missing")?
+        .token;
+    let mut children = Children(vec![start(&runtime)?]);
+    wait_ready(&runtime)?;
+    tokio::runtime::Runtime::new()?.block_on(async {
+        let request = |method| airk_cli::service_runtime::request(&runtime, method);
+        ensure!(
+            matches!(
+                request(Method::Register {
+                    project: project.clone()
+                })
+                .await?,
+                Response::Registered { .. }
+            ),
+            "registration failed"
+        );
+        let sid = airk_cli::local_ipc::current_user()?;
+        let restore = Restore {
+            tool,
+            source: source.clone(),
+            sid: format!("*{sid}"),
+        };
+        let output = Command::new(&restore.tool)
+            .arg(&source)
+            .args(["/deny", &format!("{}:(RD)", restore.sid)])
+            .creation_flags(0x08000000)
+            .output()?;
+        ensure!(output.status.success(), "fixture directory denial failed");
+        ensure!(
+            fs::read_dir(&source).is_err(),
+            "fixture directory listing remains readable"
+        );
+        let mut connection =
+            airk_cli::project_client::Connection::connect(&runtime, project.binding).await?;
+        let result = connection
+            .call(
+                "airk_search".into(),
+                serde_json::json!({"query":"copper", "mode":"lexical"})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            )
+            .await?;
+        ensure!(
+            result.get("isError").and_then(Value::as_bool) != Some(true)
+                && result.to_string().contains("memo.txt"),
+            "denied source blocked retained query: {result}"
+        );
+        let status = kernel.status()?;
+        ensure!(
+            status.publication.context("publication lost")?.token == token,
+            "denied source changed publication"
+        );
+        ensure!(
+            status
+                .source_availability
+                .context("availability missing")?
+                .reason
+                == Some(airk_kernel::service_projects::SourceProblem::PermissionDenied),
+            "permission reason missing"
+        );
+        let Response::RequestEpoch { namespace, epoch } = request(Method::RequestEpoch).await?
+        else {
+            anyhow::bail!("request epoch missing")
+        };
+        let Response::Job { job } = request(Method::Enqueue {
+            project: project.binding,
+            caller: airk_kernel::service_broker::new_instance_id()?,
+            key: RequestKey {
+                namespace,
+                epoch,
+                nonce: airk_kernel::service_broker::new_instance_id()?,
+            },
+            kind: JobKind::Index,
+        })
+        .await?
+        else {
+            anyhow::bail!("index request not accepted")
+        };
+        let until = tokio::time::Instant::now() + Duration::from_secs(30);
+        loop {
+            let Response::Job { job } = request(Method::Job { id: job.id }).await? else {
+                anyhow::bail!("job receipt missing")
+            };
+            if let Some(outcome) = job.outcome {
+                ensure!(
+                    matches!(outcome, JobOutcome::Failed { code } if code == "source_unavailable"),
+                    "permission failure lost its typed outcome"
+                );
+                break;
+            }
+            ensure!(
+                tokio::time::Instant::now() < until,
+                "denied source job did not finish"
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        drop(connection);
+        request(Method::Shutdown).await?;
+        ensure!(wait_exit(&mut children.0[0])?, "service did not drain");
+        drop(restore);
+        ensure!(
+            fs::read_to_string(source.join("memo.txt"))? == original,
+            "source bytes changed"
+        );
+        Ok::<_, anyhow::Error>(())
+    })?;
+    Ok(())
+}

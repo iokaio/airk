@@ -354,15 +354,17 @@ impl Kernel {
     fn service_source_observation(&self) -> Option<service_projects::SourceObservation> {
         self.service_collection.as_ref()?;
         use service_projects::SourceState;
-        let state = match self.require_service_sources() {
-            Ok(()) => SourceState::Available,
-            Err(error) if error.is::<service_projects::SourceUnavailable>() => {
-                SourceState::Unavailable
-            }
-            Err(_) => SourceState::Unknown,
+        let (state, reason) = match self.require_service_sources() {
+            Ok(()) => (SourceState::Available, None),
+            Err(error) if error.is::<service_projects::SourceUnavailable>() => (
+                SourceState::Unavailable,
+                Some(service_projects::problem(&error)),
+            ),
+            Err(_) => (SourceState::Unknown, None),
         };
         Some(service_projects::SourceObservation {
             state,
+            reason,
             observed_unix_ms: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |time| time.as_millis().min(u64::MAX as u128) as u64),
