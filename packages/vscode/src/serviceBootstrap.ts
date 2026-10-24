@@ -226,6 +226,22 @@ export class RuntimeHost {
         if(value.schema!==1||value.metadata_only!==true||value.payload_verified!==false)throw new ServiceError('invalid_bootstrap_snapshot');
         return value;
     }
+    async repair(binding:RuntimeBinding,preview?:string):Promise<RecordValue>{
+        this.active();
+        if(binding.lifecycle!=='on-demand')throw new ServiceError('runtime_payload_managed_externally');
+        const bundle=await this.verified();
+        if(bundle.digest!==binding.runtimeSha256)throw new ServiceError('matching_approved_distribution_required_for_repair');
+        const args=['runtime','repair-payload','--install-dir',binding.installDir,'--source',bundle.source,'--approved-sha256',bundle.digest];
+        if(preview)args.push('--preview',identifier(preview,32));
+        const value=await this.invoke(bundle.main,args,180000);
+        if(value.schema!==1||value.runtime!==binding.runtimeSha256)throw new ServiceError('invalid_payload_repair_receipt',!!preview);
+        if(preview){if(value.repaired!==true||value.service_started!==false)throw new ServiceError('invalid_payload_repair_receipt',true);}
+        else {identifier(value.preview,32);safePath(value.preserved_directory);
+            if(!Number.isSafeInteger(value.preserved_bytes)||Number(value.preserved_bytes)<0||Number(value.preserved_bytes)>4*1024**3
+                ||!Number.isSafeInteger(value.preserved_files)||Number(value.preserved_files)<0||Number(value.preserved_files)>2050
+                ||value.starts_service!==false||value.requires_stopped_owners!==true)throw new ServiceError('invalid_payload_repair_preview');}
+        return value;
+    }
     async lifecycle(binding:RuntimeBinding,intent:LifecycleIntent,force=false):Promise<RecordValue>{
         this.active();
         if(binding.lifecycle==='external')throw new ServiceError('lifecycle_managed_externally');

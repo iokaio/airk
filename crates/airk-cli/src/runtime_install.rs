@@ -29,6 +29,8 @@ mod managed;
 pub use managed::ManagedLifecycle;
 #[path = "runtime_lifecycle.rs"]
 mod lifecycle;
+#[path = "runtime_payload_repair.rs"]
+mod payload_repair;
 #[path = "runtime_retirement.rs"]
 mod retirement;
 #[path = "runtime_snapshot.rs"]
@@ -154,6 +156,18 @@ pub enum RuntimeCommand {
         revision: Option<u64>,
         #[arg(long, default_value_t = 16)]
         limit: usize,
+    },
+    /// Preview or explicitly repair the selected payload, preserving the complete damaged slot.
+    RepairPayload {
+        #[arg(long)]
+        install_dir: PathBuf,
+        #[arg(long)]
+        source: PathBuf,
+        #[arg(long)]
+        approved_sha256: String,
+        /// Omit for read-only preview; supply the reviewed preview digest to apply.
+        #[arg(long)]
+        preview: Option<airk_core::identity::Sha256Digest>,
     },
     /// Remove one unused owned runtime; preserve active/rollback selections and unknown files.
     Remove {
@@ -783,6 +797,7 @@ fn owned_inventory(root: &Path, identity: &str) -> Result<(PathBuf, Approval, In
 }
 
 pub fn selected(root: &Path) -> Result<(Selection, PathBuf, Approval)> {
+    payload_repair::require_settled(root)?;
     ensure!(root.is_dir(), "runtime installation is missing");
     local_ipc::prepare_root(root)?;
     ensure!(
@@ -1042,6 +1057,7 @@ async fn start(
 
 pub async fn ensure_running(root: &Path) -> Result<ServiceHealth> {
     let _lock = install_lock(root)?;
+    payload_repair::require_settled(root)?;
     lifecycle::settle(root).await?;
     if managed::read(root)?.is_some() {
         return managed::ensure(root).await;
@@ -1055,6 +1071,7 @@ pub async fn ensure_running(root: &Path) -> Result<ServiceHealth> {
 }
 
 pub(crate) fn startup_selected(root: &Path) -> Result<(PathBuf, Approval)> {
+    payload_repair::require_settled(root)?;
     lifecycle::require_start_allowed(root)?;
     if let Some(selected) = activation::startup(root)? {
         return Ok(selected);
@@ -1079,18 +1096,22 @@ fn stop_identity(root: &Path) -> Result<(Approval, String)> {
     .parent()
     .context("shutdown runtime parent missing")?
     .to_path_buf();
+    saved_payload_identity(&directory, &selection.active)
+}
+
+fn saved_payload_identity(directory: &Path, identity: &str) -> Result<(Approval, String)> {
     let approval: Approval =
         serde_json::from_slice(&read_bounded(&directory.join("approval.json"), 4096)?)?;
     let bytes = read_bounded(&directory.join("airk-install.json"), MAX_MANIFEST)?;
     ensure!(
-        format!("{:x}", Sha256::digest(&bytes)) == selection.active,
+        format!("{:x}", Sha256::digest(&bytes)) == identity,
         "shutdown inventory identity mismatch"
     );
     let inventory: InstallManifest = serde_json::from_slice(&bytes)?;
     ensure!(
         approval.schema == 1
             && inventory.schema == 1
-            && approval.manifest_sha256 == selection.active
+            && approval.manifest_sha256 == identity
             && approval.version == inventory.version,
         "shutdown approval identity mismatch"
     );
@@ -1205,6 +1226,7 @@ fn quiescent(root: &Path) -> Result<Quiescence> {
 
 pub async fn activate(root: &Path, identity: &str) -> Result<Selection> {
     let _lock = install_lock(root)?;
+    payload_repair::require_settled(root)?;
     lifecycle::require_settled(root)?;
     lifecycle::require_start_allowed(root)?;
     activation::begin(root, identity).await

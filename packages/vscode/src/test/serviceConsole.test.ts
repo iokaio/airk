@@ -29,7 +29,7 @@ function fixture(){
         }
     }});
     const host:ConsoleHost={version:'1.4.0',authority:'local-test',storage:{keys:()=>[...values.keys()],get:<T>(key:string)=>values.get(key) as T|undefined,update:async(key,value)=>{if(value===undefined)values.delete(key);else values.set(key,structuredClone(value));}},
-        runtime:{discover:async()=>({bundle:{main:'/main',helper:'/helper',source:'/bundle',digest:binding.runtimeSha256,version:'1.4.0',platform:'test'},installDir:'/install',installed:true,inspection:{control_dir:'/control'},location:{}}),binding:()=>binding,ensure:async()=>binding,client:()=>client,snapshot:async()=>({})},
+        runtime:{discover:async()=>({bundle:{main:'/main',helper:'/helper',source:'/bundle',digest:binding.runtimeSha256,version:'1.4.0',platform:'test'},installDir:'/install',installed:true,inspection:{control_dir:'/control'},location:{}}),binding:()=>binding,ensure:async()=>binding,client:()=>client,snapshot:async()=>({}),repair:async()=>({})},
         trusted:()=>trusted,changed(){},confirm:async()=>true,copy:async text=>{copied.push(text);},logs:async()=>{},resources:async()=>undefined,lifecycle:async()=>({status:'lifecycle'})};
     const controller=new ServiceConsoleController(host);
     const action=async(name:string,extra:RecordValue={})=>controller.action({type:'service',revision:controller.state.revision,action:name,...extra});
@@ -109,6 +109,7 @@ test('damaged payload uses cached pages and persists an instance-fenced Stop wit
     await f.action('nextPage');assert.deepEqual(requests.at(-1),{after:project,revision:3});
     assert.equal(((f.controller.state.page!.projects[0].project as RecordValue).registration as RecordValue).binding,second);
     await f.action('stop');assert.equal(f.controller.state.pending.length,0);assert.equal(f.controller.state.message,undefined);
+    assert.equal((f.controller.state.bootstrap.value?.lifecycle as RecordValue).explicitly_stopped,true);
     assert.equal(f.sent.length,0);f.controller.dispose();
 });
 
@@ -119,4 +120,28 @@ test('a failed health check changes previously live resource and work observatio
     assert.equal(f.controller.state.resources.state,'cached');assert.equal(f.controller.state.model.state,'cached');
     const html=renderConsole(f.controller.state);assert.match(html,/Cached sample/);assert.doesNotMatch(html,/Current generation/);
     f.controller.dispose();
+});
+
+test('runtime repair requires Stop and approves only the native reviewed preview',async()=>{
+    const f=fixture(),calls:(string|undefined)[]=[],preview='ab'.repeat(32);
+    f.host.runtime.repair=async(_binding,token)=>{calls.push(token);return token?{repaired:true}:{preview,preserved_files:5,preserved_bytes:123,preserved_directory:'/preserved'};};
+    await f.controller.refresh();await f.action('repairRuntime');
+    assert.equal(f.controller.state.message,'stop_service_before_payload_repair');assert.deepEqual(calls,[]);
+    const observation=await f.host.runtime.discover();observation.inspection={control_dir:'/control',lifecycle:{explicitly_stopped:true}};
+    f.host.runtime.discover=async()=>observation;
+    await f.action('connect');f.host.confirm=async()=>false;await f.action('repairRuntime');assert.deepEqual(calls,[undefined]);
+    f.host.confirm=async message=>{assert.match(message,/123 bytes/);assert.match(message,new RegExp(preview));return true;};
+    await f.action('repairRuntime');assert.deepEqual(calls,[undefined,undefined,preview]);
+    assert.match(f.controller.state.message!,/Runtime payload repaired/);
+    assert.equal(consoleAction({type:'service',revision:f.controller.state.revision,action:'repairRuntime',preview},f.controller.state),undefined);
+    f.controller.dispose();
+});
+
+test('trust lost while native repair preview loads prevents approval and mutation',async()=>{
+    const f=fixture(),observation=await f.host.runtime.discover();observation.inspection={control_dir:'/control',lifecycle:{explicitly_stopped:true}};
+    f.host.runtime.discover=async()=>observation;let calls=0,confirmed=false;
+    f.host.confirm=async()=>{confirmed=true;return true;};
+    f.host.runtime.repair=async()=>{calls++;f.setTrusted(false);return {preview:'ab'.repeat(32)};};
+    await f.controller.refresh();await f.action('repairRuntime');
+    assert.equal(calls,1);assert.equal(confirmed,false);assert.equal(f.controller.state.message,'runtime_client_no_longer_authorized');f.controller.dispose();
 });

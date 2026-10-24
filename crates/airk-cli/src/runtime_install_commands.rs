@@ -23,6 +23,7 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
                 action,
                 LoginCommand::Plan | LoginCommand::Status | LoginCommand::Stop
             ) {
+                payload_repair::require_settled(install_dir)?;
                 activation::require_settled(install_dir)?;
             }
             match action {
@@ -153,6 +154,15 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
             revision,
             limit,
         } => snapshot::read(install_dir, *after, *revision, *limit)?,
+        RuntimeCommand::RepairPayload {
+            install_dir,
+            source,
+            approved_sha256,
+            preview,
+        } => match preview {
+            Some(preview) => payload_repair::apply(install_dir, source, approved_sha256, *preview)?,
+            None => payload_repair::preview(install_dir, source, approved_sha256)?,
+        },
         RuntimeCommand::Inspect { install_dir } => {
             let (selection, executable, approval) = selected(install_dir)?;
             let policy = managed::read(install_dir)?;
@@ -175,7 +185,7 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
                     .and_then(|registry| registry.incarnation())
                 })
                 .transpose()?;
-            serde_json::json!({"selection":selection,"executable":executable,"approval":approval,"launcher":launcher,"managed_policy":policy,"control_dir":control.ok(),"state_error":state_error,"lifecycle":lifecycle,"registry_namespace":registry_namespace,"payload_verified":true})
+            serde_json::json!({"selection":selection,"executable":executable,"approval":approval,"launcher":launcher,"managed_policy":policy,"control_dir":control.ok(),"state_error":state_error,"lifecycle":lifecycle,"registry_namespace":registry_namespace,"payload_verified":true,"payload_repair":payload_repair::status(install_dir)?})
         }
         RuntimeCommand::Remove {
             install_dir,
@@ -204,6 +214,7 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
         }
         RuntimeCommand::Uninstall { install_dir } => {
             let _lock = install_lock(install_dir)?;
+            payload_repair::require_settled(install_dir)?;
             retirement::uninstall(install_dir).await?
         }
         RuntimeCommand::AbortStage {
@@ -211,6 +222,7 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
             runtime_sha256,
         } => {
             let _lock = install_lock(install_dir)?;
+            payload_repair::require_settled(install_dir)?;
             staging::abort(install_dir, runtime_sha256)?;
             serde_json::json!({"aborted_stage":runtime_sha256,"promoted_runtime_preserved":install_dir.join("runtimes").join(runtime_sha256).try_exists()?})
         }

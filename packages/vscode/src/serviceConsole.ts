@@ -5,7 +5,7 @@ import { BootstrapObservation, nativeRunner, RuntimeHost, RuntimeOptions } from 
 import { RecordValue, ServiceError } from './serviceClient';
 import { ServiceConsoleController } from './serviceConsoleController';
 import { consoleContent, renderConsole, ServiceConsoleState } from './serviceConsoleView';
-export type ConsoleRuntime=Pick<RuntimeHost,'discover'|'binding'|'ensure'|'client'|'snapshot'|'lifecycle'|'abandonLifecycle'>;
+export type ConsoleRuntime=Pick<RuntimeHost,'discover'|'binding'|'ensure'|'client'|'snapshot'|'repair'|'lifecycle'|'abandonLifecycle'>;
 
 /** Machine/user settings only. A repository cannot nominate an executable or approval. */
 export function serviceRuntimeOptions():RuntimeOptions {

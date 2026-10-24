@@ -88,6 +88,24 @@ test('damaged selected payload exposes saved metadata but cannot be launched or 
         assert.ok(calls.every(args=>['self-test','location','inspect','snapshot','diagnose'].includes(args[1])));
     }finally{await f.cleanup();}
 });
+
+test('payload repair executes the trusted bundle with a reviewed guard and refuses a different approved pin',async()=>{
+    const f=await fixture(),calls:string[][]=[],token='ab'.repeat(32),root=path.join(f.root,'install');
+    const host=new RuntimeHost(f.root,'1.4.0',{channel:'stable'},async(command,args)=>{
+        assert.equal(command,path.join(f.source,f.main));calls.push(args);
+        return args.includes('--preview')?{schema:1,runtime:f.digest,repaired:true,service_started:false}:{schema:1,runtime:f.digest,
+            preview:token,preserved_directory:path.join(root,'preserved'),preserved_files:3,preserved_bytes:100,starts_service:false,requires_stopped_owners:true};
+    });
+    const binding={installDir:root,controlDir:path.join(root,'control'),executable:path.join(root,'missing-main'),launcher:null,
+        runtimeSha256:f.digest,version:'1.4.0',lifecycle:'on-demand' as const,verificationBasis:'trusted_distribution',payloadVerified:false};
+    try{
+        assert.equal((await host.repair(binding)).preview,token);assert.equal((await host.repair(binding,token)).repaired,true);
+        assert.equal(calls[1][calls[1].indexOf('--preview')+1],token);
+        await assert.rejects(host.repair({...binding,runtimeSha256:'cd'.repeat(32)}),/matching_approved_distribution_required/);
+        await assert.rejects(host.repair({...binding,lifecycle:'external'}),/runtime_payload_managed_externally/);
+        assert.equal(calls.length,2);
+    }finally{await f.cleanup();}
+});
 test('discovery does not install/start and concurrent first use shares one approved activation',async()=>{
     const f=await fixture(),install=path.join(f.root,'install'),calls:string[][]=[];let selected=false;
     const inspection=()=>({selection:{active:f.digest,previous:null},executable:path.join(install,'runtimes',f.digest,f.main),launcher:path.join(install,'airk-launcher'),

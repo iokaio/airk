@@ -7,7 +7,7 @@ import { consoleAction, ConsoleObservation, diagnosticPreview, ServiceConsoleSta
 
 export interface ConsoleHost {
     version:string; authority:string; storage:IntentStorage;
-    runtime:Pick<RuntimeHost,'discover'|'binding'|'ensure'|'client'|'snapshot'>;
+    runtime:Pick<RuntimeHost,'discover'|'binding'|'ensure'|'client'|'snapshot'|'repair'>;
     trusted():boolean;
     changed(state:ServiceConsoleState):void;
     confirm(message:string):Promise<boolean>;
@@ -77,7 +77,7 @@ export class ServiceConsoleController {
     private cachedSnapshot(snapshot:RecordValue):void{
         if(this.bootstrap)this.bootstrap.inspection={...this.bootstrap.inspection,...snapshot};
         this.state.bootstrap={...this.state.bootstrap,value:{...this.state.bootstrap.value,lifecycle:snapshot.lifecycle,
-            payloadVerified:snapshot.payload_verified,registryError:snapshot.registry_error,startupManager:snapshot.startup_manager}};
+            payloadVerified:snapshot.payload_verified,registryError:snapshot.registry_error,startupManager:snapshot.startup_manager,payloadRepair:snapshot.payload_repair}};
         if(snapshot.console)this.state.page=parseConsolePage(snapshot.console);
         if(snapshot.logs)this.state.serviceEvents={state:'cached',checkedAt:Date.now(),value:record(snapshot.logs)};
     }
@@ -192,12 +192,23 @@ export class ServiceConsoleController {
         this.state.plan={value:snapshot,items:more?[...current.items,...items].slice(-1024):items,after:page.after===null?null:identifier(page.after,32)};
     }
     private async receipt(response:RecordValue):Promise<void>{
+        if(response.status==='lifecycle'){
+            const saved=record(response.record);
+            if(saved.phase==='abandoned'||saved.phase==='complete'&&record(saved.request).action==='stop')this.stopPreference(true);
+        }
         if(response.status==='lifecycle'&&record(response.record).phase==='abandoned')this.state.message='Lifecycle request abandoned. Automatic starts remain disabled until Start service.';
         if(response.status==='plan'){
             const value=record(response.plan),id=identifier(value.id,32);
             await this.host.storage.update(`airk.service.plan.${this.journal!.scope}`,id);
             this.state.plan={value,items:[],after:null};
         }
+    }
+    private stopPreference(stopped:boolean):void{
+        if(!this.bootstrap?.inspection)return;
+        const prior=this.bootstrap.inspection.lifecycle?record(this.bootstrap.inspection.lifecycle):{};
+        const lifecycle={...prior,explicitly_stopped:stopped,pending:null};
+        this.bootstrap.inspection.lifecycle=lifecycle;
+        this.state.bootstrap={...this.state.bootstrap,value:{...this.state.bootstrap.value,lifecycle}};
     }
     private async mutation(title:string,intent:ConsoleIntent):Promise<void>{
         if(!this.journal||(!this.client&&!('lifecycle' in intent)))throw new ServiceError('console_not_connected');
@@ -230,6 +241,16 @@ export class ServiceConsoleController {
             if(action.action==='logs'){await this.host.logs(this.bootstrap);return;}
             this.authorized();
             if(action.action==='responseMode'){await this.host.chooseResponseMode?.();return;}
+            if(action.action==='repairRuntime'){
+                if(!this.binding)throw new ServiceError('runtime_binding_not_observed');
+                const lifecycle=this.bootstrap?.inspection?.lifecycle;
+                if(!lifecycle||record(lifecycle).explicitly_stopped!==true)throw new ServiceError('stop_service_before_payload_repair');
+                const preview=await this.host.runtime.repair(this.binding);this.authorized();
+                if(!await this.host.confirm(`Repair the selected runtime on ${this.host.authority}? Preserve ${preview.preserved_files} files (${preview.preserved_bytes} bytes) at ${preview.preserved_directory}, then copy the exact approved distribution. One free runtime slot and replacement disk space are required. The service stays stopped. Review digest: ${preview.preview}`))return;
+                this.authorized();this.client?.dispose();this.client=undefined;this.disconnected();
+                await this.host.runtime.repair(this.binding,identifier(preview.preview,32));this.authorized();
+                await this.discover();this.state.message='Runtime payload repaired; the damaged slot is preserved. Use Start service when ready.';return;
+            }
             if(action.action==='recoverLifecycle'||action.action==='abandonLifecycle'){
                 if(!this.binding||!this.journal||!this.bootstrap?.inspection?.lifecycle)throw new ServiceError('native_lifecycle_not_observed');
                 const pending=record(record(this.bootstrap.inspection.lifecycle).pending),request=record(pending.request),key=record(request.key);
@@ -267,6 +288,7 @@ export class ServiceConsoleController {
             if(action.action==='start'){
                 if(this.binding?.lifecycle==='external')throw new ServiceError('lifecycle_managed_externally');
                 this.binding=await this.host.runtime.ensure(true);this.authorized();this.state.lifecycle=this.binding.lifecycle;
+                this.stopPreference(false);
                 this.client?.dispose();this.client=this.host.runtime.client(this.binding);
             }else if(action.action==='connect'){
                 this.client?.dispose();this.client=undefined;await this.discover();

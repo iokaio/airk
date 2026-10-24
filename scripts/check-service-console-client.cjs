@@ -29,7 +29,7 @@ const {ServiceConsoleController}=require('../packages/vscode/out/serviceConsoleC
         lifecycle:(selected,intent,force)=>runtime.lifecycle(selected,intent,force),abandonLifecycle:(selected,intent,id)=>runtime.abandonLifecycle(selected,intent,id)});
     const action=async(name,extra={})=>{
         await controller.action({type:'service',revision:controller.state.revision,action:name,...extra});
-        if(controller.state.message&&!controller.state.message.startsWith('Repair preview changed'))throw new Error(controller.state.message);
+        if(controller.state.message&&!controller.state.message.startsWith('Repair preview changed')&&!controller.state.message.startsWith('Runtime payload repaired;'))throw new Error(controller.state.message);
     };
     const wait=async(predicate,label)=>{
         const deadline=Date.now()+90000;
@@ -75,17 +75,23 @@ const {ServiceConsoleController}=require('../packages/vscode/out/serviceConsoleC
         const selectedHelper=path.join(path.dirname(binding.executable),helper),backup=path.join(fixture,'saved-helper');
         assert.equal(path.relative(fixture,selectedHelper).startsWith('..'),false);
         await fs.rename(selectedHelper,backup);missingHelper={selectedHelper,backup};
+        const retainedNote='Original unknown payload note; preserve through repair and uninstall.';
+        await fs.writeFile(path.join(path.dirname(binding.executable),'unknown-note.txt'),retainedNote);
         await action('connect');assert.equal(controller.state.connected,false);
         assert.equal(controller.state.bootstrap.value.payloadVerified,false);
         assert.equal(controller.state.page.projects[0].project.registration.binding,project);
         assert.equal(controller.state.resources.state,'cached');
         await action('stop');assert.equal(controller.state.pending.length,0);
         await assert.rejects(nativeRunner(path.join(native,'runtime',main),['service','health','--runtime-dir',binding.controlDir]));
-        await fs.rename(backup,selectedHelper);missingHelper=undefined;
+        await action('repairRuntime');missingHelper=undefined;
+        const preserved=path.join(install,'runtimes',`damaged-${digest}`);
+        assert.equal(await fs.readFile(path.join(preserved,'unknown-note.txt'),'utf8'),retainedNote);
+        await assert.rejects(fs.stat(path.join(preserved,helper)),error=>error.code==='ENOENT');
+        assert.ok((await fs.stat(selectedHelper)).isFile());
         await assert.rejects(runtime.ensure(),/service_explicitly_stopped/);
         await action('start');assert.equal(controller.state.connected,true);
         assert.equal(await fs.readFile(path.join(source,'memo.txt'),'utf8'),original);
-        console.log('Missing-helper discovery, cached projects/resources, saved-instance Stop and repaired explicit Start passed.');
+        console.log('Missing-helper discovery, cached projects/resources, saved-instance Stop, approved payload repair and explicit Start passed.');
     }finally{
         controller.dispose();
         if(missingHelper)await fs.rename(missingHelper.backup,missingHelper.selectedHelper);

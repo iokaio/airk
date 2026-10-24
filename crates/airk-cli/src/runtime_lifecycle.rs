@@ -99,6 +99,7 @@ pub(super) async fn settle(root: &Path) -> Result<()> {
 }
 pub(super) async fn explicit_start(root: &Path) -> Result<ServiceHealth> {
     let _lock = install_lock(root)?;
+    payload_repair::require_settled(root)?;
     owner(root)?;
     let control = layout::control(root)?;
     if control.join("service-1.4.sqlite3").try_exists()? {
@@ -147,6 +148,7 @@ pub(super) async fn run(root: &Path, input: Input) -> Result<LifecycleRecord> {
         "lifecycle_runtime_selection_changed"
     );
     if request.action == LifecycleAction::Restart {
+        payload_repair::require_settled(root)?;
         verify_runtime(root, &saved.selection.active)?;
     }
     match observation(root, &saved.approval, &saved.executable_sha256).await {

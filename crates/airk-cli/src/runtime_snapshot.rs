@@ -12,6 +12,9 @@ pub(super) struct SavedRuntime {
 }
 pub(super) fn identity(root: &Path) -> Result<SavedRuntime> {
     ensure!(root.is_dir(), "runtime installation is missing");
+    if let Some(saved) = payload_repair::saved_identity(root)? {
+        return Ok(saved);
+    }
     let selection = selection_record(root)?;
     if let Some(policy) = managed::read(root)? {
         ensure!(
@@ -114,7 +117,8 @@ pub(super) fn read(
         "selection":saved.selection,"executable":saved.executable,"approval":saved.approval,"executable_sha256":saved.executable_sha256,
         "managed_policy":policy,"launcher":launcher,"control_dir":control.ok(),"state_error":state_error,
         "registry_namespace":namespace,"request_epoch":epoch,"lifecycle":lifecycle,"registry_error":registry_error,
-        "console":console,"startup_manager":startup_manager,"logs":logs,"log_control_dir":log_control});
+        "console":console,"startup_manager":startup_manager,"logs":logs,"log_control_dir":log_control,
+        "payload_repair":payload_repair::status(root).unwrap_or_else(|_|serde_json::json!({"phase":"unavailable"}))});
     ensure!(
         serde_json::to_vec_pretty(&value)?.len() < 256 * 1024,
         "bootstrap snapshot exceeds budget"

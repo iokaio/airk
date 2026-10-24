@@ -204,6 +204,7 @@ pub(super) async fn uninstall(root: &Path) -> Result<serde_json::Value> {
         return managed::detach(root).await;
     }
     activation::require_settled(root)?;
+    let preserved_payload = payload_repair::preserved(root)?;
     let intent_path = root.join("uninstall.json");
     let intent: UninstallIntent = if present(&intent_path)? {
         serde_json::from_slice(&read_bounded(&intent_path, 4096)?)?
@@ -232,8 +233,15 @@ pub(super) async fn uninstall(root: &Path) -> Result<serde_json::Value> {
         let directory = root.join("runtimes");
         if present(&directory)? {
             local_ipc::prepare_root(&directory)?;
-            for entry in fs::read_dir(directory)?.take(5) {
+            for (count, entry) in fs::read_dir(directory)?.take(5).enumerate() {
+                ensure!(count < 4, "runtime uninstall inventory exceeds bound");
                 let entry = entry?;
+                if preserved_payload.as_ref().is_some_and(|preserved| {
+                    entry.file_name() == preserved.file_name().unwrap_or_default()
+                        && entry.path().canonicalize().ok().as_ref() == Some(preserved)
+                }) {
+                    continue;
+                }
                 let identity = entry
                     .file_name()
                     .into_string()
@@ -312,6 +320,6 @@ pub(super) async fn uninstall(root: &Path) -> Result<serde_json::Value> {
     fs::remove_file(intent_path)?;
     sync_directory(root)?;
     Ok(
-        serde_json::json!({"uninstalled":true,"project_data_preserved":true,"service_metadata_preserved":true}),
+        serde_json::json!({"uninstalled":true,"project_data_preserved":true,"service_metadata_preserved":true,"preserved_damaged_payload":preserved_payload}),
     )
 }

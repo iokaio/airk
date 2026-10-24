@@ -450,6 +450,14 @@ pub(super) fn saved_control(root: &Path) -> Result<PathBuf> {
     );
     Ok(layout.state.join("control"))
 }
+pub(super) fn retained_parameters(root: &Path) -> Result<(PathBuf, RuntimeChannel)> {
+    let layout = Layout::read(root)?.context("runtime state layout missing")?;
+    ensure!(
+        layout.ready && layout.claimed()?,
+        "runtime state layout is not claimed"
+    );
+    Ok((layout.state, layout.channel))
+}
 /// Record initialization before any registry creation, under singleton ownership.
 pub(super) fn record_control(lease: &airk_store::service::ServiceLease) -> Result<()> {
     let control = control_location(lease.root())?;

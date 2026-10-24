@@ -291,6 +291,20 @@ pub(super) fn stage_with_layout(
     channel: RuntimeChannel,
 ) -> Result<Approval> {
     let _lock = install_lock(root)?;
+    payload_repair::require_settled(root)?;
+    stage_locked(source, root, approved, basis, state, channel, true)
+}
+
+/// Caller holds installation and native quiescence leases for explicit repair.
+pub(super) fn stage_locked(
+    source: &Path,
+    root: &Path,
+    approved: &str,
+    basis: VerificationBasis,
+    state: Option<&Path>,
+    channel: RuntimeChannel,
+    launcher: bool,
+) -> Result<Approval> {
     managed::require_unmanaged(root)?;
     ensure!(
         !root.join("uninstall.json").try_exists()?,
@@ -313,7 +327,9 @@ pub(super) fn stage_with_layout(
             fs::remove_file(StageIntent::path(root, approved))?;
             sync_directory(root)?;
         }
-        prepare_launcher(root, &main)?;
+        if launcher {
+            prepare_launcher(root, &main)?;
+        }
         return Ok(approval);
     }
     let intent = if StageIntent::path(root, approved).try_exists()? {
@@ -371,19 +387,30 @@ pub(super) fn stage_with_layout(
         sync_directory(root)?;
         intent
     };
-    let result = copy(&source, root, &intent, &inventory, self_test);
+    let result = copy_payload(&source, root, &intent, &inventory, self_test, launcher);
     if result.is_err() {
         let _ = abort(root, approved);
     }
     result
 }
 
+#[cfg(test)]
 fn copy(
     source: &Path,
     root: &Path,
     intent: &StageIntent,
     inventory: &InstallManifest,
     verify: impl FnOnce(&Path) -> Result<()>,
+) -> Result<Approval> {
+    copy_payload(source, root, intent, inventory, verify, true)
+}
+fn copy_payload(
+    source: &Path,
+    root: &Path,
+    intent: &StageIntent,
+    inventory: &InstallManifest,
+    verify: impl FnOnce(&Path) -> Result<()>,
+    launcher: bool,
 ) -> Result<Approval> {
     let directory = intent.directory(root);
     if !directory.try_exists()? {
@@ -500,7 +527,9 @@ fn copy(
     sync_directory(&root.join("runtimes"))?;
     fs::remove_file(StageIntent::path(root, &intent.approval.manifest_sha256))?;
     sync_directory(root)?;
-    prepare_launcher(root, &destination.join(main_name()))?;
+    if launcher {
+        prepare_launcher(root, &destination.join(main_name()))?;
+    }
     Ok(intent.approval.clone())
 }
 

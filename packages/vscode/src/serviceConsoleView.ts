@@ -13,7 +13,7 @@ export interface ServiceConsoleState {
     pending:{id:string;title:string;unknown:boolean;lifecycle?:boolean;forceAvailable?:boolean}[]; preview?:string; includePaths:boolean; message?:string;
 }
 export type ConsoleAction = {type:'service';revision:string;action:string;project?:string;id?:string;selected?:boolean;scope?:'one'|'selected'|'all';operation?:RepairOperation;includePaths?:boolean;allowFallback?:boolean};
-const simple=['refresh','connect','start','stop','restart','logs','resources','responseMode','recoverLifecycle','abandonLifecycle','startEmbedding','stopEmbedding','forceEmbedding','firstPage','nextPage','morePlan','refreshPlan','pausePlan','resumePlan','cancelPlan','approvePlan','previewReport','copyReport'];
+const simple=['refresh','connect','start','stop','restart','repairRuntime','logs','resources','responseMode','recoverLifecycle','abandonLifecycle','startEmbedding','stopEmbedding','forceEmbedding','firstPage','nextPage','morePlan','refreshPlan','pausePlan','resumePlan','cancelPlan','approvePlan','previewReport','copyReport'];
 const projects=['inspect','index','pause','resume','restartProject','watch','modelSetup'];
 const operations=['auto','verify','recover','reconcile','vectors','rebuild'];
 /** Messages select fixed host-owned operations; no paths, commands, tokens or RPC bodies are accepted. */
@@ -117,6 +117,7 @@ export function consoleContent(state:ServiceConsoleState):string {
     const projects=state.page?.projects.map(row=>projectRow(row,state)).join('')??'<p>No project page has been observed.</p>';
     const lifecycle=obj(state.bootstrap.value?.lifecycle),pending=obj(lifecycle.pending);
     const manager=obj(state.bootstrap.value?.startupManager);
+    const repair=obj(state.bootstrap.value?.payloadRepair);
     return `<h1>AIRK Service Console</h1><p>${e(state.authority)} · extension ${e(state.version)} · ${state.connected?'Connected':'Disconnected'}${state.busy?' · Working':''}</p>
         ${!state.trusted?'<p role="alert">Trust the workspace before connecting AIRK or requesting work.</p>':''}
         ${state.message?`<p role="status">${e(state.message)}</p>`:''}
@@ -124,6 +125,7 @@ export function consoleContent(state:ServiceConsoleState):string {
         ${button('start','Start service','',unavailable||state.lifecycle==='external')}${button('restart','Restart service','',unavailable||!state.connected||state.lifecycle==='external')}
         ${button('stop','Stop service','',unavailable||(!state.connected||state.health.state!=='live')&&typeof lifecycle.recorded_instance!=='string'||state.lifecycle==='external')}${button('logs','Open service logs','',state.busy)}${button('resources','Resource settings','',unavailable||!state.connected)}</div>
         ${state.lifecycle==='external'?'<p>Startup, stop and restart are controlled by the external service manager.</p>':''}
+        ${button('repairRuntime','Review runtime payload repair','',unavailable||state.lifecycle!=='on-demand'||lifecycle.explicitly_stopped!==true)}
         <p>MCP response mode: <strong>${e(state.responseMode??'terse')}</strong>. Full adds diagnostic provenance, readiness and coverage details. Agents can request Full for one call when those details are needed.</p>
         ${button('responseMode','Choose terse / full responses','',unavailable)}
         <h2>Runtime and observations</h2>${observation('Service',state.health)}${observation('Bootstrap',state.bootstrap)}
@@ -131,6 +133,7 @@ export function consoleContent(state:ServiceConsoleState):string {
         ${facts([['Selected payload verified',state.bootstrap.value?.payloadVerified],['Cached registry failure',state.bootstrap.value?.registryError],
             ['Startup manager observation',manager.mode],['Login registration installed',manager.installed],['Manager reports running',manager.running],
             ['Registration definition matches',manager.registered_definition_matches],['Registration verification failed',manager.verification_failed]])}
+        ${facts([['Runtime repair phase',repair.phase],['Runtime repair preview',repair.preview],['Preserved damaged slot',repair.preserved_directory]])}
         ${facts([['Explicitly stopped',lifecycle.explicitly_stopped],['Pending native lifecycle request',pending.id],['Native lifecycle phase',pending.phase]])}
         ${pending.id?button('recoverLifecycle','Resume saved native lifecycle','',unavailable)+button('abandonLifecycle','Abandon saved native lifecycle intent','',unavailable):''}
         ${facts([['Service instance',health.instance],['Native version',health.version],['Protocol',health.protocol],['Service process',health.process_id],
@@ -179,6 +182,10 @@ export function diagnosticPreview(state:ServiceConsoleState,includePaths:boolean
     const report:RecordValue={schemaVersion:1,capturedAt:new Date().toISOString(),authority:includePaths?state.authority:'selected execution host',extensionVersion:state.version,
         observations:Object.fromEntries(['health','resources','model','sources','bootstrap'].map(name=>{const observation=state[name as 'health'];return [name,{state:observation.state,checkedAt:observation.checkedAt,code:observation.code}];})),
         service:fields(health,['instance','version','protocol','process_id','executable_sha256','runtime_sha256','uptime_ms',...(includePaths?['user']:[])]),
+        bootstrap:fields(obj(state.bootstrap.value),['installed','payloadVerified','registryError','error','platform','bundleDigest',...(includePaths?['installDir']:[])]),
+        startupManager:fields(obj(state.bootstrap.value?.startupManager),['mode','id','platform','installed','loaded','running','registered_definition_matches','verification_failed']),
+        runtimeRepair:fields(obj(state.bootstrap.value?.payloadRepair),['phase','runtime','preview',...(includePaths?['preserved_directory']:[])]),
+        lifecycle:fields(obj(state.bootstrap.value?.lifecycle),['explicitly_stopped','recorded_instance']),
         resources:fields(resources,['resident_workers','resident_limit','running_jobs','waiting_projects','logical_cpus','extraction_threads_limit','extraction_threads_reserved','inference_threads_limit','memory_limit_bytes','memory_reserved_bytes','observed_rss_bytes','available_memory_bytes','telemetry_complete','pressure','pending_provider_drains','provider_drain_error']),
         resourceConfiguration:fields(obj(resources.configuration),['preset','extraction_threads','inference_threads','memory_bytes','background_io_bytes_per_second']),
         inference:fields(model,['available','worker','loads','reuses','sessions','observation_age_ms']),
