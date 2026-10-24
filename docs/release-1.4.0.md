@@ -49,3 +49,6 @@ Installed control initialization now has an independent state-level receipt, wri
 
 
 Service-bound MCP execution now uses one shared native materialization budget per project worker across all clients, evidence/status calls, rendering and usage accounting. Accepted work keeps that budget after transport cancellation until completion, and shared shutdown drains it once. Independent service health remains outside this project budget. The standalone 1.3.x adapter retains its existing separate four-evidence/two-control capacity until final cutover.
+
+
+Each native 1.4 data root now belongs to one canonical control directory and durable registry namespace. Registration and activated workers reject foreign/recreated registry ownership; active workers recheck their saved authority before queries and jobs. Finite quota-admitted receipts resume exact interrupted claims. Legacy storage remains separate; populated unbound 1.4 development state requires its old runtime or fresh storage instead of implicit adoption.

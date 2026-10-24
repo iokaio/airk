@@ -251,6 +251,11 @@ impl Management {
                                         .downcast_ref::<airk_core::service_maintenance::PlanError>()
                                         .map(ToString::to_string)
                                     })
+                                    .or_else(|| {
+                                        (error.is::<airk_store::service::data_scope::ForeignDataRoot>()
+                                            || error.is::<airk_store::service::data_scope::UnboundDataRoot>())
+                                            .then(|| "data_root_scope_conflict".into())
+                                    })
                                     .unwrap_or_else(|| "invalid_registry_request".into());
                                 ControlResponse::Failure { code }
                             }),

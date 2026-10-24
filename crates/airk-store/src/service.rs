@@ -6,6 +6,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[path = "service_data_scope.rs"]
+pub mod data_scope;
+
 #[path = "service_collection.rs"]
 pub mod collection;
 #[path = "service_model_files.rs"]

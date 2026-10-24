@@ -11,6 +11,18 @@ use std::{
 
 struct Children(Vec<Child>);
 
+// Existing evidence fixtures explicitly bind their storage before pre-populating
+// it. Production workers bind after activation and never adopt unbound 1.4 data.
+fn bind_fixture_data(runtime: &Path, data: &Path) -> Result<()> {
+    airk_cli::local_ipc::prepare_root(runtime)?;
+    let registry = airk_store::service::registry::ServiceRegistry::open(
+        runtime,
+        airk_kernel::service_broker::new_instance_id()?,
+    )?;
+    airk_store::service::data_scope::bind(data, runtime, registry.incarnation()?)?;
+    Ok(())
+}
+
 #[test]
 fn process_logs_survive_shutdown_and_unknown_log_state_does_not_disable_health() -> Result<()> {
     use airk_core::{
@@ -122,6 +134,7 @@ fn maintenance_preview_survives_restart_and_rejects_changed_settings_before_muta
         "# Slate harbor\nRetained slate harbor fixture.\n",
     )?;
     let project = airk_kernel::service_projects::registration(&source, &data, "maintenance")?;
+    bind_fixture_data(&runtime, &data)?;
     let kernel = airk_kernel::Kernel::open_service_collection(&source, Some(data), "maintenance")?;
     kernel.configure_vectors(false)?;
     kernel.index()?;
@@ -385,6 +398,7 @@ fn manually_changed_extra_roots_cannot_capture_another_projects_private_data() -
     )?;
     let project = airk_kernel::service_projects::registration(&source, &data, "public")?;
     let other = airk_kernel::service_projects::registration(&other_source, &other_data, "other")?;
+    bind_fixture_data(&runtime, &data)?;
     let kernel =
         airk_kernel::Kernel::open_service_collection(&source, Some(data.clone()), "public")?;
     kernel.configure_vectors(false)?;
@@ -448,6 +462,7 @@ fn missing_registered_source_still_brokers_retained_evidence_and_reports_a_typed
         "# Copper harbor\nRetained copper harbor fixture.\n",
     )?;
     let project = airk_kernel::service_projects::registration(&source, &data, "missing-source")?;
+    bind_fixture_data(&runtime, &data)?;
     let kernel =
         airk_kernel::Kernel::open_service_collection(&source, Some(data), "missing-source")?;
     kernel.configure_vectors(false)?;
@@ -2124,6 +2139,7 @@ fn denied_registered_source_keeps_direct_queries_and_fails_new_work_without_data
     let original = "Original copper permission fixture.\n";
     fs::write(source.join("memo.txt"), original)?;
     let project = airk_kernel::service_projects::registration(&source, &data, "denied-source")?;
+    bind_fixture_data(&runtime, &data)?;
     let kernel =
         airk_kernel::Kernel::open_service_collection(&source, Some(data), "denied-source")?;
     kernel.configure_vectors(false)?;
@@ -2446,5 +2462,83 @@ fn installed_control_loss_rejects_native_startup_and_restoration_retains_registr
         wait_exit(children.0.last_mut().unwrap())?,
         "restored service did not stop"
     );
+    Ok(())
+}
+
+#[test]
+fn separate_services_cannot_register_the_same_owned_data_root_or_change_its_evidence() -> Result<()>
+{
+    use airk_core::service::{ControlMethod as Method, ControlResponse as Response};
+    let owner = tempfile::tempdir()?;
+    let first = owner.path().join("first-runtime");
+    let second = owner.path().join("second-runtime");
+    let source = owner.path().join("source");
+    let data = owner.path().join("data");
+    fs::create_dir(&source)?;
+    fs::create_dir(&data)?;
+    fs::write(
+        source.join("memo.md"),
+        "# Copper beacon\nOriginal scope fixture.\n",
+    )?;
+    bind_fixture_data(&first, &data)?;
+    let kernel =
+        airk_kernel::Kernel::open_service_collection(&source, Some(data.clone()), "scoped")?;
+    kernel.configure_vectors(false)?;
+    kernel.index()?;
+    let token = kernel
+        .status()?
+        .publication
+        .context("initial evidence missing")?
+        .token;
+    let receipt = fs::read(data.join("service-data-1.4.owner.json"))?;
+    let project = airk_kernel::service_projects::registration(&source, &data, "scoped")?;
+    let mut children = Children(vec![start(&first)?, start(&second)?]);
+    wait_ready(&first)?;
+    wait_ready(&second)?;
+    tokio::runtime::Runtime::new()?.block_on(async {
+        ensure!(
+            matches!(
+                airk_cli::service_runtime::request(
+                    &first,
+                    Method::Register {
+                        project: project.clone()
+                    }
+                )
+                .await?,
+                Response::Registered { .. }
+            ),
+            "original service rejected its owned data"
+        );
+        let response =
+            airk_cli::service_runtime::request(&second, Method::Register { project }).await?;
+        ensure!(
+            matches!(response,Response::Failure {code} if code=="data_root_scope_conflict"),
+            "foreign service did not report storage ownership conflict"
+        );
+        Ok::<_, anyhow::Error>(())
+    })?;
+    ensure!(
+        kernel
+            .status()?
+            .publication
+            .context("retained evidence lost")?
+            .token
+            == token,
+        "foreign registration changed evidence"
+    );
+    ensure!(
+        fs::read(data.join("service-data-1.4.owner.json"))? == receipt,
+        "foreign registration changed ownership"
+    );
+    ensure!(
+        fs::read_to_string(source.join("memo.md"))? == "# Copper beacon\nOriginal scope fixture.\n",
+        "source changed"
+    );
+    for runtime in [&first, &second] {
+        control(runtime, "shutdown")?;
+    }
+    for child in &mut children.0 {
+        ensure!(wait_exit(child)?, "private fixture service did not stop");
+    }
     Ok(())
 }

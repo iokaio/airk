@@ -37,6 +37,7 @@ use tokio::{
 
 struct State {
     identity: WorkerIdentity,
+    storage: airk_store::service::data_scope::BoundDataRoot,
     broker: Mutex<Broker>,
     tools: airk_mcp::local::LocalTools,
     closing: Arc<AtomicBool>,
@@ -127,6 +128,7 @@ async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
                 !request.tool.is_empty() && request.tool.len() <= 128,
                 "invalid tool name"
             );
+            state.storage.check()?;
             let request_id = state
                 .broker
                 .lock()
@@ -287,6 +289,11 @@ pub async fn run() -> Result<()> {
         "project activation identity or allowance mismatch"
     );
     crate::embedding_pool_client::install(pool.map(|access| *access))?;
+    let storage = airk_store::service::data_scope::bind(
+        Path::new(&registration.data_root),
+        &init.runtime,
+        registry.incarnation()?,
+    )?;
     let kernel = Kernel::open_service_collection_for_diagnostics(
         Path::new(&registration.root),
         Some((&registration.data_root).into()),
@@ -334,8 +341,10 @@ pub async fn run() -> Result<()> {
     let activity = Arc::new(Notify::new());
     let busy = Arc::new(AtomicBool::new(false));
     let maintenance_waiting = Arc::new(AtomicBool::new(false));
+    let job_storage = storage.clone();
     let state = Arc::new(State {
         identity,
+        storage,
         broker: Mutex::new(broker),
         tools: airk_mcp::local::LocalTools::with_client(
             kernel.clone(),
@@ -382,6 +391,7 @@ pub async fn run() -> Result<()> {
                     Ok(JobOutcome::Canceled)
                 } else {
                     airk_kernel::service_execution::run(allowance.clone(), || {
+                        job_storage.check()?;
                         airk_kernel::service_execution::checkpoint()?;
                         let kind = if job.kind == JobKind::Repair {
                             use airk_core::service_maintenance::{PlanError, RepairOperation};

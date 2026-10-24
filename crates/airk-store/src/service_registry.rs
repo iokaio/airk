@@ -250,6 +250,11 @@ impl ServiceRegistry {
 
     pub fn register(&mut self, registration: &ProjectRegistration) -> Result<()> {
         registration.validate()?;
+        super::data_scope::check(
+            Path::new(&registration.data_root),
+            &self.root,
+            self.incarnation()?,
+        )?;
         let payload = serde_json::to_vec(registration)?;
         let transaction = self
             .connection

@@ -836,6 +836,9 @@ impl Quota {
                                 entry.file_name() == "collections-1.4"
                                     || entry.file_name() == ".quota-1.4"
                                     || entry.file_name() == ".lifecycle-1.4.lock"
+                                    || entry.file_name() == crate::service::data_scope::OWNER
+                                    || entry.file_name() == crate::service::data_scope::PART
+                                    || entry.file_name() == crate::service::data_scope::LOCK
                             }
                             Namespace::Service => {
                                 entry.file_name() == "collections-1.2"
