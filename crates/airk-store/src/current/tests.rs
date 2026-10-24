@@ -642,6 +642,89 @@ fn changed_artifact_attaches_and_replaces_exact_vector_occurrence() -> Result<()
     expected.sort_by_key(|pointer| pointer.occurrence_id);
     assert_eq!(read.vector_occurrence_pointers(key)?, Some(expected));
     assert_eq!(read.counts()?.live_nodes, 1);
+    let base = read.head().clone();
+    drop(read);
+    // A vector-only replacement must prove that the old physical node is
+    // tombstoned in the same sealed delta. Other paths keep their citations.
+    for old_state in 0..3 {
+        let reservation = fixture
+            .quota
+            .reserve(&fixture.scope.collection, 4 * 1024 * 1024)?;
+        let overlay = graph::GraphOverlay::new(
+            &reservation,
+            fixture.store.current_read(&fixture.scope)?,
+            graph::GraphOverlayLimits {
+                maximum_bytes: 1024 * 1024,
+                ..Default::default()
+            },
+        )?;
+        overlay.append(
+            2,
+            GraphRecord {
+                embedding_key: Some(key),
+                live: true,
+                bytes: vec![8; 16],
+            },
+        )?;
+        if old_state == 1 {
+            overlay.put(1, overlay.read(1)?)?;
+        } else if old_state == 2 {
+            overlay.set_live(1, false)?;
+        }
+        let sealed = overlay.seal()?;
+        let mut target = base.clone();
+        target.sequence += 1;
+        target.graph_head = sealed.descriptor().target.clone();
+        let writer = fixture.store.lock()?;
+        let mut current =
+            fixture
+                .store
+                .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+        let replacement = prepared_occurrence(&fixture, &second, key, 2)?;
+        let prepared = current.prepare_artifacts_with_resources(
+            &base.token()?,
+            target,
+            &sealed,
+            ArtifactVectorChanges {
+                configuration: None,
+                artifacts: &[],
+                vector_inputs: Some(std::slice::from_ref(&second)),
+                occurrences: std::slice::from_ref(&replacement),
+            },
+            None,
+            br#"{"engine":"test","sequence":4}"#,
+            &[],
+            &[resources::ResourceChange {
+                key: "semantic-policy".into(),
+                reference: None,
+            }],
+        );
+        if old_state < 2 {
+            let message = format!("{:#}", prepared.unwrap_err());
+            assert!(
+                message.contains(if old_state == 0 {
+                    "no sealed afterimage"
+                } else {
+                    "graph ID differs"
+                }),
+                "{message}"
+            );
+            assert_eq!(current.phase()?, TransactionPhase::Ready);
+        } else {
+            let pending = prepared?;
+            current.mark_applying(&pending)?;
+            current.commit(&pending, pending.target.lexical_commit)?;
+        }
+    }
+    let read = fixture.store.current_read(&fixture.scope)?;
+    let binding = read.vector_binding(key)?.unwrap();
+    assert_eq!(binding.graph_id, 2);
+    assert_eq!(binding.occurrence_ids.len(), 2);
+    assert_eq!(read.counts()?.live_nodes, 1);
+    assert_eq!(
+        read.artifact(&second.artifact.path)?.unwrap().content_hash,
+        second.artifact.content_hash
+    );
     Ok(())
 }
 

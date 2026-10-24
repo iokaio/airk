@@ -1549,6 +1549,23 @@ impl CurrentWriter<'_> {
             "changed-artifact publication base expired"
         );
         let mut plan = map::MapPlan::new(self.connection()?, &self.scope, base.artifact_root)?;
+        if let Some(inputs) = vector_inputs {
+            for input in inputs {
+                let key = map::key(
+                    &self.scope,
+                    map::MapDomain::Artifact,
+                    input.artifact.path.as_bytes(),
+                )?;
+                ensure!(
+                    plan.get(key)?.as_deref() == Some(input.bytes()?.as_slice()),
+                    "vector-only input differs from current artifact"
+                );
+                prior_sources.insert(
+                    input.artifact.path.clone(),
+                    Some(input.artifact.content_hash.parse()?),
+                );
+            }
+        }
         // Validate bootstrap configuration against the committed base. Retained
         // change metadata below mutates the plan even when no artifacts exist.
         let mut collection =

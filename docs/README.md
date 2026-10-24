@@ -18,6 +18,7 @@ The [1.3.0 release](release-1.3.0.md) retires the former `airk_history` MCP endp
 - [Retained service events, bounded paging and explicit retry](service-events.md)
 - [Cached project inspection and maintenance guards](service-inspection.md)
 - [Durable service maintenance plans](service-maintenance.md): guarded previews, frozen scope, approved execution and partial-failure receipts.
+- [Vector regeneration from retained evidence](service-vector-regeneration.md): forced recomputation, bounded turns and atomic citation/node replacement.
 - [Bounded process logs and down-service diagnostics](service-logging.md). Native placement is bound to install/state ownership and source isolation.
 - [Native service brokerage and direct query protocol](service-protocol.md)
 - [Service resource admission, presets and observations](service-resources.md), including one shared per-worker materialization budget through client cancellation.

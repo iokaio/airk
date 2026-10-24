@@ -26,6 +26,7 @@ use std::{
 struct Transport {
     available: AtomicBool,
     opens: AtomicUsize,
+    embedded: AtomicUsize,
 }
 struct Adapter(Arc<Transport>);
 impl Connector for Adapter {
@@ -55,10 +56,13 @@ impl RemoteSession for Transport {
                     special_tokens: 0,
                 },
             }),
-            Request::Embed { texts, .. } => Ok(Response::Embedded {
-                vectors: texts.iter().map(|_| Some(vec![1.0, 0.0])).collect(),
-                execution: Box::new(EmbeddingCacheStats::default()),
-            }),
+            Request::Embed { texts, .. } => {
+                self.embedded.fetch_add(texts.len(), Ordering::AcqRel);
+                Ok(Response::Embedded {
+                    vectors: texts.iter().map(|_| Some(vec![1.0, 0.0])).collect(),
+                    execution: Box::new(EmbeddingCacheStats::default()),
+                })
+            }
             Request::Peak => Ok(Response::Peak { bytes: 4096 }),
             _ => anyhow::bail!("unexpected fixture transport operation"),
         }
@@ -93,7 +97,10 @@ fn source_and_replacement_publish_without_helper_and_semantics_resume_in_bounded
     for n in 0..40 {
         fs::write(
             source.join(format!("memo-{n:02}.md")),
-            format!("Copper beacon original entry {n}.\n"),
+            format!(
+                "Copper beacon original entry {}.\n",
+                if n == 39 { 0 } else { n }
+            ),
         )?;
     }
     let vocabulary = br#"{"copper":[1.0,0.0],"beacon":[0.0,1.0]}"#;
@@ -113,6 +120,7 @@ fn source_and_replacement_publish_without_helper_and_semantics_resume_in_bounded
     let transport = Arc::new(Transport {
         available: AtomicBool::new(false),
         opens: AtomicUsize::new(0),
+        embedded: AtomicUsize::new(0),
     });
     embedding_worker::install_connector(Arc::new(Adapter(transport.clone())))?;
     let kernel = Kernel::open_service_collection(&source, Some(data.clone()), "phases")?
@@ -197,5 +205,115 @@ fn source_and_replacement_publish_without_helper_and_semantics_resume_in_bounded
         "service copied collection-local model assets"
     );
     assert!(assets.directory().is_dir());
+    let before = current.status()?;
+    let embedded = transport.embedded.load(Ordering::Acquire);
+    let regeneration = Sha256Digest::from_bytes([6; 32]);
+    let queued = work(identity, 6, || {
+        current.begin_service_vector_regeneration(regeneration)
+    })?;
+    assert_eq!(queued.state, SemanticState::Pending);
+    assert_eq!(queued.selected_artifacts, 40);
+    assert_eq!(queued.completed_artifacts, 0);
+    assert_eq!(current.status()?.indexed_vectors, before.indexed_vectors);
+    assert_eq!(
+        current.status()?.publication.unwrap().token.incarnation,
+        before.publication.unwrap().token.incarnation
+    );
+    let query = SearchQuery {
+        text: "beacon".into(),
+        path_prefix: None,
+        limit: 4,
+        max_bytes: 4096,
+    };
+    assert!(!current.search(&query)?.hits.is_empty());
+    let queued_token = current.status()?.publication.unwrap().token;
+    work(identity, 7, || {
+        current.begin_service_vector_regeneration(regeneration)
+    })?;
+    assert_eq!(
+        current.status()?.publication.unwrap().token,
+        queued_token,
+        "same accepted job requeued the manifest"
+    );
+    let partial = work(identity, 8, || current.service_enrichment_turn())?
+        .semantic_readiness
+        .unwrap();
+    assert_eq!(partial.completed_artifacts, 32);
+    for path in ["memo-00.md", "memo-39.md"] {
+        let shared = current.semantic_search(&SearchQuery {
+            text: "beacon".into(),
+            path_prefix: Some(path.into()),
+            limit: 4,
+            max_bytes: 4096,
+        })?;
+        assert!(
+            shared.hits.iter().any(|hit| hit.citation.path == path),
+            "citation lost between regeneration turns: {path}"
+        );
+    }
+    work(identity, 9, || {
+        current.begin_service_vector_regeneration(regeneration)
+    })?;
+    assert_eq!(current.status()?.semantic_readiness.completed_artifacts, 32);
+    work(identity, 10, || current.service_enrichment_turn())?;
+    assert_eq!(
+        current.status()?.semantic_readiness.state,
+        SemanticState::Ready
+    );
+    assert!(
+        transport.embedded.load(Ordering::Acquire) >= embedded + 39,
+        "regeneration reused cached embeddings"
+    );
+    assert_eq!(
+        fs::read_to_string(offline.join("memo-00.md"))?,
+        "Copper beacon original entry 0.\n"
+    );
+    for path in ["memo-00.md", "memo-39.md"] {
+        let all = current.semantic_search(&SearchQuery {
+            text: "beacon".into(),
+            path_prefix: Some(path.into()),
+            limit: 4,
+            max_bytes: 4096,
+        })?;
+        assert!(
+            all.hits.iter().any(|hit| hit.citation.path == path),
+            "shared citation lost: {path}"
+        );
+    }
+    // A deleted input can leave a proven empty/tombstoned binding. Readding
+    // that source and explicitly regenerating must not require a new live-to-
+    // dead transition for the node that was already dead in the base.
+    fs::rename(&offline, &source)?;
+    fs::remove_file(source.join("memo-00.md"))?;
+    fs::remove_file(source.join("memo-39.md"))?;
+    work(identity, 11, || current.index_service_sources())?;
+    fs::write(
+        source.join("memo-00.md"),
+        "Copper beacon original entry 0.\n",
+    )?;
+    work(identity, 12, || current.index_service_sources())?;
+    work(identity, 13, || {
+        current.begin_service_vector_regeneration(Sha256Digest::from_bytes([13; 32]))
+    })?;
+    work(identity, 14, || current.service_enrichment_turn())?;
+    work(identity, 15, || current.service_enrichment_turn())?;
+    let ready = current.status()?.semantic_readiness;
+    assert_eq!(ready.state, SemanticState::Ready);
+    assert_eq!(ready.completed_artifacts, 39);
+    assert!(
+        !current
+            .semantic_search(&SearchQuery {
+                text: "beacon".into(),
+                path_prefix: Some("memo-00.md".into()),
+                limit: 4,
+                max_bytes: 4096,
+            })?
+            .hits
+            .is_empty()
+    );
+    assert_eq!(
+        fs::read_to_string(source.join("memo-00.md"))?,
+        "Copper beacon original entry 0.\n"
+    );
     Ok(())
 }

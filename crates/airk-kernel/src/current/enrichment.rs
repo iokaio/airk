@@ -81,6 +81,8 @@ pub(super) struct SemanticWork {
     pub fully_ready_unix_ms: Option<u64>,
     pub pending: Vec<PendingArtifact>,
     pub failure: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub regeneration_job: Option<Sha256Digest>,
 }
 
 impl SemanticWork {
@@ -301,11 +303,8 @@ pub(super) fn prepare_work(
         } else {
             all_units_countable
         },
-        force_recompute: if unchanged {
-            compatible.is_some_and(|p| p.force_recompute)
-        } else {
-            full
-        },
+        force_recompute: full
+            || compatible.is_some_and(|p| p.force_recompute && !p.pending.is_empty()),
         first_ready_unix_ms: if unchanged {
             compatible.map_or(now_unix_ms()?, |p| p.first_ready_unix_ms)
         } else {
@@ -320,12 +319,129 @@ pub(super) fn prepare_work(
         },
         pending,
         failure: None,
+        regeneration_job: compatible.and_then(|p| p.regeneration_job),
     };
     work.validate()?;
     Ok(work)
 }
 
 impl Kernel {
+    /// Queue every eligible retained extraction without scanning live sources or
+    /// discarding readable vectors. Subsequent service turns replace bounded batches.
+    pub fn begin_service_vector_regeneration(
+        &self,
+        job: Sha256Digest,
+    ) -> Result<SemanticReadiness> {
+        ensure!(
+            self.is_service_collection(),
+            "service project owner required"
+        );
+        crate::service_execution::checkpoint()?;
+        let scope = self.current_scope()?.context("workspace is not indexed")?;
+        let quota = self.collection_quota()?;
+        super::recover_current(&self.store, &quota, &scope)?;
+        let writer = self.store.lock()?;
+        let read = self.store.current_read(&scope)?;
+        if let Some(work) = read_work(&read, &self.store)?
+            && work.regeneration_job == Some(job)
+        {
+            return Ok(work.readiness(read_policy(&read, &self.store)?));
+        }
+        let state = read
+            .collection_state()?
+            .context("current configuration missing")?;
+        let configuration = state.configuration;
+        let model = configuration
+            .model
+            .context("vector regeneration requires an indexed model")?;
+        ensure!(
+            self.vectors_enabled()?,
+            "vectors are disabled for this project"
+        );
+        let mut pending = Vec::new();
+        let mut bytes = 0usize;
+        let mut after = None;
+        loop {
+            crate::service_execution::checkpoint()?;
+            let page = read.lookup_paths(
+                airk_store::current::postings::Lookup::Files,
+                "",
+                after.as_deref(),
+                256,
+            )?;
+            for path in page.paths {
+                let artifact = read.artifact(&path)?.context("current artifact missing")?;
+                let retained = artifact
+                    .retained
+                    .as_ref()
+                    .context("retained extraction missing")?;
+                let profile = retained
+                    .profile
+                    .as_ref()
+                    .context("retained profile missing")?;
+                if !configuration
+                    .vector_selection
+                    .decision(&path, profile, &artifact.language)?
+                    .eligible
+                {
+                    continue;
+                }
+                let item = PendingArtifact {
+                    path,
+                    source_hash: artifact.content_hash.parse()?,
+                    extraction_object: retained.object.parse()?,
+                };
+                bytes = bytes
+                    .checked_add(serde_json::to_vec(&item)?.len())
+                    .context("semantic manifest overflow")?;
+                ensure!(
+                    pending.len() < MAX_PENDING_INPUTS && bytes <= 64 << 20,
+                    "semantic regeneration admission exceeded"
+                );
+                pending.push(item);
+            }
+            after = page.next_after;
+            if after.is_none() {
+                break;
+            }
+        }
+        pending.sort_unstable_by(|left, right| left.path.cmp(&right.path));
+        let now = now_unix_ms()?;
+        let work = SemanticWork {
+            version: 1,
+            selection_digest: configuration.vector_selection.digest()?,
+            pipeline_digest: model.pipeline_digest,
+            selected_artifacts: pending.len() as u64,
+            completed_artifacts: 0,
+            selected_units: None,
+            completed_units: 0,
+            all_units_countable: true,
+            force_recompute: true,
+            first_ready_unix_ms: now,
+            fully_ready_unix_ms: pending.is_empty().then_some(now),
+            pending,
+            failure: None,
+            regeneration_job: Some(job),
+        };
+        let policy = read_policy(&read, &self.store)?;
+        drop(read);
+        let reservation = self.publication_reservation()?;
+        CurrentUpdater {
+            store: &self.store,
+            quota: &quota,
+            scope: &scope,
+            writer: &writer,
+            reservation: &reservation,
+            configuration: None,
+        }
+        .apply_with_resources(
+            &[],
+            None,
+            &[work.resource_change(&self.store, &reservation)?],
+        )?;
+        Ok(work.readiness(policy))
+    }
+
     pub fn set_default_semantic_search_policy(
         &self,
         policy: DefaultSearchPolicy,

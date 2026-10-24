@@ -454,6 +454,19 @@ pub async fn run() -> Result<()> {
                                     .require_service_sources()
                                     .map_err(|_| PlanError::SourceUnavailable)?;
                             }
+                            if approved.operation == RepairOperation::Vectors {
+                                // The approved regeneration supersedes an older
+                                // continuation. A crash/failure before its success
+                                // must not silently resume that old chain.
+                                registry.set_background_pending(
+                                    &job_lease,
+                                    JobKind::Vectors,
+                                    false,
+                                )?;
+                                kernel
+                                    .refresh_service_snapshot()?
+                                    .begin_service_vector_regeneration(job.id)?;
+                            }
                             approved
                                 .operation
                                 .job_kind()

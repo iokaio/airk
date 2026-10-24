@@ -31,6 +31,40 @@ fn pending_fixture() -> Result<(tempfile::TempDir, Kernel)> {
 }
 
 #[test]
+fn source_changes_preserve_forced_recomputation_for_unfinished_semantic_work() -> Result<()> {
+    let (_directory, kernel) = pending_fixture()?;
+    let read = kernel.current_reader()?;
+    let mut previous = read_work(&read, &kernel.store)?.unwrap();
+    previous.force_recompute = true;
+    let job = Sha256Digest::from_bytes([42; 32]);
+    previous.regeneration_job = Some(job);
+    let configuration = read.collection_state()?.unwrap().configuration;
+    let snapshot = kernel.current_scan_projection(&read)?;
+    let (path, artifact) = snapshot.artifacts.first_key_value().unwrap();
+    let changes = BTreeMap::from([(
+        path.clone(),
+        ArtifactChange::Upsert(Box::new(CapturedInput::new(artifact.clone()))),
+    )]);
+    let next = prepare_work(
+        &snapshot,
+        &changes,
+        Some(&previous),
+        &configuration.vector_selection,
+        configuration.model.unwrap().pipeline_digest,
+        false,
+    )?;
+    assert!(next.force_recompute);
+    assert_eq!(next.regeneration_job, Some(job));
+    assert_eq!(next.pending.len(), 1);
+    // Older canonical manifests omit the additive field and remain readable.
+    previous.regeneration_job = None;
+    let bytes = previous.canonical_bytes()?;
+    assert!(!String::from_utf8_lossy(&bytes).contains("regeneration_job"));
+    assert!(SemanticWork::from_bytes(&bytes)?.regeneration_job.is_none());
+    Ok(())
+}
+
+#[test]
 fn bounded_drain_prioritizes_edits_and_docs_yields_on_pause_and_sweeps_once() -> Result<()> {
     let (_directory, kernel) = pending_fixture()?;
     for index in 0..64 {

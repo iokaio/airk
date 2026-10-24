@@ -151,9 +151,13 @@ impl VectorPlan<'_> {
     }
 
     fn retire(&mut self, changes: &[ArtifactChange]) -> Result<()> {
+        self.retire_paths(changes.iter().map(path))
+    }
+
+    fn retire_paths<'a>(&mut self, paths: impl Iterator<Item = &'a str>) -> Result<()> {
         let mut work = 0usize;
-        for change in changes {
-            let Some(index) = self.read.path_occurrences(path(change))? else {
+        for path in paths {
+            let Some(index) = self.read.path_occurrences(path)? else {
                 continue;
             };
             for ordinal in 0..index.count {
@@ -169,7 +173,7 @@ impl VectorPlan<'_> {
                     .context("current occurrence missing")?;
                 let pointer = OccurrencePointer::decode(&bytes, id)?;
                 ensure!(
-                    pointer.path == path(change)
+                    pointer.path == path
                         && pointer.path_ordinal == ordinal
                         && pointer.source_hash == index.source_hash,
                     "current occurrence differs from changed path"
@@ -219,7 +223,9 @@ impl VectorPlan<'_> {
                 self.registry.len() < MAX_PENDING_VECTOR_INPUTS,
                 "current vector registry work limit exceeded"
             );
-            if let Some(id) = self.existing(key)? {
+            if let Some(id) = self.existing(key)?
+                && !semantic.cache.bypass
+            {
                 self.registry.insert(key, Some(id));
             } else {
                 missing.entry(key).or_insert(index);
@@ -249,6 +255,12 @@ impl VectorPlan<'_> {
                 self.registry.len() < MAX_PENDING_VECTOR_INPUTS,
                 "current vector registry work limit exceeded"
             );
+            let retained_members = if let Some(prior) = self.memberships.get(&key) {
+                graph.set_live(prior.id, key, false)?;
+                prior.remaining
+            } else {
+                0
+            };
             let id = if let Some(vector) = vector {
                 ensure!(
                     self.memberships.len() < MAX_PENDING_VECTOR_INPUTS,
@@ -258,11 +270,20 @@ impl VectorPlan<'_> {
                 let id = graph.insert(key, &vector)?;
                 semantic.cache.stats.graph_insert_us +=
                     u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
-                self.memberships
-                    .insert(key, VectorMembership { id, remaining: 0 });
+                self.memberships.insert(
+                    key,
+                    VectorMembership {
+                        id,
+                        remaining: retained_members,
+                    },
+                );
                 semantic.cache.stats.vector_graph_nodes += 1;
                 Some(id)
             } else {
+                ensure!(
+                    retained_members == 0,
+                    "recomputed vector omitted retained occurrences"
+                );
                 None
             };
             self.registry.insert(key, id);
@@ -539,6 +560,9 @@ impl CurrentUpdater<'_> {
         };
         if !replacing {
             plan.retire(changes)?;
+            if let Some(inputs) = semantic_inputs {
+                plan.retire_paths(inputs.iter().map(|input| input.artifact.path.as_str()))?;
+            }
         }
         let descriptor = semantic
             .as_ref()

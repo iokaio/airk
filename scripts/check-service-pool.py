@@ -55,14 +55,17 @@ class Bridge:
         if result.get("isError") or "memo.md" not in json.dumps(result):
             raise RuntimeError(f"{mode} retrieval lost the original collection citation: {result}")
 
-    def readiness(self):
+    def status(self):
         for attempt in range(3):
             result = self.call("tools/call", {"name": "airk_status", "arguments": {"response_mode": "full"}})
             if not result.get("isError"):
-                return json.loads(result["content"][0]["text"])["semantic_readiness"]
+                return json.loads(result["content"][0]["text"])
             if attempt == 2:
                 raise RuntimeError(f"Native readiness query failed: {result}")
             time.sleep(0.05)
+
+    def readiness(self):
+        return self.status()["semantic_readiness"]
 
     def wait_semantics(self, expected="ready"):
         deadline = time.monotonic() + 180
@@ -233,6 +236,40 @@ def main():
             if rpc("embedding_status").get("loads") != 1:
                 raise RuntimeError("Retirement unnecessarily discarded the compatible loaded model")
             print("Replacement preserved direct clients and one MiniLM load; old incarnation retired while shared files stayed pinned.", flush=True)
+
+            before = bridges[0].status()["publication"]
+            plan = rpc({"plan_create": {"caller": uuid.uuid4().hex,
+                "key": {"namespace": epoch["namespace"], "epoch": epoch["epoch"], "nonce": uuid.uuid4().hex},
+                "request": {"selection": {"selected": [projects[0]["binding"]]}, "operation": "vectors"}}})["plan"]
+            deadline = time.monotonic() + 180
+            while plan["phase"] != "ready":
+                if plan["phase"] != "planning" or time.monotonic() >= deadline:
+                    raise RuntimeError(f"Vector regeneration preview failed: {plan}")
+                time.sleep(0.2)
+                plan = rpc({"plan": {"id": plan["id"]}})["plan"]
+            page = rpc({"plan_items": {"id": plan["id"], "after": None, "limit": 32}})["page"]
+            if page["after"] is not None or len(page["items"]) != 1 or page["items"][0]["action"] != "vectors":
+                raise RuntimeError(f"Vector regeneration preview selected unexpected work: {page}")
+            rpc({"plan_execute": {"id": plan["id"], "preview": plan["preview_digest"], "allow_fallback": False}})
+            while True:
+                plan = rpc({"plan": {"id": plan["id"]}})["plan"]
+                if plan["phase"] == "finished":
+                    if plan["counts"]["succeeded"] != 1:
+                        raise RuntimeError(f"Vector regeneration did not succeed: {plan}")
+                    break
+                if time.monotonic() >= deadline:
+                    raise RuntimeError(f"Vector regeneration did not finish: {plan}")
+                time.sleep(0.2)
+            bridges[0].wait_semantics()
+            after = bridges[0].status()["publication"]
+            if after["incarnation"] != before["incarnation"] or after["generation"] <= before["generation"]:
+                raise RuntimeError("Vector regeneration did not advance the same index incarnation")
+            for bridge in bridges:
+                bridge.search("lexical")
+                bridge.search("vector")
+            if rpc("embedding_status").get("loads") != 1:
+                raise RuntimeError("Vector regeneration discarded the shared MiniLM session")
+            print("Approved vector regeneration recomputed completed evidence while preserving lexical citations, index incarnation and one MiniLM load.", flush=True)
 
             def event_tail(cursor=None):
                 events = []

@@ -16,6 +16,8 @@ Planning queues distinct read-only inspection jobs. A preview binds sorted proje
 
 The metadata actor dispatches at most four candidates per plan and 16 operations per turn, without opening indexes. Project workers execute the existing bounded verify/recover/reconcile/vector/rebuild paths. Plan jobs do not join another client's or another plan's work, so plan pause/cancellation cannot stop unrelated requests.
 
+An approved `vectors` action now [queues complete vector regeneration](service-vector-regeneration.md), including already completed artifacts. It preserves lexical evidence and drains retained inputs through bounded semantic turns. The initial repair receipt and final semantic readiness remain separate observations; a partial turn does not certify complete coverage.
+
 `plan_pause` stops new admission and pauses running work at existing safe checkpoints. Planning has a ten-minute admission/inspection budget, excluding explicit plan pause. Failed inspections retry at most three times with finite backoff. Typed quota, filesystem-headroom and storage-full failures use at most three action attempts with ten/twenty-second backoff. Every retry revalidates the original preview. Source changes captured during a repair remain independent durable desired work.
 
 `plan_cancel` persists intent, cancels queued owned jobs and signals running owners. Atomic commits remain indivisible. Restart resumes accepted plan metadata and safely queued work. Ambiguous interrupted repair actions fail with a retained receipt instead of being silently replayed. A matching durable rebuild-switch receipt can establish that publication succeeded; it cannot prove retirement completed.
