@@ -203,6 +203,12 @@ pub(crate) fn validate_control_root(control: &Path) -> Result<()> {
 pub(crate) fn record_control_root(lease: &airk_store::service::ServiceLease) -> Result<()> {
     layout::record_control(lease)
 }
+pub(crate) fn record_registry_root(
+    lease: &airk_store::service::ServiceLease,
+    namespace: airk_core::identity::Incarnation,
+) -> Result<()> {
+    layout::record_registry(lease, namespace)
+}
 
 pub(crate) fn log_parent(control: &Path) -> Result<PathBuf> {
     layout::log_parent(control)

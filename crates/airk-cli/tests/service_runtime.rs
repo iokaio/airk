@@ -2421,6 +2421,13 @@ fn installed_control_loss_rejects_native_startup_and_restoration_retains_registr
     control(&root, "shutdown")?;
     ensure!(wait_exit(&mut children.0[0])?, "first service did not stop");
     let marker = fs::read(state.join("airk-control-1.4.owner.json"))?;
+    let namespace_marker = fs::read(state.join("airk-registry-1.4.owner.json"))?;
+    let namespace_binding: Value = serde_json::from_slice(&namespace_marker)?;
+    ensure!(
+        namespace_binding["ready"] == true
+            && namespace_binding["namespace"] == namespace.to_string(),
+        "service accepted metadata before its independent namespace binding"
+    );
     let database = fs::read(root.join("service-1.4.sqlite3"))?;
     let saved = state.join("original-control");
     fs::rename(&root, &saved)?;
@@ -2468,6 +2475,50 @@ fn installed_control_loss_rejects_native_startup_and_restoration_retains_registr
     ensure!(
         wait_exit(children.0.last_mut().unwrap())?,
         "restored service did not stop"
+    );
+    let names = ["service-1.4.sqlite3", "service-1.4.owner.json"];
+    let originals = names
+        .iter()
+        .map(|name| fs::read(root.join(name)))
+        .collect::<std::io::Result<Vec<_>>>()?;
+    for name in names {
+        fs::remove_file(root.join(name))?;
+    }
+    children.0.push(start(&root)?);
+    ensure!(
+        !wait_exit(children.0.last_mut().unwrap())?,
+        "lost registry and owner silently created another authority"
+    );
+    ensure!(
+        names.iter().all(|name| !root.join(name).exists()),
+        "failed admission recreated missing metadata"
+    );
+    ensure!(
+        fs::read(state.join("airk-registry-1.4.owner.json"))? == namespace_marker,
+        "independent namespace proof changed after loss"
+    );
+    for (name, bytes) in names.into_iter().zip(originals) {
+        fs::write(root.join(name), bytes)?;
+    }
+    children.0.push(start(&root)?);
+    wait_ready(&root)?;
+    executor.block_on(async {
+        let Response::RequestEpoch {
+            namespace: actual, ..
+        } = airk_cli::service_runtime::request(&root, Method::RequestEpoch).await?
+        else {
+            anyhow::bail!("twice-restored namespace missing")
+        };
+        ensure!(
+            actual == namespace,
+            "whole-ledger restoration changed authority"
+        );
+        Ok::<_, anyhow::Error>(())
+    })?;
+    control(&root, "shutdown")?;
+    ensure!(
+        wait_exit(children.0.last_mut().unwrap())?,
+        "twice-restored service did not stop"
     );
     Ok(())
 }

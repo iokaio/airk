@@ -9,6 +9,8 @@ const OWNER_PART: &str = "airk-state-1.4.owner.part";
 const MAX_LAYOUT: u64 = 32 * 1024;
 const CONTROL_OWNER: &str = "airk-control-1.4.owner.json";
 const CONTROL_PART: &str = "airk-control-1.4.owner.part";
+#[path = "runtime_registry_binding.rs"]
+mod registry_binding;
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -394,7 +396,11 @@ fn control_binding(control: &Path) -> Result<Option<Layout>> {
         serde_json::from_slice::<Layout>(&read_bounded(&state.join(OWNER), MAX_LAYOUT)?)?
     } else {
         ensure!(
-            !exists(&partial)? && !exists(&state.join(CLAIM))? && !exists(&state.join(OWNER_PART))?,
+            !exists(&partial)?
+                && !exists(&state.join(CLAIM))?
+                && !exists(&state.join(OWNER_PART))?
+                && !exists(&state.join(registry_binding::PIN))?
+                && !exists(&state.join(registry_binding::PART))?,
             "service state ownership is incomplete; control initialization cannot fall back"
         );
         return Ok(None); // Explicit raw development namespace.
@@ -427,6 +433,7 @@ fn control_binding(control: &Path) -> Result<Option<Layout>> {
             );
         }
     }
+    registry_binding::validate(&owner, completed)?;
     Ok(Some(owner))
 }
 /// Must run before directory creation, including explicit foreground startup.
@@ -446,6 +453,7 @@ pub(super) fn record_control(lease: &airk_store::service::ServiceLease) -> Resul
     };
     require_control(&control)?;
     let marker = owner.state.join(CONTROL_OWNER);
+    registry_binding::begin(lease, &owner, exists(&marker)?)?;
     if exists(&marker)? {
         return Ok(());
     }
@@ -473,6 +481,16 @@ pub(super) fn record_control(lease: &airk_store::service::ServiceLease) -> Resul
     drop(file);
     publish_new(&partial, &marker)?;
     sync_directory(&owner.state)
+}
+
+pub(super) fn record_registry(
+    lease: &airk_store::service::ServiceLease,
+    namespace: airk_core::identity::Incarnation,
+) -> Result<()> {
+    let Some(owner) = control_binding(&control_location(lease.root())?)? else {
+        return Ok(());
+    };
+    registry_binding::finish(lease, &owner, namespace)
 }
 
 pub(super) fn log_parent(control: &Path) -> Result<PathBuf> {

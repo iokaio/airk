@@ -224,3 +224,5 @@ git diff --check
 Original code/documentation use the existing [Apache-2.0 license](LICENSE). Dependency notices and release-review gaps are recorded in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Local temp/ reference files are excluded from Git, indexing and Docker builds.
 
 Registry recovery in the opt-in 1.4 development service now refuses lost initialized databases and missing required tables instead of recreating an empty request ledger. Native and extension versions remain 1.3.2 until the complete service cutover; see the [development release record](docs/release-1.4.0.md).
+
+Installed namespace binding now independently pins the completed registry identity outside the control directory; losing both registry files refuses startup without creating another authority. See the [installation development contract](docs/service-installation.md).

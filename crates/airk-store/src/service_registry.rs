@@ -104,6 +104,7 @@ fn owner(root: &Path, existed: bool, incarnation: Incarnation) -> Result<Owner> 
                 metadata.is_file() && !metadata.file_type().is_symlink() && metadata.len() <= 16384,
                 "invalid service registry owner"
             );
+            crate::managed_collection::reject_file_aliases(&path, &metadata)?;
             #[cfg(windows)]
             {
                 use std::os::windows::fs::MetadataExt;
@@ -149,6 +150,37 @@ fn owner(root: &Path, existed: bool, incarnation: Incarnation) -> Result<Owner> 
         }
         Err(error) => Err(error.into()),
     }
+}
+
+/// Read an already completed namespace without creating or opening a database.
+/// Installed-state receipts use this before any directory/registry recovery.
+pub fn retained_namespace(root: &Path) -> Result<Incarnation> {
+    let root = root.canonicalize()?;
+    let path = root.join("service-1.4.sqlite3");
+    let metadata =
+        fs::symlink_metadata(&path).context("initialized service registry is missing")?;
+    ensure!(
+        metadata.is_file()
+            && !metadata.file_type().is_symlink()
+            && metadata.len() > 0
+            && metadata.len() <= MAX_DATABASE_BYTES,
+        "initialized service registry is unavailable or redirected"
+    );
+    crate::managed_collection::reject_file_aliases(&path, &metadata)?;
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        ensure!(
+            metadata.file_attributes() & 0x400 == 0,
+            "redirected service registry"
+        );
+    }
+    let receipt = owner(&root, true, Incarnation::from_bytes([0; 16]))?;
+    ensure!(
+        receipt.ready && receipt.format == 2,
+        "service registry initialization is incomplete"
+    );
+    Ok(receipt.incarnation)
 }
 
 fn bump(connection: &Connection) -> Result<()> {
@@ -548,6 +580,20 @@ impl ServiceRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn retained_namespace_is_read_only_and_refuses_linked_ownership() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        assert!(retained_namespace(directory.path()).is_err());
+        assert!(fs::read_dir(directory.path())?.next().is_none());
+        let namespace = Incarnation::from_bytes([9; 16]);
+        drop(ServiceRegistry::open(directory.path(), namespace)?);
+        assert_eq!(retained_namespace(directory.path())?, namespace);
+        let receipt = directory.path().join("service-1.4.owner.json");
+        fs::hard_link(&receipt, directory.path().join("linked-owner"))?;
+        assert!(retained_namespace(directory.path()).is_err());
+        assert!(ServiceRegistry::open(directory.path(), namespace).is_err());
+        Ok(())
+    }
     fn project(name: &str) -> ProjectRegistration {
         ProjectRegistration::new(
             format!("/original/{name}"),

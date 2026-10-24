@@ -628,3 +628,5 @@ Implementation progress is recorded at the start of this document. The plan itse
 Development shutdown refinement: login Stop/Uninstall authenticates saved inventory identity independently of launchable payload validation and requires exact OS registration proof for fallback stopping. Full removal preserves damaged payloads for explicit follow-up after stopping owned startup; see [installation contracts](service-installation.md).
 
 Development availability refinement: retained reads keep the exact saved source binding through missing roots, permission denial, redirection and non-directory replacement. Status reports the reason independently; new capture remains blocked and unbound collections are never initialized. See [source freshness and availability](service-freshness.md).
+
+Installed namespace binding now independently pins the completed registry identity outside the control directory; losing both registry files refuses startup without creating another authority. See the [installation development contract](service-installation.md).

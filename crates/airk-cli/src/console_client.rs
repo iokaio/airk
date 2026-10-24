@@ -23,6 +23,12 @@ pub struct Response {
 fn failure(code: &str) -> ControlResponse {
     ControlResponse::Failure { code: code.into() }
 }
+fn metadata_only(response: ControlResponse) -> ControlResponse {
+    match response {
+        ControlResponse::Connection { .. } => failure("console_brokerage_forbidden"),
+        response => response,
+    }
+}
 async fn handle(
     root: &Path,
     method: ControlMethod,
@@ -113,7 +119,9 @@ pub async fn run(root: &Path, runtime: Option<airk_core::identity::Sha256Digest>
         };
         let response = Response {
             id: request.id,
-            response: handle(root, request.method, &engine, runtime.as_deref()).await,
+            response: metadata_only(
+                handle(root, request.method, &engine, runtime.as_deref()).await,
+            ),
         };
         let mut bytes = Vec::new();
         if service_ipc::write_frame(&mut bytes, &response).is_err() {
@@ -135,4 +143,40 @@ pub async fn run(root: &Path, runtime: Option<airk_core::identity::Sha256Digest>
         output.flush()?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn unexpected_broker_response_cannot_put_a_bearer_on_the_console_pipe() {
+        use airk_core::{
+            identity::Sha256Digest,
+            service::{ConnectionGrant, WorkerIdentity},
+        };
+        let token = Sha256Digest::from_bytes([0xaa; 32]);
+        let response = metadata_only(ControlResponse::Connection {
+            role: "original-private-fixture".into(),
+            grant: ConnectionGrant {
+                protocol: 1,
+                identity: WorkerIdentity {
+                    service: Incarnation::from_bytes([1; 16]),
+                    worker: Incarnation::from_bytes([2; 16]),
+                    project: Sha256Digest::from_bytes([3; 32]),
+                    fencing_generation: 1,
+                },
+                caller: Incarnation::from_bytes([4; 16]),
+                token,
+                ttl_ms: 30000,
+            },
+        });
+        let serialized = serde_json::to_string(&response).unwrap();
+        assert!(serialized.contains("console_brokerage_forbidden"));
+        assert!(!serialized.contains(&token.to_string()));
+        assert!(!serialized.contains("grant"));
+        assert!(matches!(
+            metadata_only(ControlResponse::Stopping),
+            ControlResponse::Stopping
+        ));
+    }
 }

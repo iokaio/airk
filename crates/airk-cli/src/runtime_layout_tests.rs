@@ -524,6 +524,153 @@ fn initialized_control_loss_never_creates_an_empty_registry_and_restoration_keep
 }
 
 #[test]
+fn completed_namespace_pin_refuses_loss_of_both_registry_files_and_retains_accepted_keys()
+-> Result<()> {
+    use airk_core::service::{JobKind, ProjectRegistration, RequestKey};
+    let (owner, root, state) = fixture()?;
+    initialize(&root, Some(&state), RuntimeChannel::Stable)?;
+    let control = control(&root)?;
+    local_ipc::prepare_root(&control)?;
+    let lease = airk_store::service::ServiceLease::acquire(&control)?;
+    record_control(&lease)?;
+    let initial: serde_json::Value =
+        serde_json::from_slice(&fs::read(state.join(registry_binding::PIN))?)?;
+    assert_eq!(initial["ready"], false);
+    let mut registry = airk_store::service::registry::ServiceRegistry::open(
+        &control,
+        airk_kernel::service_broker::new_instance_id()?,
+    )?;
+    let source = owner.path().canonicalize()?.join("source");
+    let data = owner.path().canonicalize()?.join("data");
+    let project = ProjectRegistration::new(
+        source.to_str().unwrap().into(),
+        data.to_str().unwrap().into(),
+        "namespace-fixture".into(),
+    )?;
+    registry.register(&project)?;
+    let (namespace, epoch) = registry.request_epoch()?;
+    let caller = airk_kernel::service_broker::new_instance_id()?;
+    let key = RequestKey {
+        namespace,
+        epoch,
+        nonce: airk_kernel::service_broker::new_instance_id()?,
+    };
+    let job = registry.enqueue(project.binding, caller, &key, JobKind::Index)?;
+    record_registry(&lease, namespace)?;
+    drop(registry);
+    let pin = fs::read(state.join(registry_binding::PIN))?;
+    let files = ["service-1.4.sqlite3", "service-1.4.owner.json"];
+    let originals = files
+        .iter()
+        .map(|name| fs::read(control.join(name)))
+        .collect::<std::io::Result<Vec<_>>>()?;
+    for name in files {
+        fs::remove_file(control.join(name))?;
+    }
+    assert!(validate_control(&control).is_err());
+    assert!(record_control(&lease).is_err());
+    for name in files {
+        assert!(!control.join(name).exists());
+    }
+    assert_eq!(fs::read(state.join(registry_binding::PIN))?, pin);
+    for (name, bytes) in files.into_iter().zip(originals) {
+        fs::write(control.join(name), bytes)?;
+    }
+    validate_control(&control)?;
+    let mut registry = airk_store::service::registry::ServiceRegistry::open(
+        &control,
+        airk_kernel::service_broker::new_instance_id()?,
+    )?;
+    assert_eq!(registry.incarnation()?, namespace);
+    assert_eq!(
+        registry
+            .enqueue(project.binding, caller, &key, JobKind::Index)?
+            .id,
+        job.id
+    );
+    Ok(())
+}
+
+#[test]
+fn namespace_binding_promotion_resumes_owned_prefixes_and_preserves_corruption() -> Result<()> {
+    let (_owner, root, state) = fixture()?;
+    initialize(&root, Some(&state), RuntimeChannel::Stable)?;
+    let control = control(&root)?;
+    local_ipc::prepare_root(&control)?;
+    let lease = airk_store::service::ServiceLease::acquire(&control)?;
+    record_control(&lease)?;
+    let initial = fs::read(state.join(registry_binding::PIN))?;
+    let registry = airk_store::service::registry::ServiceRegistry::open(
+        &control,
+        airk_kernel::service_broker::new_instance_id()?,
+    )?;
+    let namespace = registry.incarnation()?;
+    drop(registry);
+    record_registry(&lease, namespace)?;
+    let ready = fs::read(state.join(registry_binding::PIN))?;
+    fs::write(state.join(registry_binding::PIN), &initial)?;
+    fs::write(
+        state.join(registry_binding::PART),
+        &ready[..ready.len() / 2],
+    )?;
+    record_registry(&lease, namespace)?;
+    assert_eq!(fs::read(state.join(registry_binding::PIN))?, ready);
+    assert!(!state.join(registry_binding::PART).exists());
+    let mut damaged: serde_json::Value = serde_json::from_slice(&ready)?;
+    damaged["ready"] = false.into();
+    let damaged = serde_json::to_vec(&damaged)?;
+    fs::write(state.join(registry_binding::PIN), &damaged)?;
+    assert!(validate_control(&control).is_err());
+    assert!(record_control(&lease).is_err());
+    assert_eq!(fs::read(state.join(registry_binding::PIN))?, damaged);
+    fs::write(state.join(registry_binding::PIN), initial)?;
+    let unknown = b"Unknown partial ownership must survive.";
+    fs::write(state.join(registry_binding::PART), unknown)?;
+    assert!(record_registry(&lease, namespace).is_err());
+    assert_eq!(fs::read(state.join(registry_binding::PART))?, unknown);
+    Ok(())
+}
+
+#[test]
+fn earlier_control_receipt_requires_complete_metadata_before_namespace_upgrade() -> Result<()> {
+    for complete in [true, false] {
+        let (_owner, root, state) = fixture()?;
+        initialize(&root, Some(&state), RuntimeChannel::Stable)?;
+        let control = control(&root)?;
+        local_ipc::prepare_root(&control)?;
+        let lease = airk_store::service::ServiceLease::acquire(&control)?;
+        let namespace = if complete {
+            Some(
+                airk_store::service::registry::ServiceRegistry::open(
+                    &control,
+                    airk_kernel::service_broker::new_instance_id()?,
+                )?
+                .incarnation()?,
+            )
+        } else {
+            None
+        };
+        fs::write(
+            state.join(CONTROL_OWNER),
+            serde_json::to_vec(&Layout::read(&root)?.unwrap())?,
+        )?;
+        if let Some(namespace) = namespace {
+            record_control(&lease)?;
+            let pin: serde_json::Value =
+                serde_json::from_slice(&fs::read(state.join(registry_binding::PIN))?)?;
+            assert_eq!(pin["ready"], true);
+            assert_eq!(pin["namespace"], namespace.to_string());
+        } else {
+            assert!(validate_control(&control).is_err());
+            assert!(record_control(&lease).is_err());
+            assert!(!state.join(registry_binding::PIN).exists());
+            assert!(!control.join("service-1.4.sqlite3").exists());
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn interrupted_control_receipt_requires_original_directory_and_resumes_exact_prefix() -> Result<()>
 {
     let (_owner, root, state) = fixture()?;

@@ -283,6 +283,7 @@ impl Management {
                 let _ownership=ownership;
                 let mut registry = ServiceRegistry::open(&root, instance).and_then(|mut registry|{
                     registry.record_service_instance(&_ownership,instance)?;
+                    crate::runtime_install::record_registry_root(&_ownership,registry.incarnation()?)?;
                     Ok(registry)
                 });
                 let _ = ready.send(());
