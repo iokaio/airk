@@ -105,6 +105,29 @@ export interface RetryIntent { id: string; caller: string; key: RequestKey }
 export interface PlanIntent { caller: string; key: RequestKey; request: { selection: 'all' | { selected: string[] }; operation: RepairOperation } }
 export type MutationIntent = { enqueue: JobIntent } | { retry: RetryIntent } | { plan_create: PlanIntent };
 export type RepairOperation = 'auto' | 'verify' | 'recover' | 'reconcile' | 'vectors' | 'rebuild';
+export function validateMutationIntent(input:unknown): MutationIntent {
+    const intent=record(input),variants=Object.keys(intent);
+    if(variants.length!==1||!['enqueue','retry','plan_create'].includes(variants[0]))throw new ServiceError('invalid_mutation_intent');
+    const kind=variants[0],value=record(intent[kind]),key=record(value.key);
+    identifier(value.caller,16);identifier(key.namespace,16);identifier(key.nonce,16);count(key.epoch);
+    if(Object.keys(key).sort().join(',')!=='epoch,namespace,nonce')throw new ServiceError('invalid_mutation_key');
+    const keys=kind==='enqueue'?'caller,key,kind,project':kind==='retry'?'caller,id,key':'caller,key,request';
+    if(Object.keys(value).sort().join(',')!==keys)throw new ServiceError('invalid_mutation_fields');
+    if(kind==='enqueue'){
+        identifier(value.project,32);
+        if(!['index','reconcile','vectors','model_setup','verify','inspect','recover','maintain'].includes(String(value.kind)))throw new ServiceError('invalid_job_intent');
+    }else if(kind==='retry'){identifier(value.id,32);}
+    else {
+        const request=record(value.request);
+        if(Object.keys(request).sort().join(',')!=='operation,selection'||!['auto','verify','recover','reconcile','vectors','rebuild'].includes(String(request.operation)))throw new ServiceError('invalid_repair_intent');
+        if(request.selection!=='all'){
+            const selection=record(request.selection),members=selection.selected;
+            if(Object.keys(selection).join(',')!=='selected'||!Array.isArray(members)||!members.length||members.length>256||new Set(members).size!==members.length)throw new ServiceError('invalid_repair_selection');
+            members.forEach(member=>identifier(member,32));
+        }
+    }
+    return input as MutationIntent;
+}
 export interface ConsolePage { revision: number; cached: true; observed_unix_ms: number; projects: RecordValue[]; after: string | null }
 export class ServiceClient {
     private readonly caller = randomUUID().replaceAll('-', '');
@@ -167,12 +190,7 @@ export class ServiceClient {
             selection: selection === 'all' ? 'all' : { selected: [...selection] }, operation } } };
     }
     async submitMutation(intent: MutationIntent): Promise<RecordValue> {
-        const value = 'enqueue' in intent ? intent.enqueue : 'retry' in intent ? intent.retry : intent.plan_create;
-        identifier(value.caller,16); identifier(value.key.namespace,16); count(value.key.epoch); identifier(value.key.nonce,16);
-        if ('enqueue' in intent) {
-            identifier(intent.enqueue.project,32);
-            if (!['index','reconcile','vectors','model_setup','verify','inspect','recover','maintain'].includes(intent.enqueue.kind)) { throw new ServiceError('invalid_job_intent'); }
-        } else if ('retry' in intent) { identifier(intent.retry.id,32); }
+        validateMutationIntent(intent);
         // The host persists the complete prepared intent before this call and
         // retires it only after receiving a complete, matching native result.
         const response = await this.rpc(intent, 'plan_create' in intent ? 'plan' : 'job');

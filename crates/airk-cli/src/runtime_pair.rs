@@ -17,13 +17,28 @@ const MAX_EXECUTABLE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 /// Bind a maintenance preview to executable behavior and the paired helper's
 /// expected identity. Missing/broken inference remains a separate availability
 /// observation; this function never loads a model or starts a helper.
+/// Hash this running image once. Health and brokerage use the same startup
+/// identity, so a cold broker does not rehash a large executable on its thread.
+pub(crate) fn current_executable_sha256() -> Result<String> {
+    static DIGEST: std::sync::OnceLock<std::result::Result<String, String>> =
+        std::sync::OnceLock::new();
+    DIGEST
+        .get_or_init(|| {
+            digest_file(&std::env::current_exe().map_err(|error| error.to_string())?)
+                .map_err(|error| error.to_string())
+        })
+        .as_ref()
+        .cloned()
+        .map_err(|_| anyhow::anyhow!("running executable identity is unavailable"))
+}
+
 pub fn engine_identity() -> Result<airk_core::identity::Sha256Digest> {
     static ID: std::sync::OnceLock<std::result::Result<airk_core::identity::Sha256Digest, String>> =
         std::sync::OnceLock::new();
     let result = ID.get_or_init(|| {
         (|| -> Result<_> {
             let main = std::env::current_exe()?.canonicalize()?;
-            let digest = digest_file(&main)?;
+            let digest = current_executable_sha256()?;
             let manifest = main
                 .parent()
                 .context("runtime parent missing")?

@@ -79,6 +79,7 @@ test('current maintenance replaces historical controls; extraction and quota cha
         if (extra[1] === 'run') { return { receipt: { state: 'pending', pending: true }, receipt_persisted: true, status }; }
         throw new Error(`Unexpected native call ${command} ${extra}`);
     };
+    (stub as any).env = {};
     (stub as any).TreeItem = class { constructor(public label: string) {} };
     (stub as any).TreeItemCollapsibleState = { None: 0 };
     (stub as any).ThemeIcon = class { constructor(public id: string) {} };

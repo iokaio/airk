@@ -5,6 +5,8 @@ import * as path from 'node:path';
 import { IndexReport, LaunchSpec, Usage, collectionId, eligibleEvent, launchArgs } from './model';
 import { setupAgent } from './agentSetup';
 import { DashboardView } from './dashboardView';
+import { ConsoleRuntime, ServiceConsole, serviceRuntimeOptions } from './serviceConsole';
+import { RuntimeHost } from './serviceBootstrap';
 import { collectDiagnostics, DiagnosticHistory, verifyDiagnosticIntegrity } from './diagnostics';
 import { openDiagnosticsPanel } from './diagnosticsView';
 import { CollectionItem, CollectionTree } from './collectionTree';
@@ -1191,6 +1193,28 @@ export async function activate(context: vscode.ExtensionContext): Promise<{ getS
     activeController = controller;
     context.subscriptions.push(vscode.window.createTreeView('airk.collectionsView', { treeDataProvider: controller.collectionTree }));
     context.subscriptions.push(vscode.window.registerWebviewViewProvider('airk.dashboard', controller.sidebar));
+    let serviceConsole:ServiceConsole|undefined;
+    let nativeRuntime:RuntimeHost|undefined,runtimeGeneration=0;
+    const runtime=()=>{
+        if(!nativeRuntime){
+            const generation=runtimeGeneration;
+            nativeRuntime=new RuntimeHost(context.extensionPath,context.extension.packageJSON.version,serviceRuntimeOptions(),undefined,
+                ()=>vscode.workspace.isTrusted&&!!serviceConsole&&generation===runtimeGeneration);
+        }
+        return nativeRuntime;
+    };
+    const serviceRuntime:ConsoleRuntime={discover:()=>runtime().discover(),ensure:explicit=>runtime().ensure(explicit),
+        binding:(inspection,installDir)=>runtime().binding(inspection,installDir),client:binding=>runtime().client(binding),
+        lifecycle:(binding,intent,force)=>runtime().lifecycle(binding,intent,force),
+        abandonLifecycle:(binding,intent,id)=>runtime().abandonLifecycle(binding,intent,id)};
+    serviceConsole=new ServiceConsole(context,serviceRuntime);
+    const activeServiceConsole=serviceConsole;
+    context.subscriptions.push(activeServiceConsole,{dispose:()=>{serviceConsole=undefined;}},
+        vscode.window.registerWebviewViewProvider('airk.service',activeServiceConsole));
+    for(const [name,action] of Object.entries({serviceConnect:'connect',serviceStart:'start',serviceRestart:'restart',serviceStop:'stop',
+        serviceLogs:'logs',serviceResources:'resources',serviceDiagnostics:'previewReport'})){
+        context.subscriptions.push(vscode.commands.registerCommand(`airk.${name}`,()=>activeServiceConsole.command(action)));
+    }
     const safe = (action: () => void | Promise<unknown>, propagate = false) => async () => {
         try { await action(); } catch (error) {
             controller.output.appendLine(String(error)); controller.output.show(true);
@@ -1231,6 +1255,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<{ getS
         vscode.workspace.onDidGrantWorkspaceTrust(safe(() => controller.refresh())),
         vscode.workspace.onDidChangeWorkspaceFolders(safe(() => controller.refresh())),
         vscode.workspace.onDidChangeConfiguration(event => {
+            if(event.affectsConfiguration('airk.service')){runtimeGeneration++;nativeRuntime=undefined;activeServiceConsole.reset();}
             if (event.affectsConfiguration('airk.mcp.registrationEnabled') || event.affectsConfiguration('airk.mcp.responseMode')) { controller.registrationChanged(); }
             if (event.affectsConfiguration('airk')) { controller.configure(); void safe(() => controller.refresh())(); }
         }));

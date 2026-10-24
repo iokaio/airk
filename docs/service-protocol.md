@@ -1,5 +1,7 @@
 # Native service and direct query protocol 1
 
+Current development console/global lifecycle contracts are described in [the trusted service console](service-console.md). Its persistent metadata channel never carries evidence grants. Global stop/restart is an installed native transaction with a durable request key and observed instance; project restart remains a separate operation. Cold direct setup now retries transient admission/transport conditions within eight attempts/thirty seconds before submitting a query, with fresh health/grants and no uncertain query replay.
+
 This contract describes the opt-in service implementation. It has not replaced the default 1.3.2 extension, storage format or scheduler. The [shared embedding runtime](service-embedding.md) is implemented with initial finite limits. Installation, complete publication qualification, resource-policy qualification, maintenance planning and the 1.4.0 cutover remain in progress.
 
 `airk serve --runtime-dir <private-directory>` holds the service OS lease and listens on a user-only named pipe on Windows or a protected Unix socket. Both endpoints authenticate same-user peers. Control uses length-prefixed JSON with a 64 KiB maximum, five-second frame deadlines and 64 connection slots. Unknown protocol versions fail before dispatch. Health reads a cached service allocation policy, executable identity, optional install-manifest identity and uptime; it does not query a collection or wait on registry I/O. Those counters describe allocations, not live per-query worker telemetry.

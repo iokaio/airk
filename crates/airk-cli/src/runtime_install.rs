@@ -27,6 +27,8 @@ mod layout;
 #[path = "runtime_managed.rs"]
 mod managed;
 pub use managed::ManagedLifecycle;
+#[path = "runtime_lifecycle.rs"]
+mod lifecycle;
 #[path = "runtime_retirement.rs"]
 mod retirement;
 #[path = "runtime_staging.rs"]
@@ -117,6 +119,23 @@ pub enum RuntimeCommand {
     Ensure {
         #[arg(long)]
         install_dir: PathBuf,
+    },
+    /// Explicitly start a deliberately stopped service; automatic ensure honors that stop.
+    Start {
+        #[arg(long)]
+        install_dir: PathBuf,
+    },
+    /// Stop/restart the observed instance using one bounded durable request read from stdin.
+    Lifecycle {
+        #[arg(long)]
+        install_dir: PathBuf,
+    },
+    /// Abandon one saved lifecycle recovery intent; preserve every running process and keep automatic starts disabled.
+    AbandonLifecycle {
+        #[arg(long)]
+        install_dir: PathBuf,
+        #[arg(long)]
+        request_id: airk_core::identity::Sha256Digest,
     },
     /// Inspect verified selection without starting a process or opening a project.
     Inspect {
@@ -1004,6 +1023,7 @@ async fn start(
 
 pub async fn ensure_running(root: &Path) -> Result<ServiceHealth> {
     let _lock = install_lock(root)?;
+    lifecycle::settle(root).await?;
     if managed::read(root)?.is_some() {
         return managed::ensure(root).await;
     }
@@ -1016,6 +1036,7 @@ pub async fn ensure_running(root: &Path) -> Result<ServiceHealth> {
 }
 
 pub(crate) fn startup_selected(root: &Path) -> Result<(PathBuf, Approval)> {
+    lifecycle::require_start_allowed(root)?;
     if let Some(selected) = activation::startup(root)? {
         return Ok(selected);
     }
@@ -1165,6 +1186,8 @@ fn quiescent(root: &Path) -> Result<Quiescence> {
 
 pub async fn activate(root: &Path, identity: &str) -> Result<Selection> {
     let _lock = install_lock(root)?;
+    lifecycle::require_settled(root)?;
+    lifecycle::require_start_allowed(root)?;
     activation::begin(root, identity).await
 }
 

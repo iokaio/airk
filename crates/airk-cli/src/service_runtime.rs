@@ -124,8 +124,17 @@ pub async fn serve(root: &Path) -> Result<()> {
 pub async fn serve_with_idle(root: &Path, idle_grace: Option<Duration>) -> Result<()> {
     crate::runtime_install::validate_control_root(root)?;
     local_ipc::prepare_root(root)?;
-    let _ownership = airk_store::service::ServiceLease::acquire(root)?;
+    let _ownership = Arc::new(airk_store::service::ServiceLease::acquire(root)?);
     crate::runtime_install::record_control_root(&_ownership)?;
+    if root.join("service-1.4.sqlite3").try_exists()?
+        && let Ok(registry) =
+            airk_store::service::registry::ServiceRegistry::open(root, new_instance_id()?)
+    {
+        ensure!(
+            !registry.service_explicitly_stopped()?,
+            "service_explicitly_stopped"
+        );
+    }
     _ownership.prepare_control_endpoint()?;
     local_ipc::prepare_control_endpoint(&_ownership)?;
     let address = local_ipc::endpoint(root, "control")?;
@@ -145,7 +154,7 @@ pub async fn serve_with_idle(root: &Path, idle_grace: Option<Duration>) -> Resul
         started: Instant::now(),
         last_client_activity: Mutex::new(Instant::now()),
         user: local_ipc::current_user()?,
-        executable_sha256: crate::runtime_pair::digest_file(&std::env::current_exe()?)?,
+        executable_sha256: crate::runtime_pair::current_executable_sha256()?,
         runtime_sha256: crate::runtime_install::installed_identity(&std::env::current_exe()?)?,
         shutdown: Notify::new(),
         management: crate::service_management::Management::start(
@@ -153,6 +162,7 @@ pub async fn serve_with_idle(root: &Path, idle_grace: Option<Duration>) -> Resul
             instance,
             sources.wake_handle(),
             log.clone(),
+            _ownership.clone(),
         )?,
         supervisor: crate::project_supervisor::Supervisor::start(
             root.canonicalize()?,

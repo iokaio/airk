@@ -12,6 +12,8 @@ beforeEach(() => { mock.method(cliInstall, 'installCli', async () => []); });
 afterEach(() => { mock.restoreAll(); });
 
 function addTreeApi(stub: any, capture?: (provider: any) => void, dashboard?: (provider: any) => void): void {
+    stub.env ??= {};
+    delete require.cache[require.resolve('../serviceConsole')];
     stub.TreeItem = class { constructor(public label: string) {} };
     stub.TreeItemCollapsibleState = { None: 0 };
     stub.ThemeIcon = class { constructor(public id: string) {} };
@@ -19,7 +21,7 @@ function addTreeApi(stub: any, capture?: (provider: any) => void, dashboard?: (p
         capture?.(options.treeDataProvider);
         return { dispose() {} };
     };
-    stub.window.registerWebviewViewProvider = (_id: string, provider: unknown) => { dashboard?.(provider); return { dispose() {} }; };
+    stub.window.registerWebviewViewProvider = (id: string, provider: unknown) => { if(id==='airk.dashboard')dashboard?.(provider); return { dispose() {} }; };
 }
 function addReportApi(stub: any): void {
     stub.ViewColumn = { Active: 1 };
@@ -346,7 +348,8 @@ test('untrusted workspaces expose no MCP servers and commands cannot launch a he
     const loader = Module as unknown as { _load: (...args: any[]) => any };
     const original = loader._load;
     loader._load = function(request: string, ...args: any[]) { return request === 'vscode' ? stub : original.call(this, request, ...args); };
-    const context = { subscriptions: [] as { dispose(): void }[], extensionPath: '/nonexistent-helper-fixture' };
+    const context = { subscriptions: [] as { dispose(): void }[], extensionPath: '/nonexistent-helper-fixture',
+        extension:{packageJSON:{version:'1.4.0'}},globalState:{keys:()=>[],get:()=>undefined,update:async()=>{}} };
     try {
         for (const module of ['../extension', '../agentSetup', '../dashboardView', '../collectionTree']) { delete require.cache[require.resolve(module)]; }
         const extension = require('../extension');

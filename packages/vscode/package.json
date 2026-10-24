@@ -100,6 +100,12 @@
           "type": "webview"
         },
         {
+          "id": "airk.service",
+          "name": "Service Console",
+          "type": "webview",
+          "visibility": "collapsed"
+        },
+        {
           "id": "airk.collectionsView",
           "name": "Collections",
           "visibility": "collapsed"
@@ -368,6 +374,41 @@
         "command": "airk.currentMaintenance",
         "title": "Reclaim Unreferenced Index Objects",
         "category": "AIRK"
+      },
+      {
+        "command": "airk.serviceConnect",
+        "category": "AIRK",
+        "title": "Connect / Reconnect Service"
+      },
+      {
+        "command": "airk.serviceStart",
+        "category": "AIRK",
+        "title": "Start Service"
+      },
+      {
+        "command": "airk.serviceRestart",
+        "category": "AIRK",
+        "title": "Restart Service"
+      },
+      {
+        "command": "airk.serviceStop",
+        "category": "AIRK",
+        "title": "Stop Service"
+      },
+      {
+        "command": "airk.serviceLogs",
+        "category": "AIRK",
+        "title": "Open Service Logs"
+      },
+      {
+        "command": "airk.serviceResources",
+        "category": "AIRK",
+        "title": "Service Resource Settings"
+      },
+      {
+        "command": "airk.serviceDiagnostics",
+        "category": "AIRK",
+        "title": "Preview Service Diagnostics"
       }
     ],
     "configuration": [
@@ -376,8 +417,14 @@
         "properties": {
           "airk.mcp.responseMode": {
             "type": "string",
-            "enum": ["terse", "full"],
-            "enumDescriptions": ["Compact evidence for routine discovery and navigation.", "Detailed provenance, coverage limitations and readiness for investigation."],
+            "enum": [
+              "terse",
+              "full"
+            ],
+            "enumDescriptions": [
+              "Compact evidence for routine discovery and navigation.",
+              "Detailed provenance, coverage limitations and readiness for investigation."
+            ],
             "default": "terse",
             "scope": "machine",
             "markdownDescription": "MCP response detail. Terse is the default. Choose Full for provenance audits, parser/coverage limitations or missing/surprising results. Reload the MCP connection after changing this setting. Agents can override a single call with `response_mode`."
@@ -387,6 +434,50 @@
             "default": true,
             "scope": "machine",
             "markdownDescription": "Install the bundled CLI on first trusted activation and update it with the extension. Adds AIRK to new VS Code terminals and the user PATH (Windows) or Bash, Zsh and fish startup files (macOS/Linux). Restart external terminal applications after installation. Disable in User settings to skip future automatic setup; existing CLI files and PATH entries remain. Use **AIRK: Install or Repair CLI** to retry setup."
+          },
+          "airk.service.channel": {
+            "type": "string",
+            "enum": [
+              "stable",
+              "preview"
+            ],
+            "default": "stable",
+            "markdownDescription": "Service runtime channel on this execution host. Only user settings are read; workspace values cannot redirect service discovery.",
+            "scope": "machine"
+          },
+          "airk.service.installDir": {
+            "type": "string",
+            "default": "",
+            "markdownDescription": "Absolute user installation directory on this execution host. Empty uses native account defaults. Workspace values are ignored.",
+            "scope": "machine"
+          },
+          "airk.service.managedSource": {
+            "type": "string",
+            "default": "",
+            "markdownDescription": "Absolute organization-provided read-only runtime directory. Requires a separately approved inventory digest. Workspace values are ignored.",
+            "scope": "machine"
+          },
+          "airk.service.managedSha256": {
+            "type": "string",
+            "default": "",
+            "markdownDescription": "Separately supplied SHA-256 approval for the organization runtime inventory. A manifest checksum alone is not approval.",
+            "scope": "machine"
+          },
+          "airk.service.managedLifecycle": {
+            "type": "string",
+            "enum": [
+              "external",
+              "user-on-demand"
+            ],
+            "default": "external",
+            "markdownDescription": "Who owns the organization runtime lifetime. External mode disables competing user start, stop and restart.",
+            "scope": "machine"
+          },
+          "airk.service.managedStateDir": {
+            "type": "string",
+            "default": "",
+            "markdownDescription": "Optional absolute writable state directory for the organization runtime. Workspace values are ignored.",
+            "scope": "machine"
           }
         }
       },

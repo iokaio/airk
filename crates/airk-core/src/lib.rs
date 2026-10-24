@@ -403,3 +403,4 @@ pub trait EmbeddingProvider: Send + Sync {
 }
 
 pub mod service_console;
+pub mod service_lifecycle;

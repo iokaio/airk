@@ -128,6 +128,25 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
         RuntimeCommand::Ensure { install_dir } => {
             serde_json::to_value(ensure_running(install_dir).await?)?
         }
+        RuntimeCommand::Start { install_dir } => {
+            serde_json::to_value(lifecycle::explicit_start(install_dir).await?)?
+        }
+        RuntimeCommand::AbandonLifecycle {
+            install_dir,
+            request_id,
+        } => {
+            serde_json::json!({"status":"lifecycle","record":lifecycle::abandon(install_dir,*request_id)?})
+        }
+        RuntimeCommand::Lifecycle { install_dir } => {
+            let mut bytes = Vec::new();
+            std::io::stdin()
+                .lock()
+                .take(16385)
+                .read_to_end(&mut bytes)?;
+            ensure!(bytes.len() <= 16384, "lifecycle request exceeds budget");
+            let input = serde_json::from_slice(&bytes)?;
+            serde_json::json!({"status":"lifecycle","record":lifecycle::run(install_dir,input).await?})
+        }
         RuntimeCommand::Inspect { install_dir } => {
             let (selection, executable, approval) = selected(install_dir)?;
             let policy = managed::read(install_dir)?;
@@ -137,7 +156,20 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
                 .as_ref()
                 .err()
                 .map(|error| error.to_string().chars().take(512).collect::<String>());
-            serde_json::json!({"selection":selection,"executable":executable,"approval":approval,"launcher":launcher,"managed_policy":policy,"control_dir":control.ok(),"state_error":state_error})
+            let lifecycle = lifecycle::inspect(install_dir)?;
+            let registry_namespace = control
+                .as_ref()
+                .ok()
+                .filter(|path| path.join("service-1.4.sqlite3").is_file())
+                .map(|path| {
+                    airk_store::service::registry::ServiceRegistry::open(
+                        path,
+                        airk_kernel::service_broker::new_instance_id()?,
+                    )
+                    .and_then(|registry| registry.incarnation())
+                })
+                .transpose()?;
+            serde_json::json!({"selection":selection,"executable":executable,"approval":approval,"launcher":launcher,"managed_policy":policy,"control_dir":control.ok(),"state_error":state_error,"lifecycle":lifecycle,"registry_namespace":registry_namespace})
         }
         RuntimeCommand::Remove {
             install_dir,

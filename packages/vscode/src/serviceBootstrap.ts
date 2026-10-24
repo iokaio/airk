@@ -4,14 +4,15 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { runText } from './native';
 import { NativeControlTransport, ServiceClient, ServiceError, record, RecordValue, identifier } from './serviceClient';
+import type { LifecycleIntent } from './serviceIntents';
 export type RuntimeChannel = 'stable' | 'preview';
 export interface RuntimeOptions {
     channel: RuntimeChannel; installDir?: string;
     managed?: { source: string; approvedSha256: string; lifecycle: 'external' | 'user-on-demand'; stateDir?: string };
 }
-export type NativeRunner = (command: string, args: string[], timeout?: number) => Promise<RecordValue>;
-export const nativeRunner: NativeRunner = async (command,args,timeout=60000) => {
-    const text=await runText(command,args,path.dirname(command),timeout);
+export type NativeRunner = (command: string, args: string[], timeout?: number,input?:string) => Promise<RecordValue>;
+export const nativeRunner: NativeRunner = async (command,args,timeout=60000,input) => {
+    const text=await runText(command,args,path.dirname(command),timeout,undefined,undefined,input);
     if(Buffer.byteLength(text)>2*1024*1024){throw new ServiceError('bootstrap_response_oversize');}
     return record(JSON.parse(text));
 };
@@ -127,8 +128,8 @@ export class RuntimeHost {
             if(options.managed.stateDir)safePath(options.managed.stateDir);}
     }
     private active():void {if(!this.canContinue())throw new ServiceError('runtime_client_no_longer_authorized');}
-    private async invoke(command:string,args:string[],timeout?:number):Promise<RecordValue>{
-        this.active();const result=await this.run(command,args,timeout);this.active();return result;
+    private async invoke(command:string,args:string[],timeout?:number,input?:string):Promise<RecordValue>{
+        this.active();const result=await this.run(command,args,timeout,input);this.active();return result;
     }
     private verified():Promise<VerifiedBundle>{
         this.bundle??=verifyBundledRuntime(this.extensionPath,this.version).catch(error=>{this.bundle=undefined;throw error;});return this.bundle;
@@ -150,15 +151,16 @@ export class RuntimeHost {
         catch {observation.error??='runtime_diagnostics_unavailable';}
         return observation;
     }
-    ensure():Promise<RuntimeBinding>{
-        this.preparing??=this.prepare().finally(()=>{this.preparing=undefined;});return this.preparing;
+    ensure(explicitStart=false):Promise<RuntimeBinding>{
+        this.preparing??=this.prepare(explicitStart).finally(()=>{this.preparing=undefined;});return this.preparing;
     }
-    private async prepare():Promise<RuntimeBinding>{
+    private async prepare(explicitStart:boolean):Promise<RuntimeBinding>{
         let lastError:unknown;
         for(let attempt=0;attempt<3;attempt++){
             try {
                 const observed=await this.discover(),{bundle,installDir}=observed,managed=this.options.managed;
                 const inspected=observed.inspection,selection=inspected?record(inspected.selection):undefined;
+                if(!explicitStart&&inspected?.lifecycle&&record(inspected.lifecycle).explicitly_stopped===true)throw new ServiceError('service_explicitly_stopped');
                 if(managed){
                     if(inspected){
                         if(!inspected.managed_policy)throw new ServiceError('managed_runtime_policy_mismatch');
@@ -175,16 +177,16 @@ export class RuntimeHost {
                     }else {const args=['runtime','managed','--source',managed.source,'--install-dir',installDir,
                         '--approved-sha256',managed.approvedSha256,'--verification-basis','organization-digest','--lifecycle',managed.lifecycle,'--channel',this.options.channel];
                         if(managed.stateDir)args.push('--state-dir',managed.stateDir);await this.invoke(bundle.main,args,180000);}
-                }else if(selection?.active!==bundle.digest){
+                }else if(!selection?.active||record(inspected?.approval).version!==this.version){
                     await this.invoke(bundle.main,['runtime','stage','--source',bundle.source,'--install-dir',installDir,
                         '--approved-sha256',bundle.digest,'--verification-basis','trusted-distribution','--channel',this.options.channel],180000);
                     await this.invoke(bundle.main,['runtime','activate','--install-dir',installDir,'--runtime-sha256',bundle.digest],180000);
                 }
-                await this.invoke(bundle.main,['runtime','ensure','--install-dir',installDir],120000);
+                await this.invoke(bundle.main,['runtime',explicitStart?'start':'ensure','--install-dir',installDir],180000);
                 const inspection=await this.invoke(bundle.main,['runtime','inspect','--install-dir',installDir]);
                 return this.binding(inspection,installDir);
             }catch(error){
-                if(error instanceof ServiceError&&['runtime_client_no_longer_authorized','managed_runtime_policy_mismatch','managed_runtime_state_mismatch'].includes(error.code))throw error;
+                if(error instanceof ServiceError&&['runtime_client_no_longer_authorized','managed_runtime_policy_mismatch','managed_runtime_state_mismatch','service_explicitly_stopped'].includes(error.code))throw error;
                 lastError=error;if(attempt<2)await new Promise(resolve=>setTimeout(resolve,1000*(attempt+1)));
             }
         }
@@ -205,5 +207,31 @@ export class RuntimeHost {
         this.active();
         return new ServiceClient(new NativeControlTransport(binding.executable,['service','console','--runtime-dir',binding.controlDir,
             '--runtime-sha256',binding.runtimeSha256]));
+    }
+    async lifecycle(binding:RuntimeBinding,intent:LifecycleIntent,force=false):Promise<RecordValue>{
+        this.active();
+        if(binding.lifecycle==='external')throw new ServiceError('lifecycle_managed_externally');
+        if(intent.lifecycle.runtime!==binding.runtimeSha256)throw new ServiceError('lifecycle_runtime_selection_changed');
+        const bundle=await this.verified();
+        const result=await this.invoke(bundle.main,['runtime','lifecycle','--install-dir',binding.installDir],180000,
+            JSON.stringify({...intent.lifecycle,force}));
+        if(result.status!=='lifecycle')throw new ServiceError('invalid_lifecycle_receipt',true);
+        const receipt=record(result.record),request=record(receipt.request),key=record(request.key);
+        if(request.caller!==intent.lifecycle.caller||request.runtime!==intent.lifecycle.runtime
+            ||request.action!==intent.lifecycle.action||request.expected_instance!==intent.lifecycle.expected_instance
+            ||key.namespace!==intent.lifecycle.key.namespace||key.epoch!==intent.lifecycle.key.epoch||key.nonce!==intent.lifecycle.key.nonce)throw new ServiceError('crossed_lifecycle_receipt',true);
+        if(!['complete','abandoned'].includes(String(receipt.phase)))throw new ServiceError('lifecycle_request_incomplete',true);
+        return result;
+    }
+    async abandonLifecycle(binding:RuntimeBinding,intent:LifecycleIntent,id:string):Promise<RecordValue>{
+        this.active();identifier(id,32);
+        const bundle=await this.verified();
+        const result=await this.invoke(bundle.main,['runtime','abandon-lifecycle','--install-dir',binding.installDir,'--request-id',id]);
+        const receipt=record(result.record),request=record(receipt.request),key=record(request.key);
+        if(result.status!=='lifecycle'||receipt.id!==id||!['complete','abandoned'].includes(String(receipt.phase))
+            ||request.runtime!==intent.lifecycle.runtime||request.caller!==intent.lifecycle.caller
+            ||request.action!==intent.lifecycle.action||request.expected_instance!==intent.lifecycle.expected_instance
+            ||key.namespace!==intent.lifecycle.key.namespace||key.epoch!==intent.lifecycle.key.epoch||key.nonce!==intent.lifecycle.key.nonce)throw new ServiceError('crossed_lifecycle_receipt',true);
+        return result;
     }
 }

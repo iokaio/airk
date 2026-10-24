@@ -45,6 +45,8 @@ mod provider_drains;
 pub use provider_drains::{MAX_PROVIDER_DRAINS, ProviderBoot, ProviderDrain};
 #[path = "service_background.rs"]
 mod background;
+#[path = "service_lifecycle.rs"]
+mod lifecycle;
 
 pub struct ServiceRegistry {
     root: PathBuf,
@@ -223,6 +225,7 @@ impl ServiceRegistry {
         let mut connection = Connection::open(&path)?;
         connection.busy_timeout(Duration::from_secs(2))?;
         let mut initialize = !existed;
+        let mut schema_version = 0;
         if existed {
             let application: i64 =
                 connection.pragma_query_value(None, "application_id", |row| row.get(0))?;
@@ -239,9 +242,10 @@ impl ServiceRegistry {
                 initialize = true;
             } else {
                 ensure!(
-                    application == APPLICATION && version == 1,
+                    application == APPLICATION && (1..=2).contains(&version),
                     "unsupported service registry format"
                 );
+                schema_version = version;
                 let actual: String = connection.query_row(
                     "SELECT incarnation FROM service_meta WHERE id=1",
                     [],
@@ -264,7 +268,7 @@ impl ServiceRegistry {
             progress::SCHEMA,
             source_isolation::SCHEMA,
         ];
-        if must_exist {
+        if must_exist || schema_version >= 2 {
             // These names come only from our compiled schema, never from input.
             for name in ["service_meta", "projects"].into_iter().chain(
                 schemas
@@ -281,6 +285,24 @@ impl ServiceRegistry {
                     exists,
                     "initialized service registry table is missing: {name}"
                 );
+            }
+            if schema_version >= 2 {
+                for name in ["service_lifecycle", "service_lifecycle_state"] {
+                    let exists: bool = connection.query_row(
+                        "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?1)",
+                        [name],
+                        |row| row.get(0),
+                    )?;
+                    ensure!(
+                        exists,
+                        "initialized service registry table is missing: {name}"
+                    );
+                }
+                let _: bool = connection.query_row(
+                    "SELECT stopped FROM service_lifecycle_state WHERE id=1",
+                    [],
+                    |row| row.get(0),
+                )?;
             }
         }
         connection.execute_batch(
@@ -304,13 +326,26 @@ impl ServiceRegistry {
             transaction.pragma_update(None, "user_version", 1)?;
             transaction.commit()?;
         }
-        let registry = Self { root, connection };
+        let mut registry = Self { root, connection };
         ensure!(
             registry.incarnation()? == owner.incarnation,
             "service registry identity disagrees with owner"
         );
         for schema in schemas {
             registry.connection.execute_batch(schema)?;
+        }
+        if schema_version < 2 {
+            let transaction = registry
+                .connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let foreign: bool=transaction.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE name IN('service_lifecycle','service_lifecycle_state'))",[],|row|row.get(0))?;
+            ensure!(
+                !foreign,
+                "unexpected lifecycle state in an earlier registry format"
+            );
+            transaction.execute_batch(lifecycle::SCHEMA)?;
+            transaction.pragma_update(None, "user_version", 2)?;
+            transaction.commit()?;
         }
         if !owner.ready {
             owner.complete(&registry.root)?;

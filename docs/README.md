@@ -104,6 +104,6 @@ Development helper recovery now preserves project workers and rebinds retained d
 
 Native project controls now expose cached worker identity, queued restart and startup-circuit state. Explicit restart drains the expected worker before replacement, preserves other projects and supports retained evidence when sources are unavailable. See [native service control](service-protocol.md). Default client cutover and installed-platform qualification remain open.
 
-Native console metadata now uses bounded persistent framing, complete cached project pages and a trusted offline runtime client. The full console view and default adapter cutover remain in progress. See [the console foundation and development receipts](service-console.md).
+Development console code now presents cached project/work observations, guarded repair previews, exact request recovery and redacted diagnostic previews. Native global lifecycle uses durable instance-fenced stop/restart intent and an explicit-stop preference. Default adapter cutover, complete configuration and installed/editor qualification remain in progress. See [the console foundation and development receipts](service-console.md).
 
 Initialized registry recovery now refuses missing/empty databases and missing required tables, preserving accepted request and fencing identity. See [durable registry ownership](service-jobs.md).

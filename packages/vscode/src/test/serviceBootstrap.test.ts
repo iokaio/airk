@@ -107,3 +107,47 @@ test('managed policy conflicts do not stage payloads, change a pin or start a co
         options.managed!.approvedSha256='f'.repeat(64);assert.equal(host.options.managed!.approvedSha256,f.digest,'caller mutation must not retarget a prepared host');
     }finally {await f.cleanup();}
 });
+
+test('automatic bootstrap respects an approved same-version pin and a persistent explicit stop',async()=>{
+    const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install);
+    const pinned='ef'.repeat(32),calls:string[][]=[];let stopped=true;
+    const run:NativeRunner=async(_command,args)=>{
+        calls.push(args);switch(args[1]){
+            case 'self-test':return {protocol:1,version:'1.4.0',self_test:'passed',metadata_console:1};
+            case 'location':return {protocol:1,install_dir:install};
+            case 'inspect':return {selection:{active:pinned,previous:f.digest},approval:{version:'1.4.0',manifest_sha256:pinned,verification_basis:'trusted_distribution'},
+                executable:path.join(install,'approved-main'),launcher:null,control_dir:path.join(install,'control'),lifecycle:{explicitly_stopped:stopped,pending:null}};
+            case 'diagnose':return {};
+            case 'start':stopped=false;return {};
+            case 'ensure':return {};
+            default:throw new Error('Bootstrap changed an explicit runtime pin');
+        }
+    };
+    try{
+        const host=new RuntimeHost(f.root,'1.4.0',{channel:'stable',installDir:install},run);
+        await assert.rejects(host.ensure(),/service_explicitly_stopped/);
+        assert.ok(!calls.some(args=>['stage','activate','ensure','start'].includes(args[1])));
+        const started=await host.ensure(true);assert.equal(started.runtimeSha256,pinned);
+        assert.equal(calls.filter(args=>args[1]==='start').length,1);
+        assert.equal((await host.ensure()).runtimeSha256,pinned);
+        assert.ok(!calls.some(args=>['stage','activate'].includes(args[1])));
+    }finally{await f.cleanup();}
+});
+
+test('native lifecycle sends a bounded saved intent over stdin and refuses a crossed acknowledgement',async()=>{
+    const f=await fixture(),install=path.join(f.root,'install');const inputs:string[]=[];let crossed=false;
+    const intent={lifecycle:{action:'restart' as const,caller:'12'.repeat(16),expected_instance:'34'.repeat(16),runtime:f.digest,
+        key:{namespace:'56'.repeat(16),epoch:8,nonce:'78'.repeat(16)}}};
+    const binding={installDir:install,controlDir:path.join(install,'control'),executable:f.source,launcher:null,runtimeSha256:f.digest,
+        version:'1.4.0',lifecycle:'on-demand' as const,verificationBasis:'trusted_distribution'};
+    const host=new RuntimeHost(f.root,'1.4.0',{channel:'stable'},async(_command,args,_timeout,input)=>{
+        assert.equal(args[1],'lifecycle');assert.ok(input);inputs.push(input!);
+        const request=JSON.parse(input!);delete request.force;
+        if(crossed)request.key.nonce='99'.repeat(16);
+        return {status:'lifecycle',record:{id:'ab'.repeat(32),request,phase:'complete'}};
+    });
+    try{
+        await host.lifecycle(binding,intent);assert.deepEqual(JSON.parse(inputs[0]),{...intent.lifecycle,force:false});
+        crossed=true;await assert.rejects(host.lifecycle(binding,intent),/crossed_lifecycle_receipt/);
+    }finally{await f.cleanup();}
+});

@@ -269,6 +269,7 @@ impl Management {
         instance: Incarnation,
         source: crate::source_supervisor::SourceWake,
         log: crate::service_logs::Log,
+        ownership: Arc<airk_store::service::ServiceLease>,
     ) -> Result<Self> {
         let (sender, receiver) = sync_channel::<Envelope>(32);
         let pending = Arc::new(AtomicUsize::new(0));
@@ -279,7 +280,11 @@ impl Management {
         let thread = std::thread::Builder::new()
             .name("airk-registry".into())
             .spawn(move || {
-                let mut registry = ServiceRegistry::open(&root, instance);
+                let _ownership=ownership;
+                let mut registry = ServiceRegistry::open(&root, instance).and_then(|mut registry|{
+                    registry.record_service_instance(&_ownership,instance)?;
+                    Ok(registry)
+                });
                 let _ = ready.send(());
                 let mut next_tick = std::time::Instant::now();
                 let mut metadata_failed = false;
