@@ -16,6 +16,7 @@ pub enum LogKind {
     PeerRejected,
     ConnectionFailed,
     WorkerFailed,
+    WorkerStopped,
     ModelFailed,
     ModelStopped,
     SourceWorkerFailed,

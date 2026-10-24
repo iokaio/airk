@@ -18,6 +18,7 @@ use std::{
 #[derive(Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Draft {
+    Unregister,
     Vectors {
         enabled: bool,
     },
@@ -129,6 +130,7 @@ impl Draft {
                     manifest_sha256: manifest.sha256,
                 }
             }
+            Self::Unregister => ProjectConfiguration::Unregister,
             Self::BundledModel => ProjectConfiguration::BundledModel,
             Self::Usage { mode } => ProjectConfiguration::Usage { mode },
             Self::ClearUsage => ProjectConfiguration::ClearUsage,

@@ -49,10 +49,13 @@ mod background;
 mod configuration;
 #[path = "service_lifecycle.rs"]
 mod lifecycle;
+#[path = "service_unregistration.rs"]
+mod unregistration;
 
 pub struct ServiceRegistry {
     root: PathBuf,
     connection: Connection,
+    registration_state: bool,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -238,10 +241,14 @@ impl ServiceRegistry {
             connection.pragma_query_value(None, "application_id", |row| row.get(0))?;
         let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
         ensure!(
-            application == APPLICATION && (2..=4).contains(&version),
+            application == APPLICATION && (2..=5).contains(&version),
             "unsupported saved service registry format"
         );
-        let registry = Self { root, connection };
+        let registry = Self {
+            root,
+            connection,
+            registration_state: version >= 5,
+        };
         ensure!(
             registry.incarnation()? == namespace,
             "service registry ownership mismatch"
@@ -309,7 +316,7 @@ impl ServiceRegistry {
                 initialize = true;
             } else {
                 ensure!(
-                    application == APPLICATION && (1..=4).contains(&version),
+                    application == APPLICATION && (1..=5).contains(&version),
                     "unsupported service registry format"
                 );
                 schema_version = version;
@@ -379,6 +386,12 @@ impl ServiceRegistry {
                 let invalid: i64 = connection.query_row("SELECT count(*) FROM service_configuration WHERE result IS NULL OR length(result)<>16392", [], |row| row.get(0))?;
                 ensure!(invalid == 0, "invalid configuration result state");
             }
+            if schema_version >= 5 {
+                let invalid: i64 = connection.query_row(
+                    "SELECT count(*) FROM projects WHERE typeof(registered)<>'integer' OR registered NOT IN(0,1) OR (registered=0 AND paused<>1)",
+                    [], |row| row.get(0))?;
+                ensure!(invalid == 0, "invalid service registration state");
+            }
         }
         connection.execute_batch(
             "PRAGMA page_size=4096; PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL;
@@ -401,7 +414,11 @@ impl ServiceRegistry {
             transaction.pragma_update(None, "user_version", 1)?;
             transaction.commit()?;
         }
-        let mut registry = Self { root, connection };
+        let mut registry = Self {
+            root,
+            connection,
+            registration_state: false,
+        };
         ensure!(
             registry.incarnation()? == owner.incarnation,
             "service registry identity disagrees with owner"
@@ -447,6 +464,27 @@ impl ServiceRegistry {
             transaction.pragma_update(None, "user_version", 4)?;
             transaction.commit()?;
         }
+        if schema_version < 5 {
+            let transaction = registry
+                .connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let foreign: bool = transaction.query_row(
+                "SELECT EXISTS(SELECT 1 FROM pragma_table_info('projects') WHERE name='registered')", [], |row| row.get(0))?;
+            ensure!(
+                !foreign,
+                "unexpected registration state in an earlier registry format"
+            );
+            transaction.execute_batch("ALTER TABLE projects ADD COLUMN registered INTEGER NOT NULL DEFAULT 1 CHECK(registered IN(0,1));")?;
+            transaction.pragma_update(None, "user_version", 5)?;
+            transaction.commit()?;
+        }
+        let invalid: i64 = registry.connection.query_row(
+            "SELECT count(*) FROM projects WHERE registered NOT IN(0,1) OR registered IS NULL",
+            [],
+            |row| row.get(0),
+        )?;
+        ensure!(invalid == 0, "invalid service registration state");
+        registry.registration_state = true;
         if !owner.ready {
             owner.complete(&registry.root)?;
         }
@@ -486,6 +524,13 @@ impl ServiceRegistry {
                 existing == payload,
                 "service registration binding collision"
             );
+            if transaction.execute(
+                "UPDATE projects SET registered=1,paused=0 WHERE binding=?1 AND registered=0",
+                [registration.binding.to_string()],
+            )? == 1
+            {
+                bump(&transaction)?;
+            }
         } else {
             let collision: bool = transaction.query_row(
                 "SELECT EXISTS(SELECT 1 FROM projects WHERE json_extract(payload,'$.data_root')=?1 AND json_extract(payload,'$.collection')=?2)",
@@ -502,7 +547,7 @@ impl ServiceRegistry {
                 "service project registration capacity exhausted"
             );
             transaction.execute(
-                "INSERT INTO projects VALUES(?1,?2,0,0)",
+                "INSERT INTO projects(binding,payload,epoch,paused,registered) VALUES(?1,?2,0,0,1)",
                 params![registration.binding.to_string(), payload],
             )?;
             bump(&transaction)?;
@@ -515,7 +560,11 @@ impl ServiceRegistry {
         let (bytes, epoch, paused) = self
             .connection
             .query_row(
-                "SELECT substr(payload,1,20481),epoch,paused FROM projects WHERE binding=?1",
+                if self.registration_state {
+                    "SELECT substr(payload,1,20481),epoch,paused FROM projects WHERE binding=?1 AND registered=1"
+                } else {
+                    "SELECT substr(payload,1,20481),epoch,paused FROM projects WHERE binding=?1"
+                },
                 [binding.to_string()],
                 project_row,
             )
@@ -528,7 +577,23 @@ impl ServiceRegistry {
         Ok(project)
     }
 
-    /// Bounded identity-only ownership audit; no project payload or index is opened.
+    /// Saved pre-unregister registries are observed without migrating their schema.
+    pub fn is_registered(&self, binding: ProjectBinding) -> Result<bool> {
+        self.connection
+            .query_row(
+                if self.registration_state {
+                    "SELECT EXISTS(SELECT 1 FROM projects WHERE binding=?1 AND registered=1)"
+                } else {
+                    "SELECT EXISTS(SELECT 1 FROM projects WHERE binding=?1)"
+                },
+                [binding.to_string()],
+                |row| row.get(0),
+            )
+            .map_err(Into::into)
+    }
+
+    /// Bounded identity-only ownership audit, including inactive registrations:
+    /// a crash may have interrupted their actual worker drain.
     pub fn bindings(&self) -> Result<Vec<ProjectBinding>> {
         let mut statement = self
             .connection
@@ -562,10 +627,11 @@ impl ServiceRegistry {
             expected_revision.is_none_or(|expected| expected == revision),
             "service registry cursor expired"
         );
-        let mut statement = transaction.prepare(
-            "SELECT substr(payload,1,20481),epoch,paused FROM projects
-            WHERE binding>?1 ORDER BY binding LIMIT ?2",
-        )?;
+        let mut statement = transaction.prepare(if self.registration_state {
+            "SELECT substr(payload,1,20481),epoch,paused FROM projects WHERE binding>?1 AND registered=1 ORDER BY binding LIMIT ?2"
+        } else {
+            "SELECT substr(payload,1,20481),epoch,paused FROM projects WHERE binding>?1 ORDER BY binding LIMIT ?2"
+        })?;
         let mut rows = statement.query(params![
             after.map(|id| id.to_string()).unwrap_or_default(),
             (limit + 1) as i64
@@ -603,12 +669,13 @@ impl ServiceRegistry {
     }
 
     pub fn pause(&mut self, binding: ProjectBinding, paused: bool) -> Result<()> {
+        self.get(binding)?;
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         ensure!(
             transaction.execute(
-                "UPDATE projects SET paused=?1 WHERE binding=?2",
+                "UPDATE projects SET paused=?1 WHERE binding=?2 AND registered=1",
                 params![paused, binding.to_string()]
             )? == 1,
             "service project is not registered"
@@ -627,7 +694,7 @@ impl ServiceRegistry {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let epoch: i64 = transaction.query_row(
-            "SELECT epoch FROM projects WHERE binding=?1",
+            "SELECT epoch FROM projects WHERE binding=?1 AND registered=1",
             [lease.binding.to_string()],
             |row| row.get(0),
         )?;
@@ -648,6 +715,60 @@ impl ServiceRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn registration_state_migration_preserves_saved_v4_observation_and_existing_pause() -> Result<()>
+    {
+        let directory = tempfile::tempdir()?;
+        let namespace = Incarnation::from_bytes([7; 16]);
+        let registration = project("registration-state");
+        let mut registry = ServiceRegistry::open(directory.path(), namespace)?;
+        registry.register(&registration)?;
+        registry.pause(registration.binding, true)?;
+        registry
+            .connection
+            .execute_batch("ALTER TABLE projects DROP COLUMN registered; PRAGMA user_version=4;")?;
+        drop(registry);
+        let path = directory.path().join("service-1.4.sqlite3");
+        let before = fs::read(&path)?;
+        let saved = ServiceRegistry::open_saved(directory.path())?;
+        assert!(saved.get(registration.binding)?.paused);
+        assert_eq!(saved.get(registration.binding)?.registration, registration);
+        drop(saved);
+        assert_eq!(
+            fs::read(&path)?,
+            before,
+            "saved inspection cannot migrate v4"
+        );
+        let registry = ServiceRegistry::open(directory.path(), Incarnation::from_bytes([8; 16]))?;
+        assert_eq!(registry.incarnation()?, namespace);
+        assert!(registry.is_registered(registration.binding)?);
+        assert!(registry.get(registration.binding)?.paused);
+        assert_eq!(
+            registry.get(registration.binding)?.registration,
+            registration
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn invalid_registration_state_is_rejected_before_registry_mutation() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let namespace = Incarnation::from_bytes([7; 16]);
+        let registration = project("invalid-registration-state");
+        let mut registry = ServiceRegistry::open(directory.path(), namespace)?;
+        registry.register(&registration)?;
+        registry.connection.execute(
+            "UPDATE projects SET registered=0 WHERE binding=?1",
+            [registration.binding.to_string()],
+        )?;
+        drop(registry);
+        let path = directory.path().join("service-1.4.sqlite3");
+        let before = fs::read(&path)?;
+        assert!(ServiceRegistry::open(directory.path(), namespace).is_err());
+        assert_eq!(fs::read(&path)?, before);
+        Ok(())
+    }
     #[test]
     fn saved_registry_never_initializes_migrates_or_permits_mutation() -> Result<()> {
         let directory = tempfile::tempdir()?;

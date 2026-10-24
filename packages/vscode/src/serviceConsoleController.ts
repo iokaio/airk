@@ -447,6 +447,11 @@ export class ServiceConsoleController {
                 }
                 const draft=await this.host.configuration(row);this.authorized();if(!draft)return;
                 const request=await this.host.runtime.prepareConfiguration(this.binding,project,draft);this.authorized();
+                if(request.configuration.operation==='unregister'){
+                    const registration=record(record(row.project).registration);
+                    if(!await this.host.confirm(`Unregister ${String(registration.collection)} from AIRK on ${this.host.authority}? Source: ${String(registration.root)}. Data: ${String(registration.data_root)}. This stops automatic work and new connections for this project; its owned worker will drain and existing clients may disconnect. Sources, settings and index data are retained. Registration must be reviewed again before reconnecting.`))return;
+                    this.authorized();
+                }
                 await this.mutation(`Configure ${String(request.configuration.operation)} ${project}`,await this.client!.prepareConfiguration(project,request));break;
             }
             case 'firstPage':await this.page(false,true);return;

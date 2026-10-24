@@ -110,7 +110,7 @@ export function validateConfigurationRequest(input:unknown):ProjectConfiguration
     const value=record(input),configuration=record(value.configuration),operation=configuration.operation;
     if(Object.keys(value).sort().join(',')!=='configuration,incarnation,settings'||Buffer.byteLength(JSON.stringify(value))>16384)throw new ServiceError('invalid_project_configuration');
     identifier(value.incarnation,16);identifier(value.settings,32);
-    const names:Record<string,string[]>={bundled_model:[],vectors:['enabled'],detail:['level'],vector_selection:['policy'],
+    const names:Record<string,string[]>={unregister:[],bundled_model:[],vectors:['enabled'],detail:['level'],vector_selection:['policy'],
         add_root:['alias','path'],remove_root:['alias'],install_model:['directory','manifest_sha256'],usage:['mode'],
         clear_usage:[],usage_feedback:['request_id','usefulness'],import_usage:['input'],extraction_policy:['input'],scan_limits:['input'],quota_policy:['input','expected_policy_digest'],
         calibrate:['tokenizer','baseline','returned','generation','content_kind','record']};

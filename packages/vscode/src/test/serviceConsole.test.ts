@@ -105,6 +105,29 @@ test('configuration requires an inspection before opening host choices or prepar
     assert.match(f.controller.state.message!,/Inspect this project/);f.controller.dispose();
 });
 
+test('unregister binds the prepared project and requires approval before durable dispatch',async()=>{
+    for(const approved of [false,true]){
+        const f=fixture();let reviewed='';
+        f.host.configuration=async()=>({operation:'unregister'});
+        f.host.runtime.prepareConfiguration=async(_binding,selected,draft)=>{
+            assert.equal(selected,project);return {incarnation:'cd'.repeat(16),settings:'ef'.repeat(32),configuration:draft};
+        };
+        f.host.confirm=async message=>{reviewed=message;return approved;};
+        await f.controller.refresh();f.controller.state.page!.projects[0].inspection={snapshot:{settings_digest:'ab'.repeat(32)}};
+        await f.action('configureProject',{project});
+        assert.match(reviewed,/Unregister/);assert.match(reviewed,/Source: \/sensitive/);assert.match(reviewed,/Sources, settings and index data are retained/);
+        assert.equal(f.sent.filter(value=>value&&typeof value==='object'&&'configure_project' in value).length,approved?1:0);
+        assert.equal(f.controller.state.pending.length,0);f.controller.dispose();
+    }
+    const f=fixture();f.host.configuration=async()=>({operation:'unregister'});
+    f.host.runtime.prepareConfiguration=async(_binding,_project,draft)=>({incarnation:'cd'.repeat(16),settings:'ef'.repeat(32),configuration:draft});
+    f.host.confirm=async()=>{f.setTrusted(false);return true;};
+    await f.controller.refresh();f.controller.state.page!.projects[0].inspection={snapshot:{settings_digest:'ab'.repeat(32)}};
+    await f.action('configureProject',{project});
+    assert.equal(f.sent.filter(value=>value&&typeof value==='object'&&'configure_project' in value).length,0);
+    assert.equal(f.controller.state.pending.length,0);f.controller.dispose();
+});
+
 test('usage configuration waits for native completion and preserves a lost acknowledgement without replay',async()=>{
     for(const lost of [false,true]){
         const f=fixture(),base=f.host.runtime.client({} as any),inspect='ab'.repeat(32);let configured=0;

@@ -633,6 +633,8 @@ Development shutdown refinement: login Stop/Uninstall authenticates saved invent
 
 Development transition refinement: the coding-agent guide now provides [explicit legacy JSON diff review](service-legacy-transition.md), exact guarded replacement for the selected source/collection, and manual merging for other formats. Old command text is never executed as ownership proof. Native old-registration review and derived-state cleanup remain separate gates.
 
+Development retirement work: [guarded unregister](service-project-retirement.md) now has an atomic registry/result transition and preserved-data contract. Windows native paused-project, idle-client drain, replay, isolation and store migration tests pass. Inactive bindings remain in ownership audits while registered-project lists and bulk repair exclude them. Selected derived-state deletion remains a separate implementation requirement.
+
 Development availability refinement: retained reads keep the exact saved source binding through missing roots, permission denial, redirection and non-directory replacement. Status reports the reason independently; new capture remains blocked and unbound collections are never initialized. See [source freshness and availability](service-freshness.md).
 
 Installed namespace binding now independently pins the completed registry identity outside the control directory; losing both registry files refuses startup without creating another authority. See the [installation development contract](service-installation.md).

@@ -748,6 +748,10 @@ pub async fn run() -> Result<()> {
     }
     closing.store(true, Ordering::Release);
     drop(work_sender);
+    // Idle client reads must not hold an intentionally stopped owner open.
+    // Blocking materialization retains its inner admission permit until actual
+    // completion; process/job ownership is still held through the native drain.
+    connections.abort_all();
     while connections.join_next().await.is_some() {}
     jobs.await??;
     let mut state = Arc::try_unwrap(state)

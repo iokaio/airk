@@ -182,6 +182,7 @@ pub(super) fn recover_results(
                     id
                 ],
             )?;
+            super::unregistration::finish_if_requested(connection, lease.binding, id.parse()?)?;
         }
     }
     Ok(())
@@ -255,6 +256,7 @@ mod tests {
         service::{JobKind, JobState, ProjectRegistration, RequestKey},
         service_configuration::{ConfigurationRequest, ProjectConfiguration},
     };
+    use anyhow::Context;
 
     fn open(base: &std::path::Path, caller: Incarnation) -> Result<ServiceRegistry> {
         let control = base.join("control");
@@ -282,6 +284,214 @@ mod tests {
             base.join("data").to_str().unwrap().into(),
             "configuration".into(),
         )
+    }
+    #[test]
+    fn unregister_is_atomic_preserves_other_projects_and_old_request_replay_cannot_unregister_a_reregistration()
+    -> Result<()> {
+        use airk_core::service::JobOutcome;
+        let temporary = tempfile::tempdir()?;
+        let caller = Incarnation::from_bytes([1; 16]);
+        let engine = Sha256Digest::from_bytes([4; 32]);
+        let mut registry = open(temporary.path(), caller)?;
+        let selected = project(temporary.path())?;
+        let other = ProjectRegistration::new(
+            selected.root.clone(),
+            selected.data_root.clone(),
+            "other".into(),
+        )?;
+        registry.register(&selected)?;
+        registry.register(&other)?;
+        registry.configure_watch(selected.binding, true)?;
+        let mut request = request(false);
+        request.configuration = ProjectConfiguration::Unregister;
+        let accepted_key = key(&mut registry, 1)?;
+        let job = registry.enqueue_configuration(
+            selected.binding,
+            caller,
+            &accepted_key,
+            &request,
+            engine,
+        )?;
+        let pending_key = key(&mut registry, 2)?;
+        let pending = registry.enqueue(selected.binding, caller, &pending_key, JobKind::Index)?;
+        let stale_key = key(&mut registry, 3)?;
+        let ordinary = ConfigurationRequest {
+            configuration: ProjectConfiguration::Vectors { enabled: true },
+            ..request.clone()
+        };
+        let ordinary_key = key(&mut registry, 4)?;
+        let ordinary_job = registry.enqueue_configuration(
+            selected.binding,
+            caller,
+            &ordinary_key,
+            &ordinary,
+            engine,
+        )?;
+        registry.pause(selected.binding, true)?;
+        assert!(registry.job_runs_while_paused(job.id)?);
+        assert!(!registry.job_runs_while_paused(ordinary_job.id)?);
+        assert_eq!(
+            registry.next_pending_job(selected.binding)?.unwrap().id,
+            job.id
+        );
+        assert_eq!(registry.pending_projects(32)?, vec![selected.binding]);
+        assert_eq!(
+            registry.pending_project_page(None, 32)?,
+            vec![selected.binding]
+        );
+        let mut lease = ProjectLease::acquire(&registry.root, selected.binding)?;
+        registry.admit_worker(&mut lease)?;
+        registry.set_background_pending(&lease, JobKind::Vectors, true)?;
+        assert!(
+            registry.claim_job_id(&lease, pending.id)?.is_none(),
+            "unregister must not resume queued source work"
+        );
+        registry
+            .claim_job_id(&lease, job.id)?
+            .context("unregister not claimed")?;
+        assert!(
+            registry
+                .complete_job(&lease, job.id, JobOutcome::Succeeded { revision: None })
+                .is_err(),
+            "an absent preparation result cannot unregister or commit success"
+        );
+        assert!(registry.is_registered(selected.binding)?);
+        assert_eq!(registry.job(job.id)?.state, JobState::Running);
+        registry.record_configuration_result(
+            &lease,
+            job.id,
+            &serde_json::json!({"unregistration_requested":true}),
+        )?;
+        registry.complete_job(&lease, job.id, JobOutcome::Succeeded { revision: None })?;
+        assert!(!registry.is_registered(selected.binding)?);
+        assert!(registry.get(selected.binding).is_err());
+        assert!(registry.pause(selected.binding, false).is_err());
+        assert!(registry.configure_watch(selected.binding, true).is_err());
+        assert_eq!(registry.job(pending.id)?.state, JobState::Canceled);
+        assert_eq!(registry.job(ordinary_job.id)?.state, JobState::Canceled);
+        assert!(!registry.has_background_work()?);
+        let mut retained = vec![selected.binding, other.binding];
+        retained.sort();
+        assert_eq!(
+            registry.bindings()?,
+            retained,
+            "ownership audits must retain inactive bindings"
+        );
+        assert_eq!(registry.list(None, None, 32)?.projects.len(), 1);
+        let plan_key = key(&mut registry, 5)?;
+        let plan = registry.create_maintenance_plan(
+            caller,
+            &plan_key,
+            &airk_core::service_maintenance::RepairRequest {
+                selection: airk_core::service_maintenance::RepairSelection::All,
+                operation: airk_core::service_maintenance::RepairOperation::Verify,
+            },
+            0,
+            engine,
+        )?;
+        assert_eq!(
+            plan.counts.selected, 1,
+            "all-project repair excludes inactive registrations"
+        );
+        let invalid_plan_key = key(&mut registry, 6)?;
+        assert!(
+            registry
+                .create_maintenance_plan(
+                    caller,
+                    &invalid_plan_key,
+                    &airk_core::service_maintenance::RepairRequest {
+                        selection: airk_core::service_maintenance::RepairSelection::Selected(vec![
+                            selected.binding
+                        ]),
+                        operation: airk_core::service_maintenance::RepairOperation::Verify,
+                    },
+                    0,
+                    engine
+                )
+                .is_err()
+        );
+        assert!(
+            registry
+                .enqueue(other.binding, caller, &stale_key, JobKind::Index)
+                .is_err()
+        );
+        assert_eq!(
+            registry.configuration_result(job.id)?.unwrap()["unregistered"],
+            true
+        );
+        assert_eq!(
+            registry
+                .enqueue_configuration(selected.binding, caller, &accepted_key, &request, engine)?
+                .id,
+            job.id
+        );
+        drop(lease);
+        let mut saved = ServiceRegistry::open_saved(&registry.root)?;
+        assert!(!saved.is_registered(selected.binding)?);
+        assert_eq!(saved.list(None, None, 32)?.projects[0].registration, other);
+        registry.register(&selected)?;
+        assert!(!registry.get(selected.binding)?.paused);
+        assert_eq!(
+            registry
+                .enqueue_configuration(selected.binding, caller, &accepted_key, &request, engine)?
+                .id,
+            job.id
+        );
+        assert!(
+            registry.is_registered(selected.binding)?,
+            "replay must preserve explicit re-registration"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn captured_unregister_preparation_recovers_to_one_atomic_terminal_receipt() -> Result<()> {
+        let temporary = tempfile::tempdir()?;
+        let caller = Incarnation::from_bytes([1; 16]);
+        let mut registry = open(temporary.path(), caller)?;
+        let selected = project(temporary.path())?;
+        registry.register(&selected)?;
+        let mut request = request(false);
+        request.configuration = ProjectConfiguration::Unregister;
+        let accepted = key(&mut registry, 1)?;
+        let job = registry.enqueue_configuration(
+            selected.binding,
+            caller,
+            &accepted,
+            &request,
+            Sha256Digest::from_bytes([4; 32]),
+        )?;
+        let mut lease = ProjectLease::acquire(&registry.root, selected.binding)?;
+        registry.admit_worker(&mut lease)?;
+        registry
+            .claim_job_id(&lease, job.id)?
+            .context("unregister not claimed")?;
+        registry.record_configuration_result(
+            &lease,
+            job.id,
+            &serde_json::json!({"unregistration_requested":true}),
+        )?;
+        assert!(
+            registry.is_registered(selected.binding)?,
+            "preparation alone is not an unregister receipt"
+        );
+        drop(lease);
+        drop(registry);
+        let mut registry = open(temporary.path(), Incarnation::from_bytes([9; 16]))?;
+        let mut replacement = ProjectLease::acquire(&registry.root, selected.binding)?;
+        registry.admit_worker(&mut replacement)?;
+        registry.recover_jobs(&replacement)?;
+        assert!(!registry.is_registered(selected.binding)?);
+        assert_eq!(registry.job(job.id)?.state, JobState::Succeeded);
+        let receipt = registry.configuration_result(job.id)?.unwrap();
+        assert_eq!(receipt["unregistered"], true);
+        assert_eq!(receipt["derived_state_retained"], true);
+        assert_eq!(
+            registry.bindings()?,
+            vec![selected.binding],
+            "recovery must retain ownership-audit identity"
+        );
+        Ok(())
     }
     #[test]
     fn configuration_keys_bind_complete_requests_and_pending_join_preserves_engine() -> Result<()> {
@@ -530,6 +740,7 @@ mod tests {
                  result BLOB CHECK(result IS NULL OR length(result)<=16384)) WITHOUT ROWID;
              INSERT INTO service_configuration SELECT job,payload,NULL FROM configuration_v4;
              DROP TABLE configuration_v4;
+             ALTER TABLE projects DROP COLUMN registered;
              PRAGMA user_version=3;",
         )?;
         registry.connection.execute(
@@ -699,7 +910,7 @@ mod tests {
         let job = registry.enqueue(project.binding, caller, &key, JobKind::Index)?;
         registry
             .connection
-            .execute_batch("DROP TABLE service_configuration; PRAGMA user_version=2;")?;
+            .execute_batch("DROP TABLE service_configuration; ALTER TABLE projects DROP COLUMN registered; PRAGMA user_version=2;")?;
         drop(registry);
         let mut registry = open(temporary.path(), Incarnation::from_bytes([9; 16]))?;
         assert_eq!(registry.incarnation()?, caller);

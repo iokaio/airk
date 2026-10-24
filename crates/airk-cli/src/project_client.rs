@@ -113,6 +113,11 @@ impl Connection {
         let (role, mut grant) =
             match service_runtime::request(root, ControlMethod::Connect { project }).await? {
                 ControlResponse::Connection { role, grant } => (role, grant),
+                ControlResponse::Failure { code } if code == "project_unregistered" => {
+                    anyhow::bail!(
+                        "project is unregistered; review native registration before connecting"
+                    )
+                }
                 ControlResponse::Failure { code }
                     if matches!(
                         code.as_str(),

@@ -529,6 +529,40 @@ impl Supervisor {
                     if registry.is_none() {
                         registry = ServiceRegistry::open(&root, instance).ok();
                     }
+                    // A committed unregister closes fresh brokerage immediately.
+                    // Drain only our exact child before releasing resident/query
+                    // allowances; unknown registry state never authorizes a stop.
+                    let unregistered = workers
+                        .keys()
+                        .copied()
+                        .filter(|project| {
+                            registry.as_ref().is_some_and(|registry| {
+                                matches!(registry.is_registered(*project), Ok(false))
+                            })
+                        })
+                        .collect::<Vec<_>>();
+                    for project in unregistered {
+                        if let Some(worker) = workers.remove(&project) {
+                            let identity = worker.identity;
+                            drop(worker);
+                            if let Some(identity) = identity {
+                                let _ = resources.process_exited(identity);
+                                if let Ok(mut policy) = policy.lock() {
+                                    let _ = policy.process_exited(identity);
+                                }
+                                if let Some(pool) = pool.as_mut() {
+                                    let _ = pool.revoke(identity.worker);
+                                }
+                            }
+                            log.record(
+                                airk_core::service_logs::LogKind::WorkerStopped,
+                                Some(project),
+                                None,
+                            );
+                        }
+                        backoff.remove(&project);
+                        restarting.remove(&project);
+                    }
                     // Stop only the exact accepted incarnation. Admission remains charged
                     // through descendant drain; a newer worker is never stopped by replay.
                     for (project, expected) in &mut restarting {
@@ -841,7 +875,11 @@ impl Supervisor {
                             let _ = reply.send(response);
                         }
                         Ok(Envelope::Connect { project, reply }) => {
+                            let unregistered = registry.as_ref().is_some_and(|registry| {
+                                matches!(registry.is_registered(project), Ok(false))
+                            });
                             let response = (|| {
+                                ensure!(!unregistered, "project is unregistered");
                                 ensure!(may_allocate, "previous project workers still draining");
                                 let registration = registry
                                     .as_ref()
@@ -867,7 +905,9 @@ impl Supervisor {
                                     .grant()
                             })()
                             .unwrap_or(ControlResponse::Failure {
-                                code: if may_allocate {
+                                code: if unregistered {
+                                    "project_unregistered"
+                                } else if may_allocate {
                                     "project_unavailable_or_busy"
                                 } else {
                                     "previous_workers_draining"
@@ -1159,11 +1199,7 @@ impl Supervisor {
                                     grant: grant.id,
                                     paused: plan_paused
                                         || (registry.get(*project).ok()?.paused
-                                            && !matches!(
-                                                registry.job(grant.job).ok()?.kind,
-                                                airk_core::service::JobKind::Inspect
-                                                    | airk_core::service::JobKind::PlanInspect
-                                            )),
+                                            && !registry.job_runs_while_paused(grant.job).ok()?),
                                     canceled: plan_canceled
                                         || registry.cancellation_requested(grant.job).ok()?,
                                 })

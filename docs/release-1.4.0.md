@@ -6,6 +6,8 @@ Current cutover status: the working tree now defaults to the service-backed exte
 
 The coding-agent guide now offers [explicit diff review for recognized legacy JSON entries](service-legacy-transition.md), with exact proposal/file guards and preserved unrelated settings. Other formats retain manual review. Native MCP verification is read-only. This does not establish ownership of old workers or authorize their automatic removal.
 
+[Guarded project unregister](service-project-retirement.md) now commits registration closure, canceled queued work and the final receipt atomically. It runs while paused, drains the exact owned worker and preserves sources, settings and derived data. Active project lists/bulk repair exclude it; native ownership audits retain it until actual owners are gone. Separate derived-state cleanup and remaining platform gates stay open.
+
 The dated development checkpoints below retain their original artifact/version evidence; they are not claims of final release qualification.
 
 Current client/qualification follow-up: managed payloads support an explicitly prepared lightweight client launcher without provider writes or lifecycle takeover. Native source/semantic turns record actual numeric usage work independently of queue acceptance and waiting clients. Runtime packaging now preserves the paired inventory and legal files, rejects links and oversized inputs before hashing, and streams large archive payloads. See [development qualification](service-cutover-qualification.md); complete CI script ports, native Mac startup ownership and final review remain open.

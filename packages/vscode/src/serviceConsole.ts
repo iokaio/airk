@@ -142,10 +142,11 @@ export class ServiceConsole implements vscode.WebviewViewProvider,vscode.Disposa
             {label:'Source scan limits file',operation:'scan_limits',description:'Set bounded extraction limits for this project'},
             {label:'Shared storage quota file',operation:'quota_policy',description:'Change storage admission for all collections sharing this data root'},
             {label:'Calibrate token counts',operation:'calibrate',description:'Count explicit logical JSON samples with a local tokenizer'},
+            {label:'Unregister project',operation:'unregister',description:'Stop new connections and automatic work; preserve sources, settings and index data'},
         ],{title:`AIRK project settings: ${String(registration.collection)}`,placeHolder:'Changes become durable native jobs; source files stay unchanged'});
         if(!selection)return;
         const operation=selection.operation;
-        if(operation==='bundled_model')return {operation};
+        if(operation==='bundled_model'||operation==='unregister')return {operation};
         if(operation==='vectors'){
             const enabled=await vscode.window.showQuickPick([{label:'Enable vector search',value:true},{label:'Disable vector search',value:false}],{title:'AIRK vector search'});
             return enabled?{operation,enabled:enabled.value}:undefined;

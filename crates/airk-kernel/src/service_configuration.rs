@@ -84,6 +84,9 @@ impl Kernel {
         self.validate_service_configuration(project, request)?;
         crate::service_execution::checkpoint()?;
         let result = match &request.configuration {
+            // Native registry completion performs the actual unregister and
+            // writes its final receipt atomically. This only validates the guard.
+            ProjectConfiguration::Unregister => json!({"unregistration_requested":true}),
             ProjectConfiguration::Vectors { enabled } => {
                 serde_json::to_value(self.configure_vectors(*enabled)?)?
             }

@@ -979,7 +979,7 @@ impl ServiceRegistry {
                 for project in projects {
                     ensure!(
                         tx.query_row(
-                            "SELECT EXISTS(SELECT 1 FROM projects WHERE binding=?1)",
+                            "SELECT EXISTS(SELECT 1 FROM projects WHERE binding=?1 AND registered=1)",
                             [project.to_string()],
                             |row| row.get::<_, bool>(0)
                         )?,
@@ -989,8 +989,9 @@ impl ServiceRegistry {
                 projects.clone()
             }
             RepairSelection::All => {
-                let mut statement =
-                    tx.prepare("SELECT binding FROM projects ORDER BY binding LIMIT 1025")?;
+                let mut statement = tx.prepare(
+                    "SELECT binding FROM projects WHERE registered=1 ORDER BY binding LIMIT 1025",
+                )?;
                 let values = statement
                     .query_map([], |row| row.get::<_, String>(0))?
                     .map(|row| row?.parse())

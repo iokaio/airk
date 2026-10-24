@@ -110,7 +110,7 @@ impl ServiceRegistry {
         ensure!((1..=32).contains(&limit), "invalid watch roster page limit");
         let mut statement = self
             .connection
-            .prepare("SELECT binding FROM projects WHERE binding>?1 ORDER BY binding LIMIT ?2")?;
+            .prepare("SELECT binding FROM projects WHERE binding>?1 AND registered=1 ORDER BY binding LIMIT ?2")?;
         let ids = statement
             .query_map(
                 params![
@@ -244,6 +244,12 @@ impl ServiceRegistry {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let registered: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM projects WHERE binding=?1 AND registered=1)",
+            [project.to_string()],
+            |row| row.get(0),
+        )?;
+        ensure!(registered, "service project is not registered");
         ensure_row(&tx, project)?;
         let changed=tx.execute("UPDATE service_watch SET enabled=?1,configuration_epoch=configuration_epoch+1,
             requested=requested+CASE WHEN ?1 THEN 1 ELSE 0 END,attempts=0,next_ms=0,blocked_revision=NULL,

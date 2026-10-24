@@ -9,6 +9,10 @@ use airk_core::{
 use anyhow::{Context, Result, ensure};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
+// Unregister changes registration metadata only. It must not require resuming
+// source work to remove a paused project. No other configuration bypasses pause.
+const RUN_WHILE_PAUSED: &str = "(j.kind IN('inspect','plan_inspect') OR (j.kind='configure' AND EXISTS(SELECT 1 FROM service_configuration c WHERE c.job=j.id AND json_extract(CAST(c.payload AS TEXT),'$.request.configuration.operation')='unregister')))";
+
 pub(super) const SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS service_jobs(
         seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE,
@@ -133,6 +137,15 @@ pub(super) fn worker_epoch(
 }
 
 impl ServiceRegistry {
+    pub fn job_runs_while_paused(&self, id: Sha256Digest) -> Result<bool> {
+        let job = record(&self.connection, id)?;
+        Ok(matches!(job.kind, JobKind::Inspect | JobKind::PlanInspect)
+            || job.kind == JobKind::Configure
+                && super::configuration::work(&self.connection, id)?.is_some_and(|work| {
+                    work.request.configuration
+                        == airk_core::service_configuration::ProjectConfiguration::Unregister
+                }))
+    }
     /// Fair oldest-pending order, bounded independently of the number of saved projects.
     pub fn pending_projects(&self, limit: usize) -> Result<Vec<ProjectBinding>> {
         ensure!(
@@ -140,7 +153,7 @@ impl ServiceRegistry {
             "invalid pending project page bound"
         );
         let mut statement = self.connection.prepare(
-            &format!("SELECT j.project FROM service_jobs j JOIN projects p ON p.binding=j.project WHERE j.state='running' OR (j.state='pending' AND (p.paused=0 OR j.kind IN('inspect','plan_inspect')) AND {}) GROUP BY j.project ORDER BY min(j.seq) LIMIT ?1",super::maintenance::ELIGIBLE))?;
+            &format!("SELECT j.project FROM service_jobs j JOIN projects p ON p.binding=j.project WHERE j.state='running' OR (j.state='pending' AND (p.paused=0 OR {RUN_WHILE_PAUSED}) AND {}) GROUP BY j.project ORDER BY min(j.seq) LIMIT ?1",super::maintenance::ELIGIBLE))?;
         let rows = statement.query_map([limit as i64], |row| row.get::<_, String>(0))?;
         rows.map(|row| row?.parse()).collect()
     }
@@ -156,7 +169,7 @@ impl ServiceRegistry {
         );
         let mut statement = self.connection.prepare(
             &format!("SELECT DISTINCT j.project FROM service_jobs j JOIN projects p ON p.binding=j.project
-             WHERE (j.state='running' OR (j.state='pending' AND (p.paused=0 OR j.kind IN('inspect','plan_inspect')) AND {}))
+             WHERE (j.state='running' OR (j.state='pending' AND (p.paused=0 OR {RUN_WHILE_PAUSED}) AND {}))
              AND (?1 IS NULL OR j.project>?1) ORDER BY j.project LIMIT ?2",super::maintenance::ELIGIBLE),
         )?;
         let rows = statement.query_map(
@@ -170,7 +183,7 @@ impl ServiceRegistry {
             .connection
             .query_row(
                 &format!("SELECT j.id FROM service_jobs j JOIN projects p ON p.binding=j.project
-             WHERE j.project=?1 AND j.state='pending' AND (p.paused=0 OR j.kind IN('inspect','plan_inspect')) AND {} ORDER BY j.seq LIMIT 1",super::maintenance::ELIGIBLE),
+             WHERE j.project=?1 AND j.state='pending' AND (p.paused=0 OR {RUN_WHILE_PAUSED}) AND {} ORDER BY j.seq LIMIT 1",super::maintenance::ELIGIBLE),
                 [project.to_string()],
                 |row| row.get(0),
             )
@@ -409,7 +422,7 @@ impl ServiceRegistry {
             JobError::KeyExpired
         );
         let registered: bool = transaction.query_row(
-            "SELECT EXISTS(SELECT 1 FROM projects WHERE binding=?1)",
+            "SELECT EXISTS(SELECT 1 FROM projects WHERE binding=?1 AND registered=1)",
             [project.to_string()],
             |row| row.get(0),
         )?;
@@ -842,7 +855,7 @@ impl ServiceRegistry {
         if running {
             return Ok(None);
         }
-        let id: Option<String> = transaction.query_row(&format!("SELECT j.id FROM service_jobs j WHERE j.project=?1 AND j.state='pending' AND (?2 IS NULL OR j.id=?2) AND (NOT ?3 OR j.kind IN('inspect','plan_inspect')) AND {} ORDER BY j.seq LIMIT 1",super::maintenance::ELIGIBLE), params![lease.binding.to_string(), selected.map(|id|id.to_string()),paused], |row| row.get(0)).optional()?;
+        let id: Option<String> = transaction.query_row(&format!("SELECT j.id FROM service_jobs j WHERE j.project=?1 AND j.state='pending' AND (?2 IS NULL OR j.id=?2) AND (NOT ?3 OR {RUN_WHILE_PAUSED}) AND {} ORDER BY j.seq LIMIT 1",super::maintenance::ELIGIBLE), params![lease.binding.to_string(), selected.map(|id|id.to_string()),paused], |row| row.get(0)).optional()?;
         let Some(id) = id else {
             return Ok(None);
         };
@@ -1023,6 +1036,9 @@ impl ServiceRegistry {
             },
             maintenance,
         )?;
+        if matches!(outcome, JobOutcome::Succeeded { .. }) {
+            super::unregistration::finish_if_requested(&transaction, current.project, id)?;
+        }
         transaction.commit()?;
         Ok(completed)
     }
