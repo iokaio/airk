@@ -78,6 +78,16 @@ pub(crate) fn audit(executable: &Path) -> Audit {
     result
 }
 #[cfg(target_os = "linux")]
+fn proc_executable_matches(actual: &Path, expected: &Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    matches(actual, expected)
+        || actual
+            .as_os_str()
+            .as_bytes()
+            .strip_suffix(b" (deleted)")
+            .is_some_and(|bytes| matches(Path::new(std::ffi::OsStr::from_bytes(bytes)), expected))
+}
+#[cfg(target_os = "linux")]
 fn platform(executable: &Path) -> Result<Audit> {
     use std::os::unix::fs::MetadataExt;
     // SAFETY: read-only native effective-user identity, independent of environment.
@@ -115,7 +125,7 @@ fn platform(executable: &Path) -> Result<Audit> {
             continue;
         }
         match std::fs::read_link(entry.path().join("exe")) {
-            Ok(path) if matches(&path, executable) => result.matched(pid),
+            Ok(path) if proc_executable_matches(&path, executable) => result.matched(pid),
             Ok(_) => (),
             Err(_) => result.missed(),
         }
@@ -249,6 +259,36 @@ fn platform(_executable: &Path) -> Result<Audit> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn deleted_owned_executable_remains_a_read_only_process_candidate() -> Result<()> {
+        use std::process::{Command, Stdio};
+        let owner = tempfile::tempdir()?;
+        let executable = owner.path().canonicalize()?.join("airk");
+        std::fs::copy(std::env::current_exe()?, &executable)?;
+        let child = Command::new(&executable)
+            .args(["--exact", "service_manager::tests::manager_command_fixture"])
+            .env("AIRK_MANAGER_COMMAND_FIXTURE", "blocked-input")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()?;
+        struct Owned(std::process::Child);
+        impl Drop for Owned {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        let child = Owned(child);
+        std::fs::remove_file(&executable)?;
+        let observation = audit(&executable);
+        assert!(
+            observation.matching_executable_pids.contains(&child.0.id()),
+            "deleted owned fixture not observed: {observation:?}"
+        );
+        Ok(())
+    }
     #[test]
     fn same_user_exact_executable_audit_finds_self_without_a_stop_capability() -> Result<()> {
         let executable = std::env::current_exe()?;

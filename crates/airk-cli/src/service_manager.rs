@@ -1077,6 +1077,14 @@ pub(crate) fn execute_native_observation(program: &Path, args: &[&str]) -> Resul
     let output = execute(&Invocation::new(program, args))?;
     Ok((output.success, output.text))
 }
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn verify_macos_login_intent(
+    root: &Path,
+    identity: &str,
+    channel: crate::runtime_install::RuntimeChannel,
+) -> Result<()> {
+    macos::verify_intent(root, identity, channel)
+}
 fn execute_with_timeout(invocation: &Invocation, timeout: Duration) -> Result<Output> {
     ensure!(
         invocation

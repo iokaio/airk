@@ -12,7 +12,7 @@ The native MCP check reads readiness and verifies its handshake without scheduli
 
 ## Old startup ownership and removal
 
-The trusted Service Console separately offers **Review old startup**. Select the old source, data directory, collection and executable. Review uses the verified new runtime; it never launches the selected old executable or opens its index. A bounded, same-user executable-path audit reports candidate PIDs and incomplete observations. Candidate matches do not authorize process signals.
+The trusted Service Console separately offers **Review old startup**. Select the old source, data directory, collection and executable. Review uses the verified new runtime; it never launches the selected old executable or opens its index. A bounded, same-user executable-path audit reports candidate PIDs and incomplete observations. Linux also recognizes the kernel's deleted-executable path suffix; use CLI paths or a saved review when the original file is gone. Candidate matches do not authorize process signals.
 
 Removal requires the saved AIRK receipt, exact generated command/definition, unchanged file proofs and native manager observations. Windows compares the actual Task Scheduler definition; Linux compares typed user-bus properties. Unknown, changed or unverifiable registrations are preserved. Mac loaded registrations currently refuse removal because full native configuration proof remains unavailable.
 

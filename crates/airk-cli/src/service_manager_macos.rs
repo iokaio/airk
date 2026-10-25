@@ -46,6 +46,16 @@ fn decode(bytes: &[u8], root: &Path, channel: RuntimeChannel) -> Result<Owner> {
     );
     Ok(receipt.value)
 }
+pub(super) fn verify_intent(root: &Path, identity: &str, channel: RuntimeChannel) -> Result<()> {
+    let bytes = read_config(&root.join(RECEIPT))?
+        .context("Mac login mutation has no captured ownership intent")?;
+    let owner = decode(&bytes, &root.canonicalize()?, channel)?;
+    ensure!(
+        owner.target == identity,
+        "Mac login mutation differs from captured runtime intent"
+    );
+    Ok(())
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum State {
     NotRegistered,
@@ -356,6 +366,11 @@ mod tests {
             value: owner.clone(),
             sha256: digest(&owner)?,
         })?;
+        assert!(verify_intent(&root, &owner.target, RuntimeChannel::Stable).is_err());
+        fs::write(root.join(RECEIPT), &original)?;
+        verify_intent(&root, &owner.target, RuntimeChannel::Stable)?;
+        assert!(verify_intent(&root, &"cd".repeat(32), RuntimeChannel::Stable).is_err());
+        assert!(verify_intent(&root, &owner.target, RuntimeChannel::Preview).is_err());
         assert_eq!(decode(&original, &root, RuntimeChannel::Stable)?, owner);
         assert!(decode(&original, &root.join("foreign"), RuntimeChannel::Stable).is_err());
         assert!(decode(&original, &root, RuntimeChannel::Preview).is_err());

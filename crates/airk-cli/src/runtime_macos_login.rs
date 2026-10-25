@@ -234,6 +234,16 @@ pub(crate) fn native(
         "unregister" => 2,
         _ => bail!("unknown Mac login action"),
     };
+    if operation != 0 {
+        crate::service_manager::verify_macos_login_intent(root, identity, expected_channel)?;
+    }
+    if operation == 1 {
+        require_start_allowed(root)?;
+        ensure!(
+            quiet(root)?,
+            "drain native owners before private Mac registration"
+        );
+    }
     let main = approved_main(root, identity, operation == 1)?;
     ensure!(
         std::env::current_exe()?.canonicalize()? == main.canonicalize()?,
@@ -271,6 +281,9 @@ pub(crate) fn native(
         -2 => bail!("Mac login app or fixed plist identity mismatch"),
         -3 => bail!(
             "SMAppService {action} failed with native error {error}; inspect Login Items and native policy"
+        ),
+        -5 => bail!(
+            "Mac login consent is disabled or pending; approve explicitly in System Settings before Start"
         ),
         _ => bail!("SMAppService returned an unsupported state"),
     }
@@ -316,6 +329,7 @@ pub(crate) fn foreground_root(expected_channel: RuntimeChannel) -> Result<PathBu
         channel(&root)? == expected_channel,
         "Mac foreground channel differs"
     );
+    crate::service_manager::verify_macos_login_intent(&root, identity, expected_channel)?;
     let (selected, _) = startup_selected(&root)?;
     ensure!(
         selected.canonicalize()? == current,

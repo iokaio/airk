@@ -50,6 +50,9 @@ int airk_macos_login(int action, const char *plist_name, const char *expected_bu
             NSError *error = nil;
             BOOL success = YES;
             if (action == 1) {
+                if (service.status == SMAppServiceStatusRequiresApproval) {
+                    return -5;
+                }
                 success = [service registerAndReturnError:&error];
             } else if (action == 2) {
                 success = [service unregisterAndReturnError:&error];
