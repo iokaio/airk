@@ -48,6 +48,38 @@ test('configuration preparation uses bounded stdin and the verified bundled comm
         assert.equal(calls.length,1);
     }finally{await f.cleanup();}
 });
+test('legacy startup review executes only the verified new main and binds exact targets, approvals and runtime scope',async()=>{
+    const f=await fixture(),calls:string[][]=[];let authorized=true,crossed=false;
+    const target={root:path.join(f.root,'old-source'),data_dir:path.join(f.root,'old-data'),collection:'old-fixture',executable:path.join(f.root,'old',f.main)};
+    await fs.mkdir(target.root);await fs.mkdir(target.data_dir);await fs.mkdir(path.dirname(target.executable));await fs.writeFile(target.executable,'Old command is data only.');
+    const canonical={...target,root:await fs.realpath(target.root),data_dir:await fs.realpath(target.data_dir),executable:await fs.realpath(target.executable)};
+    const binding={installDir:f.root,controlDir:path.join(f.root,'control'),executable:path.join(f.root,'selected-main'),launcher:null,
+        runtimeSha256:f.digest,version:'1.4.0',lifecycle:'on-demand' as const,verificationBasis:'trusted_distribution'};
+    const approval='ab'.repeat(32);
+    const value=()=>({preview:{version:1,namespace:'cd'.repeat(16),epoch:1,removal_available:true,spec:{id:'airk-'+'ef'.repeat(16),target:{...canonical,collection:crossed?'other':canonical.collection},definition:path.join(f.root,'old-startup.xml'),receipt:path.join(f.root,'old-owner.json')},observation:{owned:true,loaded:true,running:false,definition_matches:true}},approval,
+        workers:{matching_executable_pids:[],complete:false,scanned:3,unobserved:1,failure:null}});
+    const host=new RuntimeHost(f.root,'1.4.0',{channel:'stable'},async(command,args)=>{
+        assert.equal(command,path.join(f.source,f.main));assert.notEqual(command,target.executable);calls.push([...args]);
+        if(args[2]==='review')return value();
+        if(args[2]==='list')return {namespace:'cd'.repeat(16),epoch:1,items:[{approval,service_id:'airk-'+'ef'.repeat(16),phase:'definition_removed'}]};
+        if(args[2]==='show')return {version:1,review:value(),phase:'definition_removed'};
+        assert.equal(args[2],'remove-startup');return {approval,startup_removed:true,sources_preserved:true,project_settings_preserved:true,indexes_retained:true};
+    },()=>authorized);
+    try{
+        const review=await host.reviewLegacyStartup(binding,target);assert.ok(Object.isFrozen(review)&&Object.isFrozen(review.target));
+        assert.equal(calls.length,1);assert.ok(!calls[0].includes('remove-startup'));
+        await assert.rejects(host.removeLegacyStartup(binding,{...review}),/legacy_startup_not_reviewed/);
+        await assert.rejects(host.removeLegacyStartup({...binding,controlDir:path.join(f.root,'other-control')},review),/legacy_startup_not_reviewed/);assert.equal(calls.length,1);
+        await host.removeLegacyStartup(binding,review);assert.equal(calls[1][calls[1].indexOf('--approval')+1],approval);
+        await assert.rejects(host.removeLegacyStartup(binding,review),/legacy_startup_not_reviewed/);
+        const receipts=await host.legacyStartupReceipts(binding);assert.equal((receipts.items as any[]).length,1);
+        const resumed=await host.loadLegacyStartup(binding,approval);assert.equal(resumed.phase,'definition_removed');
+        const before=calls.length;authorized=false;await assert.rejects(host.removeLegacyStartup(binding,resumed),/runtime_client_no_longer_authorized/);assert.equal(calls.length,before);
+        authorized=true;crossed=true;await assert.rejects(host.reviewLegacyStartup(binding,target),/crossed_legacy_review/);
+        assert.equal(await fs.readFile(target.executable,'utf8'),'Old command is data only.');
+    }finally{await f.cleanup();}
+});
+
 async function fixture(){
     const root=await fs.mkdtemp(path.join(os.tmpdir(),'airk-runtime-bootstrap-'));
     const source=path.join(root,'native','runtime');await fs.mkdir(source,{recursive:true});

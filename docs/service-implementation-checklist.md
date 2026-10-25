@@ -38,6 +38,8 @@ Management follow-up: full replacement work now records one actual `reindex` obs
 
 ## Token-efficiency additions
 
+Legacy-startup follow-up: console/CLI review, same-user executable candidate audit, exact Windows/Linux manager ownership and separately approved removal are implemented. Bounded checksummed intents retain resumable phases and idempotent completion, preserving sources/settings/indexes. Windows fault/panel tests and an actual stopped owned Task Scheduler fixture pass; Linux library/native/Clippy qualification also passes. Native Mac loaded-registration proof and old derived-state deletion remain open.
+
 Implement and validate these during Phase 7 MCP/extension cutover, after the worker/publication/resource contracts are integrated. Plan changes do not mark their code or acceptance gates complete.
 
 - [x] Terse by default, extension-panel Full selection, per-call override and agent guidance in MCP instructions/tool descriptions. Native schemas, real stdio, bounded instructions, panel rendering/actions and direct-worker receipt renewal have Windows/Linux development evidence; installed-editor acceptance remains in the final matrix.

@@ -69,7 +69,7 @@ fn sid_string(sid: *mut c_void) -> Result<String> {
     Ok(value)
 }
 
-fn process_user(pid: u32) -> Result<String> {
+pub(crate) fn process_user(pid: u32) -> Result<String> {
     // SAFETY: PID and requested read-only rights are scalar values.
     let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
     if process.is_null() {

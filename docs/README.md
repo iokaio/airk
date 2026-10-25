@@ -12,7 +12,7 @@ The 1.3.x/1.2.x release records and former direct-helper/window-scheduler guides
 - [Offline service installation, resumable activation, managed payloads and startup ownership](service-installation.md) Shutdown ownership checks also cover damaged payload files, and initialization receipts prevent silent registry replacement after control loss.
 - [Reviewed runtime upgrades, rollback, saved activation and version pins](service-runtime-transitions.md)
 - [Reviewed project setup, reserved storage and stable-launcher MCP bindings](service-project-setup.md)
-- [Explicit legacy agent-entry review and guarded JSON replacement](service-legacy-transition.md)
+- [Explicit legacy agent-entry review, old startup ownership and resumable removal](service-legacy-transition.md)
 - [Guarded project unregister and resumable selected index cleanup](service-project-retirement.md)
 - [Direct service client adapters and durable CLI request recovery](service-client-adapters.md)
 - [Direct usage/settings reads, scan-limit reset and guarded project management](service-native-management.md)

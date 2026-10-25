@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { randomUUID } from 'node:crypto';
-import { BootstrapObservation, RuntimeBinding, RuntimeHost } from './serviceBootstrap';
+import { BootstrapObservation, LegacyStartupReview, LegacyStartupTarget, RuntimeBinding, RuntimeHost } from './serviceBootstrap';
 import { count, identifier, parseConsolePage, record, RecordValue, ServiceClient, ServiceError } from './serviceClient';
 import { ConsoleIntent, IntentJournal, IntentStorage, LifecycleIntent } from './serviceIntents';
 import { consoleAction, ConsoleObservation, diagnosticPreview, ServiceConsoleState } from './serviceConsoleView';
@@ -21,6 +21,13 @@ export interface ConsoleHost {
     chooseResponseMode?():Promise<void>;
     registerWorkspace?():Promise<void>;
     currentProjects?():ReadonlySet<string>;
+    legacy?:{
+        choose():Promise<LegacyStartupTarget|undefined>;
+        review(binding:RuntimeBinding,target:LegacyStartupTarget):Promise<LegacyStartupReview>;
+        load(binding:RuntimeBinding,approval:string):Promise<LegacyStartupReview>;
+        list(binding:RuntimeBinding):Promise<RecordValue>;
+        remove(binding:RuntimeBinding,review:LegacyStartupReview):Promise<RecordValue>;
+    };
 }
 const empty=():ConsoleObservation=>({state:'unavailable',checkedAt:Date.now()});
 function code(error:unknown):string{return error instanceof ServiceError?error.code:'console_operation_failed';}
@@ -33,6 +40,7 @@ export class ServiceConsoleController {
     private eventCursor:unknown=null;
     private pageStart:{after:string|null;revision:number|null}={after:null,revision:null};
     private disposed=false;
+    private legacyReview?:LegacyStartupReview;
     private readonly idle=new Set<(available:boolean)=>void>();
     constructor(private readonly host:ConsoleHost){
         this.state={revision:'',trusted:host.trusted(),busy:false,authority:host.authority,version:host.version,connected:false,
@@ -51,6 +59,7 @@ export class ServiceConsoleController {
         if(this.disposed)return;this.state.trusted=this.host.trusted();this.state.revision=randomUUID();
         this.state.responseMode=this.host.responseMode?.()??'terse';
         this.state.registrationAvailable=!!this.host.registerWorkspace;
+        this.state.legacyAvailable=!!this.host.legacy;
         this.state.currentProjects=new Set(this.host.currentProjects?.()??[]);
         this.host.changed(this.state);
     }
@@ -165,6 +174,7 @@ export class ServiceConsoleController {
         const journal=new IntentJournal(this.host.storage,this.binding!.controlDir,identifier(namespace,16));
         if(this.journal?.scope!==journal.scope){
             this.journal=journal;this.state.selected.clear();this.eventCursor=null;this.state.events=[];this.state.page=undefined;
+            this.legacyReview=undefined;this.state.legacyReview=undefined;this.state.legacyReceipts=undefined;
             this.state.preview=undefined;
             this.state.configurationResults=undefined;
             this.pageStart={after:null,revision:null};
@@ -279,6 +289,9 @@ export class ServiceConsoleController {
         const requestedPreview=this.state.preview;
         this.state.busy=true;this.state.message=undefined;this.publish();
         try{
+            if(['reviewLegacyStartup','legacyStartupReceipts','resumeLegacyStartup','removeLegacyStartup','copyLegacyStartup'].includes(action.action)){
+                await this.legacyAction(action);return;
+            }
             if(action.action==='registerWorkspace'){
                 this.authorized();if(!this.host.registerWorkspace)throw new ServiceError('workspace_registration_unavailable');
                 await this.host.registerWorkspace();this.authorized();
@@ -391,6 +404,37 @@ export class ServiceConsoleController {
             this.publish();
             this.releaseIdle();
         }
+    }
+    private async legacyAction(action:NonNullable<ReturnType<typeof consoleAction>>):Promise<void>{
+        this.authorized();const legacy=this.host.legacy;if(!legacy)throw new ServiceError('legacy_review_unavailable');
+        if(action.action==='copyLegacyStartup'){if(this.state.legacyReview)await this.host.copy(JSON.stringify(this.state.legacyReview,null,2));return;}
+        if(!this.binding)await this.discover();this.authorized();const binding=this.binding;
+        if(!binding)throw new ServiceError('initialized_native_control_required');
+        if(action.action==='legacyStartupReceipts'){
+            const value=await legacy.list(binding);this.authorized();
+            if(!Array.isArray(value.items)||value.items.length>16)throw new ServiceError('invalid_legacy_receipt_list');
+            for(const item of value.items){const row=record(item);identifier(row.approval,32);if(!['planned','disabled','definition_removed','receipt_removed','complete'].includes(String(row.phase)))throw new ServiceError('invalid_legacy_receipt_phase');}
+            this.state.legacyReceipts=value;return;
+        }
+        if(action.action==='reviewLegacyStartup'){
+            const target=await legacy.choose();this.authorized();if(!target)return;
+            this.legacyReview=await legacy.review(binding,target);this.authorized();
+            this.state.legacyReview={value:this.legacyReview.value,phase:this.legacyReview.phase,checkedAt:Date.now()};this.state.legacyResult=undefined;return;
+        }
+        if(action.action==='resumeLegacyStartup'){
+            this.legacyReview=await legacy.load(binding,identifier(action.id,32));this.authorized();
+            this.state.legacyReview={value:this.legacyReview.value,phase:this.legacyReview.phase,checkedAt:Date.now()};this.state.legacyResult=undefined;
+            if(this.legacyReview.phase==='complete'){this.state.message='Showing the original completed legacy removal receipt.';return;}
+        }
+        const review=this.legacyReview;
+        if(!review?.approval||review.phase==='complete')throw new ServiceError('legacy_startup_review_required');
+        const spec=record(record(review.value.preview).spec),target=review.target;
+        if(!await this.host.confirm(`${review.phase?'Resume removal of':'Remove'} reviewed old AIRK startup ${String(spec.id)} on ${this.host.authority}? Source: ${target.root}. Old data: ${target.data_dir}. Collection: ${target.collection}. Configured executable: ${target.executable}. This stops that OS-managed old worker and removes its login registration. Active old indexing may be interrupted. Original sources, project settings and old indexes stay in place; unmanaged old processes remain under their own controls. Approval: ${review.approval}.`))return;
+        this.authorized();
+        const result=await legacy.remove(binding,review);this.authorized();this.state.legacyResult=result;
+        this.state.legacyReview={value:review.value,phase:'complete',checkedAt:Date.now()};this.legacyReview=undefined;
+        if(Array.isArray(this.state.legacyReceipts?.items))this.state.legacyReceipts={...this.state.legacyReceipts,items:this.state.legacyReceipts.items.map(value=>record(value).approval===review.approval?{...record(value),phase:'complete'}:value)};
+        this.state.message='The reviewed old startup was removed. Sources, project settings and old indexes were retained.';
     }
     /** Trusted host command: capture a native repair preview; execution still needs its separate review. */
     async projectConfiguration(project:string,draft:RecordValue,valid:()=>boolean=()=>true):Promise<void>{

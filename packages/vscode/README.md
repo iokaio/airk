@@ -18,6 +18,8 @@ Open **AIRK: Connect / Reconnect Service** for project and worker observations, 
 
 A deliberate Stop stays stopped until **Start service**. Reconnecting, advertising MCP definitions or closing a window does not silently repeat work. Uncertain requests keep their exact saved key for explicit recovery.
 
+Old startup has a separate review and removal confirmation. The verified new runtime checks saved and native OS ownership without executing the selected old command. Resumable removal preserves sources, settings and old indexes. Process candidates remain observations; unknown registrations are preserved. Native Mac loaded-registration proof and old derived-state cleanup remain pending.
+
 The runtime contains two executables: lightweight `airk` service/client/worker roles and `airk-embed` inference with offline model assets. Native ownership is independent of the extension directory. Windows, Linux and both Mac architectures are targets; installed-platform qualification is recorded separately and native Mac/editor acceptance remains pending.
 
 ## Coding agents and response mode

@@ -12,6 +12,8 @@ mod platform;
 #[cfg(unix)]
 #[path = "local_ipc_unix.rs"]
 mod platform;
+#[cfg(windows)]
+pub(crate) use platform::process_user;
 pub use platform::{Listener, Stream, connect, current_user, prepare_root};
 
 /// Stable counter identity for the OS-authenticated user; not a bearer credential.

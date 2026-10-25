@@ -6,6 +6,8 @@ Current cutover status: the working tree now defaults to the service-backed exte
 
 The coding-agent guide now offers [explicit diff review for recognized legacy JSON entries](service-legacy-transition.md), with exact proposal/file guards and preserved unrelated settings. Other formats retain manual review. Native MCP verification is read-only. This does not establish ownership of old workers or authorize their automatic removal.
 
+The console and CLI now separately review old startup ownership and require explicit removal approval. Native Windows/Linux proof, exact saved-file guards and checksummed bounded intents support interrupted removal and safe completion replay. Read-only same-user process candidates never authorize signals. Sources, settings and old indexes remain preserved; native Mac loaded-registration proof and old derived-state deletion remain open.
+
 [Guarded project unregister](service-project-retirement.md) now commits registration closure, canceled queued work and the final receipt atomically. It runs while paused, drains the exact owned worker and preserves sources, settings and derived data. Active project lists/bulk repair exclude it; native ownership audits retain it until actual owners are gone. A separate inactive-project console view previews owner-bound index cleanup and requires explicit deletion approval. A private native worker removes known derived files in resumable turns, preserves saved settings and original sources, and blocks re-registration until interrupted cleanup finishes. Legacy 1.3 cleanup and remaining platform gates stay open.
 
 The dated development checkpoints below retain their original artifact/version evidence; they are not claims of final release qualification.

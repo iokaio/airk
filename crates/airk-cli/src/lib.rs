@@ -23,6 +23,8 @@ pub mod project_worker;
 
 mod service_resource_policy;
 
+mod legacy_processes;
+pub mod legacy_startup;
 pub mod runtime_install;
 pub mod service_manager;
 

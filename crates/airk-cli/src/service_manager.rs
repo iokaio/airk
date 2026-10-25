@@ -62,6 +62,7 @@ struct Receipt {
 }
 
 pub struct ServiceManager {
+    legacy_review: bool,
     platform: Platform,
     id: String,
     principal: String,
@@ -95,6 +96,83 @@ struct Output {
 }
 
 impl ServiceManager {
+    /// Inspect/remove an explicitly selected former root scheduler. Never launch
+    /// its command or open its Kernel/index to establish ownership.
+    pub(crate) fn for_reviewed_legacy(
+        root: &Path,
+        data: &Path,
+        collection: &str,
+        executable: &Path,
+    ) -> Result<Self> {
+        ensure!(
+            root.is_absolute() && data.is_absolute() && executable.is_absolute(),
+            "legacy review requires absolute paths"
+        );
+        airk_store::validate_collection(collection)?;
+        let source = absolute_existing_ancestor(root)?;
+        let data = absolute_existing_ancestor(data)?;
+        let executable = if executable.try_exists()? {
+            ensure!(
+                fs::metadata(executable)?.is_file(),
+                "legacy executable path must name a file"
+            );
+            executable.canonicalize()?
+        } else {
+            absolute_existing_ancestor(
+                executable
+                    .parent()
+                    .context("legacy executable parent missing")?,
+            )?
+            .join(
+                executable
+                    .file_name()
+                    .context("legacy executable filename missing")?,
+            )
+        };
+        ensure!(
+            executable
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.eq_ignore_ascii_case(if cfg!(windows) {
+                    "airk.exe"
+                } else {
+                    "airk"
+                })),
+            "legacy command must name an explicitly reviewed AIRK executable"
+        );
+        for path in [&source, &data, &executable] {
+            ensure!(
+                path.to_str().is_some_and(|value| value.len() <= 4096),
+                "legacy review path exceeds budget"
+            );
+        }
+        let args = vec![
+            "--root".into(),
+            source.to_str().context("non-UTF-8 source")?.into(),
+            "--data-dir".into(),
+            data.to_str().context("non-UTF-8 data")?.into(),
+            "--collection".into(),
+            collection.into(),
+            "schedule".into(),
+            "run".into(),
+            "--watch".into(),
+        ];
+        let mut manager = Self::for_command(&data, executable, args, false)?;
+        manager.legacy_review = true;
+        Ok(manager)
+    }
+    pub(crate) fn legacy_definition_digest(&self) -> Result<Option<String>> {
+        ensure!(self.legacy_review, "legacy review role required");
+        if !self.check_owned()? {
+            return Ok(None);
+        }
+        Ok(Some(format!(
+            "{:x}",
+            Sha256::digest(
+                read_config(&self.definition)?.context("owned legacy definition missing")?
+            )
+        )))
+    }
     pub fn for_kernel(kernel: &Kernel) -> Result<Self> {
         let data = absolute_existing_ancestor(kernel.data_dir())?;
         let args = vec![
@@ -195,6 +273,7 @@ impl ServiceManager {
             );
         }
         Ok(Self {
+            legacy_review: false,
             platform,
             id,
             principal,
@@ -406,6 +485,17 @@ impl ServiceManager {
 
     pub fn uninstall(&self) -> Result<ServiceStatus> {
         ensure!(self.check_owned()?, "service is not installed");
+        self.unregister_owned()?;
+        ensure!(
+            self.check_owned()?,
+            "service ownership changed during uninstall"
+        );
+        fs::remove_file(&self.definition)?;
+        fs::remove_file(&self.receipt)?;
+        self.reload_user_manager()?;
+        self.status()
+    }
+    fn unregister_owned(&self) -> Result<()> {
         let status = self.stop()?;
         if status.loaded == Some(true) {
             self.require_registered(&self.status()?)?;
@@ -416,16 +506,29 @@ impl ServiceManager {
             Platform::Linux => checked(&self.systemctl(&["disable", &self.unit()]))?,
             Platform::Macos => (),
         }
-        ensure!(
-            self.check_owned()?,
-            "service ownership changed during uninstall"
-        );
-        fs::remove_file(&self.definition)?;
-        fs::remove_file(&self.receipt)?;
+        Ok(())
+    }
+    fn reload_user_manager(&self) -> Result<()> {
         if self.platform == Platform::Linux {
             checked(&self.systemctl(&["daemon-reload"]))?;
         }
-        self.status()
+        Ok(())
+    }
+    pub(crate) fn legacy_paths(&self) -> Result<(&Path, &Path)> {
+        ensure!(self.legacy_review, "legacy removal role required");
+        Ok((&self.definition, &self.receipt))
+    }
+    pub(crate) fn disable_reviewed_legacy(&self) -> Result<()> {
+        ensure!(self.legacy_review, "legacy removal role required");
+        self.unregister_owned()
+    }
+    pub(crate) fn legacy_manager_state(&self) -> Result<(Option<bool>, Option<bool>)> {
+        ensure!(self.legacy_review, "legacy removal role required");
+        Ok(parse_status(self.platform, &execute(&self.query(false)?)?))
+    }
+    pub(crate) fn reload_reviewed_legacy(&self) -> Result<()> {
+        ensure!(self.legacy_review, "legacy removal role required");
+        self.reload_user_manager()
     }
 
     pub fn owned_registration_exists(&self) -> Result<bool> {
@@ -434,7 +537,8 @@ impl ServiceManager {
 
     fn require_registration_adapter(&self) -> Result<()> {
         ensure!(
-            !(self.id.starts_with("airksvc-") && self.platform == Platform::Macos),
+            !((self.id.starts_with("airksvc-") || self.legacy_review)
+                && self.platform == Platform::Macos),
             "shared LaunchAgent configuration proof is unavailable; retain on-demand mode until the native adapter is implemented and qualified"
         );
         Ok(())
@@ -478,6 +582,10 @@ impl ServiceManager {
     }
 
     fn check_launchable(&self) -> Result<()> {
+        ensure!(
+            !self.legacy_review,
+            "legacy review/removal never starts or executes the old command"
+        );
         if self.id.starts_with("airksvc-") {
             let root = Path::new(&self.data);
             let launcher = crate::runtime_install::verified_launcher(root)?;
@@ -491,7 +599,7 @@ impl ServiceManager {
         Ok(())
     }
     fn require_registered(&self, status: &ServiceStatus) -> Result<()> {
-        if self.id.starts_with("airksvc-") {
+        if self.id.starts_with("airksvc-") || self.legacy_review {
             ensure!(
                 status.loaded == Some(true) && status.registered_definition_matches == Some(true),
                 "registered service definition is different or could not be verified; inspect OS startup configuration before changing it"
@@ -555,6 +663,12 @@ impl ServiceManager {
             format!("{:x}", Sha256::digest(&definition)) == receipt.definition_sha256,
             "service definition was modified; refusing to alter it"
         );
+        if self.legacy_review {
+            ensure!(
+                definition == self.definition_bytes(&self.plan()?.definition),
+                "legacy definition differs from the reviewed executable, source, data or collection"
+            );
+        }
         Ok(true)
     }
     fn platform_name(&self) -> &'static str {
@@ -1018,6 +1132,88 @@ pub(crate) fn check_executable_identity(program: &Path, expected: &str) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "requires explicit owned native Task Scheduler qualification"]
+    fn reviewed_legacy_task_removal_preserves_sources_and_replays_receipt() -> Result<()> {
+        use crate::legacy_startup::{Target, remove_target, review_target};
+        let owner = tempfile::tempdir()?;
+        let root = owner.path().canonicalize()?;
+        let source = root.join("source");
+        let data = root.join("old-data");
+        let control = root.join("control");
+        for path in [&source, &data, &control] {
+            fs::create_dir(path)?;
+        }
+        fs::write(source.join("original.txt"), b"original source")?;
+        fs::write(data.join("settings.json"), b"saved settings")?;
+        fs::write(data.join("index.dat"), b"retained old index")?;
+        let executable = root.join("airk.exe");
+        fs::write(&executable, b"deliberately invalid executable; never run")?;
+        let target = Target {
+            root: source.clone(),
+            data_dir: data.clone(),
+            collection: "owned-legacy-fixture".into(),
+            executable,
+        };
+        airk_store::service::registry::ServiceRegistry::open(
+            &control,
+            airk_core::identity::Incarnation::from_bytes([61; 16]),
+        )?;
+        let manager = ServiceManager::for_reviewed_legacy(
+            &target.root,
+            &target.data_dir,
+            &target.collection,
+            &target.executable,
+        )?;
+        ensure!(
+            manager.status()?.loaded == Some(false),
+            "fixture task already exists"
+        );
+        let plan = manager.plan()?;
+        let definition = manager.definition_bytes(&plan.definition);
+        write_new(&manager.definition, &definition)?;
+        let receipt = Receipt {
+            schema: 1,
+            id: manager.id.clone(),
+            data_root: manager.data.clone(),
+            definition_sha256: format!("{:x}", Sha256::digest(&definition)),
+        };
+        write_new(&manager.receipt, &serde_json::to_vec(&receipt)?)?;
+        struct Cleanup(ServiceManager);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                if let Err(error) = self.0.uninstall()
+                    && self.0.definition.exists()
+                {
+                    eprintln!("owned legacy fixture cleanup failed: {error:#}");
+                }
+            }
+        }
+        let cleanup = Cleanup(manager);
+        let manager = &cleanup.0;
+        checked(&manager.schtasks(&[
+            "/Create",
+            "/TN",
+            &manager.id,
+            "/XML",
+            manager.definition.to_str().context("fixture task path")?,
+        ])?)?;
+        let status = manager.status()?;
+        assert_eq!(status.running, Some(false));
+        assert_eq!(status.registered_definition_matches, Some(true));
+        let review = serde_json::to_value(review_target(&control, &target)?)?;
+        let approval = serde_json::from_value(review["approval"].clone())?;
+        let result = remove_target(&control, &target, approval)?;
+        assert_eq!(result["startup_removed"], true);
+        assert_eq!(manager.status()?.loaded, Some(false));
+        assert!(!manager.definition.exists() && !manager.receipt.exists());
+        assert_eq!(remove_target(&control, &target, approval)?, result);
+        assert_eq!(fs::read(source.join("original.txt"))?, b"original source");
+        assert_eq!(fs::read(data.join("settings.json"))?, b"saved settings");
+        assert_eq!(fs::read(data.join("index.dat"))?, b"retained old index");
+        Ok(())
+    }
     #[test]
     fn manager_command_fixture() -> Result<()> {
         let Ok(mode) = std::env::var("AIRK_MANAGER_COMMAND_FIXTURE") else {
@@ -1217,6 +1413,7 @@ mod tests {
     }
     pub(super) fn fixture(platform: Platform, root: &Path) -> ServiceManager {
         ServiceManager {
+            legacy_review: false,
             platform,
             id: "airk-fixture".into(),
             principal: "1000".into(),
@@ -1232,6 +1429,48 @@ mod tests {
             definition: root.join("fixture.conf"),
             receipt: root.join("receipt.json"),
         }
+    }
+
+    #[test]
+    fn reviewed_legacy_role_refuses_launch_and_requires_exact_saved_and_os_configuration()
+    -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let mut service = fixture(Platform::Linux, root.path());
+        service.legacy_review = true;
+        assert!(service.install().is_err());
+        assert!(service.start().is_err());
+        assert!(!service.definition.exists() && !service.receipt.exists());
+        let definition = service.definition_bytes(&service.plan()?.definition);
+        write_new(&service.definition, &definition)?;
+        let mut receipt = Receipt {
+            schema: 1,
+            id: service.id.clone(),
+            data_root: service.data.clone(),
+            definition_sha256: format!("{:x}", Sha256::digest(&definition)),
+        };
+        write_new(&service.receipt, &serde_json::to_vec(&receipt)?)?;
+        assert!(service.legacy_definition_digest()?.is_some());
+        let mut status = ServiceStatus {
+            id: service.id.clone(),
+            platform: "systemd_user",
+            definition_path: service.definition.clone(),
+            installed: true,
+            loaded: Some(true),
+            running: Some(false),
+            registered_definition_matches: None,
+            registration_verification_error: None,
+            manager_output: String::new(),
+        };
+        assert!(service.require_registered(&status).is_err());
+        status.registered_definition_matches = Some(true);
+        service.require_registered(&status)?;
+        let foreign = b"foreign source or collection definition";
+        fs::write(&service.definition, foreign)?;
+        receipt.definition_sha256 = format!("{:x}", Sha256::digest(foreign));
+        fs::write(&service.receipt, serde_json::to_vec(&receipt)?)?;
+        assert!(service.legacy_definition_digest().is_err());
+        assert_eq!(fs::read(&service.definition)?, foreign);
+        Ok(())
     }
     #[test]
     fn service_rendering_escapes_all_platform_arguments_without_shells() -> Result<()> {

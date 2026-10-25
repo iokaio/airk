@@ -128,6 +128,27 @@ test('unregister binds the prepared project and requires approval before durable
     assert.equal(f.controller.state.pending.length,0);f.controller.dispose();
 });
 
+test('legacy startup controls require a separate reviewed scope and approval, preserve trust and resume only listed receipts',async()=>{
+    for(const approval of ['decline','approve','lose-trust'] as const){
+        const f=fixture();let removed=0,confirmed='';
+        const target={root:'/old-source',data_dir:'/old-data',collection:'old-fixture',executable:'/old/airk'},key='ab'.repeat(32);
+        const reviewed:any={installDir:'/install',controlDir:'/control',runtimeSha256:'90'.repeat(32),target,approval:key,value:{approval:key,preview:{spec:{id:'airk-fixture',target},observation:{owned:true,definition_matches:true}},workers:{matching_executable_pids:[123],complete:false,unobserved:1}}};
+        f.host.legacy={choose:async()=>target,review:async()=>reviewed,load:async(_binding,id)=>{assert.equal(id,key);return {...reviewed,phase:'definition_removed'};},list:async()=>({items:[{approval:key,service_id:'airk-fixture',phase:'definition_removed'}]}),remove:async(_binding,review)=>{assert.equal(review.approval,key);removed++;return {startup_removed:true};}};
+        f.host.confirm=async message=>{confirmed=message;if(approval==='lose-trust')f.setTrusted(false);return approval!=='decline';};
+        await f.controller.refresh();
+        assert.equal(consoleAction({type:'service',revision:f.controller.state.revision,action:'removeLegacyStartup'},f.controller.state),undefined);
+        await f.action('reviewLegacyStartup');assert.equal(removed,0);assert.ok(f.controller.state.legacyReview);
+        assert.match(renderConsole(f.controller.state),/Legacy startup review/);
+        await f.action('removeLegacyStartup');assert.match(confirmed,/Source: \/old-source/);assert.match(confirmed,/project settings and old indexes stay in place/);
+        assert.equal(removed,approval==='approve'?1:0);
+        f.setTrusted(true);await f.action('legacyStartupReceipts');
+        assert.equal(consoleAction({type:'service',revision:f.controller.state.revision,action:'resumeLegacyStartup',id:'ef'.repeat(32)},f.controller.state),undefined);
+        assert.equal(consoleAction({type:'service',revision:f.controller.state.revision,action:'resumeLegacyStartup',id:key,target:{root:'/injected'}},f.controller.state),undefined);
+        f.host.confirm=async()=>false;await f.action('resumeLegacyStartup',{id:key});assert.equal(f.controller.state.legacyReview?.phase,'definition_removed');
+        assert.equal(removed,approval==='approve'?1:0);f.controller.dispose();
+    }
+});
+
 test('inactive cleanup requires a completed exact preview and host approval before journaled dispatch',async()=>{
     for(const approval of ['decline','approve','lose-trust'] as const){
         const f=fixture();let reviewed='';

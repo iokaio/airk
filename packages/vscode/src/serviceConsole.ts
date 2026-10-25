@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 import * as vscode from 'vscode';
 import * as path from 'node:path';
-import { BootstrapObservation, nativeRunner, RuntimeHost, RuntimeOptions } from './serviceBootstrap';
+import { BootstrapObservation, LegacyStartupTarget, nativeRunner, RuntimeHost, RuntimeOptions } from './serviceBootstrap';
 import { RecordValue, ServiceError, record } from './serviceClient';
 import { ServiceConsoleController } from './serviceConsoleController';
 import { consoleContent, renderConsole, ServiceConsoleState } from './serviceConsoleView';
-export type ConsoleRuntime=Pick<RuntimeHost,'discover'|'binding'|'ensure'|'client'|'snapshot'|'repair'|'prepareConfiguration'|'reviewTransition'|'transition'|'lifecycle'|'abandonLifecycle'>;
+export type ConsoleRuntime=Pick<RuntimeHost,'discover'|'binding'|'ensure'|'client'|'snapshot'|'repair'|'prepareConfiguration'|'reviewTransition'|'transition'|'lifecycle'|'abandonLifecycle'> & Partial<Pick<RuntimeHost,'reviewLegacyStartup'|'loadLegacyStartup'|'legacyStartupReceipts'|'removeLegacyStartup'>>;
 
 /** Machine/user settings only. A repository cannot nominate an executable or approval. */
 export function serviceRuntimeOptions():RuntimeOptions {
@@ -45,6 +45,12 @@ export class ServiceConsole implements vscode.WebviewViewProvider,vscode.Disposa
             changed:state=>this.changed(state),confirm:async message=>(await vscode.window.showWarningMessage(message,{modal:true},'Continue'))==='Continue',
             copy:async text=>vscode.env.clipboard.writeText(text),logs:observation=>this.logs(observation),resources:current=>this.resources(current),
             configuration:row=>this.configuration(row),
+            ...(this.runtime.reviewLegacyStartup&&this.runtime.loadLegacyStartup&&this.runtime.legacyStartupReceipts&&this.runtime.removeLegacyStartup?{legacy:{
+                choose:()=>this.legacyTarget(),review:(binding:import('./serviceBootstrap').RuntimeBinding,target:LegacyStartupTarget)=>this.runtime.reviewLegacyStartup!(binding,target),
+                load:(binding:import('./serviceBootstrap').RuntimeBinding,approval:string)=>this.runtime.loadLegacyStartup!(binding,approval),
+                list:(binding:import('./serviceBootstrap').RuntimeBinding)=>this.runtime.legacyStartupReceipts!(binding),
+                remove:(binding:import('./serviceBootstrap').RuntimeBinding,review:import('./serviceBootstrap').LegacyStartupReview)=>this.runtime.removeLegacyStartup!(binding,review),
+            }}:{}),
             lifecycle:(binding,intent,force)=>this.runtime.lifecycle(binding,intent,force),
             abandonLifecycle:(binding,intent,id)=>this.runtime.abandonLifecycle(binding,intent,id),
             responseMode:()=>vscode.workspace.getConfiguration('airk').inspect<string>('mcp.responseMode')?.globalValue==='full'?'full':'terse',
@@ -105,6 +111,16 @@ export class ServiceConsole implements vscode.WebviewViewProvider,vscode.Disposa
         const result=await nativeRunner(bootstrap.bundle.main,['service','logs','--runtime-dir',control,'--limit','256']);
         if(!vscode.workspace.isTrusted||this.disposed)return;
         this.output.appendLine(JSON.stringify(result,null,2));this.output.show(true);
+    }
+    private async legacyTarget():Promise<LegacyStartupTarget|undefined>{
+        const authorized=()=>{if(!vscode.workspace.isTrusted||this.disposed)throw new ServiceError('runtime_client_no_longer_authorized');};
+        const folder=async(title:string)=>{authorized();const chosen=await vscode.window.showOpenDialog({title,canSelectFolders:true,canSelectFiles:false,canSelectMany:false,openLabel:'Review this old path'});authorized();return chosen?.[0]?.fsPath;};
+        const root=await folder('Old AIRK source root: read-only startup review');if(!root)return;
+        const data_dir=await folder('Old AIRK index data root: preserve its settings and indexes');if(!data_dir)return;
+        const selected=await vscode.window.showOpenDialog({title:'Old AIRK executable: compare its configured path; never run it',canSelectFolders:false,canSelectFiles:true,canSelectMany:false,openLabel:'Review executable path'});authorized();
+        const executable=selected?.[0]?.fsPath;if(!executable)return;
+        const collection=await vscode.window.showInputBox({title:'Old AIRK collection name',prompt:'Use the collection from its old MCP/startup configuration. This review never converts an index.',validateInput:value=>value.length>0&&value.length<=128&&value!=='.'&&value!=='..'&&/^[A-Za-z0-9._-]+$/.test(value)?undefined:'Enter the exact old collection name (letters, digits, dot, dash or underscore).'});authorized();
+        return collection?{root,data_dir,collection,executable}:undefined;
     }
     private async resources(current:RecordValue):Promise<RecordValue|undefined>{
         const choice=await vscode.window.showQuickPick([

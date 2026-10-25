@@ -337,6 +337,10 @@ enum Command {
 }
 #[derive(Subcommand)]
 enum ServiceCommand {
+    Legacy {
+        #[command(subcommand)]
+        action: airk_cli::legacy_startup::LegacyCommand,
+    },
     Requests {
         #[arg(long)]
         runtime_dir: PathBuf,
@@ -931,6 +935,7 @@ fn print_control(response: ControlResponse) -> Result<()> {
 }
 async fn service(cli: &Cli, action: &ServiceCommand) -> Result<()> {
     match action {
+        ServiceCommand::Legacy { action } => airk_cli::legacy_startup::run(action),
         ServiceCommand::Requests {
             runtime_dir,
             action,

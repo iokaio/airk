@@ -8,6 +8,7 @@ export interface ServiceConsoleState {
     responseMode?:'terse'|'full';
     registrationAvailable?:boolean; currentProjects?:ReadonlySet<string>;
     inactiveProjects?:boolean;
+    legacyAvailable?:boolean;legacyReview?:{value:RecordValue;phase?:string;checkedAt:number};legacyReceipts?:RecordValue;legacyResult?:RecordValue;
     health:ConsoleObservation; resources:ConsoleObservation; model:ConsoleObservation; sources:ConsoleObservation;
     bootstrap:ConsoleObservation; page?:ConsolePage; workers?:RecordValue; events:RecordValue[]; historyOmitted:boolean;
     serviceEvents?:ConsoleObservation;
@@ -17,7 +18,7 @@ export interface ServiceConsoleState {
     pending:{id:string;title:string;unknown:boolean;lifecycle?:boolean;forceAvailable?:boolean}[]; preview?:string; includePaths:boolean; message?:string;
 }
 export type ConsoleAction = {type:'service';revision:string;action:string;project?:string;id?:string;selected?:boolean;scope?:'one'|'selected'|'all';operation?:RepairOperation;includePaths?:boolean;allowFallback?:boolean};
-const simple=['registeredProjects','inactiveProjects','registerWorkspace','refresh','connect','start','stop','restart','repairRuntime','upgradeRuntime','rollbackRuntime','resumeActivation','logs','resources','responseMode','recoverLifecycle','abandonLifecycle','startEmbedding','stopEmbedding','forceEmbedding','firstPage','nextPage','morePlan','refreshPlan','pausePlan','resumePlan','cancelPlan','approvePlan','previewReport','copyReport'];
+const simple=['reviewLegacyStartup','legacyStartupReceipts','removeLegacyStartup','copyLegacyStartup','registeredProjects','inactiveProjects','registerWorkspace','refresh','connect','start','stop','restart','repairRuntime','upgradeRuntime','rollbackRuntime','resumeActivation','logs','resources','responseMode','recoverLifecycle','abandonLifecycle','startEmbedding','stopEmbedding','forceEmbedding','firstPage','nextPage','morePlan','refreshPlan','pausePlan','resumePlan','cancelPlan','approvePlan','previewReport','copyReport'];
 const projects=['previewCleanup','deleteDerived','inspect','index','pause','resume','restartProject','watch','modelSetup','configureProject','copyConfiguration'];
 const operations=['auto','verify','recover','reconcile','vectors','rebuild'];
 /** Messages select fixed host-owned operations; no paths, commands, tokens or RPC bodies are accepted. */
@@ -27,6 +28,9 @@ export function consoleAction(value:unknown,current:ServiceConsoleState):Console
         if(message.type!=='service'||message.revision!==current.revision||typeof message.action!=='string')return;
         const keys=new Set(['type','revision','action']);const action=message.action;
         if(simple.includes(action)){
+            if(['reviewLegacyStartup','legacyStartupReceipts','removeLegacyStartup','copyLegacyStartup'].includes(action)&&!current.legacyAvailable)return;
+            if(action==='removeLegacyStartup'&&(!current.legacyReview?.value.approval||current.legacyReview.phase==='complete'))return;
+            if(action==='copyLegacyStartup'&&!current.legacyReview)return;
             if(action==='previewReport'){keys.add('includePaths');if(typeof message.includePaths!=='boolean')return;}
             if(action==='approvePlan'){keys.add('allowFallback');if(typeof message.allowFallback!=='boolean')return;}
         }else if(projects.includes(action)||action==='select'){
@@ -40,6 +44,9 @@ export function consoleAction(value:unknown,current:ServiceConsoleState):Console
             keys.add('scope');keys.add('operation');if(!['one','selected','all'].includes(String(message.scope))||!operations.includes(String(message.operation)))return;
             if(message.scope==='one'){keys.add('project');const project=identifier(message.project,32);
                 if(!current.page?.projects.some(row=>record(record(row.project).registration).binding===project))return;}
+        }else if(action==='resumeLegacyStartup'){
+            keys.add('id');const id=identifier(message.id,32);
+            if(!current.legacyAvailable||!Array.isArray(current.legacyReceipts?.items)||!current.legacyReceipts.items.some(value=>record(value).approval===id))return;
         }else if(['retryJob','cancelJob'].includes(action)){
             keys.add('id');const id=identifier(message.id,32);
             const jobs=new Set(current.events.map(event=>event.job));
@@ -125,6 +132,15 @@ function planView(state:ServiceConsoleState):string {
         ${button('approvePlan','Approve this exact preview','',unavailable||plan.phase!=='ready'||typeof plan.preview_digest!=='string'||!!state.plan.after||state.plan.items.length!==counts.selected)}
         ${button(plan.paused?'resumePlan':'pausePlan',plan.paused?'Resume plan':'Pause plan','',unavailable)}${button('cancelPlan','Cancel plan','',unavailable)}`;
 }
+function legacyView(state:ServiceConsoleState):string {
+    if(!state.legacyAvailable)return '';
+    const unavailable=state.busy||!state.trusted,review=state.legacyReview,value=obj(review?.value),preview=obj(value.preview),spec=obj(preview.spec),target=obj(spec.target),observationValue=obj(preview.observation),workers=obj(value.workers);
+    return `<h2>Legacy startup review</h2><p>Review the old executable path, project and saved startup ownership separately from the native 1.4 service. This review reads metadata and OS state without running the old command. Index deletion is a separate operation.</p>
+        <div class="controls">${button('reviewLegacyStartup','Review old startup paths','',unavailable)}${button('legacyStartupReceipts','Saved legacy removal receipts','',unavailable)}</div>
+        ${review?facts([['Captured review',new Date(review.checkedAt).toISOString()],['Saved removal phase',review.phase],['Old source',target.root],['Old index data',target.data_dir],['Old collection',target.collection],['Configured executable',target.executable],['OS registration',spec.id],['Owned saved configuration',observationValue.owned],['OS definition matched at review',observationValue.definition_matches],['OS worker running at review',observationValue.running],['Matching executable candidates',Array.isArray(workers.matching_executable_pids)?workers.matching_executable_pids.join(', '):undefined],['Process observation complete',workers.complete],['Unavailable process observations',workers.unobserved],['Ownership diagnostic',observationValue.diagnostic],['Approval',value.approval]]):''}
+        ${review?`<p>${review.phase==='complete'?'Completed receipt; original sources, settings and indexes were retained.':value.approval?'Removal affects the reviewed OS startup entry. Other matching processes remain under their own controls.':'OS ownership could not be proven. Existing startup is preserved.'}</p>${button('removeLegacyStartup','Remove reviewed old startup','',unavailable||!value.approval||review.phase==='complete')}${button('copyLegacyStartup','Copy this legacy review','',state.busy)}`:''}
+        <ul>${(Array.isArray(state.legacyReceipts?.items)?state.legacyReceipts!.items:[]).map(value=>{const row=obj(value);return `<li>${e(row.service_id)} · ${e(row.phase)} ${button('resumeLegacyStartup',row.phase==='complete'?'Show completed receipt':'Review / resume saved removal',`data-id="${e(row.approval)}"`,unavailable)}</li>`;}).join('')}</ul>`;
+}
 export function consoleContent(state:ServiceConsoleState):string {
     const health=obj(state.health.value?.observation),resources=obj(state.resources.value?.observation),configuration=obj(resources.configuration),model=state.model.value;
     const unavailable=state.busy||!state.trusted;
@@ -185,7 +201,7 @@ export function consoleContent(state:ServiceConsoleState):string {
         ${button('repair','Repair selected',`data-scope="selected" data-operation="auto"`,unavailable||!state.connected||!state.selected.size)}
         ${button('repair','Repair all registered',`data-scope="all" data-operation="auto"`,unavailable||!state.connected||state.inactiveProjects===true)}</div>
         <p>${state.page?`Showing ${state.page.projects.length} projects at registry revision ${e(state.page.revision)}${state.page.after?'; more projects remain':''}.`:''} ${state.selected.size} selected across pages. All-project repair includes every registered project.</p>
-        ${projects}<h2>Repair preview and receipts</h2>${planView(state)}
+        ${projects}<h2>Repair preview and receipts</h2>${planView(state)}${legacyView(state)}
         <h2>Recent transitions</h2>${state.historyOmitted?'<p>Older transitions are omitted from this recent-history view.</p>':''}
         <ol>${state.events.slice(-32).reverse().map(event=>`<li>${e(event.kind)} · ${e(event.project)} · ${e(event.job_kind)} · ${e(event.code??event.observed_unix_ms)}</li>`).join('')}</ol>
         <h2>Recent process transitions</h2><p>Cached, bounded native logs; older or rotated records may be unavailable.</p>

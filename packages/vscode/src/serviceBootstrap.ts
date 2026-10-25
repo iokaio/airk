@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { runText } from './native';
-import { NativeControlTransport, ServiceClient, ServiceError, record, RecordValue, identifier, ProjectConfigurationRequest, validateConfigurationRequest } from './serviceClient';
+import { NativeControlTransport, ServiceClient, ServiceError, record, RecordValue, identifier, count, ProjectConfigurationRequest, validateConfigurationRequest } from './serviceClient';
 import type { LifecycleIntent } from './serviceIntents';
 export type RuntimeChannel = 'stable' | 'preview';
 export interface RuntimeOptions {
@@ -35,6 +35,18 @@ export interface ProjectRegistrationReview {
     readonly installDir:string; readonly controlDir:string; readonly runtimeSha256:string;
     readonly binding:string; readonly root:string; readonly data_root:string; readonly collection:string;
 }
+export interface LegacyStartupTarget {readonly root:string;readonly data_dir:string;readonly collection:string;readonly executable:string}
+export interface LegacyStartupReview {
+    readonly installDir:string;readonly controlDir:string;readonly runtimeSha256:string;readonly target:LegacyStartupTarget;
+    readonly value:RecordValue;readonly approval?:string;readonly phase?:string;
+}
+const legacyPhases=['planned','disabled','definition_removed','receipt_removed','complete'];
+function legacyTarget(input:unknown):LegacyStartupTarget {
+    const value=record(input),collection=value.collection;
+    if(Object.keys(value).sort().join(',')!=='collection,data_dir,executable,root'||typeof collection!=='string'||!collection.length||collection.length>128||collection==='.'||collection==='..'||!/^[A-Za-z0-9._-]+$/.test(collection))throw new ServiceError('invalid_legacy_target');
+    return {root:safePath(value.root),data_dir:safePath(value.data_dir),collection,executable:safePath(value.executable)};
+}
+function legacyArguments(target:LegacyStartupTarget):string[]{return ['--root',target.root,'--data-dir',target.data_dir,'--collection',target.collection,'--executable',target.executable];}
 function projectRegistration(value:unknown):{binding:string;root:string;data_root:string;collection:string}{
     const registration=record(value),collection=registration.collection;
     if(typeof collection!=='string'||collection.length>128||!collection.length||collection==='.'||collection==='..'||!/^[A-Za-z0-9._-]+$/.test(collection))throw new ServiceError('invalid_project_registration');
@@ -137,6 +149,7 @@ export class RuntimeHost {
     private preparing?:Promise<RuntimeBinding>;
     private readonly transitionReviews=new WeakSet<RuntimeTransitionReview>();
     private readonly projectReviews=new WeakSet<ProjectRegistrationReview>();
+    private readonly legacyReviews=new WeakSet<LegacyStartupReview>();
     constructor(private readonly extensionPath:string,private readonly version:string,readonly options:RuntimeOptions,
         private readonly run:NativeRunner=nativeRunner, private readonly canContinue:()=>boolean=()=>true) {
         this.options=structuredClone(options);
@@ -297,6 +310,49 @@ export class RuntimeHost {
         if(Buffer.byteLength(input)>16384)throw new ServiceError('configuration_draft_exceeds_budget');
         const bundle=await this.verified();
         return validateConfigurationRequest(await this.invoke(bundle.main,['service','prepare-configuration','--runtime-dir',binding.controlDir,'--project',project],60000,input));
+    }
+    private legacyReview(binding:RuntimeBinding,value:RecordValue,phase?:string):LegacyStartupReview {
+        if(Buffer.byteLength(JSON.stringify(value))>16384)throw new ServiceError('legacy_review_exceeds_budget');
+        const preview=record(value.preview),spec=record(preview.spec),target=legacyTarget(spec.target),workers=record(value.workers);
+        if(preview.version!==1||typeof preview.removal_available!=='boolean'||typeof spec.id!=='string'||!/^airk-[a-f0-9]{32}$/.test(spec.id))throw new ServiceError('invalid_legacy_review');
+        identifier(preview.namespace,16);count(preview.epoch);safePath(spec.definition);safePath(spec.receipt);
+        if(!Array.isArray(workers.matching_executable_pids)||workers.matching_executable_pids.length>64||workers.matching_executable_pids.some(pid=>!Number.isSafeInteger(pid)||Number(pid)<1||Number(pid)>0xffffffff)||typeof workers.complete!=='boolean')throw new ServiceError('invalid_legacy_workers');
+        count(workers.scanned);count(workers.unobserved);if(Number(workers.scanned)>16384||Number(workers.unobserved)>Number(workers.scanned))throw new ServiceError('invalid_legacy_workers');
+        const approval=value.approval===null?undefined:identifier(value.approval,32);
+        if(preview.removal_available!==!!approval||phase!==undefined&&!legacyPhases.includes(phase))throw new ServiceError('invalid_legacy_approval');
+        const observation=record(preview.observation);
+        if(approval&&(observation.owned!==true||observation.loaded!==false&&!(observation.loaded===true&&observation.definition_matches===true)))throw new ServiceError('unproven_legacy_ownership');
+        const review:LegacyStartupReview=Object.freeze({installDir:binding.installDir,controlDir:binding.controlDir,runtimeSha256:binding.runtimeSha256,target:Object.freeze(target),value,approval,phase});
+        this.legacyReviews.add(review);return review;
+    }
+    async reviewLegacyStartup(binding:RuntimeBinding,input:LegacyStartupTarget):Promise<LegacyStartupReview>{
+        this.active();if(binding.version!==this.version)throw new ServiceError('service_runtime_version_mismatch');
+        const target=legacyTarget(input),bundle=await this.verified();
+        const review=this.legacyReview(binding,await this.invoke(bundle.main,['service','legacy','review','--runtime-dir',binding.controlDir,...legacyArguments(target)]));
+        if(review.target.collection!==target.collection)throw new ServiceError('crossed_legacy_review');
+        for(const key of ['root','data_dir','executable'] as const){const [requested,returned]=await Promise.all([fs.realpath(target[key]),fs.realpath(review.target[key])]);this.active();if(path.relative(requested,returned)!=='')throw new ServiceError('crossed_legacy_review');}
+        return review;
+    }
+    async legacyStartupReceipts(binding:RuntimeBinding):Promise<RecordValue>{
+        this.active();if(binding.version!==this.version)throw new ServiceError('service_runtime_version_mismatch');
+        const bundle=await this.verified(),value=await this.invoke(bundle.main,['service','legacy','list','--runtime-dir',binding.controlDir]);
+        identifier(value.namespace,16);count(value.epoch);
+        if(!Array.isArray(value.items)||value.items.length>16)throw new ServiceError('invalid_legacy_receipt_list');
+        for(const item of value.items){const row=record(item);identifier(row.approval,32);if(typeof row.service_id!=='string'||!/^airk-[a-f0-9]{32}$/.test(row.service_id)||!legacyPhases.includes(String(row.phase)))throw new ServiceError('invalid_legacy_receipt_list');}
+        return value;
+    }
+    async loadLegacyStartup(binding:RuntimeBinding,approval:string):Promise<LegacyStartupReview>{
+        this.active();identifier(approval,32);if(binding.version!==this.version)throw new ServiceError('service_runtime_version_mismatch');
+        const bundle=await this.verified(),intent=await this.invoke(bundle.main,['service','legacy','show','--runtime-dir',binding.controlDir,'--approval',approval]);
+        if(intent.version!==1||typeof intent.phase!=='string')throw new ServiceError('invalid_legacy_receipt');
+        const review=this.legacyReview(binding,record(intent.review),intent.phase);
+        if(review.approval!==approval)throw new ServiceError('crossed_legacy_receipt');return review;
+    }
+    async removeLegacyStartup(binding:RuntimeBinding,review:LegacyStartupReview):Promise<RecordValue>{
+        this.active();if(!this.legacyReviews.has(review)||!review.approval||review.installDir!==binding.installDir||review.controlDir!==binding.controlDir||review.runtimeSha256!==binding.runtimeSha256||binding.version!==this.version)throw new ServiceError('legacy_startup_not_reviewed');
+        const bundle=await this.verified(),result=await this.invoke(bundle.main,['service','legacy','remove-startup','--runtime-dir',binding.controlDir,...legacyArguments(legacyTarget(review.target)),'--approval',identifier(review.approval,32)],120000);
+        if(result.approval!==review.approval||result.startup_removed!==true||result.sources_preserved!==true||result.project_settings_preserved!==true||result.indexes_retained!==true)throw new ServiceError('crossed_legacy_removal',true);
+        this.legacyReviews.delete(review);return result;
     }
     async reviewTransition(binding:RuntimeBinding,action:RuntimeTransitionReview['action']):Promise<RuntimeTransitionReview>{
         this.active();
