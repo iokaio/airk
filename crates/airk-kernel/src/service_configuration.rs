@@ -140,6 +140,9 @@ impl Kernel {
                 let limits = serde_json::from_slice(&verified_input(input, 65_536)?)?;
                 serde_json::to_value(self.configure_scan_limits(limits)?)?
             }
+            ProjectConfiguration::ResetScanLimits => {
+                serde_json::to_value(self.reset_scan_limits()?)?
+            }
             ProjectConfiguration::QuotaPolicy {
                 input,
                 expected_policy_digest,
@@ -187,6 +190,56 @@ impl Kernel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::Context;
+    #[test]
+    fn guarded_scan_limit_reset_removes_only_the_override_and_invalidates_the_old_guard()
+    -> Result<()> {
+        let source = tempfile::tempdir()?;
+        let data = tempfile::tempdir()?;
+        std::fs::write(
+            source.path().join("original.txt"),
+            b"original scan reset fixture",
+        )?;
+        let kernel =
+            Kernel::open_service_collection(source.path(), Some(data.path().into()), "scan-reset")?;
+        kernel.configure_vectors(false)?;
+        let automatic = kernel.scan_limits()?;
+        let mut explicit = automatic;
+        explicit.file_bytes = 1;
+        kernel.configure_scan_limits(explicit)?;
+        let project =
+            crate::service_projects::registration(source.path(), data.path(), "scan-reset")?;
+        let snapshot = kernel.inspect_service(project.binding)?;
+        let request = ConfigurationRequest {
+            incarnation: snapshot.incarnation,
+            settings: snapshot.settings_digest.context("settings missing")?,
+            configuration: ProjectConfiguration::ResetScanLimits,
+        };
+        assert!(request.configuration.requests_source_pass());
+        kernel.configure_service_project(project.binding, &request)?;
+        assert_eq!(
+            serde_json::to_value(kernel.scan_limits()?)?,
+            serde_json::to_value(automatic)?
+        );
+        assert!(
+            !kernel
+                .store
+                .directory()
+                .join("scan-limits.json")
+                .try_exists()?
+        );
+        assert!(
+            kernel
+                .configure_service_project(project.binding, &request)
+                .unwrap_err()
+                .is::<ConfigurationChanged>()
+        );
+        assert_eq!(
+            std::fs::read(source.path().join("original.txt"))?,
+            b"original scan reset fixture"
+        );
+        Ok(())
+    }
     #[test]
     fn calibration_verifies_exact_inputs_before_counting_and_returns_no_sample_text() -> Result<()>
     {

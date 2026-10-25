@@ -70,6 +70,7 @@ pub enum ProjectConfiguration {
     ScanLimits {
         input: InputFile,
     },
+    ResetScanLimits,
     QuotaPolicy {
         input: InputFile,
         expected_policy_digest: Sha256Digest,
@@ -141,6 +142,7 @@ impl ProjectConfiguration {
             | Self::Vectors { .. }
             | Self::Detail { .. }
             | Self::Usage { .. }
+            | Self::ResetScanLimits
             | Self::ClearUsage => {}
         }
         ensure!(
@@ -169,6 +171,7 @@ impl ProjectConfiguration {
                 | Self::Detail { .. }
                 | Self::ExtractionPolicy { .. }
                 | Self::ScanLimits { .. }
+                | Self::ResetScanLimits
                 | Self::VectorSelection { .. }
                 | Self::AddRoot { .. }
                 | Self::RemoveRoot { .. }

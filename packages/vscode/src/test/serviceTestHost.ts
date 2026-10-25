@@ -15,7 +15,7 @@ import * as cliInstall from '../cliInstall';
 
 export async function serviceTestHost(test:TestContext,options:{trusted?:boolean;roots?:number;registered?:boolean}={}){
     const root=await fs.mkdtemp(path.join(os.tmpdir(),'airk-default-service-'));
-    const values=new Map<string,unknown>(),settings=new Map<string,unknown>(),commands=new Map<string,()=>Promise<unknown>>();
+    const values=new Map<string,unknown>(),settings=new Map<string,unknown>(),commands=new Map<string,(...args:unknown[])=>Promise<unknown>>();
     const writes:any[]=[],calls:string[]=[],warnings:string[]=[],clipboard:string[]=[],panels:any[]=[],events:any[]=[];
     const storage={keys:()=>[...values.keys()],get:<T>(key:string,fallback?:T)=>(values.has(key)?values.get(key):fallback) as T|undefined,update:async(key:string,value:unknown)=>{if(value===undefined)values.delete(key);else values.set(key,structuredClone(value));}};
     const install=path.join(root,'installation'),control=path.join(install,'control'),data=path.join(root,'data');await fs.mkdir(data);
@@ -54,7 +54,7 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
                 send:async(message:unknown)=>handler(message),dispose:()=>closed?.()};panels.push(panel);return panel;},
         showTextDocument:async()=>{},
     },
-    commands:{registerCommand:(name:string,action:()=>Promise<unknown>)=>{commands.set(name,action);return disposable;},
+    commands:{registerCommand:(name:string,action:(...args:unknown[])=>Promise<unknown>)=>{commands.set(name,action);return disposable;},
         executeCommand:async(name:string)=>calls.push(name),getCommands:async()=>['workbench.mcp.listServer']},
     lm:{registerMcpServerDefinitionProvider:(_name:string,provider:unknown)=>{events.push(provider);return disposable;}},
     env:{clipboard:{writeText:async(text:string)=>{clipboard.push(text);}}},StatusBarAlignment:{Left:1},ConfigurationTarget:{Global:1},ViewColumn:{Active:1,Beside:2},

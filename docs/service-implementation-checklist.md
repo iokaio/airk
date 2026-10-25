@@ -34,6 +34,8 @@ Native phase scheduling is now service-owned: source/replacement publication is 
 - [ ] Phase 7: default extension, CLI, container and read-only MCP cutover; fresh 1.4 namespace, old-helper rejection and explicit legacy agent configuration review; no direct-store fallback or service payload forwarding. Separate 1.4 quota/recovery ledgers, staging and lifecycle locks are implemented. Each native 1.4 data root now has one durable registry/control authority, with metadata-only conflict checks, quota-admitted first claims and per-query/job revalidation; namespace-bound writer and cleanup regressions are recorded in the storage ownership guide. The extension and public CLI now use native service defaults and no direct-store fallback. Container/package cutover, complete management/transition surfaces and the full qualification matrix remain open.
 - [ ] Phase 8: synchronized native/extension/lockfile 1.4.0 versions, exact artifact receipts, repository/native/extension checks, workload and installed-platform matrix, review and release documentation.
 
+Management follow-up: full replacement work now records one actual `reindex` observation in the existing native ledger; scan-limit overrides have a guarded reset to automatic limits; the CLI request journal admits exact inactive cleanup; extension settings/walkthroughs describe native controls; tree actions retain the clicked binding independently of another active editor. Windows/Linux focused and native tests pass. The complete storage qualification rerun, legacy ownership/removal, Mac login ownership, editor adapter ports and final frozen validation remain open.
+
 ## Token-efficiency additions
 
 Implement and validate these during Phase 7 MCP/extension cutover, after the worker/publication/resource contracts are integrated. Plan changes do not mark their code or acceptance gates complete.
@@ -55,6 +57,10 @@ Implement and validate these during Phase 7 MCP/extension cutover, after the wor
 - [ ] Verify local stage commits have the authorized contributor's DCO trailer and no push occurred.
 
 If a concrete blocker cannot be resolved within existing authorization, record the affected requirement and required input. Completing a stage, a long test run or a convenient subset is not a stopping condition.
+
+## Historical development checkpoints
+
+The following paragraphs retain earlier progress observations from October 24. Statements about pending default activation or 1.3.2 development versions describe those checkpoints. Current 1.4.0 implementation and remaining gates are summarized above.
 
 Helper lifecycle integration now implements bounded native recovery, explicit stop/start controls and direct model-session rebinding for existing project workers. Completion evidence is tracked in [shared embedding](service-embedding.md); default cutover, remaining configuration controls and installed-platform qualification remain outstanding.
 

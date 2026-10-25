@@ -1,6 +1,6 @@
 # Shared embedding runtime contract, protocol 1
 
-This is the opt-in native service pool. The default extension/runtime packaging is still 1.3.2; the 1.4 cutover, resource policies and platform qualification remain in progress.
+This is the native inference pool used by the default 1.4.0 extension/CLI service. Resource and platform qualification remain tracked separately from implemented behavior. Inactive cleanup owners receive no pool access and do not start the helper.
 
 The service supervisor starts one verified sibling `airk-embed pool` process after admitting its first project worker. Starting that process does not load MiniLM. The separate feature-minimal `airk` executable has no ONNX inference or transformer-tokenizer dependency. A paired version/platform/digest receipt selects the helper; no shell or executable PATH lookup is involved. Missing or failed pool startup leaves lexical retrieval available. Worker activation and later capability updates perform no helper connection I/O.
 

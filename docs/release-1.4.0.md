@@ -10,6 +10,8 @@ The coding-agent guide now offers [explicit diff review for recognized legacy JS
 
 The dated development checkpoints below retain their original artifact/version evidence; they are not claims of final release qualification.
 
+The native settings surface now resets a validated scan-limit override to automatic limits. Extension settings/walkthroughs remove the retired editor idle/save timers and soft storage budget; native quotas apply to all work. Full replacement builds record actual `reindex` work once in the same native usage ledger, independently of later verification/handoff completion. The public CLI request journal now admits exact inactive-project cleanup proposals while retaining the active-registration requirement for ordinary work.
+
 Current client/qualification follow-up: managed payloads support an explicitly prepared lightweight client launcher without provider writes or lifecycle takeover. Native source/semantic turns record actual numeric usage work independently of queue acceptance and waiting clients. Runtime packaging now preserves the paired inventory and legal files, rejects links and oversized inputs before hashing, and streams large archive payloads. See [development qualification](service-cutover-qualification.md); complete CI script ports, native Mac startup ownership and final review remain open.
 
 ## Historical implementation checkpoints before default cutover

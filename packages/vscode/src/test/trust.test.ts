@@ -53,6 +53,25 @@ test('multi-root Index Now selects the active native binding and metadata refres
     }finally{await f.close();}
 });
 
+test('native tree commands keep the clicked project when another workspace editor is active and reject stale bindings',async context=>{
+    const f=await serviceTestHost(context,{roots:2});
+    try{
+        const project=[...f.registrations.values()][1];
+        const spec={command:f.binding.launcher!,root:project.root,dataDir:project.data_root,collection:project.collection,name:'Clicked tree project',service:{installDir:f.binding.installDir,project:project.binding}};
+        f.stub.window.activeTextEditor={document:{uri:f.folders[0].uri}};
+        await f.commands.get('airk.treeIndex')!(spec);
+        assert.equal(f.writes.find(value=>value.enqueue).enqueue.project,project.binding);
+        await f.commands.get('airk.treePause')!(spec);
+        assert.equal(f.writes.find(value=>value.pause).pause.project,project.binding);
+        await f.commands.get('airk.treeReindex')!(spec);
+        assert.deepEqual(f.writes.find(value=>value.plan_create).plan_create.request.selection,{selected:[project.binding]});
+        const count=f.writes.length;
+        const stale={...spec,service:{...spec.service,project:'ef'.repeat(32)}};
+        for(const command of ['airk.treeIndex','airk.treePause','airk.treeReindex'])await assert.rejects(f.commands.get(command)!(stale),/workspace_registration_changed/);
+        assert.equal(f.writes.length,count);
+    }finally{await f.close();}
+});
+
 test('agent setup uses the stable launcher, writes only on request and refuses stale or untrusted guides',async context=>{
     const f=await serviceTestHost(context);
     try{f.state.pick=items=>items.find(item=>item.client==='codex')??items[0];await f.commands.get('airk.setupAgent')!();assert.equal(f.panels.length,1);

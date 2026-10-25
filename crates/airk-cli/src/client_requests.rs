@@ -163,7 +163,20 @@ fn persist(control: &Path, request: ControlMethod) -> Result<Incarnation> {
         request,
     };
     let (nonce, project, _) = fields(&saved)?;
-    airk_store::service::registry::ServiceRegistry::open_saved(control)?.get(project)?;
+    let registry = airk_store::service::registry::ServiceRegistry::open_saved(control)?;
+    if let ControlMethod::ConfigureProject { request, .. } = &saved.request
+        && request.configuration.is_derived_cleanup()
+    {
+        registry.retained_project(project)?;
+        ensure!(
+            !registry.is_registered(project)?
+                && request.incarnation == saved.namespace
+                && request.settings == project,
+            "cleanup journal request requires its exact inactive project authority"
+        );
+    } else {
+        registry.get(project)?;
+    }
     let entries = entries(control)?;
     ensure!(
         entries.len() < LIMIT,

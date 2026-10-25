@@ -1,8 +1,8 @@
 # Offline service installation and lifecycle
 
-This is an implemented, opt-in development contract for the [1.4 service plan](airkservice-architecture.md). The current default extension and package version remain 1.3.2 until cutover. These commands do not establish signed distribution, macOS notarization, installed-platform qualification or extension integration.
+This is the development installation contract for the [1.4 service plan](airkservice-architecture.md). The extension and public CLI now use native service defaults at version 1.4.0. These commands do not establish signed distribution, macOS notarization or installed-platform qualification.
 
-The CLI owns OS lifecycle adapters. Kernel owns collection and admission policy; it no longer invokes Task Scheduler, systemd or launchd. The existing root scheduler remains available through its original commands until the explicit transition. Shared-service login definitions use separate `airksvc-…` identities and ownership receipts, so they cannot overwrite old `airk-…` scheduler definitions.
+The CLI owns OS lifecycle adapters. Kernel owns collection and admission policy; it no longer invokes Task Scheduler, systemd or launchd. The public 1.4 CLI retires the root scheduler's commands; existing 1.3 processes/configuration remain for explicit review. Shared-service login definitions use separate `airksvc-…` identities and ownership receipts, so they cannot overwrite old `airk-…` scheduler definitions.
 
 ## Approval and immutable staging
 

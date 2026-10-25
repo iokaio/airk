@@ -152,6 +152,23 @@ class Fixture:
     def configure(self, project, draft, expected="succeeded"):
         return self.wait(json.loads(self.run(*self.arguments(project), "configure", "--stdin", input=json.dumps(draft)).stdout), expected)
 
+    def configure_inactive(self, project, draft, expected="succeeded"):
+        assert draft.get("operation") in ("prepare_derived_cleanup", "delete_derived")
+        path = self.control.parent / f"cleanup-draft-{uuid.uuid4().hex}.json"
+        with path.open("x", encoding="utf-8") as stream:
+            json.dump(draft, stream)
+        try:
+            prepared = json.loads(self.run("service", "requests", "--runtime-dir", self.control,
+                                          "prepare-configuration", "--project", self.projects[project]["binding"],
+                                          "--file", path).stdout)
+        finally:
+            path.unlink()
+        assert prepared["submitted"] is False
+        # One exact saved request submission; an unknown outcome is never re-created.
+        receipt = json.loads(self.run("service", "requests", "--runtime-dir", self.control,
+                                      "retry", prepared["prepared"]).stdout)
+        return self.wait(receipt, expected)
+
     def stdio(self, name):
         child = subprocess.Popen([str(self.binary), *self.arguments(name), "mcp"], cwd=self.runtime,
                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,

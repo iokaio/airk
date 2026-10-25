@@ -61,6 +61,7 @@ pub enum Draft {
     ScanLimits {
         path: PathBuf,
     },
+    ResetScanLimits,
     QuotaPolicy {
         path: PathBuf,
     },
@@ -135,6 +136,7 @@ impl Draft {
                 }
             }
             Self::Unregister => ProjectConfiguration::Unregister,
+            Self::ResetScanLimits => ProjectConfiguration::ResetScanLimits,
             Self::PrepareDerivedCleanup => ProjectConfiguration::PrepareDerivedCleanup,
             Self::DeleteDerived { preview } => ProjectConfiguration::DeleteDerived { preview },
             Self::BundledModel => ProjectConfiguration::BundledModel,

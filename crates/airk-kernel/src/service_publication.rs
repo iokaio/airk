@@ -118,7 +118,11 @@ impl Kernel {
         next.vector_selection()?;
         next.scan_limits()?;
         next.configured_roots()?;
-        next.index_current(true, true)?;
+        // Record actual replacement source work once, even if later verification
+        // or manifest handoff fails. Job completion remains a separate receipt.
+        next.observe_service_index(airk_core::usage::UsageOperation::Reindex, || {
+            next.index_current(true, true)
+        })?;
         // Bounded pages authenticate retained sources/extractions and identify
         // one exact target revision. No live-source substitution is permitted.
         let mut after = None;

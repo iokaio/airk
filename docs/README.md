@@ -15,7 +15,7 @@ The 1.3.x/1.2.x release records and former direct-helper/window-scheduler guides
 - [Explicit legacy agent-entry review and guarded JSON replacement](service-legacy-transition.md)
 - [Guarded project unregister and resumable selected index cleanup](service-project-retirement.md)
 - [Direct service client adapters and durable CLI request recovery](service-client-adapters.md)
-- [Direct usage/settings reads and guarded project management](service-native-management.md)
+- [Direct usage/settings reads, scan-limit reset and guarded project management](service-native-management.md)
 - [Default-cutover development qualification and remaining gates](service-cutover-qualification.md)
 - [Service implementation completion checklist](service-implementation-checklist.md)
 - [Service publication, admitted sidecar lifetimes and bounded readers](service-publication.md)

@@ -22,6 +22,8 @@ In the extension, use **AIRK: Index Now** to review a trusted root and choose ma
 
 Project settings offer [guarded unregister](docs/service-project-retirement.md), including paused projects. It stops new admission and drains the selected owner while preserving source files, settings and index data. The console's **Unregistered projects / cleanup** view separately previews and deletes selected owned index state, preserves saved settings and sources, and resumes interrupted cleanup before re-registration.
 
+Native project settings can reset scan-limit overrides to automatic limits. Native quotas apply to manual and automatic work; retired editor timer/soft-budget settings no longer appear. Workspace tree actions use the clicked project, and native usage counts performed source, semantic and replacement work independently of job acceptance.
+
 The MCP provider advertises only reviewed bindings. **Connect Coding Agent** creates a stable-launcher configuration on request and preserves unrelated client settings. Recognized legacy JSON entries have an [explicit diff and guarded replacement](docs/service-legacy-transition.md); TOML and other agent formats use manual review. Agent connection is separate from the extension's bounded read-only MCP verification.
 
 Approved managed payloads can remain read-only. Their client launcher copies only the lightweight main into user metadata; the provider retains control of its payload and external service lifecycle. Development test evidence and remaining gates are recorded in [cutover qualification](docs/service-cutover-qualification.md).

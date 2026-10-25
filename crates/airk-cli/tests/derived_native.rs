@@ -26,6 +26,7 @@ fn inactive_cleanup_runs_without_query_admission_preserves_configuration_and_all
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
+    let drafts = tempfile::tempdir()?;
     let configure = |draft| -> Result<serde_json::Value> {
         if matches!(&draft, airk_cli::service_configuration::Draft::Unregister) {
             service.job(JobKind::Inspect);
@@ -35,12 +36,48 @@ fn inactive_cleanup_runs_without_query_admission_preserves_configuration_and_all
             service.project.binding,
             draft,
         ))?;
-        let Response::Job { job } = service.request(Method::ConfigureProject {
-            project: service.project.binding,
-            caller: airk_kernel::service_broker::new_instance_id()?,
-            key: service.key(),
-            request: Box::new(request.clone()),
-        }) else {
+        let response = if request.configuration.is_derived_cleanup() {
+            let file = drafts.path().join("cleanup.json");
+            fs::write(&file, serde_json::to_vec(&request.configuration)?)?;
+            let prepared = common::native_command()
+                .args(["service", "requests", "--runtime-dir"])
+                .arg(&service.control)
+                .args(["prepare-configuration", "--project"])
+                .arg(service.project.binding.to_string())
+                .arg("--file")
+                .arg(&file)
+                .output()?;
+            ensure!(
+                prepared.status.success(),
+                "CLI cleanup preparation failed: {}",
+                String::from_utf8_lossy(&prepared.stderr)
+            );
+            let prepared: serde_json::Value = serde_json::from_slice(&prepared.stdout)?;
+            assert_eq!(prepared["submitted"], false);
+            assert_eq!(airk_cli::client_requests::list(&service.control)?.len(), 1);
+            let submitted = common::native_command()
+                .args(["service", "requests", "--runtime-dir"])
+                .arg(&service.control)
+                .arg("retry")
+                .arg(prepared["prepared"].as_str().unwrap())
+                .output()?;
+            ensure!(
+                submitted.status.success(),
+                "CLI cleanup submission failed: {}",
+                String::from_utf8_lossy(&submitted.stderr)
+            );
+            let response: Response = serde_json::from_slice(&submitted.stdout)?;
+            assert!(airk_cli::client_requests::list(&service.control)?.is_empty());
+            response
+        } else {
+            service.request(Method::ConfigureProject {
+                project: service.project.binding,
+                caller: airk_kernel::service_broker::new_instance_id()?,
+                key: service.key(),
+                request: Box::new(request.clone()),
+            })
+        };
+        let Response::Job { job } = response else {
             anyhow::bail!("native configuration refused")
         };
         let completed = service.wait_outcome(job.id);

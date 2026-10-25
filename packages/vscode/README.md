@@ -36,6 +36,8 @@ Index Now accepts durable native work. Rebuild and maintenance commands open gua
 
 Project settings also offer approved **Unregister project**, including paused projects. It stops new connections and automatic work, drains the owned worker and preserves sources, settings and index data. **Unregistered projects / cleanup** separately previews selected owned index state and requires explicit deletion approval. Native cleanup preserves sources and saved settings, refuses unknown files/links, and resumes interrupted removal before re-registration. Shared models and usage history remain available.
 
+The settings page and walkthrough describe native manual/automatic watching. Retired editor idle/save timers and soft storage-budget settings are removed. Native project settings can reset a source-scan override to automatic limits; native quotas continue to apply to manual and automatic work.
+
 Only user/machine settings select installation policy and storage preferences. A workspace cannot nominate an executable, approval digest or service endpoint. Changing a storage preference does not move an existing index: a new native binding requires review. The previous collection remains independently registered.
 
 ## Scope and records

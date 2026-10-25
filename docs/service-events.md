@@ -1,6 +1,6 @@
 # Retained service events and explicit retry
 
-This is an implemented development contract for the opt-in [1.4 service](airkservice-architecture.md). The default extension and package remain 1.3.2 until cutover. The event reader and retry action are native management operations; the retrieval-only MCP tools expose neither.
+This is the development contract for the [1.4 native service](airkservice-architecture.md), now the default extension/CLI backend at version 1.4.0. The event reader and retry action are native management operations; the retrieval-only MCP tools expose neither. Final artifact/platform qualification remains separate.
 
 The private service ledger keeps at most 1,024 events, each bounded to 1 KiB, alongside its existing 32 MiB database ceiling. Registration, pause/resume, job acceptance and state changes, cancellation requests, explicit retries and watch enablement commit their events in the same transaction. Rolled-back changes leave no event or retention loss. Replaying an accepted request does not create duplicate events. Terminal events survive rotation of the original job receipt, until the event's own retention boundary is reached.
 

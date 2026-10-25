@@ -1,6 +1,6 @@
 # Service job progress and stall handling
 
-This is opt-in service implementation evidence. The default extension still uses the 1.3.2 scheduler until the 1.4.0 cutover. The [completion checklist](service-implementation-checklist.md) retains the remaining console, lifecycle and qualification gates.
+This records native progress behavior used by the default 1.4.0 extension/CLI service. The [completion checklist](service-implementation-checklist.md) retains the remaining lifecycle and qualification gates. Earlier dated fixture counts below remain development evidence.
 
 `progress` reads one bounded cached observation per registered project from the service ledger. It never opens sources or an index database. The observation binds the job, grant, worker incarnation and fencing generation, with its service receipt time and the ledger's current job state. Reads include the project's current fencing generation so an older worker observation remains visibly older after restart. A terminal job receipt does not manufacture a completed progress report if the last available sample was partial. Missing observations remain unavailable.
 
