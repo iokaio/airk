@@ -94,7 +94,7 @@ cargo build --release --locked -p airk-cli --target x86_64-apple-darwin
 
 Cross-building also compiles native grammar code and requires a matching Clang/SDK configuration. Adding a Rust target on Windows or Linux alone does not supply the Apple linker and SDK. Prefer macOS runners, and test each binary on its intended architecture. [Rust's macOS target documentation](https://doc.rust-lang.org/rustc/platform-support/apple-darwin.html) describes the targets, SDK discovery and cross-compilation requirements.
 
-AIRK's minimum supported macOS versions have not been selected. Before release, choose and record the deployment baseline for each architecture, set `MACOSX_DEPLOYMENT_TARGET` consistently during builds, and test the oldest macOS version claimed. Compiler support alone does not establish AIRK's support range.
+The 1.4 runtime builder fixes `MACOSX_DEPLOYMENT_TARGET=13.0` for both architectures and declares that minimum in its GUI-less app bundle. Set the same value for native Cargo checks. The two existing executables, static login plists, signing and ownership contract are described in [Mac service login](service-macos-login.md). Qualification on the oldest claimed OS and both architectures remains pending; compiler support alone does not establish that support range. Earlier native records describe their original artifacts.
 
 ## CI candidates and release work still required
 

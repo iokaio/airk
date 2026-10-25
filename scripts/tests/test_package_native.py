@@ -14,6 +14,41 @@ spec.loader.exec_module(package)
 
 
 class ArchiveContracts(unittest.TestCase):
+    def test_mac_bundle_archive_has_two_executables_and_rejects_resealed_foreign_resources(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            builder = package.runtime_builder()
+            main, helper = builder.runtime_names("macos")
+            for name in ("airk", "airk-embed"):
+                (root / name).write_bytes(name.encode())
+            builder.arrange_macos_bundle(root, "1.4.0")
+            for name in ("LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md", "notices/bom.cdx.json", "notices/all-MiniLM-L6-v2/LICENSE", "notices/all-MiniLM-L6-v2/provenance.json"):
+                target = root / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(b"original fixture legal metadata")
+            (root / "notices/inventory.json").write_text("[]", encoding="utf-8")
+            source = {"sha256": "1" * 64, "files": 4}
+            pair = {"schema": 1, "version": "1.4.0", "os": "macos", "arch": "aarch64",
+                    "airk_sha256": package.sha256(root / main), "embed_sha256": package.sha256(root / helper)}
+            (root / "airk-runtime.json").write_text(json.dumps(pair), encoding="utf-8")
+            (root / "airk-build.json").write_text(json.dumps({"schema": 1, "source": source, "runtime": pair}), encoding="utf-8")
+            install = {key: pair[key] for key in ("schema", "version", "os", "arch")}
+            install["files"] = package.inventory(root)
+            (root / "airk-install.json").write_text(json.dumps(install), encoding="utf-8")
+            files, executable = package.validate_runtime(root, "1.4.0", "aarch64-apple-darwin", source)
+            self.assertEqual(set(executable), {main, helper})
+            archive = root / "fixture.zip"
+            package.write_archive(root, archive, files, executable)
+            with zipfile.ZipFile(archive) as zipped:
+                for name in executable:
+                    self.assertEqual((zipped.getinfo(name).external_attr >> 16) & 0o777, 0o755)
+            archive.unlink()
+            info = root / "AIRK.app/Contents/Info.plist"
+            info.write_bytes(info.read_bytes().replace(b"<string>airk</string>", b"<string>foreign</string>"))
+            install["files"][info.relative_to(root).as_posix()] = package.sha256(info)
+            (root / "airk-install.json").write_text(json.dumps(install), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "bundle resources differ"):
+                package.validate_runtime(root, "1.4.0", "aarch64-apple-darwin", source)
     def test_payload_budget_precedes_hashing_and_hard_links_are_refused(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

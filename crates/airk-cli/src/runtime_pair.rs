@@ -204,6 +204,22 @@ pub fn verify_helper(main: &Path) -> Result<PathBuf> {
     verify_installed_pair(main, env!("CARGO_PKG_VERSION"))
 }
 
+pub(crate) fn payload_root(main: &Path) -> Result<&Path> {
+    let parent = main.parent().context("runtime directory missing")?;
+    #[cfg(target_os = "macos")]
+    if parent.file_name().is_some_and(|name| name == "MacOS") {
+        let contents = parent.parent().context("app contents missing")?;
+        let app = contents.parent().context("app bundle missing")?;
+        ensure!(
+            contents.file_name().is_some_and(|name| name == "Contents")
+                && app.file_name().is_some_and(|name| name == "AIRK.app"),
+            "unrecognized runtime app topology"
+        );
+        return app.parent().context("app payload directory missing");
+    }
+    Ok(parent)
+}
+
 /// A stable launcher can validate a later selected runtime without adopting its version.
 pub fn verify_installed_pair(main: &Path, expected_version: &str) -> Result<PathBuf> {
     let parent = main.parent().context("runtime directory missing")?;
@@ -222,7 +238,7 @@ pub fn verify_installed_pair(main: &Path, expected_version: &str) -> Result<Path
             );
         }
     }
-    let manifest = parent.join("airk-runtime.json");
+    let manifest = payload_root(main)?.join("airk-runtime.json");
     let metadata =
         fs::symlink_metadata(&manifest).context("verified runtime pair manifest is missing")?;
     ensure!(

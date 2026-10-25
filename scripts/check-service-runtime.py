@@ -14,6 +14,8 @@ def main():
     args = parser.parse_args()
     runtime = args.runtime.resolve(strict=True)
     binary = runtime / ("airk.exe" if os.name == "nt" else "airk")
+    if not binary.is_file():
+        binary = runtime / "AIRK.app/Contents/MacOS/airk"
     environment = dict(os.environ, HTTP_PROXY="http://127.0.0.1:1",
                        HTTPS_PROXY="http://127.0.0.1:1", ALL_PROXY="http://127.0.0.1:1")
     with tempfile.TemporaryDirectory(prefix="airk-runtime-smoke-") as temporary:

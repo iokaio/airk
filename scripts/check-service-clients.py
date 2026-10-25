@@ -40,6 +40,8 @@ class Fixture:
     def __init__(self, runtime, owner, command_timeout=120, job_timeout=180):
         self.runtime = runtime.resolve(strict=True)
         self.binary = self.runtime / ("airk.exe" if os.name == "nt" else "airk")
+        if not self.binary.is_file():
+            self.binary = self.runtime / "AIRK.app/Contents/MacOS/airk"
         self.control = owner / "control"
         self.projects = {}
         self.environment = {**os.environ, "AIRK_MCP_RESPONSE_MODE": "full"}

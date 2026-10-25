@@ -19,6 +19,10 @@ const MAX_CONFIG: u64 = 128 * 1024;
 #[cfg(target_os = "linux")]
 #[path = "service_manager_linux.rs"]
 mod linux;
+#[cfg(any(target_os = "macos", test))]
+#[path = "service_manager_macos.rs"]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+mod macos;
 
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -286,6 +290,10 @@ impl ServiceManager {
     }
 
     pub fn plan(&self) -> Result<ServicePlan> {
+        #[cfg(target_os = "macos")]
+        if self.platform == Platform::Macos && self.id.starts_with("airksvc-") {
+            return macos::Manager::new(self).plan();
+        }
         let executable = self.executable.to_str().context("non-UTF-8 executable")?;
         let definition = match self.platform {
             Platform::Linux => {
@@ -346,6 +354,10 @@ impl ServiceManager {
     }
 
     pub fn status(&self) -> Result<ServiceStatus> {
+        #[cfg(target_os = "macos")]
+        if self.platform == Platform::Macos && self.id.starts_with("airksvc-") {
+            return macos::Manager::new(self).status();
+        }
         let installed = self.check_owned()?;
         let output = execute(&self.query(installed)?)?;
         let (loaded, running) = parse_status(self.platform, &output);
@@ -390,6 +402,10 @@ impl ServiceManager {
 
     /// Explicit user action: register login startup and start immediately.
     pub fn install(&self) -> Result<ServiceStatus> {
+        #[cfg(target_os = "macos")]
+        if self.platform == Platform::Macos && self.id.starts_with("airksvc-") {
+            return macos::Manager::new(self).install();
+        }
         self.require_registration_adapter()?;
         self.check_launchable()?;
         ensure!(
@@ -423,6 +439,10 @@ impl ServiceManager {
     }
 
     pub fn start(&self) -> Result<ServiceStatus> {
+        #[cfg(target_os = "macos")]
+        if self.platform == Platform::Macos && self.id.starts_with("airksvc-") {
+            return macos::Manager::new(self).start();
+        }
         self.require_registration_adapter()?;
         self.check_launchable()?;
         ensure!(self.check_owned()?, "service is not installed");
@@ -447,6 +467,10 @@ impl ServiceManager {
 
     /// Stop this login's process, retaining automatic startup for the next login.
     pub fn stop(&self) -> Result<ServiceStatus> {
+        #[cfg(target_os = "macos")]
+        if self.platform == Platform::Macos && self.id.starts_with("airksvc-") {
+            return macos::Manager::new(self).stop();
+        }
         ensure!(self.check_owned()?, "service is not installed");
         let status = self.status()?;
         ensure!(
@@ -484,6 +508,10 @@ impl ServiceManager {
     }
 
     pub fn uninstall(&self) -> Result<ServiceStatus> {
+        #[cfg(target_os = "macos")]
+        if self.platform == Platform::Macos && self.id.starts_with("airksvc-") {
+            return macos::Manager::new(self).uninstall();
+        }
         ensure!(self.check_owned()?, "service is not installed");
         self.unregister_owned()?;
         ensure!(
@@ -532,6 +560,10 @@ impl ServiceManager {
     }
 
     pub fn owned_registration_exists(&self) -> Result<bool> {
+        #[cfg(target_os = "macos")]
+        if self.platform == Platform::Macos && self.id.starts_with("airksvc-") {
+            return macos::Manager::new(self).owned();
+        }
         self.check_owned()
     }
 
@@ -547,6 +579,10 @@ impl ServiceManager {
     /// Establish actual restart ownership before an upgrade can save an intent.
     /// Absent local receipts do not authorize altering an unrelated OS definition.
     pub(crate) fn owns_restart(&self) -> Result<bool> {
+        #[cfg(target_os = "macos")]
+        if self.platform == Platform::Macos && self.id.starts_with("airksvc-") {
+            return macos::Manager::new(self).owns_restart();
+        }
         if !self.check_owned()? {
             return Ok(false);
         }
@@ -563,6 +599,10 @@ impl ServiceManager {
     }
 
     pub(crate) fn require_stopped_for_maintenance(&self) -> Result<()> {
+        #[cfg(target_os = "macos")]
+        if self.platform == Platform::Macos && self.id.starts_with("airksvc-") {
+            return macos::Manager::new(self).require_stopped();
+        }
         if !self.check_owned()? {
             return Ok(());
         }
@@ -1027,6 +1067,15 @@ fn checked(invocation: &Invocation) -> Result<()> {
 }
 fn execute(invocation: &Invocation) -> Result<Output> {
     execute_with_timeout(invocation, Duration::from_secs(30))
+}
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn execute_native_program(program: &Path, args: &[&str]) -> Result<bool> {
+    Ok(execute(&Invocation::new(program, args))?.success)
+}
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn execute_native_observation(program: &Path, args: &[&str]) -> Result<(bool, String)> {
+    let output = execute(&Invocation::new(program, args))?;
+    Ok((output.success, output.text))
 }
 fn execute_with_timeout(invocation: &Invocation, timeout: Duration) -> Result<Output> {
     ensure!(

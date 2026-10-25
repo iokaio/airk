@@ -29,6 +29,10 @@ mod managed;
 pub use managed::ManagedLifecycle;
 #[path = "runtime_lifecycle.rs"]
 mod lifecycle;
+#[cfg(any(target_os = "macos", test))]
+#[path = "runtime_macos_login.rs"]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) mod macos_login;
 #[path = "runtime_payload_repair.rs"]
 mod payload_repair;
 #[path = "runtime_retirement.rs"]
@@ -77,6 +81,22 @@ pub enum RuntimeCommand {
     Foreground {
         #[arg(long)]
         install_dir: PathBuf,
+    },
+    #[command(hide = true)]
+    LoginForeground {
+        #[arg(long, value_enum)]
+        channel: RuntimeChannel,
+    },
+    #[command(hide = true)]
+    MacLogin {
+        #[arg(long)]
+        install_dir: PathBuf,
+        #[arg(long)]
+        runtime_sha256: String,
+        #[arg(long, value_enum)]
+        channel: RuntimeChannel,
+        #[arg(long)]
+        action: String,
     },
     /// Stage an offline payload with an independently approved install-manifest digest.
     Stage {
@@ -581,10 +601,7 @@ fn payload_path(root: &Path, name: &str) -> Result<PathBuf> {
 }
 
 pub(crate) fn installed_identity(main: &Path) -> Result<Option<String>> {
-    let manifest = main
-        .parent()
-        .context("runtime parent missing")?
-        .join("airk-install.json");
+    let manifest = runtime_pair::payload_root(main)?.join("airk-install.json");
     if !manifest.try_exists()? {
         return Ok(None);
     }
@@ -593,11 +610,19 @@ pub(crate) fn installed_identity(main: &Path) -> Result<Option<String>> {
 }
 
 pub fn main_name() -> &'static str {
-    if cfg!(windows) { "airk.exe" } else { "airk" }
+    if cfg!(windows) {
+        "airk.exe"
+    } else if cfg!(target_os = "macos") {
+        "AIRK.app/Contents/MacOS/airk"
+    } else {
+        "airk"
+    }
 }
 fn helper_name() -> &'static str {
     if cfg!(windows) {
         "airk-embed.exe"
+    } else if cfg!(target_os = "macos") {
+        "AIRK.app/Contents/MacOS/airk-embed"
     } else {
         "airk-embed"
     }
@@ -929,10 +954,11 @@ fn self_test(main: &Path) -> Result<()> {
     }
     runtime_pair::validate_native_image(main)?;
     runtime_pair::validate_native_image(
-        &main
-            .parent()
-            .context("runtime directory missing")?
-            .join(helper_name()),
+        &main.parent().context("runtime directory missing")?.join(
+            Path::new(helper_name())
+                .file_name()
+                .context("helper name missing")?,
+        ),
     )?;
     // A fixed native command, no shell, no source or collection parameters.
     let mut command = Command::new(main);

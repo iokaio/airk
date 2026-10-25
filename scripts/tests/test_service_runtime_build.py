@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """A source race must not publish a mixed executable pair."""
 import importlib.util
+import plistlib
 from pathlib import Path
 import sys
 import tempfile
@@ -9,6 +10,35 @@ from unittest import mock
 
 
 class ServiceRuntimeBuildTests(unittest.TestCase):
+    def test_mac_bundle_keeps_exactly_two_executables_and_static_channel_scope(self):
+        script = Path(__file__).resolve().parents[1] / "build-service-runtime.py"
+        specification = importlib.util.spec_from_file_location("service_runtime_builder", script)
+        builder = importlib.util.module_from_spec(specification)
+        specification.loader.exec_module(builder)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "airk").write_bytes(b"lightweight main fixture")
+            (root / "airk-embed").write_bytes(b"inference helper fixture")
+            builder.arrange_macos_bundle(root, "1.4.0")
+            main, helper = builder.runtime_names("macos")
+            self.assertEqual((root / main).read_bytes(), b"lightweight main fixture")
+            self.assertEqual((root / helper).read_bytes(), b"inference helper fixture")
+            self.assertFalse((root / "airk").exists())
+            self.assertFalse((root / "airk-embed").exists())
+            info = plistlib.loads((root / "AIRK.app/Contents/Info.plist").read_bytes())
+            self.assertEqual(info["CFBundleExecutable"], "airk")
+            for channel in ("stable", "preview"):
+                name = f"io.iokaio.airk.service.{channel}"
+                agent = plistlib.loads((root / f"AIRK.app/Contents/Library/LaunchAgents/{name}.plist").read_bytes())
+                self.assertEqual(agent["Label"], name)
+                self.assertEqual(agent["BundleProgram"], "Contents/MacOS/airk")
+                self.assertEqual(agent["ProgramArguments"], ["airk", "runtime", "login-foreground", "--channel", channel])
+                self.assertNotIn("Program", agent)
+            with mock.patch.object(builder.subprocess, "run") as codesign:
+                builder.sign_development_macos_bundle(root)
+                self.assertEqual(codesign.call_count, 3)
+                self.assertEqual(codesign.call_args_list[1].args[0][-1], str(root / "AIRK.app"))
+                self.assertIn("--timestamp=none", codesign.call_args_list[0].args[0])
     def test_changed_source_discards_owned_staging_and_preserves_inputs(self):
         script = Path(__file__).resolve().parents[1] / "build-service-runtime.py"
         specification = importlib.util.spec_from_file_location("service_runtime_builder", script)

@@ -1,5 +1,7 @@
 # AIRK 1.4.0 development release record
 
+The [Mac service bundle/login adapter](service-macos-login.md) now uses the same two executables in a GUI-less app, static channel-specific agent plists and native `SMAppService` operations from the exact approved bundle. Checksummed captured ownership, launchd origin/program/argument refusal, preserved user consent and stopped-owner runtime transitions are implemented. The builder targets macOS 13.0; signing seals the app before external pair hashes, with explicit app notarization/stapling. Portable Rust/Python/extension checks pass; native Apple SDK, actual login/signing/upgrade and installed-platform qualification remain pending.
+
 Native usage/settings management now uses exact bounded direct pages, explicit exports and supplied price assumptions. The Usage & Savings panel uses guarded durable jobs. Selected extraction/scan-limit files and shared quota policies use digest-bound preparation; stale quota previews cannot overwrite another project's change. See [native management](service-native-management.md). Final qualification and the VSIX gate remain open.
 
 Current cutover status: the working tree now defaults to the service-backed extension and native CLI, with synchronized **1.4.0** source and lockfiles. Direct public CLI store writers and the editor-owned scheduler are retired. Container/package cutover, all management/transition surfaces, full frozen qualification and review remain open. No final 1.4 VSIX has been built or published.

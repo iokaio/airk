@@ -4,6 +4,17 @@ use sha2::{Digest, Sha256};
 use std::{env, fs, path::PathBuf};
 
 fn main() {
+    println!("cargo:rerun-if-changed=src/service_manager_macos.m");
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+        cc::Build::new()
+            .file("src/service_manager_macos.m")
+            .flag("-fobjc-arc")
+            .flag("-Werror")
+            .compile("airk_macos_login");
+        println!("cargo:rustc-link-lib=framework=Foundation");
+        println!("cargo:rustc-link-lib=framework=ServiceManagement");
+        println!("cargo:rustc-link-lib=objc");
+    }
     println!("cargo:rerun-if-env-changed=AIRK_BUNDLED_MODEL_DIR");
     let workspace = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("../..");
     let catalog = workspace.join("crates/airk-retrieval/src/model_catalog.json");

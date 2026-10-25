@@ -14,6 +14,49 @@ spec.loader.exec_module(signing)
 
 
 class SigningContracts(unittest.TestCase):
+    def test_new_mac_ticket_requires_matching_bundle_receipts_and_native_validation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source, output = root / "source", root / "signed"
+            runtime = output / "runtime"
+            source.mkdir(); runtime.mkdir(parents=True)
+            target = "aarch64-apple-darwin"
+            names = signing.pair_package().runtime_builder().runtime_names("macos")
+            original = {"files": {}}
+            signed = {"files": {}}
+            components = {}
+            for name in names:
+                for parent, body in [(source, b"original component"), (runtime, b"signed component")]:
+                    file = parent / name
+                    file.parent.mkdir(parents=True, exist_ok=True)
+                    file.write_bytes(body)
+                original["files"][name] = signing.digest(source / name)
+                signed["files"][name] = signing.digest(runtime / name)
+                components[name] = {"schema": "airk-native-signing/1", "target": target, "commit": "fixture",
+                    "cargo_lock_sha256": "b" * 64, "team_id": "5PX7D99PXA", "source_sha256": original["files"][name], "binary_sha256": signed["files"][name]}
+            ticket = runtime / "AIRK.app/Contents/CodeResources"
+            ticket.write_bytes(b"fictional ticket; native verifier is mocked in this unit test")
+            signed["files"][ticket.relative_to(runtime).as_posix()] = signing.digest(ticket)
+            for parent, value in [(source, original), (runtime, signed)]:
+                (parent / "airk-install.json").write_text(json.dumps(value), encoding="utf-8")
+            receipt = {"schema": "airk-service-pair-signing/1", "target": target, "commit": "fixture", "cargo_lock_sha256": "b" * 64,
+                "source_install_sha256": signing.digest(source / "airk-install.json"), "install_manifest_sha256": signing.digest(runtime / "airk-install.json"), "components": components}
+            def save(): (output / "signing.json").write_text(json.dumps(receipt), encoding="utf-8")
+            save()
+            with patch.object(signing, "verify", return_value={}), patch.object(signing, "verify_app_bundle") as bundle, patch.object(signing, "run", return_value="") as native:
+                with self.assertRaisesRegex(ValueError, "stapled notarization receipts"):
+                    signing.read_verified_pair(output, source, target, "fixture", "b" * 64)
+                bundle.assert_not_called(); native.assert_not_called()
+                for component in components.values():
+                    component["notarization"] = {"id": "matching-native-job", "status": "Accepted", "stapled": True, "scope": "AIRK.app"}
+                save()
+                signing.read_verified_pair(output, source, target, "fixture", "b" * 64)
+                bundle.assert_called_once_with(runtime, "5PX7D99PXA")
+                self.assertEqual(native.call_args.args[0], ["/usr/bin/xcrun", "stapler", "validate", runtime / "AIRK.app"])
+                components[names[1]]["notarization"]["id"] = "crossed-job"
+                save()
+                with self.assertRaisesRegex(ValueError, "stapled notarization receipts"):
+                    signing.read_verified_pair(output, source, target, "fixture", "b" * 64)
     def test_pair_receipt_binds_both_components_and_preserves_unrelated_payload(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

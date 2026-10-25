@@ -2,6 +2,7 @@
 """Stage a platform VSIX from a verified native candidate and compiled AIRK modules."""
 import argparse
 import hashlib
+import importlib.util
 import json
 from pathlib import Path
 import re
@@ -108,7 +109,7 @@ def verify_vsix(archive, expected, executable, platform=None, version=None, pre_
         if payload != normalized or set(names) != {"extension/" + name for name in normalized} | generated:
             raise ValueError("VSIX payload differs from the allowlisted stage")
         for name in expected:
-            if name in ("native/airk", "native/runtime/airk", "native/runtime/airk-embed") and not (zipped.getinfo("extension/" + name).external_attr >> 16) & stat.S_IXUSR:
+            if name in ("native/airk", "native/runtime/airk", "native/runtime/airk-embed", "native/runtime/AIRK.app/Contents/MacOS/airk", "native/runtime/AIRK.app/Contents/MacOS/airk-embed") and not (zipped.getinfo("extension/" + name).external_attr >> 16) & stat.S_IXUSR:
                 raise ValueError("VSIX lost native executable permission: " + name)
         metadata = ET.fromstring(zipped.read("extension.vsixmanifest"))
         identity = next((element for element in metadata.iter()
@@ -163,14 +164,18 @@ def main():
     publish = output / "publish"
     stage.mkdir()
     publish.mkdir()
-    executable = "airk.exe" if "windows" in args.target else "airk"
-    helper = "airk-embed.exe" if "windows" in args.target else "airk-embed"
+    specification = importlib.util.spec_from_file_location("airk_pair_builder", ROOT / "scripts/build-service-runtime.py")
+    builder = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(builder)
+    operating_system = "windows" if "windows" in args.target else "macos" if "apple" in args.target else "linux"
+    executable, helper = builder.runtime_names(operating_system)
+    mac_resources = set(builder.macos_bundle_files(manifest["version"])) | {"AIRK.app/Contents/_CodeSignature/CodeResources", "AIRK.app/Contents/CodeResources"} if operating_system == "macos" else set()
     with zipfile.ZipFile(archive) as zipped:
         if len(zipped.namelist()) != len(set(zipped.namelist())) or set(zipped.namelist()) != set(manifest["payload"]):
             raise SystemExit("Native archive inventory differs")
         for name, expected in manifest["payload"].items():
             safe_name(name)
-            if name not in (executable, helper, "airk-build.json", "airk-runtime.json", "airk-install.json", "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md") and not name.startswith("notices/"):
+            if name not in (executable, helper, "airk-build.json", "airk-runtime.json", "airk-install.json", "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md") and name not in mac_resources and not name.startswith("notices/"):
                 raise SystemExit("Unexpected native payload path: " + name)
             data = zipped.read(name)
             if digest(data) != expected:

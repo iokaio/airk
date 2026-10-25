@@ -22,6 +22,8 @@ Old startup has a separate review and removal confirmation. The verified new run
 
 The runtime contains two executables: lightweight `airk` service/client/worker roles and `airk-embed` inference with offline model assets. Native ownership is independent of the extension directory. Windows, Linux and both Mac architectures are targets; installed-platform qualification is recorded separately and native Mac/editor acceptance remains pending.
 
+The Mac payload contains those same two executables in a GUI-less app bundle, targeting macOS 13.0. Optional signed-bundle login preserves system consent and refuses unverifiable registrations. Native Mac signing/login and installed-editor qualification remain pending.
+
 ## Coding agents and response mode
 
 Use **AIRK: Connect Coding Agent**. The guide supplies stable-launcher arguments for the reviewed collection and preserves unrelated settings. Recognized old project JSON entries have an explicit diff and approved replacement with fresh file/trust checks. TOML and other formats require manual review. In remote windows, configure the agent on the same execution host as its sources.

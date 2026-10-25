@@ -139,7 +139,8 @@ export async function verifyBundledRuntime(extensionPath:string,version:string,
     }
     await inspect(source,'',0);
     for(const name of names){if(await fileDigest(path.join(source,...relativeFile(name)))!==files[name]){throw new ServiceError('runtime_payload_digest_mismatch');}}
-    const main=host.platform==='win32'?'airk.exe':'airk',helper=host.platform==='win32'?'airk-embed.exe':'airk-embed';
+    const prefix=host.platform==='darwin'?'AIRK.app/Contents/MacOS/':'';
+    const main=prefix+(host.platform==='win32'?'airk.exe':'airk'),helper=prefix+(host.platform==='win32'?'airk-embed.exe':'airk-embed');
     const payload=record(wrapper.payload);
     if(payload[main]!==files[main]||payload[helper]!==files[helper]||!files[main]||!files[helper]){throw new ServiceError('runtime_pair_missing');}
     return {main:path.join(source,main),helper:path.join(source,helper),source,digest,version,platform};

@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import plistlib
 import shutil
 import subprocess
 import tempfile
@@ -100,8 +101,7 @@ def seal_install_payload(staging, version, operating_system, architecture):
 
 
 def write_pair_metadata(staging, version, operating_system, architecture):
-    main = "airk.exe" if operating_system == "windows" else "airk"
-    helper = "airk-embed.exe" if operating_system == "windows" else "airk-embed"
+    main, helper = runtime_names(operating_system)
     manifest = {"schema": 1, "version": version, "os": operating_system, "arch": architecture,
                 "airk_sha256": digest(staging / main), "embed_sha256": digest(staging / helper)}
     (staging / "airk-runtime.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
@@ -112,11 +112,63 @@ def write_pair_metadata(staging, version, operating_system, architecture):
     return manifest
 
 
+def runtime_names(operating_system):
+    if operating_system == "macos":
+        return ("AIRK.app/Contents/MacOS/airk", "AIRK.app/Contents/MacOS/airk-embed")
+    return ("airk.exe", "airk-embed.exe") if operating_system == "windows" else ("airk", "airk-embed")
+
+
+def macos_bundle_files(version):
+    """Static signed resources; mutable install/control paths never enter the bundle."""
+    files = {"AIRK.app/Contents/Info.plist": plistlib.dumps({
+        "CFBundleIdentifier": "io.iokaio.airk.service", "CFBundleName": "AIRK Service",
+        "CFBundleExecutable": "airk", "CFBundlePackageType": "APPL",
+        "CFBundleVersion": version, "CFBundleShortVersionString": version,
+        "LSMinimumSystemVersion": "13.0", "LSBackgroundOnly": True,
+    }, sort_keys=True)}
+    for channel in ("stable", "preview"):
+        label = "io.iokaio.airk.service." + channel
+        files[f"AIRK.app/Contents/Library/LaunchAgents/{label}.plist"] = plistlib.dumps({
+            "Label": label, "BundleProgram": "Contents/MacOS/airk",
+            "ProgramArguments": ["airk", "runtime", "login-foreground", "--channel", channel],
+            "RunAtLoad": True, "KeepAlive": {"SuccessfulExit": False},
+            "ThrottleInterval": 30, "ProcessType": "Background",
+        }, sort_keys=True)
+    return files
+
+
+def arrange_macos_bundle(staging, version):
+    executables = runtime_names("macos")
+    for source, destination in zip(("airk", "airk-embed"), executables):
+        target = staging / destination
+        target.parent.mkdir(parents=True, exist_ok=True)
+        (staging / source).rename(target)
+    for name, data in macos_bundle_files(version).items():
+        target = staging / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+
+
+def sign_development_macos_bundle(staging):
+    # An ad-hoc signature enables native development fixtures. It is never a
+    # Developer ID, notarization or independent distribution-approval claim.
+    subprocess.run(["/usr/bin/codesign", "--force", "--sign", "-", "--options", "runtime",
+                    "--timestamp=none", str(staging / runtime_names("macos")[1])], check=True)
+    subprocess.run(["/usr/bin/codesign", "--force", "--sign", "-", "--options", "runtime",
+                    "--timestamp=none", str(staging / "AIRK.app")], check=True)
+    subprocess.run(["/usr/bin/codesign", "--verify", "--strict", str(staging / "AIRK.app")], check=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--destination", type=Path, required=True)
     parser.add_argument("--profile", choices=["debug", "release"], default="debug")
     args = parser.parse_args()
+    if platform.system() == "Darwin":
+        configured = os.environ.get("MACOSX_DEPLOYMENT_TARGET", "13.0")
+        if configured not in ("13", "13.0"):
+            raise RuntimeError("The 1.4 Mac bundle requires MACOSX_DEPLOYMENT_TARGET=13.0; qualify another baseline separately")
+        os.environ["MACOSX_DEPLOYMENT_TARGET"] = "13.0"
     destination = args.destination.absolute()
     if destination.exists() or destination.is_symlink():
         raise SystemExit("Destination already exists; select a fresh runtime directory")
@@ -136,6 +188,9 @@ def main():
         architecture = {"amd64": "x86_64", "x86_64": "x86_64", "arm64": "aarch64", "aarch64": "aarch64"}.get(platform.machine().lower())
         if not operating_system or not architecture:
             raise RuntimeError("Unsupported host runtime pair target")
+        if operating_system == "macos":
+            arrange_macos_bundle(staging, version)
+            sign_development_macos_bundle(staging)
         manifest = write_pair_metadata(staging, version, operating_system, architecture)
         if source_identity() != source:
             raise RuntimeError("Native source changed during the paired build; staging was not published")

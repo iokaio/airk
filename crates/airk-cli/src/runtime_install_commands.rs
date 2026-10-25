@@ -4,6 +4,34 @@ use super::*;
 
 pub async fn run(command: &RuntimeCommand) -> Result<()> {
     let output = match command {
+        RuntimeCommand::LoginForeground { channel } => {
+            #[cfg(target_os = "macos")]
+            {
+                let root = macos_login::foreground_root(*channel)?;
+                return Box::pin(run(&RuntimeCommand::Foreground { install_dir: root })).await;
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                let _ = channel;
+                bail!("Mac login entry is unavailable on this platform");
+            }
+        }
+        RuntimeCommand::MacLogin {
+            install_dir,
+            runtime_sha256,
+            channel,
+            action,
+        } => {
+            #[cfg(target_os = "macos")]
+            {
+                macos_login::native(install_dir, runtime_sha256, *channel, action)?
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                let _ = (install_dir, runtime_sha256, channel, action);
+                bail!("Mac login API is unavailable on this platform");
+            }
+        }
         RuntimeCommand::ContainerHost {
             source,
             approved_sha256,

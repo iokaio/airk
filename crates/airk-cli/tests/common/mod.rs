@@ -83,16 +83,17 @@ impl Service {
                 let payload = owner.path().join("pair");
                 std::fs::create_dir(&payload).unwrap();
                 let main = airk_cli::runtime_install::main_name();
-                let embed = if cfg!(windows) {
+                let embed = Path::new(main).with_file_name(if cfg!(windows) {
                     "airk-embed.exe"
                 } else {
                     "airk-embed"
-                };
+                });
+                std::fs::create_dir_all(payload.join(main).parent().unwrap()).unwrap();
                 std::fs::copy(env!("CARGO_BIN_EXE_airk"), payload.join(main)).unwrap();
-                std::fs::copy(env!("CARGO_BIN_EXE_airk-embed"), payload.join(embed)).unwrap();
+                std::fs::copy(env!("CARGO_BIN_EXE_airk-embed"), payload.join(&embed)).unwrap();
                 let pair = serde_json::json!({"schema":1,"version":env!("CARGO_PKG_VERSION"),"os":std::env::consts::OS,"arch":std::env::consts::ARCH,
                     "airk_sha256":airk_cli::runtime_pair::digest_file(&payload.join(main)).unwrap(),
-                    "embed_sha256":airk_cli::runtime_pair::digest_file(&payload.join(embed)).unwrap()});
+                    "embed_sha256":airk_cli::runtime_pair::digest_file(&payload.join(&embed)).unwrap()});
                 std::fs::write(
                     payload.join("airk-runtime.json"),
                     serde_json::to_vec(&pair).unwrap(),

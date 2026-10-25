@@ -73,6 +73,9 @@ def verify(directory, commit, version, channel, *, receipts=None):
                     raise ValueError("Embedded native payload digest mismatch")
             if paired:
                 helper = "airk-embed.exe" if platform == "win32-x64" else "airk-embed"
+                if platform.startswith("darwin-"):
+                    executable = "AIRK.app/Contents/MacOS/airk"
+                    helper = "AIRK.app/Contents/MacOS/airk-embed"
                 wrapper = json.loads(zipped.read("extension/native/manifest.json"))
                 expected = {"schema": 2, "version": version, "vsix_target": platform, "runtime_dir": "runtime",
                             "install_manifest_sha256": native["payload"]["airk-install.json"],

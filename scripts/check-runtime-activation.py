@@ -54,6 +54,8 @@ def main():
     args = parser.parse_args()
     payload = args.runtime.resolve(strict=True)
     binary = payload / ("airk.exe" if os.name == "nt" else "airk")
+    if not binary.is_file():
+        binary = payload / "AIRK.app/Contents/MacOS/airk"
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     environment = dict(os.environ, HTTP_PROXY="http://127.0.0.1:1", HTTPS_PROXY="http://127.0.0.1:1",
                        ALL_PROXY="http://127.0.0.1:1")

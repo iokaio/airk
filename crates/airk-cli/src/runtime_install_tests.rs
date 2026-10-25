@@ -3,6 +3,11 @@ use super::*;
 
 pub(super) fn fixture(root: &Path) -> Result<String> {
     fs::create_dir_all(root.join("notices"))?;
+    fs::create_dir_all(
+        root.join(main_name())
+            .parent()
+            .context("fixture executable parent")?,
+    )?;
     fs::write(root.join(main_name()), b"Original inert main fixture.")?;
     fs::write(root.join(helper_name()), b"Original inert helper fixture.")?;
     fs::write(root.join("LICENSE"), b"Original fictional license fixture.")?;

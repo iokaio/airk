@@ -30,6 +30,8 @@ def main():
         provider = fixture / "organization payload"
         shutil.copytree(payload, provider)
         binary = provider / ("airk.exe" if os.name == "nt" else "airk")
+        if not binary.is_file():
+            binary = provider / "AIRK.app/Contents/MacOS/airk"
         approved = digest(provider / "airk-install.json")
         files = sorted(path for path in provider.rglob("*") if path.is_file())
         before = {str(path.relative_to(provider)): digest(path) for path in files}

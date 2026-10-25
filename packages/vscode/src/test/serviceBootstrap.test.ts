@@ -80,22 +80,36 @@ test('legacy startup review executes only the verified new main and binds exact 
     }finally{await f.cleanup();}
 });
 
-async function fixture(){
+async function fixture(host:{platform:string;arch:string}={platform:process.platform,arch:process.arch}){
     const root=await fs.mkdtemp(path.join(os.tmpdir(),'airk-runtime-bootstrap-'));
     const source=path.join(root,'native','runtime');await fs.mkdir(source,{recursive:true});
-    const main=process.platform==='win32'?'airk.exe':'airk',helper=process.platform==='win32'?'airk-embed.exe':'airk-embed';
+    const prefix=host.platform==='darwin'?'AIRK.app/Contents/MacOS/':'';
+    const main=prefix+(host.platform==='win32'?'airk.exe':'airk'),helper=prefix+(host.platform==='win32'?'airk-embed.exe':'airk-embed');
     const files:Record<string,string>={};
     for(const [name,body]of [[main,'Original native main fixture.'],[helper,'Original native inference fixture.'],['LICENSE','Original fixture license notice.']]){
-        await fs.writeFile(path.join(source,name),body);files[name]=sha(body);
+        await fs.mkdir(path.dirname(path.join(source,name)),{recursive:true});await fs.writeFile(path.join(source,name),body);files[name]=sha(body);
     }
-    const inventory=Buffer.from(JSON.stringify({schema:1,version:'1.4.0',os:process.platform==='win32'?'windows':process.platform==='darwin'?'macos':'linux',
-        arch:process.arch==='arm64'?'aarch64':'x86_64',files}));
+    const inventory=Buffer.from(JSON.stringify({schema:1,version:'1.4.0',os:host.platform==='win32'?'windows':host.platform==='darwin'?'macos':'linux',
+        arch:host.arch==='arm64'?'aarch64':'x86_64',files}));
     const digest=sha(inventory);await fs.writeFile(path.join(source,'airk-install.json'),inventory);
-    const wrapper={schema:2,version:'1.4.0',vsix_target:`${process.platform}-${process.arch}`,runtime_dir:'runtime',install_manifest_sha256:digest,payload:{[main]:files[main],[helper]:files[helper]}};
+    const wrapper={schema:2,version:'1.4.0',vsix_target:`${host.platform}-${host.arch}`,runtime_dir:'runtime',install_manifest_sha256:digest,payload:{[main]:files[main],[helper]:files[helper]}};
     await fs.writeFile(path.join(root,'native','manifest.json'),JSON.stringify(wrapper));
     async function cleanup(){const target=path.resolve(root),base=path.resolve(os.tmpdir());assert.equal(path.dirname(target),base);assert.ok(path.basename(target).startsWith('airk-runtime-bootstrap-'));await fs.rm(target,{recursive:true,force:true});}
     return {root,source,main,helper,digest,wrapper,cleanup};
 }
+
+test('Mac bundle verification resolves the same two native roles and refuses an extra executable',async()=>{
+    for(const arch of ['arm64','x64']){
+        const host={platform:'darwin',arch},f=await fixture(host);
+        try{
+            const bundle=await verifyBundledRuntime(f.root,'1.4.0',host);
+            assert.equal(bundle.main,path.join(f.source,'AIRK.app','Contents','MacOS','airk'));
+            assert.equal(bundle.helper,path.join(f.source,'AIRK.app','Contents','MacOS','airk-embed'));
+            await fs.writeFile(path.join(f.source,'airk'),'Unexpected third native executable.');
+            await assert.rejects(verifyBundledRuntime(f.root,'1.4.0',host),/unknown_runtime_payload_file/);
+        }finally{await f.cleanup();}
+    }
+});
 
 async function transitionFixture(){
     const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install);

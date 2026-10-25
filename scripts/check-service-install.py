@@ -22,6 +22,8 @@ def main():
     args = parser.parse_args()
     payload = args.runtime.resolve(strict=True)
     binary = payload / ("airk.exe" if os.name == "nt" else "airk")
+    if not binary.is_file():
+        binary = payload / "AIRK.app/Contents/MacOS/airk"
     identity = sha256(payload / "airk-install.json")
     version = json.loads((payload / "airk-install.json").read_text(encoding="utf-8"))["version"]
     environment = dict(os.environ, HTTP_PROXY="http://127.0.0.1:1",

@@ -11,6 +11,7 @@ The 1.3.x/1.2.x release records and former direct-helper/window-scheduler guides
 - [Draft 1.4.0 development release record](release-1.4.0.md)
 - [Offline service installation, resumable activation, managed payloads and startup ownership](service-installation.md) Shutdown ownership checks also cover damaged payload files, and initialization receipts prevent silent registry replacement after control loss.
 - [Reviewed runtime upgrades, rollback, saved activation and version pins](service-runtime-transitions.md)
+- [Mac signed service bundle, optional login ownership and qualification limits](service-macos-login.md)
 - [Reviewed project setup, reserved storage and stable-launcher MCP bindings](service-project-setup.md)
 - [Explicit legacy agent-entry review, startup removal and old derived-file retirement](service-legacy-transition.md)
 - [Guarded project unregister and resumable selected index cleanup](service-project-retirement.md)

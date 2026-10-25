@@ -20,6 +20,8 @@ def main():
     args = parser.parse_args()
     payload = args.runtime.resolve(strict=True)
     binary = payload / ("airk.exe" if os.name == "nt" else "airk")
+    if not binary.is_file():
+        binary = payload / "AIRK.app/Contents/MacOS/airk"
     with (payload / "airk-install.json").open("rb") as stream:
         identity = hashlib.file_digest(stream, "sha256").hexdigest()
     spec = importlib.util.spec_from_file_location("airk_pool_fixture", Path(__file__).with_name("check-service-pool.py"))

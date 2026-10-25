@@ -100,12 +100,17 @@ def read_verified_pair(directory, source, target, commit, lock_digest, signtool=
     runtime = directory / "runtime"
     original = package.bounded_json(source / "airk-install.json")
     signed = package.bounded_json(runtime / "airk-install.json")
-    main = "airk.exe" if "windows" in target else "airk"
-    helper = "airk-embed.exe" if "windows" in target else "airk-embed"
+    main, helper = package.runtime_builder().runtime_names("windows" if "windows" in target else "macos")
     components = receipt.get("components", {})
-    if set(components) != {main, helper} or set(original["files"]) != set(signed["files"]):
+    ticket = {"AIRK.app/Contents/CodeResources"} if "apple" in target else set()
+    if set(components) != {main, helper} or set(original["files"]) - ticket != set(signed["files"]) - ticket:
         raise ValueError("Pair signing component inventory differs")
     mutable = {main, helper, "airk-runtime.json", "airk-build.json"}
+    if "apple" in target:
+        mutable.add("AIRK.app/Contents/_CodeSignature/CodeResources")
+        mutable.add("AIRK.app/Contents/CodeResources")
+        if "AIRK.app/Contents/CodeResources" in signed["files"] and "AIRK.app/Contents/CodeResources" not in original["files"] and not stapled_app_ticket(components):
+            raise ValueError("New app ticket lacks matching stapled notarization receipts")
     for name, expected in original["files"].items():
         if name not in mutable and signed["files"].get(name) != expected:
             raise ValueError("Signing changed unrelated runtime payload")
@@ -117,6 +122,10 @@ def read_verified_pair(directory, source, target, commit, lock_digest, signtool=
                 or component.get("binary_sha256") != signed["files"][name]):
             raise ValueError("Signed component differs from tested executable")
         component["verification"] = verify(runtime / name, component, signtool)
+    if "apple" in target:
+        verify_app_bundle(runtime, components[main]["team_id"])
+        if stapled_app_ticket(components):
+            run(["/usr/bin/xcrun", "stapler", "validate", runtime / "AIRK.app"])
     if receipt.get("install_manifest_sha256") != digest(runtime / "airk-install.json"):
         raise ValueError("Signed pair installer digest differs")
     return runtime, receipt
@@ -128,6 +137,20 @@ def pair_package():
     package = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(package)
     return package
+
+
+def verify_app_bundle(runtime, team):
+    if not re.fullmatch(r"[A-Z0-9]{10}", team):
+        raise ValueError("Expected exact Apple bundle team identifier")
+    run(["/usr/bin/codesign", "--verify", "--strict", "--verbose=2", "-R",
+         f'=anchor apple generic and certificate leaf[subject.OU] = "{team}" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists', runtime / "AIRK.app"])
+
+
+def stapled_app_ticket(components):
+    receipts = [component.get("notarization") for component in components.values()]
+    return (len(receipts) == 2 and all(isinstance(value, dict) and value.get("status") == "Accepted"
+            and value.get("stapled") is True and value.get("scope") == "AIRK.app" and isinstance(value.get("id"), str) and value["id"] for value in receipts)
+            and len({value["id"] for value in receipts}) == 1)
 
 
 def prepare_pair(source, output, target):
@@ -163,7 +186,13 @@ def finish_pair(source, output, target, components, commit, lock_digest, signtoo
     if pending != {"schema": 1, "source": str(source), "target": target, "source_install_sha256": files["airk-install.json"]}:
         raise ValueError("Signing source differs from prepared pair")
     staged = package.inventory(runtime)
-    if set(staged) != set(files) or any(staged[name] != files[name] for name in files if name not in executables):
+    mutable = set(executables)
+    if "apple" in target:
+        mutable.add("AIRK.app/Contents/_CodeSignature/CodeResources")
+    ticket = {"AIRK.app/Contents/CodeResources"} if "apple" in target else set()
+    if set(staged) - set(files) and not stapled_app_ticket(components):
+        raise ValueError("New app ticket lacks matching stapled notarization receipts")
+    if set(staged) - ticket != set(files) - ticket or any(staged[name] != files[name] for name in files if name not in mutable and name not in ticket):
         raise ValueError("Signing changed unrelated runtime payload")
     if set(components) != set(executables):
         raise ValueError("Both signed service components are required")
@@ -173,12 +202,16 @@ def finish_pair(source, output, target, components, commit, lock_digest, signtoo
                 or component["source_sha256"] != files[name] or component["binary_sha256"] != digest(runtime / name)):
             raise ValueError("Signed service component differs from tested build")
         component["verification"] = verify(runtime / name, component, signtool)
+    if "apple" in target:
+        verify_app_bundle(runtime, components[executables[0]]["team_id"])
+        if stapled_app_ticket(components):
+            run(["/usr/bin/xcrun", "stapler", "validate", runtime / "AIRK.app"])
     pair = json.loads((runtime / "airk-runtime.json").read_text(encoding="utf-8"))
     pair.update(airk_sha256=digest(runtime / executables[0]), embed_sha256=digest(runtime / executables[1]))
     (runtime / "airk-runtime.json").write_text(json.dumps(pair, indent=2) + "\n", encoding="utf-8")
     original_build["runtime"] = pair
     (runtime / "airk-build.json").write_text(json.dumps(original_build, indent=2) + "\n", encoding="utf-8")
-    original_install["files"] = {name: digest(runtime / name) for name in original_install["files"]}
+    original_install["files"] = {name: value for name, value in package.inventory(runtime).items() if name != "airk-install.json"}
     (runtime / "airk-install.json").write_text(json.dumps(original_install, indent=2) + "\n", encoding="utf-8")
     receipt = {"schema": "airk-service-pair-signing/1", "target": target, "commit": commit,
                "cargo_lock_sha256": lock_digest, "source_install_sha256": digest(source / "airk-install.json"),
@@ -194,11 +227,13 @@ def sign_pair(args):
     """Sign both staged copies, then seal their exact new installer identities."""
     output = args.output.resolve()
     source, runtime, executables, _ = prepare_pair(args.runtime_dir, output, args.target)
+    if "apple" in args.target and (runtime / "AIRK.app/Contents/CodeResources").exists() and not args.notarize:
+        raise ValueError("Re-signing a stapled app requires explicit --notarize to replace its ticket")
     commit = run(["git", "rev-parse", "HEAD"]).strip()
     lock_digest = digest(ROOT / "Cargo.lock")
     components = {}
     for name in executables:
-        component_output = output / (name + ".signature")
+        component_output = output / (Path(name).name + ".signature")
         command = [__import__("sys").executable, str(ROOT / "scripts/sign-native.py"), "--target", args.target,
                    "--source-file", str(source / name), "--output", str(component_output), "--identity", args.identity,
                    "--signtool", args.signtool]
@@ -206,13 +241,35 @@ def sign_pair(args):
             value = getattr(args, flag)
             if value:
                 command += ["--" + flag.replace("_", "-"), str(value)]
-        if args.notarize:
+        if args.notarize and "apple" not in args.target:
             command.append("--notarize")
         run(command, timeout=1500)
         binary, receipt = read_verified(component_output, source / name, args.target, commit, lock_digest, args.signtool)
         shutil.copyfile(binary, runtime / name)
         (runtime / name).chmod(0o755)
         components[name] = receipt
+    if "apple" in args.target:
+        keychain = ["--keychain", str(args.keychain)] if args.keychain else []
+        # Seal the enclosing app after its two nested executables. Hashes remain
+        # outside the signed bundle, avoiding a signature/resource digest cycle.
+        run(["/usr/bin/codesign", "--force", "--sign", args.identity, "--options", "runtime", "--timestamp", *keychain, runtime / "AIRK.app"])
+        components[executables[0]]["binary_sha256"] = digest(runtime / executables[0])
+        verify_app_bundle(runtime, args.team_id)
+        if args.notarize:
+            with tempfile.TemporaryDirectory(prefix="airk-app-notary-") as temporary:
+                archive = Path(temporary) / "AIRK.zip"
+                with zipfile.ZipFile(archive, "x", compression=zipfile.ZIP_DEFLATED) as zipped:
+                    for file in sorted((runtime / "AIRK.app").rglob("*")):
+                        if file.is_file():
+                            zipped.write(file, file.relative_to(runtime).as_posix())
+                result = json.loads(run(["/usr/bin/xcrun", "notarytool", "submit", archive, "--keychain-profile", args.keychain_profile,
+                                         *keychain, "--wait", "--timeout", "20m", "--output-format", "json"], timeout=1250))
+                if result.get("status") != "Accepted" or not result.get("id"):
+                    raise RuntimeError("Apple app notarization did not return Accepted")
+                run(["/usr/bin/xcrun", "stapler", "staple", runtime / "AIRK.app"])
+                run(["/usr/bin/xcrun", "stapler", "validate", runtime / "AIRK.app"])
+                for receipt in components.values():
+                    receipt["notarization"] = {"id": result["id"], "status": "Accepted", "stapled": True, "scope": "AIRK.app"}
     finish_pair(source, output, args.target, components, commit, lock_digest, args.signtool)
 
 
@@ -251,7 +308,10 @@ def main():
     if args.source_file:
         source = source.resolve(strict=True)
         expected = ("airk.exe", "airk-embed.exe") if windows else ("airk", "airk-embed")
-        if source.name not in expected or not source.is_relative_to((ROOT / "artifacts").resolve()) or not (source.parent / "airk-install.json").is_file():
+        owner = source.parent
+        if not windows and source.parent.name == "MacOS":
+            owner = source.parents[3]
+        if source.name not in expected or not source.is_relative_to((ROOT / "artifacts").resolve()) or not (owner / "airk-install.json").is_file():
             parser.error("Signing component must belong to a staged artifact runtime pair")
     if source.is_symlink() or not source.is_file():
         parser.error("Build the target release binary first")

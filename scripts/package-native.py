@@ -23,6 +23,13 @@ TARGETS = {
 }
 
 
+def runtime_builder():
+    specification = importlib.util.spec_from_file_location("airk_pair_builder", ROOT / "scripts/build-service-runtime.py")
+    builder = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(builder)
+    return builder
+
+
 def sha256(path):
     digest = hashlib.sha256()
     count = 0
@@ -128,13 +135,24 @@ def validate_runtime(runtime, version, target, source):
         raise ValueError("Runtime install inventory differs from complete payload")
     if build.get("schema") != 1 or build.get("source") != source or build.get("runtime") != pair:
         raise ValueError("Runtime build receipt differs from current source/pair")
-    main = "airk.exe" if operating_system == "windows" else "airk"
-    helper = "airk-embed.exe" if operating_system == "windows" else "airk-embed"
+    builder = runtime_builder()
+    main, helper = builder.runtime_names(operating_system)
     allowed = {main, helper, "airk-install.json", "airk-runtime.json", "airk-build.json", "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"}
     required = allowed | {"notices/inventory.json", "notices/bom.cdx.json", "notices/all-MiniLM-L6-v2/LICENSE", "notices/all-MiniLM-L6-v2/provenance.json"}
     if not required.issubset(files):
         raise ValueError("Runtime pair legal/notice inventory is incomplete")
     allowed = set(required)
+    if operating_system == "macos":
+        for name, expected in builder.macos_bundle_files(version).items():
+            if (runtime / name).stat().st_size != len(expected) or (runtime / name).read_bytes() != expected:
+                raise ValueError("Mac service bundle resources differ")
+            allowed.add(name)
+        signature = "AIRK.app/Contents/_CodeSignature/CodeResources"
+        if signature in files:
+            allowed.add(signature)
+        ticket = "AIRK.app/Contents/CodeResources"
+        if ticket in files:
+            allowed.add(ticket)
     notices = bounded_json(runtime / "notices/inventory.json")
     if not isinstance(notices, list) or len(notices) > 1024:
         raise ValueError("Runtime dependency notice inventory exceeds budget")
@@ -165,9 +183,7 @@ def main():
         raise SystemExit("Package and smoke-test on the intended native runner")
     metadata = json.loads(capture("cargo", "metadata", "--locked", "--no-deps", "--format-version", "1"))
     version = next(p["version"] for p in metadata["packages"] if p["name"] == "airk-cli")
-    specification = importlib.util.spec_from_file_location("airk_pair_builder", ROOT / "scripts/build-service-runtime.py")
-    builder = importlib.util.module_from_spec(specification)
-    specification.loader.exec_module(builder)
+    builder = runtime_builder()
     runtime = args.runtime_dir.resolve(strict=True)
     if runtime.is_symlink() or not runtime.is_dir():
         raise SystemExit("Expected an immutable tested runtime pair directory")
