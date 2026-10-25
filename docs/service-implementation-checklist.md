@@ -12,19 +12,19 @@ Frozen Windows workspace tests report 1,333 passes and 17 ignores; non-root Linu
 
 Exact optimized pair 59 passes two retained real-model trials, offline smoke, two-size retrieval judgments, all nine project/client cases, 16,384 files/128 MiB, original document coordinates, storage cleanup, complete thirty-serial/thirty-concurrent usage accounting, Windows process-death faults, normal/interrupted transitions and all five real editor-stage scenarios. Its final Linux container smoke and six process-death plus isolated full-volume admission/recovery cases pass. The tmpfs fixture uses a private 2 GiB mount and a stricter 512 MiB logical quota through the guarded native API; default-headroom and unsafe-ancestor refusals are retained separately. See [exact evidence and limitations](service-cutover-qualification.md).
 
-Local packaging and actual installed-VSIX acceptance are the remaining candidate steps below. Native Mac, minimum-platform, other hardware and enforced security/remote-host matrices remain unqualified. Latest load health p95 reaches 716.8 ms including CLI startup; these measurements do not establish every performance objective.
+Local packaging and all five actual installed-VSIX scenarios pass. The exact artifact and seven-window receipt are recorded in [qualification](service-cutover-qualification.md). Native Mac, minimum-platform, other hardware and enforced security/remote-host matrices remain unqualified. Latest load health p95 reaches 716.8 ms including CLI startup; these measurements do not establish every performance objective.
 
 | Phase | Implemented behavior | Remaining exit evidence |
 |---|---|---|
 | 0 | Authenticated publication, bounded readers, admission and crash/tamper checks | Controlled Linux full-volume admission/recovery passes; physical device power loss unavailable |
-| 1 | Native discovery, racing launchers, same-user control, direct grants and reconnect | Final installed VSIX; native Mac/minimum-platform matrix unavailable |
+| 1 | Native discovery, racing launchers, same-user control, direct grants and reconnect | Windows installed VSIX passes; native Mac/minimum-platform matrix unavailable |
 | 2 | Durable requests, deduplication, fencing, supervision, pause/cancel, recovery, watches and bounded events | Final-source Windows/Linux suites pass; broader installed fault matrix unavailable |
 | 3 | Coherent format-140 publication, object leases, reserved sibling rebuild, atomic selection and retained cleanup | Final-source suites and controlled full-volume campaign pass; physical power loss unavailable |
 | 4 | Fair finite grants, observed pressure, presets, pooled model/input reuse, provider drains and bounded helper recovery | Exact-pair checks pass; other hardware classes and universal latency qualification unavailable |
-| 5 | Verified immutable offline pairs, launcher, on-demand/optional login ownership, upgrade/rollback, repair and uninstall | Final exact artifact; actual Apple SDK/signing/login and installed platform policy unavailable |
-| 6 | Trusted console, sampled waits, down-service metadata, exact request recovery, one/selected/all repair, guarded settings and usage | Final installed all-five editor scenarios; unavailable platform/fault cases remain explicit |
-| 7 | Default CLI/extension/container/MCP cutover, fresh namespace, explicit legacy agent/startup/derived-state transition, no fallback/payload proxy | Final production container passes; final VSIX gate below; native Mac removal unavailable |
-| 8 | Synchronized 1.4.0 source/lockfiles, exact receipts, DCO stages and qualification tools | Local checks/review and documentation reconciled; final VSIX and installed acceptance below |
+| 5 | Verified immutable offline pairs, launcher, on-demand/optional login ownership, upgrade/rollback, repair and uninstall | Exact Windows artifact passes; actual Apple SDK/signing/login and broader platform policy unavailable |
+| 6 | Trusted console, sampled waits, down-service metadata, exact request recovery, one/selected/all repair, guarded settings and usage | All five installed Windows scenarios pass; unavailable platform/fault cases remain explicit |
+| 7 | Default CLI/extension/container/MCP cutover, fresh namespace, explicit legacy agent/startup/derived-state transition, no fallback/payload proxy | Final production container and Windows VSIX pass; native Mac removal unavailable |
+| 8 | Synchronized 1.4.0 source/lockfiles, exact receipts, DCO stages and qualification tools | Local checks/review, documentation, exact VSIX and installed acceptance complete; external matrix unavailable |
 
 Code completion does not imply that an unavailable target has passed qualification. [Cutover qualification](service-cutover-qualification.md) records exact artifacts and historical counts; [the requirements review](service-requirements-review.md) identifies the external matrix. No push, public release or deployment is authorized.
 
@@ -43,8 +43,8 @@ Code completion does not imply that an unavailable target has passed qualificati
 - [x] Finish relevant native, extension, packaging, license, repository, formatting, Clippy and whitespace checks. Identify unavailable qualification explicitly; never count it as passed.
 - [x] Review the complete change, fix findings and rerun affected checks.
 - [x] Verify README, documentation index, release notes and Marketplace description agree with the implemented 1.4.0 behavior.
-- [ ] Build the new VSIX only after the preceding implementation, test and review gates pass; record its exact path and digest for manual installation.
-- [ ] Pass all five actual installed-VSIX scenarios against that exact artifact and retain its receipt.
+- [x] Build the new VSIX only after the preceding implementation, test and review gates pass; record its exact path and digest for manual installation.
+- [x] Pass all five actual installed-VSIX scenarios against that exact artifact and retain its receipt.
 - [x] Verify local stage commits have the authorized contributor's DCO trailer and no push occurred.
 
 If a concrete blocker cannot be resolved within existing authorization, record the affected requirement and required input. Completing a stage, a long test run or a convenient subset is not a stopping condition.

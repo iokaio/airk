@@ -2,7 +2,7 @@
 
 ## Reviewed local candidate, October 25, 2026
 
-The available implementation and code-review gates pass. Local VSIX packaging and actual installed-artifact acceptance follow these checks; no push or publication is authorized. Native Mac and the complete target/hardware/security/remote matrix remain unqualified.
+The available implementation, code-review, packaging and actual installed-artifact gates pass. No push or publication is authorized. Native Mac and the complete target/hardware/security/remote matrix remain unqualified.
 
 Optimized Windows pair 59 binds native source `e78795a0118eac764171b6558c1b58c549beebe7f0f94860faaf7b901e32266d` (658 inputs), main `4fbf338b09304237669221e37dd4ceed8d0184f65a7d243f1d2860f98f392703`, helper `9a6832e4a7ca31ed53672d7709c7fe7f3fef9ba40ac8336e88264a7543077bad` and install manifest `f70830b43df5cd6dbbe067ef4f2214d020aeff972b975951dd7beb5753b7be21`. Build receipt: `target/airksvc-runtime-stage59/airk-build.json`. The clean full-tree retrieval receipt binds documentation checkpoint `b655cd153788b62748f9c345d81c26eb08be4521`; later documentation reconciliation does not change the native source identity.
 
@@ -27,6 +27,16 @@ The full-volume fixture uses an initially empty, private mode-0700 2 GiB tmpfs a
 Latest load during/idle query p95 ratios range up to 1.95, with explicit rejections counted separately. Health p95 including CLI startup reaches 716.8 ms. Five samples per wave, uncontrolled OS caches and concurrent host work do not qualify universal latency; earlier campaigns missed the proposed 2× query-tail objective. Usage measurements do not observe external provider tokens. Windows is this Windows 11 workstation/VS Code 1.143.1, Linux is the non-root x64 Debian 12 container; Node 24.21.0 differs from the pinned CI Node. Mac/minimum-platform/other hardware/remote/security-policy qualification remains unavailable.
 
 License bundles include 411 packages. Three existing pinned upstream declarations lack separate license texts and require public-release review; this record does not invent approval. Local stage commits carry the authorized human DCO trailer. Fixtures, private indexes and receipts remain ignored and are not packaged.
+
+## Final Windows manual-test artifact
+
+- VSIX: `artifacts/local/airksvc-manual-1.4.0-extension/publish/airk-1.4.0-win32-x64.vsix` (119,036,610 bytes).
+- SHA-256: `1c611d787d6ebbc84e1d54d1e16bc7e7ff3e98b62d4124b2a0e891e5d9121799`.
+- Artifact/source checkpoint: `256a1ee92a0128f396738a2d968e1c0af626fc96`; native source identity and runtime pair remain the values above.
+- Strict archive inventory verifies exactly `airk.exe` and `airk-embed.exe`, with approved runtime modules/assets/notices and no private/index/test-driver contents.
+- Installed receipt: `artifacts/editor-qualification/native-installed-7aJINR/summary.json`. All five scenarios pass across seven private VS Code 1.143.1 windows; `staged: false`, every window `installed: true`, native install digest matches pair 59.
+
+The first installed attempt (`native-installed-weAJWu`) activated AIRK but never discovered the subsequently copied private driver because VSIX installation created `extensions.json`. It timed out before exercising a scenario. The harness now explicitly develops only the separate driver; AIRK resolves from the verified installed VSIX directory. The corrected full run (`native-installed-7aJINR`) passes against the unchanged VSIX checksum above. The harness correction and this receipt are later local commits, not changes to the packaged implementation. The user's ordinary VS Code installation/profile and unrelated services are not test targets.
 
 ## Historical development checkpoints
 

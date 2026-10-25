@@ -28,7 +28,7 @@ Final code review found and addressed transient publication/job mismatch, racing
 
 Frozen Windows workspace tests report 1,333 passes/17 ignores; non-root Linux production tests pass 1,347/18 skips. Serial docs, formatting, Clippy, native extension (217/2 skips), Python (142/4 skips), 411-package license inventories, repository and whitespace checks pass. Exact pair 59 passes model/retrieval/load/large-corpus/document/storage/usage/fault/transition campaigns and five real editor-stage scenarios. Final container isolation/persistence and controlled tmpfs full-volume admission/recovery pass. [Qualification](service-cutover-qualification.md) records exact identities and limitations.
 
-Remaining local candidate steps are strict VSIX packaging, all five scenarios against the actual installed VSIX, and recording that artifact/receipt. They follow implementation, available checks and code review. No public release is implied.
+Local candidate gates are complete: strict VSIX packaging and all five actual installed-VSIX scenarios pass across seven private VS Code 1.143.1 windows. The exact artifact and receipt are recorded in [qualification](service-cutover-qualification.md). The separate test driver is explicitly discovered while AIRK resolves from the installed VSIX. No public release is implied.
 
 ## Checks requiring another execution environment
 

@@ -1,6 +1,6 @@
 # AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents
 
-**1.4.0 local manual-test candidate.** The native service cutover is implemented and reviewed. Available Windows and Linux x64 checks pass; the [qualification record](docs/service-cutover-qualification.md) separates those results from the remaining installed-platform, signing and policy matrix. Local VSIX packaging and installed-artifact acceptance follow the [completion checklist](docs/service-implementation-checklist.md). See the [implementation plan](docs/airkservice-architecture.md) and [candidate release record](docs/release-1.4.0.md). This is an unpublished local candidate.
+**1.4.0 local manual-test candidate.** The native service cutover is implemented and reviewed. Available Windows and Linux x64 checks pass; the [qualification record](docs/service-cutover-qualification.md) separates those results from the remaining installed-platform, signing and policy matrix. The Windows VSIX passes all five actual installed-artifact scenarios; the [completion checklist](docs/service-implementation-checklist.md) records the completed local gates. See the [implementation plan](docs/airkservice-architecture.md) and [candidate release record](docs/release-1.4.0.md). This is an unpublished local candidate.
 
 The [Windows build and editor harness](docs/windows-local-build.md) now uses the verified runtime pair and reviewed native registrations. An allowlisted development stage can be exercised before creating a VSIX; final artifact acceptance remains separate.
 

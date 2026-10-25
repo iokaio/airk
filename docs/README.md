@@ -2,7 +2,7 @@
 
 **AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents**
 
-The **1.4.0 local manual-test candidate** implements the native extension/CLI/container cutover. Available Windows/Linux x64 checks and code review are complete; local VSIX and installed-artifact receipts follow the final packaging gate. Native Mac and the complete installed-platform/signing/policy matrix remain unqualified. Start with the [candidate release record](release-1.4.0.md), [service plan](airkservice-architecture.md), [completion checklist](service-implementation-checklist.md), [project setup](service-project-setup.md) and [client adapters](service-client-adapters.md).
+The **1.4.0 local manual-test candidate** implements the native extension/CLI/container cutover. Available Windows/Linux x64 checks and code review are complete; the verified Windows VSIX and all-five installed-artifact receipt are recorded in [qualification](service-cutover-qualification.md). Native Mac and the complete installed-platform/signing/policy matrix remain unqualified. Start with the [candidate release record](release-1.4.0.md), [service plan](airkservice-architecture.md), [completion checklist](service-implementation-checklist.md), [project setup](service-project-setup.md) and [client adapters](service-client-adapters.md).
 
 The 1.3.x/1.2.x release records and former direct-helper/window-scheduler guides are historical references. They do not describe the 1.4 default lifecycle or authorize opening legacy stores through the service. Native and extension source/lockfile versions are synchronized at 1.4.0; publication is a separate action.
 

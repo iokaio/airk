@@ -66,6 +66,10 @@ exports.activate=()=>{if(!process.env.AIRK_EDITOR_RUN)return;void require(${JSON
             const args=[workspace,'--new-window','--user-data-dir',profile,'--extensions-dir',extensions,'--shared-data-dir',path.join(run,'shared-editor-data'),
                 `--remote-debugging-port=${ports[role]}`,'--remote-debugging-address=127.0.0.1','--skip-welcome','--skip-release-notes','--disable-updates','--disable-telemetry','--disable-gpu'];
             if(stage)args.push(`--extensionDevelopmentPath=${source}`);
+            // VSIX installation creates extensions.json; a subsequently copied
+            // driver is not registered there. Develop only the separate driver:
+            // installed AIRK must still resolve from the verified VSIX directory.
+            else args.push(`--extensionDevelopmentPath=${driver}`);
             if(scenario!=='untrusted')args.push('--disable-workspace-trust');
             children.push(runProcess(args,path.join(folder,`${role}-editor.log`),{AIRK_EDITOR_RUN:run,AIRK_EDITOR_ROLE:role,AIRK_EDITOR_SCENARIO:scenario,
                 AIRK_EDITOR_DEVELOPMENT_STAGE:stage?source:'',AIRK_USAGE_MODE:scenario==='usage'?'aggregates-only':'disabled'}));
