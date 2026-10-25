@@ -1,5 +1,7 @@
 # Reviewed project registration and launcher binding
 
+Current onboarding follow-up (October 25): trusted VSIX activation automatically prepares and submits registrations for new workspace folders using native defaults or User storage selection, then queues model setup and indexing with automatic watching. The native canonical-path, reservation, isolation and trust checks below still apply. Existing saved 1.4 bindings are retained without changing their storage, watching or index work. Manual storage changes still show an exact review. The dated checkpoint and artifact results below describe the earlier manual-only setup.
+
 **Development checkpoint before the 1.4 default cutover (2026-10-24).** The artifact identities and 1.3.2 development versions below remain historical evidence. The current source/lockfiles are 1.4.0 and the extension/public CLI now use service defaults; see the [current completion checklist](service-implementation-checklist.md).
 
 

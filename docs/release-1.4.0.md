@@ -1,5 +1,13 @@
 # AIRK 1.4.0 local manual-test candidate
 
+## October 25 onboarding follow-up (source changes)
+
+Local follow-up validation: extension 219 passes/6 skips; Python contract suite 142 tests/4 skips; formatting, Windows workspace Clippy, repository and whitespace checks pass. Full Rust workspace execution is still in progress. Fresh native/VSIX packaging and installed-editor qualification are recorded separately; the historical VSIX checksum below is unchanged.
+
+Trusted VSIX activation automatically installs the native runtime and the airk terminal command, registers new workspace folders, prepares the bundled offline model and queues indexing with automatic watching. Existing 1.4 registrations, chosen index-data locations and watching preferences are preserved. Compatible 1.4 runtime updates use native fenced activation and required schema migrations. Managed ownership and explicit Stop remain authoritative. Open a new VS Code terminal after installation. Use Choose Index Storage Folder or Choose Native Automatic Watching to change settings later; old index files remain for separate cleanup. User airk.cli.autoInstall: false disables automatic installation and registration. Agent connection remains explicit.
+
+Linux and both Mac CI jobs stopped at Clippy on a decimal permission literal; the fixture now uses equivalent octal `0o0`. Historical VSIX receipts below predate these changes; a replacement artifact has not been qualified.
+
 October 25, 2026. The native service cutover is implemented and reviewed. This unpublished candidate keeps version **1.4.0**, with two executables: lightweight `airk` and offline MiniLM inference helper `airk-embed`. Evidence flows directly to project workers; inference inputs go directly to the shared helper. The broker owns metadata, work and resource policy.
 
 Terse is the default, with extension-panel Full selection and per-call agent guidance. Compact navigation/facts, consistent `items`, candidate method matching, retained change baselines, `index-current` validation and safe publication retries are implemented. The console adds sampled exact-job waits and queued cancellation. Native connection-opening admission preserves accepted work without replaying scans or publications.

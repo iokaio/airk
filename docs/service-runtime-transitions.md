@@ -1,5 +1,7 @@
 # Reviewed runtime upgrades and rollback
 
+Current onboarding follow-up (October 25): trusted extension activation automatically upgrades an older compatible 1.4 patch selection (or changed same-version bundled payload) through the existing fenced native review/stage/activation contract. It preserves project registrations, storage locations, watching choices and explicit Stop. It does not downgrade a newer patch or take over managed runtime lifecycle. Required schema handling stays native; this extension change adds no database schema. Console rollback and other explicit transitions retain their reviews. The dated checkpoint below describes the earlier manual-only upgrade default.
+
 **Development checkpoint before the 1.4 default cutover (2026-10-24).** The artifact identities and 1.3.2 development versions below remain historical evidence. The current source/lockfiles are 1.4.0 and the extension/public CLI now use service defaults; see the [current completion checklist](service-implementation-checklist.md).
 
 

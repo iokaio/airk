@@ -26,7 +26,7 @@ test('service activation advertises reviewed bindings without indexing and prese
     context.mock.method(RuntimeHost.prototype,'ensure',async(explicit?:boolean)=>{ensures++;assert.notEqual(explicit,true);if(stopped)throw new ServiceError('service_explicitly_stopped');return binding;});
     const disposable={dispose(){}},event=()=>disposable;
     const stub:any={workspace:{isTrusted:true,workspaceFolders:[{name:'Fixture',uri:{scheme:'file',fsPath:source}}],
-        getConfiguration:()=>({inspect:(key:string)=>({globalValue:key==='mcp.responseMode'?'full':undefined})}),
+        getConfiguration:()=>({inspect:(key:string)=>({globalValue:key==='mcp.responseMode'?'full':key==='cli.autoInstall'?false:undefined})}),
         onDidChangeWorkspaceFolders:event,onDidGrantWorkspaceTrust:event,onDidChangeConfiguration:event,
         createFileSystemWatcher:()=>{throw new Error('Editor-owned source watching is forbidden');}},
     window:{createOutputChannel:()=>({appendLine(){},show(){},dispose(){}}),createStatusBarItem:()=>({show(){},dispose(){}}),

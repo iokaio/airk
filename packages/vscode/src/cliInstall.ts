@@ -146,8 +146,8 @@ try {
     if ($airkKind -ne [Microsoft.Win32.RegistryValueKind]::String -and $airkKind -ne [Microsoft.Win32.RegistryValueKind]::ExpandString) { throw 'User PATH has an unsupported registry type.' }
     $airkFound = @($airkOld.Split(';') | Where-Object { [Environment]::ExpandEnvironmentVariables($_).Trim().Trim('"').TrimEnd('\\') -ieq $airkBin.TrimEnd('\\') }).Count -gt 0
     if (-not $airkFound) {
-        $airkSeparator = if ($airkOld -and -not $airkOld.EndsWith(';')) { ';' } else { '' }
-        $airkKey.SetValue('Path', $airkOld + $airkSeparator + $airkBin, $airkKind)
+        $airkSeparator = if ($airkOld) { ';' } else { '' }
+        $airkKey.SetValue('Path', $airkBin + $airkSeparator + $airkOld, $airkKind)
     }
 } finally { $airkKey.Dispose() }
 if (-not $airkFound) {
@@ -170,9 +170,28 @@ export async function installCli(helper: string, context: Pick<ExtensionContext,
 }
 
 /** The verified native installation owns this launcher; never copy an extension helper over it. */
-export async function installLauncherCli(launcher:string,context:Pick<ExtensionContext,'environmentVariableCollection'>):Promise<string[]>{
-    const directory=path.dirname(launcher);validatePath(directory,process.platform);
+export async function installLauncherCli(launcher:string,context:Pick<ExtensionContext,'environmentVariableCollection'|'globalStorageUri'>):Promise<string[]>{
+    const directory=await publishLauncherCommand(launcher,context.globalStorageUri.fsPath);
     return installPath(directory,context);
+}
+
+/** Keep the stable launcher's original path and native installation identity. */
+export async function publishLauncherCommand(launcher:string,storage:string,platform:NodeJS.Platform=process.platform):Promise<string>{
+    validatePath(launcher,platform);
+    if(platform==='win32'&&/["%!]/.test(launcher))throw new Error('AIRK launcher path cannot be represented in a Windows command wrapper.');
+    const directory=path.join(storage,'service-cli','bin');validatePath(directory,platform);
+    await fs.mkdir(directory,{recursive:true});
+    const command=path.join(directory,platform==='win32'?'airk.cmd':'airk');
+    const content=platform==='win32'?`@echo off\r\n"${launcher}" %*\r\nexit /b %errorlevel%\r\n`:`#!/bin/sh\nexec ${quote(launcher)} "$@"\n`;
+    try{
+        const info=await fs.lstat(command);
+        if(!info.isFile()||info.isSymbolicLink()||info.nlink!==1)throw new Error('AIRK command destination must be a regular unlinked file.');
+        if(await fs.readFile(command,'utf8')===content)return directory;
+    }catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
+    const temporary=path.join(directory,`${randomUUID()}.tmp`);
+    try{await fs.writeFile(temporary,content,{flag:'wx',mode:0o755});await fs.rename(temporary,command);}
+    finally{await fs.unlink(temporary).catch(()=>undefined);}
+    return directory;
 }
 
 async function installPath(directory:string,context:Pick<ExtensionContext,'environmentVariableCollection'>):Promise<string[]>{

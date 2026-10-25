@@ -1,5 +1,7 @@
 # Architecture
 
+Trusted extension activation now installs the approved runtime and terminal forwarding command and sets up new workspace folders automatically. Existing 1.4 project/storage/watching selections remain native and are preserved on compatible runtime updates. Runtime activation and any schema migrations stay in the native adapter; the dashboard renders metadata and does not open indexes.
+
 Current 1.4.0 cutover: the public CLI and extension are service clients. Only native worker roles open project Kernels/stores; the broker remains metadata-only and retrieval/inference use direct scoped transports. Source and lockfile versions are synchronized. Container/package cutover and available Windows/Linux qualification are complete for the local manual-test candidate. Native Mac and the broader installed-platform/security matrix remain unqualified; see [the qualification record](service-cutover-qualification.md).
 
 

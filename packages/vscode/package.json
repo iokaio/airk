@@ -428,7 +428,7 @@
             "type": "boolean",
             "default": true,
             "scope": "machine",
-            "markdownDescription": "Install the bundled CLI on first trusted activation and update it with the extension. Adds AIRK to new VS Code terminals and the user PATH (Windows) or Bash, Zsh and fish startup files (macOS/Linux). Restart external terminal applications after installation. Disable in User settings to skip future automatic setup; existing CLI files and PATH entries remain. Use **AIRK: Install or Repair CLI** to retry setup."
+            "markdownDescription": "Install the native runtime and airk terminal command on trusted activation; register new workspace folders and start automatic indexing. Preserve existing 1.4 storage and watching selections during compatible runtime updates. Adds AIRK to new VS Code terminals and the user PATH (Windows) or Bash, Zsh and fish startup files (macOS/Linux). Restart external terminal applications after installation. Disable in User settings to skip future automatic installation and workspace registration; existing CLI files and PATH entries remain. Use **AIRK: Install or Repair CLI** to retry setup."
           },
           "airk.service.channel": {
             "type": "string",

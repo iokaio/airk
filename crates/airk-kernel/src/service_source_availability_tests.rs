@@ -40,7 +40,7 @@ fn denied_source_and_denied_ancestor_keep_owned_evidence_without_publishing_dele
     let token = kernel.status()?.publication.unwrap().token;
     for target in [&source, &parent] {
         let restore = Restore(target.clone(), std::fs::metadata(target)?.permissions());
-        std::fs::set_permissions(target, std::fs::Permissions::from_mode(0))?;
+        std::fs::set_permissions(target, std::fs::Permissions::from_mode(0o0))?;
         assert!(
             std::fs::read_dir(&source).is_err(),
             "permission fixture requires a non-root user"

@@ -24,6 +24,11 @@ export class ServiceWorkspace {
         private readonly authorized:()=>boolean){}
     private active():void {if(!this.authorized())throw new ServiceError('runtime_client_no_longer_authorized');}
     private selection(install:string,opened:string):string{return ACTIVE+createHash('sha256').update(JSON.stringify([install,opened])).digest('hex');}
+    hasRegistration(binding:RuntimeBinding,opened:string):boolean{
+        this.active();
+        return this.saved().some(value=>same(value.opened,opened)&&same(value.registration.installDir,binding.installDir)
+            &&same(value.registration.controlDir,binding.controlDir));
+    }
     private saved():SavedProject[]{
         const keys=this.storage.keys().filter(key=>key.startsWith(PREFIX)).sort();
         if(keys.length>1024)throw new ServiceError('workspace_registration_capacity');

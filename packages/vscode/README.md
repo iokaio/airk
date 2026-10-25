@@ -1,5 +1,7 @@
 # AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents
 
+Trusted VSIX activation now installs the native runtime and the `airk` terminal command, registers new workspace folders, prepares the bundled offline model and queues indexing with automatic watching. No setup links are required. Open a new VS Code terminal after installation; restart external terminal applications to refresh PATH. User `airk.cli.autoInstall: false` disables automatic installation and registration. Existing 1.4 registrations, selected index-data locations and watching preferences are preserved, including after a storage change. Compatible 1.4 runtime updates use the native fenced activation and schema-migration path; no fresh registration or reindex is requested for saved projects. Managed runtime ownership and explicit Stop remain authoritative. Use **Choose Index Storage Folder** or **Choose Native Automatic Watching** to change defaults later. Storage selection creates a reviewed binding and retains old index files for separate cleanup. Agent connection remains a separate explicit action.
+
 Managed installations support a verified lightweight client launcher in user metadata while leaving the approved provider payload read-only and preserving its lifecycle policy. See the [native installation contract](https://github.com/iokaio/airk/blob/main/docs/service-installation.md).
 
 **1.4.0 local manual-test candidate:** the native service cutover is implemented and reviewed, with available Windows/Linux x64 checks recorded. Native Mac and the complete installed-platform/signing/policy matrix remain unqualified. See the [candidate release record](https://github.com/iokaio/airk/blob/main/docs/release-1.4.0.md). This local candidate is unpublished.
@@ -10,7 +12,7 @@ AIRK gives coding agents bounded, cited evidence from local code and documents. 
 
 ## First registration
 
-Trust the workspace, then use **AIRK: Index Now**. Review the source, separate index-data location and native project binding. Choose manual indexing or automatic native watching, which continues after editor windows close. Login startup is a separate choice.
+Trust the workspace to start automatic setup. Use **AIRK: Index Now** for later explicit indexing. Automatic native watching continues after editor windows close; change it to manual with **AIRK: Choose Native Automatic Watching**. Login startup is a separate choice.
 
 1.4 uses a fresh namespace and rebuilds indexes from sources. It does not convert or share live 1.3 stores, jobs or tokens. Existing indexes, old registrations and agent settings remain for explicit review. Allow additional disk space for the runtime pair and fresh indexes. Sources stay separate from derived state.
 

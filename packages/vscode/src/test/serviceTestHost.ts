@@ -13,7 +13,7 @@ import { ServiceWorkspace } from '../serviceWorkspace';
 import * as native from '../native';
 import * as cliInstall from '../cliInstall';
 
-export async function serviceTestHost(test:TestContext,options:{trusted?:boolean;roots?:number;registered?:boolean}={}){
+export async function serviceTestHost(test:TestContext,options:{trusted?:boolean;roots?:number;registered?:boolean;automatic?:boolean;upgrade?:boolean}={}){
     const root=await fs.mkdtemp(path.join(os.tmpdir(),'airk-default-service-'));
     const values=new Map<string,unknown>(),settings=new Map<string,unknown>(),commands=new Map<string,(...args:unknown[])=>Promise<unknown>>();
     const writes:any[]=[],calls:string[]=[],warnings:string[]=[],clipboard:string[]=[],panels:any[]=[],events:any[]=[];
@@ -26,6 +26,7 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
         const source=path.join(root,`source-${i}`);await fs.mkdir(source);folders.push({name:`Source ${i}`,uri:{scheme:'file',fsPath:await fs.realpath(source)}});
     }
     settings.set('service.installDir',install);settings.set('storage.path',data);
+    settings.set('cli.autoInstall',options.automatic??false);
     const digest=(value:string)=>createHash('sha256').update(value).digest('hex');
     const review=async(_binding:unknown,source:string,data_root:string,collection:string)=>({...binding,binding:digest(JSON.stringify([source,data_root,collection])),root:await fs.realpath(source),data_root,collection});
     const register=async(_binding:unknown,value:any)=>{registrations.set(value.binding,value);return value;};
@@ -36,11 +37,12 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
     const state={down:false,stopped:false,ackLost:false,confirm:true,discovered:0,ensured:0,picks:0,
         pick:undefined as undefined|((items:any[])=>any),selectedFolders:undefined as undefined|any[]};
     const disposable={dispose(){}},event=()=>disposable;
+    let foldersChanged:()=>Promise<void>;
     const stub:any={workspace:{isTrusted:options.trusted??true,workspaceFolders:folders,textDocuments:[],
         getWorkspaceFolder:(uri:any)=>folders.find(folder=>uri.fsPath===folder.uri.fsPath||uri.fsPath.startsWith(folder.uri.fsPath+path.sep)),
         getConfiguration:()=>({inspect:(key:string)=>({globalValue:settings.get(key),workspaceValue:key==='storage.path'?path.join(root,'untrusted-storage'):'/workspace/untrusted'}),
             update:async(key:string,value:unknown)=>{settings.set(key,value);}}),
-        onDidChangeWorkspaceFolders:event,onDidGrantWorkspaceTrust:event,onDidChangeConfiguration:event,
+        onDidChangeWorkspaceFolders:(callback:()=>Promise<void>)=>{foldersChanged=callback;return disposable;},onDidGrantWorkspaceTrust:event,onDidChangeConfiguration:event,
         createFileSystemWatcher:()=>{throw new Error('Editor-owned source watcher is forbidden');}},
     window:{activeTextEditor:{document:{uri:folders[0]?.uri}},createOutputChannel:()=>({appendLine:(text:string)=>calls.push(text),show(){},dispose(){}}),
         createStatusBarItem:()=>({show(){},dispose(){}}),createTreeView:()=>disposable,registerWebviewViewProvider:()=>disposable,
@@ -87,11 +89,16 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
     test.mock.method(RuntimeHost.prototype,'discover',async function(this:RuntimeHost){
         state.discovered++;assert.equal(this.options.installDir,install);
         return {bundle:{main:path.join(root,'bundle-main'),helper:path.join(root,'bundle-helper'),source:root,digest:binding.runtimeSha256,version:'1.4.0',platform:'fixture'},
-            installDir:install,installed:true,location:{user_paths:{data}},inspection:{selection:{active:binding.runtimeSha256},approval:{manifest_sha256:binding.runtimeSha256,version:'1.4.0',verification_basis:'trusted_distribution'},
+            installDir:install,installed:true,location:{user_paths:{data}},inspection:{selection:{active:binding.runtimeSha256},approval:{manifest_sha256:binding.runtimeSha256,version:binding.version,verification_basis:'trusted_distribution'},
             executable:binding.executable,launcher:binding.launcher,control_dir:control,registry_namespace:'34'.repeat(16),lifecycle:{explicitly_stopped:state.stopped}}};
     });
     test.mock.method(RuntimeHost.prototype,'ensure',async(explicit?:boolean)=>{state.ensured++;assert.notEqual(explicit,true);if(state.stopped)throw new ServiceError('service_explicitly_stopped');if(state.down)throw new ServiceError('service_unavailable');return binding;});
     test.mock.method(RuntimeHost.prototype,'client',()=>new ServiceClient(transport));
+    test.mock.method(RuntimeHost.prototype,'reviewTransition',async(current:typeof binding,action:'upgrade'|'rollback'|'resume')=>{
+        assert.equal(current.runtimeSha256,binding.runtimeSha256);assert.equal(action,'upgrade');calls.push('upgrade-reviewed');
+        return {action,installDir:install,controlDir:control,observedActive:binding.runtimeSha256,expectedActive:binding.runtimeSha256,target:binding.runtimeSha256,version:'1.4.1'};
+    });
+    test.mock.method(RuntimeHost.prototype,'transition',async()=>{calls.push('upgrade-applied');binding.version='1.4.1';return {};});
     test.mock.method(RuntimeHost.prototype,'reviewProject',review);
     test.mock.method(RuntimeHost.prototype,'registerProject',register);
     test.mock.method(cliInstall,'installLauncherCli',async()=>[]);
@@ -102,10 +109,11 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
     const clear=()=>{for(const name of modules)delete require.cache[require.resolve(name)];};clear();
     loader._load=function(request:string,...args:any[]){return request==='vscode'?stub:original.call(this,request,...args);};
     let extension:any;
-    try{extension=require('../extension');const context:any={extensionPath:root,extension:{packageJSON:{version:'1.4.0'}},globalState:storage,
+    try{extension=require('../extension');const context:any={extensionPath:root,extension:{packageJSON:{version:options.upgrade?'1.4.1':'1.4.0'}},globalState:storage,
         globalStorageUri:{fsPath:path.join(root,'editor-storage')},subscriptions:[],environmentVariableCollection:{persistent:false,prepend(){}}};
         const api=await extension.activate(context);
         return {root,folders,binding,registrations,values,settings,commands,writes,calls,warnings,clipboard,panels,state,stub,api,providers:events,
+            async refreshFolders(){await foldersChanged!();},
             async close(){extension.deactivate();loader._load=original;clear();await fs.rm(root,{recursive:true,force:true});}};
     }catch(error){extension?.deactivate();loader._load=original;clear();await fs.rm(root,{recursive:true,force:true});throw error;}
 }

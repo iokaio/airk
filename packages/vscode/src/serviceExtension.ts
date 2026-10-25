@@ -14,6 +14,7 @@ import { ServiceWorkspace } from './serviceWorkspace';
 import { McpVerification } from './sidebar';
 import { installLauncherCli } from './cliInstall';
 import { openUsagePanel } from './usagePanel';
+import { renderServiceDashboard } from './serviceDashboard';
 
 function same(left:string,right:string):boolean {
     return path.relative(process.platform==='win32'?path.toNamespacedPath(left):left,process.platform==='win32'?path.toNamespacedPath(right):right)==='';
@@ -34,6 +35,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     private roots:{opened:string;canonical:string}[]=[];
     private readonly checks=new Map<string,McpVerification>();
     private refreshing?:Promise<void>;
+    private settingUp?:Promise<void>;
 
     constructor(private readonly context:vscode.ExtensionContext){
         const runtime:ConsoleRuntime={discover:()=>this.runtime().discover(),ensure:explicit=>this.runtime().ensure(explicit),
@@ -206,15 +208,51 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             await this.console.configureProject(spec.service.project,draft,()=>valid()&&continuing?.()!==false);
         });
     }
-    async installCommandLine():Promise<void>{
-        this.trusted();const observation=await this.runtime().discover();this.trusted();
-        if(!observation.inspection&&await vscode.window.showWarningMessage('Install AIRK’s native service runtime? It uses a fresh index namespace and requires additional disk space. Existing indexes and agent entries are preserved; source registration and indexing require separate review.',{modal:true},'Install runtime')!=='Install runtime')return;
+    async installCommandLine(automatic=false):Promise<void>{
         this.trusted();const binding=await this.runtime().ensure();this.trusted();
         if(!binding.launcher)throw new ServiceError('stable_launcher_unavailable');
-        if(await vscode.window.showWarningMessage(`Add the approved launcher directory to your user PATH? ${path.dirname(binding.launcher)}. Existing CLI entries and running legacy processes are preserved.`,{modal:true},'Add launcher PATH')!=='Add launcher PATH')return;
-        this.trusted();const errors=await installLauncherCli(binding.launcher,this.context);this.trusted();
+        const errors=await installLauncherCli(binding.launcher,this.context);this.trusted();
         if(errors.length)throw new Error(errors.join('\n'));
-        void vscode.window.showInformationMessage('AIRK launcher PATH setup complete. Open a new terminal and use airk-launcher. Restart external terminal applications to refresh PATH.');
+        if(!automatic)void vscode.window.showInformationMessage('AIRK installed. Open a new VS Code terminal and run airk --version. Restart external terminal applications to refresh PATH.');
+    }
+    automaticInstall():Promise<void>{
+        this.settingUp??=this.automaticSetup().finally(()=>{this.settingUp=undefined;});return this.settingUp;
+    }
+    private async automaticSetup():Promise<void>{
+        if(!vscode.workspace.isTrusted||vscode.workspace.getConfiguration('airk').inspect<boolean>('cli.autoInstall')?.globalValue===false)return;
+        try{
+            const installed=await this.runtime().discover();this.trusted();
+            if(installed.inspection&&!serviceRuntimeOptions().managed){
+                const current=this.runtime().binding(installed.inspection,installed.installDir),target=this.context.extension.packageJSON.version as string;
+                const from=current.version.split('.').map(Number),to=target.split('.').map(Number);
+                if(from[0]===1&&from[1]===4&&to[0]===1&&to[1]===4&&from[2]<=to[2]
+                    &&(current.version!==target||current.runtimeSha256!==installed.bundle.digest)){
+                    const review=await this.runtime().reviewTransition(current,installed.diagnosis?.pending_activation?'resume':'upgrade');this.trusted();
+                    await this.runtime().transition(current,review);this.trusted();
+                }
+            }
+            await this.installCommandLine(true);this.trusted();
+            const binding=await this.runtime().ensure();this.trusted();
+            const folders=this.folders(),specs=await this.workspace.definitions(binding,folders.map(folder=>folder.uri.fsPath));
+            const observation=await this.runtime().discover();this.trusted();
+            const dataRoot=vscode.workspace.getConfiguration('airk').inspect<string>('storage.path')?.globalValue||record(observation.location.user_paths).data;
+            if(typeof dataRoot!=='string'||!path.isAbsolute(dataRoot))throw new ServiceError('invalid_project_data_location');
+            for(const folder of folders){
+                if(this.workspace.hasRegistration(binding,folder.uri.fsPath))continue;
+                this.trusted();const canonical=await fs.realpath(folder.uri.fsPath);this.trusted();
+                if(specs.some(spec=>same(spec.root,canonical)))continue;
+                const project=await this.workspace.register(binding,folder.uri.fsPath,dataRoot,collectionId(canonical),async()=>true);
+                if(!project)continue;this.trusted();const client=this.runtime().client(binding);
+                try{
+                    await client.rpc({configure_watch:{project:project.binding,enabled:true}});this.trusted();
+                    await this.enqueue(binding,project.binding,'model_setup',client);
+                    await this.enqueue(binding,project.binding,'index',client);
+                }finally{client.dispose();}
+                this.output.appendLine(`Automatically registered ${folder.uri.fsPath}. Index data: ${dataRoot}. Automatic watching enabled; change storage or watching with AIRK commands.`);
+            }
+        }
+        catch(error){this.output.appendLine(`Automatic installation failed: ${String(error)}`);
+            void vscode.window.showErrorMessage(`AIRK installation needs attention: ${error instanceof Error?error.message:String(error)}. Use AIRK: Install or Repair CLI to retry.`);}
     }
     async manageVscodeMcp():Promise<void>{this.trusted();await vscode.commands.executeCommand('workbench.mcp.listServer');}
     async provideDefinitions():Promise<vscode.McpStdioServerDefinition[]>{
@@ -246,8 +284,11 @@ export async function activate(context:vscode.ExtensionContext):Promise<{getServ
     const controller=new ServiceExtension(context);active=controller;context.subscriptions.push(controller);
     context.subscriptions.push(vscode.window.registerWebviewViewProvider('airk.service',controller.console),
         vscode.window.registerWebviewViewProvider('airk.dashboard',{resolveWebviewView(view){
-            view.webview.options={enableCommandUris:['airk.index','airk.serviceConnect','airk.setupAgent']};
-            view.webview.html='<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'"></head><body><h1>AIRK</h1><p>Register trusted roots with the native service. Choose manual indexing or automatic watching that continues after editor windows close.</p><p><a href="command:airk.index">Review workspace registration / index</a></p><p><a href="command:airk.serviceConnect">Open Service Console</a></p><p><a href="command:airk.setupAgent">Connect a coding agent</a></p><p>New service indexes use a fresh namespace. Existing indexes and agent entries remain available for separate review.</p></body></html>';
+            view.webview.options={enableCommandUris:['airk.index','airk.serviceConnect','airk.setupAgent','airk.installCli','airk.chooseStorage','airk.indexMode'],localResourceRoots:[]};
+            const render=()=>{view.webview.html=renderServiceDashboard(vscode.workspace.isTrusted,
+                (vscode.workspace.workspaceFolders??[]).filter(folder=>['file','vscode-remote'].includes(folder.uri.scheme)).length,controller.getChildren().length);};
+            render();const listener=controller.onDidChangeTreeData(render);
+            context.subscriptions.push(listener,view.onDidDispose(()=>listener.dispose()));
         }}),
         vscode.window.createTreeView('airk.collectionsView',{treeDataProvider:controller}));
     const safe=(action:(...args:unknown[])=>unknown|Promise<unknown>)=>async(...args:unknown[])=>{try{return await action(...args);}catch(error){controller.output.appendLine(String(error));
@@ -265,16 +306,16 @@ export async function activate(context:vscode.ExtensionContext):Promise<{getServ
     commands.chooseStorage=async()=>{controller.trusted();const selected=await vscode.window.showOpenDialog({canSelectFolders:true,canSelectFiles:false,canSelectMany:false,openLabel:'Review new project storage'});
         if(selected?.length){controller.trusted();await vscode.workspace.getConfiguration('airk').update('storage.path',selected[0].fsPath,vscode.ConfigurationTarget.Global);
             await controller.registerWorkspace();}};
-    commands.installCli=()=>controller.installCommandLine();
+    commands.installCli=async()=>{await controller.installCommandLine();await controller.automaticInstall();await controller.refresh();};
     commands.openTools=()=>controller.openTools();
     commands.usage=()=>controller.usage();
     for(const [name,action] of Object.entries(commands))context.subscriptions.push(vscode.commands.registerCommand(`airk.${name}`,safe(action)));
     if(vscode.lm?.registerMcpServerDefinitionProvider)context.subscriptions.push(vscode.lm.registerMcpServerDefinitionProvider('airk.collections',{
         onDidChangeMcpServerDefinitions:controller.definitions.event,provideMcpServerDefinitions:()=>controller.provideDefinitions(),resolveMcpServerDefinition:value=>controller.resolveDefinition(value)}));
-    context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(()=>void controller.refresh()),vscode.workspace.onDidGrantWorkspaceTrust(()=>void controller.refresh()),
+    context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(()=>controller.automaticInstall().then(()=>controller.refresh())),vscode.workspace.onDidGrantWorkspaceTrust(()=>void controller.automaticInstall().then(()=>controller.refresh())),
         vscode.window.onDidChangeActiveTextEditor(()=>void controller.console.controller.refresh()),vscode.workspace.onDidChangeConfiguration(event=>{
             if(event.affectsConfiguration('airk.service'))controller.reset();
             else if(event.affectsConfiguration('airk.mcp'))controller.registrationChanged();
         }));
-    await controller.refresh();return {getServerDefinitions:()=>controller.provideDefinitions()};
+    await controller.automaticInstall();await controller.refresh();return {getServerDefinitions:()=>controller.provideDefinitions()};
 }
