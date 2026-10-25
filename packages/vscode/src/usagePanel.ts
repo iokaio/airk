@@ -47,7 +47,7 @@ export async function openUsagePanel(spec: LaunchSpec, valid: () => boolean,
         return chosenPrice ? withJson(chosenPrice, file => runText(spec.command, [...launchArgs(spec, 'usage'), ...args, '--price-scenario', file], path.dirname(spec.command),180000))
             : runText(spec.command, [...launchArgs(spec, 'usage'), ...args], path.dirname(spec.command),180000);
     };
-    const render = () => { check(); panel.webview.html = renderReport('Usage & Savings', 'usage', { ...report, days }); };
+    const render = () => { check(); panel.webview.html = renderReport('Usage & Savings', 'usage', { ...report, days, busy }); };
     const refresh = async () => { report = JSON.parse(await read()); render(); };
     const show = async (content: string, language: string) => { check(); await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({ content, language }), { preview: false }); };
     const listener = panel.webview.onDidReceiveMessage(async message => {
@@ -57,6 +57,7 @@ export async function openUsagePanel(spec: LaunchSpec, valid: () => boolean,
         busy = true;
         try {
             check();
+            render();
             if (json || action?.action === 'json') { await show(JSON.stringify(report, null, 2), 'json'); return; }
             if (!action) { return; }
             switch (action.action) {
@@ -111,7 +112,7 @@ export async function openUsagePanel(spec: LaunchSpec, valid: () => boolean,
                 }
             }
         } catch (error) { void vscode.window.showErrorMessage(`AIRK usage: ${String(error)}`); }
-        finally { busy = false; }
+        finally { busy = false; try { render(); } catch { /* Stale/disposed panels stay unauthorized. */ } }
     });
     panel.onDidDispose(() => { disposed = true; listener.dispose(); });
     try { await refresh(); } catch (error) { panel.dispose(); throw error; }

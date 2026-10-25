@@ -635,7 +635,7 @@ pub fn launcher_path(root: &Path) -> PathBuf {
     })
 }
 
-fn install_lock(root: &Path) -> Result<File> {
+fn open_install_lock(root: &Path) -> Result<File> {
     ensure!(
         root.is_absolute(),
         "installation location must be absolute and machine/user selected"
@@ -658,9 +658,61 @@ fn install_lock(root: &Path) -> Result<File> {
         .truncate(false)
         .open(&lock)?;
     safe_file(&lock)?;
+    Ok(file)
+}
+
+fn install_lock(root: &Path) -> Result<File> {
+    let file = open_install_lock(root)?;
     file.try_lock()
         .context("another AIRK installer/launcher is active; retry after it finishes")?;
     Ok(file)
+}
+
+async fn connection_install_lock(root: &Path, budget: Duration) -> Result<File> {
+    let file = open_install_lock(root)?;
+    let deadline = tokio::time::Instant::now() + budget;
+    loop {
+        match file.try_lock() {
+            Ok(()) => return Ok(file),
+            Err(std::fs::TryLockError::WouldBlock) if tokio::time::Instant::now() < deadline => {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            Err(error) => {
+                return Err(error).context("service connection installer wait expired or failed");
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod connection_lock_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn concurrent_connections_wait_without_stealing_mutation_ownership() -> Result<()> {
+        let owner = tempfile::tempdir()?;
+        let root = owner.path().join("installation");
+        let held = install_lock(&root)?;
+        let wait = connection_install_lock(&root, Duration::from_millis(100));
+        assert!(wait.await.is_err());
+        assert!(install_lock(&root).is_err());
+        let release = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            drop(held);
+        });
+        let acquired = connection_install_lock(&root, Duration::from_secs(5)).await?;
+        release.await?;
+        assert!(install_lock(&root).is_err());
+        drop(acquired);
+        install_lock(&root)?;
+        fs::write(root.join("install-1.4.lock"), b"foreign bytes")?;
+        assert!(
+            connection_install_lock(&root, Duration::from_secs(5))
+                .await
+                .is_err()
+        );
+        Ok(())
+    }
 }
 
 fn replace_json<T: Serialize>(root: &Path, name: &str, value: &T) -> Result<()> {
@@ -1166,7 +1218,7 @@ async fn start(
 }
 
 pub async fn ensure_running(root: &Path) -> Result<ServiceHealth> {
-    let _lock = install_lock(root)?;
+    let _lock = connection_install_lock(root, Duration::from_secs(60)).await?;
     payload_repair::require_settled(root)?;
     lifecycle::settle(root).await?;
     if managed::read(root)?.is_some() {

@@ -1,6 +1,8 @@
 # Native process ownership and cleanup
 
-This records opt-in service development behavior, not installed-platform qualification. The [implementation checklist](service-implementation-checklist.md) retains the complete drain-accounting and owner-crash gates.
+This records native service behavior in 1.4 development, separately from installed-platform qualification. The [implementation checklist](service-implementation-checklist.md) retains the complete drain-accounting and owner-crash gates.
+
+A disconnected worker control pipe can race an intentional idle exit. Status, renewal, helper-binding and job-dispatch paths allow up to one second to observe the exact child's successful exit without sending Stop. Only that native success clears the failure circuit; nonzero exits, invalid protocol responses, timeouts and unknown wait state retain failure handling. Cleanup still proves process/guardian and lease release before returning resource capacity or admitting another writer. The Linux revision workload that previously exhausted the circuit now passes; the owned-child regression separately checks successful/nonzero exits and refusal to forgive a protocol error.
 
 `airk-process` supplies process lifetime primitives to extraction and native lifecycle adapters without depending on indexing, the service registry or agent behavior. Windows jobs retain their existing bounded handle-based descendant drain; see [resource accounting](service-resources.md).
 

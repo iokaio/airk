@@ -4,7 +4,7 @@ This is the development console for the [1.4 plan](airkservice-architecture.md).
 
 The [Project settings contract](service-configuration.md) covers typed native preparation, exact incarnation/settings guards, trusted model/root/calibration choices, durable result reservations and explicit uncertain-outcome recovery. The view keeps the last configuration receipt independently of later background progress and supports bounded result Copy while disconnected.
 
-The configuration checkpoint's complete real native/controller workload passed on Windows, including missing-helper repair, with its fixture uninstalled. Windows/Linux checks and exact pair identities are recorded in the configuration contract. Default adapter cutover and installed-editor/native Mac qualification remain open.
+The configuration checkpoint's complete real native/controller workload passed on Windows, including missing-helper repair, with its fixture uninstalled. Windows/Linux checks and exact pair identities are recorded in the configuration contract. Native adapters are now the defaults; installed-editor/native Mac qualification remains open.
 
 ## View and trusted host
 
@@ -78,7 +78,7 @@ A real Windows bootstrap fixture used the approved offline pair to stage/activat
 
 The two-project offline MiniLM fixture also passed after the I/O-thread change: shared model load, direct citations, replacement/retirement, exact helper stop, lexical/source preservation, helper recovery and explicit semantic retry. Development pair `target/airksvc-runtime-stage33` has native source fingerprint `c4c4da4d6d419603d4610b76207cf247e24e355c11eb15b190a06c5cf232d0de` (620 files), main digest `07ef00f372ecfd2747825498e822a6a0d35d95b60369bd5386153b5e2c0a1c2f` and helper digest `5cd1b4f8f5aa49ddfce1a95983cec8b4b7b55d0dc42127cfa52d37624d4fcecc`. Linux review image: `d0bcb97545bd59eabf3d91b921a447956f14bac1218ebee923a298cf9f11f3f1`.
 
-At this earlier foundation checkpoint, the console view/controller and lifecycle/restart intent integration were still open. Complete configuration actions, default adapters and platform/installed-editor qualification remain open in the current implementation. The schema-2 VSIX wrapper is verified by the client but is not yet emitted by the default package script. No service VSIX has been built.
+At this earlier foundation checkpoint, the console view/controller, lifecycle/restart integration, configuration actions, default adapters and schema-2 package emission were still open. Those paths are now implemented in 1.4 development. Native platform/installed-editor qualification remains separate, and no final service VSIX has been built.
 
 Final instance-fence review: the targeted native console test passed on Windows/Linux after adding `expected_instance`, including a rejected stale shutdown followed by successful live health. All-target Clippy passed again on both platforms, and Windows workspace doc tests passed sequentially. The final Linux image is `a265f5423f10cb167085431a8adf78ab598a246f4119d24fb9895268c3857970`. The runtime pair and earlier full-suite image above predate this final additive control-header fence; inference and evidence framing were unchanged.
 

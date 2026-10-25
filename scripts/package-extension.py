@@ -139,6 +139,7 @@ def main():
     parser.add_argument("--native-dir", type=Path)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--channel", choices=("preview", "stable"), default="stable")
+    parser.add_argument("--stage-only", action="store_true", help="Verify an allowlisted development stage without creating a VSIX")
     args = parser.parse_args()
     native = (args.native_dir or ROOT / "artifacts" / "native" / args.target / "publish").resolve()
     output = (args.output or ROOT / "artifacts" / "extension" / args.target).resolve()
@@ -223,6 +224,14 @@ def main():
     for name in ("LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"):
         shutil.copyfile(ROOT / name, stage / name)
     expected = {file.relative_to(stage).as_posix(): digest(file.read_bytes()) for file in stage.rglob("*") if file.is_file()}
+    if args.stage_only:
+        (output / "stage-receipt.json").write_text(json.dumps({
+            "schema": "airk-extension-stage/1", "commit": commit,
+            "native_manifest_sha256": digest((native / "manifest.json").read_bytes()),
+            "payload": expected, "qualification": "development stage; no VSIX created"
+        }, indent=2) + "\n", encoding="utf-8")
+        print("Verified extension stage: " + str(stage))
+        return
     vsix = publish / ("airk-" + package["version"] + "-" + TARGETS[args.target] + ".vsix")
     subprocess.run(["node", str(EXTENSION / "scripts" / "package.cjs"), str(stage), TARGETS[args.target], str(vsix), args.channel], cwd=ROOT, check=True)
     verify_vsix(vsix, expected, executable, TARGETS[args.target], package["version"], pre_release, package["displayName"])

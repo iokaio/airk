@@ -312,7 +312,19 @@ mod tests {
         let usage_directory = kernel.store.managed_collection_directory()?.to_path_buf();
         airk_store::usage::UsageStore::open(&usage_directory, &kernel.usage_scope(), &policy)?
             .context("usage ledger missing")?;
-        let usage = std::fs::read(usage_directory.join("usage.sqlite3"))?;
+        let span = kernel.usage_span(
+            airk_core::usage::UsageOperation::Status,
+            airk_core::usage::ClientFamily::Cli,
+        );
+        kernel.finish_usage(
+            span,
+            None,
+            0,
+            false,
+            airk_core::usage::ResponseRepresentation::LogicalResultJson,
+        );
+        let usage = kernel.usage_report(30)?;
+        assert_eq!(usage.report.calls, 1);
         let old = kernel.refresh_service_snapshot()?;
         let old_token = old
             .status()?
@@ -346,7 +358,22 @@ mod tests {
         assert!(current.search(&query("amber"))?.hits.is_empty());
         assert!(!old.search(&query("amber"))?.hits.is_empty());
         assert!(!current.vectors_enabled()?);
-        assert_eq!(std::fs::read(usage_directory.join("usage.sqlite3"))?, usage);
+        let after = current.usage_report(30)?;
+        assert_eq!(after.report.calls, usage.report.calls + 1);
+        assert_eq!(
+            after.report.operations[&airk_core::usage::UsageOperation::Reindex].calls,
+            1
+        );
+        for (operation, summary) in &usage.report.operations {
+            assert_eq!(
+                serde_json::to_value(after.report.operations.get(operation))?,
+                serde_json::to_value(summary)?
+            );
+        }
+        assert_eq!(
+            serde_json::to_value(&after.report.scope)?,
+            serde_json::to_value(&usage.report.scope)?
+        );
         assert_eq!(
             current.usage_policy()?.mode,
             airk_core::usage::RecordingMode::AggregatesOnly

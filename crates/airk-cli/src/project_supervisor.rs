@@ -40,6 +40,31 @@ struct ChildWorker {
     last_status: Instant,
 }
 
+fn clean_disconnected_exit(child: &mut Child, error: &anyhow::Error) -> bool {
+    let disconnected = error.chain().any(|cause| {
+        cause.downcast_ref::<std::io::Error>().is_some_and(|error| {
+            matches!(
+                error.kind(),
+                std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::UnexpectedEof
+            )
+        }) || cause.downcast_ref::<mpsc::RecvTimeoutError>()
+            == Some(&mpsc::RecvTimeoutError::Disconnected)
+    });
+    if !disconnected {
+        return false;
+    }
+    // A worker can close its control pipes while draining an intentional idle exit.
+    // Observe its actual exit without sending Stop or releasing ownership first.
+    let deadline = Instant::now() + Duration::from_secs(1);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return status.success(),
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
+            _ => return false,
+        }
+    }
+}
+
 impl Drop for ChildWorker {
     fn drop(&mut self) {
         if let Some(mut input) = self.input.take() {
@@ -787,6 +812,7 @@ impl Supervisor {
                         }
                     }
                     let mut failed_renewals = Vec::new();
+                    let mut clean_renewals = std::collections::BTreeSet::new();
                     let mut pool_control_failed = false;
                     for (project, worker) in &mut workers {
                         if pool_control_failed {
@@ -824,7 +850,10 @@ impl Supervisor {
                                     continue;
                                 }
                             };
-                            if worker.configure_pool(access).is_err() {
+                            if let Err(error) = worker.configure_pool(access) {
+                                if clean_disconnected_exit(&mut worker.child, &error) {
+                                    clean_renewals.insert(*project);
+                                }
                                 failed_renewals.push(*project);
                                 continue;
                             }
@@ -842,7 +871,10 @@ impl Supervisor {
                                 .renew(identity, Instant::now(), Duration::from_secs(300))
                                 .map_err(Into::into)
                         });
-                        if renewed.is_err() {
+                        if let Err(error) = renewed {
+                            if clean_disconnected_exit(&mut worker.child, &error) {
+                                clean_renewals.insert(*project);
+                            }
                             failed_renewals.push(*project);
                             continue;
                         }
@@ -858,9 +890,18 @@ impl Supervisor {
                         log.record(airk_core::service_logs::LogKind::ModelFailed, None, None);
                     }
                     for project in failed_renewals {
-                        worker_failed(&mut backoff, project, Instant::now());
+                        let clean = clean_renewals.contains(&project);
+                        if clean {
+                            backoff.remove(&project);
+                        } else {
+                            worker_failed(&mut backoff, project, Instant::now());
+                        }
                         log.record(
-                            airk_core::service_logs::LogKind::WorkerFailed,
+                            if clean {
+                                airk_core::service_logs::LogKind::WorkerStopped
+                            } else {
+                                airk_core::service_logs::LogKind::WorkerFailed
+                            },
                             Some(project),
                             None,
                         );
@@ -1240,6 +1281,7 @@ impl Supervisor {
                         }
                     }
                     let mut failed = Vec::new();
+                    let mut clean_exits = std::collections::BTreeSet::new();
                     for (project, worker) in &mut workers {
                         if worker.last_status.elapsed() < Duration::from_secs(1) {
                             continue;
@@ -1304,7 +1346,13 @@ impl Supervisor {
                                     let _ = resources.finished(identity, finished);
                                 }
                             }
-                            Err(_) => failed.push(*project),
+                            Err(error) => {
+                                let clean = clean_disconnected_exit(&mut worker.child, &error);
+                                if clean {
+                                    clean_exits.insert(*project);
+                                }
+                                failed.push(*project);
+                            }
                         }
                     }
                     loop {
@@ -1312,17 +1360,30 @@ impl Supervisor {
                             break;
                         };
                         let project = grant.identity.project;
-                        if workers
-                            .get_mut(&project)
-                            .is_none_or(|worker| worker.run_job(grant).is_err())
-                        {
+                        if let Some(worker) = workers.get_mut(&project) {
+                            if let Err(error) = worker.run_job(grant) {
+                                if clean_disconnected_exit(&mut worker.child, &error) {
+                                    clean_exits.insert(project);
+                                }
+                                failed.push(project);
+                            }
+                        } else {
                             failed.push(project);
                         }
                     }
                     for project in failed {
-                        worker_failed(&mut backoff, project, Instant::now());
+                        let clean = clean_exits.contains(&project);
+                        if clean {
+                            backoff.remove(&project);
+                        } else {
+                            worker_failed(&mut backoff, project, Instant::now());
+                        }
                         log.record(
-                            airk_core::service_logs::LogKind::WorkerFailed,
+                            if clean {
+                                airk_core::service_logs::LogKind::WorkerStopped
+                            } else {
+                                airk_core::service_logs::LogKind::WorkerFailed
+                            },
                             Some(project),
                             None,
                         );
@@ -1552,6 +1613,75 @@ impl Supervisor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn idle_pipe_exit_fixture() -> Result<()> {
+        let Some(marker) = std::env::var_os("AIRK_IDLE_PIPE_EXIT_FIXTURE") else {
+            return Ok(());
+        };
+        // This runs only in the explicitly spawned test process.
+        unsafe {
+            libc::close(libc::STDIN_FILENO);
+        }
+        std::fs::write(marker, b"control closed")?;
+        std::thread::sleep(Duration::from_millis(200));
+        std::process::exit(std::env::var("AIRK_IDLE_PIPE_EXIT_CODE")?.parse()?);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn disconnected_control_requires_observed_success_without_signaling() -> Result<()> {
+        use std::io::Write;
+        struct Owned(Child);
+        impl Drop for Owned {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        let owner = tempfile::tempdir()?;
+        for code in [0, 7] {
+            let marker = owner.path().join(format!("ready-{code}"));
+            let mut child = Owned(
+                Command::new(std::env::current_exe()?)
+                    .args([
+                        "--exact",
+                        "project_supervisor::tests::idle_pipe_exit_fixture",
+                        "--nocapture",
+                    ])
+                    .env("AIRK_IDLE_PIPE_EXIT_FIXTURE", &marker)
+                    .env("AIRK_IDLE_PIPE_EXIT_CODE", code.to_string())
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn()?,
+            );
+            let until = Instant::now() + Duration::from_secs(10);
+            while !marker.try_exists()? {
+                ensure!(Instant::now() < until, "owned idle fixture did not start");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            let error = child
+                .0
+                .stdin
+                .as_mut()
+                .context("fixture stdin missing")?
+                .write_all(b"status")
+                .unwrap_err();
+            assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe);
+            assert_eq!(
+                clean_disconnected_exit(&mut child.0, &error.into()),
+                code == 0
+            );
+            assert!(child.0.try_wait()?.is_some());
+            assert!(!clean_disconnected_exit(
+                &mut child.0,
+                &anyhow::anyhow!("invalid protocol reply")
+            ));
+        }
+        Ok(())
+    }
     #[test]
     fn project_failure_budget_stays_exhausted_until_explicit_reset() {
         let now = Instant::now();

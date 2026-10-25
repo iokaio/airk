@@ -10,6 +10,8 @@ The Mac payload places the existing lightweight `airk` and inference-only `airk-
 
 The paired hashes, build receipt, installer inventory and notices remain outside the signed app. This avoids a signature/hash cycle. The native builder fixes `MACOSX_DEPLOYMENT_TARGET=13.0`, creates an ad-hoc development signature, then hashes the final bytes. An ad-hoc signature is not Developer ID, notarization or independent distribution approval.
 
+Engine identity resolves that same external pair receipt, so maintenance/model ownership includes the expected helper digest even when the main sits inside the app. Portable bare/app-layout tests verify that changing the helper changes engine identity and a mismatched main is refused. These checks do not execute Apple frameworks.
+
 Explicit release signing signs the two components and enclosing app before sealing final hashes. Explicit notarization submits the app, staples and validates its ticket, and inventories the ticket with the payload. Archives preserve both executable modes and all approved signature/ticket bytes. Native extraction/offline Gatekeeper tests must still verify that path. No quarantine removal or policy bypass is part of installation.
 
 ## Captured registration ownership

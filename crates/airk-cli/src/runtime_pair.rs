@@ -39,51 +39,8 @@ pub fn engine_identity() -> Result<airk_core::identity::Sha256Digest> {
         (|| -> Result<_> {
             let main = std::env::current_exe()?.canonicalize()?;
             let digest = current_executable_sha256()?;
-            let manifest = main
-                .parent()
-                .context("runtime parent missing")?
-                .join("airk-runtime.json");
-            let bytes = match fs::symlink_metadata(&manifest) {
-                Ok(metadata) => {
-                    ensure!(
-                        metadata.is_file()
-                            && !metadata.file_type().is_symlink()
-                            && metadata.len() <= 4096,
-                        "invalid engine pair receipt"
-                    );
-                    #[cfg(windows)]
-                    {
-                        use std::os::windows::fs::MetadataExt;
-                        ensure!(
-                            metadata.file_attributes() & 0x400 == 0,
-                            "redirected engine pair receipt"
-                        );
-                    }
-                    let mut bytes = Vec::new();
-                    fs::File::open(manifest)?
-                        .take(4097)
-                        .read_to_end(&mut bytes)?;
-                    ensure!(bytes.len() <= 4096, "oversized engine pair receipt");
-                    let pair: RuntimePair = serde_json::from_slice(&bytes)?;
-                    ensure!(
-                        pair.schema == 1
-                            && pair.version == env!("CARGO_PKG_VERSION")
-                            && pair.os == std::env::consts::OS
-                            && pair.arch == std::env::consts::ARCH
-                            && pair.airk_sha256 == digest,
-                        "engine pair identity mismatch"
-                    );
-                    pair.embed_sha256
-                        .parse::<airk_core::identity::Sha256Digest>()?;
-                    serde_json::to_vec(&pair)?
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => digest.into_bytes(),
-                Err(error) => return Err(error.into()),
-            };
-            Ok(airk_core::identity::framed_digest(
-                b"airk-maintenance-engine/1.4",
-                &[&bytes],
-            ))
+            let manifest = payload_root(&main)?.join("airk-runtime.json");
+            engine_identity_from_receipt(&manifest, digest)
         })()
         .map_err(|error| error.to_string())
     });
@@ -91,6 +48,51 @@ pub fn engine_identity() -> Result<airk_core::identity::Sha256Digest> {
         .as_ref()
         .copied()
         .map_err(|_| anyhow::anyhow!("verified runtime identity is unavailable for maintenance"))
+}
+
+fn engine_identity_from_receipt(
+    manifest: &Path,
+    digest: String,
+) -> Result<airk_core::identity::Sha256Digest> {
+    let bytes = match fs::symlink_metadata(manifest) {
+        Ok(metadata) => {
+            ensure!(
+                metadata.is_file() && !metadata.file_type().is_symlink() && metadata.len() <= 4096,
+                "invalid engine pair receipt"
+            );
+            #[cfg(windows)]
+            {
+                use std::os::windows::fs::MetadataExt;
+                ensure!(
+                    metadata.file_attributes() & 0x400 == 0,
+                    "redirected engine pair receipt"
+                );
+            }
+            let mut bytes = Vec::new();
+            fs::File::open(manifest)?
+                .take(4097)
+                .read_to_end(&mut bytes)?;
+            ensure!(bytes.len() <= 4096, "oversized engine pair receipt");
+            let pair: RuntimePair = serde_json::from_slice(&bytes)?;
+            ensure!(
+                pair.schema == 1
+                    && pair.version == env!("CARGO_PKG_VERSION")
+                    && pair.os == std::env::consts::OS
+                    && pair.arch == std::env::consts::ARCH
+                    && pair.airk_sha256 == digest,
+                "engine pair identity mismatch"
+            );
+            pair.embed_sha256
+                .parse::<airk_core::identity::Sha256Digest>()?;
+            serde_json::to_vec(&pair)?
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => digest.into_bytes(),
+        Err(error) => return Err(error.into()),
+    };
+    Ok(airk_core::identity::framed_digest(
+        b"airk-maintenance-engine/1.4",
+        &[&bytes],
+    ))
 }
 
 #[derive(Serialize, Deserialize)]
@@ -205,9 +207,12 @@ pub fn verify_helper(main: &Path) -> Result<PathBuf> {
 }
 
 pub(crate) fn payload_root(main: &Path) -> Result<&Path> {
+    payload_root_for_layout(main, cfg!(target_os = "macos"))
+}
+
+fn payload_root_for_layout(main: &Path, app_layout: bool) -> Result<&Path> {
     let parent = main.parent().context("runtime directory missing")?;
-    #[cfg(target_os = "macos")]
-    if parent.file_name().is_some_and(|name| name == "MacOS") {
+    if app_layout && parent.file_name().is_some_and(|name| name == "MacOS") {
         let contents = parent.parent().context("app contents missing")?;
         let app = contents.parent().context("app bundle missing")?;
         ensure!(
@@ -273,6 +278,43 @@ pub fn verify_installed_pair(main: &Path, expected_version: &str) -> Result<Path
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn engine_pair_receipt_binds_helper_for_bare_and_bundle_layouts() -> Result<()> {
+        for bundle in [false, true] {
+            let owner = tempfile::tempdir()?;
+            let root = owner.path();
+            let main = root.join(if bundle {
+                "AIRK.app/Contents/MacOS/airk"
+            } else {
+                "airk"
+            });
+            fs::create_dir_all(main.parent().unwrap())?;
+            let manifest = payload_root_for_layout(&main, bundle)?.join("airk-runtime.json");
+            assert_eq!(manifest, root.join("airk-runtime.json"));
+            let mut pair = RuntimePair {
+                schema: 1,
+                version: env!("CARGO_PKG_VERSION").into(),
+                os: std::env::consts::OS.into(),
+                arch: std::env::consts::ARCH.into(),
+                airk_sha256: "a".repeat(64),
+                embed_sha256: "b".repeat(64),
+            };
+            fs::write(&manifest, serde_json::to_vec(&pair)?)?;
+            let before = engine_identity_from_receipt(&manifest, pair.airk_sha256.clone())?;
+            pair.embed_sha256 = "c".repeat(64);
+            fs::write(&manifest, serde_json::to_vec(&pair)?)?;
+            assert_ne!(
+                before,
+                engine_identity_from_receipt(&manifest, pair.airk_sha256.clone())?
+            );
+            assert!(engine_identity_from_receipt(&manifest, "d".repeat(64)).is_err());
+        }
+        assert!(
+            payload_root_for_layout(Path::new("unknown.app/Contents/MacOS/airk"), true).is_err()
+        );
+        Ok(())
+    }
 
     #[test]
     fn pair_rejects_modified_helper_main_and_platform_without_execution() -> Result<()> {

@@ -196,7 +196,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             this.trusted();if(!valid()||continuing?.()===false)throw new ServiceError('project_configuration_selection_changed');
             let draft:Record<string,unknown>;
             if(args.length===1&&args[0]==='clear')draft={operation:'clear_usage'};
-            else if(args.length===3&&args[0]==='configure'&&args[1]==='--mode'&&['disabled','aggregates_only','diagnostic_events'].includes(args[2]))draft={operation:'usage',mode:args[2]};
+            else if(args.length===3&&args[0]==='configure'&&args[1]==='--mode'&&['disabled','aggregates-only','diagnostic-events'].includes(args[2]))draft={operation:'usage',mode:args[2].replaceAll('-','_')};
             else if(args.length===4&&args[0]==='feedback'&&args[2]==='--usefulness'&&['useful','partly-useful','not-useful'].includes(args[3])){
                 identifier(args[1],16);draft={operation:'usage_feedback',request_id:args[1],usefulness:args[3].replaceAll('-','_')};
             }else if(args.length===4&&args[0]==='import'&&args[2]==='--if-sha256'&&path.isAbsolute(args[1])){

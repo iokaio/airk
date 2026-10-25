@@ -405,6 +405,43 @@ pub fn call(
     args: &[&str],
 ) -> anyhow::Result<serde_json::Value> {
     let output = command(root, data, collection).args(args).output()?;
+    if !output.status.success() {
+        let scope = (
+            root.canonicalize()?,
+            data.canonicalize()?,
+            collection.into(),
+        );
+        let service = FIXTURES
+            .get()
+            .and_then(|fixtures| fixtures.lock().ok()?.get(&scope)?.upgrade());
+        if let Some(service) = service {
+            use std::io::Read;
+            if let Ok(file) = std::fs::File::open(service.owner.path().join("stderr")) {
+                let mut text = String::new();
+                if file.take(16384).read_to_string(&mut text).is_ok() {
+                    eprintln!("native fixture child diagnostic: {text}");
+                }
+            }
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?;
+            for method in [
+                Method::Resources,
+                Method::Workers {
+                    projects: vec![service.project.binding],
+                },
+            ] {
+                let observation =
+                    runtime.block_on(airk_cli::service_runtime::request(&service.control, method));
+                if let Ok(observation) = observation {
+                    eprintln!(
+                        "native fixture failure observation: {}",
+                        serde_json::to_string(&observation)?
+                    );
+                }
+            }
+        }
+    }
     anyhow::ensure!(
         output.status.success(),
         "{}\n{}",

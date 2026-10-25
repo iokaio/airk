@@ -4,6 +4,8 @@ Managed installations support a verified lightweight client launcher in user met
 
 **1.4.0 development:** native service defaults are implemented in this working tree. Complete packaging, qualification and review are still in progress. No final 1.4 VSIX has been built. See the [development release record](https://github.com/iokaio/airk/blob/main/docs/release-1.4.0.md).
 
+Private editor acceptance now exercises reviewed native registrations and Full/Terse panel choices. Development-stage tests and installed-VSIX qualification are recorded separately; neither implies native Mac qualification.
+
 AIRK gives coding agents bounded, cited evidence from local code and documents. Its read-only MCP tools preserve indexed revision identities and original document locations. A native service owns indexing and resources; agents retrieve evidence directly from project workers. The offline inference helper embeds MiniLM and shares compatible model sessions across projects. No cloud service or API key is required.
 
 ## First registration

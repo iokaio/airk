@@ -3,7 +3,7 @@
 **Development checkpoint before the 1.4 default cutover (2026-10-24).** The artifact identities and 1.3.2 development versions below remain historical evidence. The current source/lockfiles are 1.4.0 and the extension/public CLI now use service defaults; see the [current completion checklist](service-implementation-checklist.md).
 
 
-This records development adapter behavior for the [1.4 plan](airkservice-architecture.md). The service-backed extension activation is implemented in `serviceExtension.ts`, but the package still activates the older controller pending the coordinated default CLI/container/package cutover. Native and extension versions remain 1.3.2 during this development stage. This is not a released 1.4 VSIX.
+This records current adapter behavior for the [1.4 plan](airkservice-architecture.md). The package activates `serviceExtension.ts`; extension and public CLI defaults use native service ownership at 1.4.0. The dated evidence below predates that cutover. Final artifact and installed-platform qualification remain separate gates.
 
 ## Direct native clients
 
@@ -30,7 +30,7 @@ airk service requests --runtime-dir <control> forget <saved-nonce>
 
 `prepare` writes a durable request and reports `submitted: false`. `retry` submits those exact saved bytes/key. A complete matching native job receipt is printed before its local record is retired. Lost acknowledgment therefore leaves an explicit recovery path; native acceptance and job completion remain separate. Forgetting a local key never cancels native work or asserts its outcome. After a key expires natively, the CLI preserves that explicit failure instead of manufacturing another request.
 
-## Prepared extension activation
+## Native extension activation
 
 The service-backed activation registers no editor source watcher or indexing scheduler. It advertises only reviewed native workspace bindings. Resolution honors explicit Stop and selects the installed stable launcher, with the launcher directory as the working directory so unavailable sources can retain read-only MCP access. The panel's response-mode setting controls generated definitions and the tools terminal.
 
@@ -38,7 +38,7 @@ Registration explains the fresh namespace, rebuild/disk cost, preserved legacy r
 
 Each opened root has one separately saved active project selection. Reviewing new storage selects the new binding while retaining the preceding registration and native state. Closed native registrations remain in the service console. Open-workspace highlighting uses those opaque bindings. Status/tools calls remain direct; repair commands capture a bounded native preview without approving it. PATH setup points to the verified stable launcher directory and preserves existing entries instead of copying a versioned extension helper over service executables.
 
-## Development evidence and remaining cutover
+## Historical development evidence before default cutover
 
 Windows and Linux pass 113 native library tests and three CLI tests. Extension checks pass 197 tests with six skips, including actual activation against a VS Code API fixture that refuses any editor-owned source watcher, verifies no indexing during definition advertisement, and checks explicit Stop. Python passes 129 tests with four skips. Workspace Clippy, separately run documentation tests, formatting, repository and whitespace checks pass. The Linux image is `7a58dc20eaa2c5579eee02abd8935f7b5af5b5f4190b631c95c800a17590d90b`.
 

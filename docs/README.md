@@ -6,6 +6,8 @@ The current working tree targets **1.4.0** and now defaults to service-backed ex
 
 The 1.3.x/1.2.x release records and former direct-helper/window-scheduler guides are historical references. They do not describe the 1.4 default lifecycle or authorize opening legacy stores through the service. Native and extension source/lockfile versions are synchronized at 1.4.0; publication is a separate action.
 
+The [Windows build/editor guide](windows-local-build.md) describes pair builds, stage-only acceptance without a VSIX, and real native registration/usage/response-mode checks in isolated editor profiles.
+
 - [Architecture and code boundaries](architecture.md)
 - [AIRK 1.4.0 local service architecture and implementation plan](airkservice-architecture.md)
 - [Draft 1.4.0 development release record](release-1.4.0.md)

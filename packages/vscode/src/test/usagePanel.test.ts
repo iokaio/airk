@@ -44,8 +44,13 @@ test('usage panel pins collection scope, exports chosen window, confirms clear a
             showErrorMessage: (error: string) => errors.push(error) }
     };
     const native = require('../native'), previousRun = native.runText;
+    let holdNextRead = false, releaseRead: (() => void) | undefined;
     native.runText = async (_command: string, args: string[]) => {
         reads.push(args);
+        if (holdNextRead) {
+            holdNextRead = false;
+            await new Promise<void>(resolve => { releaseRead = resolve; });
+        }
         return args.includes('csv') ? 'operation,calls\nsearch,1\n' : JSON.stringify({ report: { scope: { collection: 'fixture' }, calls: 1 }, status: 'partial' });
     };
     const loader = Module as unknown as { _load: (...args: any[]) => any }, original = loader._load;
@@ -55,7 +60,15 @@ test('usage panel pins collection scope, exports chosen window, confirms clear a
         const { openUsagePanel } = require('../usagePanel');
         await openUsagePanel({ command: 'fixture-helper', root: '/fixture/root', dataDir: '/fixture/state', collection: 'fixture', name: 'Fixture' }, () => valid,
             async (args: string[]) => { writes.push(args); });
-        await message({ type: 'usage', action: 'days', days: 7 });
+        holdNextRead = true;
+        const changing = message({ type: 'usage', action: 'days', days: 7 });
+        await new Promise(resolve => setImmediate(resolve));
+        assert.match(webview.html, /aria-busy="true"/);
+        assert.match(webview.html, /<fieldset disabled>/);
+        await message({ type: 'usage', action: 'csv' });
+        assert.equal(exports.length, 0, 'No second action is submitted while a report is pending');
+        releaseRead!(); await changing;
+        assert.match(webview.html, /aria-busy="false"/);
         assert.ok(reads.at(-1)!.includes('7'));
         await message({ type: 'usage', action: 'csv' });
         assert.equal(exports[0], 'operation,calls\nsearch,1\n');

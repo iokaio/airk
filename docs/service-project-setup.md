@@ -3,7 +3,7 @@
 **Development checkpoint before the 1.4 default cutover (2026-10-24).** The artifact identities and 1.3.2 development versions below remain historical evidence. The current source/lockfiles are 1.4.0 and the extension/public CLI now use service defaults; see the [current completion checklist](service-implementation-checklist.md).
 
 
-This is the implemented development adapter for the [1.4 service plan](airkservice-architecture.md). Default extension/CLI/container cutover remains in progress; native and extension versions still read 1.3.2. No new VSIX has been built.
+This is the implemented registration adapter for the [1.4 service plan](airkservice-architecture.md). Native and extension source/lockfiles are 1.4.0 and default to service ownership. The dated validation below retains its earlier artifact versions. Final platform/editor qualification and the VSIX gate remain open.
 
 `airk --root <source> --data-dir <storage> --collection <name> service prepare-registration` returns the exact canonical project registration without creating directories. The source must already exist. Storage may be missing: the native adapter resolves its existing ancestor and rejects traversal, unavailable ancestors and overlap with the proposed source. The review identifies source, data, collection, opaque binding and installed runtime scope.
 

@@ -2,6 +2,8 @@
 
 **1.4.0 development.** This working tree now uses the native service for extension and CLI operation. The complete implementation, container/package cutover, testing and review are still in progress. No final 1.4 VSIX has been built. See the [implementation plan](docs/airkservice-architecture.md), [completion checklist](docs/service-implementation-checklist.md) and [development release record](docs/release-1.4.0.md).
 
+The [Windows build and editor harness](docs/windows-local-build.md) now uses the verified runtime pair and reviewed native registrations. An allowlisted development stage can be exercised before creating a VSIX; final artifact acceptance remains separate.
+
 AIRK indexes local code and documents and serves bounded, cited evidence to coding agents through read-only MCP tools. It preserves original document locations and exact indexed revision identities. It provides native syntax facts and candidate relationships without claiming complete language understanding or resolved references. Original files remain outside derived storage.
 
 ## Native service ownership

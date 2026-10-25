@@ -49,6 +49,16 @@ test('service activation advertises reviewed bindings without indexing and prese
         stopped=true;await assert.rejects(provider.resolveMcpServerDefinition(definitions[0]),/service_explicitly_stopped/);assert.equal(ensures,1);
         stopped=false;await commands.get('airk.openTools')!();assert.equal(terminals.length,1);
         assert.deepEqual(terminals[0].shellArgs.slice(-2),['tools','shell']);assert.equal(terminals[0].shellPath,binding.launcher);
+        const usageDrafts:unknown[]=[];
+        context.mock.method(require('../serviceConsole').ServiceConsole.prototype,'configureProject',async(project:string,draft:unknown,valid:()=>boolean)=>{
+            assert.equal(project,registration.binding);assert.equal(valid(),true);usageDrafts.push(draft);
+        });
+        context.mock.method(require('../usagePanel'),'openUsagePanel',async(_spec:unknown,_valid:unknown,write:(args:string[])=>Promise<unknown>)=>{
+            for(const mode of ['disabled','aggregates-only','diagnostic-events'])await write(['configure','--mode',mode]);
+            await assert.rejects(write(['configure','--mode','arbitrary']),/invalid_usage_action/);
+        });
+        await commands.get('airk.usage')!();
+        assert.deepEqual(usageDrafts,[{operation:'usage',mode:'disabled'},{operation:'usage',mode:'aggregates_only'},{operation:'usage',mode:'diagnostic_events'}]);
         stub.workspace.isTrusted=false;assert.deepEqual(await api.getServerDefinitions(),[]);
         const before=ensures;await assert.rejects(provider.resolveMcpServerDefinition(definitions[0]),/runtime_client_no_longer_authorized/);assert.equal(ensures,before);
     }finally{extension?.deactivate();loader._load=original;delete require.cache[require.resolve('../serviceExtension')];await fs.rm(root,{recursive:true,force:true});}

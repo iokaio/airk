@@ -1,6 +1,6 @@
 # Build and review the Windows app and VS Code extension
 
-Native builds embed the pinned FP32 MiniLM assets. Before Cargo checks/builds, run `python scripts/provision-local-model.py --destination target/local-vector-model --download`, or supply verified offline assets there (or through `AIRK_BUNDLED_MODEL_DIR`). Cargo never downloads model assets. See [model provisioning](onnx-models.md).
+The lightweight main and inference helper are built separately. The helper embeds the pinned FP32 MiniLM assets; the main excludes inference dependencies and weights. Before Cargo checks/builds, run `python scripts/provision-local-model.py --destination target/local-vector-model --download`, or supply verified offline assets there (or through `AIRK_BUNDLED_MODEL_DIR`). Cargo never downloads model assets. See [model provisioning](onnx-models.md).
 
 From the repository root in PowerShell 7:
 
@@ -8,7 +8,7 @@ From the repository root in PowerShell 7:
 pwsh -NoProfile -File scripts/build-windows.ps1
 ```
 
-This builds the Windows x64 release executable and a matching platform VSIX. It runs Rust formatting, clippy and workspace tests, archive tests, repository checks, TypeScript compilation, extension tests and a real native MCP-adapter test. Both archives are verified against allowlisted payload hashes. No signing or Marketplace credentials are needed, and nothing is published or deployed.
+This builds the Windows x64 release runtime pair and a matching platform VSIX. It runs Rust formatting, clippy and workspace tests, archive tests, repository checks, TypeScript compilation, extension tests and a real native MCP-adapter test. Both archives are verified against allowlisted payload hashes. No signing or Marketplace credentials are needed, and nothing is published or deployed.
 
 Every build also prepares the pinned MiniLM model in ignored `target/local-vector-model/` (about 91 MB downloaded on first use) and tests the built executable with real embeddings and DiskANN retrieval. Repeat builds verify and reuse those assets. This gate covers native model installation, default hybrid and explicit vector queries, opt-out/re-enable, and invalid-model rollback; a failure stops the build. The verified weights, tokenizer, manifest and license are embedded in the VSIX's native helper. On first indexing in a trusted workspace, the extension prepares its local model and builds the collection's DiskANN index automatically; existing opt-out, pause and manual-indexing choices remain in effect.
 
@@ -18,7 +18,7 @@ Every build also prepares the pinned MiniLM model in ignored `target/local-vecto
 - Git, rustup and the repository-pinned Rust toolchain.
 - Visual Studio C++ build tools with the Windows SDK for native grammar compilation.
 - Node.js 24.15.0 (the CI version) and npm; VSCE requires Node 22 or newer.
-- Python 3.9+ via `py` or `python`, for notices and archive verification.
+- Python 3.11+ via `py` or `python`, for notices and archive verification.
 - Initial network access for locked Cargo/npm dependencies and missing Rust components.
 - VS Code 1.140+ with its `code` launcher on PATH, only for editor testing/review.
 
@@ -36,7 +36,7 @@ Every run creates a fresh ignored `artifacts/local/<timestamp>-<id>/` directory:
 | result.json | Native/VSIX paths and whether checks/editor tests ran |
 | vector-check.json | Real-model/DiskANN verification and process measurements |
 
-The build-tree executable is `target/x86_64-pc-windows-msvc/release/airk.exe`. The script prints its path, the VSIX path and the build directory. It leaves prior run directories intact and never deletes index state or source files. Intermediate staging and compiler outputs are not distributed.
+The verified pair is in the run's `runtime/` directory. The script prints its main executable path, the VSIX path and the build directory. It leaves prior run directories intact and never deletes index state or source files. Intermediate staging and compiler outputs are not distributed.
 
 If you deliberately want to omit routine checks during an iterative build:
 
@@ -46,7 +46,13 @@ pwsh -NoProfile -File scripts/build-windows.ps1 -SkipChecks
 
 Compilation, real-model/DiskANN verification, helper version validation and native/VSIX archive verification still run. `result.json` explicitly records that routine checks were skipped and points to the vector verification report.
 
-## Install and prepare this checkout for local agent testing
+## Connect this checkout for local agent testing
+
+For 1.4, register the trusted checkout through **AIRK: Index Now**, then use **Connect Coding Agent** to review its stable-launcher arguments. Use the guide's manual merge for Codex TOML, preserving unrelated settings. The service owns model setup and indexing. A storage preference does not replace an existing reviewed project binding.
+
+### Historical 1.3 personal setup workflow
+
+The following personal-wrapper workflow and `setup-local-test.py` describe the earlier single-helper candidate schema. They do not accept a 1.4 native pair or migrate an old store/configuration. Use the reviewed service guide above for 1.4.
 
 The optional root-level `build-local.ps1` is a personal, Git-ignored entry point. It builds and installs the verified VSIX into your normal VS Code profile, then invokes the tracked `scripts/setup-local-test.py` helper. Local setup prepares the model through the native quota-managed installer, updates or creates this checkout's Codex project MCP entry, indexes its collection and verifies the saved launch through MCP status, a revision-pinned README read checked against live source bytes, lexical search, default search and explicit vector search. A saved vector opt-out is preserved and reported; enabled vectors must have a ready model and populated DiskANN index. Existing custom models are preserved and validated during indexing. It checks the MCP helper version against the installed candidate. The verification process disables its own usage recording so setup probes do not look like agent evidence requests.
 
@@ -74,7 +80,7 @@ Reload the VS Code window and restart existing Codex sessions afterward. Changin
 pwsh -NoProfile -File scripts/build-windows.ps1 -OpenReview
 ```
 
-This installs the generated VSIX in a separate extensions directory and opens a private VS Code profile with a copy of the public project-a fixture. It does not install into or alter your normal profile. Grant that fixture workspace trust, then select the AIRK status item. Try Index Now, Reindex, indexing modes, pause/resume, storage selection, collection status and Verify Native MCP.
+This installs the generated VSIX in a separate extensions directory and opens a private VS Code profile with a copy of the public project-a fixture, its own native installation and separate index data. It does not install into or alter your normal profile. Grant that fixture workspace trust, then select the AIRK status item. Try Index Now, Reindex, indexing modes, pause/resume, storage selection, collection status and Verify Native MCP.
 
 To install the reviewed package into your normal profile later, use **Extensions: Install from VSIX** and choose the printed VSIX path. Installation is not performed in the normal profile by this script.
 
@@ -84,11 +90,11 @@ To install the reviewed package into your normal profile later, use **Extensions
 pwsh -NoProfile -File scripts/build-windows.ps1 -RunEditorTests
 ```
 
-The test loads the verified VSIX payload in an isolated VS Code extension host, using the installed Code.exe beside its code.cmd launcher. It checks contributed commands, MCP server definitions, the cached helper, incremental/full indexing, the real fifteen-tool stdio handshake in unreleased source, and switching index storage while retaining the original snapshot. It uses only a generated fixture and profile; workspace trust is disabled only in that test process. Other installed extensions are disabled for this smoke, and the normal user's settings/trust are untouched.
+The test installs the verified VSIX into isolated profiles, using the installed Code.exe and its matching CLI identified by code.cmd. It exercises reviewed native registration, stable-launcher MCP definitions, indexing, the real fifteen-tool stdio handshake, citation hashes and separately reviewed storage rebinding that retains the old index. It runs the same five scenarios described below. Only generated fixtures and private profiles are used; the normal user's settings and trust are untouched.
 
-This is a packaged-extension development-host smoke, not complete installed Marketplace, remote-host, upgrade/rollback or clean-machine qualification. It does not exercise any paid coding model. VS Code startup may show a temporary test window even though the process is launched with its console hidden.
+This is isolated installed-VSIX acceptance. Marketplace, remote-host, upgrade/rollback and clean-machine qualification remain separate. It does not exercise any paid coding model. VS Code startup may show a temporary test window even though the process is launched with its console hidden.
 
-`-RunEditorTests -OpenReview` runs the smoke first, then opens the same private profile for review. The test profile has manual indexing selected; change modes through AIRK controls if you want to inspect automatic behavior.
+`-RunEditorTests -OpenReview` runs acceptance first, then opens a separate private profile for review. Automated registrations explicitly select manual native indexing.
 
 ## Installed extension and two-window qualification
 
@@ -102,7 +108,9 @@ Use the installed editor executable and its matching CLI script (the installed `
 
 The scenarios cover two simultaneous windows sharing one workspace/collection, two simultaneous windows using different workspaces/collections in the same storage root, a two-root workspace, and an untrusted workspace. Checks include concurrent native scheduling and MCP reads, post-edit retrieval, positive/negative collection isolation, rejected collection overrides and path traversal, the fifteen-tool handshake in unreleased source, registration settings off/on, and storage changes that preserve the previous indexes. The trust scenario runs with workspace trust enabled and verifies that indexing is rejected, server definitions are empty and storage remains untouched. Trusted scenarios disable the trust prompt in their private processes only.
 
-Each window opens the real AIRK dashboard. The harness clicks its registration switch off/on and its Verify connection button through the rendered webview, then checks the real fifteen-tool verification result from unreleased source. Untrusted controls must remain disabled. The harness captures workbench screenshots through a loopback-only debugging endpoint, records separate extension-host process IDs and writes per-window results plus a combined summary. Citation paths and SHA-256 hashes must match the generated source files, including peer edits. Private profiles and indexes are not release payloads; two fictional-workspace [screenshots](ui/README.md#installed-vs-code-captures) are included for review. The storage-switch check changes the private profile setting; it does not automate the operating-system folder picker. External coding-agent approval screens, Marketplace installation, upgrade/rollback, remote hosts and macOS/Linux remain separate qualification.
+Each trusted window opens the native service console. The harness reviews the exact source/data binding through real root/mode pickers and confirmation dialogs, then exercises Full and Terse through the panel. It checks MCP advertisement off/on through the public setting and runs the native fifteen-tool probe. Untrusted native controls must remain disabled. Screenshots use a loopback-only debugging endpoint; results record independent extension-host process IDs and the native install digest. Citation paths and SHA-256 hashes must match source bytes, including peer edits. A private install directory isolates service ownership from the user's installation. Cleanup requests shutdown only in that fixture's control namespace and retains diagnostic state on failure. Storage changes require a new reviewed registration; OS-native folder dialogs, coding-agent approval screens, Marketplace installation, upgrade/rollback, remote hosts and native macOS/Linux editors remain separate qualification.
+
+Before the final packaging gate, the same harness accepts an allowlisted development stage. `package-extension.py --stage-only` writes its hashed stage receipt without creating a VSIX. Pass its `stage/` directory as the third argument to `check-native-editor.cjs`. This tests the staged runtime, while installed-VSIX acceptance remains a later distinct gate.
 
 On October 17, 2026, AIRK 1.1.1 passed all four scenarios in VS Code 1.142.0 on Windows, across six installed-editor windows. The verified VSIX SHA-256 was `4265b3f4a90a8e15a2357253204a68fd903f147a9c5448f411b98e7efbe77dee`. Both same-workspace windows reported the same collection ID; different-workspace windows reported distinct IDs and never returned the other collection's evidence. The multi-root storage change preserved the original index. The untrusted window launched no index and exposed no MCP definitions. Each window used a distinct private profile while sharing AIRK storage with its scenario peers; shared-profile settings synchronization was not tested.
 

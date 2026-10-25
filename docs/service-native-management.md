@@ -4,6 +4,8 @@ Current 1.4 development guidance. Final packaging, platform qualification and re
 
 Reports and settings travel directly to the registered project worker. The broker carries identity, admission and job metadata. The MCP inventory remains fifteen read-only evidence tools; native management reads add no hidden tools or usage observations for panel refreshes.
 
+Usage & Savings shows a pending-operation state and disables report controls until the native action finishes. Recording choices translate the panel's CLI spellings to the native enum, including daily totals and diagnostics. Real Windows stage acceptance covers seven-day CSV/Markdown exports, reviewed imports, supplied price assumptions, recording off/on, two-collection isolation, canceled/confirmed clearing and rejection after reviewed storage rebinding.
+
 ## Read clients
 
 Use the approved stable launcher with the source/data/collection arguments for an existing registration. A saved opaque binding also supports retained reads when the source is unavailable.

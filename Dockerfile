@@ -32,6 +32,13 @@ FROM source AS test
 RUN --mount=type=cache,id=airk-cargo-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=airk-cargo-git,target=/usr/local/cargo/git \
     --mount=type=cache,id=airk-linux-target,target=/build/target \
+    rustup show active-toolchain \
+    && useradd --create-home --uid 10001 airkbuild \
+    && chown -R airkbuild:airkbuild /build /usr/local/cargo /usr/local/rustup
+USER 10001:10001
+RUN --mount=type=cache,id=airk-cargo-registry,target=/usr/local/cargo/registry \
+    --mount=type=cache,id=airk-cargo-git,target=/usr/local/cargo/git \
+    --mount=type=cache,id=airk-linux-target,target=/build/target \
     cargo fetch --locked \
     && python3 scripts/ci-metrics.py run --name test-compile -- cargo nextest run --profile ci --workspace --all-features --locked --offline --no-run \
     && python3 scripts/ci-metrics.py run --name test-execution -- cargo nextest run --profile ci --workspace --all-features --locked --offline \
