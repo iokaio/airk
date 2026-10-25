@@ -180,6 +180,12 @@ def main():
                 raise RuntimeError("Rollback did not restore the preceding verified payload")
             if run("ensure", "--install-dir", install)["runtime_sha256"] != identity:
                 raise RuntimeError("Rollback health points to the wrong runtime")
+            # This private fixture deliberately restarts the same healthy image
+            # several times within the two-minute crash-circuit window. Start
+            # the independent retirement scenario with a fresh attempt budget;
+            # retain the production circuit and its dedicated regression tests.
+            if run("reset-startup", "--install-dir", install).get("startup_circuit") != "reset":
+                raise RuntimeError("Fixture startup budget was not reset")
             print("Checking previous runtime retirement and interrupted cleanup...", flush=True)
             run("retire-previous", "--install-dir", install, "--expected-active", next_identity, rejected=True)
             unknown_previous = install / "runtimes" / next_identity / "unrecognized.md"
