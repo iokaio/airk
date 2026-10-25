@@ -28,6 +28,10 @@ impl InputFile {
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ProjectConfiguration {
     Unregister,
+    PrepareDerivedCleanup,
+    DeleteDerived {
+        preview: Sha256Digest,
+    },
     BundledModel,
     Vectors {
         enabled: bool,
@@ -131,6 +135,8 @@ impl ProjectConfiguration {
                 );
             }
             Self::Unregister
+            | Self::PrepareDerivedCleanup
+            | Self::DeleteDerived { .. }
             | Self::BundledModel
             | Self::Vectors { .. }
             | Self::Detail { .. }
@@ -147,6 +153,12 @@ impl ProjectConfiguration {
         matches!(
             self,
             Self::BundledModel | Self::InstallModel { .. } | Self::Calibrate { .. }
+        )
+    }
+    pub fn is_derived_cleanup(&self) -> bool {
+        matches!(
+            self,
+            Self::PrepareDerivedCleanup | Self::DeleteDerived { .. }
         )
     }
     pub fn requests_source_pass(&self) -> bool {

@@ -101,6 +101,13 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
         } => ControlResponse::Projects {
             page: registry.list(after, revision, limit)?,
         },
+        ControlMethod::InactiveConsole {
+            after,
+            revision,
+            limit,
+        } => ControlResponse::Console {
+            page: console_page_role(registry, after, revision, limit, now_ms, true)?,
+        },
         ControlMethod::Maintenance { project } => {
             registry.get(project)?;
             ControlResponse::Maintenance {
@@ -222,10 +229,24 @@ pub(crate) fn console_page(
     limit: usize,
     now_ms: u64,
 ) -> Result<airk_core::service_console::ConsolePage> {
+    console_page_role(registry, after, revision, limit, now_ms, false)
+}
+fn console_page_role(
+    registry: &mut ServiceRegistry,
+    after: Option<airk_core::service::ProjectBinding>,
+    revision: Option<u64>,
+    limit: usize,
+    now_ms: u64,
+    inactive: bool,
+) -> Result<airk_core::service_console::ConsolePage> {
     use airk_core::service_console::{
         ConsolePage, MAX_PAGE_BYTES, ObservationKind as Kind, ProjectObservation,
     };
-    let source = registry.list(after, revision, limit)?;
+    let source = if inactive {
+        registry.list_inactive(after, revision, limit)?
+    } else {
+        registry.list(after, revision, limit)?
+    };
     let mut page = ConsolePage {
         revision: source.revision,
         observed_unix_ms: now_ms,

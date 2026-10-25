@@ -20,7 +20,7 @@ The [native management clients](docs/service-native-management.md) provide direc
 
 In the extension, use **AIRK: Index Now** to review a trusted root and choose manual or automatic native watching. **AIRK Service Console** shows cached observations, readiness, jobs, independent source/helper state, project settings, guarded repairs and lifecycle controls. Start is explicit after a deliberate Stop; reconnect cannot clear that preference. The console also offers Terse/Full response mode, reviewed runtime upgrades/rollback and saved-request recovery.
 
-Project settings offer [guarded unregister](docs/service-project-retirement.md), including paused projects. It stops new admission and drains the selected owner while preserving source files, settings and index data. Disk reclamation is a separate operation.
+Project settings offer [guarded unregister](docs/service-project-retirement.md), including paused projects. It stops new admission and drains the selected owner while preserving source files, settings and index data. The console's **Unregistered projects / cleanup** view separately previews and deletes selected owned index state, preserves saved settings and sources, and resumes interrupted cleanup before re-registration.
 
 The MCP provider advertises only reviewed bindings. **Connect Coding Agent** creates a stable-launcher configuration on request and preserves unrelated client settings. Recognized legacy JSON entries have an [explicit diff and guarded replacement](docs/service-legacy-transition.md); TOML and other agent formats use manual review. Agent connection is separate from the extension's bounded read-only MCP verification.
 

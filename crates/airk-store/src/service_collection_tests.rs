@@ -73,6 +73,172 @@ fn initialize(store: &FileStore, root: &str, slot: Incarnation) -> Result<Curren
     head.token()
 }
 struct ChildGuard(Child);
+#[test]
+fn derived_cleanup_requires_inactive_fenced_approval_preserves_settings_and_resumes_after_cancel()
+-> Result<()> {
+    use crate::service::{ProjectLease, registry::ServiceRegistry};
+    use airk_core::{
+        service::{JobOutcome, ProjectRegistration, RequestKey},
+        service_configuration::{ConfigurationRequest, ProjectConfiguration},
+    };
+    let temporary = tempfile::tempdir()?;
+    let source = temporary.path().join("source");
+    let data = temporary.path().join("data");
+    let control = temporary.path().join("control");
+    for path in [&source, &data, &control] {
+        fs::create_dir(path)?;
+    }
+    fs::write(source.join("original.rs"), b"original source")?;
+    let source = source.canonicalize()?;
+    let data = data.canonicalize()?;
+    let root = source.to_str().unwrap();
+    let namespace = Incarnation::from_bytes([1; 16]);
+    let slot = Incarnation::from_bytes([2; 16]);
+    let engine = Sha256Digest::from_bytes([3; 32]);
+    let project =
+        ProjectRegistration::new(root.into(), data.to_str().unwrap().into(), "fixture".into())?;
+    let mut registry = ServiceRegistry::open(&control, namespace)?;
+    registry.register(&project)?;
+    crate::service::data_scope::bind(&data, &control, namespace)?;
+    let collection = Collection::initialize(&data, root, "fixture", slot)?;
+    let selected = collection.selected_store()?;
+    initialize(&selected, root, slot)?;
+    let policy = serde_json::to_vec(&serde_json::json!({"owner_root":root,"enabled":false}))?;
+    fs::write(selected.directory().join("vector-policy.json"), &policy)?;
+    let mut lease = ProjectLease::acquire(&control, project.binding)?;
+    registry.admit_worker(&mut lease)?;
+    assert!(collection.derived_cleanup_preview(&lease).is_err());
+    let (ns, epoch) = registry.request_epoch()?;
+    let request = ConfigurationRequest {
+        incarnation: slot,
+        settings: engine,
+        configuration: ProjectConfiguration::Unregister,
+    };
+    let key = RequestKey {
+        namespace: ns,
+        epoch,
+        nonce: Incarnation::from_bytes([3; 16]),
+    };
+    let job = registry.enqueue_configuration(project.binding, namespace, &key, &request, engine)?;
+    registry.claim_job_id(&lease, job.id)?.unwrap();
+    registry.record_configuration_result(
+        &lease,
+        job.id,
+        &serde_json::json!({"unregistration_requested":true}),
+    )?;
+    registry.complete_job(&lease, job.id, JobOutcome::Succeeded { revision: None })?;
+    drop(lease);
+    let submit = |registry: &mut ServiceRegistry, configuration, nonce: u8| -> Result<_> {
+        let (namespace, epoch) = registry.request_epoch()?;
+        registry.enqueue_configuration(
+            project.binding,
+            namespace,
+            &RequestKey {
+                namespace,
+                epoch,
+                nonce: Incarnation::from_bytes([nonce; 16]),
+            },
+            &ConfigurationRequest {
+                incarnation: namespace,
+                settings: project.binding,
+                configuration,
+            },
+            engine,
+        )
+    };
+    let preview_job = submit(
+        &mut registry,
+        ProjectConfiguration::PrepareDerivedCleanup,
+        4,
+    )?;
+    let mut lease = ProjectLease::acquire(&control, project.binding)?;
+    registry.admit_derived_worker(&mut lease)?;
+    registry.claim_job_id(&lease, preview_job.id)?.unwrap();
+    let unknown = selected.directory().join("unknown-original.txt");
+    fs::write(&unknown, b"keep unknown data")?;
+    assert!(collection.derived_cleanup_preview(&lease).is_err());
+    assert_eq!(fs::read(&unknown)?, b"keep unknown data");
+    fs::remove_file(&unknown)?;
+    let alias = selected.directory().join("coverage.json");
+    fs::hard_link(source.join("original.rs"), &alias)?;
+    assert!(collection.derived_cleanup_preview(&lease).is_err());
+    assert_eq!(fs::read(source.join("original.rs"))?, b"original source");
+    fs::remove_file(alias)?;
+    let preview = collection.derived_cleanup_preview(&lease)?;
+    registry.record_configuration_result(
+        &lease,
+        preview_job.id,
+        &serde_json::to_value(&preview)?,
+    )?;
+    registry.complete_job(
+        &lease,
+        preview_job.id,
+        JobOutcome::Succeeded { revision: None },
+    )?;
+    let job = submit(
+        &mut registry,
+        ProjectConfiguration::DeleteDerived {
+            preview: preview.guard,
+        },
+        5,
+    )?;
+    registry.claim_job_id(&lease, job.id)?.unwrap();
+    assert!(
+        collection
+            .delete_derived_turn(&lease, job.id, engine)
+            .is_err()
+    );
+    assert!(selected.directory().join("current.sqlite3").is_file());
+    let report = collection.delete_derived_turn(&lease, job.id, preview.guard)?;
+    assert!(!report.complete);
+    registry.complete_job(&lease, job.id, JobOutcome::Canceled)?;
+    assert!(
+        registry.register(&project).is_err(),
+        "cancellation must retain the cleanup barrier"
+    );
+    drop(lease);
+    let job = submit(
+        &mut registry,
+        ProjectConfiguration::DeleteDerived {
+            preview: preview.guard,
+        },
+        6,
+    )?;
+    let mut lease = ProjectLease::acquire(&control, project.binding)?;
+    registry.admit_derived_worker(&mut lease)?;
+    registry.claim_job_id(&lease, job.id)?.unwrap();
+    assert!(collection.derived_cleanup_preview(&lease)?.resuming);
+    let mut complete = None;
+    for _ in 0..10 {
+        let report = collection.delete_derived_turn(&lease, job.id, preview.guard)?;
+        if report.complete {
+            complete = Some(report);
+            break;
+        }
+    }
+    let report = complete.context("cleanup did not complete")?;
+    assert!(!selected.directory().try_exists()?);
+    assert_eq!(fs::read(source.join("original.rs"))?, b"original source");
+    let retained = collection.selected_store()?;
+    assert_eq!(
+        fs::read(retained.directory().join("vector-policy.json"))?,
+        policy
+    );
+    assert!(!retained.directory().join("current.sqlite3").try_exists()?);
+    registry.record_configuration_result(&lease, job.id, &serde_json::to_value(&report)?)?;
+    // Captured completion and the barrier recover together after owner death.
+    drop(lease);
+    let mut lease = ProjectLease::acquire(&control, project.binding)?;
+    registry.admit_derived_worker(&mut lease)?;
+    registry.recover_jobs(&lease)?;
+    assert_eq!(
+        registry.job(job.id)?.state,
+        airk_core::service::JobState::Succeeded
+    );
+    drop(lease);
+    registry.register(&project)?;
+    Ok(())
+}
 impl Drop for ChildGuard {
     fn drop(&mut self) {
         let _ = self.0.kill();

@@ -34,7 +34,7 @@ MCP verification checks the bounded native connection; it does not prove a codin
 
 Index Now accepts durable native work. Rebuild and maintenance commands open guarded repair previews. The tools terminal and status use the direct project client. The CLI PATH command points to the approved stable launcher and preserves existing entries. Project settings and automatic watching are native service controls, replacing the former window-owned indexing modes and direct-store maintenance paths.
 
-Project settings also offer approved **Unregister project**, including paused projects. It stops new connections and automatic work, drains the owned worker and preserves sources, settings and index data. It does not reclaim disk space.
+Project settings also offer approved **Unregister project**, including paused projects. It stops new connections and automatic work, drains the owned worker and preserves sources, settings and index data. **Unregistered projects / cleanup** separately previews selected owned index state and requires explicit deletion approval. Native cleanup preserves sources and saved settings, refuses unknown files/links, and resumes interrupted removal before re-registration. Shared models and usage history remain available.
 
 Only user/machine settings select installation policy and storage preferences. A workspace cannot nominate an executable, approval digest or service endpoint. Changing a storage preference does not move an existing index: a new native binding requires review. The previous collection remains independently registered.
 

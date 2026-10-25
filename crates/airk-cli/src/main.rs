@@ -80,6 +80,8 @@ enum Command {
     #[command(hide = true)]
     ProjectWorker,
     #[command(hide = true)]
+    DerivedWorker,
+    #[command(hide = true)]
     SourceWorker,
     #[command(hide = true)]
     ProcessGuardian,
@@ -555,6 +557,7 @@ async fn run() -> Result<()> {
     match &cli.command {
         Command::Runtime { action } => return airk_cli::runtime_install::run(action).await,
         Command::ProjectWorker => return airk_cli::project_worker::run().await,
+        Command::DerivedWorker => return airk_cli::derived_worker::run(),
         Command::SourceWorker => return airk_cli::source_worker::run(),
         Command::ProcessGuardian => {
             anyhow::bail!("guardian requires its standalone private invocation")

@@ -46,7 +46,7 @@ function fixture(){
             case 'embedding_status':return {status:'embedding_status',available:false,loads:0};
             case 'source_status':return {status:'source_status',available:false};
             case 'request_epoch':return {status:'request_epoch',namespace,epoch:7};
-            case 'console':return {status:'console',page:{revision:1,cached:true,observed_unix_ms:1,projects:[row],after:null}};
+            case 'console':case 'inactive_console':return {status:'console',page:{revision:1,cached:true,observed_unix_ms:1,projects:[row],after:null}};
             case 'workers':return {status:'workers',observations:[{project,identity:null,restarting:false,automatic_start_blocked:false}],age_ms:1};
             case 'events':assert.ok((method as {events:{limit:number}}).events.limit<=32);return {status:'events',page:{namespace,retained_prefix_lost:false,events:[],next:null,tail:{namespace,project:null,after:0,through:null}}};
             case 'enqueue':case 'configure_project':{
@@ -126,6 +126,29 @@ test('unregister binds the prepared project and requires approval before durable
     await f.action('configureProject',{project});
     assert.equal(f.sent.filter(value=>value&&typeof value==='object'&&'configure_project' in value).length,0);
     assert.equal(f.controller.state.pending.length,0);f.controller.dispose();
+});
+
+test('inactive cleanup requires a completed exact preview and host approval before journaled dispatch',async()=>{
+    for(const approval of ['decline','approve','lose-trust'] as const){
+        const f=fixture();let reviewed='';
+        f.host.runtime.prepareConfiguration=async(_binding,selected,draft)=>{assert.equal(selected,project);return {incarnation:namespace,settings:project,configuration:draft};};
+        await f.controller.refresh();
+        assert.equal(consoleAction({type:'service',revision:f.controller.state.revision,action:'deleteDerived',project},f.controller.state),undefined);
+        await f.action('inactiveProjects');assert.equal(f.controller.state.inactiveProjects,true);
+        assert.ok(f.sent.some(value=>value&&typeof value==='object'&&'inactive_console' in value));
+        assert.equal(consoleAction({type:'service',revision:f.controller.state.revision,action:'index',project},f.controller.state),undefined);
+        assert.equal(consoleAction({type:'service',revision:f.controller.state.revision,action:'repair',scope:'all',operation:'auto'},f.controller.state),undefined);
+        await f.action('deleteDerived',{project});assert.equal(f.controller.state.message,'cleanup_preview_required');
+        const row=f.controller.state.page!.projects[0];row.configuration={id:job,project,kind:'configure',state:'succeeded'};
+        f.controller.state.configurationResults=new Map([[project,{job,jobState:'succeeded',checkedAt:1,value:{active:instance,guard:'ab'.repeat(32),owned_files:9,owned_bytes:123,inventory_complete:false}}]]);
+        f.host.confirm=async message=>{reviewed=message;if(approval==='lose-trust')f.setTrusted(false);return approval!=='decline';};
+        await f.action('deleteDerived',{project});
+        assert.match(reviewed,/Source: \/sensitive/);assert.match(reviewed,/bounded lower bounds/);assert.match(reviewed,/Saved settings and original sources are preserved/);
+        const sent=f.sent.filter(value=>value&&typeof value==='object'&&'configure_project' in value) as any[];
+        assert.equal(sent.length,approval==='approve'?1:0);
+        if(sent.length)assert.deepEqual(sent[0].configure_project.request.configuration,{operation:'delete_derived',preview:'ab'.repeat(32)});
+        assert.equal(f.controller.state.pending.length,0);f.controller.dispose();
+    }
 });
 
 test('usage configuration waits for native completion and preserves a lost acknowledgement without replay',async()=>{

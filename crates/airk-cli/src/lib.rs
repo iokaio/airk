@@ -15,6 +15,7 @@ pub mod service_registration;
 pub mod service_runtime;
 
 pub mod bundled_assets;
+pub mod derived_worker;
 pub mod project_client;
 pub mod project_protocol;
 mod project_supervisor;

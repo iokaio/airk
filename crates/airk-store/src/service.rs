@@ -87,6 +87,7 @@ fn acquire_file_for(
 }
 
 pub struct ProjectLease {
+    derived: bool,
     _file: OwnershipFile,
     root: PathBuf,
     binding: airk_core::service::ProjectBinding,
@@ -113,6 +114,7 @@ impl ProjectLease {
             root,
             binding,
             epoch: None,
+            derived: false,
         })
     }
     pub fn identity(&self) -> (airk_core::service::ProjectBinding, Option<u64>) {

@@ -21,6 +21,9 @@ use std::{
 const MAX_METADATA: usize = 16384;
 const MAX_RETIRED: usize = 8;
 
+#[path = "service_collection_cleanup.rs"]
+mod cleanup;
+
 #[derive(Clone, Copy, Debug)]
 pub struct SelectionContention;
 impl SelectionContention {
@@ -299,8 +302,9 @@ impl Collection {
                 continue;
             }
             let path = entry.path();
-            let owned = json::<Manifest>(&path)
-                .is_ok_and(|value| value.version == 140 && value.owner == self.binding)
+            let owned = cleanup::owned_scratch(&path, self.binding)
+                || json::<Manifest>(&path)
+                    .is_ok_and(|value| value.version == 140 && value.owner == self.binding)
                 || json::<Intent>(&path)
                     .is_ok_and(|value| value.version == 140 && value.owner == self.binding)
                 || json::<Initial>(&path)
@@ -318,6 +322,9 @@ impl Collection {
     /// A live old request defers retirement, including after its timer expires.
     pub fn retire(&self) -> Result<RetirementReport> {
         let _lease = acquire_file(&self.directory, "replacement.lock")?;
+        self.retire_locked()
+    }
+    fn retire_locked(&self) -> Result<RetirementReport> {
         let snapshot = {
             let _lock = manifest_lock(&self.directory)?;
             self.manifest()?
@@ -600,6 +607,9 @@ impl Collection {
     }
     pub fn recover_abandoned_replacement(&self) -> Result<()> {
         let _lease = acquire_file(&self.directory, "replacement.lock")?;
+        self.recover_abandoned_replacement_locked()
+    }
+    fn recover_abandoned_replacement_locked(&self) -> Result<()> {
         let _lock = manifest_lock(&self.directory)?;
         self.sweep_metadata_scratch()?;
         let path = self.directory.join("replacement.json");

@@ -90,7 +90,7 @@ export class ServiceConsoleController {
             selectedRuntime:snapshot.selection?record(snapshot.selection).active:undefined,
             selectedVersion:snapshot.approval?record(snapshot.approval).version:undefined,
             verificationBasis:snapshot.approval?record(snapshot.approval).verification_basis:undefined}};
-        if(snapshot.console)this.state.page=parseConsolePage(snapshot.console);
+        if(snapshot.console){this.state.page=parseConsolePage(snapshot.console);this.state.inactiveProjects=false;}
         this.state.configurationResultsOmitted=snapshot.configuration_results_omitted===true;
         if(snapshot.configuration_results!==undefined){
             const items=snapshot.configuration_results;
@@ -185,7 +185,7 @@ export class ServiceConsoleController {
         const prior=this.state.page;
         const start=first?{after:null,revision:null}:next?{after:prior?.after??null,revision:prior?.revision??null}:this.pageStart;
         if(!this.client){await this.savedSnapshot(start.after,start.after?start.revision:null);this.pageStart=start;return;}
-        const page=await this.client.projects(start.after,start.after?start.revision:null);
+        const page=await this.client.projects(start.after,start.after?start.revision:null,16,this.state.inactiveProjects===true);
         this.pageStart=start;
         this.authorized();this.state.page=page;
         this.state.workers=await this.client.workers(page.projects.map(row=>String(record(record(row.project).registration).binding)));
@@ -439,6 +439,26 @@ export class ServiceConsoleController {
     private async connectedAction(action:NonNullable<ReturnType<typeof consoleAction>>):Promise<void>{
         const project=action.project!,id=action.id!;
         switch(action.action){
+            case 'registeredProjects':case 'inactiveProjects':{
+                this.state.inactiveProjects=action.action==='inactiveProjects';this.state.selected.clear();
+                await this.page(false,true);return;
+            }
+            case 'previewCleanup':case 'deleteDerived':{
+                if(!this.state.inactiveProjects||!this.binding)throw new ServiceError('cleanup_requires_inactive_project');
+                const row=this.state.page?.projects.find(row=>record(record(row.project).registration).binding===project);
+                if(!row)throw new ServiceError('cleanup_project_not_observed');
+                let draft:RecordValue={operation:'prepare_derived_cleanup'};
+                if(action.action==='deleteDerived'){
+                    const result=this.state.configurationResults?.get(project),preview=result?.value;
+                    if(!preview||result?.jobState!=='succeeded'||typeof preview.active!=='string'||typeof preview.guard!=='string')throw new ServiceError('cleanup_preview_required');
+                    identifier(preview.guard,32);
+                    const registration=record(record(row.project).registration);
+                    if(!await this.host.confirm(`Delete the selected owned index state for ${String(registration.collection)} on ${this.host.authority}? Source: ${String(registration.root)}. Data: ${String(registration.data_root)}. Preview ${preview.guard}: ${String(preview.owned_files)} known files, ${String(preview.owned_bytes)} bytes${preview.inventory_complete===true?'':' (bounded lower bounds)'}. Saved settings and original sources are preserved. Unknown files and links are refused. This cannot restore the removed index; it must be indexed again. Interrupted cleanup must finish before re-registration.`))return;
+                    this.authorized();draft={operation:'delete_derived',preview:preview.guard};
+                }
+                const request=await this.host.runtime.prepareConfiguration(this.binding,project,draft);this.authorized();
+                await this.mutation(`${action.action} ${project}`,await this.client!.prepareConfiguration(project,request));break;
+            }
             case 'configureProject':{
                 const row=this.state.page?.projects.find(row=>record(record(row.project).registration).binding===project);
                 if(!row||!this.binding||!this.host.configuration)throw new ServiceError('project_configuration_unavailable');

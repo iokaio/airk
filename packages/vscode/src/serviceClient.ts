@@ -110,7 +110,7 @@ export function validateConfigurationRequest(input:unknown):ProjectConfiguration
     const value=record(input),configuration=record(value.configuration),operation=configuration.operation;
     if(Object.keys(value).sort().join(',')!=='configuration,incarnation,settings'||Buffer.byteLength(JSON.stringify(value))>16384)throw new ServiceError('invalid_project_configuration');
     identifier(value.incarnation,16);identifier(value.settings,32);
-    const names:Record<string,string[]>={unregister:[],bundled_model:[],vectors:['enabled'],detail:['level'],vector_selection:['policy'],
+    const names:Record<string,string[]>={unregister:[],prepare_derived_cleanup:[],delete_derived:['preview'],bundled_model:[],vectors:['enabled'],detail:['level'],vector_selection:['policy'],
         add_root:['alias','path'],remove_root:['alias'],install_model:['directory','manifest_sha256'],usage:['mode'],
         clear_usage:[],usage_feedback:['request_id','usefulness'],import_usage:['input'],extraction_policy:['input'],scan_limits:['input'],quota_policy:['input','expected_policy_digest'],
         calibrate:['tokenizer','baseline','returned','generation','content_kind','record']};
@@ -118,6 +118,7 @@ export function validateConfigurationRequest(input:unknown):ProjectConfiguration
     const filePath=(input:unknown)=>{if(typeof input!=='string'||!path.isAbsolute(input)||input.length>4096||/[\u0000-\u001f\u007f]/.test(input))throw new ServiceError('invalid_configuration_path');};
     if(operation==='vectors'&&typeof configuration.enabled!=='boolean')throw new ServiceError('invalid_project_configuration');
     if(operation==='detail'&&!['essential','agent_lean','balanced','detailed'].includes(String(configuration.level)))throw new ServiceError('invalid_project_configuration');
+    if(operation==='delete_derived')identifier(configuration.preview,32);
     if(operation==='usage'&&!['disabled','aggregates_only','diagnostic_events'].includes(String(configuration.mode)))throw new ServiceError('invalid_project_configuration');
     if(operation==='usage_feedback'){
         identifier(configuration.request_id,16);
@@ -198,10 +199,10 @@ export class ServiceClient {
         if (expected && response.status !== expected) { throw new ServiceError('unexpected_service_response', true); }
         return response;
     }
-    async projects(after: string | null = null, revision: number | null = null, limit = 16): Promise<ConsolePage> {
+    async projects(after: string | null = null, revision: number | null = null, limit = 16, inactive = false): Promise<ConsolePage> {
         if (after !== null) { identifier(after,32); } if (revision !== null) { count(revision); }
         if (!Number.isInteger(limit) || limit < 1 || limit > 32) { throw new ServiceError('invalid_project_page_limit'); }
-        return parseConsolePage((await this.rpc({ console: { after, revision, limit } }, 'console')).page,limit);
+        return parseConsolePage((await this.rpc({ [inactive?'inactive_console':'console']: { after, revision, limit } }, 'console')).page,limit);
     }
     async workers(projects: string[]): Promise<RecordValue> {
         if (projects.length > 32 || new Set(projects).size !== projects.length) { throw new ServiceError('invalid_worker_observation_scope'); }

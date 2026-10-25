@@ -69,6 +69,7 @@ async fn handle(
         | ControlMethod::Cancel { .. }
         | ControlMethod::CancelPending { .. }
         | ControlMethod::Console { .. }
+        | ControlMethod::InactiveConsole { .. }
         | ControlMethod::Workers { .. }
         | ControlMethod::Worker { .. }
         | ControlMethod::RestartProject { .. }

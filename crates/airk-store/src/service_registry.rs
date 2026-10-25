@@ -45,6 +45,8 @@ mod provider_drains;
 pub use provider_drains::{MAX_PROVIDER_DRAINS, ProviderBoot, ProviderDrain};
 #[path = "service_background.rs"]
 mod background;
+#[path = "service_cleanup.rs"]
+mod cleanup;
 #[path = "service_configuration.rs"]
 mod configuration;
 #[path = "service_lifecycle.rs"]
@@ -241,7 +243,7 @@ impl ServiceRegistry {
             connection.pragma_query_value(None, "application_id", |row| row.get(0))?;
         let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
         ensure!(
-            application == APPLICATION && (2..=5).contains(&version),
+            application == APPLICATION && (2..=6).contains(&version),
             "unsupported saved service registry format"
         );
         let registry = Self {
@@ -316,7 +318,7 @@ impl ServiceRegistry {
                 initialize = true;
             } else {
                 ensure!(
-                    application == APPLICATION && (1..=5).contains(&version),
+                    application == APPLICATION && (1..=6).contains(&version),
                     "unsupported service registry format"
                 );
                 schema_version = version;
@@ -391,6 +393,11 @@ impl ServiceRegistry {
                     "SELECT count(*) FROM projects WHERE typeof(registered)<>'integer' OR registered NOT IN(0,1) OR (registered=0 AND paused<>1)",
                     [], |row| row.get(0))?;
                 ensure!(invalid == 0, "invalid service registration state");
+            }
+            if schema_version >= 6 {
+                let invalid: i64 = connection.query_row("SELECT count(*) FROM projects WHERE cleanup_guard IS NOT NULL AND (typeof(cleanup_guard)<>'text' OR length(cleanup_guard)<>64 OR cleanup_guard GLOB '*[^0-9a-f]*' OR registered<>0)",
+                    [], |row| row.get(0))?;
+                ensure!(invalid == 0, "invalid derived cleanup barrier");
             }
         }
         connection.execute_batch(
@@ -485,6 +492,19 @@ impl ServiceRegistry {
         )?;
         ensure!(invalid == 0, "invalid service registration state");
         registry.registration_state = true;
+        if schema_version < 6 {
+            let transaction = registry
+                .connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let foreign: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('projects') WHERE name='cleanup_guard')", [], |row| row.get(0))?;
+            ensure!(
+                !foreign,
+                "unexpected cleanup state in an earlier registry format"
+            );
+            transaction.execute_batch("ALTER TABLE projects ADD COLUMN cleanup_guard TEXT CHECK(cleanup_guard IS NULL OR length(cleanup_guard)=64);")?;
+            transaction.pragma_update(None, "user_version", 6)?;
+            transaction.commit()?;
+        }
         if !owner.ready {
             owner.complete(&registry.root)?;
         }
@@ -523,6 +543,21 @@ impl ServiceRegistry {
             ensure!(
                 existing == payload,
                 "service registration binding collision"
+            );
+            let cleanup: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM service_jobs j JOIN service_configuration c ON c.job=j.id WHERE j.project=?1 AND j.state IN('pending','running') AND json_extract(CAST(c.payload AS TEXT),'$.request.configuration.operation') IN('prepare_derived_cleanup','delete_derived'))",
+                [registration.binding.to_string()], |row| row.get(0))?;
+            ensure!(
+                !cleanup,
+                "derived cleanup is still pending; inspect its native receipt before registering"
+            );
+            let barrier: bool = transaction.query_row(
+                "SELECT cleanup_guard IS NOT NULL FROM projects WHERE binding=?1",
+                [registration.binding.to_string()],
+                |row| row.get(0),
+            )?;
+            ensure!(
+                !barrier,
+                "finish the captured derived cleanup before registering this project"
             );
             if transaction.execute(
                 "UPDATE projects SET registered=1,paused=0 WHERE binding=?1 AND registered=0",
@@ -592,6 +627,40 @@ impl ServiceRegistry {
             .map_err(Into::into)
     }
 
+    /// Administrative retained binding, including unregistered storage owners.
+    pub fn retained_project(&self, binding: ProjectBinding) -> Result<RegisteredProject> {
+        let (bytes, epoch, paused) = self.connection.query_row(
+            "SELECT substr(payload,1,20481),epoch,paused FROM projects WHERE binding=?1",
+            [binding.to_string()],
+            project_row,
+        )?;
+        let project = decode(&bytes, epoch, paused)?;
+        ensure!(
+            project.registration.binding == binding,
+            "foreign retained project binding"
+        );
+        Ok(project)
+    }
+
+    pub fn validate_inactive_worker(&self, lease: &ProjectLease) -> Result<ProjectRegistration> {
+        ensure!(
+            lease.derived,
+            "inactive collection access requires the private cleanup owner"
+        );
+        jobs::worker_epoch(&self.connection, &self.root, lease)?;
+        ensure!(
+            !self.is_registered(lease.binding)?,
+            "derived cleanup requires an unregistered project"
+        );
+        let registration = self.retained_project(lease.binding)?.registration;
+        super::data_scope::check(
+            Path::new(&registration.data_root),
+            &self.root,
+            self.incarnation()?,
+        )?;
+        Ok(registration)
+    }
+
     /// Bounded identity-only ownership audit, including inactive registrations:
     /// a crash may have interrupted their actual worker drain.
     pub fn bindings(&self) -> Result<Vec<ProjectBinding>> {
@@ -613,6 +682,23 @@ impl ServiceRegistry {
         expected_revision: Option<u64>,
         limit: usize,
     ) -> Result<ProjectPage> {
+        self.list_role(after, expected_revision, limit, false)
+    }
+    pub fn list_inactive(
+        &mut self,
+        after: Option<ProjectBinding>,
+        expected_revision: Option<u64>,
+        limit: usize,
+    ) -> Result<ProjectPage> {
+        self.list_role(after, expected_revision, limit, true)
+    }
+    fn list_role(
+        &mut self,
+        after: Option<ProjectBinding>,
+        expected_revision: Option<u64>,
+        limit: usize,
+        inactive: bool,
+    ) -> Result<ProjectPage> {
         ensure!(
             (1..=32).contains(&limit) && (after.is_none() || expected_revision.is_some()),
             "invalid service registry page request"
@@ -627,7 +713,11 @@ impl ServiceRegistry {
             expected_revision.is_none_or(|expected| expected == revision),
             "service registry cursor expired"
         );
-        let mut statement = transaction.prepare(if self.registration_state {
+        let mut statement = transaction.prepare(if inactive && self.registration_state {
+            "SELECT substr(payload,1,20481),epoch,paused FROM projects WHERE binding>?1 AND registered=0 ORDER BY binding LIMIT ?2"
+        } else if inactive {
+            "SELECT substr(payload,1,20481),epoch,paused FROM projects WHERE 0 AND binding>?1 ORDER BY binding LIMIT ?2"
+        } else if self.registration_state {
             "SELECT substr(payload,1,20481),epoch,paused FROM projects WHERE binding>?1 AND registered=1 ORDER BY binding LIMIT ?2"
         } else {
             "SELECT substr(payload,1,20481),epoch,paused FROM projects WHERE binding>?1 ORDER BY binding LIMIT ?2"
@@ -686,6 +776,12 @@ impl ServiceRegistry {
     }
 
     pub fn admit_worker(&mut self, lease: &mut ProjectLease) -> Result<u64> {
+        self.admit_worker_role(lease, false)
+    }
+    pub fn admit_derived_worker(&mut self, lease: &mut ProjectLease) -> Result<u64> {
+        self.admit_worker_role(lease, true)
+    }
+    fn admit_worker_role(&mut self, lease: &mut ProjectLease, derived: bool) -> Result<u64> {
         ensure!(
             lease.root == self.root && lease.epoch.is_none(),
             "foreign or already admitted service worker lease"
@@ -694,10 +790,18 @@ impl ServiceRegistry {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let epoch: i64 = transaction.query_row(
-            "SELECT epoch FROM projects WHERE binding=?1 AND registered=1",
-            [lease.binding.to_string()],
+            "SELECT epoch FROM projects WHERE binding=?1 AND registered=?2",
+            params![lease.binding.to_string(), !derived],
             |row| row.get(0),
         )?;
+        if derived {
+            let pending: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM service_jobs j JOIN service_configuration c ON c.job=j.id WHERE j.project=?1 AND j.state IN('pending','running') AND json_extract(CAST(c.payload AS TEXT),'$.request.configuration.operation') IN('prepare_derived_cleanup','delete_derived'))",
+                [lease.binding.to_string()], |row| row.get(0))?;
+            ensure!(
+                pending,
+                "no accepted derived cleanup authorizes this worker"
+            );
+        }
         let next = epoch
             .checked_add(1)
             .context("service fencing generation exhausted")?;
@@ -708,6 +812,7 @@ impl ServiceRegistry {
         bump(&transaction)?;
         transaction.commit()?;
         lease.epoch = Some(next as u64);
+        lease.derived = derived;
         Ok(next as u64)
     }
 }
@@ -727,7 +832,7 @@ mod tests {
         registry.pause(registration.binding, true)?;
         registry
             .connection
-            .execute_batch("ALTER TABLE projects DROP COLUMN registered; PRAGMA user_version=4;")?;
+            .execute_batch("ALTER TABLE projects DROP COLUMN cleanup_guard; ALTER TABLE projects DROP COLUMN registered; PRAGMA user_version=4;")?;
         drop(registry);
         let path = directory.path().join("service-1.4.sqlite3");
         let before = fs::read(&path)?;

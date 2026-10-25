@@ -87,6 +87,10 @@ impl Kernel {
             // Native registry completion performs the actual unregister and
             // writes its final receipt atomically. This only validates the guard.
             ProjectConfiguration::Unregister => json!({"unregistration_requested":true}),
+            ProjectConfiguration::PrepareDerivedCleanup
+            | ProjectConfiguration::DeleteDerived { .. } => {
+                anyhow::bail!("derived cleanup requires the service-owned inactive-project worker")
+            }
             ProjectConfiguration::Vectors { enabled } => {
                 serde_json::to_value(self.configure_vectors(*enabled)?)?
             }

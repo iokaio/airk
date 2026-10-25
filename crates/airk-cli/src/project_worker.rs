@@ -424,6 +424,15 @@ pub async fn run() -> Result<()> {
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
             };
+            // Unregister can commit between supervisor observation and dispatch.
+            // Never claim inactive cleanup with a query/index owner.
+            registry.get(identity.project)?;
+            ensure!(
+                !registry
+                    .configuration_work(allowance.job)?
+                    .is_some_and(|work| work.request.configuration.is_derived_cleanup()),
+                "cleanup requires a distinct inactive owner"
+            );
             if let Some(job) = registry.claim_job_id(&job_lease, allowance.job)? {
                 let mut completed_maintenance = None;
                 let outcome = if registry.cancellation_requested(job.id)? {

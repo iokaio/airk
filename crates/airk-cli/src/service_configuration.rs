@@ -19,6 +19,10 @@ use std::{
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Draft {
     Unregister,
+    PrepareDerivedCleanup,
+    DeleteDerived {
+        preview: airk_core::identity::Sha256Digest,
+    },
     Vectors {
         enabled: bool,
     },
@@ -131,6 +135,8 @@ impl Draft {
                 }
             }
             Self::Unregister => ProjectConfiguration::Unregister,
+            Self::PrepareDerivedCleanup => ProjectConfiguration::PrepareDerivedCleanup,
+            Self::DeleteDerived { preview } => ProjectConfiguration::DeleteDerived { preview },
             Self::BundledModel => ProjectConfiguration::BundledModel,
             Self::Usage { mode } => ProjectConfiguration::Usage { mode },
             Self::ClearUsage => ProjectConfiguration::ClearUsage,
@@ -186,6 +192,23 @@ pub async fn prepare(
     project: ProjectBinding,
     draft: Draft,
 ) -> Result<ConfigurationRequest> {
+    if matches!(
+        &draft,
+        Draft::PrepareDerivedCleanup | Draft::DeleteDerived { .. }
+    ) {
+        let ControlResponse::RequestEpoch { namespace, .. } =
+            crate::service_runtime::request(runtime, ControlMethod::RequestEpoch).await?
+        else {
+            anyhow::bail!("native cleanup authority is unavailable")
+        };
+        let request = ConfigurationRequest {
+            incarnation: namespace,
+            settings: project,
+            configuration: draft.prepare()?,
+        };
+        request.validate()?;
+        return Ok(request);
+    }
     let ControlResponse::Inspection {
         observation: Some(observation),
         ..

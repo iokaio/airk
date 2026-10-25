@@ -7,6 +7,7 @@ export interface ServiceConsoleState {
     lifecycle?:'on-demand'|'external'|'user-on-demand';
     responseMode?:'terse'|'full';
     registrationAvailable?:boolean; currentProjects?:ReadonlySet<string>;
+    inactiveProjects?:boolean;
     health:ConsoleObservation; resources:ConsoleObservation; model:ConsoleObservation; sources:ConsoleObservation;
     bootstrap:ConsoleObservation; page?:ConsolePage; workers?:RecordValue; events:RecordValue[]; historyOmitted:boolean;
     serviceEvents?:ConsoleObservation;
@@ -16,8 +17,8 @@ export interface ServiceConsoleState {
     pending:{id:string;title:string;unknown:boolean;lifecycle?:boolean;forceAvailable?:boolean}[]; preview?:string; includePaths:boolean; message?:string;
 }
 export type ConsoleAction = {type:'service';revision:string;action:string;project?:string;id?:string;selected?:boolean;scope?:'one'|'selected'|'all';operation?:RepairOperation;includePaths?:boolean;allowFallback?:boolean};
-const simple=['registerWorkspace','refresh','connect','start','stop','restart','repairRuntime','upgradeRuntime','rollbackRuntime','resumeActivation','logs','resources','responseMode','recoverLifecycle','abandonLifecycle','startEmbedding','stopEmbedding','forceEmbedding','firstPage','nextPage','morePlan','refreshPlan','pausePlan','resumePlan','cancelPlan','approvePlan','previewReport','copyReport'];
-const projects=['inspect','index','pause','resume','restartProject','watch','modelSetup','configureProject','copyConfiguration'];
+const simple=['registeredProjects','inactiveProjects','registerWorkspace','refresh','connect','start','stop','restart','repairRuntime','upgradeRuntime','rollbackRuntime','resumeActivation','logs','resources','responseMode','recoverLifecycle','abandonLifecycle','startEmbedding','stopEmbedding','forceEmbedding','firstPage','nextPage','morePlan','refreshPlan','pausePlan','resumePlan','cancelPlan','approvePlan','previewReport','copyReport'];
+const projects=['previewCleanup','deleteDerived','inspect','index','pause','resume','restartProject','watch','modelSetup','configureProject','copyConfiguration'];
 const operations=['auto','verify','recover','reconcile','vectors','rebuild'];
 /** Messages select fixed host-owned operations; no paths, commands, tokens or RPC bodies are accepted. */
 export function consoleAction(value:unknown,current:ServiceConsoleState):ConsoleAction|undefined {
@@ -31,8 +32,11 @@ export function consoleAction(value:unknown,current:ServiceConsoleState):Console
         }else if(projects.includes(action)||action==='select'){
             keys.add('project');const project=identifier(message.project,32);
             if(!current.page?.projects.some(row=>record(record(row.project).registration).binding===project))return;
+            if(['previewCleanup','deleteDerived'].includes(action)&&!current.inactiveProjects)return;
+            if(current.inactiveProjects&&!['previewCleanup','deleteDerived','copyConfiguration'].includes(action))return;
             if(action==='watch'||action==='select'){keys.add('selected');if(typeof message.selected!=='boolean')return;}
         }else if(action==='repair'){
+            if(current.inactiveProjects)return;
             keys.add('scope');keys.add('operation');if(!['one','selected','all'].includes(String(message.scope))||!operations.includes(String(message.operation)))return;
             if(message.scope==='one'){keys.add('project');const project=identifier(message.project,32);
                 if(!current.page?.projects.some(row=>record(record(row.project).registration).binding===project))return;}
@@ -73,7 +77,7 @@ function projectRow(row:RecordValue,state:ServiceConsoleState):string {
     const resultValue=result&&result.job===configuration.id?result.value:undefined;
     const attr=`data-project="${e(binding)}"`;
     const unavailable=state.busy||!state.connected||!state.trusted;
-    return `<article><h3><label><input type="checkbox" data-action="select" ${attr}${state.selected.has(binding)?' checked':''}${unavailable?' disabled':''}> ${e(registration.collection)}</label>${state.currentProjects?.has(binding)?' · Open workspace':''}</h3>
+    return `<article><h3><label><input type="checkbox" data-action="select" ${attr}${state.selected.has(binding)?' checked':''}${unavailable||state.inactiveProjects?' disabled':''}> ${e(registration.collection)}</label>${state.currentProjects?.has(binding)?' · Open workspace':''}</h3>
         ${facts([['Source',registration.root],['Index data',registration.data_root],['Project identity',binding],
             ['Worker',identity.worker??(worker.restarting?'Restart queued':worker.identity===null?'No resident worker observed':'Worker identity not observed')],['Worker fence',identity.fencing_generation],
             ['Worker age at sample (ms)',state.workers?.age_ms],['Worker observation',state.connected?'Connected sample':'Cached sample'],['Startup circuit blocked',worker.automatic_start_blocked],
@@ -90,13 +94,13 @@ function projectRow(row:RecordValue,state:ServiceConsoleState):string {
             ['Last configuration job',configuration.id],['Configuration state (cached)',configuration.state],['Configuration failure',obj(configuration.outcome).code],
             ['Configuration result failure',result?.code],['Configuration result checked',result?new Date(result.checkedAt).toISOString():undefined],
             ['Last observed publication',work.publication],['Unavailable cached fields',Array.isArray(row.failed_observations)?row.failed_observations.join(', '):undefined]])}
-        <div class="controls">${button('inspect','Inspect',attr,unavailable)}${button('index','Index now',attr,unavailable)}
+        ${state.inactiveProjects?`<p>Unregistered project. Sources and saved settings are preserved. Cleanup requires a separate, exact preview.</p><div class="controls">${button('previewCleanup','Preview / resume index cleanup',attr,unavailable)}${button('deleteDerived','Delete reviewed index state',attr,unavailable||configuration.state!=='succeeded'||typeof resultValue?.active!=='string'||typeof resultValue?.guard!=='string')}</div>`:`<div class="controls">${button('inspect','Inspect',attr,unavailable)}${button('index','Index now',attr,unavailable)}
         ${button(project.paused?'resume':'pause',project.paused?'Resume project':'Pause project',attr,unavailable)}
         ${button('restartProject','Restart project worker',attr,unavailable)}${button('modelSetup','Install bundled model',attr,unavailable)}
         ${button('configureProject','Project settings',attr,unavailable)}
         ${button('repair','Diagnose & repair',`${attr} data-scope="one" data-operation="auto"`,unavailable)}</div>
         ${obj(configuration.outcome).code==='configuration_outcome_unknown_reinspect'?'<p>The configuration effect is uncertain. Inspect the current settings before deliberately requesting another change.</p>':''}
-        <label><input type="checkbox" data-action="watch" ${attr}${watch.enabled?' checked':''}${unavailable?' disabled':''}> Continue automatic source watching when workspaces are closed</label>
+        <label><input type="checkbox" data-action="watch" ${attr}${watch.enabled?' checked':''}${unavailable?' disabled':''}> Continue automatic source watching when workspaces are closed</label>`}
         ${job.state==='failed'||job.state==='canceled'?button('retryJob','Retry job',`data-id="${e(job.id)}"`,unavailable):''}
         ${job.state==='running'||job.state==='pending'?button('cancelJob','Cancel job',`data-id="${e(job.id)}"`,unavailable):''}
         ${resultValue?`<details><summary>Last configuration result (cached)</summary><pre>${e(JSON.stringify(resultValue,null,2))}</pre>${JSON.stringify(resultValue,null,2).length>4096?'<p>Display truncated at 4,096 characters; Copy keeps the complete bounded result.</p>':''}${button('copyConfiguration','Copy configuration result',attr,state.busy)}</details>`:''}
@@ -176,9 +180,10 @@ export function consoleContent(state:ServiceConsoleState):string {
         ${button('stopEmbedding','Stop this inference helper','',unavailable||!state.connected||typeof model?.worker!=='string')}
         ${button('forceEmbedding','Force-stop this owned inference helper','',unavailable||!state.connected||typeof model?.worker!=='string')}
         <h2>Registered projects</h2><p>Includes closed workspaces. Index and progress values are cached observations; missing values remain unknown.</p>
+        <div class="controls">${button('registeredProjects','Registered projects','',unavailable||!state.connected)}${button('inactiveProjects','Unregistered projects / cleanup','',unavailable||!state.connected)}</div>
         <div class="controls">${button('firstPage','First page','',state.busy)}${button('nextPage','Next page','',state.busy||!state.page?.after)}
         ${button('repair','Repair selected',`data-scope="selected" data-operation="auto"`,unavailable||!state.connected||!state.selected.size)}
-        ${button('repair','Repair all registered',`data-scope="all" data-operation="auto"`,unavailable||!state.connected)}</div>
+        ${button('repair','Repair all registered',`data-scope="all" data-operation="auto"`,unavailable||!state.connected||state.inactiveProjects===true)}</div>
         <p>${state.page?`Showing ${state.page.projects.length} projects at registry revision ${e(state.page.revision)}${state.page.after?'; more projects remain':''}.`:''} ${state.selected.size} selected across pages. All-project repair includes every registered project.</p>
         ${projects}<h2>Repair preview and receipts</h2>${planView(state)}
         <h2>Recent transitions</h2>${state.historyOmitted?'<p>Older transitions are omitted from this recent-history view.</p>':''}

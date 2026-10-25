@@ -116,6 +116,11 @@ pub enum ControlMethod {
         revision: Option<u64>,
         limit: usize,
     },
+    InactiveConsole {
+        after: Option<ProjectBinding>,
+        revision: Option<u64>,
+        limit: usize,
+    },
     Workers {
         projects: Vec<ProjectBinding>,
     },

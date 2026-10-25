@@ -183,6 +183,7 @@ pub(super) fn recover_results(
                 ],
             )?;
             super::unregistration::finish_if_requested(connection, lease.binding, id.parse()?)?;
+            super::cleanup::finish_if_requested(connection, lease.binding, id.parse()?)?;
         }
     }
     Ok(())
@@ -740,7 +741,7 @@ mod tests {
                  result BLOB CHECK(result IS NULL OR length(result)<=16384)) WITHOUT ROWID;
              INSERT INTO service_configuration SELECT job,payload,NULL FROM configuration_v4;
              DROP TABLE configuration_v4;
-             ALTER TABLE projects DROP COLUMN registered;
+             ALTER TABLE projects DROP COLUMN cleanup_guard; ALTER TABLE projects DROP COLUMN registered;
              PRAGMA user_version=3;",
         )?;
         registry.connection.execute(
@@ -910,7 +911,7 @@ mod tests {
         let job = registry.enqueue(project.binding, caller, &key, JobKind::Index)?;
         registry
             .connection
-            .execute_batch("DROP TABLE service_configuration; ALTER TABLE projects DROP COLUMN registered; PRAGMA user_version=2;")?;
+            .execute_batch("DROP TABLE service_configuration; ALTER TABLE projects DROP COLUMN cleanup_guard; ALTER TABLE projects DROP COLUMN registered; PRAGMA user_version=2;")?;
         drop(registry);
         let mut registry = open(temporary.path(), Incarnation::from_bytes([9; 16]))?;
         assert_eq!(registry.incarnation()?, caller);

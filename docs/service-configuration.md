@@ -1,6 +1,6 @@
 # Guarded project configuration
 
-This is the implemented development contract for the [1.4 service plan](airkservice-architecture.md). Native and extension versions remain 1.3.2 until default adapter cutover. These controls do not qualify an installed editor or release a VSIX.
+This is the implemented development contract for the [1.4 service plan](airkservice-architecture.md). Native and extension versions are 1.4.0. These controls do not qualify an installed editor or release a VSIX.
 
 The trusted Service Console's **Project settings** action supports vectors, extraction detail, semantic selection rules, additional source roots, explicit offline custom-model selection, explicit return to the bundled model, usage recording policy and local tokenizer calibration. Inspect the project first. Host-owned pickers and dialogs collect the choices; webview messages carry only a fixed action and a visible project identity. Trust is checked again after each asynchronous preparation step.
 
@@ -25,6 +25,8 @@ Development registry schema 4 adds the fixed result reservation. Versions 1/2 up
 Recovery marks an older running configuration successful only if its saved result decodes correctly. Without a valid result, the job fails with `configuration_outcome_unknown_reinspect` and is never automatically replayed: the settings effect may already have happened. Damaged result bytes are preserved. Reinspect the actual settings before explicitly choosing another change. A result transaction and the configuration effect are separate boundaries; the plan does not claim atomicity between them.
 
 ## Privacy and presentation
+
+[Inactive-project derived cleanup](service-project-retirement.md) is the explicit exception to uncertain-outcome configuration recovery. Its prepare/delete requests bind the persistent registry namespace and opaque project, with a separate exact cleanup preview. A distinct fenced native owner receives no retrieval or inference access. Store-owned deletion intents make those two operations resumable, so an interrupted attempt without a captured result can retry under the existing three-attempt bound. A captured complete deletion receipt, successful job and cleared re-registration barrier commit together. Other configuration retains the uncertain-outcome rule above.
 
 Durable requests retain selected file paths and SHA-256 hashes until receipt retirement; they do not retain sample plaintext. The worker verifies the exact sample/tokenizer bytes before counting or recording. Usage aggregates remain per collection. Calculate-only calibration does not create an aggregate record. Results contain bounded metadata and counts, with original selected files unchanged.
 

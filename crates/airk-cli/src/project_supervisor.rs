@@ -26,6 +26,7 @@ use std::{
 use tokio::sync::oneshot;
 
 struct ChildWorker {
+    derived: bool,
     _containment: crate::child_job::ChildJob,
     child: Child,
     input: Option<ChildStdin>,
@@ -72,12 +73,21 @@ impl Drop for ChildWorker {
 }
 
 impl ChildWorker {
-    fn spawn(root: &Path, project: ProjectBinding, service: Incarnation) -> Result<Self> {
+    fn spawn(
+        root: &Path,
+        project: ProjectBinding,
+        service: Incarnation,
+        derived: bool,
+    ) -> Result<Self> {
         let executable = std::env::current_exe()?.canonicalize()?;
         let worker = new_instance_id()?;
         let mut command = Command::new(executable);
         command
-            .arg("project-worker")
+            .arg(if derived {
+                "derived-worker"
+            } else {
+                "project-worker"
+            })
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
@@ -93,6 +103,7 @@ impl ChildWorker {
         let mut output = child.stdout.take().context("project output missing")?;
         let (sender, receiver) = mpsc::sync_channel(1);
         let mut process = Self {
+            derived,
             child,
             _containment: containment,
             input: Some(input),
@@ -394,6 +405,7 @@ fn start_worker(
     root: &Path,
     registration: airk_core::service::ProjectRegistration,
     instance: Incarnation,
+    derived: bool,
     backoff: &mut BTreeMap<ProjectBinding, (Instant, u32)>,
     admission: WorkerAdmission<'_>,
 ) -> Result<()> {
@@ -404,7 +416,8 @@ fn start_worker(
         resources,
     } = admission;
     let project = registration.binding;
-    if workers.contains_key(&project) {
+    if let Some(worker) = workers.get(&project) {
+        ensure!(worker.derived == derived, "project owner role is draining");
         return Ok(());
     }
     ensure!(resources.may_start_resident(), "project capacity busy");
@@ -414,7 +427,7 @@ fn start_worker(
             .is_none_or(|(until, attempts)| *attempts < 3 && Instant::now() >= *until),
         "project restart backoff"
     );
-    let mut worker = match ChildWorker::spawn(root, project, instance) {
+    let mut worker = match ChildWorker::spawn(root, project, instance, derived) {
         Ok(worker) => worker,
         Err(error) => {
             let attempt = backoff
@@ -450,6 +463,7 @@ fn start_worker(
     resources.resident_started(identity)?;
     let access = pool
         .as_mut()
+        .filter(|_| !derived)
         .and_then(|pool| pool.access(identity.worker, registration).ok());
     if let Err(error) = worker.activate(identity, allowance, access) {
         drop(worker);
@@ -533,13 +547,27 @@ impl Supervisor {
                     // Drain only our exact child before releasing resident/query
                     // allowances; unknown registry state never authorizes a stop.
                     let unregistered = workers
-                        .keys()
-                        .copied()
-                        .filter(|project| {
+                        .iter()
+                        .filter(|(project, worker)| {
                             registry.as_ref().is_some_and(|registry| {
-                                matches!(registry.is_registered(*project), Ok(false))
+                                match registry.is_registered(**project) {
+                                    Ok(active) => {
+                                        if worker.derived {
+                                            active
+                                                || resources.running(**project).is_none()
+                                                    && matches!(
+                                                        registry.derived_work_pending(**project),
+                                                        Ok(false)
+                                                    )
+                                        } else {
+                                            !active
+                                        }
+                                    }
+                                    Err(_) => false,
+                                }
                             })
                         })
+                        .map(|(project, _)| *project)
                         .collect::<Vec<_>>();
                     for project in unregistered {
                         if let Some(worker) = workers.remove(&project) {
@@ -701,7 +729,8 @@ impl Supervisor {
                     if may_allocate
                         && pool.is_none()
                         && pool_recovery.due(Instant::now())
-                        && (!workers.is_empty() || pool_recovery.requested)
+                        && (workers.values().any(|worker| !worker.derived)
+                            || pool_recovery.requested)
                     {
                         pool_recovery.attempted();
                         pool = Pool::start(
@@ -763,7 +792,10 @@ impl Supervisor {
                         if pool_control_failed {
                             continue;
                         }
-                        let desired_pool = pool.as_ref().map(Pool::identity);
+                        let desired_pool = pool
+                            .as_ref()
+                            .filter(|_| !worker.derived)
+                            .map(Pool::identity);
                         if worker.pool_binding != desired_pool {
                             let access = (|| -> Result<_> {
                                 match pool.as_mut() {
@@ -891,6 +923,7 @@ impl Supervisor {
                                     &root,
                                     registration,
                                     instance,
+                                    false,
                                     &mut backoff,
                                     WorkerAdmission {
                                         log: &log,
@@ -1093,6 +1126,7 @@ impl Supervisor {
                                 &root,
                                 record.registration,
                                 instance,
+                                false,
                                 &mut backoff,
                                 WorkerAdmission {
                                     log: &log,
@@ -1119,9 +1153,13 @@ impl Supervisor {
                             if restarting.contains_key(&project) {
                                 continue;
                             }
-                            let Ok(registration) =
-                                registry.get(project).map(|record| record.registration)
-                            else {
+                            let derived = registry.derived_work_pending(project).unwrap_or(false);
+                            let Ok(registration) = (if derived {
+                                registry.retained_project(project)
+                            } else {
+                                registry.get(project)
+                            })
+                            .map(|record| record.registration) else {
                                 continue;
                             };
                             let _ = start_worker(
@@ -1129,6 +1167,7 @@ impl Supervisor {
                                 &root,
                                 registration,
                                 instance,
+                                derived,
                                 &mut backoff,
                                 WorkerAdmission {
                                     log: &log,
@@ -1148,6 +1187,20 @@ impl Supervisor {
                             }
                             match registry.next_pending_job(project) {
                                 Ok(Some(job)) => {
+                                    let derived = registry
+                                        .configuration_work(job.id)
+                                        .ok()
+                                        .flatten()
+                                        .is_some_and(|work| {
+                                            work.request.configuration.is_derived_cleanup()
+                                        });
+                                    if workers
+                                        .get(&project)
+                                        .is_none_or(|worker| worker.derived != derived)
+                                    {
+                                        resources.forget_pending(project);
+                                        continue;
+                                    }
                                     // A newly admitted worker may precede the first helper turn.
                                     // Wait through finite recovery, then expose failure normally;
                                     // source jobs never depend on this inference-only gate.
@@ -1198,7 +1251,7 @@ impl Supervisor {
                                 Some(protocol::WorkControl {
                                     grant: grant.id,
                                     paused: plan_paused
-                                        || (registry.get(*project).ok()?.paused
+                                        || (registry.retained_project(*project).ok()?.paused
                                             && !registry.job_runs_while_paused(grant.job).ok()?),
                                     canceled: plan_canceled
                                         || registry.cancellation_requested(grant.job).ok()?,

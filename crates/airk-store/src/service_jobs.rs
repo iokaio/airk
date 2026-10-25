@@ -11,7 +11,7 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
 // Unregister changes registration metadata only. It must not require resuming
 // source work to remove a paused project. No other configuration bypasses pause.
-const RUN_WHILE_PAUSED: &str = "(j.kind IN('inspect','plan_inspect') OR (j.kind='configure' AND EXISTS(SELECT 1 FROM service_configuration c WHERE c.job=j.id AND json_extract(CAST(c.payload AS TEXT),'$.request.configuration.operation')='unregister')))";
+const RUN_WHILE_PAUSED: &str = "(j.kind IN('inspect','plan_inspect') OR (j.kind='configure' AND EXISTS(SELECT 1 FROM service_configuration c WHERE c.job=j.id AND json_extract(CAST(c.payload AS TEXT),'$.request.configuration.operation') IN('unregister','prepare_derived_cleanup','delete_derived'))))";
 
 pub(super) const SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS service_jobs(
@@ -142,8 +142,9 @@ impl ServiceRegistry {
         Ok(matches!(job.kind, JobKind::Inspect | JobKind::PlanInspect)
             || job.kind == JobKind::Configure
                 && super::configuration::work(&self.connection, id)?.is_some_and(|work| {
-                    work.request.configuration
-                        == airk_core::service_configuration::ProjectConfiguration::Unregister
+                    work.request.configuration.is_derived_cleanup()
+                        || work.request.configuration
+                            == airk_core::service_configuration::ProjectConfiguration::Unregister
                 }))
     }
     /// Fair oldest-pending order, bounded independently of the number of saved projects.
@@ -421,12 +422,31 @@ impl ServiceRegistry {
             namespace == key.namespace.to_string() && current == epoch,
             JobError::KeyExpired
         );
-        let registered: bool = transaction.query_row(
-            "SELECT EXISTS(SELECT 1 FROM projects WHERE binding=?1 AND registered=1)",
-            [project.to_string()],
-            |row| row.get(0),
-        )?;
-        ensure!(registered, "service project is not registered");
+        let derived = configuration
+            .as_deref()
+            .is_some_and(|work| work.request.configuration.is_derived_cleanup());
+        if let Some(work) = configuration.as_deref().filter(|_| derived) {
+            ensure!(
+                work.request.incarnation.to_string() == namespace
+                    && work.request.settings == project,
+                "derived cleanup authority does not match this registry and project"
+            );
+        }
+        let registered: Option<bool> = transaction
+            .query_row(
+                "SELECT registered FROM projects WHERE binding=?1",
+                [project.to_string()],
+                |row| row.get(0),
+            )
+            .optional()?;
+        ensure!(
+            registered == Some(!derived),
+            if derived {
+                "unregister the project before derived cleanup"
+            } else {
+                "service project is not registered"
+            }
+        );
         ensure!(!metadata_pressure(&transaction)?, JobError::Capacity);
         let planned_source = plan
             .map(|link| super::maintenance::prepare_job(&transaction, link, project, kind))
@@ -802,6 +822,8 @@ impl ServiceRegistry {
             code: "configuration_outcome_unknown_reinspect".into(),
         })?;
         super::configuration::recover_results(&transaction, lease, epoch)?;
+        transaction.execute("UPDATE service_jobs SET state='pending' WHERE project=?1 AND kind='configure' AND state='running' AND epoch<>?2 AND attempts<3 AND id IN(SELECT job FROM service_configuration WHERE json_extract(CAST(payload AS TEXT),'$.request.configuration.operation') IN('prepare_derived_cleanup','delete_derived'))",
+            params![lease.binding.to_string(),i64::try_from(epoch)?])?;
         transaction.execute("UPDATE service_jobs SET state='failed',outcome=?1 WHERE project=?2 AND kind='configure' AND state='running' AND epoch<>?3",
             params![uncertain,lease.binding.to_string(),i64::try_from(epoch)?])?;
         transaction.execute(
@@ -859,6 +881,17 @@ impl ServiceRegistry {
         let Some(id) = id else {
             return Ok(None);
         };
+        let derived = super::configuration::work(&transaction, id.parse()?)?
+            .is_some_and(|work| work.request.configuration.is_derived_cleanup());
+        let registered: bool = transaction.query_row(
+            "SELECT registered FROM projects WHERE binding=?1",
+            [lease.binding.to_string()],
+            |row| row.get(0),
+        )?;
+        ensure!(
+            derived == lease.derived && registered != derived,
+            "project job belongs to a different worker role"
+        );
         transaction.execute("UPDATE service_jobs SET state='running',epoch=?1,attempts=attempts+1 WHERE id=?2 AND state='pending'",
             params![i64::try_from(epoch)?, id])?;
         let claimed = record(&transaction, id.parse()?)?;
@@ -1038,6 +1071,7 @@ impl ServiceRegistry {
         )?;
         if matches!(outcome, JobOutcome::Succeeded { .. }) {
             super::unregistration::finish_if_requested(&transaction, current.project, id)?;
+            super::cleanup::finish_if_requested(&transaction, current.project, id)?;
         }
         transaction.commit()?;
         Ok(completed)
