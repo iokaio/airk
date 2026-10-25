@@ -359,8 +359,9 @@ impl ServiceManager {
             return macos::Manager::new(self).status();
         }
         let installed = self.check_owned()?;
+        self.require_legacy_domain()?;
         let output = execute(&self.query(installed)?)?;
-        let (loaded, running) = parse_status(self.platform, &output);
+        let (loaded, running) = self.observed_state(&output);
         let verification = if installed && loaded == Some(true) {
             self.verify_registration(&output)
         } else {
@@ -384,6 +385,11 @@ impl ServiceManager {
     }
 
     fn verify_registration(&self, output: &Output) -> Result<Option<bool>> {
+        #[cfg(any(target_os = "macos", test))]
+        if self.platform == Platform::Macos && self.legacy_review {
+            self.verify_legacy_mac_job(&output.text)?;
+            return Ok(Some(true));
+        }
         if self.platform == Platform::Windows {
             let value: serde_json::Value = serde_json::from_str(&output.text)?;
             return Ok(Some(
@@ -552,7 +558,54 @@ impl ServiceManager {
     }
     pub(crate) fn legacy_manager_state(&self) -> Result<(Option<bool>, Option<bool>)> {
         ensure!(self.legacy_review, "legacy removal role required");
-        Ok(parse_status(self.platform, &execute(&self.query(false)?)?))
+        self.require_legacy_domain()?;
+        Ok(self.observed_state(&execute(&self.query(false)?)?))
+    }
+
+    fn require_legacy_domain(&self) -> Result<()> {
+        if self.platform == Platform::Macos && self.legacy_review {
+            checked(&self.launchctl(&["print", &self.domain()]))?;
+        }
+        Ok(())
+    }
+    fn observed_state(&self, output: &Output) -> (Option<bool>, Option<bool>) {
+        if self.platform == Platform::Macos && self.legacy_review && !output.success {
+            return if output
+                .text
+                .contains(&format!("Could not find service \"{}\"", self.id))
+            {
+                (Some(false), Some(false))
+            } else {
+                (None, None)
+            };
+        }
+        parse_status(self.platform, output)
+    }
+    #[cfg(any(target_os = "macos", test))]
+    fn verify_legacy_mac_job(&self, text: &str) -> Result<()> {
+        ensure!(
+            self.legacy_review && self.platform == Platform::Macos,
+            "legacy Mac ownership required"
+        );
+        ensure!(
+            text.lines()
+                .next()
+                .is_some_and(|line| line.trim() == format!("{} = {{", self.target())),
+            "Mac legacy label or user domain differs"
+        );
+        let executable = self
+            .executable
+            .to_str()
+            .context("non-UTF-8 legacy executable")?;
+        let arguments = std::iter::once(executable)
+            .chain(self.args.iter().map(String::as_str))
+            .collect::<Vec<_>>();
+        crate::runtime_install::macos_login::verify_job_scope(
+            text,
+            &self.executable,
+            &self.definition,
+            &arguments,
+        )
     }
     pub(crate) fn reload_reviewed_legacy(&self) -> Result<()> {
         ensure!(self.legacy_review, "legacy removal role required");
@@ -569,8 +622,7 @@ impl ServiceManager {
 
     fn require_registration_adapter(&self) -> Result<()> {
         ensure!(
-            !((self.id.starts_with("airksvc-") || self.legacy_review)
-                && self.platform == Platform::Macos),
+            !(self.id.starts_with("airksvc-") && self.platform == Platform::Macos),
             "shared LaunchAgent configuration proof is unavailable; retain on-demand mode until the native adapter is implemented and qualified"
         );
         Ok(())
@@ -1456,6 +1508,76 @@ mod tests {
             b"Not an accessible directory.",
         )?;
         assert!(!service.owns_restart()?);
+        Ok(())
+    }
+    #[test]
+    fn legacy_mac_job_requires_exact_user_label_origin_program_and_all_arguments() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let mut service = fixture(Platform::Macos, root.path());
+        service.legacy_review = true;
+        service.args = vec![
+            "--root".into(),
+            "/fixture source/é".into(),
+            "--data-dir".into(),
+            "/fixture data".into(),
+            "--collection".into(),
+            "example".into(),
+            "schedule".into(),
+            "run".into(),
+            "--watch".into(),
+        ];
+        let argv = std::iter::once(service.executable.to_str().unwrap())
+            .chain(service.args.iter().map(String::as_str))
+            .collect::<Vec<_>>()
+            .join("\n\t\t");
+        let text = format!(
+            "{} = {{\n\tpath = {}\n\tprogram = {}\n\targuments = {{\n\t\t{argv}\n\t}}\n\tstate = running\n}}\n",
+            service.target(),
+            service.definition.display(),
+            service.executable.display()
+        );
+        let observed = Output {
+            success: true,
+            text: text.clone(),
+        };
+        assert_eq!(service.verify_registration(&observed)?, Some(true));
+        assert_eq!(service.observed_state(&observed), (Some(true), Some(true)));
+        for changed in [
+            text.replace("gui/1000/", "gui/1001/"),
+            text.replace("airk-fixture =", "foreign-fixture ="),
+            text.replace(
+                &format!("path = {}", service.definition.display()),
+                "path = /foreign.plist",
+            ),
+            text.replace("program = /fixture", "program = /foreign"),
+            text.replace("\t\t--watch", "\t\t--foreign"),
+            text.replace(
+                "\tstate = running",
+                "\tprogram = /duplicate\n\tstate = running",
+            ),
+            text.replace("\targuments = {", "\tignored = {\n\targuments = {") + "}\n",
+            "x".repeat(65_537),
+        ] {
+            assert!(service.verify_legacy_mac_job(&changed).is_err());
+        }
+        for (message, expected) in [
+            (
+                "Could not find service \"airk-fixture\" in domain",
+                (Some(false), Some(false)),
+            ),
+            ("Could not find service \"foreign\" in domain", (None, None)),
+            ("Could not find domain for user", (None, None)),
+        ] {
+            assert_eq!(
+                service.observed_state(&Output {
+                    success: false,
+                    text: message.into()
+                }),
+                expected
+            );
+        }
+        service.legacy_review = false;
+        assert!(service.verify_legacy_mac_job(&text).is_err());
         Ok(())
     }
     #[test]

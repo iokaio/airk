@@ -67,7 +67,21 @@ where
         anyhow::bail!("direct setup attempt budget exhausted")
     })
     .await
-    .map_err(|_| anyhow::anyhow!("direct setup deadline exceeded before query submission"))?
+    .map_err(|_| {
+        anyhow::Error::new(RetrySetup(
+            "direct setup deadline exceeded before query submission",
+        ))
+    })?
+}
+
+fn setup_rejection(error: &anyhow::Error) -> Option<serde_json::Value> {
+    if !setup_retryable(error) {
+        return None;
+    }
+    let detail = serde_json::json!({"error":{"code":"direct_query_setup","reason":"busy",
+        "query_submitted":false,"retryable":true,"retry_after_ms":100,
+        "fresh_brokerage_required":true}});
+    Some(serde_json::json!({"content":[{"type":"text","text":detail.to_string()}],"isError":true}))
 }
 
 pub struct Connection {
@@ -259,7 +273,10 @@ impl airk_mcp::remote::RemoteTools for Backend {
                     .map(|client| *client)
                     .unwrap_or(airk_core::usage::ClientFamily::Unknown);
                 let mut connection =
-                    Connection::connect_as(&self.root, self.project, client).await?;
+                    match Connection::connect_as(&self.root, self.project, client).await {
+                        Ok(connection) => connection,
+                        Err(error) => return setup_rejection(&error).ok_or(error),
+                    };
                 connection.restore_status_receipt(state.status_receipt);
                 state.connection = Some(connection);
             }
@@ -368,6 +385,30 @@ mod tests {
         assert!(setup_retryable(
             &std::io::Error::from(std::io::ErrorKind::ConnectionReset).into()
         ));
+    }
+
+    #[test]
+    fn only_temporary_pre_submission_setup_failures_get_a_retry_receipt() {
+        for error in [
+            anyhow::Error::new(RetrySetup("capacity")),
+            std::io::Error::from(std::io::ErrorKind::ConnectionRefused).into(),
+        ] {
+            let envelope = setup_rejection(&error).unwrap();
+            let detail: serde_json::Value =
+                serde_json::from_str(envelope["content"][0]["text"].as_str().unwrap()).unwrap();
+            assert_eq!(envelope["isError"], true);
+            assert_eq!(detail["error"]["code"], "direct_query_setup");
+            assert_eq!(detail["error"]["query_submitted"], false);
+            assert_eq!(detail["error"]["fresh_brokerage_required"], true);
+            assert_eq!(detail["error"]["retryable"], true);
+        }
+        for error in [
+            anyhow::anyhow!("identity mismatch"),
+            anyhow::anyhow!("query outcome unknown"),
+            std::io::Error::from(std::io::ErrorKind::PermissionDenied).into(),
+        ] {
+            assert!(setup_rejection(&error).is_none());
+        }
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

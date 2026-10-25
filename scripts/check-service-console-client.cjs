@@ -17,7 +17,7 @@ const {ServiceConsoleController}=require('../packages/vscode/out/serviceConsoleC
     const native=path.join(fixture,'native'),source=path.join(fixture,'source'),data=path.join(fixture,'data');
     await fs.mkdir(native);await fs.cp(payload,path.join(native,'runtime'),{recursive:true,errorOnExist:true,force:false});
     const bytes=await fs.readFile(path.join(native,'runtime','airk-install.json')),inventory=JSON.parse(bytes);
-    const main=process.platform==='win32'?'airk.exe':'airk',helper=process.platform==='win32'?'airk-embed.exe':'airk-embed';
+    const main=process.platform==='win32'?'airk.exe':process.platform==='darwin'?'AIRK.app/Contents/MacOS/airk':'airk',helper=process.platform==='win32'?'airk-embed.exe':process.platform==='darwin'?'AIRK.app/Contents/MacOS/airk-embed':'airk-embed';
     const digest=crypto.createHash('sha256').update(bytes).digest('hex');
     await fs.writeFile(path.join(native,'manifest.json'),JSON.stringify({schema:2,version:inventory.version,vsix_target:`${process.platform}-${process.arch}`,
         runtime_dir:'runtime',install_manifest_sha256:digest,payload:{[main]:inventory.files[main],[helper]:inventory.files[helper]}}));
@@ -107,11 +107,11 @@ const {ServiceConsoleController}=require('../packages/vscode/out/serviceConsoleC
         assert.equal([...values.keys()].filter(key=>key.startsWith('airk.service.intent.')).length,0);
         console.log('Captured redacted report, trust refusal, native stop acknowledgement, explicit start and original-source preservation passed.');
 
-        const selectedHelper=path.join(path.dirname(binding.executable),helper),backup=path.join(fixture,'saved-helper');
+        const selectedHelper=path.join(path.dirname(binding.executable),path.basename(helper)),backup=path.join(fixture,'saved-helper');
         assert.equal(path.relative(fixture,selectedHelper).startsWith('..'),false);
         await fs.rename(selectedHelper,backup);missingHelper={selectedHelper,backup};
         const retainedNote='Original unknown payload note; preserve through repair and uninstall.';
-        await fs.writeFile(path.join(path.dirname(binding.executable),'unknown-note.txt'),retainedNote);
+        await fs.writeFile(path.join(install,'runtimes',digest,'unknown-note.txt'),retainedNote);
         await action('connect');assert.equal(controller.state.connected,false);
         assert.equal(controller.state.bootstrap.value.payloadVerified,false);
         assert.equal(controller.state.page.projects[0].project.registration.binding,project);

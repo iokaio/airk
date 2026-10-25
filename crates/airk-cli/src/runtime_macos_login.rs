@@ -45,6 +45,25 @@ pub(crate) fn require_start_allowed(root: &Path) -> Result<()> {
     lifecycle::require_start_allowed(root)
 }
 fn job_scope(text: &str, main: &Path, plist: &Path, channel: RuntimeChannel) -> Result<()> {
+    verify_job_scope(
+        text,
+        main,
+        plist,
+        &[
+            "airk",
+            "runtime",
+            "login-foreground",
+            "--channel",
+            channel_name(channel),
+        ],
+    )
+}
+pub(crate) fn verify_job_scope(
+    text: &str,
+    main: &Path,
+    plist: &Path,
+    expected_arguments: &[&str],
+) -> Result<()> {
     ensure!(
         text.len() <= 65_536,
         "Mac launchd observation exceeds budget"
@@ -75,7 +94,7 @@ fn job_scope(text: &str, main: &Path, plist: &Path, channel: RuntimeChannel) -> 
             }
         } else if in_arguments && depth == 2 && value != "}" {
             ensure!(
-                arguments.len() < 8 && value.len() <= 4096,
+                arguments.len() < 32 && value.len() <= 4096,
                 "Mac job argument budget exceeded"
             );
             arguments.push(value.to_owned());
@@ -99,15 +118,8 @@ fn job_scope(text: &str, main: &Path, plist: &Path, channel: RuntimeChannel) -> 
         depth == 0
             && program.as_deref() == main.to_str()
             && origin.as_deref() == plist.to_str()
-            && arguments
-                == [
-                    "airk",
-                    "runtime",
-                    "login-foreground",
-                    "--channel",
-                    channel_name(channel)
-                ],
-        "Mac job origin/program/arguments differ from captured signed bundle"
+            && arguments == expected_arguments,
+        "Mac job origin/program/arguments differ from captured ownership"
     );
     Ok(())
 }

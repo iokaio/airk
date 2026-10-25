@@ -73,6 +73,12 @@ class ServiceClientTests(unittest.TestCase):
                            ("retry_after_ms", 0), ("retry_after_ms", True), ("retry_after_ms", 1001)):
             self.assertIsNone(CLIENTS.read_retry_delay(self.envelope({**hint, key: value}, True)))
 
+    def test_setup_rejection_is_unsubmitted_and_honors_native_backoff(self):
+        error = {"code": "direct_query_setup", "reason": "busy", "query_submitted": False,
+                 "retryable": True, "fresh_brokerage_required": True, "retry_after_ms": 100}
+        self.assertEqual(CLIENTS.read_retry_delay(self.envelope({"error": error}, True)), 0.1)
+        self.assertIsNone(CLIENTS.read_retry_delay(self.envelope({"error": {**error, "query_submitted": True}}, True)))
+
 
 if __name__ == "__main__":
     unittest.main()

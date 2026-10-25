@@ -13,7 +13,7 @@ const {probeMcp,runText}=require('../packages/vscode/out/native.js');
     const payload=await fs.realpath(process.argv[3]),parent=await fs.realpath(path.join(__dirname,'../target'));
     const fixture=await fs.mkdtemp(path.join(parent,'airk-frontend-fixture-'));
     const install=path.join(fixture,'installation'),native=path.join(fixture,'native'),source=path.join(fixture,'source');
-    const data=path.join(fixture,'new','data'),main=process.platform==='win32'?'airk.exe':'airk',helper=process.platform==='win32'?'airk-embed.exe':'airk-embed';
+    const data=path.join(fixture,'new','data'),main=process.platform==='win32'?'airk.exe':process.platform==='darwin'?'AIRK.app/Contents/MacOS/airk':'airk',helper=process.platform==='win32'?'airk-embed.exe':process.platform==='darwin'?'AIRK.app/Contents/MacOS/airk-embed':'airk-embed';
     await fs.mkdir(native);await fs.cp(payload,path.join(native,'runtime'),{recursive:true,errorOnExist:true,force:false});
     const bytes=await fs.readFile(path.join(native,'runtime','airk-install.json')),inventory=JSON.parse(bytes);
     const digest=crypto.createHash('sha256').update(bytes).digest('hex');

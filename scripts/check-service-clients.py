@@ -30,7 +30,7 @@ def unsubmitted_busy(envelope):
         return False
     try:
         error = tool_value(envelope)["error"]
-        return (error.get("code") == "direct_query_admission" and error.get("reason") == "busy"
+        return (error.get("code") in ("direct_query_admission", "direct_query_setup") and error.get("reason") == "busy"
                 and error.get("query_submitted") is False)
     except (AssertionError, KeyError, TypeError, ValueError):
         return False
@@ -38,7 +38,8 @@ def unsubmitted_busy(envelope):
 
 def read_retry_delay(envelope):
     if unsubmitted_busy(envelope):
-        return 0.025
+        delay = tool_value(envelope)["error"].get("retry_after_ms", 25)
+        return delay / 1000 if type(delay) is int and 1 <= delay <= 1000 else None
     if envelope.get("isError") is not True:
         return None
     try:

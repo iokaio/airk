@@ -14,7 +14,7 @@ const {ServiceConsoleController}=require('../packages/vscode/out/serviceConsoleC
     const parent=await fs.realpath(path.join(__dirname,'../target'));
     const fixture=await fs.mkdtemp(path.join(parent,'airk-transition-fixture-'));
     const install=path.join(fixture,'installation'),native=path.join(fixture,'native'),source=path.join(fixture,'source'),data=path.join(fixture,'data');
-    const main=process.platform==='win32'?'airk.exe':'airk',helper=process.platform==='win32'?'airk-embed.exe':'airk-embed';
+    const main=process.platform==='win32'?'airk.exe':process.platform==='darwin'?'AIRK.app/Contents/MacOS/airk':'airk',helper=process.platform==='win32'?'airk-embed.exe':process.platform==='darwin'?'AIRK.app/Contents/MacOS/airk-embed':'airk-embed';
     const hash=bytes=>crypto.createHash('sha256').update(bytes).digest('hex');
     await fs.mkdir(native);await fs.cp(payload,path.join(native,'runtime'),{recursive:true,errorOnExist:true,force:false});
     const bytes=await fs.readFile(path.join(native,'runtime','airk-install.json')),inventory=JSON.parse(bytes),target=hash(bytes);
@@ -70,7 +70,9 @@ const {ServiceConsoleController}=require('../packages/vscode/out/serviceConsoleC
         assert.equal((await selection()).active,preceding,'same-version pin was automatically replaced');
         await fs.mkdir(source);await fs.mkdir(data);const original='Original copper beacon transition evidence.\n';await fs.writeFile(path.join(source,'memo.txt'),original);
         const control=await fs.realpath(path.join(fixture,'state','control'));
-        const registered=await nativeRunner(bundled.main,['--root',source,'--data-dir',data,'--collection','transition-fixture','service','register','--runtime-dir',control]);
+        // Register through the deliberately pinned predecessor, whose engine
+        // identity the running service accepts. The candidate must stay fenced.
+        const registered=await nativeRunner(path.join(install,'runtimes',preceding,main),['--root',source,'--data-dir',data,'--collection','transition-fixture','service','register','--runtime-dir',control]);
         const project=registered.project.registration.binding;
         await controller.refresh();await action('index',{project});
         const deadline=Date.now()+90000;

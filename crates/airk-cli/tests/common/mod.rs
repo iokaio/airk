@@ -420,15 +420,25 @@ pub fn call(
                     .ok()
                 })
                 .filter(|hint| {
-                    hint["status"] == "retry"
+                    (hint["status"] == "retry"
                         && hint["retryable"] == true
                         && hint["action"] == "repeat_same_request"
                         && matches!(
                             hint["code"].as_str(),
                             Some("publication_busy" | "selection_busy")
-                        )
+                        ))
+                        || (matches!(
+                            hint["error"]["code"].as_str(),
+                            Some("direct_query_admission" | "direct_query_setup")
+                        ) && hint["error"]["reason"] == "busy"
+                            && hint["error"]["query_submitted"] == false
+                            && hint["error"]["retryable"] == true)
                 })
-                .and_then(|hint| hint["retry_after_ms"].as_u64())
+                .and_then(|hint| {
+                    hint["retry_after_ms"]
+                        .as_u64()
+                        .or_else(|| hint["error"]["retry_after_ms"].as_u64())
+                })
                 .filter(|delay| (1..=1000).contains(delay))
                 .map(Duration::from_millis)
         } else {

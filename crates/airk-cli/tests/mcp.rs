@@ -84,8 +84,10 @@ impl Session {
                 .as_str()
                 .and_then(|text| serde_json::from_str::<Value>(text).ok());
             let Some(hint) = hint.filter(|hint| {
-                (hint["error"]["code"] == "direct_query_admission"
-                    && hint["error"]["reason"] == "busy")
+                (matches!(
+                    hint["error"]["code"].as_str(),
+                    Some("direct_query_admission" | "direct_query_setup")
+                ) && hint["error"]["reason"] == "busy")
                     || (hint["status"] == "retry"
                         && hint["retryable"] == true
                         && hint["action"] == "repeat_same_request"
@@ -101,7 +103,10 @@ impl Session {
             } else {
                 assert_eq!(hint["error"]["query_submitted"], false);
                 assert_eq!(hint["error"]["retryable"], true);
-                assert_eq!(hint["error"]["fresh_brokerage_required"], false);
+                assert_eq!(
+                    hint["error"]["fresh_brokerage_required"],
+                    hint["error"]["code"] == "direct_query_setup"
+                );
                 hint["error"]["retry_after_ms"].as_u64().unwrap()
             };
             assert!((1..=1000).contains(&delay));
@@ -708,7 +713,7 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
             json!({"selectors":[{"kind":"path","path":"auth.py"}]}),
         ),
     ] {
-        let result = session.call(i, name, args.clone())?;
+        let result = session.read_retry(i, name, args.clone())?;
         assert!(result.get("error").is_none(), "{name}: {result}");
         assert_ne!(result["result"]["isError"], true, "{name}: {result}");
         let payload: Value = serde_json::from_str(
@@ -716,15 +721,12 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
                 .as_str()
                 .expect("JSON payload"),
         )?;
-        let direct = common::command(root.path(), state.path(), "project-a")
-            .args(["tools", "call", name, "--args", &args.to_string()])
-            .output()?;
-        assert!(
-            direct.status.success(),
-            "{name}: {}",
-            String::from_utf8_lossy(&direct.stderr)
-        );
-        let direct: Value = serde_json::from_slice(&direct.stdout)?;
+        let direct = common::call(
+            root.path(),
+            state.path(),
+            "project-a",
+            &["tools", "call", name, "--args", &args.to_string()],
+        )?;
         let mut direct: Value =
             serde_json::from_str(direct["content"][0]["text"].as_str().unwrap())?;
         if name != "airk_status" {
@@ -732,11 +734,18 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
             let mut expected = payload.clone();
             expected.as_object_mut().unwrap().remove("request_id");
             direct.as_object_mut().unwrap().remove("request_id");
-            if direct.get("freshness").is_some() {
-                // Each call observes scheduler freshness at its own wall-clock instant.
-                assert!(direct["freshness"]["observed_unix_ms"].is_number());
-                direct["freshness"]["observed_unix_ms"] = Value::Null;
-                expected["freshness"]["observed_unix_ms"] = Value::Null;
+            for value in [&mut direct, &mut expected] {
+                if let Some(freshness) = value.as_object_mut().unwrap().remove("freshness") {
+                    // Scheduler observations are independently cached per call;
+                    // they can become unavailable without changing indexed evidence.
+                    let freshness: airk_core::changes::FreshnessObservation =
+                        serde_json::from_value(freshness)?;
+                    assert!(freshness.observed_unix_ms > 0);
+                    assert!(!freshness.live_source_verified);
+                    if freshness.state == airk_core::changes::FreshnessState::Unavailable {
+                        assert!(freshness.error.is_some());
+                    }
+                }
             }
             assert_eq!(direct, expected, "CLI/MCP result mismatch for {name}");
         }

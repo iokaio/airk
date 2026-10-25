@@ -286,7 +286,9 @@ def main():
             _, event_cursor = event_tail()
             # Ask the native owner to drain its exact opaque worker identity.
             # A stale/foreign identity must never stop the current helper.
-            worker_identities = [rpc({"connect": {"project": project["binding"]}})["grant"]["identity"] for project in projects]
+            worker_identities = [rpc({"worker": {"project": project["binding"]}})["identity"] for project in projects]
+            if any(identity is None for identity in worker_identities):
+                raise RuntimeError("Expected resident project worker identity before helper stop")
             observation = rpc("embedding_status")
             rejected = rpc({"stop_embedding": {"worker": uuid.uuid4().hex, "force": True}})
             if rejected.get("code") != "embedding_worker_changed":
@@ -359,7 +361,7 @@ def main():
             if recovered["worker"] == observation["worker"]:
                 raise RuntimeError("Embedding replacement reused an old process incarnation")
             for project, identity in zip(projects, worker_identities):
-                if rpc({"connect": {"project": project["binding"]}})["grant"]["identity"] != identity:
+                if rpc({"worker": {"project": project["binding"]}})["identity"] != identity:
                     raise RuntimeError("Helper recovery replaced an independent project worker")
             # Failed semantic jobs require an explicit new request; recovery never
             # silently replays an uncertain operation or cancels a source receipt.
