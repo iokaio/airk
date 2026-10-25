@@ -291,6 +291,18 @@ fn open_writer_mode(
     create: bool,
     bootstrap: bool,
 ) -> Result<Connection> {
+    super::admission::admit_open(|| {
+        open_writer_mode_once(path, capacity, create, bootstrap)
+            .map_err(super::admission::writer_open_error)
+    })
+}
+
+fn open_writer_mode_once(
+    path: &Path,
+    capacity: u64,
+    create: bool,
+    bootstrap: bool,
+) -> Result<Connection> {
     let pages = validate_capacity(capacity)?;
     if !create {
         plain_database(path)?;

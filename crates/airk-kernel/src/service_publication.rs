@@ -189,6 +189,85 @@ mod tests {
     }
 
     #[test]
+    fn concurrent_source_publications_and_queries_preserve_project_evidence() -> Result<()> {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let owner = tempfile::tempdir()?;
+        let data = owner.path().join("data");
+        std::fs::create_dir(&data)?;
+        let mut kernels = Vec::new();
+        for n in 0..4 {
+            let source = owner.path().join(format!("source-{n}"));
+            std::fs::create_dir(&source)?;
+            for file in 0..16 {
+                std::fs::write(
+                    source.join(format!("file-{file}.txt")),
+                    format!("projectmarker{n} Original fixture {file}.\n").repeat(32),
+                )?;
+            }
+            let kernel = Kernel::open_service_collection(
+                &source,
+                Some(data.clone()),
+                &format!("concurrent-{n}"),
+            )?;
+            kernel.configure_vectors(false)?;
+            kernel.index_service_sources()?;
+            kernels.push((source, kernel));
+        }
+        let stop = Arc::new(AtomicBool::new(false));
+        let reader_kernel = kernels[0].1.clone();
+        let reader_stop = stop.clone();
+        let reader = std::thread::spawn(move || -> Result<()> {
+            while !reader_stop.load(Ordering::Acquire) {
+                match reader_kernel.search(&query("projectmarker0")) {
+                    Ok(result) => ensure!(
+                        !result.hits.is_empty(),
+                        "concurrent reader lost its project evidence"
+                    ),
+                    Err(error) if Kernel::service_enrichment_contention(&error) => {}
+                    Err(error) => return Err(error.context("concurrent project query")),
+                }
+            }
+            Ok(())
+        });
+        let outcome = std::thread::scope(|scope| -> Result<()> {
+            let mut writers = Vec::new();
+            for (n, (source, kernel)) in kernels.iter().enumerate() {
+                writers.push(scope.spawn(move || -> Result<()> {
+                    for turn in 0..8 {
+                        for file in 0..16 {
+                            std::fs::write(
+                                source.join(format!("file-{file}.txt")),
+                                format!("projectmarker{n} Updated fixture {file} turn {turn}.\n")
+                                    .repeat(64),
+                            )?;
+                        }
+                        kernel.index_service_sources().with_context(|| {
+                            format!("concurrent source publication project {n} turn {turn}")
+                        })?;
+                        ensure!(
+                            crate::service_execution::with_database_admission(|| kernel.status())?
+                                .files
+                                == 16,
+                            "publication lost its source inventory"
+                        );
+                    }
+                    Ok(())
+                }));
+            }
+            for writer in writers {
+                writer
+                    .join()
+                    .map_err(|_| anyhow::anyhow!("source publication thread failed"))??;
+            }
+            Ok(())
+        });
+        stop.store(true, Ordering::Release);
+        reader
+            .join()
+            .map_err(|_| anyhow::anyhow!("source query thread failed"))??;
+        outcome
+    }
+    #[test]
     fn missing_source_keeps_retained_reads_and_rejects_scan_or_rebuild_without_deleting_evidence()
     -> Result<()> {
         let owner = tempfile::tempdir()?;

@@ -665,6 +665,10 @@ pub async fn run() -> Result<()> {
                                 && Kernel::service_enrichment_contention(&error)
                             {
                                 "semantic_contention_retry_exhausted"
+                            } else if error.is::<airk_store::current::CurrentReadContention>()
+                                || error.is::<airk_store::current::CurrentOpenContention>()
+                            {
+                                "current_database_admission_busy"
                             } else if error.is::<airk_kernel::service_execution::WorkStalled>() {
                                 "work_stalled"
                             } else if error.is::<airk_kernel::service_projects::SourceUnavailable>()
@@ -707,10 +711,13 @@ pub async fn run() -> Result<()> {
                             | JobKind::Recover
                             | JobKind::Vectors
                     ) {
-                        let readiness = kernel
-                            .refresh_service_snapshot()?
-                            .status()?
-                            .semantic_readiness;
+                        let readiness =
+                            airk_kernel::service_execution::with_database_admission(|| {
+                                Ok(kernel
+                                    .refresh_service_snapshot()?
+                                    .status()?
+                                    .semantic_readiness)
+                            })?;
                         registry.set_background_pending(
                             &job_lease,
                             JobKind::Vectors,

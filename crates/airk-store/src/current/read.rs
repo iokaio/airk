@@ -286,6 +286,9 @@ impl GraphRecordReader for CurrentRead {
 
 impl FileStore {
     pub fn current_read(&self, scope: &CurrentScope) -> Result<Arc<CurrentRead>> {
+        super::admission::admit_open(|| self.current_read_once(scope).map_err(read_error))
+    }
+    fn current_read_once(&self, scope: &CurrentScope) -> Result<Arc<CurrentRead>> {
         scope.validate()?;
         ensure!(
             self.collection_id()? == scope.collection,

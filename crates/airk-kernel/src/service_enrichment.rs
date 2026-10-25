@@ -21,6 +21,7 @@ impl Kernel {
             Some(WaitReason::ReaderLease)
         } else if error.is::<crate::CurrentGateContention>()
             || error.is::<airk_store::current::CurrentReadContention>()
+            || error.is::<airk_store::current::CurrentOpenContention>()
         {
             Some(WaitReason::Publication)
         } else if error.is::<airk_store::service::collection::SelectionContention>() {
@@ -39,8 +40,10 @@ impl Kernel {
             self.is_service_collection(),
             "source-only service indexing requires its project owner"
         );
-        self.observe_service_index(airk_core::usage::UsageOperation::Index, || {
-            self.index_current(false, true)
+        crate::service_execution::with_database_admission(|| {
+            self.observe_service_index(airk_core::usage::UsageOperation::Index, || {
+                self.index_current(false, true)
+            })
         })
     }
     /// One bounded 32-artifact semantic batch; the soft deadline is checked at
@@ -50,12 +53,14 @@ impl Kernel {
             self.is_service_collection(),
             "service enrichment requires its project owner"
         );
-        self.observe_service_index(airk_core::usage::UsageOperation::Index, || {
-            self.resume_current_enrichment_batches_bounded(
-                1,
-                Some(std::time::Duration::from_secs(30)),
-            )
-            .map(|(_, report)| report)
+        crate::service_execution::with_database_admission(|| {
+            self.observe_service_index(airk_core::usage::UsageOperation::Index, || {
+                self.resume_current_enrichment_batches_bounded(
+                    1,
+                    Some(std::time::Duration::from_secs(30)),
+                )
+                .map(|(_, report)| report)
+            })
         })
     }
 

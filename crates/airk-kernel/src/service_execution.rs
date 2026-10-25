@@ -62,6 +62,18 @@ pub fn progress_waiting(reason: Option<airk_core::service_resources::WaitReason>
 pub fn waiting_for() -> Option<airk_core::service_resources::WaitReason> {
     *OWNER.get()?.waiting.lock().ok()?
 }
+pub fn with_database_admission<T>(work: impl FnOnce() -> Result<T>) -> Result<T> {
+    airk_store::current::with_work_admission(
+        Duration::from_secs(30),
+        checkpoint,
+        |waiting| {
+            progress_waiting(
+                waiting.then_some(airk_core::service_resources::WaitReason::Publication),
+            )
+        },
+        work,
+    )
+}
 pub(crate) fn progress_capture() {
     observe(|progress, now| progress.capture(now));
 }
@@ -237,7 +249,7 @@ pub fn run<T>(grant: WorkAllowance, work: impl FnOnce() -> Result<T>) -> Result<
         }
     }
     let _reset = Reset;
-    work()
+    with_database_admission(work)
 }
 pub(crate) fn plan(root: &Path) -> Result<Option<ExecutionPlan>> {
     checkpoint()?;

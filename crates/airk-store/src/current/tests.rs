@@ -1619,6 +1619,116 @@ fn changed_pending_map_bytes_block_applying_and_commit_without_advancing_head() 
 }
 
 #[test]
+fn work_writer_open_admission_retries_only_before_transactions() -> Result<()> {
+    use std::time::Duration;
+    let fixture = Fixture::new()?;
+    let token = fixture.store.current_read(&fixture.scope)?.token()?;
+    let capacity = database::check_owner(fixture.store.directory(), &fixture.scope)?;
+    let path = fixture.store.directory().join("current.sqlite3");
+    let _writer = fixture.store.lock()?;
+    let blocker = rusqlite::Connection::open(&path)?;
+    blocker.execute_batch("BEGIN EXCLUSIVE;")?;
+    let error = database::open_writer(&path, capacity, false)
+        .err()
+        .context("writer unexpectedly admitted")?;
+    assert!(error.is::<CurrentOpenContention>(), "{error:#}");
+    let release = std::thread::spawn(move || -> Result<()> {
+        std::thread::sleep(Duration::from_millis(100));
+        blocker.execute_batch("ROLLBACK;")?;
+        Ok(())
+    });
+    let connection = with_work_admission(
+        Duration::from_secs(2),
+        || Ok(()),
+        |_| {},
+        || database::open_writer(&path, capacity, false),
+    );
+    release.join().unwrap()?;
+    drop(connection?);
+    fixture
+        .store
+        .current_read(&fixture.scope)?
+        .require_token(&token)?;
+    Ok(())
+}
+
+#[test]
+fn work_read_admission_waits_for_real_lock_without_changing_direct_queries() -> Result<()> {
+    use std::{
+        sync::atomic::{AtomicUsize, Ordering},
+        time::{Duration, Instant},
+    };
+    static CHECKS: AtomicUsize = AtomicUsize::new(0);
+    static WAITS: AtomicUsize = AtomicUsize::new(0);
+    fn checkpoint() -> Result<()> {
+        CHECKS.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+    fn waiting(blocked: bool) {
+        WAITS.fetch_or(if blocked { 1 } else { 2 }, Ordering::SeqCst);
+    }
+    let fixture = Fixture::new()?;
+    let token = fixture.store.current_read(&fixture.scope)?.token()?;
+    let blocker = rusqlite::Connection::open(fixture.store.directory().join("current.sqlite3"))?;
+    blocker.execute_batch("BEGIN EXCLUSIVE;")?;
+    with_work_admission(Duration::from_millis(40), checkpoint, waiting, || {
+        let store = fixture.store.clone();
+        let scope = fixture.scope.clone();
+        std::thread::spawn(move || -> Result<()> {
+            let error = store
+                .current_read(&scope)
+                .err()
+                .context("query unexpectedly waited")?;
+            ensure!(
+                error.is::<CurrentReadContention>(),
+                "direct query lost its retry marker"
+            );
+            Ok(())
+        })
+        .join()
+        .unwrap()?;
+        assert_eq!(
+            CHECKS.load(Ordering::SeqCst),
+            0,
+            "work policy leaked into another query thread"
+        );
+        let started = Instant::now();
+        let error = fixture
+            .store
+            .current_read(&fixture.scope)
+            .err()
+            .context("lock did not bound work admission")?;
+        assert!(error.is::<CurrentReadContention>());
+        assert!(started.elapsed() >= Duration::from_millis(40));
+        Ok(())
+    })?;
+    let checks = CHECKS.load(Ordering::SeqCst);
+    assert!(fixture.store.current_read(&fixture.scope).is_err());
+    assert_eq!(
+        CHECKS.load(Ordering::SeqCst),
+        checks,
+        "work policy survived its scope"
+    );
+    let release = std::thread::spawn(move || -> Result<()> {
+        std::thread::sleep(Duration::from_millis(100));
+        blocker.execute_batch("ROLLBACK;")?;
+        Ok(())
+    });
+    let read = with_work_admission(Duration::from_secs(2), checkpoint, waiting, || {
+        fixture.store.current_read(&fixture.scope)
+    });
+    release.join().unwrap()?;
+    let read = read?;
+    read.require_token(&token)?;
+    assert_eq!(
+        WAITS.load(Ordering::SeqCst),
+        3,
+        "wait observation did not clear"
+    );
+    Ok(())
+}
+
+#[test]
 fn temporary_read_lock_is_typed_and_retry_preserves_the_exact_revision() -> Result<()> {
     let fixture = Fixture::new()?;
     let token = fixture.store.current_read(&fixture.scope)?.token()?;

@@ -8,6 +8,8 @@ Authorization: implement the entire plan, make human DCO-signed local stage comm
 
 The native service, direct worker retrieval, shared inference helper, default clients, installer/lifecycle, guarded maintenance and legacy transition are implemented. Terse/Full response choices and all seven token-efficiency additions are implemented. The final requirement audit added exact sampled wait reasons and paused queued-job visibility/cancellation; native and extension regressions pass. Refreshed final-source qualification is running before packaging.
 
+Concurrent-workload review then reproduced SQLite connection-opening exclusion during source publication. Native thread-scoped admission now waits within a finite checkpointed budget for reader/writer opens, without replaying source scans or publications; query threads preserve immediate typed rejection. The four-project concurrency regression, actual locked-reader/writer tests, cancellation/domain checks and workspace Clippy pass. A fresh exact pair and full production pipeline are being qualified before the VSIX gate.
+
 Private optimized pair 57 passes five real transformer lifecycle trials, all nine project/client load cases, two-size retrieval judgments and all five real editor-stage scenarios together. Earlier exact receipts cover the 128 MiB/16,384-file corpus, original document coordinates, storage retirement, usage overhead/accounting, publication faults, installer/controller recovery and interrupted transitions. The Linux production baseline passes 1,339 tests with 18 skips. These are bounded development results, separate from the final-source and installed-VSIX gates below. The query-tail 2× objective is not met in every measured case.
 
 | Phase | Implemented behavior | Remaining exit evidence |
