@@ -407,9 +407,29 @@ pub fn call(
     let deadline = Instant::now() + Duration::from_secs(60);
     let output = loop {
         let output = command(root, data, collection).args(args).output()?;
-        // Tools are read-only. A typed rejection permits repeating these exact
+        // Evidence commands are read-only. A typed rejection repeats these exact
         // arguments (including revision/cursor); never retry an accepted mutation.
-        let delay = if args.starts_with(&["tools", "call"]) {
+        let read = args.starts_with(&["tools", "call"])
+            || matches!(
+                args.first(),
+                Some(
+                    &("status"
+                        | "search"
+                        | "files"
+                        | "read"
+                        | "info"
+                        | "outline"
+                        | "symbol"
+                        | "imports"
+                        | "facts"
+                        | "refs"
+                        | "context"
+                        | "changes"
+                        | "code-facts"
+                        | "relationships")
+                )
+            );
+        let delay = if read {
             serde_json::from_slice::<serde_json::Value>(&output.stdout)
                 .ok()
                 .filter(|envelope| envelope["isError"] == true)

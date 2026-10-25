@@ -1,5 +1,7 @@
 # AIRK 1.4.0 development release record
 
+October 25: typed semantic contention now retains the accepted work grant through bounded retry, uses publication identity to avoid repeating a committed batch, and leaves genuine faults terminal. Five retained transformer lifecycle trials, run two at a time, pass on the fresh optimized pair; native Windows/Linux lock and after-commit regressions pass. The full nine-case project/client matrix has passing correctness and health evidence, with explicit overload and query-tail limitations. Frozen workspace/container and installed-artifact acceptance remain open; see [exact evidence](service-cutover-qualification.md).
+
 All five real private editor-stage scenarios now pass together. The 128 MiB/16,384-file lexical workload, complete usage accounting, native installer/controller recovery, shared model recovery and reviewed/interrupted runtime transitions also pass. Exact legacy Mac loaded-job proof is implemented with portable refusal tests; actual native Mac removal remains unverified. Ten-project load exposed an untyped setup exhaustion, now a proven-unsubmitted retry hint; the fresh load rerun and final artifact gates remain open. See [the current evidence record](service-cutover-qualification.md).
 
 Fresh optimized-pair qualification now passes two-size retrieval judgments, offline bundled/custom model lifecycle, original-coordinate documents, guarded storage retirement/re-registration, usage inputs and six process-death publication attempts. Mac qualification paths select the app-bundled executable while preserving external receipt identity. Test adapters preserve exact read selectors across typed publication rejection and await durable configuration receipts. Full workload/broad-platform review and final VSIX acceptance remain open; [exact evidence and the retained intermittent timeout](service-cutover-qualification.md) are recorded separately.
@@ -70,7 +72,7 @@ Service source freshness now uses fenced cached registry samples rather than leg
 
 Native call discovery now indexes terminal written method names for receiver/chained calls and exposes explicit candidate labels without resolving receivers. Prior posting formats remain readable and retire safely. Temporary selection/read contention returns typed MCP retry hints while hard errors and exact-revision expiry stay distinct. See [retrieval contracts](service-retrieval.md).
 
-Physical compression now preserves the prior capture’s posting format, and the native writer rejects a format change during physical-only repacking. This keeps later call-posting retirement compatible with older captures; source evidence remains byte-exact.
+Physical compression now preserves the prior captureâ€™s posting format, and the native writer rejects a format change during physical-only repacking. This keeps later call-posting retirement compatible with older captures; source evidence remains byte-exact.
 
 The change feed now retains bounded authenticated parent/event metadata across publications, with independent coverage floors, whole-group pressure/age expiry and exact baseline/cursor checks. It coalesces delayed file and selected unit observations while preserving current-source-read expiry. See [retention contracts](service-change-retention.md).
 

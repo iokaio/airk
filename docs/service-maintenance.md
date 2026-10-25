@@ -1,6 +1,6 @@
 # Durable service maintenance plans
 
-The opt-in 1.4 service now accepts native maintenance plans through its authenticated control endpoint. The extension console and default client cutover remain under implementation. This is local index maintenance; the service never supplies agent reasoning or carries retrieval payloads.
+The default 1.4.0 native service accepts maintenance plans through its authenticated control endpoint and trusted extension console. This is local index maintenance; the service never supplies agent reasoning or carries retrieval payloads. Final qualification is tracked separately in the completion checklist.
 
 ## Preview and approval
 

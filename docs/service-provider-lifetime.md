@@ -1,6 +1,6 @@
 # Service provider lifetime
 
-The opt-in 1.4 service uses the existing `airk` executable in a private Unix guardian role for each admitted extraction provider, including the PDF subprocess. This adds a process role without adding a third deployed executable. Windows retains native Job Object containment. Providers must remain in their private group; these mechanisms are lifetime ownership for trusted providers, not a sandbox.
+The default 1.4.0 service uses the existing `airk` executable in a private Unix guardian role for each admitted extraction provider, including the PDF subprocess. This adds a process role without adding a third deployed executable. Windows retains native Job Object containment. Providers must remain in their private group; these mechanisms are lifetime ownership for trusted providers, not a sandbox.
 
 The project worker passes three pipe endpoints and a duplicate of its native project-lease file description over a private socket pair. Provider stdin, stdout and stderr connect directly to the worker. The guardian receives bounded command metadata and lifecycle requests; it never forwards source or extraction bodies. It starts before any async runtime and does not load an inference model. Existing parser CPU/address-space limits still apply, with the existing macOS physical-memory observation policy.
 

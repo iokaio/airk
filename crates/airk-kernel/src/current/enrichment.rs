@@ -534,11 +534,7 @@ impl Kernel {
     }
 
     fn semantic_failure(&self, error: anyhow::Error) -> anyhow::Error {
-        if error.is::<crate::execution::CapacityBusy>()
-            || error
-                .downcast_ref::<crate::CurrentGateContention>()
-                .is_some()
-        {
+        if Self::service_enrichment_contention(&error) {
             // A reader may release its gate before this handler runs. Temporary
             // publication exclusion must not become durable semantic failure.
             return error;

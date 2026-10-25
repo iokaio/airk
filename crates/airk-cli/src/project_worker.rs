@@ -24,6 +24,61 @@ use std::{
 // All accepted blocking kernel work finishes before the process exits. Retain the OS
 // ownership handle until that exit, including error paths through the async runtime.
 static PROCESS_LEASE: OnceLock<Arc<ProjectLease>> = OnceLock::new();
+
+fn retry_semantic_turn<T>(mut turn: impl FnMut() -> Result<T>, budget: Duration) -> Result<T> {
+    let deadline = Instant::now() + budget;
+    loop {
+        airk_kernel::service_execution::checkpoint()?;
+        match turn() {
+            Err(error)
+                if Kernel::service_enrichment_contention(&error) && Instant::now() < deadline =>
+            {
+                // Retained work is fenced/idempotent. Keep the same accepted job
+                // and charged grant through temporary read/publication exclusion.
+                std::thread::sleep(
+                    Duration::from_millis(25)
+                        .min(deadline.saturating_duration_since(Instant::now())),
+                );
+            }
+            result => return result,
+        }
+    }
+}
+
+fn semantic_publication<T: PartialEq, R>(
+    mut turn: impl FnMut() -> Result<()>,
+    mut observe: impl FnMut() -> Result<(T, R)>,
+    budget: Duration,
+) -> Result<R> {
+    let before = retry_semantic_turn(&mut observe, budget)?.0;
+    let mut inspect = false;
+    let mut contention = None;
+    retry_semantic_turn(
+        || {
+            if !inspect {
+                match turn() {
+                    Ok(()) => {}
+                    Err(error) if Kernel::service_enrichment_contention(&error) => {
+                        contention = Some(error)
+                    }
+                    Err(error) => return Err(error),
+                }
+                inspect = true;
+            }
+            // Once publication advanced, no mutation is repeated. This worker is
+            // the sole writer, and temporary exclusion never publishes a failure.
+            let (publication, result) = observe()?;
+            if publication == before
+                && let Some(error) = contention.take()
+            {
+                inspect = false;
+                return Err(error);
+            }
+            Ok(result)
+        },
+        budget,
+    )
+}
 struct StopOnDrop(Arc<AtomicBool>);
 impl Drop for StopOnDrop {
     fn drop(&mut self) {
@@ -221,15 +276,32 @@ fn execute(
     if kind == JobKind::Maintain {
         return Ok(JobOutcome::Succeeded { revision: None });
     }
+    if kind == JobKind::Vectors {
+        let selected = retry_semantic_turn(
+            || kernel.refresh_service_snapshot(),
+            Duration::from_secs(30),
+        )?;
+        return semantic_publication(
+            || selected.service_enrichment_turn().map(|_| ()),
+            || {
+                let publication = selected.status()?.publication;
+                Ok((
+                    publication.clone(),
+                    JobOutcome::Succeeded {
+                        revision: publication.map(|value| value.token),
+                    },
+                ))
+            },
+            Duration::from_secs(30),
+        );
+    }
     let selected = kernel.refresh_service_snapshot()?;
     let kernel = &selected;
     match kind {
         JobKind::Index | JobKind::Reconcile => {
             kernel.index_service_sources()?;
         }
-        JobKind::Vectors => {
-            kernel.service_enrichment_turn()?;
-        }
+        JobKind::Vectors => unreachable!("vector turns use publication-aware retry"),
         JobKind::ModelSetup => {
             kernel.install_service_default_vector_model()?;
             return Ok(JobOutcome::Succeeded { revision: None });
@@ -580,6 +652,10 @@ pub async fn run() -> Result<()> {
                                 };
                             } else if airk_store::capacity::is_storage_pressure(&error) {
                                 "storage_pressure"
+                            } else if job.kind == JobKind::Vectors
+                                && Kernel::service_enrichment_contention(&error)
+                            {
+                                "semantic_contention_retry_exhausted"
                             } else if error.is::<airk_kernel::service_execution::WorkStalled>() {
                                 "work_stalled"
                             } else if error.is::<airk_kernel::service_projects::SourceUnavailable>()
@@ -772,6 +848,93 @@ pub async fn run() -> Result<()> {
 
 #[cfg(test)]
 mod admission_tests {
+    #[test]
+    fn semantic_retry_after_commit_only_repeats_observation() -> anyhow::Result<()> {
+        let turns = std::cell::Cell::new(0);
+        let reads = std::cell::Cell::new(0);
+        let result = super::semantic_publication(
+            || {
+                turns.set(turns.get() + 1);
+                // The batch committed, but its follow-up report was excluded.
+                Err(airk_store::current::CurrentReadContention.into())
+            },
+            || {
+                reads.set(reads.get() + 1);
+                match reads.get() {
+                    1 => Ok((0, 0)),
+                    2 => Err(airk_store::current::CurrentReadContention.into()),
+                    _ => Ok((1, 42)),
+                }
+            },
+            std::time::Duration::from_secs(1),
+        )?;
+        assert_eq!(result, 42);
+        assert_eq!(turns.get(), 1);
+        assert_eq!(reads.get(), 3);
+        Ok(())
+    }
+    #[test]
+    fn semantic_turn_waits_for_native_lock_release_and_bounds_persistent_contention()
+    -> anyhow::Result<()> {
+        use std::{
+            fs::OpenOptions,
+            time::{Duration, Instant},
+        };
+        let owner = tempfile::tempdir()?;
+        let path = owner.path().join("owned-semantic-turn.lock");
+        let held = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .open(&path)?;
+        held.try_lock()?;
+        let (seen, waiting) = std::sync::mpsc::sync_channel(1);
+        let release = std::thread::spawn(move || {
+            let _ = waiting.recv();
+            std::thread::sleep(Duration::from_millis(100));
+            drop(held);
+        });
+        let mut attempts = 0;
+        let result = super::retry_semantic_turn(
+            || {
+                attempts += 1;
+                let lock = OpenOptions::new().read(true).write(true).open(&path)?;
+                if let Err(error) = lock.try_lock() {
+                    let _ = seen.try_send(());
+                    return Err(error.into());
+                }
+                Ok(42)
+            },
+            Duration::from_secs(2),
+        )?;
+        release.join().unwrap();
+        assert_eq!(result, 42);
+        assert!(attempts >= 2);
+        let held = OpenOptions::new().read(true).write(true).open(&path)?;
+        held.try_lock()?;
+        let started = Instant::now();
+        let result = super::retry_semantic_turn(
+            || {
+                let lock = OpenOptions::new().read(true).write(true).open(&path)?;
+                lock.try_lock()?;
+                Ok(())
+            },
+            Duration::from_millis(50),
+        );
+        assert!(result.unwrap_err().is::<std::fs::TryLockError>());
+        assert!(started.elapsed() < Duration::from_secs(2));
+        let mut failed = 0;
+        let result: anyhow::Result<()> = super::retry_semantic_turn(
+            || {
+                failed += 1;
+                Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied).into())
+            },
+            Duration::from_secs(1),
+        );
+        assert!(result.is_err());
+        assert_eq!(failed, 1);
+        Ok(())
+    }
     #[test]
     fn temporary_admission_keeps_the_session_and_expired_authority_requires_rebinding() {
         use airk_core::service::AdmissionError;

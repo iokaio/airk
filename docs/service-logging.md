@@ -1,6 +1,6 @@
 # Bounded service process diagnostics
 
-The opt-in 1.4 service records content-free lifecycle diagnostics independently of project indexes and the service registry. The complete service console and default client cutover remain under implementation.
+The default 1.4.0 native service records content-free lifecycle diagnostics independently of project indexes and the service registry. The service console exposes bounded diagnostics while connected or stopped; final qualification remains tracked in the completion checklist.
 
 The native CLI owns logging; core defines typed records and pages. A 64-entry background queue keeps diagnostic file writes off control/health handlers. Four JSONL files hold at most 1 MiB each in `logs-1.4` beneath the installation's pinned log directory. A root-bound ownership receipt and writer lock protect this separate ring. Unknown, oversized, redirected or hard-linked state disables writing and remains preserved. Logging failure does not disable health, retrieval or shutdown.
 

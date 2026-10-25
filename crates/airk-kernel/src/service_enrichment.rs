@@ -3,6 +3,18 @@
 use crate::Kernel;
 use anyhow::{Result, ensure};
 impl Kernel {
+    /// Typed temporary exclusion, independent of durable semantic failure.
+    /// Native workers may repeat a retained semantic turn under the same grant.
+    pub fn service_enrichment_contention(error: &anyhow::Error) -> bool {
+        error.is::<crate::execution::CapacityBusy>()
+            || error.is::<crate::CurrentGateContention>()
+            || error.is::<airk_store::current::CurrentReadContention>()
+            || error.is::<airk_store::service::collection::SelectionContention>()
+            || matches!(
+                error.downcast_ref::<std::fs::TryLockError>(),
+                Some(std::fs::TryLockError::WouldBlock)
+            )
+    }
     pub fn index_service_sources(&self) -> Result<airk_ingest::IndexReport> {
         ensure!(
             self.is_service_collection(),
@@ -42,15 +54,12 @@ impl Kernel {
         );
         let span = self.usage_span(operation, ClientFamily::NativeScheduler);
         let result = work();
-        // A deferred admission did no indexing work; repeated queue contention
-        // must not inflate observations or invent failed extraction work.
-        if result.as_ref().is_err_and(|error| {
-            error.is::<crate::execution::CapacityBusy>()
-                || matches!(
-                    error.downcast_ref::<std::fs::TryLockError>(),
-                    Some(std::fs::TryLockError::WouldBlock)
-                )
-        }) {
+        // Temporary exclusion produced no committed report; repeated contention
+        // must not invent failed extraction or duplicate completed index work.
+        if result
+            .as_ref()
+            .is_err_and(Self::service_enrichment_contention)
+        {
             return result;
         }
         let logical = result
@@ -76,6 +85,27 @@ impl Kernel {
 mod tests {
     use super::*;
     use airk_core::usage::{ClientFamily, RecordingMode, UsageOperation};
+
+    #[test]
+    fn semantic_contention_uses_typed_causes_and_preserves_terminal_failures() {
+        for error in [
+            anyhow::Error::new(crate::execution::CapacityBusy),
+            anyhow::anyhow!("publication gate").context(crate::CurrentGateContention::Readers),
+            airk_store::current::CurrentReadContention.into(),
+            airk_store::service::collection::SelectionContention.into(),
+        ] {
+            assert!(Kernel::service_enrichment_contention(
+                &error.context("retained turn")
+            ));
+        }
+        for error in [
+            anyhow::anyhow!("corrupt model; recording failure also encountered a busy gate"),
+            std::io::Error::from(std::io::ErrorKind::PermissionDenied).into(),
+            anyhow::Error::new(crate::service_execution::Canceled),
+        ] {
+            assert!(!Kernel::service_enrichment_contention(&error));
+        }
+    }
 
     #[test]
     fn native_turns_record_actual_work_once_and_skip_deferred_admission() -> Result<()> {
