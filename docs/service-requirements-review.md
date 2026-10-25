@@ -32,6 +32,6 @@ Local candidate gates are complete: strict VSIX packaging and all five actual in
 
 ## Checks requiring another execution environment
 
-The available host does not establish native Mac qualification, minimum Windows/macOS versions, actual SSH/WSL/remote-editor behavior, low-memory/slower-disk hardware classes, or enforced EDR/TCC/noexec/SELinux/AppArmor policy. Native Mac execution has been requested separately and remains unavailable. Physical device/cache power loss has not been simulated.
+The available host does not establish native Mac qualification, minimum Windows/macOS versions, actual SSH/WSL/remote-editor behavior, low-memory/slower-disk hardware classes, or enforced EDR/TCC/noexec/SELinux/AppArmor policy. On October 25, 2026, the user confirmed that no Mac execution host is available. Native Mac login, upgrade, packaging and installed-target checks are recorded as unavailable, not passed. Physical device/cache power loss has not been simulated.
 
 Published target promotion remains behind the plan's installed-platform/signing matrix. Existing publisher-declared license records for three upstream crates still need release review because their packages do not contain separate license texts; pinned declarations are preserved without inventing legal approval. These qualifications are not silently counted as passed.

@@ -4,6 +4,8 @@
 
 The available implementation, code-review, packaging and actual installed-artifact gates pass. No push or publication is authorized. Native Mac and the complete target/hardware/security/remote matrix remain unqualified.
 
+On October 25, 2026, the user confirmed that no Mac execution host is available. Native Mac login, upgrade, packaging and installed-target checks remain unavailable; portable adapter tests do not establish native Mac qualification. This confirmation does not change the Windows artifact or its acceptance receipts below.
+
 Optimized Windows pair 59 binds native source `e78795a0118eac764171b6558c1b58c549beebe7f0f94860faaf7b901e32266d` (658 inputs), main `4fbf338b09304237669221e37dd4ceed8d0184f65a7d243f1d2860f98f392703`, helper `9a6832e4a7ca31ed53672d7709c7fe7f3fef9ba40ac8336e88264a7543077bad` and install manifest `f70830b43df5cd6dbbe067ef4f2214d020aeff972b975951dd7beb5753b7be21`. Build receipt: `target/airksvc-runtime-stage59/airk-build.json`. The clean full-tree retrieval receipt binds documentation checkpoint `b655cd153788b62748f9c345d81c26eb08be4521`; later documentation reconciliation does not change the native source identity.
 
 | Check | Result and exact local evidence |
