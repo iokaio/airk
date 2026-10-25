@@ -157,6 +157,10 @@ pub struct ControlRequest {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ServiceHealth {
+    #[serde(default)]
+    pub build: Option<RuntimeBuild>,
+    #[serde(default)]
+    pub build_error: Option<String>,
     pub logs: crate::service_logs::LogTelemetry,
     pub version: String,
     pub protocol: u32,
@@ -168,6 +172,30 @@ pub struct ServiceHealth {
     pub user: String,
     pub uptime_ms: u64,
     pub policy: BrokerStatus,
+}
+
+/// Bounded, path-free build receipt metadata; not an executable approval.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeBuild {
+    pub source_sha256: crate::identity::Sha256Digest,
+    pub source_files: u64,
+    pub profile: String,
+    pub rustc: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeProcess {
+    pub version: String,
+    pub protocol: u32,
+    pub process_id: u32,
+    pub os: String,
+    pub arch: String,
+    pub executable_sha256: Option<crate::identity::Sha256Digest>,
+    pub payload_sha256: Option<crate::identity::Sha256Digest>,
+    pub build: Option<RuntimeBuild>,
+    pub metadata_error: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -200,6 +228,18 @@ pub enum ControlResponse {
     Progress {
         project: ProjectBinding,
         observation: Option<Box<crate::service_progress::ProgressObservation>>,
+        #[serde(default)]
+        pending_job: Option<JobRecord>,
+        #[serde(default)]
+        queued_jobs: Vec<JobRecord>,
+        #[serde(default)]
+        queue_truncated: Option<bool>,
+        #[serde(default)]
+        project_paused: Option<bool>,
+        #[serde(default)]
+        pending_paused: Option<bool>,
+        #[serde(default)]
+        observed_unix_ms: Option<u64>,
     },
     Inspection {
         project: ProjectBinding,

@@ -100,6 +100,7 @@ use tokio::{
 };
 
 struct State {
+    control: std::path::PathBuf,
     identity: WorkerIdentity,
     storage: airk_store::service::data_scope::BoundDataRoot,
     broker: Mutex<Broker>,
@@ -214,7 +215,13 @@ async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
             let response = match tokio::time::timeout(Duration::from_secs(125), async {
                 match request.native {
                     Some(native) => tools.read_native(native, state.identity.project).await,
-                    None => Ok(serde_json::to_value(tools.call(request.tool, request.arguments).await?)?),
+                    None => {
+                        if request.tool == "airk_status" {
+                            tools.set_runtime(crate::runtime_metadata::bundle(&state.control, state.identity, request.frontend).await);
+                            tools.set_work(crate::runtime_metadata::work(&state.control, state.identity).await);
+                        }
+                        Ok(serde_json::to_value(tools.call(request.tool, request.arguments).await?)?)
+                    },
                 }
             }).await {
                 Ok(response) => response,
@@ -463,6 +470,7 @@ pub async fn run() -> Result<()> {
     let maintenance_waiting = Arc::new(AtomicBool::new(false));
     let job_storage = storage.clone();
     let state = Arc::new(State {
+        control: init.runtime.clone(),
         identity,
         storage,
         broker: Mutex::new(broker),

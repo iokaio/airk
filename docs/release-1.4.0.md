@@ -1,5 +1,7 @@
 # AIRK 1.4.0 local manual-test candidate
 
+October 25 cleanup/help/status follow-up (same 1.4.0 manual-test candidate): replacement now retires obsolete terminal executables and the previous native payload/rollback reference. Sixteen MCP tools include airk_help (35 topics, generated CLI help and current tool schemas). airk_status reports process/build identities, scoped jobs/queue/pause/watch/waits and unavailable-index diagnostics with unknown counts. Windows validation includes focused Rust regressions, 225 extension tests (six native-dependent skips before packaged testing), 142 Python tests (four skips), native installer retirement/retry checks, formatting, clippy, repository and whitespace checks. The all-feature workspace suite and doc tests also passed. Final packaged runtime checks are recorded with the generated candidate. Previous installed-editor receipts below do not qualify this follow-up; manual installation/testing and native macOS/Linux qualification remain pending.
+
 ## October 25 onboarding follow-up (source changes)
 
 Local follow-up validation: extension 219 passes/6 skips; Python contract suite 142 tests/4 skips; formatting, Windows workspace Clippy, repository and whitespace checks pass. Full Rust workspace execution is still in progress. Fresh native/VSIX packaging and installed-editor qualification are recorded separately; the historical VSIX checksum below is unchanged.
@@ -9,6 +11,18 @@ Trusted VSIX activation automatically installs the native runtime and the airk t
 Linux and both Mac CI jobs stopped at Clippy on a decimal permission literal; the fixture now uses equivalent octal `0o0`. Historical VSIX receipts below predate these changes; a replacement artifact has not been qualified.
 
 October 25, 2026. The native service cutover is implemented and reviewed. This unpublished candidate keeps version **1.4.0**, with two executables: lightweight `airk` and offline MiniLM inference helper `airk-embed`. Evidence flows directly to project workers; inference inputs go directly to the shared helper. The broker owns metadata, work and resource policy.
+
+## October 25 help and live work diagnostics (source changes)
+
+The MCP inventory now has 16 read-only tools. airk_help provides 35 bundled usage topics, public CLI help generated from the native parser and current MCP descriptions/schemas, with bounded line continuation and no workspace/index access or command execution. airk_status.work independently reports scoped job/progress observations, up to 16 queued jobs with truncation, pause policy, watcher state and exact-job/current-worker sampled waits. Unknown/stale observations and sample ages remain explicit; help explains CLI management options without performing them. Version remains 1.4.0 for this manual-test candidate. The prior VSIX receipt below does not qualify these source changes.
+
+## October 25 runtime diagnostics (source changes)
+
+airk_status now includes a runtime JSON bundle for the MCP frontend, index worker and native service, with running versions, process/instance identities, executable/payload hashes, inventory-bound build receipts and nullable version/payload/source comparisons. The tool description explains the bundle and distinguishes client-reported frontend metadata from worker and exact-instance service observations. Missing metadata stays explicit in Terse and Full modes. These source changes are not part of the historical VSIX receipt below.
+
+## October 25 executable retirement (source changes)
+
+VSIX CLI installation removes previous extension-managed terminal binaries regardless of version and retires the previous native runtime and rollback reference after successful activation. Native cleanup journals its exact ownership and inventory, drains owners and resumes interrupted deletion. Locked or unknown files report incomplete cleanup; the selected runtime, sources, indexes and settings are preserved. Managed provider payloads remain provider-owned. Retry on the next trusted activation or with Install or Repair CLI after disconnecting old clients. Close terminal sessions completely to refresh command resolution. This source change is not included in the historical VSIX receipt below.
 
 Terse is the default, with extension-panel Full selection and per-call agent guidance. Compact navigation/facts, consistent `items`, candidate method matching, retained change baselines, `index-current` validation and safe publication retries are implemented. The console adds sampled exact-job waits and queued cancellation. Native connection-opening admission preserves accepted work without replaying scans or publications.
 

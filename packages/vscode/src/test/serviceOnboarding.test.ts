@@ -8,6 +8,7 @@ test('trusted activation installs and registers all folders once with model/inde
     const f=await serviceTestHost(context,{automatic:true,registered:false,roots:2});
     try{
         assert.equal(f.registrations.size,2);assert.equal(f.state.picks,0);assert.equal(f.warnings.length,0);
+        assert.ok(f.calls.includes('previous-runtime-retired'));
         assert.equal(f.writes.filter(value=>value.configure_watch?.enabled===true).length,2);
         assert.deepEqual(f.writes.filter(value=>value.enqueue).map(value=>value.enqueue.kind),['model_setup','index','model_setup','index']);
         assert.equal((await f.api.getServerDefinitions()).length,2);
@@ -32,6 +33,7 @@ test('1.4 patch upgrade retains existing storage bindings and does not reset wat
     const f=await serviceTestHost(context,{automatic:true,upgrade:true});
     try{
         assert.ok(f.calls.includes('upgrade-reviewed'));assert.ok(f.calls.includes('upgrade-applied'));
+        assert.ok(f.calls.includes('previous-runtime-retired'));
         assert.equal(f.registrations.size,1);assert.equal(f.writes.length,0);
         const definitions=await f.api.getServerDefinitions();assert.equal(definitions.length,1);
         assert.ok(definitions[0].args.includes([...f.registrations.keys()][0]));

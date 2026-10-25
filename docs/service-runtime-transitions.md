@@ -1,5 +1,7 @@
 # Reviewed runtime upgrades and rollback
 
+Current installation cleanup (October 25): after a successful replacement, VSIX CLI installation retires the previous native payload and clears its rollback reference. Failed activation still preserves/restores its predecessor. Standalone native activation retains rollback until explicit `runtime retire-previous`; the historical rollback controls below apply only while that payload remains installed. Interrupted retirement must finish before another activation. See [the installation cleanup contract](service-console.md).
+
 Current onboarding follow-up (October 25): trusted extension activation automatically upgrades an older compatible 1.4 patch selection (or changed same-version bundled payload) through the existing fenced native review/stage/activation contract. It preserves project registrations, storage locations, watching choices and explicit Stop. It does not downgrade a newer patch or take over managed runtime lifecycle. Required schema handling stays native; this extension change adds no database schema. Console rollback and other explicit transitions retain their reviews. The dated checkpoint below describes the earlier manual-only upgrade default.
 
 **Development checkpoint before the 1.4 default cutover (2026-10-24).** The artifact identities and 1.3.2 development versions below remain historical evidence. The current source/lockfiles are 1.4.0 and the extension/public CLI now use service defaults; see the [current completion checklist](service-implementation-checklist.md).

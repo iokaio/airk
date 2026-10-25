@@ -5,6 +5,7 @@ pub mod embedding_pool_client;
 mod embedding_pool_process;
 pub mod embedding_pool_protocol;
 pub mod local_ipc;
+mod runtime_metadata;
 pub mod runtime_pair;
 pub mod service_configuration;
 pub mod service_frontend;

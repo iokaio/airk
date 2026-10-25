@@ -1165,7 +1165,7 @@ fn probe_stdio_bridge(root: &Path, project: airk_core::service::ProjectBinding) 
             .as_array()
             .context("bridge tool list missing")?;
         ensure!(
-            tools.len() == 15
+            tools.len() == 16
                 && tools
                     .iter()
                     .all(|tool| tool["annotations"]["readOnlyHint"] == true),

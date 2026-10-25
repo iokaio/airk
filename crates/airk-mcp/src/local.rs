@@ -72,6 +72,8 @@ pub fn tools() -> Vec<Tool> {
 }
 
 pub struct LocalTools {
+    work: std::sync::Arc<std::sync::RwLock<Option<serde_json::Value>>>,
+    runtime: std::sync::Arc<std::sync::RwLock<Option<serde_json::Value>>>,
     kernel: Kernel,
     family: ClientFamily,
     owns_admission: bool,
@@ -102,11 +104,15 @@ impl LocalTools {
         server.client = family;
         server.admission = admission.clone();
         let responses = server.responses.clone();
+        let runtime = server.runtime.clone();
+        let work = server.work.clone();
         let (client, server) = tokio::try_join!(
             async { Ok::<_, anyhow::Error>(().serve(client_transport).await?) },
             async { Ok::<_, anyhow::Error>(server.serve(server_transport).await?) }
         )?;
         Ok(Self {
+            work,
+            runtime,
             kernel,
             family,
             owns_admission,
@@ -124,6 +130,17 @@ impl LocalTools {
     }
     pub async fn session_with_client(&self, client: ClientFamily) -> anyhow::Result<Self> {
         Self::with_admission(self.kernel.clone(), client, self.admission.clone(), false).await
+    }
+
+    pub fn set_runtime(&self, value: serde_json::Value) {
+        if let Ok(mut runtime) = self.runtime.write() {
+            *runtime = Some(value);
+        }
+    }
+    pub fn set_work(&self, value: serde_json::Value) {
+        if let Ok(mut work) = self.work.write() {
+            *work = Some(value);
+        }
     }
 
     pub async fn call(
@@ -344,6 +361,80 @@ mod tests {
         }
         assert_eq!(validators[0], validators[1]);
         second.close().await?;
+        owner.close().await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn status_runtime_bundle_is_explicit_in_both_modes_and_isolated_between_clients()
+    -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let root = directory.path().join("source");
+        std::fs::create_dir(&root)?;
+        std::fs::write(root.join("one.rs"), "fn alpha() {}\n")?;
+        let kernel = Kernel::open(&root, Some(directory.path().join("data")))?;
+        kernel.configure_vectors(false)?;
+        kernel.index()?;
+        let mut owner = LocalTools::new(kernel).await?;
+        let mut first = owner.session().await?;
+        let mut second = owner.session().await?;
+        let runtime = serde_json::json!({"schema":1,"mcp_frontend":{"process":{"version":"1.4.0"}},"service":null,"service_error":"service_health_unavailable"});
+        first.set_runtime(runtime.clone());
+        let work = serde_json::json!({"schema":1,"progress_current_worker":false,"pending_job":null,"failed_observations":["watch_unavailable"]});
+        first.set_work(work.clone());
+        for mode in ["terse", "full", "terse"] {
+            let args = serde_json::json!({"response_mode":mode})
+                .as_object()
+                .unwrap()
+                .clone();
+            assert_eq!(
+                body(first.call("airk_status".into(), args).await?)?["runtime"],
+                runtime
+            );
+            assert_eq!(
+                body(first.call("airk_status".into(), Default::default()).await?)?["work"],
+                work
+            );
+        }
+        assert_eq!(
+            body(
+                second
+                    .call("airk_status".into(), Default::default())
+                    .await?
+            )?["runtime"]["error"],
+            "native_runtime_context_unavailable"
+        );
+        first.close().await?;
+        second.close().await?;
+        owner.close().await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn native_status_keeps_service_and_work_diagnostics_before_first_publication()
+    -> anyhow::Result<()> {
+        let root = tempfile::tempdir()?;
+        let data = tempfile::tempdir()?;
+        let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+        let mut owner = LocalTools::new(kernel).await?;
+        assert!(
+            owner
+                .call("airk_status".into(), Default::default())
+                .await?
+                .is_error
+                .unwrap_or(false)
+        );
+        owner.set_runtime(serde_json::json!({"schema":1,"service":{"responsive":true}}));
+        owner.set_work(serde_json::json!({"schema":1,"progress":{"phase":"discovering"}}));
+        let result = owner.call("airk_status".into(), Default::default()).await?;
+        assert!(!result.is_error.unwrap_or(false));
+        let status = body(result)?;
+        assert_eq!(status["index_state"], "unavailable");
+        assert!(status["files"].is_null());
+        assert!(status["publication"].is_null());
+        assert_eq!(status["runtime"]["service"]["responsive"], true);
+        assert_eq!(status["work"]["progress"]["phase"], "discovering");
+        assert!(status["index_error"]["code"].is_string());
         owner.close().await?;
         Ok(())
     }

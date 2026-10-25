@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 mod execution;
 pub mod response;
 use response::ResponseArgs;
+pub mod help;
 pub mod local;
 pub mod remote;
 
@@ -375,6 +376,8 @@ fn default_hops() -> usize {
 
 #[derive(Clone)]
 pub struct AirkServer {
+    work: std::sync::Arc<std::sync::RwLock<Option<serde_json::Value>>>,
+    runtime: std::sync::Arc<std::sync::RwLock<Option<serde_json::Value>>>,
     kernel: Kernel,
     tool_router: ToolRouter<Self>,
     client: ClientFamily,
@@ -388,6 +391,8 @@ impl AirkServer {
     pub fn new(kernel: Kernel) -> Self {
         let admission = execution::Admission::for_kernel(&kernel);
         Self {
+            work: Default::default(),
+            runtime: Default::default(),
             kernel,
             tool_router: Self::tool_router(),
             client: ClientFamily::Unknown,
@@ -395,6 +400,19 @@ impl AirkServer {
             responses: Default::default(),
             response_mode: response::ResponseMode::from_environment(),
         }
+    }
+
+    #[tool(
+        name = "airk_help",
+        description = "Explain this AIRK version and how to use its CLI and MCP tools. Omit arguments for an overview and topic catalog; select a topic, an exact CLI command path, or an MCP tool name for guidance, examples and live schemas. Read-only bundled help: no workspace scan, indexing or command execution. Use start_line/max_bytes for bounded continuation. response_mode=full is accepted; help is the same in both modes. This is usage guidance, not live configuration or runtime-health evidence; use airk_status for that.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            open_world_hint = false
+        )
+    )]
+    async fn help(&self, Parameters(args): Parameters<help::HelpArgs>) -> CallToolResult {
+        help::reply(args)
     }
 
     #[tool(
@@ -559,7 +577,7 @@ impl AirkServer {
 
     #[tool(
         name = "airk_status",
-        description = "Check collection index readiness, active generation, file/chunk counts and extractor version. Counts describe the snapshot, not live workspace coverage or freshness. Request indexing through the CLI/extension when sources change. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
+        description = "Check index readiness, generation, counts and extractor version. Includes a runtime JSON bundle identifying running MCP frontend, index worker and service versions, process/instance identities, executable/payload hashes and available build metadata. The work bundle reports scoped job state, phase/counters, pending job, pause policy, source watcher and exact-job sampled waits with freshness/worker identity checks. Frontend identity is client-reported; missing/stale observations remain explicit. Health is not progress and counts are indexed snapshots, not live source proof. Use airk_help for interpretation/CLI options and response_mode=full for diagnosis; MCP does not manage jobs.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -567,8 +585,26 @@ impl AirkServer {
         )
     )]
     async fn status(&self, Parameters(args): Parameters<StatusArgs>) -> CallToolResult {
+        let runtime = self.runtime.read().ok().and_then(|runtime| runtime.clone());
+        let work = self.work.read().ok().and_then(|work| work.clone());
         self.execute_response(UsageOperation::Status, args.response, move |kernel| {
-            kernel.status()
+            let mut status = match kernel.status() {
+                Ok(status) => {
+                    let mut status = serde_json::to_value(status)?;
+                    status["index_state"] = "available".into();
+                    status
+                }
+                Err(error) if runtime.is_some() || work.is_some() => {
+                    unavailable_status(&kernel, runtime.clone(), work.clone(), &error.to_string())
+                }
+                Err(error) => return Err(error),
+            };
+            status["runtime"] = runtime.unwrap_or_else(
+                || serde_json::json!({"schema":1,"error":"native_runtime_context_unavailable"}),
+            );
+            status["work"] = work
+                .unwrap_or_else(|| serde_json::json!({"error":"native_work_context_unavailable"}));
+            Ok(status)
         })
         .await
     }
@@ -814,6 +850,17 @@ impl AirkServer {
             "limitations": ["No universal native type/name resolution or complete caller graph","Optional providers require provisioning; embedding models require corpus qualification","LSP evidence queries selected symbol positions; external/unindexed locations are rejected","OCR covers selected pages and may misrecognize layout/text","No legacy binary Office formats","No SVG rendering","Composite child evidence has explicit mapping, grammar and resource limits"]
         })) }).await
     }
+}
+
+pub(crate) fn unavailable_status(
+    kernel: &Kernel,
+    runtime: Option<serde_json::Value>,
+    work: Option<serde_json::Value>,
+    message: &str,
+) -> serde_json::Value {
+    serde_json::json!({"collection":kernel.collection(),"index_state":"unavailable",
+        "index_error":{"code":"index_status_unavailable","message":message.chars().take(1024).collect::<String>()},
+        "publication":null,"files":null,"chunks":null,"freshness":kernel.changes_freshness(),"runtime":runtime,"work":work})
 }
 
 fn render<T: Serialize>(

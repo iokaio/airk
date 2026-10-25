@@ -64,6 +64,18 @@ fn print_json(value: &impl serde::Serialize) -> Result<()> {
 /// Metadata inspection works even before a workspace has been indexed.
 pub fn inspect(action: &ToolsCommand) -> Result<bool> {
     match action {
+        ToolsCommand::Call {
+            tool,
+            args,
+            args_file,
+        } if tool == "airk_help" => {
+            let result = serde_json::to_value(airk_mcp::help::call(Value::Object(arguments(
+                args.as_deref(),
+                args_file.as_deref(),
+            )?)))?;
+            print_json(&result)?;
+            ensure!(result["isError"] != true, "AIRK help request failed");
+        }
         ToolsCommand::List { json: true } => print_json(&json!({"tools": tools()}))?,
         ToolsCommand::List { json: false } => {
             for tool in tools() {

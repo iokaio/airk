@@ -174,9 +174,9 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     async verify(spec?:LaunchSpec):Promise<void>{
         const selected=spec??await this.chooseSpec();if(!selected)return;this.trusted();
         if(!this.isCurrent(selected))throw new ServiceError('workspace_registration_changed');
-        try{const result=await probeMcp(selected,15,this.context.extension.packageJSON.version);this.trusted();
+        try{const result=await probeMcp(selected,16,this.context.extension.packageJSON.version);this.trusted();
             this.checks.set(selected.service!.project,{phase:'verified',tools:result.tools,checkedAt:Date.now(),
-                indexState:record(result.status).state==='not_indexed'?'not_indexed':'published'});
+                indexState:record(result.status).state==='not_indexed'?'not_indexed':record(result.status).state==='index_unavailable'?'unavailable':'published'});
             this.output.appendLine(`Verified ${result.tools.length} MCP tools through the installed launcher. Agent connection is separate.`);
         }catch(error){this.checks.set(selected.service!.project,{phase:'failed',checkedAt:Date.now(),error:String(error).slice(0,600)});throw error;}
     }
@@ -213,6 +213,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         if(!binding.launcher)throw new ServiceError('stable_launcher_unavailable');
         const errors=await installLauncherCli(binding.launcher,this.context);this.trusted();
         if(errors.length)throw new Error(errors.join('\n'));
+        await this.runtime().retirePrevious(binding);this.trusted();
         if(!automatic)void vscode.window.showInformationMessage('AIRK installed. Open a new VS Code terminal and run airk --version. Restart external terminal applications to refresh PATH.');
     }
     automaticInstall():Promise<void>{
@@ -227,6 +228,8 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
                 const from=current.version.split('.').map(Number),to=target.split('.').map(Number);
                 if(from[0]===1&&from[1]===4&&to[0]===1&&to[1]===4&&from[2]<=to[2]
                     &&(current.version!==target||current.runtimeSha256!==installed.bundle.digest)){
+                    // Finish a prior installation's deferred cleanup before staging another replacement.
+                    if(!installed.diagnosis?.pending_activation)await this.runtime().retirePrevious(current);
                     const review=await this.runtime().reviewTransition(current,installed.diagnosis?.pending_activation?'resume':'upgrade');this.trusted();
                     await this.runtime().transition(current,review);this.trusted();
                 }

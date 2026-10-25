@@ -35,6 +35,11 @@ const {probeMcp,runText}=require('../packages/vscode/out/native.js');
         await assert.rejects(fs.stat(data),{code:'ENOENT'});
         await runtime.registerProject(binding,review);assert.equal((await fs.stat(data)).isDirectory(),true);
         console.log('Reviewed registration created only its reserved data path.');
+        const beforeIndex=await nativeRunner(binding.executable,['--service-install-dir',install,'--service-project',review.binding,'tools','call','airk_status'],180000);
+        assert.notEqual(beforeIndex.isError,true);const startup=JSON.parse(beforeIndex.content.find(part=>part.type==='text').text);
+        assert.equal(startup.index_state,'unavailable');assert.equal(startup.publication,null);assert.equal(startup.files,null);
+        assert.equal(startup.runtime.service.version,inventory.version);assert.ok(startup.work);
+        console.log('Service/job diagnostics remain available before the first index publication.');
         client=runtime.client(binding);
         const intent=await client.prepareJob(review.binding,'index'),accepted=await client.submitJob(intent);
         const deadline=Date.now()+90000;
@@ -46,9 +51,21 @@ const {probeMcp,runText}=require('../packages/vscode/out/native.js');
         }
         const spec={command:binding.launcher,root:review.root,dataDir:review.data_root,collection:review.collection,name:'Frontend fixture',
             service:{installDir:install,project:review.binding}};
-        const first=await probeMcp(spec,15,inventory.version);assert.equal(first.tools.length,15);assert.notEqual(first.status.state,'not_indexed');
+        const first=await probeMcp(spec,16,inventory.version);assert.equal(first.tools.length,16);assert.notEqual(first.status.state,'not_indexed');
+        const observed=JSON.parse(first.status.content.find(part=>part.type==='text').text);
+        assert.equal(observed.runtime.service.version,inventory.version);assert.equal(observed.runtime.versions_match,true);
+        assert.equal(observed.runtime.service.responsive,true);assert.equal(observed.work.serving_worker.project,review.binding);
+        assert.equal(typeof observed.work.watch.enabled,'boolean');assert.ok(Array.isArray(observed.work.queued_jobs));
+        const build=JSON.parse(await fs.readFile(path.join(payload,'airk-build.json'),'utf8'));
+        assert.equal(observed.runtime.service.build.source_sha256,build.source.sha256);
+        console.log('Runtime/build identities and scoped work/watcher observations verified.');
         if(cli){
             const context=['--service-install-dir',install,'--service-project',review.binding];
+            const help=await nativeRunner(binding.executable,['tools','call','airk_help','--args',JSON.stringify({topic:'job-management'})],180000);
+            assert.notEqual(help.isError,true);const guidance=JSON.parse(help.content.find(part=>part.type==='text').text);
+            assert.equal(guidance.version,inventory.version);assert.ok(guidance.content.includes('airk pause'));
+            const commandHelp=await nativeRunner(binding.executable,['tools','call','airk_help','--args',JSON.stringify({command:'runtime retire-previous'})],180000);
+            assert.ok(JSON.parse(commandHelp.content.find(part=>part.type==='text').text).content.includes('--expected-active'));
             const result=await nativeRunner(binding.executable,[...context,'tools','call','airk_status'],180000);
             assert.notEqual(result.isError,true);assert.ok(result.content.some(part=>part.type==='text'));
             const prepared=await nativeRunner(binding.executable,['service','requests','--runtime-dir',control,'prepare','--project',review.binding],180000);
@@ -66,7 +83,7 @@ const {probeMcp,runText}=require('../packages/vscode/out/native.js');
         }
         assert.equal(await fs.readFile(path.join(source,'memo.txt'),'utf8'),original);
         await fs.rename(source,path.join(fixture,'temporarily-offline-source'));
-        const retained=await probeMcp(spec,15,inventory.version);assert.notEqual(retained.status.state,'not_indexed');
+        const retained=await probeMcp(spec,16,inventory.version);assert.notEqual(retained.status.state,'not_indexed');
         console.log('Stable-launcher MCP served the registered publication with sources present and unavailable.');
     }finally{
         client?.dispose();

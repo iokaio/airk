@@ -1,5 +1,11 @@
 # Architecture
 
+The MCP frontend serves bundled `airk_help` without a worker/evidence query. Native CLI supplies a lazy public-command catalog generated from its parser; MCP supplies topic guidance and its own schemas. Scoped status work observations use existing instance-fenced metadata RPCs; store supplies a bounded read-only FIFO queue observation. Progress/watcher/worker samples remain distinct from kernel publication readiness. No management action or agent reasoning is added to MCP.
+
+The native CLI captures path-free process/build observations for `airk_status.runtime`. Core owns the serialized metadata contracts; MCP adds the native host's bundle before rendering/accounting without taking a dependency on CLI or opening service state itself. The worker observes exact-instance broker health independently of index readiness and labels frontend metadata as client-reported. Kernel status remains collection evidence.
+
+Extension CLI installation removes obsolete terminal executable copies at its own fixed global-storage locations. Native CLI ownership remains responsible for retiring the previous runtime: it fences the active selection, journals inventory-bound cleanup, drains owners, clears rollback and restarts the selected runtime. Sources, indexes and settings remain outside executable retirement. Managed provider payloads are excluded. See [console installation](service-console.md).
+
 Trusted extension activation now installs the approved runtime and terminal forwarding command and sets up new workspace folders automatically. Existing 1.4 project/storage/watching selections remain native and are preserved on compatible runtime updates. Runtime activation and any schema migrations stay in the native adapter; the dashboard renders metadata and does not open indexes.
 
 Current 1.4.0 cutover: the public CLI and extension are service clients. Only native worker roles open project Kernels/stores; the broker remains metadata-only and retrieval/inference use direct scoped transports. Source and lockfile versions are synchronized. Container/package cutover and available Windows/Linux qualification are complete for the local manual-test candidate. Native Mac and the broader installed-platform/security matrix remain unqualified; see [the qualification record](service-cutover-qualification.md).

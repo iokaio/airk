@@ -188,6 +188,11 @@ impl Connection {
         arguments: serde_json::Map<String, serde_json::Value>,
     ) -> Result<serde_json::Value> {
         self.exchange(Query {
+            frontend: if tool == "airk_status" {
+                Some(crate::runtime_metadata::observe_process())
+            } else {
+                None
+            },
             tool,
             arguments,
             native: None,
@@ -200,6 +205,7 @@ impl Connection {
         request: airk_mcp::local::NativeRead,
     ) -> Result<serde_json::Value> {
         self.exchange(Query {
+            frontend: None,
             tool: String::new(),
             arguments: Default::default(),
             native: Some(request),
@@ -260,6 +266,24 @@ impl airk_mcp::remote::RemoteTools for Backend {
         arguments: serde_json::Map<String, serde_json::Value>,
     ) -> airk_mcp::remote::RemoteFuture<'_> {
         Box::pin(async move {
+            if tool == "airk_help" {
+                return Ok(serde_json::to_value(airk_mcp::help::call(
+                    serde_json::Value::Object(arguments),
+                ))?);
+            }
+            if tool == "airk_status" {
+                if serde_json::from_value::<airk_mcp::StatusArgs>(serde_json::Value::Object(
+                    arguments.clone(),
+                ))
+                .is_err()
+                {
+                    return Ok(
+                        serde_json::json!({"content":[{"type":"text","text":"Invalid airk_status arguments; inspect its current schema with airk_help."}],"isError":true}),
+                    );
+                }
+                // Cold image hashing must not consume a freshly brokered connection's idle/grant lifetime.
+                crate::runtime_metadata::observe_process();
+            }
             let mut state = self.state.lock().await;
             if state
                 .connection
@@ -272,11 +296,20 @@ impl airk_mcp::remote::RemoteTools for Backend {
                     .lock()
                     .map(|client| *client)
                     .unwrap_or(airk_core::usage::ClientFamily::Unknown);
-                let mut connection =
-                    match Connection::connect_as(&self.root, self.project, client).await {
-                        Ok(connection) => connection,
-                        Err(error) => return setup_rejection(&error).ok_or(error),
-                    };
+                let connected = if tool == "airk_status" {
+                    Connection::connect_once(&self.root, self.project, client).await
+                } else {
+                    Connection::connect_as(&self.root, self.project, client).await
+                };
+                let mut connection = match connected {
+                    Ok(connection) => connection,
+                    Err(_) if tool == "airk_status" => {
+                        return Ok(
+                            crate::runtime_metadata::unavailable(&self.root, self.project).await,
+                        );
+                    }
+                    Err(error) => return setup_rejection(&error).ok_or(error),
+                };
                 connection.restore_status_receipt(state.status_receipt);
                 state.connection = Some(connection);
             }
@@ -315,6 +348,41 @@ pub async fn bridge(root: PathBuf, project: ProjectBinding) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn status_without_a_service_returns_unknown_counts_and_never_creates_an_index()
+    -> anyhow::Result<()> {
+        let control = tempfile::tempdir()?;
+        let project = "ab".repeat(32).parse()?;
+        let backend = super::tools(control.path().into(), project);
+        let reply = backend
+            .call("airk_status".into(), Default::default())
+            .await?;
+        assert_ne!(reply["isError"], true);
+        let status: serde_json::Value =
+            serde_json::from_str(reply["content"][0]["text"].as_str().unwrap())?;
+        assert_eq!(status["index_state"], "unavailable");
+        assert!(status["publication"].is_null());
+        assert!(status["files"].is_null());
+        assert!(status["runtime"]["service"].is_null());
+        assert!(
+            !status["work"]["failed_observations"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        assert!(std::fs::read_dir(control.path())?.next().is_none());
+        let invalid = backend
+            .call(
+                "airk_status".into(),
+                serde_json::json!({"project":"foreign"})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            )
+            .await?;
+        assert_eq!(invalid["isError"], true);
+        Ok(())
+    }
     use super::*;
 
     #[tokio::test]

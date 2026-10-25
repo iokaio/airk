@@ -295,6 +295,10 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
             retirement::remove(install_dir, runtime_sha256)?;
             serde_json::json!({"removed_runtime":runtime_sha256})
         }
+        RuntimeCommand::RetirePrevious {
+            install_dir,
+            expected_active,
+        } => retirement::retire_previous(install_dir, expected_active).await?,
         RuntimeCommand::Uninstall { install_dir } => {
             let _lock = install_lock(install_dir)?;
             payload_repair::require_settled(install_dir)?;

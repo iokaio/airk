@@ -10,6 +10,21 @@ import { RecordValue, ServiceClient, ServiceError, record } from '../serviceClie
 import { nativePayloadDirectory } from './nativeServiceFixture';
 const sha=(bytes:Buffer|string)=>createHash('sha256').update(bytes).digest('hex');
 
+test('installation retires previous native runtime with the exact current selection and validates its receipt',async()=>{
+    const f=await fixture(),install=path.join(f.root,'install');let crossed=false;
+    const host=new RuntimeHost(f.root,'1.4.0',{channel:'stable'},async(_command,args)=>{
+        if(args[1]==='self-test')return {protocol:1,version:'1.4.0',self_test:'passed',metadata_console:1};
+        assert.deepEqual(args,['runtime','retire-previous','--install-dir',install,'--expected-active',f.digest]);
+        return {active:crossed?'ab'.repeat(32):f.digest,retired_previous:'cd'.repeat(32)};
+    });
+    const binding={installDir:install,controlDir:path.join(install,'control'),executable:f.source,launcher:null,
+        runtimeSha256:f.digest,version:'1.4.0',lifecycle:'on-demand' as const,verificationBasis:'trusted_distribution'};
+    try{
+        await host.retirePrevious(binding);crossed=true;
+        await assert.rejects(host.retirePrevious(binding),/crossed_runtime_retirement_receipt/);
+    }finally{await f.cleanup();}
+});
+
 test('native qualification locates pair metadata outside the exact Mac app layout',()=>{
     const root=path.resolve('native-payload-fixture');
     assert.equal(nativePayloadDirectory(path.join(root,'airk.exe')),root);

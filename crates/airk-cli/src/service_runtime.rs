@@ -69,6 +69,8 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                     .status(now);
                 ControlResponse::Health {
                     observation: Box::new(ServiceHealth {
+                        build: crate::runtime_metadata::process().build,
+                        build_error: crate::runtime_metadata::process().metadata_error,
                         logs: state.log.telemetry(),
                         version: env!("CARGO_PKG_VERSION").into(),
                         protocol: PROTOCOL_VERSION,

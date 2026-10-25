@@ -216,7 +216,7 @@ export async function joinScheduledIndex<T>(initialArgs: string[],
 }
 
 /** Real bounded stdio initialization/tool-list/status probe, independent of any coding agent. */
-export function probeMcp(spec: LaunchSpec, expectedTools: 14 | 15 | 16 = 15, clientVersion = 'development'): Promise<{ tools: string[]; status: unknown }> {
+export function probeMcp(spec: LaunchSpec, expectedTools: 14 | 15 | 16 = 16, clientVersion = 'development'): Promise<{ tools: string[]; status: unknown }> {
     return new Promise((resolve, reject) => {
         const child = spawn(spec.command, launchArgs(spec), { cwd: spec.service?path.dirname(spec.command):spec.root, env: { ...process.env, AIRK_CLIENT: 'vscode' }, windowsHide: true, stdio: 'pipe' });
         let buffer = '', stderr = '', total = 0, done = false;
@@ -261,13 +261,18 @@ export function probeMcp(spec: LaunchSpec, expectedTools: 14 | 15 | 16 = 15, cli
             child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
             const listed = await request(2, 'tools/list', {});
             const tools: string[] = listed.tools.map((tool: { name: string }) => tool.name);
-            const required = ['airk_status', 'airk_symbols', 'airk_code_facts', 'airk_relationships', ...(expectedTools >= 15 ? ['airk_changes'] : [])];
+            const required = ['airk_status', 'airk_symbols', 'airk_code_facts', 'airk_relationships', ...(expectedTools >= 15 ? ['airk_changes'] : []), ...(expectedTools >= 16 ? ['airk_help'] : [])];
             if (tools.length !== expectedTools || !required.every(name => tools.includes(name))) { throw new Error(`AIRK MCP tool inventory differs from the expected ${expectedTools} tools.`); }
             const status = await request(3, 'tools/call', { name: 'airk_status', arguments: {} });
             if (status.isError) {
                 const message = status.content?.map((part: { text?: string }) => part.text ?? '').join('\n') ?? '';
                 if (!message.includes('workspace is not indexed')) { throw new Error(`AIRK MCP status failed: ${message.slice(0, 300)}`); }
                 finish(undefined, { tools, status: { state: 'not_indexed' } }); return;
+            }
+            if(expectedTools>=16){
+                const text=status.content?.find((part:any)=>part.type==='text')?.text;
+                const payload=JSON.parse(text??'null');
+                if(payload?.index_state==='unavailable')status.state='index_unavailable';
             }
             finish(undefined, { tools, status });
         })().catch(error => finish(error instanceof Error ? error : new Error(String(error))));

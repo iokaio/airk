@@ -109,7 +109,8 @@ test('registered native MCP verifies before the first publication without starti
     const fixture=await NativeServiceFixture.create(process.env.AIRK_TEST_BINARY!);
     try{
         const spec=await fixture.register('unindexed');
-        const result=await probeMcp(spec);assert.equal(result.tools.length,15);assert.deepEqual(result.status,{state:'not_indexed'});
+        const result=await probeMcp(spec);assert.equal(result.tools.length,16);assert.equal(record(result.status).state,'index_unavailable');
+        const status=JSON.parse((record(result.status).content as {text:string}[])[0].text);assert.equal(status.index_state,'unavailable');assert.equal(status.files,null);
         const embedding=await fixture.embedding();
         assert.equal(embedding.loads,0);assert.equal(embedding.sessions,0);
     }finally{await fixture.dispose();}
@@ -230,7 +231,7 @@ test('cached old helper survives extension replacement and a changed trusted hel
         // 1.2 builds an independent current-index namespace and leaves the old
         // helper's derived collection untouched.
         await runJson(newAgent, 'index', ['--full']);
-        assert.equal((await probeMcp(newAgent)).tools.length, 15);
+        assert.equal((await probeMcp(newAgent)).tools.length, 16);
         await assert.rejects(runJson(newAgent, 'collections', ['history', 'set', '--json', JSON.stringify({
             version: 1, enabled: true, recent: 3, hourly_hours: 24,
             max_packages: 12, max_bytes: 268435456, quota_basis_points: 1000
@@ -304,7 +305,7 @@ test('extension native clients index, inspect, approve rebuilds, enforce limits 
         await fixture.repair(a,'rebuild');
         const rebuilt=await fixture.tool(a,'airk_status');
         assert.notEqual(record(rebuilt.publication).incarnation,record(before.publication).incarnation);
-        const probe=await probeMcp(a);assert.equal(probe.tools.length,15);assert.ok(probe.tools.includes('airk_changes'));
+        const probe=await probeMcp(a);assert.equal(probe.tools.length,16);assert.ok(probe.tools.includes('airk_changes'));
         const foreign=await fixture.tool(b,'airk_code_facts',{name:'authenticate_fixture',compact:false});
         assert.deepEqual(foreign.items,[]);
         await assert.rejects(runJson(a,'collections',['remove',b.collection]));

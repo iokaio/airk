@@ -39,7 +39,44 @@ fn tools_help_works_without_a_workspace_and_exposes_live_schemas() {
             .unwrap(),
     );
     let tools = list["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 15);
+    assert_eq!(tools.len(), 16);
+    assert!(tools.iter().any(|tool| tool["name"] == "airk_help"));
+    let help = evidence(
+        command(&root, &state)
+            .args(["tools", "call", "airk_help"])
+            .output()
+            .unwrap(),
+    );
+    assert!(help["topics"].as_array().unwrap().len() >= 25);
+    let help = evidence(
+        command(&root, &state)
+            .args([
+                "tools",
+                "call",
+                "airk_help",
+                "--args",
+                r#"{"command":"runtime retire-previous"}"#,
+            ])
+            .output()
+            .unwrap(),
+    );
+    assert!(
+        help["content"]
+            .as_str()
+            .unwrap()
+            .contains("--expected-active")
+    );
+    assert!(!root.exists() && !state.exists());
+    let status = tools
+        .iter()
+        .find(|tool| tool["name"] == "airk_status")
+        .unwrap();
+    assert!(
+        status["description"]
+            .as_str()
+            .unwrap()
+            .contains("runtime JSON bundle")
+    );
     for tool in tools {
         let help = success(
             command(&root, &state)
@@ -87,6 +124,56 @@ fn tool_calls_preserve_evidence_scope_errors_and_argument_budgets() {
     );
     service.wait(serde_json::from_value(accepted["job"]["id"].clone()).unwrap());
     let query = state.path().join("query with spaces.json");
+    let mut status = evidence(
+        command(root.path(), state.path())
+            .args(["tools", "call", "airk_status"])
+            .output()
+            .unwrap(),
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while status["runtime"]["index_worker"]["process"]["executable_sha256"].is_null() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "runtime identity stayed unavailable: {status}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        status = evidence(
+            command(root.path(), state.path())
+                .args(["tools", "call", "airk_status"])
+                .output()
+                .unwrap(),
+        );
+    }
+    let runtime = &status["runtime"];
+    assert_eq!(runtime["schema"], 1);
+    assert_eq!(runtime["versions_match"], true);
+    assert_eq!(
+        runtime["mcp_frontend"]["process"]["version"],
+        env!("CARGO_PKG_VERSION")
+    );
+    assert_eq!(
+        runtime["index_worker"]["process"]["version"],
+        env!("CARGO_PKG_VERSION")
+    );
+    assert_eq!(runtime["service"]["version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(
+        status["work"]["serving_worker"]["project"],
+        serde_json::to_value(service.project.binding).unwrap()
+    );
+    assert!(
+        status["work"]["pending_job"].is_null()
+            || status["work"]["pending_job"]["project"]
+                == status["work"]["serving_worker"]["project"]
+    );
+    assert!(status["work"]["watch"]["enabled"].is_boolean());
+    assert_eq!(
+        runtime["index_worker"]["identity"]["service"],
+        runtime["service"]["instance"]
+    );
+    assert_eq!(
+        runtime["index_worker"]["process"]["executable_sha256"],
+        runtime["service"]["executable_sha256"]
+    );
     fs::write(
         &query,
         br#"{"query":"Authenticate","mode":"lexical","limit":1}"#,

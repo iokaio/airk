@@ -120,10 +120,29 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
             project,
             observation: registry.watch(project)?.observation,
         },
-        ControlMethod::Progress { project } => ControlResponse::Progress {
-            project,
-            observation: registry.progress_observation(project)?.map(Box::new),
-        },
+        ControlMethod::Progress { project } => {
+            let paused = registry.get(project)?.paused;
+            let pending_job = registry.pending_job_observation(project)?;
+            let mut queued_jobs = registry.queued_jobs_observation(project, 17)?;
+            let queue_truncated = queued_jobs.len() > 16;
+            queued_jobs.truncate(16);
+            let pending_paused = paused
+                && pending_job
+                    .as_ref()
+                    .map(|job| registry.job_runs_while_paused(job.id))
+                    .transpose()?
+                    .is_some_and(|runs| !runs);
+            ControlResponse::Progress {
+                project,
+                observation: registry.progress_observation(project)?.map(Box::new),
+                pending_job,
+                queued_jobs,
+                queue_truncated: Some(queue_truncated),
+                project_paused: Some(paused),
+                pending_paused: Some(pending_paused),
+                observed_unix_ms: Some(now_ms),
+            }
+        }
         ControlMethod::Inspection { project } => ControlResponse::Inspection {
             project,
             observation: registry.inspection(project)?.map(Box::new),

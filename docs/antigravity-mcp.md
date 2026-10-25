@@ -1,5 +1,7 @@
 # Google Antigravity MCP setup
 
+Current 1.4.0 source exposes sixteen read-only tools, including airk_help; see the [current MCP catalog](mcp.md). The fifteen-tool 1.3 statements below describe that historical source.
+
 Reviewed on **16 October 2026**. Google's [MCP documentation](https://antigravity.google/docs/mcp) describes local stdio servers with a `mcpServers` object containing `command` and `args`. AIRK already provides that transport and configuration shape. The documented connection needs no new AIRK binary, HTTP bridge or retrieval adapter. This is configuration compatibility, not an installed-Antigravity qualification result.
 
 ## Prepare the collection

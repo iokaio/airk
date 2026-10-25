@@ -65,7 +65,7 @@ fn startup_circuit_retains_failed_attempts_across_reopen_and_backwards_clock() -
     Ok(())
 }
 
-fn unselected_fixture() -> Result<(tempfile::TempDir, PathBuf, String)> {
+pub(super) fn unselected_fixture() -> Result<(tempfile::TempDir, PathBuf, String)> {
     let owner = tempfile::tempdir()?;
     let root = owner.path().join("install");
     local_ipc::prepare_root(&root)?;

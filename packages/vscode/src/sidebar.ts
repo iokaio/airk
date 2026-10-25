@@ -7,7 +7,7 @@ import { VectorStatus } from './vectorModel';
 export interface ControlGroup { label: string; commands: [string, string, string][] }
 export interface McpVerification {
     phase: 'preparing' | 'checking' | 'verified' | 'failed'; checkedAt?: number; tools?: string[]; error?: string;
-    indexState?: 'not_indexed' | 'published';
+    indexState?: 'not_indexed' | 'unavailable' | 'published';
 }
 export type IndexDetail = 'agent_lean' | 'essential' | 'balanced' | 'detailed';
 export function detailLabel(level: IndexDetail): string {
@@ -160,7 +160,7 @@ export function sidebarContent(state: SidebarState): string {
         const error = item.error || view?.error;
         const mcp = item.mcp, checking = mcp?.phase === 'checking' || mcp?.phase === 'preparing';
         const mcpLabel = !mcp ? 'Not checked' : mcp.phase === 'preparing' ? 'Preparing collection…' : mcp.phase === 'checking' ? 'Checking MCP…'
-            : mcp.phase === 'verified' ? `Verified · ${mcp.tools?.length ?? 0} tools available${mcp.indexState === 'not_indexed' ? '; indexing pending' : ''}` : 'Verification failed';
+            : mcp.phase === 'verified' ? `Verified · ${mcp.tools?.length ?? 0} tools available${mcp.indexState === 'not_indexed' ? '; indexing pending' : mcp.indexState === 'unavailable' ? '; index status unavailable' : ''}` : 'Verification failed';
         const connection = `<div class="mcp"><h3>AIRK helper check</h3><p role="status" aria-live="polite">Helper: <strong>${escape(mcpLabel)}</strong></p>
             ${mcp?.checkedAt ? `<p class="muted">Last checked: ${escape(new Date(mcp.checkedAt).toLocaleString())}</p>` : ''}
             ${mcp?.error ? `<p class="error">${escape(mcp.error.slice(0, 600))}</p>` : ''}

@@ -247,6 +247,14 @@ export class RuntimeHost {
             verificationBasis:typeof approval.verification_basis==='string'?approval.verification_basis:'unknown',
             payloadVerified:inspection.payload_verified!==false&&inspection.metadata_only!==true};
     }
+    async retirePrevious(binding:RuntimeBinding):Promise<void>{
+        this.active();
+        if(this.options.managed)return;
+        const bundle=await this.verified();
+        const result=await this.invoke(bundle.main,['runtime','retire-previous','--install-dir',binding.installDir,
+            '--expected-active',binding.runtimeSha256],180000);
+        if(result.active!==binding.runtimeSha256)throw new ServiceError('crossed_runtime_retirement_receipt',true);
+    }
     client(binding:RuntimeBinding):ServiceClient {
         this.active();
         if(binding.version!==this.version)throw new ServiceError('service_runtime_version_mismatch');

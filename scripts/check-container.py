@@ -73,7 +73,7 @@ def check_stdio(name):
         tools = receive(2)["result"]["tools"]
         expected = {
             "airk_capabilities", "airk_changes", "airk_code_facts", "airk_context",
-            "airk_document_facts", "airk_file_info", "airk_imports", "airk_list_files",
+            "airk_document_facts", "airk_file_info", "airk_help", "airk_imports", "airk_list_files",
             "airk_outline", "airk_read_file", "airk_references", "airk_relationships",
             "airk_search", "airk_status", "airk_symbols",
         }

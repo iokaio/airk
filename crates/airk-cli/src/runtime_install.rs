@@ -220,6 +220,13 @@ pub enum RuntimeCommand {
         #[arg(long)]
         runtime_sha256: String,
     },
+    /// Retire the previous rollback payload after a successful replacement; preserve the active runtime and project data.
+    RetirePrevious {
+        #[arg(long)]
+        install_dir: PathBuf,
+        #[arg(long)]
+        expected_active: String,
+    },
     /// Abort an ownership-proven interrupted copy; preserve promoted runtimes and unknown files.
     AbortStage {
         #[arg(long)]
@@ -1400,6 +1407,7 @@ async fn activate_with_expected(
     expected: Option<&str>,
 ) -> Result<Selection> {
     let _lock = install_lock(root)?;
+    retirement::require_previous_settled(root)?;
     if let Some(expected) = expected
         && activation::reviewed_request(root, identity, expected)?
     {

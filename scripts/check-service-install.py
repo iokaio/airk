@@ -180,6 +180,29 @@ def main():
                 raise RuntimeError("Rollback did not restore the preceding verified payload")
             if run("ensure", "--install-dir", install)["runtime_sha256"] != identity:
                 raise RuntimeError("Rollback health points to the wrong runtime")
+            print("Checking previous runtime retirement and interrupted cleanup...", flush=True)
+            run("retire-previous", "--install-dir", install, "--expected-active", next_identity, rejected=True)
+            unknown_previous = install / "runtimes" / next_identity / "unrecognized.md"
+            unknown_previous.write_text("Original retirement preservation fixture.\n", encoding="utf-8")
+            run("retire-previous", "--install-dir", install, "--expected-active", identity, rejected=True)
+            if unknown_previous.read_text(encoding="utf-8") != "Original retirement preservation fixture.\n":
+                raise RuntimeError("Retirement changed an unknown file")
+            if run("ensure", "--install-dir", install)["runtime_sha256"] != identity:
+                raise RuntimeError("Deferred retirement did not restore selected service health")
+            run("activate", "--install-dir", install, "--runtime-sha256", next_identity, rejected=True)
+            unknown_previous.unlink()
+            retired = run("retire-previous", "--install-dir", install, "--expected-active", identity)
+            if retired.get("active") != identity or retired.get("retired_previous") != next_identity:
+                raise RuntimeError("Retirement receipt lost the exact selected/previous identities")
+            if (install / "runtimes" / next_identity).exists():
+                raise RuntimeError("Previous runtime executable payload remains after retirement")
+            if run("inspect", "--install-dir", install)["selection"]["previous"] is not None:
+                raise RuntimeError("Retirement retained a rollback reference")
+            if run("ensure", "--install-dir", install)["runtime_sha256"] != identity:
+                raise RuntimeError("Retirement lost the selected service")
+            if run("retire-previous", "--install-dir", install, "--expected-active", identity).get("retired_previous") is not None:
+                raise RuntimeError("Completed retirement was not idempotent")
+            stage(next_payload, next_identity)
             foreign = install / "runtimes" / next_identity / "unrecognized.md"
             foreign.write_text("Original unknown file fixture.\n", encoding="utf-8")
             print("Checking resumable owned uninstall...", flush=True)

@@ -187,11 +187,26 @@ impl AirkServer {
         };
         let kernel = self.kernel.clone();
         let client = self.client;
+        let diagnostics = if matches!(operation, UsageOperation::Status) {
+            Some((
+                self.runtime.read().ok().and_then(|value| value.clone()),
+                self.work.read().ok().and_then(|value| value.clone()),
+            ))
+        } else {
+            None
+        };
         tokio::task::spawn_blocking(move || {
             let _permit = permit;
             let kernel = match kernel.refresh_service_snapshot() {
                 Ok(kernel) => kernel,
-                Err(_) => return error("AIRK collection selection is busy or unavailable; retry against the current revision"),
+                Err(_) => {
+                    if let Some((runtime, work)) = diagnostics && (runtime.is_some() || work.is_some()) {
+                        let status = crate::unavailable_status(&kernel, runtime, work, "AIRK collection selection is busy or unavailable; retry against the current revision");
+                        let span = kernel.usage_span(operation, client);
+                        return crate::render(&kernel, span, Ok(status), &responses, mode, true, operation);
+                    }
+                    return error("AIRK collection selection is busy or unavailable; retry against the current revision");
+                },
             };
             let span = kernel.usage_span(operation, client);
             let result =

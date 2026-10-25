@@ -19,7 +19,7 @@ class ContainerCheckTests(unittest.TestCase):
     def test_stdio_rejects_retired_missing_and_duplicate_tools(self):
         names = ["airk_" + name for name in (
             "capabilities", "changes", "code_facts", "context", "document_facts",
-            "file_info", "imports", "list_files", "outline", "read_file", "references",
+            "file_info", "help", "imports", "list_files", "outline", "read_file", "references",
             "relationships", "search", "status", "symbols")]
         for catalog, accepted in ((names, True), (names[:-1], False),
                                   (names + ["airk_history"], False),

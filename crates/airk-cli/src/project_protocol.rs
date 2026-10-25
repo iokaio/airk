@@ -72,6 +72,8 @@ pub enum Reply {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Query {
+    #[serde(default)]
+    pub frontend: Option<airk_core::service::RuntimeProcess>,
     pub tool: String,
     pub arguments: serde_json::Map<String, serde_json::Value>,
     #[serde(default)]

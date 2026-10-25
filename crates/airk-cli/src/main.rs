@@ -485,6 +485,41 @@ enum SearchMode {
     Hybrid,
 }
 
+fn cli_help_catalog() -> std::collections::BTreeMap<String, String> {
+    use clap::CommandFactory;
+    fn visit(
+        mut command: clap::Command,
+        name: String,
+        catalog: &mut std::collections::BTreeMap<String, String>,
+    ) {
+        command = command
+            .color(clap::ColorChoice::Never)
+            .term_width(100)
+            .bin_name(if name.is_empty() {
+                "airk".into()
+            } else {
+                format!("airk {name}")
+            });
+        catalog.insert(name.clone(), command.render_long_help().to_string());
+        for child in command
+            .get_subcommands()
+            .filter(|child| !child.is_hide_set())
+        {
+            let path = if name.is_empty() {
+                child.get_name().into()
+            } else {
+                format!("{name} {}", child.get_name())
+            };
+            visit(child.clone(), path, catalog);
+        }
+    }
+    let mut root = Cli::command();
+    root.build();
+    let mut catalog = std::collections::BTreeMap::new();
+    visit(root, String::new(), &mut catalog);
+    catalog
+}
+
 fn print_json(value: &impl serde::Serialize) -> Result<()> {
     println!("{}", serde_json::to_string(value)?);
     Ok(())
@@ -540,6 +575,7 @@ fn run_cli() -> Result<()> {
 }
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn run() -> Result<()> {
+    airk_mcp::help::install_cli_help(cli_help_catalog);
     let cli = Cli::parse();
     let executable = std::env::current_exe()?;
     if !matches!(cli.command, Command::Runtime { .. })

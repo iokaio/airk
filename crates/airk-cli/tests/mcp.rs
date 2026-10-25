@@ -299,7 +299,7 @@ fn durable_key_reads_match_cli_and_mcp_and_reject_filter_combinations() -> anyho
             .as_array()
             .unwrap()
             .len(),
-        15
+        16
     );
     for (id, command, option, tool, field, key) in [
         (
@@ -662,7 +662,7 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
     let mut advertised = tools.clone();
     advertised.sort_by_key(|tool| tool["name"].as_str().unwrap().to_owned());
     assert_eq!(catalog["tools"], json!(advertised));
-    assert_eq!(tools.len(), 15);
+    assert_eq!(tools.len(), 16);
     assert!(
         tools
             .iter()

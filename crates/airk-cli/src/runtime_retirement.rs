@@ -11,6 +11,202 @@ fn present(path: &Path) -> Result<bool> {
     }
 }
 
+const PREVIOUS_RETIREMENT: &str = "previous-retirement.json";
+
+#[cfg(test)]
+mod previous_tests {
+    use super::*;
+
+    fn fixture() -> Result<(tempfile::TempDir, PathBuf, String, String)> {
+        let (owner, root, old) = super::super::tests::unselected_fixture()?;
+        let active = "a".repeat(64);
+        fs::create_dir(root.join("runtimes").join(&active))?;
+        fs::write(
+            root.join("runtimes").join(&active).join("keep"),
+            b"selected",
+        )?;
+        replace_json(
+            &root,
+            "selected.json",
+            &Selection {
+                schema: 1,
+                active: active.clone(),
+                previous: Some(old.clone()),
+            },
+        )?;
+        Ok((owner, root, old, active))
+    }
+
+    #[test]
+    fn previous_retirement_clears_rollback_removes_payload_and_preserves_active_and_data()
+    -> Result<()> {
+        let (_owner, root, old, active) = fixture()?;
+        fs::write(root.join("saved-settings"), b"preserve")?;
+        assert!(previous_intent(&root, &"b".repeat(64)).is_err());
+        let intent = previous_intent(&root, &active)?.context("missing retirement")?;
+        assert!(require_previous_settled(&root).is_err());
+        finish_previous(&root, &intent)?;
+        assert!(!root.join("runtimes").join(old).exists());
+        assert!(selection_record(&root)?.previous.is_none());
+        assert_eq!(
+            fs::read(root.join("runtimes").join(&active).join("keep"))?,
+            b"selected"
+        );
+        assert_eq!(fs::read(root.join("saved-settings"))?, b"preserve");
+        require_previous_settled(&root)?;
+        assert!(previous_intent(&root, &active)?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn previous_retirement_preserves_unknown_files_and_resumes_after_rollback_is_cleared()
+    -> Result<()> {
+        let (_owner, root, old, active) = fixture()?;
+        let unknown = root.join("runtimes").join(&old).join("unknown.dll");
+        fs::write(&unknown, b"preserve unknown")?;
+        let intent = previous_intent(&root, &active)?.context("missing retirement")?;
+        assert!(finish_previous(&root, &intent).is_err());
+        assert!(selection_record(&root)?.previous.is_none());
+        assert!(root.join("runtimes").join(&old).join(main_name()).is_file());
+        assert_eq!(fs::read(&unknown)?, b"preserve unknown");
+        fs::remove_file(unknown)?;
+        let resumed = previous_intent(&root, &active)?.context("lost retirement")?;
+        // Simulate death after payload retirement but before the outer receipt was removed.
+        remove(&root, &old)?;
+        finish_previous(&root, &resumed)?;
+        require_previous_settled(&root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn previous_retirement_refuses_foreign_receipts_and_changed_selection() -> Result<()> {
+        let (_owner, root, old, active) = fixture()?;
+        let mut intent = previous_intent(&root, &active)?.context("missing retirement")?;
+        intent.install = root.join("other");
+        replace_json(&root, PREVIOUS_RETIREMENT, &intent)?;
+        assert!(previous_intent(&root, &active).is_err());
+        assert!(root.join("runtimes").join(old).join(main_name()).is_file());
+        Ok(())
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PreviousRetirement {
+    schema: u32,
+    install: PathBuf,
+    active: String,
+    previous: String,
+}
+
+pub(super) fn require_previous_settled(root: &Path) -> Result<()> {
+    ensure!(
+        !present(&root.join(PREVIOUS_RETIREMENT))?,
+        "previous runtime retirement is pending; resume retire-previous before another activation"
+    );
+    Ok(())
+}
+
+fn previous_intent(root: &Path, expected: &str) -> Result<Option<PreviousRetirement>> {
+    digest(expected)?;
+    let selected = selection_record(root)?;
+    ensure!(
+        selected.active == expected,
+        "runtime selection changed before retirement"
+    );
+    let path = root.join(PREVIOUS_RETIREMENT);
+    if present(&path)? {
+        let intent: PreviousRetirement = serde_json::from_slice(&read_bounded(&path, 16384)?)?;
+        digest(&intent.previous)?;
+        ensure!(
+            intent.schema == 1
+                && intent.install == root.canonicalize()?
+                && intent.active == expected
+                && intent.previous != expected
+                && selected
+                    .previous
+                    .as_ref()
+                    .is_none_or(|previous| previous == &intent.previous),
+            "previous runtime retirement ownership or selection changed"
+        );
+        return Ok(Some(intent));
+    }
+    let Some(previous) = selected.previous else {
+        return Ok(None);
+    };
+    digest(&previous)?;
+    ensure!(previous != expected, "active runtime cannot be retired");
+    // Preserve inventory before clearing rollback, including for interrupted deletion.
+    validated_inventory(root, &previous)?;
+    let intent = PreviousRetirement {
+        schema: 1,
+        install: root.canonicalize()?,
+        active: expected.into(),
+        previous,
+    };
+    replace_json(root, PREVIOUS_RETIREMENT, &intent)?;
+    Ok(Some(intent))
+}
+
+fn finish_previous(root: &Path, intent: &PreviousRetirement) -> Result<()> {
+    let selected = selection_record(root)?;
+    ensure!(
+        selected.active == intent.active
+            && selected
+                .previous
+                .as_ref()
+                .is_none_or(|previous| previous == &intent.previous),
+        "runtime selection changed during retirement"
+    );
+    replace_json(
+        root,
+        "selected.json",
+        &Selection {
+            schema: 1,
+            active: intent.active.clone(),
+            previous: None,
+        },
+    )?;
+    // The existing inventory-proven remover preserves unknown/changed files and resumes partial deletion.
+    if present(&root.join("runtimes").join(&intent.previous))?
+        || present(&root.join(format!("retire-{}.json", intent.previous)))?
+    {
+        remove(root, &intent.previous)?;
+    }
+    fs::remove_file(root.join(PREVIOUS_RETIREMENT))?;
+    sync_directory(root)
+}
+
+pub(super) async fn retire_previous(root: &Path, expected: &str) -> Result<serde_json::Value> {
+    let _lock = install_lock(root)?;
+    managed::require_unmanaged(root)?;
+    activation::require_settled(root)?;
+    payload_repair::require_settled(root)?;
+    lifecycle::require_settled(root)?;
+    lifecycle::require_start_allowed(root)?;
+    let Some(intent) = previous_intent(root, expected)? else {
+        return Ok(serde_json::json!({"active":expected,"retired_previous":null}));
+    };
+    let (main, approval) = verify_runtime(root, expected)?;
+    let manager = crate::service_manager::ServiceManager::for_runtime(root)?;
+    let owned_manager = manager.owns_restart()?;
+    drain(root, &main, &approval).await?;
+    if owned_manager {
+        manager.stop()?;
+    }
+    manager.require_stopped_for_maintenance()?;
+    let cleanup = {
+        let _quiescence = quiescent(root)?;
+        finish_previous(root, &intent)
+    };
+    // Restore the healthy replacement even when locked/unknown old files defer cleanup.
+    activation::start_selected(root, &approval, &main, Some(owned_manager))
+        .await
+        .context("replacement runtime remains selected but restart after retirement is pending")?;
+    cleanup.context("previous runtime cleanup is incomplete; retry retire-previous")?;
+    Ok(serde_json::json!({"active":expected,"retired_previous":intent.previous}))
+}
+
 fn validate_startup(root: &Path, identity: &str) -> Result<()> {
     let path = root.join(format!("startup-{identity}.json"));
     if present(&path)? {

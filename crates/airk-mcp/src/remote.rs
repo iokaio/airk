@@ -63,6 +63,9 @@ impl ServerHandler for Bridge {
             .into());
         };
         let mut arguments = request.arguments.unwrap_or_default();
+        if request.name == "airk_help" {
+            return Ok(crate::help::call(serde_json::Value::Object(arguments)).into());
+        }
         let client = context
             .peer
             .peer_info()
@@ -196,6 +199,17 @@ mod tests {
                 );
                 assert_eq!(value["include_status"], true);
             }
+            let help = client
+                .call_tool(
+                    CallToolRequestParams::new("airk_help").with_arguments(Default::default()),
+                )
+                .await?;
+            let help: serde_json::Value =
+                serde_json::from_str(&help.content[0].as_text().unwrap().text)?;
+            assert!(
+                help["topics"].as_array().unwrap().len() >= 25,
+                "help must be served locally rather than forwarded to the echo backend"
+            );
             client.close().await?;
             server.close().await?;
         }

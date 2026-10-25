@@ -1,5 +1,9 @@
 # AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents
 
+The cleanup, help and live-status follow-up remains version 1.4.0 for manual testing. Its checks run on Windows x64; installed-editor acceptance and native macOS/Linux qualification of this follow-up remain pending.
+
+CLI installation removes previous extension-managed terminal executable copies regardless of version. It also retires the previous native rollback payload after successful activation, preserving the selected runtime, sources, indexes and settings. Locked files report incomplete cleanup; disconnect old clients and use **AIRK: Install or Repair CLI**, or allow the next trusted activation to retry. Close old terminal sessions completely; **Developer: Reload Window** can preserve their environment.
+
 Trusted VSIX activation now installs the native runtime and the `airk` terminal command, registers new workspace folders, prepares the bundled offline model and queues indexing with automatic watching. No setup links are required. Open a new VS Code terminal after installation; restart external terminal applications to refresh PATH. User `airk.cli.autoInstall: false` disables automatic installation and registration. Existing 1.4 registrations, selected index-data locations and watching preferences are preserved, including after a storage change. Compatible 1.4 runtime updates use the native fenced activation and schema-migration path; no fresh registration or reindex is requested for saved projects. Managed runtime ownership and explicit Stop remain authoritative. Use **Choose Index Storage Folder** or **Choose Native Automatic Watching** to change defaults later. Storage selection creates a reviewed binding and retains old index files for separate cleanup. Agent connection remains a separate explicit action.
 
 Managed installations support a verified lightweight client launcher in user metadata while leaving the approved provider payload read-only and preserving its lifecycle policy. See the [native installation contract](https://github.com/iokaio/airk/blob/main/docs/service-installation.md).
@@ -11,6 +15,10 @@ Private editor acceptance now exercises reviewed native registrations and Full/T
 AIRK gives coding agents bounded, cited evidence from local code and documents. Its read-only MCP tools preserve indexed revision identities and original document locations. A native service owns indexing and resources; agents retrieve evidence directly from project workers. The offline inference helper embeds MiniLM and shares compatible model sessions across projects. No cloud service or API key is required.
 
 ## First registration
+
+The 16-tool MCP catalog includes `airk_help`: ask for its topic catalog, a topic such as jobs/troubleshooting, an exact CLI command path or another tool's schema. `airk_status.work` separately reports scoped jobs, progress, up to 16 queued jobs, watcher observations and matched waits. Missing/stale samples remain explicit. The agent can explain management choices; MCP never executes them.
+
+Use `airk_status` in your coding agent to inspect the connected MCP frontend, index worker and native service versions, process identities, executable/payload hashes and available build metadata. These observations identify running processes separately from the extension version and index extractor version.
 
 Trust the workspace to start automatic setup. Use **AIRK: Index Now** for later explicit indexing. Automatic native watching continues after editor windows close; change it to manual with **AIRK: Choose Native Automatic Watching**. Login startup is a separate choice.
 

@@ -94,6 +94,7 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
     });
     test.mock.method(RuntimeHost.prototype,'ensure',async(explicit?:boolean)=>{state.ensured++;assert.notEqual(explicit,true);if(state.stopped)throw new ServiceError('service_explicitly_stopped');if(state.down)throw new ServiceError('service_unavailable');return binding;});
     test.mock.method(RuntimeHost.prototype,'client',()=>new ServiceClient(transport));
+    test.mock.method(RuntimeHost.prototype,'retirePrevious',async()=>{calls.push('previous-runtime-retired');});
     test.mock.method(RuntimeHost.prototype,'reviewTransition',async(current:typeof binding,action:'upgrade'|'rollback'|'resume')=>{
         assert.equal(current.runtimeSha256,binding.runtimeSha256);assert.equal(action,'upgrade');calls.push('upgrade-reviewed');
         return {action,installDir:install,controlDir:control,observedActive:binding.runtimeSha256,expectedActive:binding.runtimeSha256,target:binding.runtimeSha256,version:'1.4.1'};

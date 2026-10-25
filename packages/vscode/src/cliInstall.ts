@@ -172,7 +172,39 @@ export async function installCli(helper: string, context: Pick<ExtensionContext,
 /** The verified native installation owns this launcher; never copy an extension helper over it. */
 export async function installLauncherCli(launcher:string,context:Pick<ExtensionContext,'environmentVariableCollection'|'globalStorageUri'>):Promise<string[]>{
     const directory=await publishLauncherCommand(launcher,context.globalStorageUri.fsPath);
-    return installPath(directory,context);
+    const errors=await installPath(directory,context);
+    errors.push(...await retireCliExecutables(context.globalStorageUri.fsPath));
+    return errors;
+}
+
+/** Retire only obsolete binaries at extension-owned CLI locations, regardless of version.
+ * Never execute them, traverse redirected directories, stop clients or delete native runtime slots.
+ * Missing files are complete; a locked file remains an explicit failure for the next install attempt.
+ */
+export async function retireCliExecutables(storage:string,platform:NodeJS.Platform=process.platform):Promise<string[]>{
+    validatePath(storage,process.platform);
+    const targets=platform==='win32'
+        ?[['cli','bin','airk.exe'],['service-cli','bin','airk.exe']]
+        :[['cli','bin','airk']];
+    const errors:string[]=[];
+    for(const parts of targets){
+        const executable=path.join(storage,...parts);
+        try{
+            let directory=storage;
+            for(const part of ['',...parts.slice(0,-1)]){
+                directory=path.join(directory,part);
+                const info=await fs.lstat(directory);
+                if(!info.isDirectory()||info.isSymbolicLink())throw new Error('Redirected or non-directory CLI location preserved');
+            }
+            const info=await fs.lstat(executable);
+            if(!info.isFile()||info.isSymbolicLink()||info.nlink!==1)throw new Error('Non-regular, redirected or hard-linked CLI executable preserved');
+            await fs.unlink(executable);
+        }catch(error){
+            if((error as NodeJS.ErrnoException).code==='ENOENT')continue;
+            errors.push(`Could not remove previous AIRK CLI ${executable}: ${String(error)}. Disconnect clients using this executable, close old terminals, then run AIRK: Install or Repair CLI. Automatic installation retries on the next trusted activation.`);
+        }
+    }
+    return errors;
 }
 
 /** Keep the stable launcher's original path and native installation identity. */

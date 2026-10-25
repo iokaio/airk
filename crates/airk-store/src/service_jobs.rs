@@ -201,6 +201,32 @@ impl ServiceRegistry {
         id.map(|id| record(&self.connection, id.parse()?))
             .transpose()
     }
+    /// Bounded FIFO observations include paused jobs and never admit or mutate work.
+    pub fn queued_jobs_observation(
+        &self,
+        project: ProjectBinding,
+        limit: usize,
+    ) -> Result<Vec<JobRecord>> {
+        ensure!(
+            (1..=32).contains(&limit),
+            "queued job observation limit must be 1..32"
+        );
+        self.get(project)?;
+        let transaction = self.connection.unchecked_transaction()?;
+        let mut statement = transaction.prepare("SELECT id FROM service_jobs WHERE project=?1 AND state='pending' ORDER BY seq LIMIT ?2")?;
+        let ids = statement
+            .query_map(params![project.to_string(), limit as i64], |row| {
+                row.get::<_, String>(0)
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        drop(statement);
+        let jobs = ids
+            .into_iter()
+            .map(|id| record(&transaction, id.parse()?))
+            .collect::<Result<Vec<_>>>()?;
+        transaction.commit()?;
+        Ok(jobs)
+    }
     /// Rotate the request epoch when terminal receipts are retired, so an old unknown key
     /// always expires rather than accidentally replaying its former mutation.
     fn prune_job_receipts(
@@ -1849,6 +1875,14 @@ mod tests {
             queued.id
         );
         assert!(registry.next_pending_job(project.binding)?.is_none());
+        let observed_queue = registry.queued_jobs_observation(project.binding, 16)?;
+        assert_eq!(observed_queue.len(), 1);
+        assert_eq!(observed_queue[0].id, queued.id);
+        assert!(
+            registry
+                .queued_jobs_observation(project.binding, 33)
+                .is_err()
+        );
         assert!(registry.claim_job(&lease)?.is_none());
         registry.pause(project.binding, false)?;
         assert!(registry.claim_job(&lease)?.is_some());
