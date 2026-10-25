@@ -1,6 +1,6 @@
 # Service resource admission and observations
 
-This is implemented opt-in service behavior. Default extension/native cutover to 1.4.0 and installed-platform/workload qualification remain open. The [completion checklist](service-implementation-checklist.md) records those gates.
+This is implemented native 1.4.0 behavior, used by the default extension and public CLI. Installed-platform and workload qualification remain open. The [completion checklist](service-implementation-checklist.md) records those gates.
 
 The service owns finite resident and work grants across registered projects and storage roots. Workers cannot claim a job without its exact identity-bound grant, or fall back to the old four execution slots per storage root. The legacy scheduler is not consulted for service work. A worker keeps its project lease until actual process exit. Each resident receives one concurrent direct query and 64 KiB of output credit, within the broker's 32-query/2 MiB global ceiling. Up to 32 residents are admitted subject to memory headroom; this replaces the fixed four-worker service scaffold.
 

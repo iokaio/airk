@@ -9,6 +9,11 @@ import {LaunchSpec,launchArgs} from '../model';
 import {runText} from '../native';
 import {NativeControlTransport,RecordValue,ServiceClient,record,JobKind,ServiceError} from '../serviceClient';
 
+export function nativePayloadDirectory(binary:string):string {
+    const directory=path.dirname(path.resolve(binary)),contents=path.dirname(directory),app=path.dirname(contents);
+    return path.basename(directory)==='MacOS'&&path.basename(contents)==='Contents'&&path.basename(app)==='AIRK.app'?path.dirname(app):directory;
+}
+
 export class NativeServiceFixture {
     client?:ServiceClient;
     control='';launcher='';
@@ -17,7 +22,7 @@ export class NativeServiceFixture {
         const owner=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'airk-native-')));
         const fixture=new NativeServiceFixture(path.resolve(binary),owner,path.join(owner,'i'));
         try{
-            const source=path.dirname(fixture.binary),bytes=await fs.readFile(path.join(source,'airk-install.json'));
+            const source=nativePayloadDirectory(fixture.binary),bytes=await fs.readFile(path.join(source,'airk-install.json'));
             const manifest=JSON.parse(bytes.toString());assert.equal(manifest.version,'1.4.0');
             await fixture.run(['runtime','managed','--source',source,'--install-dir',fixture.install,
                 '--state-dir',path.join(owner,'s'),'--approved-sha256',createHash('sha256').update(bytes).digest('hex'),

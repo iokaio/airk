@@ -26,9 +26,9 @@ def main():
         primary_text = "Original primary source.\n"
         original_text = "REQ-81: The service shall answer within 40 ms.\n"
         replacement_text = "Replacement requirement fixture.\n"
-        (root / "main.md").write_text(primary_text, encoding="utf-8")
-        (specs / "requirements.md").write_text(original_text, encoding="utf-8")
-        (replacement / "requirements.md").write_text(replacement_text, encoding="utf-8")
+        (root / "main.md").write_bytes(primary_text.encode("utf-8"))
+        (specs / "requirements.md").write_bytes(original_text.encode("utf-8"))
+        (replacement / "requirements.md").write_bytes(replacement_text.encode("utf-8"))
         fixture = stack.enter_context(clients.Fixture(binary.parent, base))
         assert fixture.binary == binary
         name = "storage-fixture"

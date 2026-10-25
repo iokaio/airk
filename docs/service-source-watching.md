@@ -1,6 +1,6 @@
 # Service-owned saved-source reconciliation
 
-This is implemented opt-in service behavior. The default 1.3.2 editor/native scheduler remains active until the 1.4.0 cutover. See the [completion checklist](service-implementation-checklist.md) for remaining integration and qualification.
+This is implemented native 1.4.0 behavior. The default extension and CLI use service-owned scheduling; the old editor scheduler is retired from those paths. See the [completion checklist](service-implementation-checklist.md) for remaining qualification.
 
 `configure_watch` enables saved-source monitoring for a registered project. Registrations begin in manual mode. The service retains this choice, requested/completed source-intent revisions, last reconciliation time, configuration epoch and bounded retry state in its ledger. Closed editor windows do not own this work. [Fenced source freshness](service-freshness.md) combines these durable intents with source-job outcomes and forwards bounded cached observations to workers independently of index readiness. Pause preserves changes and prevents new claims; resume admits them under ordinary service resource grants.
 

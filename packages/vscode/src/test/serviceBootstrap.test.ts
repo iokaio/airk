@@ -7,7 +7,16 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { NativeRunner, RuntimeHost, RuntimeOptions, verifyBundledRuntime } from '../serviceBootstrap';
 import { RecordValue, ServiceClient, ServiceError, record } from '../serviceClient';
+import { nativePayloadDirectory } from './nativeServiceFixture';
 const sha=(bytes:Buffer|string)=>createHash('sha256').update(bytes).digest('hex');
+
+test('native qualification locates pair metadata outside the exact Mac app layout',()=>{
+    const root=path.resolve('native-payload-fixture');
+    assert.equal(nativePayloadDirectory(path.join(root,'airk.exe')),root);
+    assert.equal(nativePayloadDirectory(path.join(root,'AIRK.app','Contents','MacOS','airk')),root);
+    const unknown=path.join(root,'Other.app','Contents','MacOS','airk');
+    assert.equal(nativePayloadDirectory(unknown),path.dirname(unknown));
+});
 test('reviewed project setup reserves exact native identity before creating storage and refuses copied reviews',async()=>{
     const f=await fixture(),calls:string[][]=[],mutations:unknown[]=[];
     const registration={binding:'ab'.repeat(32),root:path.join(f.root,'source'),data_root:path.join(f.root,'new','data'),collection:'fixture'};

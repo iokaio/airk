@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Only a native unsubmitted busy receipt permits qualification query retry."""
+"""Only explicit native read-rejection receipts permit qualification retry."""
 import importlib.util
 import json
 from pathlib import Path
 import subprocess
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -13,6 +14,23 @@ SPEC.loader.exec_module(CLIENTS)
 
 
 class ServiceClientTests(unittest.TestCase):
+    def test_runtime_receipts_stay_outside_the_mac_bundle(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            nested = root / "AIRK.app/Contents/MacOS"
+            nested.mkdir(parents=True)
+            (nested / "airk").write_bytes(b"fictional native payload")
+            for selected in (root, nested):
+                fixture = CLIENTS.Fixture(selected, root)
+                try:
+                    self.assertEqual(fixture.runtime, root)
+                    self.assertEqual(fixture.binary, nested / "airk")
+                finally:
+                    fixture.log.close()
+            unknown = root / "Other.app/Contents/MacOS"
+            unknown.mkdir(parents=True)
+            self.assertEqual(CLIENTS.runtime_root(unknown), unknown)
+
     def envelope(self, value, failed=False):
         return {"isError": failed, "content": [{"type": "text", "text": json.dumps(value)}]}
 
@@ -39,6 +57,21 @@ class ServiceClientTests(unittest.TestCase):
             self.assertEqual(fixture.query("fixture", "search", "marker")["request_id"], "accepted")
             self.assertEqual(run.call_count, 2)
             sleep.assert_called_once_with(0.025)
+
+    def test_publication_retry_preserves_exact_revision_and_cursor(self):
+        fixture = CLIENTS.Fixture.__new__(CLIENTS.Fixture)
+        fixture.arguments = lambda _: []
+        args = ("tools", "call", "airk_outline", "--args", '{"revision":"saved","cursor":"exact"}')
+        hint = {"status": "retry", "retryable": True, "action": "repeat_same_request",
+                "code": "publication_busy", "retry_after_ms": 25}
+        replies = [subprocess.CompletedProcess([], 1, json.dumps(self.envelope(hint, True)), ""),
+                   subprocess.CompletedProcess([], 0, json.dumps(self.envelope({"items": []})), "")]
+        with patch.object(fixture, "run", side_effect=replies) as run, patch.object(CLIENTS.time, "sleep"):
+            self.assertEqual(fixture.query("fixture", *args), {"items": []})
+            self.assertEqual(run.call_args_list[0], run.call_args_list[1])
+        for key, value in (("code", "unknown"), ("retryable", False), ("action", "refresh_revision"),
+                           ("retry_after_ms", 0), ("retry_after_ms", True), ("retry_after_ms", 1001)):
+            self.assertIsNone(CLIENTS.read_retry_delay(self.envelope({**hint, key: value}, True)))
 
 
 if __name__ == "__main__":

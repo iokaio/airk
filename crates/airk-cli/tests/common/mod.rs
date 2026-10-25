@@ -404,7 +404,44 @@ pub fn call(
     collection: &str,
     args: &[&str],
 ) -> anyhow::Result<serde_json::Value> {
-    let output = command(root, data, collection).args(args).output()?;
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let output = loop {
+        let output = command(root, data, collection).args(args).output()?;
+        // Tools are read-only. A typed rejection permits repeating these exact
+        // arguments (including revision/cursor); never retry an accepted mutation.
+        let delay = if args.starts_with(&["tools", "call"]) {
+            serde_json::from_slice::<serde_json::Value>(&output.stdout)
+                .ok()
+                .filter(|envelope| envelope["isError"] == true)
+                .and_then(|envelope| {
+                    serde_json::from_str::<serde_json::Value>(
+                        envelope["content"][0]["text"].as_str()?,
+                    )
+                    .ok()
+                })
+                .filter(|hint| {
+                    hint["status"] == "retry"
+                        && hint["retryable"] == true
+                        && hint["action"] == "repeat_same_request"
+                        && matches!(
+                            hint["code"].as_str(),
+                            Some("publication_busy" | "selection_busy")
+                        )
+                })
+                .and_then(|hint| hint["retry_after_ms"].as_u64())
+                .filter(|delay| (1..=1000).contains(delay))
+                .map(Duration::from_millis)
+        } else {
+            None
+        };
+        if let Some(delay) = delay
+            && Instant::now() + delay < deadline
+        {
+            std::thread::sleep(delay);
+            continue;
+        }
+        break output;
+    };
     if !output.status.success() {
         let scope = (
             root.canonicalize()?,

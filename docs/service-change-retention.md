@@ -1,6 +1,6 @@
 # Retained indexed changes
 
-The 1.4.0 development implementation retains authenticated change metadata across up to **64 publications or 24 hours**, bounded independently by **10,000 records and 16 MiB**. These are ceilings: record/byte pressure and omitted observations can advance explicit coverage floors earlier. The default service cutover and final qualification remain open in the [completion checklist](service-implementation-checklist.md).
+The 1.4.0 development implementation retains authenticated change metadata across up to **64 publications or 24 hours**, bounded independently by **10,000 records and 16 MiB**. These are ceilings: record/byte pressure and omitted observations can advance explicit coverage floors earlier. Native clients are now the defaults; final qualification remains open in the [completion checklist](service-implementation-checklist.md).
 
 `airk_changes` accepts an exact saved token and returns observed file changes, plus selected symbol/document changes when requested. Delayed edits coalesce by durable subject, preserving the first before-state, latest after-state, observation count, changed dimensions and causes. A file edited and then restored still reports its intervening observations. Current remembered evidence uses the explicit **`index-current`** outcome; `unchanged` citation content and index readiness never establish live-source freshness.
 

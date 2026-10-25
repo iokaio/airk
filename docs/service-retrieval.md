@@ -1,6 +1,6 @@
 # Indexed call candidates and temporary read retries
 
-These are 1.4.0 development contracts. The default service cutover and final installed-platform qualification remain open in the [completion checklist](service-implementation-checklist.md).
+These are 1.4.0 development contracts for the default native clients. Final installed-platform qualification remains open in the [completion checklist](service-implementation-checklist.md).
 
 ## Terminal method-name discovery
 

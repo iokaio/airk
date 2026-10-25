@@ -48,6 +48,14 @@ def native_runner(fixture, root, state, directory, prefix, measurements, timeout
 
     def run(label, *args):
         started = time.monotonic()
+        if args[:2] == ("configure", "--file"):
+            draft = json.loads(Path(args[2]).read_text(encoding="utf-8"))
+            receipt = fixture.configure(prefix, draft)
+            measurements.append({"label": prefix + "-" + label,
+                                 "wall_ms": round((time.monotonic() - started) * 1000, 3),
+                                 "accepted_job": receipt["id"],
+                                 "scope": "durable inspection/configuration completion; process counters not sampled"})
+            return fixture.rpc({"configuration_result": {"id": receipt["id"]}})["result"]
         value, metrics = measured([str(fixture.binary), *fixture.arguments(prefix), *args], directory,
                                   prefix + "-" + label, timeout=timeout, environment=fixture.environment)
         if "content" in value:
@@ -238,10 +246,6 @@ def fixture_bytes(index, size, revised=False):
 def synthetic(binary, directory, count, size, measurements, command_timeout=1800, *, fixture):
     root, state = directory / "synthetic", directory / "synthetic-state"
     root.mkdir()
-    for index in range(count):
-        folder = root / f"group{index // 256:04d}"
-        folder.mkdir(exist_ok=True)
-        (folder / f"item{index:08d}.txt").write_bytes(fixture_bytes(index, size))
     config = directory / "synthetic-limits.json"
     config.write_text(json.dumps(limits(count, count * size)), encoding="utf-8")
     run = native_runner(fixture, root, state, directory, "synthetic", measurements, command_timeout)
@@ -249,6 +253,12 @@ def synthetic(binary, directory, count, size, measurements, command_timeout=1800
     quota = directory / "synthetic-quota.json"
     quota.write_text(json.dumps(QUALIFICATION_QUOTA), encoding="utf-8")
     configure_file(run, directory, "synthetic-quota", "quota_policy", quota)
+    # Configure the empty owned project before adding source bytes. Policy
+    # changes can schedule a scan; they must not consume the measured first index.
+    for index in range(count):
+        folder = root / f"group{index // 256:04d}"
+        folder.mkdir(exist_ok=True)
+        (folder / f"item{index:08d}.txt").write_bytes(fixture_bytes(index, size))
     first = run("index", "index")
     if first["status"]["files"] != count or source_digest(root)["bytes"] != count * size:
         raise AssertionError("synthetic corpus was not indexed completely")

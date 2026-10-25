@@ -36,9 +36,36 @@ def unsubmitted_busy(envelope):
         return False
 
 
+def read_retry_delay(envelope):
+    if unsubmitted_busy(envelope):
+        return 0.025
+    if envelope.get("isError") is not True:
+        return None
+    try:
+        hint = tool_value(envelope)
+        delay = hint.get("retry_after_ms")
+        if (hint.get("status") == "retry" and hint.get("retryable") is True
+                and hint.get("action") == "repeat_same_request"
+                and hint.get("code") in ("publication_busy", "selection_busy")
+                and type(delay) is int and 1 <= delay <= 1000):
+            return delay / 1000
+    except (AssertionError, KeyError, TypeError, ValueError):
+        pass
+    return None
+
+
+def runtime_root(directory):
+    root = directory.resolve(strict=True)
+    if root.parts[-3:] == ("AIRK.app", "Contents", "MacOS"):
+        root = root.parents[2]
+    if not root.is_dir():
+        raise ValueError("Expected a native runtime directory")
+    return root
+
+
 class Fixture:
     def __init__(self, runtime, owner, command_timeout=120, job_timeout=180):
-        self.runtime = runtime.resolve(strict=True)
+        self.runtime = runtime_root(runtime)
         self.binary = self.runtime / ("airk.exe" if os.name == "nt" else "airk")
         if not self.binary.is_file():
             self.binary = self.runtime / "AIRK.app/Contents/MacOS/airk"
@@ -125,11 +152,12 @@ class Fixture:
         for attempt in range(41):
             result = self.run(*self.arguments(project), *arguments, check=False)
             envelope = json.loads(result.stdout)
-            if not unsubmitted_busy(envelope) or attempt == 40 or time.monotonic() >= deadline:
+            delay = read_retry_delay(envelope)
+            if delay is None or attempt == 40 or time.monotonic() + delay >= deadline:
                 assert result.returncode == 0 and not envelope.get("isError"), (result.stderr, envelope)
                 return tool_value(envelope)
-            # Native proof says no query was submitted. Never retry an unknown result.
-            time.sleep(0.025)
+            # Exact read arguments/revision survive; unknown outcomes never replay.
+            time.sleep(delay)
         raise AssertionError("Native query admission exhausted")
 
     def wait(self, receipt, expected="succeeded"):
@@ -152,10 +180,16 @@ class Fixture:
                                      "epoch": epoch["epoch"], "nonce": uuid.uuid4().hex}}})
 
     def configure(self, project, draft, expected="succeeded"):
-        return self.wait(json.loads(self.run(*self.arguments(project), "configure", "--stdin", input=json.dumps(draft)).stdout), expected)
+        # Inspection can queue behind a large scan. Follow its durable receipt
+        # using this campaign's deadline instead of the interactive CLI wait.
+        self.wait(self.enqueue(project, "inspect"))
+        return self.submit_configuration(project, draft, expected)
 
     def configure_inactive(self, project, draft, expected="succeeded"):
         assert draft.get("operation") in ("prepare_derived_cleanup", "delete_derived")
+        return self.submit_configuration(project, draft, expected)
+
+    def submit_configuration(self, project, draft, expected="succeeded"):
         path = self.control.parent / f"cleanup-draft-{uuid.uuid4().hex}.json"
         with path.open("x", encoding="utf-8") as stream:
             json.dump(draft, stream)
@@ -212,6 +246,7 @@ class Fixture:
 
 
 def qualify(runtime, files, model):
+    runtime = runtime_root(runtime)
     started = time.monotonic()
     with tempfile.TemporaryDirectory(prefix="airk-service-clients-") as temporary:
         owner = Path(temporary)

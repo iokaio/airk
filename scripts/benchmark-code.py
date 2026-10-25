@@ -66,8 +66,8 @@ def main():
             status = tool("status_final", "airk_status")
             assert status["files"] == args.files - 1
             report = {"schema": "airk-code-benchmark/2", "platform": platform.platform(),
-                      "version": json.loads((binary.parent / "airk-runtime.json").read_text())["version"],
-                      "runtime_manifest_sha256": clients.hashlib.sha256((binary.parent / "airk-install.json").read_bytes()).hexdigest(),
+                      "version": json.loads((fixture.runtime / "airk-runtime.json").read_text())["version"],
+                      "runtime_manifest_sha256": clients.hashlib.sha256((fixture.runtime / "airk-install.json").read_bytes()).hexdigest(),
                       "files_initial": args.files, "files_final": status["files"], "index_detail": "detailed",
                       "derived_logical_disk_bytes": sum(file.stat().st_size for file in state.rglob("*") if file.is_file()),
                       "observations": observations, "correctness_checks_passed": True,

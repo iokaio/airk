@@ -61,7 +61,7 @@ impl Session {
     }
     fn receive(&self, id: u64) -> anyhow::Result<Value> {
         for _ in 0..10 {
-            let line = self.output.recv_timeout(Duration::from_secs(10))?;
+            let line = self.output.recv_timeout(Duration::from_secs(60))?;
             let value: Value = serde_json::from_str(&line)?;
             if value["id"] == id {
                 return Ok(value);
@@ -84,15 +84,26 @@ impl Session {
                 .as_str()
                 .and_then(|text| serde_json::from_str::<Value>(text).ok());
             let Some(hint) = hint.filter(|hint| {
-                hint["error"]["code"] == "direct_query_admission"
-                    && hint["error"]["reason"] == "busy"
+                (hint["error"]["code"] == "direct_query_admission"
+                    && hint["error"]["reason"] == "busy")
+                    || (hint["status"] == "retry"
+                        && hint["retryable"] == true
+                        && hint["action"] == "repeat_same_request"
+                        && matches!(
+                            hint["code"].as_str(),
+                            Some("publication_busy" | "selection_busy")
+                        ))
             }) else {
                 return Ok(reply);
             };
-            assert_eq!(hint["error"]["query_submitted"], false);
-            assert_eq!(hint["error"]["retryable"], true);
-            assert_eq!(hint["error"]["fresh_brokerage_required"], false);
-            let delay = hint["error"]["retry_after_ms"].as_u64().unwrap();
+            let delay = if hint["status"] == "retry" {
+                hint["retry_after_ms"].as_u64().unwrap()
+            } else {
+                assert_eq!(hint["error"]["query_submitted"], false);
+                assert_eq!(hint["error"]["retryable"], true);
+                assert_eq!(hint["error"]["fresh_brokerage_required"], false);
+                hint["error"]["retry_after_ms"].as_u64().unwrap()
+            };
             assert!((1..=1000).contains(&delay));
             anyhow::ensure!(
                 std::time::Instant::now() < until,

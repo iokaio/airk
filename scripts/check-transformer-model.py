@@ -113,8 +113,8 @@ def main():
             assert all(hashlib.sha256(path.read_bytes()).hexdigest() == expected for path, expected in originals.items())
             assert not (data / "models" / "local").exists()
             report = {"schema": "airk-transformer-qualification/2", "passed": True,
-                      "version": json.loads((binary.parent / "airk-runtime.json").read_bytes())["version"],
-                      "runtime_manifest_sha256": hashlib.sha256((binary.parent / "airk-install.json").read_bytes()).hexdigest(),
+                      "version": json.loads((fixture.runtime / "airk-runtime.json").read_bytes())["version"],
+                      "runtime_manifest_sha256": hashlib.sha256((fixture.runtime / "airk-install.json").read_bytes()).hexdigest(),
                       "gates": ["shared offline model files", "real helper inference", "persistent DiskANN vectors",
                                 "direct default/vector/hybrid retrieval", "opt-out and re-enable", "invalid-input rejection",
                                 "immutable installed files", "context-bound revision identity", "source preservation"],
