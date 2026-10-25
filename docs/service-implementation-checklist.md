@@ -2,7 +2,7 @@
 
 This is the working completion record for the [service plan](airkservice-architecture.md). Stage commits do not close exit criteria. The [requirements review](service-requirements-review.md) maps every plan section to code, evidence and unavailable qualification.
 
-Authorization: implement the entire plan, make human DCO-signed local stage commits, do not push, and build a manual-install VSIX after implementation, available testing and review. Keep version **1.4.0**.
+Initial authorization: implement the entire plan, make human DCO-signed local stage commits without pushing, and build a manual-install VSIX after implementation, available testing and review. Keep version **1.4.0**. After local completion, the user authorized pushing `feat/airksvc` and creating a draft PR against `main`. This does not authorize a merge or public release.
 
 ## Current implementation and validation
 
@@ -26,7 +26,7 @@ Local packaging and all five actual installed-VSIX scenarios pass. The exact art
 | 7 | Default CLI/extension/container/MCP cutover, fresh namespace, explicit legacy agent/startup/derived-state transition, no fallback/payload proxy | Final production container and Windows VSIX pass; native Mac removal unavailable |
 | 8 | Synchronized 1.4.0 source/lockfiles, exact receipts, DCO stages and qualification tools | Local checks/review, documentation, exact VSIX and installed acceptance complete; external matrix unavailable |
 
-Code completion does not imply that an unavailable target has passed qualification. [Cutover qualification](service-cutover-qualification.md) records exact artifacts and historical counts; [the requirements review](service-requirements-review.md) identifies the external matrix. No push, public release or deployment is authorized.
+Code completion does not imply that an unavailable target has passed qualification. [Cutover qualification](service-cutover-qualification.md) records exact artifacts and historical counts; [the requirements review](service-requirements-review.md) identifies the external matrix. Branch push and draft PR creation are authorized; merge, public release and deployment remain separate actions.
 
 ## Token-efficiency additions
 

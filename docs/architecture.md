@@ -1,6 +1,6 @@
 # Architecture
 
-Current 1.4.0 cutover: the public CLI and extension are service clients. Only native worker roles open project Kernels/stores; the broker remains metadata-only and retrieval/inference use direct scoped transports. Source and lockfile versions are synchronized. Container/package cutover and final qualification remain in progress.
+Current 1.4.0 cutover: the public CLI and extension are service clients. Only native worker roles open project Kernels/stores; the broker remains metadata-only and retrieval/inference use direct scoped transports. Source and lockfile versions are synchronized. Container/package cutover and available Windows/Linux qualification are complete for the local manual-test candidate. Native Mac and the broader installed-platform/security matrix remain unqualified; see [the qualification record](service-cutover-qualification.md).
 
 
 AIRK is an independent local indexing/retrieval kernel. Source workspaces are authoritative; all index state is derived. It does not reason, generate answers, manage agents, route model calls or require an external database.

@@ -2,7 +2,7 @@
 
 ## Reviewed local candidate, October 25, 2026
 
-The available implementation, code-review, packaging and actual installed-artifact gates pass. No push or publication is authorized. Native Mac and the complete target/hardware/security/remote matrix remain unqualified.
+The available implementation, code-review, packaging and actual installed-artifact gates pass. The user has authorized pushing the implementation branch and creating a draft PR; merge and release publication remain separate actions. Native Mac and the complete target/hardware/security/remote matrix remain unqualified.
 
 On October 25, 2026, the user confirmed that no Mac execution host is available. Native Mac login, upgrade, packaging and installed-target checks remain unavailable; portable adapter tests do not establish native Mac qualification. This confirmation does not change the Windows artifact or its acceptance receipts below.
 
