@@ -17,11 +17,16 @@ pub enum ObservationKind {
     Maintenance,
     MaintenanceRetry,
     Configuration,
+    PendingJob,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectObservation {
     pub project: RegisteredProject,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_job: Option<crate::service::JobRecord>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pending_paused: bool,
     pub watch: Option<WatchObservation>,
     pub progress: Option<ProgressObservation>,
     #[serde(default)]
@@ -47,4 +52,6 @@ pub struct WorkerObservation {
     pub identity: Option<crate::service::WorkerIdentity>,
     pub restarting: bool,
     pub automatic_start_blocked: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub waiting: Option<crate::service_resources::WaitObservation>,
 }

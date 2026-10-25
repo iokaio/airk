@@ -6,14 +6,33 @@ impl Kernel {
     /// Typed temporary exclusion, independent of durable semantic failure.
     /// Native workers may repeat a retained semantic turn under the same grant.
     pub fn service_enrichment_contention(error: &anyhow::Error) -> bool {
-        error.is::<crate::execution::CapacityBusy>()
-            || error.is::<crate::CurrentGateContention>()
+        Self::service_enrichment_wait_reason(error).is_some()
+    }
+    pub fn service_enrichment_wait_reason(
+        error: &anyhow::Error,
+    ) -> Option<airk_core::service_resources::WaitReason> {
+        use airk_core::service_resources::WaitReason;
+        if error.is::<crate::execution::CapacityBusy>() {
+            Some(WaitReason::IndexCapacity)
+        } else if matches!(
+            error.downcast_ref::<crate::CurrentGateContention>(),
+            Some(crate::CurrentGateContention::Readers)
+        ) {
+            Some(WaitReason::ReaderLease)
+        } else if error.is::<crate::CurrentGateContention>()
             || error.is::<airk_store::current::CurrentReadContention>()
-            || error.is::<airk_store::service::collection::SelectionContention>()
-            || matches!(
-                error.downcast_ref::<std::fs::TryLockError>(),
-                Some(std::fs::TryLockError::WouldBlock)
-            )
+        {
+            Some(WaitReason::Publication)
+        } else if error.is::<airk_store::service::collection::SelectionContention>() {
+            Some(WaitReason::CollectionSelection)
+        } else if matches!(
+            error.downcast_ref::<std::fs::TryLockError>(),
+            Some(std::fs::TryLockError::WouldBlock)
+        ) {
+            Some(WaitReason::NativeLock)
+        } else {
+            None
+        }
     }
     pub fn index_service_sources(&self) -> Result<airk_ingest::IndexReport> {
         ensure!(
@@ -86,6 +105,37 @@ mod tests {
     use super::*;
     use airk_core::usage::{ClientFamily, RecordingMode, UsageOperation};
 
+    #[test]
+    fn semantic_wait_reasons_preserve_typed_cause_through_context() {
+        use airk_core::service_resources::WaitReason;
+        for (error, expected) in [
+            (
+                anyhow::Error::new(crate::execution::CapacityBusy),
+                WaitReason::IndexCapacity,
+            ),
+            (
+                anyhow::anyhow!("publication gate").context(crate::CurrentGateContention::Readers),
+                WaitReason::ReaderLease,
+            ),
+            (
+                airk_store::current::CurrentReadContention.into(),
+                WaitReason::Publication,
+            ),
+            (
+                airk_store::service::collection::SelectionContention.into(),
+                WaitReason::CollectionSelection,
+            ),
+            (
+                std::fs::TryLockError::WouldBlock.into(),
+                WaitReason::NativeLock,
+            ),
+        ] {
+            assert_eq!(
+                Kernel::service_enrichment_wait_reason(&error.context("retained turn")),
+                Some(expected)
+            );
+        }
+    }
     #[test]
     fn semantic_contention_uses_typed_causes_and_preserves_terminal_failures() {
         for error in [

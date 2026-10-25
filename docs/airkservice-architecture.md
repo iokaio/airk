@@ -500,6 +500,8 @@ Add a Service view alongside the existing project dashboard. Every window connec
 
 Health is not progress. A responsive service with a busy worker is different from a disconnected service; a heartbeat is different from newly extracted files. Do not reset a no-progress timer merely because a worker sends liveness messages. Display unknown totals without invented percentages and never infer final completion from partial committed counts.
 
+Wait observations bind an exact job and sample age. Match active observations to the worker/service/fence, distinguish native admission, resource, helper and typed publication/reader/ownership waits, and leave unmatched samples unavailable. Paused queued jobs remain visible without admission and support explicit native-validated cancellation. Keep transient wait metadata separate from stored progress and its real-advancement clock so status polling preserves rollback compatibility and cannot mask a stall.
+
 ### 11.2 Controls
 
 Provide command-palette and accessible view controls for Connect/reconnect, Start service, Restart service, Stop service, Open service logs, Copy diagnostics, Resource settings, Pause/resume project, Retry project, Verify index, Recover interrupted publication and Rebuild index. Include multi-select and all-project variants where applicable.

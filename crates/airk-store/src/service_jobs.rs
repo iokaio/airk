@@ -192,6 +192,15 @@ impl ServiceRegistry {
         id.map(|id| record(&self.connection, id.parse()?))
             .transpose()
     }
+    /// Cached-console observation includes paused jobs without admitting work.
+    pub fn pending_job_observation(&self, project: ProjectBinding) -> Result<Option<JobRecord>> {
+        let id: Option<String> = self.connection.query_row(
+            "SELECT id FROM service_jobs WHERE project=?1 AND state='pending' ORDER BY seq LIMIT 1",
+            [project.to_string()], |row| row.get(0),
+        ).optional()?;
+        id.map(|id| record(&self.connection, id.parse()?))
+            .transpose()
+    }
     /// Rotate the request epoch when terminal receipts are retired, so an old unknown key
     /// always expires rather than accidentally replaying its former mutation.
     fn prune_job_receipts(
@@ -1830,8 +1839,16 @@ mod tests {
             nonce: Incarnation::from_bytes([3; 16]),
             ..key
         };
-        registry.enqueue(project.binding, caller, &key, JobKind::Index)?;
+        let queued = registry.enqueue(project.binding, caller, &key, JobKind::Index)?;
         registry.pause(project.binding, true)?;
+        assert_eq!(
+            registry
+                .pending_job_observation(project.binding)?
+                .unwrap()
+                .id,
+            queued.id
+        );
+        assert!(registry.next_pending_job(project.binding)?.is_none());
         assert!(registry.claim_job(&lease)?.is_none());
         registry.pause(project.binding, false)?;
         assert!(registry.claim_job(&lease)?.is_some());

@@ -50,7 +50,10 @@ export function consoleAction(value:unknown,current:ServiceConsoleState):Console
         }else if(['retryJob','cancelJob'].includes(action)){
             keys.add('id');const id=identifier(message.id,32);
             const jobs=new Set(current.events.map(event=>event.job));
-            for(const row of current.page?.projects??[]){const progress=row.progress?record(row.progress):undefined;if(progress?.job)jobs.add(record(progress.job).id);}
+            for(const row of current.page?.projects??[]){
+                const progress=row.progress?record(row.progress):undefined;if(progress?.job)jobs.add(record(progress.job).id);
+                if(action==='cancelJob'&&row.pending_job)jobs.add(record(row.pending_job).id);
+            }
             if(!jobs.has(id))return;
         }else if(action==='retryIntent'||action==='forgetIntent'||action==='forceIntent'){
             keys.add('id');const id=identifier(message.id,16);if(!current.pending.some(intent=>intent.id===id))return;
@@ -70,6 +73,16 @@ function button(action:string,label:string,extra='',disabled=false):string{retur
 function observation(name:string,value:ConsoleObservation):string {
     return `<p><strong>${e(name)}</strong>: ${e(value.state)}${value.code?` · ${e(value.code)}`:''} · checked ${e(new Date(value.checkedAt).toISOString())}</p>`;
 }
+function waitLabel(reason:unknown):string {
+    const labels:Record<string,string>={worker_starting:'Worker is starting',worker_role_change:'Worker role is changing',
+        resident_capacity:'Waiting for a resident worker slot',memory_budget:'Waiting for the memory budget',
+        memory_pressure:'Waiting for observed memory pressure to ease',extraction_capacity:'Waiting for extraction capacity',
+        scheduler:'Waiting for the scheduler turn',resource_policy:'Waiting for valid resource policy',
+        provider_drain:'Waiting for previous provider processes to drain',embedding_recovery:'Waiting for the embedding helper',
+        index_capacity:'Waiting for indexing capacity',reader_lease:'Waiting for active readers',publication:'Waiting for publication',
+        collection_selection:'Waiting for collection selection',native_lock:'Waiting for a native ownership lock'};
+    return typeof reason==='string'&&Object.hasOwn(labels,reason)?labels[reason]:'Unrecognized native wait observation';
+}
 function projectRow(row:RecordValue,state:ServiceConsoleState):string {
     const project=obj(row.project),registration=obj(project.registration),binding=String(registration.binding);
     const inspection=obj(row.inspection),snapshot=obj(inspection.snapshot),progress=obj(row.progress),work=obj(progress.progress),job=obj(progress.job),watch=obj(row.watch);
@@ -79,6 +92,14 @@ function projectRow(row:RecordValue,state:ServiceConsoleState):string {
     const current=state.connected&&typeof sampled.worker==='string'&&typeof sampled.service==='string'&&sampled.worker===identity.worker&&sampled.service===identity.service
         &&sampled.project===identity.project
         &&sampled.fencing_generation===identity.fencing_generation&&sampled.fencing_generation===progress.current_fencing_generation;
+    const pending=obj(row.pending_job),waiting=obj(worker.waiting);
+    const matchingWait=(typeof pending.id==='string'&&waiting.job===pending.id)
+        ||(current&&job.state==='running'&&waiting.job===job.id);
+    const waitingReason=row.pending_paused===true?'Queued work is paused by project policy'
+        :current&&work.paused===true?'Work is paused'
+        :worker.automatic_start_blocked?'Worker startup requires explicit retry'
+        :worker.restarting?'Worker restart is pending'
+        :matchingWait?waitLabel(waiting.reason):'No matching native wait observation';
     const semantic=obj(snapshot.semantic),discovery=obj(snapshot.discovery);
     const configuration=obj(row.configuration),result=state.configurationResults?.get(binding);
     const resultValue=result&&result.job===configuration.id?result.value:undefined;
@@ -94,6 +115,8 @@ function projectRow(row:RecordValue,state:ServiceConsoleState):string {
             ['Discovery (cached)',discovery.state],['Indexed files (cached)',snapshot.indexed_files],['Semantic coverage (cached)',semantic.state],
             ['Completed semantic artifacts',semantic.completed_artifacts],['Selected semantic artifacts',semantic.selected_artifacts],
             ['Work observation',current?'Observed worker generation':progress.worker?'Cached worker sample':'Not observed'],['Phase',work.phase],
+            ['Pending job',pending.id],['Pending job kind',pending.kind],['Pending job state',pending.state],
+            ['Wait reason (sampled)',waitingReason],['Wait sample age (ms)',matchingWait?waiting.age_ms:undefined],
             ['Captured files',work.captured_files],['Extracted files',work.extracted_files],['Prepared changes',work.prepared_changes],['Committed changes',work.committed_changes],
             ['Published batches',work.publications],['Total files',work.total_files],['Last real work advance age at sample (ms)',work.last_advance_age_ms],
             ['Unpaused time without progress (ms)',work.unpaused_idle_ms],['Phase elapsed (ms)',work.phase_elapsed_ms],['Job state',job.state],
@@ -110,6 +133,7 @@ function projectRow(row:RecordValue,state:ServiceConsoleState):string {
         <label><input type="checkbox" data-action="watch" ${attr}${watch.enabled?' checked':''}${unavailable?' disabled':''}> Continue automatic source watching when workspaces are closed</label>`}
         ${job.state==='failed'||job.state==='canceled'?button('retryJob','Retry job',`data-id="${e(job.id)}"`,unavailable):''}
         ${job.state==='running'||job.state==='pending'?button('cancelJob','Cancel job',`data-id="${e(job.id)}"`,unavailable):''}
+        ${typeof pending.id==='string'&&pending.id!==job.id?button('cancelJob','Cancel queued job',`data-id="${e(pending.id)}"`,unavailable):''}
         ${resultValue?`<details><summary>Last configuration result (cached)</summary><pre>${e(JSON.stringify(resultValue,null,2))}</pre>${JSON.stringify(resultValue,null,2).length>4096?'<p>Display truncated at 4,096 characters; Copy keeps the complete bounded result.</p>':''}${button('copyConfiguration','Copy configuration result',attr,state.busy)}</details>`:''}
     </article>`;
 }

@@ -3,7 +3,9 @@
 use airk_core::{
     identity::{Incarnation, Sha256Digest},
     service::{JobKind, ProjectBinding, WorkerIdentity},
-    service_resources::{ResourceConfiguration, ResourcePreset, ResourceSnapshot, WorkAllowance},
+    service_resources::{
+        ResourceConfiguration, ResourcePreset, ResourceSnapshot, WaitReason, WorkAllowance,
+    },
 };
 use anyhow::{Result, ensure};
 use std::{
@@ -158,6 +160,50 @@ impl Resources {
     }
     pub fn may_start_resident(&self) -> bool {
         self.residents.len() < self.resident_limit && self.headroom(RESIDENT_BYTES)
+    }
+    pub fn resident_wait_reason(&self) -> Option<WaitReason> {
+        if self.blocked {
+            Some(WaitReason::ResourcePolicy)
+        } else if self.pressure() {
+            Some(WaitReason::MemoryPressure)
+        } else if self.residents.len() >= self.resident_limit {
+            Some(WaitReason::ResidentCapacity)
+        } else if !self.headroom(RESIDENT_BYTES) {
+            Some(WaitReason::MemoryBudget)
+        } else {
+            None
+        }
+    }
+    /// Explain admission for a project whose pending work the caller has observed.
+    pub fn work_wait_reason(&self, project: ProjectBinding) -> Option<WaitReason> {
+        if self.running.contains_key(&project) {
+            return None;
+        }
+        if !self.residents.contains_key(&project) {
+            return Some(
+                self.resident_wait_reason()
+                    .unwrap_or(WaitReason::WorkerStarting),
+            );
+        }
+        if self.blocked {
+            return Some(WaitReason::ResourcePolicy);
+        }
+        if self.pressure() {
+            return Some(WaitReason::MemoryPressure);
+        }
+        if self
+            .running
+            .values()
+            .map(|grant| grant.extraction_threads)
+            .sum::<u16>()
+            >= self.source_threads
+        {
+            return Some(WaitReason::ExtractionCapacity);
+        }
+        if !self.headroom(WORK_BYTES) {
+            return Some(WaitReason::MemoryBudget);
+        }
+        Some(WaitReason::Scheduler)
     }
     pub fn resident_started(&mut self, identity: WorkerIdentity) -> Result<()> {
         ensure!(
@@ -353,6 +399,63 @@ mod tests {
             8,
             Some(16 << 30),
         )
+    }
+    #[test]
+    fn wait_reasons_follow_actual_admission_without_returning_running_capacity() -> Result<()> {
+        let mut policy = resources()?;
+        let a = identity(2);
+        let b = identity(3);
+        let now = Instant::now();
+        assert_eq!(
+            policy.work_wait_reason(a.project),
+            Some(WaitReason::WorkerStarting)
+        );
+        policy.resident_started(a)?;
+        policy.resident_started(b)?;
+        policy.pending(a.project, a.project, JobKind::Index, now)?;
+        policy.pending(b.project, b.project, JobKind::Index, now)?;
+        assert_eq!(
+            policy.work_wait_reason(a.project),
+            Some(WaitReason::Scheduler)
+        );
+        let grant = policy.next(now)?.unwrap();
+        assert_eq!(policy.work_wait_reason(a.project), None);
+        assert_eq!(
+            policy.work_wait_reason(b.project),
+            Some(WaitReason::ExtractionCapacity)
+        );
+        assert!(policy.next(now)?.is_none());
+        policy.observe(Some(8 << 30), None, true);
+        assert_eq!(
+            policy.work_wait_reason(b.project),
+            Some(WaitReason::MemoryPressure)
+        );
+        policy.block_admission(true);
+        assert_eq!(
+            policy.work_wait_reason(b.project),
+            Some(WaitReason::ResourcePolicy)
+        );
+        assert_eq!(policy.running(a.project).unwrap().id, grant.id);
+        policy.block_admission(false);
+        policy.observe(None, None, false);
+        policy.finished(a, grant.id)?;
+        assert_eq!(policy.next(now)?.unwrap().identity, b);
+        let mut small = Resources::new(
+            ResourceConfiguration {
+                memory_bytes: Some(1 << 30),
+                ..Default::default()
+            },
+            2,
+            Some(8 << 30),
+        )?;
+        assert_eq!(small.resident_wait_reason(), Some(WaitReason::MemoryBudget));
+        assert!(!small.may_start_resident());
+        small.block_admission(true);
+        assert_eq!(
+            small.resident_wait_reason(),
+            Some(WaitReason::ResourcePolicy)
+        );
+        Ok(())
     }
     #[test]
     fn detected_machine_limit_wins_over_defaults_and_overrides() -> Result<()> {

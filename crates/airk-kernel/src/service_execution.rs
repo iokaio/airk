@@ -27,6 +27,7 @@ struct Owner {
     canceled: AtomicBool,
     progress: Mutex<Option<progress::Tracker>>,
     stalled: AtomicBool,
+    waiting: Mutex<Option<airk_core::service_resources::WaitReason>>,
 }
 static OWNER: OnceLock<Owner> = OnceLock::new();
 fn observe(action: impl FnOnce(&mut progress::Tracker, Instant)) {
@@ -47,7 +48,19 @@ pub fn progress() -> Option<airk_core::service_progress::WorkProgress> {
         .map(|progress| progress.snapshot(Instant::now()))
 }
 pub fn progress_phase(phase: airk_core::service_progress::WorkPhase) {
+    progress_waiting(None);
     observe(|progress, now| progress.phase(phase, now));
+}
+/// Metadata only: a wait observation must never reset work advancement clocks.
+pub fn progress_waiting(reason: Option<airk_core::service_resources::WaitReason>) {
+    if let Some(owner) = OWNER.get()
+        && let Ok(mut waiting) = owner.waiting.lock()
+    {
+        *waiting = reason;
+    }
+}
+pub fn waiting_for() -> Option<airk_core::service_resources::WaitReason> {
+    *OWNER.get()?.waiting.lock().ok()?
 }
 pub(crate) fn progress_capture() {
     observe(|progress, now| progress.capture(now));
@@ -86,7 +99,8 @@ pub fn install(root: &Path, identity: WorkerIdentity) -> Result<()> {
                 paused: AtomicBool::new(false),
                 canceled: AtomicBool::new(false),
                 progress: Mutex::new(None),
-                stalled: AtomicBool::new(false)
+                stalled: AtomicBool::new(false),
+                waiting: Mutex::new(None),
             })
             .is_ok(),
         "service execution already installed"
@@ -104,6 +118,10 @@ pub fn activate(grant: &WorkAllowance) -> Result<()> {
     owner.paused.store(false, Ordering::Release);
     owner.canceled.store(false, Ordering::Release);
     owner.stalled.store(false, Ordering::Release);
+    *owner
+        .waiting
+        .lock()
+        .map_err(|_| anyhow::anyhow!("work wait observation unavailable"))? = None;
     *owner
         .progress
         .lock()

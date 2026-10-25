@@ -16,7 +16,7 @@ Trust the workspace, then use **AIRK: Index Now**. Review the source, separate i
 
 ## Service Console
 
-Open **AIRK: Connect / Reconnect Service** for project and worker observations, accepted jobs, phase/readiness information, source/helper failures, project settings, resource presets and logs. Closed registered projects remain visible. Native maintenance has guarded previews and separate approval for execution. Runtime upgrades and rollback review exact approved targets and preserve saved recovery intent.
+Open **AIRK: Connect / Reconnect Service** for project and worker observations, accepted jobs, phase/readiness information, sampled native wait reasons, source/helper failures, project settings, resource presets and logs. Closed registered projects and paused queued jobs remain visible; queued cancellation is explicit. Native maintenance has guarded previews and separate approval for execution. Runtime upgrades and rollback review exact approved targets and preserve saved recovery intent.
 
 A deliberate Stop stays stopped until **Start service**. Reconnecting, advertising MCP definitions or closing a window does not silently repeat work. Uncertain requests keep their exact saved key for explicit recovery.
 

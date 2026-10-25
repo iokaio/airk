@@ -21,6 +21,7 @@ The [Windows build/editor guide](windows-local-build.md) describes pair builds, 
 - [Direct usage/settings reads, scan-limit reset and guarded project management](service-native-management.md)
 - [Default-cutover development qualification and remaining gates](service-cutover-qualification.md)
 - [Service implementation completion checklist](service-implementation-checklist.md)
+- [Complete service-plan requirements review and qualification boundaries](service-requirements-review.md)
 - [Service publication, admitted sidecar lifetimes and bounded readers](service-publication.md)
 - [Service worker ownership, source/semantic phases and durable continuations](service-jobs.md)
 - [Guarded service project configuration, bounded results and uncertain-outcome recovery](service-configuration.md)

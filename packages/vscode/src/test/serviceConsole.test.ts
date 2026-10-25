@@ -77,6 +77,33 @@ test('console messages reject stale revisions, injected bodies and out-of-scope 
     f.controller.dispose();
 });
 
+test('console binds sampled wait reasons and queued cancellation to observed jobs',async()=>{
+    const f=fixture();await f.controller.refresh();const state=f.controller.state,row=state.page!.projects[0],worker=(state.workers!.observations as RecordValue[])[0];
+    row.pending_job={id:job,project,kind:'index',state:'pending'};
+    worker.waiting={job,reason:'extraction_capacity',age_ms:125};
+    assert.match(renderConsole(state),/Waiting for extraction capacity/);
+    assert.match(renderConsole(state),/Cancel queued job/);
+    const action={type:'service',revision:state.revision,action:'cancelJob',id:job};
+    assert.ok(consoleAction(action,state));
+    assert.equal(consoleAction({...action,id:'ff'.repeat(32)},state),undefined);
+    assert.equal(consoleAction({...action,action:'retryJob'},state),undefined);
+    worker.waiting={job:'ff'.repeat(32),reason:'reader_lease',age_ms:999};
+    assert.doesNotMatch(renderConsole(state),/Waiting for active readers/);
+    row.pending_paused=true;
+    assert.match(renderConsole(state),/Queued work is paused by project policy/);
+    row.pending_paused=false;
+    const identity={service:instance,worker:namespace,project,fencing_generation:3};
+    worker.identity=identity;
+    worker.waiting={job,reason:'reader_lease',age_ms:50};
+    row.pending_job=null;row.progress={worker:identity,current_fencing_generation:3,job:{id:job,state:'running'},progress:{phase:'semantic'}};
+    assert.match(renderConsole(state),/Waiting for active readers/);
+    (row.progress as RecordValue).current_fencing_generation=4;
+    assert.doesNotMatch(renderConsole(state),/Waiting for active readers/);
+    worker.waiting={job,reason:'<script>bad</script>',age_ms:50};
+    assert.doesNotMatch(renderConsole(state),/<script>bad/);
+    f.controller.dispose();
+});
+
 test('project configuration is journaled before send and uncertain retry preserves the complete guarded request',async()=>{
     const f=fixture();let choices=0;
     f.host.configuration=async()=>{choices++;return {operation:'vectors',enabled:false};};

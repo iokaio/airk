@@ -1,8 +1,52 @@
 # AIRK 1.4.0 implementation completion checklist
 
-This is the working completion record for the [service plan](airkservice-architecture.md). A stage commit records progress. It does not close the implementation task. A checked item requires implemented behavior and the named validation evidence; development fixtures do not establish installed-platform acceptance.
+This is the working completion record for the [service plan](airkservice-architecture.md). Stage commits do not close exit criteria. The [requirements review](service-requirements-review.md) maps every plan section to code, evidence and unavailable qualification.
 
-User authorization: implement the entire plan, make human DCO-signed local stage commits, do not push, and build a new VSIX only after implementation, testing and review. The approved release is 1.4.0.
+Authorization: implement the entire plan, make human DCO-signed local stage commits, do not push, and build a manual-install VSIX after implementation, available testing and review. Keep version **1.4.0**.
+
+## Current implementation and validation
+
+The native service, direct worker retrieval, shared inference helper, default clients, installer/lifecycle, guarded maintenance and legacy transition are implemented. Terse/Full response choices and all seven token-efficiency additions are implemented. The final requirement audit added exact sampled wait reasons and paused queued-job visibility/cancellation; native and extension regressions pass. Refreshed final-source qualification is running before packaging.
+
+Private optimized pair 57 passes five real transformer lifecycle trials, all nine project/client load cases, two-size retrieval judgments and all five real editor-stage scenarios together. Earlier exact receipts cover the 128 MiB/16,384-file corpus, original document coordinates, storage retirement, usage overhead/accounting, publication faults, installer/controller recovery and interrupted transitions. The Linux production baseline passes 1,339 tests with 18 skips. These are bounded development results, separate from the final-source and installed-VSIX gates below. The query-tail 2× objective is not met in every measured case.
+
+| Phase | Implemented behavior | Remaining exit evidence |
+|---|---|---|
+| 0 | Authenticated publication, bounded readers, admission and crash/tamper checks | Final Linux isolated full-volume campaign; physical device power loss unavailable |
+| 1 | Native discovery, racing launchers, same-user control, direct grants and reconnect | Final installed VSIX; native Mac/minimum-platform matrix unavailable |
+| 2 | Durable requests, deduplication, fencing, supervision, pause/cancel, recovery, watches and bounded events | Final-source suites and broader installed fault matrix |
+| 3 | Coherent format-140 publication, object leases, reserved sibling rebuild, atomic selection and retained cleanup | Final-source suites and isolated full-volume campaign |
+| 4 | Fair finite grants, observed pressure, presets, pooled model/input reuse, provider drains and bounded helper recovery | Fresh exact-pair checks; other hardware classes unavailable |
+| 5 | Verified immutable offline pairs, launcher, on-demand/optional login ownership, upgrade/rollback, repair and uninstall | Final exact artifact; actual Apple SDK/signing/login and installed platform policy unavailable |
+| 6 | Trusted console, sampled waits, down-service metadata, exact request recovery, one/selected/all repair, guarded settings and usage | Final installed all-five editor scenarios; unavailable platform/fault cases remain explicit |
+| 7 | Default CLI/extension/container/MCP cutover, fresh namespace, explicit legacy agent/startup/derived-state transition, no fallback/payload proxy | Final production container and VSIX checks; native Mac removal unavailable |
+| 8 | Synchronized 1.4.0 source/lockfiles, exact receipts, DCO stages and qualification tools | Complete local checks/review, documentation reconciliation, final VSIX and installed acceptance |
+
+Code completion does not imply that an unavailable target has passed qualification. [Cutover qualification](service-cutover-qualification.md) records exact artifacts and historical counts; [the requirements review](service-requirements-review.md) identifies the external matrix. No push, public release or deployment is authorized.
+
+## Token-efficiency additions
+
+- [x] Terse by default, extension-panel Full selection, per-call override and agent guidance in MCP instructions/tool descriptions. Native schemas, real stdio, bounded instructions, panel rendering/actions and direct-worker receipt renewal have Windows/Linux development evidence; installed-editor acceptance remains in the final matrix.
+- [x] One revision token, changed/requested status only, preserved candidate/import distinctions, no repeated static provenance, and measured bounded payload comparisons. Shared provenance, independent client receipts and cached service-registry freshness are integrated; the nine-tool rich/Terse matrix verifies preserved evidence and measures serialized bytes without claiming universal token savings.
+- [x] Minimal outline/symbol/import records with shared original file/provenance bindings and consistent `items` across fact tools, empty and conditional results. Windows/Linux native budget/cursor checks, MCP transport, CLI cursor parity, document locations and usage-accounting evidence are recorded in the response-mode guide. Installed-editor qualification remains part of the final gate.
+- [x] Committed-generation reads during publication plus structured retry hints on safe temporary rejection. Typed native read/selection rejection, exact-request retry and MCP error rendering have Windows/Linux evidence in the retrieval guide.
+- [x] Terminal method-name postings for receiver/chained calls, explicitly labeled candidates. Windows/Linux native, kernel and MCP tests cover case, chained targets, compatible retirement of older memberships, updates, budgets and reopen; see the retrieval guide.
+- [x] Authenticated bounded multi-generation/time-window change baselines and explicit `index-current` validation outcomes. Metadata-only retention, exact parent/cursor identity, pressure/age floors, rebuild isolation, restart/replay and physical-repack preservation have Windows/Linux development evidence in the retention guide; historical source reads remain unavailable.
+
+## Final gate
+
+- [ ] Reconcile every requirement and exit criterion in the full plan against implementation and evidence, including requirements inside sections preceding the phase table.
+- [ ] Finish relevant native, extension, packaging, license, repository, formatting, Clippy and whitespace checks. Identify unavailable qualification explicitly; never count it as passed.
+- [ ] Review the complete change, fix findings and rerun affected checks.
+- [ ] Verify README, documentation index, release notes and Marketplace description agree with the implemented 1.4.0 behavior.
+- [ ] Build the new VSIX only after the preceding implementation, test and review gates pass; record its exact path and digest for manual installation.
+- [ ] Verify local stage commits have the authorized contributor's DCO trailer and no push occurred.
+
+If a concrete blocker cannot be resolved within existing authorization, record the affected requirement and required input. Completing a stage, a long test run or a convenient subset is not a stopping condition.
+
+## Historical development checkpoints
+
+The following checkpoints retain October 24–25 progress observations. Pending-work statements describe their original stage; use the current table above for implementation status.
 
 Current review follow-up: all five private editor-stage scenarios pass together. The 128 MiB/16,384-file scale and exact thirty-serial/thirty-concurrent usage checks pass. Native installer/console/controller/model recovery and reviewed/interrupted runtime transitions pass. Mac legacy loaded-job proof is implemented; actual Apple execution remains unavailable. The 1/4/10-project by 1/10/50-client campaign exposed a missing typed setup rejection; the fix passes focused tests, and its fresh-pair load rerun remains open. Linux CLI/MCP evidence parity validates independently cached freshness separately from exact indexed publication/evidence. Current CLI library checks pass 132 tests with one ignored native fixture; Python passes 142 with four skips. Full frozen and installed-artifact gates remain open.
 
@@ -14,7 +58,6 @@ All five editor scenarios now pass across retained private development-stage run
 
 Qualification follow-up: the earlier intermittent managed-file validation error now has a deterministic Windows mechanism regression: SQLite final close can unlink a WAL file after its validation handle opens, producing a zero-link handle. Format-140 connections now retain admitted WAL/SHM names, with native identity/reopen and real-hard-link rejection tests. Historical attribution is not certain; retain the diagnostics and workload regression while completing qualification. See [sidecar-lifetime evidence](service-publication.md).
 
-## Implementation and validation
 
 Native management checkpoint (October 24): direct project-bound usage/settings pages, UTF-8-safe exports, informational client labels, guarded usage actions, selected extraction/scan-limit files and stale shared-quota protection are implemented. Windows process and trusted-panel regressions are recorded in [native management](service-native-management.md). Final Linux/artifact/editor evidence and the remaining lifecycle/transition gates stay open.
 
@@ -44,35 +87,6 @@ Native phase scheduling is now service-owned: source/replacement publication is 
 
 Management follow-up: full replacement work now records one actual `reindex` observation in the existing native ledger; scan-limit overrides have a guarded reset to automatic limits; the CLI request journal admits exact inactive cleanup; extension settings/walkthroughs describe native controls; tree actions retain the clicked binding independently of another active editor. Windows/Linux focused and native tests pass. The complete storage qualification rerun, legacy ownership/removal, Mac login ownership, editor adapter ports and final frozen validation remain open.
 
-## Token-efficiency additions
-
-Mac adapter follow-up: the GUI-less app contains the same two executables, static channel plists and a compiled native Service Management bridge. Captured ownership, fixed plist validation before OS effects, launchd origin/program/argument checks, user-consent preservation and stopped-owner transitions are implemented. Portable Rust receipt/parser checks and both Mac layout/package contracts pass; the retained-fixture native acceptance runner is available. Apple SDK/framework execution, signed lifecycle/upgrade and both installed Mac targets remain unavailable on this Windows host and must not be counted as passed. Editor ports and final frozen qualification remain open.
-
-Old-derived retirement follow-up: an explicit offline CLI preview/deletion uses format-126 ownership metadata, native file witnesses, old worker/writer/reader exclusion, separate quota ownership and bounded checksummed intents. It preserves sources, saved configuration, usage history and unrelated root files; changed survivors and unknown derived entries refuse deletion. Completion replay never deletes a later index. Windows focused/native CLI/full-store tests and Linux affected-source/native CLI validation pass. This operation never reads an old index or participates in normal service work.
-
-Legacy-startup follow-up: console/CLI review, same-user executable candidate audit, exact Windows/Linux manager ownership and separately approved removal are implemented. Bounded checksummed intents retain resumable phases and idempotent completion, preserving sources/settings/indexes. Windows fault/panel tests and an actual stopped owned Task Scheduler fixture pass; Linux library/native/Clippy qualification also passes. Mac loaded-registration proof and old derived-state deletion are implemented; native Mac execution and final platform qualification remain open.
-
-Implement and validate these during Phase 7 MCP/extension cutover, after the worker/publication/resource contracts are integrated. Plan changes do not mark their code or acceptance gates complete.
-
-- [x] Terse by default, extension-panel Full selection, per-call override and agent guidance in MCP instructions/tool descriptions. Native schemas, real stdio, bounded instructions, panel rendering/actions and direct-worker receipt renewal have Windows/Linux development evidence; installed-editor acceptance remains in the final matrix.
-- [x] One revision token, changed/requested status only, preserved candidate/import distinctions, no repeated static provenance, and measured bounded payload comparisons. Shared provenance, independent client receipts and cached service-registry freshness are integrated; the nine-tool rich/Terse matrix verifies preserved evidence and measures serialized bytes without claiming universal token savings.
-- [x] Minimal outline/symbol/import records with shared original file/provenance bindings and consistent `items` across fact tools, empty and conditional results. Windows/Linux native budget/cursor checks, MCP transport, CLI cursor parity, document locations and usage-accounting evidence are recorded in the response-mode guide. Installed-editor qualification remains part of the final gate.
-- [x] Committed-generation reads during publication plus structured retry hints on safe temporary rejection. Typed native read/selection rejection, exact-request retry and MCP error rendering have Windows/Linux evidence in the retrieval guide.
-- [x] Terminal method-name postings for receiver/chained calls, explicitly labeled candidates. Windows/Linux native, kernel and MCP tests cover case, chained targets, compatible retirement of older memberships, updates, budgets and reopen; see the retrieval guide.
-- [x] Authenticated bounded multi-generation/time-window change baselines and explicit `index-current` validation outcomes. Metadata-only retention, exact parent/cursor identity, pressure/age floors, rebuild isolation, restart/replay and physical-repack preservation have Windows/Linux development evidence in the retention guide; historical source reads remain unavailable.
-
-## Final gate
-
-- [ ] Reconcile every requirement and exit criterion in the full plan against implementation and evidence, including requirements inside sections preceding the phase table.
-- [ ] Finish relevant native, extension, packaging, license, repository, formatting, Clippy and whitespace checks. Identify unavailable qualification explicitly; never count it as passed.
-- [ ] Review the complete change, fix findings and rerun affected checks.
-- [ ] Verify README, documentation index, release notes and Marketplace description agree with the implemented 1.4.0 behavior.
-- [ ] Build the new VSIX only after the preceding implementation, test and review gates pass; record its exact path and digest for manual installation.
-- [ ] Verify local stage commits have the authorized contributor's DCO trailer and no push occurred.
-
-If a concrete blocker cannot be resolved within existing authorization, record the affected requirement and required input. Completing a stage, a long test run or a convenient subset is not a stopping condition.
-
-## Historical development checkpoints
 
 The following paragraphs retain earlier progress observations from October 24. Statements about pending default activation or 1.3.2 development versions describe those checkpoints. Current 1.4.0 implementation and remaining gates are summarized above.
 

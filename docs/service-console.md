@@ -54,7 +54,9 @@ The `console` control request uses the same revision-bound registered-project cu
 
 Individual damaged cached observations are named in `failed_observations` while other observations and other projects remain available. Missing observations remain missing. The page does not start closed projects, inspect their sources or create index directories. Inspection values remain explicitly cached; successful transport and service health do not establish current source coverage.
 
-The `workers` control request observes at most 32 distinct project bindings from one cached native snapshot, with a shared observation age. It reports actual resident identities, queued restarts and open startup circuits without brokerage or project activation. This avoids one short-lived native command per displayed field/project.
+The `workers` control request observes at most 32 distinct project bindings from one cached native snapshot, with a shared observation age. It reports actual resident identities, queued restarts and open startup circuits without brokerage or project activation. Optional wait observations bind an exact job ID, native reason and monotonic sample age. Reasons distinguish worker admission/role changes, resident/memory/extraction limits, policy/provider drain, helper recovery and typed semantic publication/read/ownership contention. These observations are transient metadata; they do not change stored progress or reset advancement clocks. At most 1,024 queued-project samples are retained, with oldest-sample eviction.
+
+Console rows independently observe the oldest queued job, including work blocked by project pause, without admitting it. The view labels wait reasons as sampled, matches queued job IDs or the active worker/service/fence before displaying them, and leaves unmatched observations unavailable. Pause eligibility remains native. Queued cancellation accepts only a displayed job identity and is revalidated natively. Registry sampling occurs outside the resource-cache mutex, keeping cached health/status reads independent of registry I/O.
 
 ## Trusted offline bootstrap
 

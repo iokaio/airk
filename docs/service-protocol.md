@@ -1,5 +1,7 @@
 # Native service and direct query protocol 1
 
+Worker status can include optional transient `waiting` metadata: exact job, native wait reason and monotonic age. Private worker replies report the active grant and typed wait separately from progress; the supervisor accepts only its matching charged grant. Console pages can include the oldest `pending_job` and a native `pending_paused` observation, without admitting work. Existing absent optional fields remain valid. Stored progress is unchanged; see [the console contract](service-console.md).
+
 Current development console/global lifecycle contracts are described in [the trusted service console](service-console.md). Its persistent metadata channel never carries evidence grants. Global stop/restart is an installed native transaction with a durable request key and observed instance; project restart remains a separate operation. Cold direct setup now retries transient admission/transport conditions within eight attempts/thirty seconds before submitting a query, with fresh health/grants and no uncertain query replay.
 
 This contract describes the native 1.4.0 implementation, now used by the default extension and public CLI. It uses a fresh storage namespace and service-owned scheduling. The [shared embedding runtime](service-embedding.md), native installation and guarded maintenance are implemented. Complete publication/resource workload validation and installed-platform qualification remain open in the completion checklist.

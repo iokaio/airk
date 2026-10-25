@@ -7,6 +7,35 @@ use crate::{
 use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 
+/// Observed native scheduling/execution exclusion, never inferred work progress.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WaitReason {
+    WorkerStarting,
+    WorkerRoleChange,
+    ResidentCapacity,
+    MemoryBudget,
+    MemoryPressure,
+    ExtractionCapacity,
+    Scheduler,
+    ResourcePolicy,
+    ProviderDrain,
+    EmbeddingRecovery,
+    IndexCapacity,
+    ReaderLease,
+    Publication,
+    CollectionSelection,
+    NativeLock,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WaitObservation {
+    pub job: Sha256Digest,
+    pub reason: WaitReason,
+    pub age_ms: u64,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ResourcePreset {

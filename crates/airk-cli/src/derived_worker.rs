@@ -68,6 +68,7 @@ pub fn run() -> Result<()> {
     registry.recover_jobs(&lease)?;
     service_ipc::write_frame(&mut std::io::stdout().lock(), &Reply::Activated)?;
     let status = Arc::new(Mutex::new(protocol::WorkObservation {
+        waiting_for: None,
         active: None,
         finished: None,
         maintenance: None,

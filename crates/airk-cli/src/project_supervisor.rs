@@ -38,6 +38,11 @@ struct ChildWorker {
     last_renewal: Instant,
     pool_binding: Option<Incarnation>,
     last_status: Instant,
+    waiting: Option<(
+        Incarnation,
+        airk_core::service_resources::WaitReason,
+        Instant,
+    )>,
 }
 
 fn clean_disconnected_exit(child: &mut Child, error: &anyhow::Error) -> bool {
@@ -140,6 +145,7 @@ impl ChildWorker {
             last_renewal: Instant::now(),
             pool_binding: None,
             last_status: Instant::now(),
+            waiting: None,
         };
         process.reader = Some(
             std::thread::Builder::new()
@@ -299,6 +305,10 @@ impl ChildWorker {
             maintenance.validate()?;
         }
         self.last_status = Instant::now();
+        self.waiting = observation
+            .active
+            .zip(observation.waiting_for)
+            .map(|(grant, reason)| (grant, reason, self.last_status));
         Ok(observation)
     }
 
@@ -355,6 +365,52 @@ struct ResourceCache {
     workers: BTreeMap<ProjectBinding, WorkerIdentity>,
     restarting: std::collections::BTreeSet<ProjectBinding>,
     blocked: std::collections::BTreeSet<ProjectBinding>,
+    waiting: BTreeMap<ProjectBinding, WaitSample>,
+}
+
+#[derive(Clone)]
+struct WaitSample {
+    job: airk_core::identity::Sha256Digest,
+    reason: airk_core::service_resources::WaitReason,
+    observed: Instant,
+}
+fn sample_wait(
+    samples: &mut BTreeMap<ProjectBinding, WaitSample>,
+    project: ProjectBinding,
+    job: airk_core::identity::Sha256Digest,
+    reason: airk_core::service_resources::WaitReason,
+) {
+    if !samples.contains_key(&project)
+        && samples.len() >= 1024
+        && let Some(oldest) = samples
+            .iter()
+            .min_by_key(|(_, sample)| sample.observed)
+            .map(|(project, _)| *project)
+    {
+        samples.remove(&oldest);
+    }
+    samples.insert(
+        project,
+        WaitSample {
+            job,
+            reason,
+            observed: Instant::now(),
+        },
+    );
+}
+impl ResourceCache {
+    fn wait_observation(
+        &self,
+        project: ProjectBinding,
+    ) -> Option<airk_core::service_resources::WaitObservation> {
+        self.waiting
+            .get(&project)
+            .map(|sample| airk_core::service_resources::WaitObservation {
+                job: sample.job,
+                reason: sample.reason,
+                age_ms: sample.observed.elapsed().as_millis().min(u64::MAX as u128) as u64,
+            })
+    }
 }
 enum Envelope {
     ConfigureResources {
@@ -545,6 +601,7 @@ impl Supervisor {
             workers: BTreeMap::new(),
             restarting: Default::default(),
             blocked: Default::default(),
+            waiting: BTreeMap::new(),
         }));
         let resource_cache = resources.clone();
         let thread = std::thread::Builder::new()
@@ -555,6 +612,7 @@ impl Supervisor {
                 let mut pool_recovery = PoolRecovery::new(Instant::now());
                 let mut registry: Option<ServiceRegistry> = None;
                 let mut backoff = BTreeMap::<ProjectBinding, (Instant, u32)>::new();
+                let mut waiting = BTreeMap::<ProjectBinding, WaitSample>::new();
                 let mut restarting = BTreeMap::<ProjectBinding, Option<WorkerIdentity>>::new();
                 let mut predecessors: Option<Vec<ProjectBinding>> = None;
                 let mut predecessor_pool = None;
@@ -685,6 +743,24 @@ impl Supervisor {
                         configuration_error || provider_error || pending_providers > 0,
                     );
                     resources.observe(rss, available, complete && available.is_some());
+                    // Registry I/O must never occur while cached observations
+                    // are locked by health/console readers.
+                    let idle_safe = workers.is_empty() && restarting.is_empty()
+                        && !provider_error && pending_providers == 0
+                        && registry.as_ref().is_some_and(|registry| {
+                            registry.pending_projects(1).is_ok_and(|page| page.is_empty())
+                                && registry.has_background_work().is_ok_and(|pending| !pending)
+                                && registry.due_source_projects(None, i64::MAX as u64, 1).is_ok_and(|page| page.is_empty())
+                        });
+                    let mut sampled_waits = waiting.clone();
+                    for (project, worker) in &workers {
+                        if let Some(grant) = resources.running(*project) {
+                            sampled_waits.remove(project);
+                            if let Some((active, reason, observed)) = worker.waiting && active == grant.id {
+                                sampled_waits.insert(*project, WaitSample { job: grant.job, reason, observed });
+                            }
+                        }
+                    }
                     if let Ok(mut cache) = resource_cache.lock() {
                         cache.workers = workers
                             .iter()
@@ -702,19 +778,8 @@ impl Supervisor {
                         cache.snapshot = resources.snapshot();
                         cache.observed = Instant::now();
                         cache.configuration_error = configuration_error;
-                        cache.idle_safe = workers.is_empty()
-                            && restarting.is_empty()
-                            && !provider_error
-                            && pending_providers == 0
-                            && registry.as_ref().is_some_and(|registry| {
-                                registry
-                                    .pending_projects(1)
-                                    .is_ok_and(|page| page.is_empty())
-                                    && registry.has_background_work().is_ok_and(|pending| !pending)
-                                    && registry
-                                        .due_source_projects(None, i64::MAX as u64, 1)
-                                        .is_ok_and(|page| page.is_empty())
-                            });
+                        cache.idle_safe = idle_safe;
+                        cache.waiting = sampled_waits;
                     }
                     if pool.as_mut().is_some_and(Pool::exited) {
                         log.record(airk_core::service_logs::LogKind::ModelFailed, None, None);
@@ -1185,13 +1250,23 @@ impl Supervisor {
                             restarting.remove(&project);
                         }
                     }
-                    if may_allocate
-                        && let Some(registry) = registry.as_ref()
+                    if let Some(registry) = registry.as_ref()
                         && let Ok(pending) = registry.pending_project_page(pending_after, 32)
                     {
                         pending_after = pending.last().copied();
                         for project in pending {
-                            if restarting.contains_key(&project) {
+                            if let Ok(Some(job)) = registry.pending_job_observation(project)
+                                && resources.running(project).is_none() {
+                                let reason = if configuration_error {
+                                    airk_core::service_resources::WaitReason::ResourcePolicy
+                                } else if !may_allocate {
+                                    airk_core::service_resources::WaitReason::ProviderDrain
+                                } else {
+                                    resources.work_wait_reason(project).unwrap_or(airk_core::service_resources::WaitReason::Scheduler)
+                                };
+                                sample_wait(&mut waiting, project, job.id, reason);
+                            }
+                            if !may_allocate || restarting.contains_key(&project) {
                                 continue;
                             }
                             let derived = registry.derived_work_pending(project).unwrap_or(false);
@@ -1239,6 +1314,7 @@ impl Supervisor {
                                         .get(&project)
                                         .is_none_or(|worker| worker.derived != derived)
                                     {
+                                        sample_wait(&mut waiting, project, job.id, airk_core::service_resources::WaitReason::WorkerRoleChange);
                                         resources.forget_pending(project);
                                         continue;
                                     }
@@ -1265,6 +1341,7 @@ impl Supervisor {
                                         && !pool_recovery.suppressed
                                         && pool_recovery.attempts < 3
                                     {
+                                        sample_wait(&mut waiting, project, job.id, airk_core::service_resources::WaitReason::EmbeddingRecovery);
                                         resources.forget_pending(project);
                                         continue;
                                     }
@@ -1274,6 +1351,11 @@ impl Supervisor {
                                         job.kind,
                                         Instant::now(),
                                     );
+                                    if !may_allocate {
+                                        sample_wait(&mut waiting, project, job.id, airk_core::service_resources::WaitReason::ProviderDrain);
+                                    } else if let Some(reason) = resources.work_wait_reason(project) {
+                                        sample_wait(&mut waiting, project, job.id, reason);
+                                    }
                                 }
                                 Ok(None) => resources.forget_pending(project),
                                 Err(_) => {}
@@ -1511,6 +1593,7 @@ impl Supervisor {
                         identity: cache.workers.get(project).copied(),
                         restarting: cache.restarting.contains(project),
                         automatic_start_blocked: cache.blocked.contains(project),
+                        waiting: cache.wait_observation(*project),
                     })
                     .collect(),
                 age_ms: cache
@@ -1531,6 +1614,7 @@ impl Supervisor {
                 identity: cache.workers.get(&project).copied(),
                 restarting: cache.restarting.contains(&project),
                 automatic_start_blocked: cache.blocked.contains(&project),
+                waiting: cache.wait_observation(project),
                 age_ms: cache
                     .observed
                     .elapsed()
@@ -1613,6 +1697,29 @@ impl Supervisor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wait_samples_replace_jobs_and_bound_metadata_without_renewing_old_samples() {
+        use airk_core::{identity::Sha256Digest, service_resources::WaitReason};
+        let mut samples = BTreeMap::new();
+        let first = Sha256Digest::from_bytes([0; 32]);
+        sample_wait(&mut samples, first, first, WaitReason::Scheduler);
+        let old = Instant::now() - Duration::from_secs(10);
+        samples.get_mut(&first).unwrap().observed = old;
+        for n in 1_u32..=1024 {
+            let mut bytes = [0; 32];
+            bytes[..4].copy_from_slice(&n.to_le_bytes());
+            let project = Sha256Digest::from_bytes(bytes);
+            sample_wait(&mut samples, project, project, WaitReason::ResidentCapacity);
+        }
+        assert_eq!(samples.len(), 1024);
+        assert!(!samples.contains_key(&first));
+        let project = *samples.keys().next().unwrap();
+        sample_wait(&mut samples, project, first, WaitReason::EmbeddingRecovery);
+        assert_eq!(samples[&project].job, first);
+        assert_eq!(samples[&project].reason, WaitReason::EmbeddingRecovery);
+        assert_eq!(samples.len(), 1024);
+    }
 
     #[cfg(unix)]
     #[test]

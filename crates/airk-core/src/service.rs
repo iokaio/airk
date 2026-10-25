@@ -262,6 +262,8 @@ pub enum ControlResponse {
         restarting: bool,
         automatic_start_blocked: bool,
         age_ms: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        waiting: Option<crate::service_resources::WaitObservation>,
     },
     ProjectRestarting {
         project: ProjectBinding,

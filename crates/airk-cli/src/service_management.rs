@@ -259,7 +259,24 @@ fn console_page_role(
     for project in source.projects {
         let binding = project.registration.binding;
         let mut failed = Vec::new();
+        let pending_job = observed(
+            registry.pending_job_observation(binding),
+            Kind::PendingJob,
+            &mut failed,
+        )
+        .flatten();
+        let pending_paused = project.paused
+            && pending_job.as_ref().is_some_and(|job| {
+                !observed(
+                    registry.job_runs_while_paused(job.id),
+                    Kind::PendingJob,
+                    &mut failed,
+                )
+                .unwrap_or(true)
+            });
         let row = ProjectObservation {
+            pending_job,
+            pending_paused,
             configuration: observed(
                 registry.latest_configuration(binding),
                 Kind::Configuration,
@@ -481,6 +498,36 @@ mod tests {
         service::ProjectRegistration,
         service_console::{MAX_PAGE_BYTES, ObservationKind},
     };
+    #[test]
+    fn console_observes_paused_queue_without_admitting_or_opening_project_state() -> Result<()> {
+        let owner = tempfile::tempdir()?;
+        let root = owner.path().join("runtime");
+        crate::local_ipc::prepare_root(&root)?;
+        let service = Incarnation::from_bytes([77; 16]);
+        let mut registry = ServiceRegistry::open(&root, service)?;
+        let project = ProjectRegistration::new("/source".into(), "/data".into(), "queued".into())?;
+        registry.register(&project)?;
+        registry.pause(project.binding, true)?;
+        let (namespace, epoch) = registry.request_epoch()?;
+        let job = registry.enqueue(
+            project.binding,
+            service,
+            &airk_core::service::RequestKey {
+                namespace,
+                epoch,
+                nonce: service,
+            },
+            airk_core::service::JobKind::Index,
+        )?;
+        let page = console_page(&mut registry, None, None, 1, 100)?;
+        let row = &page.projects[0];
+        assert_eq!(row.pending_job.as_ref().unwrap().id, job.id);
+        assert!(row.pending_paused);
+        assert!(row.progress.is_none());
+        assert!(registry.next_pending_job(project.binding)?.is_none());
+        assert!(row.failed_observations.is_empty());
+        Ok(())
+    }
     #[test]
     fn console_pages_bound_complete_rows_and_isolate_damaged_cached_observations() -> Result<()> {
         let owner = tempfile::tempdir()?;

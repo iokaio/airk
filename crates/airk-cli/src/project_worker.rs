@@ -28,11 +28,17 @@ static PROCESS_LEASE: OnceLock<Arc<ProjectLease>> = OnceLock::new();
 fn retry_semantic_turn<T>(mut turn: impl FnMut() -> Result<T>, budget: Duration) -> Result<T> {
     let deadline = Instant::now() + budget;
     loop {
-        airk_kernel::service_execution::checkpoint()?;
+        if let Err(error) = airk_kernel::service_execution::checkpoint() {
+            airk_kernel::service_execution::progress_waiting(None);
+            return Err(error);
+        }
         match turn() {
             Err(error)
                 if Kernel::service_enrichment_contention(&error) && Instant::now() < deadline =>
             {
+                airk_kernel::service_execution::progress_waiting(
+                    Kernel::service_enrichment_wait_reason(&error),
+                );
                 // Retained work is fenced/idempotent. Keep the same accepted job
                 // and charged grant through temporary read/publication exclusion.
                 std::thread::sleep(
@@ -40,7 +46,10 @@ fn retry_semantic_turn<T>(mut turn: impl FnMut() -> Result<T>, budget: Duration)
                         .min(deadline.saturating_duration_since(Instant::now())),
                 );
             }
-            result => return result,
+            result => {
+                airk_kernel::service_execution::progress_waiting(None);
+                return result;
+            }
         }
     }
 }
@@ -798,7 +807,7 @@ pub async fn run() -> Result<()> {
                         if expected==identity {maintenance_waiting.store(keep_for_maintenance,Ordering::Release);}
                         if expected==identity && let Some(control)=control {airk_kernel::service_execution::control(identity,control.grant,control.paused,control.canceled)?;}
                         let status=work_status.lock().map_err(|_|anyhow::anyhow!("work status unavailable"))?;
-                        let reply=if expected==identity{Reply::WorkStatus{observation:protocol::WorkObservation{active:status.active,finished:status.finished,maintenance:status.maintenance.clone(),progress:airk_kernel::service_execution::progress().map(Box::new)}}}else{Reply::Failed};
+                        let reply=if expected==identity{Reply::WorkStatus{observation:protocol::WorkObservation{active:status.active,finished:status.finished,maintenance:status.maintenance.clone(),progress:airk_kernel::service_execution::progress().map(Box::new),waiting_for:status.active.and_then(|_|airk_kernel::service_execution::waiting_for())}}}else{Reply::Failed};
                         service_ipc::write_frame(&mut std::io::stdout().lock(), &reply)?;
                     },
                     Some(Command::Grant{caller})=>{

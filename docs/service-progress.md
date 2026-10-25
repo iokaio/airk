@@ -1,5 +1,7 @@
 # Service job progress and stall handling
 
+Native wait reasons travel separately as transient, exact-job metadata in worker status. Their sample age is independent of durable work counters. Setting or clearing a wait never resets phase or real-advancement clocks, and no wait field is added to persisted progress. See [console observations](service-console.md) for job/generation matching and paused queued jobs.
+
 This records native progress behavior used by the default 1.4.0 extension/CLI service. The [completion checklist](service-implementation-checklist.md) retains the remaining lifecycle and qualification gates. Earlier dated fixture counts below remain development evidence.
 
 `progress` reads one bounded cached observation per registered project from the service ledger. It never opens sources or an index database. The observation binds the job, grant, worker incarnation and fencing generation, with its service receipt time and the ledger's current job state. Reads include the project's current fencing generation so an older worker observation remains visibly older after restart. A terminal job receipt does not manufacture a completed progress report if the last available sample was partial. Missing observations remain unavailable.

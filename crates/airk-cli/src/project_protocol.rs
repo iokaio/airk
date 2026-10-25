@@ -114,4 +114,6 @@ pub struct WorkObservation {
     pub finished: Option<Incarnation>,
     pub maintenance: Option<airk_core::service::MaintenanceObservation>,
     pub progress: Option<Box<airk_core::service_progress::WorkProgress>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub waiting_for: Option<airk_core::service_resources::WaitReason>,
 }
