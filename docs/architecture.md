@@ -29,6 +29,8 @@ flowchart LR
 
 The service brokers connections and schedules metadata-bound work. Evidence and model inputs travel directly between clients, project workers and the shared helper; those payloads do not pass through the broker.
 
+Explicit legacy retirement is an administrative exception to ordinary service-only project access: CLI owns old OS-startup review/removal, while store owns offline deletion of recognized 1.3 derived files under old worker/writer/reader exclusion. This adapter reads ownership/file metadata, never opens the old database or constructs a Kernel, preserves sources/settings/usage, and cannot become a normal query/index fallback. See [the legacy transition contract](service-legacy-transition.md).
+
 ## Dependency boundaries
 
 | Crate | Responsibility | AIRK dependencies |

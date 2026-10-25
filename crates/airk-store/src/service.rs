@@ -17,7 +17,7 @@ pub mod model_files;
 #[path = "service_registry.rs"]
 pub mod registry;
 
-struct OwnershipFile(File, AtomicBool);
+pub(crate) struct OwnershipFile(File, AtomicBool);
 impl Drop for OwnershipFile {
     fn drop(&mut self) {
         // Unpinned owners unlock before close so an unrelated concurrent fork
@@ -28,7 +28,7 @@ impl Drop for OwnershipFile {
     }
 }
 
-fn acquire_file(root: &Path, name: &str) -> Result<OwnershipFile> {
+pub(crate) fn acquire_file(root: &Path, name: &str) -> Result<OwnershipFile> {
     acquire_file_for(root, name, std::time::Duration::ZERO)
 }
 

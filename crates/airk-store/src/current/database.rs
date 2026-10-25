@@ -99,6 +99,15 @@ fn read_owner(directory: &Path) -> Result<Owner> {
     Ok(owner)
 }
 
+pub(super) fn legacy_retirement_scope(directory: &Path) -> Result<CurrentScope> {
+    let owner = read_owner_any(directory)?;
+    ensure!(
+        owner.version == DATABASE_VERSION,
+        "legacy retirement requires a recognized 1.3 ownership header"
+    );
+    Ok(owner.scope)
+}
+
 fn read_owner_any(directory: &Path) -> Result<Owner> {
     let path = directory.join(OWNER_FILE);
     let metadata = fs::symlink_metadata(&path)

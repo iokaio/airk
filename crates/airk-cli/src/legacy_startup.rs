@@ -28,8 +28,53 @@ pub struct Target {
     #[arg(long)]
     pub executable: PathBuf,
 }
+#[derive(Clone, Debug, Args)]
+pub struct DerivedTarget {
+    #[arg(long)]
+    root: PathBuf,
+    #[arg(long)]
+    data_dir: PathBuf,
+    #[arg(long)]
+    collection: String,
+}
+impl DerivedTarget {
+    fn scope(&self) -> airk_store::current::legacy_retirement::Target {
+        airk_store::current::legacy_retirement::Target {
+            root: self.root.clone(),
+            data_dir: self.data_dir.clone(),
+            collection: self.collection.clone(),
+        }
+    }
+}
 #[derive(Subcommand)]
 pub enum LegacyCommand {
+    /// List captured old-derived cleanup scopes for explicit recovery.
+    DerivedReceipts {
+        #[arg(long)]
+        runtime_dir: PathBuf,
+    },
+    ForgetDerived {
+        #[arg(long)]
+        runtime_dir: PathBuf,
+        #[arg(long)]
+        approval: Sha256Digest,
+    },
+    /// Preview known owned 1.3 derived files without opening an old database.
+    PreviewDerived {
+        #[arg(long)]
+        runtime_dir: PathBuf,
+        #[command(flatten)]
+        target: DerivedTarget,
+    },
+    /// Delete one bounded turn of explicitly reviewed old derived files.
+    RemoveDerived {
+        #[arg(long)]
+        runtime_dir: PathBuf,
+        #[command(flatten)]
+        target: DerivedTarget,
+        #[arg(long)]
+        approval: Sha256Digest,
+    },
     /// Read saved ownership and OS state; do not start, stop or convert anything.
     Review {
         #[arg(long)]
@@ -423,6 +468,32 @@ pub(crate) fn remove_target(
 }
 pub fn run(command: &LegacyCommand) -> Result<()> {
     let value = match command {
+        LegacyCommand::DerivedReceipts { runtime_dir } => {
+            airk_store::current::legacy_retirement::receipts(runtime_dir)?
+        }
+        LegacyCommand::ForgetDerived {
+            runtime_dir,
+            approval,
+        } => {
+            airk_store::current::legacy_retirement::forget(runtime_dir, *approval)?;
+            serde_json::json!({"forgotten":approval,"native_work_repeated":false})
+        }
+        LegacyCommand::PreviewDerived {
+            runtime_dir,
+            target,
+        } => serde_json::to_value(airk_store::current::legacy_retirement::preview(
+            runtime_dir,
+            &target.scope(),
+        )?)?,
+        LegacyCommand::RemoveDerived {
+            runtime_dir,
+            target,
+            approval,
+        } => serde_json::to_value(airk_store::current::legacy_retirement::remove(
+            runtime_dir,
+            &target.scope(),
+            *approval,
+        )?)?,
         LegacyCommand::Review {
             runtime_dir,
             target,

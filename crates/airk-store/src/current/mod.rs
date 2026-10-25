@@ -7,6 +7,7 @@ pub mod discovery;
 pub(crate) mod gate;
 pub mod graph;
 mod journal;
+pub mod legacy_retirement;
 pub mod lexical;
 pub mod maintenance;
 pub mod map;

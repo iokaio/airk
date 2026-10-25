@@ -38,6 +38,8 @@ Management follow-up: full replacement work now records one actual `reindex` obs
 
 ## Token-efficiency additions
 
+Old-derived retirement follow-up: an explicit offline CLI preview/deletion uses format-126 ownership metadata, native file witnesses, old worker/writer/reader exclusion, separate quota ownership and bounded checksummed intents. It preserves sources, saved configuration, usage history and unrelated root files; changed survivors and unknown derived entries refuse deletion. Completion replay never deletes a later index. Windows focused/native CLI/full-store tests and Linux affected-source/native CLI validation pass. This operation never reads an old index or participates in normal service work.
+
 Legacy-startup follow-up: console/CLI review, same-user executable candidate audit, exact Windows/Linux manager ownership and separately approved removal are implemented. Bounded checksummed intents retain resumable phases and idempotent completion, preserving sources/settings/indexes. Windows fault/panel tests and an actual stopped owned Task Scheduler fixture pass; Linux library/native/Clippy qualification also passes. Native Mac loaded-registration proof and old derived-state deletion remain open.
 
 Implement and validate these during Phase 7 MCP/extension cutover, after the worker/publication/resource contracts are integrated. Plan changes do not mark their code or acceptance gates complete.
