@@ -2,7 +2,7 @@
 
 Managed installations support a verified lightweight client launcher in user metadata while leaving the approved provider payload read-only and preserving its lifecycle policy. See the [native installation contract](https://github.com/iokaio/airk/blob/main/docs/service-installation.md).
 
-**1.4.0 development:** native service defaults are implemented in this working tree. Complete packaging, qualification and review are still in progress. No final 1.4 VSIX has been built. See the [development release record](https://github.com/iokaio/airk/blob/main/docs/release-1.4.0.md).
+**1.4.0 local manual-test candidate:** the native service cutover is implemented and reviewed, with available Windows/Linux x64 checks recorded. Native Mac and the complete installed-platform/signing/policy matrix remain unqualified. See the [candidate release record](https://github.com/iokaio/airk/blob/main/docs/release-1.4.0.md). This local candidate is unpublished.
 
 Private editor acceptance now exercises reviewed native registrations and Full/Terse panel choices. Development-stage tests and installed-VSIX qualification are recorded separately; neither implies native Mac qualification.
 

@@ -2,7 +2,7 @@
 
 **AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents**
 
-The current working tree targets **1.4.0** and now defaults to service-backed extension and CLI operation. Container/package cutover, complete qualification and review remain in progress; no final service VSIX has been built. Start with the [1.4 development release record](release-1.4.0.md), [service plan](airkservice-architecture.md), [completion checklist](service-implementation-checklist.md), [project setup](service-project-setup.md) and [client adapters](service-client-adapters.md).
+The **1.4.0 local manual-test candidate** implements the native extension/CLI/container cutover. Available Windows/Linux x64 checks and code review are complete; local VSIX and installed-artifact receipts follow the final packaging gate. Native Mac and the complete installed-platform/signing/policy matrix remain unqualified. Start with the [candidate release record](release-1.4.0.md), [service plan](airkservice-architecture.md), [completion checklist](service-implementation-checklist.md), [project setup](service-project-setup.md) and [client adapters](service-client-adapters.md).
 
 The 1.3.x/1.2.x release records and former direct-helper/window-scheduler guides are historical references. They do not describe the 1.4 default lifecycle or authorize opening legacy stores through the service. Native and extension source/lockfile versions are synchronized at 1.4.0; publication is a separate action.
 
@@ -10,7 +10,7 @@ The [Windows build/editor guide](windows-local-build.md) describes pair builds, 
 
 - [Architecture and code boundaries](architecture.md)
 - [AIRK 1.4.0 local service architecture and implementation plan](airkservice-architecture.md)
-- [Draft 1.4.0 development release record](release-1.4.0.md)
+- [1.4.0 local manual-test candidate and qualification limits](release-1.4.0.md)
 - [Offline service installation, resumable activation, managed payloads and startup ownership](service-installation.md) Shutdown ownership checks also cover damaged payload files, and initialization receipts prevent silent registry replacement after control loss.
 - [Reviewed runtime upgrades, rollback, saved activation and version pins](service-runtime-transitions.md)
 - [Mac signed service bundle, optional login ownership and qualification limits](service-macos-login.md)

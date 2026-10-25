@@ -1,6 +1,6 @@
 # AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents
 
-**1.4.0 development.** This working tree now uses the native service for extension and CLI operation. The complete implementation, container/package cutover, testing and review are still in progress. No final 1.4 VSIX has been built. See the [implementation plan](docs/airkservice-architecture.md), [completion checklist](docs/service-implementation-checklist.md) and [development release record](docs/release-1.4.0.md).
+**1.4.0 local manual-test candidate.** The native service cutover is implemented and reviewed. Available Windows and Linux x64 checks pass; the [qualification record](docs/service-cutover-qualification.md) separates those results from the remaining installed-platform, signing and policy matrix. Local VSIX packaging and installed-artifact acceptance follow the [completion checklist](docs/service-implementation-checklist.md). See the [implementation plan](docs/airkservice-architecture.md) and [candidate release record](docs/release-1.4.0.md). This is an unpublished local candidate.
 
 The [Windows build and editor harness](docs/windows-local-build.md) now uses the verified runtime pair and reviewed native registrations. An allowlisted development stage can be exercised before creating a VSIX; final artifact acceptance remains separate.
 
@@ -10,7 +10,7 @@ AIRK indexes local code and documents and serves bounded, cited evidence to codi
 
 A per-user service brokers authenticated connections and owns registration, durable work and resource policy. Retrieval flows directly between clients and project workers. Project workers also talk directly to the shared inference helper; the broker does not forward evidence, source text, model weights or embeddings.
 
-The approved runtime pair contains two executables: a lightweight `airk` for native service/client/worker roles, and `airk-embed` for inference and embedded offline MiniLM assets. Compatible projects share verified model files and loaded sessions. Inference starts when needed; connecting a read-only client does not load a model. Native operation targets Windows, Linux and both Mac architectures. Windows/Linux development evidence is recorded in the component contracts; native Mac and installed-editor qualification remain pending.
+The approved runtime pair contains two executables: a lightweight `airk` for native service/client/worker roles, and `airk-embed` for inference and embedded offline MiniLM assets. Compatible projects share verified model files and loaded sessions. Inference starts when needed; connecting a read-only client does not load a model. Native operation targets Windows, Linux and both Mac architectures. Windows/Linux x64 and private Windows editor evidence is recorded separately; native Mac and the complete installed-platform matrix remain unqualified.
 
 The Mac layout uses a [GUI-less signed app bundle](docs/service-macos-login.md) containing those same two executables, with a macOS 13.0 deployment baseline and optional bundle-scoped login registration. Portable ownership/package checks pass; native SDK, signing, lifecycle and installed-platform qualification remain pending.
 

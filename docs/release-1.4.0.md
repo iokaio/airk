@@ -1,4 +1,16 @@
-# AIRK 1.4.0 development release record
+# AIRK 1.4.0 local manual-test candidate
+
+October 25, 2026. The native service cutover is implemented and reviewed. This unpublished candidate keeps version **1.4.0**, with two executables: lightweight `airk` and offline MiniLM inference helper `airk-embed`. Evidence flows directly to project workers; inference inputs go directly to the shared helper. The broker owns metadata, work and resource policy.
+
+Terse is the default, with extension-panel Full selection and per-call agent guidance. Compact navigation/facts, consistent `items`, candidate method matching, retained change baselines, `index-current` validation and safe publication retries are implemented. The console adds sampled exact-job waits and queued cancellation. Native connection-opening admission preserves accepted work without replaying scans or publications.
+
+Available frozen checks pass: Windows workspace (1,333 reported passes/17 ignores), Linux production (1,347/18 skips), serial docs, formatting, Clippy, native extension (217/2 skips), Python (142/4 skips), license inventories, repository and whitespace. Exact pair 59 passes real-model, retrieval, nine-case load, 128 MiB scale, document, storage, usage, fault, transition and five editor-stage campaigns. Final container smoke and controlled full-volume admission/recovery pass. Local VSIX packaging and installed-artifact acceptance follow the completion gate; exact receipts are recorded in [cutover qualification](service-cutover-qualification.md).
+
+Native Mac/signing/login, minimum OS, other hardware and enforced remote/security-policy matrices remain unqualified. Load health includes CLI startup and reaches 716.8 ms p95 in the latest samples; no universal latency or provider-token savings claim is made. Three pinned upstream declaration-only license records still need public-release review. See [the requirements review](service-requirements-review.md) for the full boundary between implementation and qualification.
+
+## Historical development checkpoints, October 22–25
+
+The following notes preserve their original stage status. Pending-work statements describe that checkpoint, not the current implementation summary above.
 
 October 25 connection-admission follow-up: concurrent source publication exposed a typed SQLite `BUSY_RECOVERY` opening race. Native work now waits within a finite checkpointed admission budget for current reader/writer connections, preserving job identity and avoiding scan/publication replay. Direct query rejection remains immediate. Real lock, deadline, cancellation, revision and thread-isolation tests and workspace Clippy pass; the refreshed pair and full production gate are being qualified.
 
