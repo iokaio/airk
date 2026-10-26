@@ -26,6 +26,26 @@ def producer():
 
 
 class RepairContracts(unittest.TestCase):
+    def test_intel_ticket_workaround_precedes_unchanged_mac_signing(self):
+        workflow = (repair.ROOT / ".github/workflows/github-release.yml").read_text(encoding="utf-8")
+        steps = workflow.split("\n      - ")
+        workaround = next(index for index, step in enumerate(steps)
+                          if step.startswith("name: Use TCP for Apple ticket requests on Intel runners\n"))
+        step = steps[workaround]
+        self.assertIn("if: runner.os == 'macOS' && matrix.target == 'x86_64-apple-darwin'", step)
+        self.assertIn("shell: bash", step)
+        self.assertEqual([line.strip() for line in step.split("run: |\n", 1)[1].splitlines()
+                          if line.strip() and not line.lstrip().startswith("#")], [
+            'echo "block return out quick proto udp from any to any port 443" | sudo pfctl -f -',
+            "sudo pfctl -E",
+        ])
+        signing = steps[workaround + 1]
+        self.assertTrue(signing.startswith("name: Sign and notarize Mac helper in an isolated keychain\n"))
+        self.assertIn("if: runner.os == 'macOS'", signing)
+        self.assertIn("run: python scripts/ci-macos-sign.py --target ${{ matrix.target }} --pair", signing)
+        self.assertNotIn("continue-on-error", signing)
+        self.assertNotIn("||", signing)
+
     def test_every_repair_workflow_entry_point_has_scoped_api_authentication(self):
         workflow = (repair.ROOT / ".github/workflows/github-release.yml").read_text(encoding="utf-8")
         commands = set()
