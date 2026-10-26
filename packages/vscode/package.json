@@ -97,7 +97,7 @@
       "airk": [
         {
           "id": "airk.dashboard",
-          "name": "Dashboard",
+          "name": "Status & Search",
           "type": "webview"
         },
         {
@@ -191,6 +191,11 @@
       ],
       "view/title": [
         {
+          "command": "airk.explorer.open",
+          "when": "view == airk.dashboard",
+          "group": "navigation"
+        },
+        {
           "command": "airk.treeRefresh",
           "when": "view == airk.collectionsView",
           "group": "navigation"
@@ -215,6 +220,18 @@
       ]
     },
     "commands": [
+      {
+        "command": "airk.explorer.open",
+        "title": "Open Explorer",
+        "category": "AIRK",
+        "icon": "$(search-view-icon)"
+      },
+      {
+        "command": "airk.explorer.search",
+        "title": "Search Indexed Evidence",
+        "category": "AIRK",
+        "enablement": "isWorkspaceTrusted"
+      },
       {
         "command": "airk.installCli",
         "title": "Install or Repair CLI",

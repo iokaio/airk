@@ -9,7 +9,8 @@ export const MESSAGE_VERSION = 1;
 // ---- Shared state vocabulary (design §9.2). Words are used identically on every screen.
 export type ConnectionState = 'connecting' | 'ready' | 'degraded' | 'disconnected' | 'incompatible' | 'untrusted';
 export type IndexState = 'not_registered' | 'not_indexed' | 'indexing' | 'available' | 'unavailable' | 'unknown';
-export type FreshnessState = 'fresh' | 'pending_changes' | 'stale' | 'unknown';
+/** Native scheduler freshness (airk_status.freshness.state); never proof that live source bytes match. */
+export type FreshnessState = 'unregistered' | 'unavailable' | 'idle' | 'pending' | 'running' | 'paused' | 'blocked' | 'failed' | 'unknown';
 export type SemanticState = 'pending' | 'partial' | 'ready' | 'failed' | 'disabled' | 'unknown';
 /** E1 indexed text, E2 syntax fact, E3 rule observation, E4 provider-asserted (design §9.1). */
 export type EvidenceClass = 'E1' | 'E2' | 'E3' | 'E4';
@@ -173,5 +174,7 @@ export function parseWebviewMessage(input: unknown): WebviewMessage | undefined 
 export type HostMessage =
     | { v: 1; type: 'state'; state: ExplorerViewState }
     | { v: 1; type: 'navigate'; route: string }
+    /** A query entered outside the panel (sidebar quick search or a command); the webview runs it. */
+    | { v: 1; type: 'search'; query: string }
     | { v: 1; type: 'result'; requestId: string; ok: true; data: unknown }
     | { v: 1; type: 'result'; requestId: string; ok: false; error: ExplorerError };

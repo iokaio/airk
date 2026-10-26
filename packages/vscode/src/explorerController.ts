@@ -1,0 +1,221 @@
+// SPDX-License-Identifier: Apache-2.0
+import * as vscode from 'vscode';
+import { ExplorerViewState, HostMessage, MESSAGE_VERSION, StatusSummary, WebviewMessage, WebviewMessageOf } from './explorerContracts';
+import { ControlSource, ExplorerControl } from './explorerControl';
+import { explorerError, ExplorerError } from './explorerErrors';
+import { EvidenceClient, EvidenceFailure } from './explorerEvidence';
+import { FEATURES } from './explorerFeatures';
+import { ExplorerPanel } from './explorerPanel';
+import { formatRoute, parseRoute } from './explorerRoutes';
+import { headline, statusSummary } from './explorerStatus';
+import { LaunchSpec } from './model';
+
+/** The narrow surface of the service extension that the Explorer may use. */
+export interface ExplorerHost {
+    readonly extensionUri: vscode.Uri;
+    readonly version: string;
+    trusted(): boolean;
+    specs(): readonly LaunchSpec[];
+    /** Registered project for the active editor's workspace folder, if any. */
+    activeProject(): string | undefined;
+    readonly onDidChangeSpecs: vscode.Event<void>;
+    readonly control: ControlSource;
+    log(line: string): void;
+    setStatusBar(text: string, tooltip: string): void;
+}
+
+export interface ExplorerSnapshotListener { (state: ExplorerViewState): void }
+
+/**
+ * Owns the Explorer panel, its evidence session and the published view state. All
+ * AIRK work goes through the existing control facade or the evidence session; the
+ * webview only renders state and sends validated, typed requests.
+ */
+export class ExplorerController implements vscode.Disposable {
+    private readonly control: ExplorerControl;
+    private readonly panel: ExplorerPanel;
+    private readonly listeners: vscode.Disposable[] = [];
+    private readonly snapshotListeners = new Set<ExplorerSnapshotListener>();
+    private evidence?: EvidenceClient;
+    private selected?: string;
+    private status?: StatusSummary;
+    private statusFor?: string;
+    private statusLoading?: Promise<void>;
+    private notice?: ExplorerError;
+    private revision = 0;
+    private route = '#overview';
+    private retained?: { dispose(): void };
+    private disposed = false;
+
+    constructor(private readonly host: ExplorerHost) {
+        this.control = new ExplorerControl(host.control, host.version);
+        this.panel = new ExplorerPanel(host.extensionUri, {
+            message: message => { void this.handle(message); },
+            visible: visible => this.visibility(visible),
+            rejected: () => host.log('AIRK Explorer ignored an unrecognized webview message.'),
+        });
+        this.listeners.push(this.control.onDidChange(() => this.observedControl()), host.onDidChangeSpecs(() => this.specsChanged()));
+        this.selectDefault();
+        this.publish();
+    }
+
+    /** Reveal the Explorer, optionally at a route from the manifest. */
+    open(route?: string): void {
+        if (route && parseRoute(route)) { this.route = formatRoute(parseRoute(route)!); }
+        this.panel.reveal();
+        this.panel.post({ v: MESSAGE_VERSION, type: 'navigate', route: this.route });
+        this.publish();
+        void this.loadStatus();
+    }
+
+    /** Open Search with a query typed outside the panel; the webview runs it like any search. */
+    search(query: string): void {
+        this.open('#search/query');
+        if (query.trim() && query.length <= 4096) { this.panel.post({ v: MESSAGE_VERSION, type: 'search', query }); }
+    }
+
+    onSnapshot(listener: ExplorerSnapshotListener): vscode.Disposable {
+        this.snapshotListeners.add(listener); listener(this.snapshot());
+        return { dispose: () => { this.snapshotListeners.delete(listener); } };
+    }
+
+    snapshot(): ExplorerViewState {
+        const projects = this.host.trusted() ? this.control.projects() : [];
+        return {
+            revision: this.revision,
+            extensionVersion: this.host.version,
+            trusted: this.host.trusted(),
+            connection: this.control.connection(),
+            projects,
+            ...(this.control.observedAt() !== undefined ? { projectsObservedAt: this.control.observedAt() } : {}),
+            ...(this.selected ? { selectedProject: this.selected } : {}),
+            ...(this.status && this.statusFor === this.selected ? { status: this.status } : {}),
+            features: FEATURES,
+            ...(this.notice ? { notice: this.notice } : {}),
+        };
+    }
+
+    private publish(): void {
+        if (this.disposed) { return; }
+        this.revision++;
+        const state = this.snapshot();
+        this.panel.post({ v: MESSAGE_VERSION, type: 'state', state });
+        for (const listener of this.snapshotListeners) { listener(state); }
+        const { word } = headline(state.connection, state.status, this.host.specs().length);
+        const project = state.projects.find(entry => entry.project === state.selectedProject);
+        this.host.setStatusBar(`AIRK: ${word}`, project ? `AIRK Explorer · ${project.collection} · ${word}` : `AIRK Explorer · ${word}`);
+    }
+
+    private visibility(visible: boolean): void {
+        if (visible && !this.retained) { this.retained = this.control.retain(); void this.loadStatus(); }
+        else if (!visible && this.retained) { this.retained.dispose(); this.retained = undefined; }
+    }
+
+    private selectDefault(): void {
+        const specs = this.host.specs();
+        if (this.selected && specs.some(spec => spec.service?.project === this.selected)) { return; }
+        const active = this.host.activeProject();
+        this.select(active && specs.some(spec => spec.service?.project === active) ? active : specs[0]?.service?.project);
+    }
+
+    private select(project: string | undefined): void {
+        if (project === this.selected) { return; }
+        this.selected = project;
+        this.evidence?.dispose(); this.evidence = undefined;
+        this.status = undefined; this.statusFor = undefined;
+    }
+
+    private specsChanged(): void {
+        const spec = this.selected ? this.host.specs().find(entry => entry.service?.project === this.selected) : undefined;
+        // A changed launcher binding (runtime upgrade, storage change) invalidates the session.
+        if (this.evidence && (!spec || spec.command !== this.evidence.spec.command || JSON.stringify(spec) !== JSON.stringify(this.evidence.spec))) {
+            this.evidence.dispose(); this.evidence = undefined;
+        }
+        this.selectDefault();
+        this.publish();
+        if (this.panel.open) { void this.loadStatus(); }
+    }
+
+    private observedControl(): void {
+        // Refresh published status when the cached console reports a different publication.
+        const row = this.control.projects().find(entry => entry.project === this.selected);
+        if (this.panel.open && row?.publication && this.status?.publication && row.publication !== this.status.publication) { void this.loadStatus(); }
+        this.publish();
+    }
+
+    /** The evidence session for the selected project, created lazily. */
+    protected session(): EvidenceClient {
+        if (!this.host.trusted()) { throw new EvidenceFailure(explorerError('WORKSPACE_UNTRUSTED')); }
+        const spec = this.host.specs().find(entry => entry.service?.project === this.selected);
+        if (!spec) { throw new EvidenceFailure(explorerError('NO_PROJECT')); }
+        if (!this.evidence) { this.evidence = new EvidenceClient(spec, this.host.version); }
+        return this.evidence;
+    }
+
+    private loadStatus(): Promise<void> {
+        if (this.statusLoading || this.disposed) { return this.statusLoading ?? Promise.resolve(); }
+        const project = this.selected;
+        if (!project || !this.host.trusted()) { return Promise.resolve(); }
+        this.statusLoading = (async () => {
+            try {
+                const result = await this.session().call('airk_status', {}, { timeout: 90000, supersede: 'status' });
+                if (project === this.selected) { this.status = statusSummary(result.payload); this.statusFor = project; this.notice = undefined; }
+            } catch (error) {
+                if (project === this.selected) { this.notice = failure(error); }
+            } finally { this.statusLoading = undefined; this.publish(); }
+        })();
+        return this.statusLoading;
+    }
+
+    private respond(requestId: string, outcome: { data: unknown } | { error: ExplorerError }): void {
+        const message: HostMessage = 'data' in outcome
+            ? { v: MESSAGE_VERSION, type: 'result', requestId, ok: true, data: outcome.data }
+            : { v: MESSAGE_VERSION, type: 'result', requestId, ok: false, error: outcome.error };
+        this.panel.post(message);
+    }
+
+    private async handle(message: WebviewMessage): Promise<void> {
+        if (this.disposed) { return; }
+        try {
+            const data = await this.dispatch(message);
+            if (message.type !== 'ready') { this.respond(message.requestId, { data: data ?? null }); }
+        } catch (error) {
+            this.respond(message.requestId, { error: failure(error) });
+        }
+    }
+
+    protected async dispatch(message: WebviewMessage): Promise<unknown> {
+        switch (message.type) {
+            case 'ready': this.publish(); this.panel.post({ v: MESSAGE_VERSION, type: 'navigate', route: this.route }); return;
+            case 'nav.go': {
+                const route = parseRoute(message.route);
+                if (!route) { throw new EvidenceFailure(explorerError('INVALID_MESSAGE')); }
+                this.route = formatRoute(route); return;
+            }
+            case 'project.select': {
+                const typed = message as WebviewMessageOf<'project.select'>;
+                if (!this.host.specs().some(spec => spec.service?.project === typed.project)) { throw new EvidenceFailure(explorerError('NO_PROJECT')); }
+                this.select(typed.project); this.publish(); await this.loadStatus(); return;
+            }
+            case 'status.refresh': await Promise.all([this.loadStatus(), this.control.refresh()]); return;
+            case 'manage.refresh': await this.control.refresh(); return;
+            default: throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED', `${message.type} is not available in this build.`));
+        }
+    }
+
+    dispose(): void {
+        if (this.disposed) { return; }
+        this.disposed = true;
+        this.retained?.dispose();
+        this.evidence?.dispose();
+        this.panel.dispose();
+        for (const listener of this.listeners.splice(0)) { listener.dispose(); }
+        this.snapshotListeners.clear();
+    }
+}
+
+export function failure(error: unknown): ExplorerError {
+    if (error instanceof EvidenceFailure) { return error.error; }
+    const code = error && typeof error === 'object' && typeof (error as { code?: unknown }).code === 'string' ? (error as { code: string }).code : 'TOOL_ERROR';
+    return explorerError(code, error instanceof Error ? error.message : undefined);
+}
