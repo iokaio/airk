@@ -34,6 +34,11 @@ export class ServiceConsole implements vscode.WebviewViewProvider,vscode.Disposa
     private failures=0;
     private readonly output=vscode.window.createOutputChannel('AIRK Service');
     private readonly listeners:vscode.Disposable[]=[];
+    private readonly stateChanged=new vscode.EventEmitter<ServiceConsoleState>();
+    /** Fired for every published controller state, whichever view (if any) is showing it. */
+    readonly onDidChangeState=this.stateChanged.event;
+    /** Non-view consumers (the AIRK Explorer) that need observations to keep refreshing. */
+    private consumers=0;
     constructor(private readonly context:vscode.ExtensionContext,readonly runtime:ConsoleRuntime,
         private readonly workspace?:{register():Promise<void>;currentProjects():ReadonlySet<string>}){
         this.controller=this.createController();
@@ -67,22 +72,30 @@ export class ServiceConsole implements vscode.WebviewViewProvider,vscode.Disposa
     }
     reset():void{
         this.controller.dispose();this.controller=this.createController();
-        if(this.view?.visible){void this.controller.refresh();this.schedule();}
+        if(this.observed()){void this.controller.refresh();this.schedule();}
+    }
+    private observed():boolean{return !this.disposed&&(this.view?.visible===true||this.consumers>0);}
+    /** Keep polling while a consumer is visible; disposing the handle releases it once. */
+    retain():vscode.Disposable{
+        this.consumers++;if(this.consumers===1&&!this.view?.visible){void this.controller.refresh();this.schedule();}
+        let released=false;
+        return {dispose:()=>{if(released)return;released=true;this.consumers--;if(!this.observed())clearTimeout(this.timer);}};
     }
     resolveWebviewView(view:vscode.WebviewView):void{
         this.view=view;view.webview.options={enableScripts:true,localResourceRoots:[]};
         view.webview.html=renderConsole(this.controller.state);
         this.listeners.push(view.webview.onDidReceiveMessage(message=>{void this.controller.action(message);}),
-            view.onDidChangeVisibility(()=>{if(view.visible){void this.controller.refresh();this.schedule();}else clearTimeout(this.timer);}),
+            view.onDidChangeVisibility(()=>{if(view.visible){void this.controller.refresh();this.schedule();}else if(!this.observed())clearTimeout(this.timer);}),
             view.onDidDispose(()=>{this.view=undefined;clearTimeout(this.timer);}));
         if(view.visible){void this.controller.refresh();this.schedule();}
     }
     private changed(state:ServiceConsoleState):void{
-        if(!this.view||this.disposed)return;
-        void this.view.webview.postMessage({type:'render',revision:state.revision,html:consoleContent(state)});
+        if(this.disposed)return;
+        this.stateChanged.fire(state);
+        if(this.view)void this.view.webview.postMessage({type:'render',revision:state.revision,html:consoleContent(state)});
     }
     private schedule():void{
-        clearTimeout(this.timer);if(!this.view?.visible||this.disposed)return;
+        clearTimeout(this.timer);if(!this.observed())return;
         this.failures=this.controller.state.connected?0:Math.min(this.failures+1,5);
         this.timer=setTimeout(()=>{
             void this.controller.refresh().finally(()=>this.schedule());
@@ -90,10 +103,16 @@ export class ServiceConsole implements vscode.WebviewViewProvider,vscode.Disposa
     }
     async command(action:string):Promise<void>{
         await vscode.commands.executeCommand('airk.service.focus');
+        await this.run(action,action==='previewReport'?{includePaths:false}:{});
+    }
+    /**
+     * Run one allowlisted console action without moving focus. Fields go through the
+     * same consoleAction validation as webview messages, including page scoping.
+     */
+    async run(action:string,fields:Record<string,unknown>={}):Promise<void>{
         const controller=this.controller;
         if(!await controller.whenIdle())return;
-        await controller.action({type:'service',revision:controller.state.revision,action,
-            ...(action==='previewReport'?{includePaths:false}:{})});
+        await controller.action({...fields,type:'service',revision:controller.state.revision,action});
     }
     async previewRepair(project:string,operation:import('./serviceClient').RepairOperation):Promise<void>{
         await vscode.commands.executeCommand('airk.service.focus');
@@ -227,6 +246,6 @@ export class ServiceConsole implements vscode.WebviewViewProvider,vscode.Disposa
         return recording?{operation,tokenizer,baseline,returned,generation:Number(generation),content_kind:'mixed',record:recording.record}:undefined;
     }
     dispose():void{
-        this.disposed=true;clearTimeout(this.timer);this.controller.dispose();this.output.dispose();this.listeners.forEach(listener=>listener.dispose());
+        this.disposed=true;clearTimeout(this.timer);this.controller.dispose();this.output.dispose();this.stateChanged.dispose();this.listeners.forEach(listener=>listener.dispose());
     }
 }
