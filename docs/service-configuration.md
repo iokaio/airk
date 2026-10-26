@@ -1,6 +1,6 @@
 # Guarded project configuration
 
-This is the implemented development contract for the [1.4 service plan](airkservice-architecture.md). Native and extension versions are 1.4.0. These controls do not qualify an installed editor or release a VSIX.
+This is the implemented development contract for the [1.4 service plan](airkservice-architecture.md). Native and extension versions are 1.4.5. The SQLite boundary requires fresh setup rather than registry migration. These controls do not qualify an installed editor or release a VSIX.
 
 The trusted Service Console's **Project settings** action supports vectors, extraction detail, semantic selection rules, additional source roots, explicit offline custom-model selection, explicit return to the bundled model, usage recording policy and local tokenizer calibration. Inspect the project first. Host-owned pickers and dialogs collect the choices; webview messages carry only a fixed action and a visible project identity. Trust is checked again after each asynchronous preparation step.
 
@@ -18,11 +18,11 @@ Configuration that affects indexed evidence requests a later durable source pass
 
 ## Bounded receipts and uncertain outcomes
 
-Each accepted configuration reserves 16,392 bytes for a result: an eight-byte format/length header and up to 16 KiB of JSON metadata. SQLite incremental BLOB writes fill that reservation in place, in the same transaction as the source-continuation flag. The background row is also reserved before execution. A full database therefore cannot require a fresh overflow allocation just to save the bounded result. This uses the existing SQLite dependency's BLOB feature, with no additional dependency.
+Each accepted configuration reserves up to 16 KiB of decoded metadata for its result. Native redb state validation accounts for all outstanding result reservations before accepting the next state. The bounded result and source-continuation flag persist in one registry transaction. This is logical result admission; it does not promise that a later physical write succeeds when the disk or backend fails.
 
-The ledger remains capped at 32 MiB, 1,024 jobs and 4,096 aliases. Admission also accounts for physical page pressure, reserving one eighth of the configured page ceiling, capped at 1,024 pages, as headroom. Up to 64 oldest terminal receipts can retire under pressure; pending/running work and a protected retry origin remain retained. Receipt retirement advances the request epoch atomically. Known retained keys still replay, while retired keys expire instead of repeating an operation. New work can fail capacity admission before acceptance.
+The registry bounds decoded state to 32 MiB, 1,024 jobs and 4,096 accepted request aliases. Physical file length is separate and grows automatically. Capacity retirement removes old terminal receipts while preserving pending/running work and the protected retry origin, then advances the request epoch atomically. Retained keys still replay; expired keys cannot repeat an operation. New work can fail capacity admission before acceptance.
 
-Development registry schema 4 adds the fixed result reservation. Versions 1/2 upgrade additively; version 3 migrates bounded requests and JSON results while preserving the registry namespace, aliases, jobs and fences. A missing required table in a completed registry remains a refusal. Read-only saved snapshots never migrate a registry.
+Version 1.4.5 starts a fresh redb registry namespace after metadata-authenticated old-file cleanup. No SQLite schema migration or result import remains. Completed ownership with missing or damaged native state fails closed; read-only saved snapshots never initialize or repair it.
 
 Recovery marks an older running configuration successful only if its saved result decodes correctly. Without a valid result, the job fails with `configuration_outcome_unknown_reinspect` and is never automatically replayed: the settings effect may already have happened. Damaged result bytes are preserved. Reinspect the actual settings before explicitly choosing another change. A result transaction and the configuration effect are separate boundaries; the plan does not claim atomicity between them.
 
@@ -34,7 +34,9 @@ Durable requests retain selected file paths and SHA-256 hashes until receipt ret
 
 Live console pages include the latest configuration job independently of newer source/vector progress. The host retrieves its bounded result and offers exact JSON Copy. The view labels cached results and truncates only the display at 4,096 characters. Down-service snapshots retain a separate 64 KiB result budget for at most 32 visible projects, under the overall 256 KiB snapshot ceiling. Omitted results are explicitly labeled; project/lifecycle metadata remains available. Default diagnostic export includes configuration job/result status, not the result payload or prepared file selectors.
 
-## Development evidence
+## Historical development evidence
+
+The following results describe the earlier SQLite-backed implementation. Its migration and SQL page-limit tests were retired; current native result, fencing and recovery evidence is recorded in [1.4.5 qualification](release-1.4.5.md).
 
 Windows registry tests cover exact-key persistence, canonical policies, engine identity, interrupted effects, valid-result recovery, damaged-result preservation, versions 2/3 migration, missing completed tables, pressure retirement and a result write with SQLite's page limit pinned to its existing page count. Kernel tests verify stale guards and exact calibration-input hashes while preserving sources and excluding sample text from results. Native preparation tests verify bounds and selector-only output. Extension tests cover persistence before send, exact uncertain retry, trust loss, cached result Copy, omission labels and diagnostic redaction.
 

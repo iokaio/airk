@@ -1,5 +1,7 @@
 # Operations
 
+> Historical 1.2/1.3 operator commands record, retained on October 26, 2026. The default 1.4.5 runtime uses the [native service](service-console.md) and [format-150 redb publication](service-publication.md). SQLite-specific layouts, reset/relocation commands and qualification below do not describe the current runtime. See [fresh setup and local qualification](release-1.4.5.md).
+
 ## Upgrading to 1.2
 
 AIRK 1.2 starts fresh collection/configuration ownership in `collections-1.2/`; it does not import the old `collections/` indexes or per-collection settings. Old state remains untouched and still consumes disk space. Review roots, extraction detail, vector selection, ingestion limits and quotas for the new collection, then index saved sources. Shared model assets require digest verification. See the [current-index contract](current-index-runtime.md).

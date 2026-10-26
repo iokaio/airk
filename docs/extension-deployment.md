@@ -1,6 +1,6 @@
 # Extension deployment: adapting VCP's approach
 
-The current package version is **1.4.4**; see [its release record](release-1.4.4.md). Prior 1.4.0/1.4.1/1.4.2 build and qualification records below retain their original scope.
+The current package version is **1.4.5**; see [its release record](release-1.4.5.md). Prior 1.4.0/1.4.1/1.4.2 build and qualification records below retain their original scope.
 
 AIRK's native-helper VS Code extension and native/VSIX candidate packaging are implemented. This page records the original packaging design and remains useful for its construction contract; use [extension behavior](vscode-extension.md) and the [release workflow](release-workflow.md) for current operation and publication. Full installed lifecycle qualification remains separate work. [Windows local build/review](windows-local-build.md) provides the PowerShell entry point.
 
@@ -14,16 +14,16 @@ VCP's Windows deployment uses a separately installed engine, machine-scoped path
 
 ## Implemented VSIX construction
 
-The original construction record used **1.1.1** and later **1.2.4**. The current synchronized native main/helper/extension version is **1.4.4**; see the [versioning process](versioning.md). The visible extension name is **AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents**, its identity is `iokaio.airk`, and its description has no beta label. VSCE sets the actual pre-release flag in the VSIX; a version below 1.0 by itself does not establish that channel. Keep a purely numeric version, because VS Code does not support a `-beta` suffix in its extension version field. [Official pre-release rules](https://code.visualstudio.com/api/working-with-extensions/publishing-extension#pre-release-extensions) describe the flag and separate release/pre-release versions.
+The original construction record used **1.1.1** and later **1.2.4**. The current synchronized native main/helper/extension version is **1.4.5**; see the [versioning process](versioning.md). The visible extension name is **AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents**, its identity is `iokaio.airk`, and its description has no beta label. VSCE sets the actual pre-release flag in the VSIX; a version below 1.0 by itself does not establish that channel. Keep a purely numeric version, because VS Code does not support a `-beta` suffix in its extension version field. [Official pre-release rules](https://code.visualstudio.com/api/working-with-extensions/publishing-extension#pre-release-extensions) describe the flag and separate release/pre-release versions.
 
-| Platform | 1.4.4 expected VSIX filename |
+| Platform | 1.4.5 expected VSIX filename |
 |---|---|
-| Windows x64 | airk-1.4.4-win32-x64.vsix |
-| Linux x64 | airk-1.4.4-linux-x64.vsix |
-| macOS Apple Silicon | airk-1.4.4-darwin-arm64.vsix |
-| macOS Intel | airk-1.4.4-darwin-x64.vsix |
+| Windows x64 | airk-1.4.5-win32-x64.vsix |
+| Linux x64 | airk-1.4.5-linux-x64.vsix |
+| macOS Apple Silicon | airk-1.4.5-darwin-arm64.vsix |
+| macOS Intel | airk-1.4.5-darwin-x64.vsix |
 
-Earlier local candidate receipts cover Windows x64; 1.4.4 requires the complete four-platform main CI candidate set before publication. Version 1.4.4 uses the stable channel; the release workflows control publication separately. Future previews must use a separate, deliberately selected version. A regular release must use a distinct version; the same Marketplace version cannot be both release and pre-release. Platform packages share the version and extension identity, with their target and bundled native helper distinguished in the artifact. No Marketplace listing or publication is created by the local build.
+Earlier local candidate receipts cover Windows x64; 1.4.5 requires the complete four-platform main CI candidate set before publication. Version 1.4.5 uses the stable channel; the release workflows control publication separately. Future previews must use a separate, deliberately selected version. A regular release must use a distinct version; the same Marketplace version cannot be both release and pre-release. Platform packages share the version and extension identity, with their target and bundled native helper distinguished in the artifact. No Marketplace listing or publication is created by the local build.
 
 The extension has its own package, checked-in npm lock and pinned Node/TypeScript/VSCE versions. CI restores with `npm ci --ignore-scripts` and compiles on the same native runner as its helper. [The extension packager](../scripts/package-extension.py) builds a fresh allowlisted stage containing compiled runtime modules, manifest, required media/docs, the verified helper and legal notices. Exclude tests, development dependencies, source maps, indexes, fixtures, reference files and arbitrary checkout contents.
 

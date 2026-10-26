@@ -1,5 +1,7 @@
 # AIRK 1.3.0 current index (unreleased)
 
+> Historical 1.2/1.3 current-index runtime record, retained on October 26, 2026. The default 1.4.5 runtime uses the [native service](service-console.md) and [format-150 redb publication](service-publication.md). SQLite-specific layouts, reset/relocation commands and qualification below do not describe the current runtime. See [fresh setup and local qualification](release-1.4.5.md).
+
 AIRK 1.2 uses one current index for each root/collection. CLI, MCP and extension operations use this store. Source files remain read-only. Source control owns source history; AIRK does not retain searchable historical generations, checkpoints or rollback targets.
 
 ## Fresh state and ownership

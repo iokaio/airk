@@ -56,7 +56,7 @@ Compilation, real-model/DiskANN verification, helper version validation and nati
 
 ## Connect this checkout for local agent testing
 
-For 1.4, trusted activation installs the runtime/terminal command and registers new workspace folders automatically. Existing 1.4 index-storage and watching selections are preserved. Open a new terminal to use the updated `airk` command, then use **Connect Coding Agent** to review stable-launcher arguments. **AIRK: Index Now** remains available for explicit indexing. Existing recognized local agent entries are refreshed on installation. Use the guide for first connections or unsupported custom configurations. The service owns model setup and indexing. A storage preference does not replace an existing reviewed project binding.
+For 1.4, trusted activation installs the runtime/terminal command and registers new workspace folders automatically. Compatible redb updates preserve saved selections. The 1.4.5 SQLite boundary instead requires fresh registration, full indexing and ownership-checked removal of recognized old database files. The selected storage location and separately stored settings are retained; automatic watching is enabled for the fresh registration. Open a new terminal to use the updated `airk` command, then use **Connect Coding Agent** to review stable-launcher arguments. **AIRK: Index Now** remains available for explicit indexing. Existing recognized local agent entries are refreshed on installation. Use the guide for first connections or unsupported custom configurations. The service owns model setup and indexing. A storage preference does not replace an existing reviewed project binding.
 
 ### Historical 1.3 personal setup workflow
 

@@ -1,5 +1,7 @@
 # Transactional storage relocation
 
+> Historical standalone data-root relocation record, retained on October 26, 2026. The default 1.4.5 runtime uses the [native service](service-console.md) and [format-150 redb publication](service-publication.md). SQLite-specific layouts, reset/relocation commands and qualification below do not describe the current runtime. See [fresh setup and local qualification](release-1.4.5.md).
+
 Relocation copies one managed data root into a new directory, verifies its contents, then activates the destination. Source workspaces and the old index payloads remain intact. It is an explicit maintenance action; changing the extension's storage setting alone does not migrate an index.
 
 ## Operator flow

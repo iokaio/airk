@@ -109,9 +109,12 @@ catalog. Source/extraction objects remain separate retained files, protected by
 request leases and ownership-validated cleanup. Rebuild reuse requires verified
 model/pipeline/input identity; a matching filename or branch name is insufficient.
 
-The graph redb adapter and private graph/vector staging exist, but normal
-production collection routing and whole-publication recovery integration remain
-unfinished. This describes the target placement, not completed qualification.
+Production collection routing, private graph/vector staging and coherent
+whole-publication recovery now use these adapters. Store and native-worker
+regressions cover captured replay, graph replacement, retained snapshots and
+sibling handoff. The placement is implemented; comparative performance and
+final local artifact qualification remain pending in the
+[current release record](../release-1.4.5.md).
 
 ### Keyspaces and authentication
 
