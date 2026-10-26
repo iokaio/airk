@@ -155,11 +155,33 @@ impl Service {
             project: service.project.clone(),
         });
         assert!(
-            matches!(&registered, Response::Registered { .. }),
+            matches!(&registered, Response::Registered { project } if project.registration == service.project)
+                || matches!(&registered, Response::Failure { code } if code == "registry_response_unknown_retry_with_key"),
             "fixture registration failed: {}; stderr: {}",
             serde_json::to_string(&registered).unwrap(),
             std::fs::read_to_string(service.owner.path().join("stderr")).unwrap_or_default()
         );
+        // An explicit unknown response does not prove whether registration
+        // committed. Observe its exact binding; never replay the mutation.
+        loop {
+            let observed = service.request(Method::Projects {
+                after: None,
+                revision: None,
+                limit: 32,
+            });
+            if matches!(&observed, Response::Projects { page } if page.projects.iter().any(|project| project.registration == service.project))
+            {
+                break;
+            }
+            assert!(
+                Instant::now() < until
+                    && matches!(&observed, Response::Failure { code } if matches!(code.as_str(), "registry_busy" | "registry_response_unknown_retry_with_key")),
+                "fixture registration was not observed: {}; initial response: {}",
+                serde_json::to_string(&observed).unwrap(),
+                serde_json::to_string(&registered).unwrap()
+            );
+            std::thread::sleep(Duration::from_millis(25));
+        }
         FIXTURES
             .get_or_init(Default::default)
             .lock()
