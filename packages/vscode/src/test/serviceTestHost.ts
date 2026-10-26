@@ -55,8 +55,9 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
         showQuickPick:async(items:any[])=>{state.picks++;return state.pick?state.pick(items):items[0];},
         showOpenDialog:async()=>state.selectedFolders,
         createTerminal:()=>({show(){},dispose(){}}),
-        createWebviewPanel:()=>{let handler:(message:unknown)=>Promise<void>,closed:()=>void;
-            const panel={webview:{html:'',onDidReceiveMessage:(value:any)=>{handler=value;return disposable;}},onDidDispose:(value:any)=>{closed=value;return disposable;},
+        createWebviewPanel:(viewType:string)=>{let handler:(message:unknown)=>Promise<void>,closed:()=>void;
+            const panel={viewType,posted:[] as unknown[],webview:{html:'',cspSource:'vscode-resource:',asWebviewUri:(uri:any)=>uri,postMessage:async(message:unknown)=>{panel.posted.push(message);return true;},
+                onDidReceiveMessage:(value:any)=>{handler=value;return disposable;}},onDidDispose:(value:any)=>{closed=value;return disposable;},onDidChangeViewState:()=>disposable,reveal(){},
                 send:async(message:unknown)=>handler(message),dispose:()=>closed?.()};panels.push(panel);return panel;},
         showTextDocument:async()=>{},
     },
@@ -65,7 +66,7 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
     lm:{registerMcpServerDefinitionProvider:(_name:string,provider:unknown)=>{events.push(provider);return disposable;}},
     env:{clipboard:{writeText:async(text:string)=>{clipboard.push(text);}}},StatusBarAlignment:{Left:1},ConfigurationTarget:{Global:1},ViewColumn:{Active:1,Beside:2},ProgressLocation:{Notification:15},
     EventEmitter:class{listeners:any[]=[];event=(listener:any)=>{this.listeners.push(listener);return disposable;};fire(){for(const listener of this.listeners)listener();}dispose(){}},
-    TreeItem:class{constructor(public label:string){}},Uri:{file:(fsPath:string)=>({scheme:'file',fsPath})},
+    TreeItem:class{constructor(public label:string){}},Uri:{file:(fsPath:string)=>({scheme:'file',fsPath}),joinPath:(base:any,...parts:string[])=>({scheme:'file',fsPath:path.join(base?.fsPath??'',...parts),toString(){return this.fsPath;}})},
     Range:class{constructor(..._args:any[]){}},
     WorkspaceEdit:class{uri:any;after='';replace(uri:any,_range:any,after:string){this.uri=uri;this.after=after;}},
     McpStdioServerDefinition:class{cwd:unknown;constructor(public label:string,public command:string,public args:string[],public env:unknown,public version:string){}}};

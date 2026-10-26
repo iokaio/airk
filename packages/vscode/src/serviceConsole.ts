@@ -114,8 +114,8 @@ export class ServiceConsole implements vscode.WebviewViewProvider,vscode.Disposa
         if(!await controller.whenIdle())return;
         await controller.action({...fields,type:'service',revision:controller.state.revision,action});
     }
+    /** Capture a native repair preview; approval stays a separate, explicit step. */
     async previewRepair(project:string,operation:import('./serviceClient').RepairOperation):Promise<void>{
-        await vscode.commands.executeCommand('airk.service.focus');
         await this.controller.projectPlan(project,operation);
     }
     async configureProject(project:string,draft:RecordValue,valid:()=>boolean):Promise<void>{

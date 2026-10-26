@@ -14,6 +14,7 @@ import { ServiceWorkspace } from './serviceWorkspace';
 import { McpVerification } from './sidebar';
 import { installLauncherCli } from './cliInstall';
 import { openUsagePanel } from './usagePanel';
+import { COMMAND_ROUTES } from './explorerCommands';
 import { ExplorerSidebar } from './explorerSidebar';
 import type { ExplorerController, ExplorerHost } from './explorerController';
 import { migrateLocalAgents } from './agentMigration';
@@ -169,26 +170,26 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         return (await vscode.window.showQuickPick(this.specs.map(spec=>({label:spec.name,description:spec.root,spec})),{title:'AIRK registered project'}))?.spec;
     }
     async index(requested?:LaunchSpec):Promise<void>{
-        await this.refresh();if(requested===undefined&&!this.specs.length){await this.registerWorkspace();await this.console.command('connect');return;}
+        await this.refresh();if(requested===undefined&&!this.specs.length){await this.registerWorkspace();await this.showManagement('#manage/activity');return;}
         const spec=await this.chooseSpec(requested);if(!spec)return;this.trusted();
         const binding=await this.runtime().ensure();this.trusted();await this.enqueue(binding,spec.service!.project,'index');
-        await this.console.command('connect');
+        await this.showManagement('#manage/activity');
     }
     async watching():Promise<void>{
         const spec=await this.chooseSpec();if(!spec)return;
         const selected=await vscode.window.showQuickPick([{label:'Automatic; continues after windows close',enabled:true},{label:'Manual',enabled:false}],{title:'Native source watching'});
         if(!selected)return;this.trusted();const binding=await this.runtime().ensure(),client=this.runtime().client(binding);
         try{this.trusted();await client.rpc({configure_watch:{project:spec.service!.project,enabled:selected.enabled}});this.trusted();}finally{client.dispose();}
-        await this.console.command('connect');
+        await this.showManagement('#manage/indexing');
     }
     async repair(operation:'rebuild'|'auto'|'verify',requested?:LaunchSpec):Promise<void>{
         const spec=await this.chooseSpec(requested);if(!spec)return;this.trusted();await this.runtime().ensure();this.trusted();
-        await this.console.previewRepair(spec.service!.project,operation);
+        await this.console.previewRepair(spec.service!.project,operation);await this.showManagement('#manage/repair');
     }
     async pause(paused:boolean,requested?:LaunchSpec):Promise<void>{
         const spec=await this.chooseSpec(requested);if(!spec)return;this.trusted();const binding=await this.runtime().ensure(),client=this.runtime().client(binding);
         try{this.trusted();await client.rpc({pause:{project:spec.service!.project,paused}});this.trusted();}finally{client.dispose();}
-        await this.console.command('connect');
+        await this.showManagement('#manage/activity');
     }
     async verify(spec?:LaunchSpec):Promise<void>{
         const selected=spec??await this.chooseSpec();if(!selected)return;this.trusted();
@@ -385,9 +386,14 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     }
     getTreeItem(spec:LaunchSpec):vscode.TreeItem {
         const item=new vscode.TreeItem(spec.name);item.id=spec.service!.project;item.description=spec.collection;item.tooltip=spec.root;item.contextValue='airkServiceProject';
-        item.command={command:'airk.serviceConnect',title:'Open Service Console'};return item;
+        item.command={command:'airk.explorer.open',title:'Open in AIRK Explorer',arguments:['#manage/projects']};return item;
     }
     getChildren():LaunchSpec[]{return this.specs;}
+    /** Refresh the shared console observations, then reveal a Management tab in the Explorer. */
+    async showManagement(route:string):Promise<void>{
+        await this.console.run('connect');
+        (await this.explorerController()).open(route);
+    }
     /** The AIRK Explorer is loaded on first use; it shares this extension's console and registrations. */
     explorerController():Promise<ExplorerController>{
         this.explorer??=import('./explorerController').then(({ExplorerController})=>{
@@ -418,7 +424,7 @@ export async function activate(context:vscode.ExtensionContext):Promise<{getServ
     const controller=new ServiceExtension(context);active=controller;context.subscriptions.push(controller);
     const explorerOpen=(route?:unknown)=>controller.explorerController().then(explorer=>explorer.open(typeof route==='string'?route:undefined));
     const sidebar=new ExplorerSidebar({
-        commandUris:['airk.index','airk.serviceConnect','airk.setupAgent','airk.installCli','airk.chooseStorage','airk.indexMode','airk.manageVscodeMcp'],
+        commandUris:['airk.index','airk.serviceConnect','airk.setupAgent','airk.installCli','airk.chooseStorage','airk.indexMode','airk.manageVscodeMcp','airk.explorer.open','airk.collections'],
         folders:()=>(vscode.workspace.workspaceFolders??[]).filter(folder=>['file','vscode-remote'].includes(folder.uri.scheme)).length,
         attach:async listener=>(await controller.explorerController()).onSnapshot(listener),
         open:()=>{void explorerOpen().catch(error=>controller.output.appendLine(String(error)));},
@@ -429,13 +435,17 @@ export async function activate(context:vscode.ExtensionContext):Promise<{getServ
         vscode.window.createTreeView('airk.collectionsView',{treeDataProvider:controller}));
     const safe=(action:(...args:unknown[])=>unknown|Promise<unknown>)=>async(...args:unknown[])=>{try{return await action(...args);}catch(error){controller.output.appendLine(String(error));
         void vscode.window.showErrorMessage(`AIRK: ${error instanceof Error?error.message:String(error)}`);throw error;}};
-    const consoleAction=(action='connect')=>()=>controller.console.command(action);
+    // Former Service Console commands open the matching Explorer tab (design Appendix B).
+    const routed=(name:string)=>async()=>{
+        const target=COMMAND_ROUTES[name];
+        if(target.action)await controller.console.run(target.action,{...target.fields});
+        await explorerOpen(target.route);
+    };
     const commands:Record<string,(...args:unknown[])=>unknown|Promise<unknown>>={index:()=>controller.index(),indexMode:()=>controller.watching(),pause:()=>controller.pause(true),resume:()=>controller.pause(false),
         setupAgent:()=>setupAgent(controller),manageMcp:()=>setupAgent(controller),manageVscodeMcp:()=>controller.manageVscodeMcp(),verifyMcp:()=>controller.verify(),
-        logs:consoleAction('logs'),serviceConnect:consoleAction(),serviceStart:consoleAction('start'),serviceRestart:consoleAction('restart'),serviceStop:consoleAction('stop'),
-        serviceLogs:consoleAction('logs'),serviceResources:consoleAction('resources'),serviceDiagnostics:consoleAction('previewReport'),treeRefresh:()=>controller.refresh(),
+        treeRefresh:()=>controller.refresh(),
         treeIndex:spec=>controller.index(spec as LaunchSpec|undefined),treePause:spec=>controller.pause(true,spec as LaunchSpec|undefined)};
-    for(const name of ['menu','reindex','diagnose','collections','removeCollection','currentMaintenance','extractionPolicy','configureExtractionPolicy','ingestionLimits','configureIngestionLimits','status','usage','storageLimits','treeReindex','treeRemove'])commands[name]=consoleAction();
+    for(const name of Object.keys(COMMAND_ROUTES))commands[name]=routed(name);
     commands.reindex=()=>controller.repair('rebuild');commands.treeReindex=spec=>controller.repair('rebuild',spec as LaunchSpec|undefined);
     commands.diagnose=()=>controller.repair('verify');commands.currentMaintenance=()=>controller.repair('auto');
     commands.status=()=>controller.showTool('airk_status');

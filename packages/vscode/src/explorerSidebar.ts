@@ -48,7 +48,7 @@ export function sidebarContent(state: ExplorerViewState | undefined, folders: nu
 <button type="submit">Search</button></form>
 <button type="button" class="primary" data-action="open">Open AIRK Explorer</button>
 ${state.notice ? `<p class="note" role="alert">${esc(state.notice.message)}</p>` : ''}
-<p><a href="command:airk.setupAgent">Connect a coding agent</a> · <a href="command:airk.serviceConnect">Service Console</a></p>`;
+<p><a href="command:airk.setupAgent">Connect a coding agent</a> · <a href="command:airk.collections">Management</a></p>`;
 }
 
 export function renderSidebar(state: ExplorerViewState | undefined, folders: number, nonce: string): string {
