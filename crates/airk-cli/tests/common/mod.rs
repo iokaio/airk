@@ -337,15 +337,21 @@ impl Service {
                     airk_cli::project_client::tools(self.control.clone(), self.project.binding);
                 let deadline = Instant::now() + Duration::from_secs(90);
                 loop {
-                    let envelope = connection
-                        .call(
+                    let envelope = tokio::time::timeout_at(
+                        deadline.into(),
+                        connection.call(
                             "airk_status".into(),
                             serde_json::json!({"response_mode":"full"})
                                 .as_object()
                                 .unwrap()
                                 .clone(),
-                        )
-                        .await?;
+                        ),
+                    )
+                    .await??;
+                    anyhow::ensure!(
+                        Instant::now() < deadline,
+                        "semantic observation deadline exhausted"
+                    );
                     if let Some(retry) = read_retry::within(&envelope, deadline) {
                         tokio::time::sleep(retry.delay).await;
                         continue;
@@ -353,15 +359,27 @@ impl Service {
                     anyhow::ensure!(envelope["isError"] != true, "{envelope}");
                     let status: serde_json::Value =
                         serde_json::from_str(envelope["content"][0]["text"].as_str().unwrap())?;
-                    let readiness = &status["semantic_readiness"];
-                    if readiness["state"] == "ready"
-                        && readiness["completed_artifacts"] == artifacts
-                    {
-                        return Ok(status);
+                    if !read_retry::publication_pending(
+                        &status,
+                        &self.project.collection,
+                        &self.project.binding.to_string(),
+                    )? {
+                        let readiness: airk_core::readiness::SemanticReadiness =
+                            serde_json::from_value(status["semantic_readiness"].clone())?;
+                        anyhow::ensure!(
+                            readiness.state != airk_core::readiness::SemanticState::Failed,
+                            "semantic phase failed"
+                        );
+                        if readiness.state == airk_core::readiness::SemanticState::Ready
+                            && readiness.completed_artifacts == artifacts
+                        {
+                            return Ok(status);
+                        }
                     }
                     anyhow::ensure!(
                         Instant::now() < deadline,
-                        "semantic work did not complete: {status}"
+                        "semantic work did not complete: {}",
+                        read_retry::status_summary(&status)
                     );
                     tokio::time::sleep(Duration::from_millis(25)).await;
                 }
@@ -555,49 +573,17 @@ pub fn published_status(
     let deadline = Instant::now() + Duration::from_secs(60);
     loop {
         let value = call_until(root, data, collection, &["status"], deadline)?;
-        if value["index_state"] == "available" {
-            anyhow::ensure!(
-                value["collection"] == collection
-                    && value["publication"]["token"].is_string()
-                    && value["files"].is_u64(),
-                "available status omitted its scoped publication/count: {value}"
-            );
+        anyhow::ensure!(
+            Instant::now() < deadline,
+            "publication observation deadline exhausted"
+        );
+        if !read_retry::publication_pending(&value, collection, &project)? {
             return Ok(value);
         }
         anyhow::ensure!(
-            value["index_state"] == "unavailable"
-                && value["publication"].is_null()
-                && value["files"].is_null()
-                && value["chunks"].is_null()
-                && value["index_error"]["message"].is_string(),
-            "invalid status observation: {value}"
-        );
-        let scoped = match value["index_error"]["code"].as_str() {
-            Some("index_status_unavailable") => value["collection"] == collection,
-            Some("index_worker_unavailable") => {
-                let runtime = &value["runtime"];
-                let work = &value["work"];
-                let identity = &work["worker"]["identity"];
-                value["project"] == project
-                    && runtime["service_error"].is_null()
-                    && runtime["service"]["responsive"] == true
-                    && runtime["service"]["accepting"] == true
-                    && runtime["index_worker"]["process"].is_null()
-                    && work["basis"] == "instance_bound_service_metadata"
-                    && work["serving_worker_unavailable"] == true
-                    && work["failed_observations"] == serde_json::json!([])
-                    && work["worker"]["automatic_start_blocked"] == false
-                    && (identity.is_null()
-                        || (identity["project"] == project
-                            && identity["service"] == runtime["service"]["instance"]))
-            }
-            _ => false,
-        };
-        anyhow::ensure!(scoped, "unhealthy or foreign status observation: {value}");
-        anyhow::ensure!(
             Instant::now() + Duration::from_millis(25) < deadline,
-            "published status remained unavailable: {}",
-            value["index_error"]
+            "published status unavailable at deadline; cause unknown: {}",
+            read_retry::status_summary(&value)
         );
         std::thread::sleep(Duration::from_millis(25));
     }
@@ -617,7 +603,11 @@ fn call_until(
             diagnostic("first native CLI invocation started");
             invocation_started = true;
         }
-        let output = command(root, data, collection).args(args).output()?;
+        let output = if args == ["status"] {
+            read_retry::once_until(command(root, data, collection).args(args), deadline)?
+        } else {
+            command(root, data, collection).args(args).output()?
+        };
         if !invocation_returned {
             diagnostic("native CLI invocation returned");
             invocation_returned = true;

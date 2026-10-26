@@ -61,13 +61,16 @@ class ContainerCheckTests(unittest.TestCase):
                         self.assertEqual(caught.exception.stderr, error)
 
     def test_smoke_releases_container_before_deleting_owned_volume(self):
+        status_calls = 0
         registered = False
         volume_removed = False
         token = "fixture-token"
         container_id = "owned-immutable-id"
 
-        def docker(*args, check=True):
-            nonlocal registered, volume_removed
+        def docker(*args, check=True, timeout=60):
+            self.assertGreater(timeout, 0)
+            self.assertLessEqual(timeout, 60)
+            nonlocal registered, volume_removed, status_calls
             output = ""
             if args[0] == "run":
                 self.assertFalse(registered, "restart must retire the first container")
@@ -105,10 +108,19 @@ class ContainerCheckTests(unittest.TestCase):
                 if command[0] == "index":
                     output = json.dumps({"job": {"id": collection}})
                 elif command[0] == "init":
-                    output = json.dumps({"registration": {"collection": collection}})
+                    output = json.dumps({"registration": {"collection": collection, "binding": "scope-" + collection}})
                 elif command[:2] == ("tools", "call"):
-                    result = {"collection": collection, "items": [1] if collection == "project-a" else []} if command[2] == "airk_symbols" else {"files": 2}
-                    output = json.dumps({"content": [{"text": json.dumps(result)}]})
+                    result = {"collection": collection, "items": [1] if collection == "project-a" else []} if command[2] == "airk_symbols" else {"index_state": "available", "collection": collection, "publication": {"collection": collection, "token": "token-" + collection}, "files": 2}
+                    if command[2] == "airk_status":
+                        status_calls += 1
+                        if status_calls == 1:
+                            result = {"index_state": "unavailable", "project": "scope-" + collection,
+                                "publication": None, "files": None, "chunks": None,
+                                "index_error": {"code": "index_worker_unavailable", "message": "unknown cause"},
+                                "runtime": {"service_error": None, "service": {"responsive": True, "accepting": True}, "index_worker": {"process": None}},
+                                "work": {"basis": "instance_bound_service_metadata", "serving_worker_unavailable": True,
+                                         "failed_observations": [], "worker": {"automatic_start_blocked": False, "identity": None}}}
+                    output = json.dumps({"content": [{"type": "text", "text": json.dumps(result)}]})
                 elif command == ("collections", "remove", "project-b"):
                     self.assertFalse(check)
                     return subprocess.CompletedProcess(args, 2, "", "retired writer")
@@ -129,6 +141,7 @@ class ContainerCheckTests(unittest.TestCase):
                 patch("sys.argv", ["check-container.py"]), \
                 contextlib.redirect_stdout(io.StringIO()):
             smoke.main()
+        self.assertEqual(status_calls, 4)
         self.assertTrue(volume_removed)
         self.assertFalse(registered)
 

@@ -41,7 +41,7 @@ def main():
                                  "response_utf8_bytes": len(json.dumps(value).encode())})
             return value
         def tool(label, name, arguments=None):
-            return measured(label, lambda: fixture.tool("benchmark", name, {"response_mode": "full", **(arguments or {})}))
+            return measured(label, lambda: fixture.published_status("benchmark") if name == "airk_status" else fixture.tool("benchmark", name, {"response_mode": "full", **(arguments or {})}))
         try:
             fixture.start()
             fixture.register("benchmark", root, state)
@@ -71,7 +71,7 @@ def main():
                       "files_initial": args.files, "files_final": status["files"], "index_detail": "detailed",
                       "derived_logical_disk_bytes": sum(file.stat().st_size for file in state.rglob("*") if file.is_file()),
                       "observations": observations, "correctness_checks_passed": True,
-                      "limitations": ["Timings include new CLI brokerage; the project worker remains shared.",
+                      "limitations": ["Timings include new CLI brokerage and bounded publication/admission observation waits; the project worker remains shared.",
                                       "Source job completion is separate from semantic readiness; this corpus opts out of inference.",
                                       "No physical-I/O, installed-editor, provider-token or billed-savings claim."]}
         finally:

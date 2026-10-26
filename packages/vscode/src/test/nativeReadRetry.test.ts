@@ -37,7 +37,11 @@ test('publication fixtures reject unhealthy, foreign and incomplete worker obser
         {work:{...value.work,worker:{automatic_start_blocked:false,identity:{project:'b',service:'owner'}}}},
         {files:0},
     ])assert.throws(()=>publishedStatusPending({...value,...change},'collection-a','a'));
-    const published={collection:'collection-a',index_state:'available',publication:{token:'exact'},files:1};
+    const workerSide={...value,collection:'collection-a',index_error:{code:'index_status_unavailable',message:'private-source-message'}};
+    assert.equal(publishedStatusPending(workerSide,'collection-a','a'),true);
+    assert.throws(()=>publishedStatusPending({...workerSide,work:{...value.work,worker:{automatic_start_blocked:true,identity:null}}},'collection-a','a'),error=>!String(error).includes('private-source-message'));
+    assert.throws(()=>publishedStatusPending({...workerSide,runtime:[]},'collection-a','a'));
+    const published={collection:'collection-a',index_state:'available',publication:{collection:'collection-a',token:'exact'},files:1};
     assert.equal(publishedStatusPending(published,'collection-a','a'),false);
     assert.throws(()=>publishedStatusPending({...published,collection:'b'},'collection-a','a'));
 });

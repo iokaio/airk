@@ -288,8 +288,9 @@ def smoke(server, version, root):
         names = {tool['name'] for tool in request(2, 'tools/list', {})['tools']}
         require({'airk_status', 'airk_search', 'airk_read_file'} <= names, 'Required MCP tools are missing')
         status = call(3, 'airk_status', {})
-        require(status.get('collection') == scope['--collection'] and status.get('files', 0) > 0,
-                'MCP did not open the expected indexed collection')
+        require(status.get('index_state') == 'available' and status.get('collection') == scope['--collection']
+                and type(status.get('files')) is int and status['files'] > 0,
+                'MCP did not provide the expected publication snapshot; refresh status before verifying indexed evidence')
         token = status['publication']['token']
         source = (root / 'README.md').read_bytes()
         end_line = min(8, len(source.splitlines()))

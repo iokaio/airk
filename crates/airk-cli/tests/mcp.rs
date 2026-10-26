@@ -60,8 +60,18 @@ impl Session {
         Ok(())
     }
     fn receive(&self, id: u64) -> anyhow::Result<Value> {
+        self.receive_until(id, std::time::Instant::now() + Duration::from_secs(60))
+    }
+    fn receive_until(&self, id: u64, deadline: std::time::Instant) -> anyhow::Result<Value> {
         for _ in 0..10 {
-            let line = self.output.recv_timeout(Duration::from_secs(60))?;
+            let remaining = deadline
+                .checked_duration_since(std::time::Instant::now())
+                .ok_or_else(|| anyhow::anyhow!("stdio observation deadline exhausted"))?;
+            let line = self.output.recv_timeout(remaining)?;
+            anyhow::ensure!(
+                std::time::Instant::now() < deadline,
+                "stdio observation deadline exhausted"
+            );
             let value: Value = serde_json::from_str(&line)?;
             if value["id"] == id {
                 return Ok(value);
@@ -72,6 +82,34 @@ impl Session {
     fn call(&mut self, id: u64, name: &str, arguments: Value) -> anyhow::Result<Value> {
         self.send(json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{"name":name,"arguments":arguments}}))?;
         self.receive(id)
+    }
+    fn published_status(&mut self, id: u64, project: &str) -> anyhow::Result<Value> {
+        let deadline = std::time::Instant::now() + Duration::from_secs(60);
+        loop {
+            anyhow::ensure!(
+                std::time::Instant::now() < deadline,
+                "publication observation deadline exhausted"
+            );
+            self.send(json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{"name":"airk_status","arguments":{"response_mode":"full"}}}))?;
+            let reply = self.receive_until(id, deadline)?;
+            if let Some(retry) = common::read_retry::within(&reply["result"], deadline) {
+                std::thread::sleep(retry.delay);
+                continue;
+            }
+            anyhow::ensure!(
+                reply.get("error").is_none() && reply["result"]["isError"] != true,
+                "status read rejected"
+            );
+            let value: Value = serde_json::from_str(
+                reply["result"]["content"][0]["text"]
+                    .as_str()
+                    .ok_or_else(|| anyhow::anyhow!("missing status payload"))?,
+            )?;
+            if !common::read_retry::publication_pending(&value, "project-a", project)? {
+                return Ok(reply);
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
     }
     fn read_retry(&mut self, id: u64, name: &str, arguments: Value) -> anyhow::Result<Value> {
         let until = std::time::Instant::now() + Duration::from_secs(5);
@@ -706,7 +744,16 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
             json!({"selectors":[{"kind":"path","path":"auth.py"}]}),
         ),
     ] {
-        let result = session.read_retry(i, name, args.clone())?;
+        let result = if name == "airk_status" {
+            let project = airk_kernel::service_projects::registration(
+                root.path(),
+                state.path(),
+                "project-a",
+            )?;
+            session.published_status(i, &project.binding.to_string())?
+        } else {
+            session.read_retry(i, name, args.clone())?
+        };
         assert!(result.get("error").is_none(), "{name}: {result}");
         assert_ne!(result["result"]["isError"], true, "{name}: {result}");
         let payload: Value = serde_json::from_str(
@@ -714,14 +761,17 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
                 .as_str()
                 .expect("JSON payload"),
         )?;
-        let direct = common::call(
-            root.path(),
-            state.path(),
-            "project-a",
-            &["tools", "call", name, "--args", &args.to_string()],
-        )?;
-        let mut direct: Value =
-            serde_json::from_str(direct["content"][0]["text"].as_str().unwrap())?;
+        let mut direct: Value = if name == "airk_status" {
+            common::published_status(root.path(), state.path(), "project-a")?
+        } else {
+            let envelope = common::call(
+                root.path(),
+                state.path(),
+                "project-a",
+                &["tools", "call", name, "--args", &args.to_string()],
+            )?;
+            serde_json::from_str(envelope["content"][0]["text"].as_str().unwrap())?
+        };
         if name != "airk_status" {
             // Status includes changing quota/usage observations.
             let mut expected = payload.clone();

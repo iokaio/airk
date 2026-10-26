@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Smoke-test one container, two collections and persistence using only public fixtures."""
 import argparse
+import importlib.util
 import json
 import queue
 from pathlib import Path
@@ -11,9 +12,14 @@ import time
 import uuid
 
 
-def docker(*args, check=True):
+spec = importlib.util.spec_from_file_location("service_clients", Path(__file__).with_name("check-service-clients.py"))
+clients = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(clients)
+
+
+def docker(*args, check=True, timeout=60):
     result = subprocess.run(["docker", *args], check=False, text=True,
-                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
     if check and result.returncode:
         print(result.stderr[-4096:], file=sys.stderr, flush=True)
         result.check_returncode()
@@ -55,8 +61,9 @@ def check_stdio(name):
         process.stdin.flush()
 
     def receive(expected, timeout=10):
+        deadline = time.monotonic() + timeout
         for _ in range(10):
-            value = json.loads(responses.get(timeout=timeout))
+            value = json.loads(responses.get(timeout=clients.remaining(deadline, timeout)))
             if value.get("id") == expected:
                 return value
         raise AssertionError("No matching MCP response")
@@ -78,10 +85,14 @@ def check_stdio(name):
             "airk_search", "airk_status", "airk_symbols",
         }
         assert len(tools) == len(expected) and {tool["name"] for tool in tools} == expected
-        send({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
-            "name": "airk_symbols", "arguments": {"name": "authenticate", "response_mode": "full"}}})
-        result = receive(3)["result"]
-        assert not result.get("isError")
+        request = {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
+            "name": "airk_symbols", "arguments": {"name": "authenticate", "response_mode": "full"}}}
+        def read(until):
+            send(request)
+            reply = receive(3, clients.remaining(until, 10))
+            assert "error" not in reply, "Container stdio protocol failure"
+            return reply["result"]
+        result, _ = clients.read_envelope(read, time.monotonic() + 10)
         evidence = json.loads(result["content"][0]["text"])
         assert evidence["collection"] == "project-a" and evidence["items"]
     finally:
@@ -102,6 +113,7 @@ def main():
     volume = name + "-data"
     fixtures = Path(__file__).resolve().parent.parent / "examples/workspaces"
     volume_created = False
+    projects = {}
 
     def start():
         docker("run", "--detach", "--name", name, "--label", f"io.airk.fixture={token}", "--network", "none",
@@ -109,9 +121,9 @@ def main():
                "--tmpfs", "/tmp", "--mount", f"type=bind,source={fixtures},target=/workspaces,readonly",
                "--mount", f"type=volume,source={volume},target=/data", args.image)
 
-    def command(collection, *command_args, check=True):
+    def command(collection, *command_args, check=True, timeout=60):
         return docker("exec", name, "airk", "--root", "/workspaces/" + collection,
-                      "--data-dir", "/data/indexes", "--collection", collection, *command_args, check=check)
+                      "--data-dir", "/data/indexes", "--collection", collection, *command_args, check=check, timeout=timeout)
 
     def ready():
         deadline = time.monotonic() + 120
@@ -138,10 +150,21 @@ def main():
             time.sleep(0.2)
         raise AssertionError("Native container job did not finish")
 
-    def tool(collection, name, arguments=None):
-        envelope = json.loads(command(collection, "tools", "call", name, "--args", json.dumps(arguments or {"response_mode": "full"})).stdout)
-        assert not envelope.get("isError"), envelope
-        return json.loads(envelope["content"][0]["text"])
+    def tool(collection, name, arguments=None, deadline=None):
+        deadline = min(deadline if deadline is not None else float("inf"), time.monotonic() + 60)
+        exact = ("tools", "call", name, "--args", json.dumps(arguments or {"response_mode": "full"}))
+        def read(until):
+            result = command(collection, *exact, check=False, timeout=clients.remaining(until, 60))
+            assert result.returncode in (0, 1), f"Container read process failed: exit {result.returncode}"
+            envelope = json.loads(result.stdout)
+            assert result.returncode == 0 or clients.read_retry_delay(envelope) is not None, "Container read failed without typed rejection"
+            return envelope
+        envelope, _ = clients.read_envelope(read, deadline)
+        return clients.tool_value(envelope)
+
+    def published_status(collection):
+        return clients.observe_publication(lambda until: tool(collection, "airk_status", deadline=until),
+                                           collection, projects[collection], time.monotonic() + 60)
 
     try:
         docker("volume", "create", "--label", f"io.airk.fixture={token}", volume)
@@ -153,6 +176,7 @@ def main():
         for collection in ("project-a", "project-b"):
             registered = json.loads(command(collection, "init").stdout)
             assert registered["registration"]["collection"] == collection
+            projects[collection] = registered["registration"]["binding"]
             accepted = json.loads(command(collection, "index").stdout)
             wait_job(control, accepted)
             print(f"Indexed isolated collection {collection}.", flush=True)
@@ -177,12 +201,12 @@ def main():
         remove_owned_container(name, token)
         start()
         ready()
-        assert tool("project-a", "airk_status")["files"] == 2
+        assert published_status("project-a")["files"] == 2
         # Retired direct-store deletion cannot remove either service-owned collection.
         assert command("project-a", "collections", "remove", "project-b", check=False).returncode != 0
         assert (fixtures / "project-b/README.md").is_file()
-        assert tool("project-b", "airk_status")["files"] > 0
-        assert tool("project-a", "airk_status")["files"] == 2
+        assert published_status("project-b")["files"] > 0
+        assert published_status("project-a")["files"] == 2
     finally:
         if volume_created:
             # Explicit removal waits for this container to release its mounts.

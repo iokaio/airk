@@ -52,7 +52,7 @@ def qualify(previous, current):
             assert refusal["status"]=="failure",refusal
             search=new.tool("pressure","airk_search",{"query":"polar_case_0_0","mode":"lexical","response_mode":"full"})
             assert any(hit["citation"]["path"]=="fixture_0.py" for hit in search["hits"]),search
-            status=new.tool("pressure","airk_status",{"response_mode":"full"})
+            status=new.published_status("pressure")
             assert status["storage_sizes"]["current_index_file"]=="current.airk",status
             assert not (new.control/"service-1.4.sqlite3").exists()
             for path, expected in originals.items():

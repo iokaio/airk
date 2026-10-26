@@ -75,26 +75,43 @@ fn paused_unregister_drains_idle_clients_preserves_settings_and_other_projects_a
     };
     service.wait(job.id);
     enqueue(other.binding, JobKind::Index);
-    let read = |project| {
+    let read = |project, collection: &str| {
         executor.block_on(async {
             let mut connection =
                 airk_cli::project_client::Connection::connect(&service.control, project).await?;
-            let reply = connection
-                .read_retry(
-                    "airk_status".into(),
-                    json!({"response_mode":"full"}).as_object().unwrap().clone(),
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+            loop {
+                let reply = tokio::time::timeout_at(
+                    deadline.into(),
+                    connection.read_retry(
+                        "airk_status".into(),
+                        json!({"response_mode":"full"}).as_object().unwrap().clone(),
+                    ),
                 )
-                .await?;
-            ensure!(reply["isError"] != true, "{reply}");
-            Ok::<Value, anyhow::Error>(serde_json::from_str(
-                reply["content"][0]["text"]
-                    .as_str()
-                    .context("missing status")?,
-            )?)
+                .await??;
+                ensure!(reply["isError"] != true, "status read rejected");
+                let value: Value = serde_json::from_str(
+                    reply["content"][0]["text"]
+                        .as_str()
+                        .context("missing status")?,
+                )?;
+                ensure!(
+                    std::time::Instant::now() < deadline,
+                    "status observation deadline exhausted"
+                );
+                if !common::read_retry::publication_pending(
+                    &value,
+                    collection,
+                    &project.to_string(),
+                )? {
+                    return Ok::<Value, anyhow::Error>(value);
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
         })
     };
-    let before = read(service.project.binding)?;
-    let unrelated = read(other.binding)?;
+    let before = read(service.project.binding, &service.project.collection)?;
+    let unrelated = read(other.binding, &other.collection)?;
     let settings = executor.block_on(airk_cli::usage_client::settings(
         &service.control,
         service.project.binding,
@@ -178,7 +195,7 @@ fn paused_unregister_drains_idle_clients_preserves_settings_and_other_projects_a
             .is_err()
     );
     assert_eq!(
-        read(other.binding)?["publication"],
+        read(other.binding, &other.collection)?["publication"],
         unrelated["publication"]
     );
     assert!(data.path().join("collections-1.4/unregister-a").is_dir());
@@ -198,7 +215,7 @@ fn paused_unregister_drains_idle_clients_preserves_settings_and_other_projects_a
     };
     assert_eq!(replay.id, job.id);
     assert_eq!(
-        read(service.project.binding)?["publication"],
+        read(service.project.binding, &service.project.collection)?["publication"],
         before["publication"]
     );
     assert_eq!(
@@ -210,7 +227,7 @@ fn paused_unregister_drains_idle_clients_preserves_settings_and_other_projects_a
         settings
     );
     assert_eq!(
-        read(other.binding)?["publication"],
+        read(other.binding, &other.collection)?["publication"],
         unrelated["publication"]
     );
     Ok(())

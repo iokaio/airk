@@ -124,30 +124,30 @@ fn tool_calls_preserve_evidence_scope_errors_and_argument_budgets() {
     );
     service.wait(serde_json::from_value(accepted["job"]["id"].clone()).unwrap());
     let query = state.path().join("query with spaces.json");
-    let mut status = evidence(
-        common::read_retry::output(command(root.path(), state.path()).args([
-            "tools",
-            "call",
-            "airk_status",
-        ]))
-        .unwrap(),
-    );
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
-    while status["runtime"]["index_worker"]["process"]["executable_sha256"].is_null() {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "runtime identity stayed unavailable: {status}"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(100));
-        status = evidence(
-            common::read_retry::output(command(root.path(), state.path()).args([
-                "tools",
-                "call",
-                "airk_status",
-            ]))
+    let status = loop {
+        let status = evidence(
+            common::read_retry::output_until(
+                command(root.path(), state.path()).args(["tools", "call", "airk_status"]),
+                deadline,
+            )
             .unwrap(),
         );
-    }
+        common::read_retry::publication_pending(
+            &status,
+            "tools-test",
+            &service.project.binding.to_string(),
+        )
+        .unwrap();
+        assert!(
+            std::time::Instant::now() < deadline,
+            "runtime observation deadline exhausted"
+        );
+        if !status["runtime"]["index_worker"]["process"]["executable_sha256"].is_null() {
+            break status;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    };
     let runtime = &status["runtime"];
     assert_eq!(runtime["schema"], 1);
     assert_eq!(runtime["versions_match"], true);

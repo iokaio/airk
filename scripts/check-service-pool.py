@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Offline two-project native service/MiniLM smoke test; never packages or installs a VSIX."""
 import argparse
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -12,8 +13,14 @@ import time
 import uuid
 
 
+spec = importlib.util.spec_from_file_location("service_clients", Path(__file__).with_name("check-service-clients.py"))
+clients = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(clients)
+
+
 class Bridge:
-    def __init__(self, binary, runtime, binding, environment):
+    def __init__(self, binary, runtime, binding, environment, collection):
+        self.binding, self.collection = binding, collection
         self.process = subprocess.Popen(
             [str(binary), "bridge", "--runtime-dir", str(runtime), "--project", binding],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
@@ -41,40 +48,43 @@ class Bridge:
         self.process.stdin.write((json.dumps(value) + "\n").encode("utf-8"))
         self.process.stdin.flush()
 
-    def call(self, method, params):
+    def call(self, method, params, deadline=None):
+        deadline = min(deadline if deadline is not None else float("inf"), time.monotonic() + 120)
+        clients.remaining(deadline, 120)
         self.sequence += 1
         self.send({"jsonrpc": "2.0", "id": self.sequence, "method": method, "params": params})
-        response = self.responses.get(timeout=120)
+        response = self.responses.get(timeout=clients.remaining(deadline, 120))
         if response.get("id") != self.sequence or "error" in response:
             raise RuntimeError("MCP bridge returned an invalid response")
         return response["result"]
 
+    def read(self, name, arguments, deadline=None):
+        deadline = min(deadline if deadline is not None else float("inf"), time.monotonic() + 120)
+        params = {"name": name, "arguments": arguments}
+        result, _ = clients.read_envelope(lambda until: self.call("tools/call", params, until), deadline)
+        return clients.tool_value(result)
+
     def search(self, mode, query="copper beacon"):
-        result = self.call("tools/call", {"name": "airk_search", "arguments": {
-            "query": query, "mode": mode, "max_bytes": 4096}})
-        if result.get("isError") or "memo.md" not in json.dumps(result):
-            raise RuntimeError(f"{mode} retrieval lost the original collection citation: {result}")
+        result = self.read("airk_search", {"query": query, "mode": mode, "max_bytes": 4096})
+        if "memo.md" not in json.dumps(result):
+            raise RuntimeError(f"{mode} retrieval lost the original collection citation")
 
-    def status(self):
-        for attempt in range(3):
-            result = self.call("tools/call", {"name": "airk_status", "arguments": {"response_mode": "full"}})
-            if not result.get("isError"):
-                return json.loads(result["content"][0]["text"])
-            if attempt == 2:
-                raise RuntimeError(f"Native readiness query failed: {result}")
-            time.sleep(0.05)
+    def published_status(self, deadline=None):
+        deadline = min(deadline if deadline is not None else float("inf"), time.monotonic() + 120)
+        return clients.observe_publication(lambda until: self.read("airk_status", {"response_mode": "full"}, until),
+                                           self.collection, self.binding, deadline)
 
-    def readiness(self):
-        return self.status()["semantic_readiness"]
+    def readiness(self, deadline=None):
+        return clients.semantic_readiness(self.published_status(deadline))
 
     def wait_semantics(self, expected="ready"):
         deadline = time.monotonic() + 180
         while True:
-            readiness = self.readiness()
+            readiness = self.readiness(deadline)
             if readiness["state"] == expected:
                 return
             if readiness["state"] == "failed" or time.monotonic() >= deadline:
-                raise RuntimeError(f"Independent semantic phase did not reach {expected}: {readiness}")
+                raise RuntimeError(f"Independent semantic phase did not reach {expected}: state={readiness['state']}")
             time.sleep(0.2)
 
     def close(self):
@@ -190,7 +200,7 @@ def main():
                 time.sleep(0.2)
 
             for project in projects:
-                bridge = Bridge(binary, runtime, project["binding"], environment)
+                bridge = Bridge(binary, runtime, project["binding"], environment, project["collection"])
                 bridges.append(bridge)
                 bridge.wait_semantics()
                 bridge.search("hybrid")
@@ -239,7 +249,7 @@ def main():
                 raise RuntimeError("Retirement unnecessarily discarded the compatible loaded model")
             print("Replacement preserved direct clients and one MiniLM load; old incarnation retired while shared files stayed pinned.", flush=True)
 
-            before = bridges[0].status()["publication"]
+            before = bridges[0].published_status()["publication"]
             plan = rpc({"plan_create": {"caller": uuid.uuid4().hex,
                 "key": {"namespace": epoch["namespace"], "epoch": epoch["epoch"], "nonce": uuid.uuid4().hex},
                 "request": {"selection": {"selected": [projects[0]["binding"]]}, "operation": "vectors"}}})["plan"]
@@ -263,7 +273,7 @@ def main():
                     raise RuntimeError(f"Vector regeneration did not finish: {plan}")
                 time.sleep(0.2)
             bridges[0].wait_semantics()
-            after = bridges[0].status()["publication"]
+            after = bridges[0].published_status()["publication"]
             if after["incarnation"] != before["incarnation"] or after["generation"] <= before["generation"]:
                 raise RuntimeError("Vector regeneration did not advance the same index incarnation")
             for bridge in bridges:

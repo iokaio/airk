@@ -40,6 +40,7 @@ tempfile.workspace = true
 sha2.workspace = true
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["process"] }
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true

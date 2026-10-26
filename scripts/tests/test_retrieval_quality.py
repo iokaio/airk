@@ -18,14 +18,14 @@ class RetrievalQualityTests(unittest.TestCase):
         for submitted in (False, True):
             session = self.session([self.hit("wanted.txt")])
             accepted = session.request()
-            replies = [{"isError":True,"content":[{"text":json.dumps({"error":{
-                "code":"direct_query_admission","reason":"busy","query_submitted":submitted,"retry_after_ms":25}})}]}, accepted]
+            replies = [{"isError":True,"content":[{"type":"text","text":json.dumps({"error":{
+                "code":"direct_query_admission","reason":"busy","query_submitted":submitted,"retryable":True,"fresh_brokerage_required":False,"retry_after_ms":25}})}]}, accepted]
             def request(*_):
                 return replies.pop(0)
             session.request = request
             with patch.object(QUALITY.time,"sleep") as sleep:
                 if submitted:
-                    with self.assertRaises(RuntimeError):
+                    with self.assertRaises(AssertionError):
                         session.search(self.case())
                     self.assertEqual(len(replies),1)
                     sleep.assert_not_called()
