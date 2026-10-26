@@ -1,10 +1,31 @@
 # SPDX-License-Identifier: Apache-2.0
 """Classify complete PR diffs; unknown paths and non-PR builds fail closed to full CI."""
 import argparse
+import importlib.util
 import json
 import os
 from pathlib import Path, PurePosixPath
 import subprocess
+
+
+def repair_scope():
+    specification = importlib.util.spec_from_file_location("release_repair_scope", Path(__file__).with_name("release-1.4.4-repair.py"))
+    repair = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(repair)
+    return repair.scope()
+
+
+def pinned_repair_plan(event):
+    # Only this 1.4.4 tooling repair may reuse its already-qualified binaries.
+    # The complete cumulative diff, version and exact runtime inputs must match;
+    # a later code/version change restores the ordinary full producer plan.
+    if event not in ("pull_request", "push"):
+        return None
+    try:
+        repair_scope()
+    except (ValueError, FileNotFoundError, subprocess.CalledProcessError):
+        return None
+    return dict(native=False, container=False, extension=False, contracts=True)
 
 
 def classify(paths, event):
@@ -63,7 +84,7 @@ def main():
         paths = [p for p in result.decode("utf-8", errors="strict").split("\0") if p]
         if any(PurePosixPath(p).is_absolute() or ".." in PurePosixPath(p).parts for p in paths):
             raise ValueError("Invalid diff path")
-    plan = classify(paths, event)
+    plan = pinned_repair_plan(event) or classify(paths, event)
     value = json.dumps(plan, separators=(",", ":"))
     print(value)
     with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:

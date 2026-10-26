@@ -1,5 +1,7 @@
 # Contributing to AIRK
 
+The narrowly pinned [1.4.4 release-tool repair](docs/release-workflow.md#pinned-144-release-tool-repair) is the only exception to rebuilding native candidates on main. Complete diff, version, ancestry and runtime-identity checks must prove that only the permitted release tooling/tests/docs changed. Its PR/main gates still run quick checks and all four host contract suites; source or extension changes restore normal CI. Remove this exception after 1.4.4.
+
 Inference-helper builds embed the pinned FP32 MiniLM assets; the default main CLI excludes inference/model weights. Before Cargo checks/builds, run `python scripts/provision-local-model.py --destination target/local-vector-model --download`, or supply verified offline assets there (or through `AIRK_BUNDLED_MODEL_DIR`). Cargo never downloads model assets. See [model provisioning](docs/onnx-models.md).
 
 Contributions to code, extraction fixtures, retrieval quality and documentation are welcome. Read the [architecture](docs/architecture.md) and [roadmap](docs/roadmap.md) before choosing a change. Small focused pull requests are easiest to review; discuss changes to collection identity, index formats, MCP contracts and default dependencies in an issue first.

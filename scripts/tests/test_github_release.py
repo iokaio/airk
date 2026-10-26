@@ -97,6 +97,235 @@ def fixtures(directory, channel="preview"):
         write_receipt(vsix_dir, vsix)
 
 
+PAIR_VERSION = "1.4.4"
+
+
+def pair_files(target, signed=False):
+    """Fictional bytes in the real service layout; no native trust is asserted."""
+    operating_system = "windows" if "windows" in target else "macos" if "apple" in target else "linux"
+    builder = release.native.runtime_builder()
+    executables = builder.runtime_names(operating_system)
+    files = {name: ("signed " if signed else "tested ").encode() + name.encode() for name in executables}
+    for name in ("LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md", "notices/bom.cdx.json",
+                 "notices/all-MiniLM-L6-v2/LICENSE", "notices/all-MiniLM-L6-v2/provenance.json"):
+        files[name] = b"fictional legal metadata"
+    files["notices/inventory.json"] = b"[]"
+    if operating_system == "macos":
+        files.update(builder.macos_bundle_files(PAIR_VERSION))
+        files["AIRK.app/Contents/_CodeSignature/CodeResources"] = b"signed seal" if signed else b"ad-hoc seal"
+        if signed:
+            files["AIRK.app/Contents/CodeResources"] = b"fictional stapled ticket"
+    pair = {"schema": 1, "version": PAIR_VERSION, "os": operating_system,
+            "arch": "aarch64" if target.startswith("aarch64-") else "x86_64",
+            "airk_sha256": release.hashlib.sha256(files[executables[0]]).hexdigest(),
+            "embed_sha256": release.hashlib.sha256(files[executables[1]]).hexdigest()}
+    files["airk-runtime.json"] = json.dumps(pair).encode()
+    files["airk-build.json"] = json.dumps({"schema": 1, "runtime": pair,
+        "source": {"sha256": "d" * 64, "files": 4}}).encode()
+    seal_pair_files(files)
+    return files, executables
+
+
+def seal_pair_files(files):
+    pair = json.loads(files["airk-runtime.json"])
+    install = {key: pair[key] for key in ("schema", "version", "os", "arch")}
+    install["files"] = {name: release.hashlib.sha256(data).hexdigest()
+                        for name, data in files.items() if name != "airk-install.json"}
+    files["airk-install.json"] = json.dumps(install).encode()
+
+
+def save_pair_candidate(directory, files, receipt, executables):
+    directory.mkdir(parents=True, exist_ok=True)
+    archive = directory / receipt["archive"]
+    with zipfile.ZipFile(archive, "w") as zipped:
+        for name, data in files.items():
+            info = zipfile.ZipInfo(name)
+            info.external_attr = (0o100755 if name in executables else 0o100644) << 16
+            zipped.writestr(info, data)
+    receipt.update(archive_sha256=release.digest(archive),
+                   payload={name: release.hashlib.sha256(data).hexdigest() for name, data in files.items()},
+                   install_manifest_sha256=release.hashlib.sha256(files["airk-install.json"]).hexdigest())
+    write_receipt(directory, receipt)
+
+
+def pair_fixture(directory, target, signed=False):
+    files, executables = pair_files(target, signed)
+    original, _ = pair_files(target)
+    signing = None
+    if signed:
+        components = {}
+        for name in executables:
+            component = {"schema": "airk-native-signing/1", "target": target, "commit": COMMIT,
+                         "cargo_lock_sha256": release.digest(release.ROOT / "Cargo.lock"),
+                         "source_sha256": release.hashlib.sha256(original[name]).hexdigest(),
+                         "binary_sha256": release.hashlib.sha256(files[name]).hexdigest(), "identity": "c" * 40}
+            if "windows" in target:
+                component.update(platform="Windows", azure=release.signer.AZURE_SIGNING,
+                    verification={"trust": "authenticode_valid", "timestamp_present": True, "signer_thumbprint": "c" * 40})
+            else:
+                component.update(platform="Darwin", team_id="5PX7D99PXA",
+                    verification={"trust": "apple_developer_id", "team_id": "5PX7D99PXA",
+                                  "timestamp_present": True, "hardened_runtime": True},
+                    notarization={"status": "Accepted", "id": "fictional-app-job", "stapled": True, "scope": "AIRK.app"})
+            components[name] = component
+        signing = {"schema": "airk-service-pair-signing/1", "target": target, "commit": COMMIT,
+                   "cargo_lock_sha256": release.digest(release.ROOT / "Cargo.lock"),
+                   "source_install_sha256": release.hashlib.sha256(original["airk-install.json"]).hexdigest(),
+                   "install_manifest_sha256": release.hashlib.sha256(files["airk-install.json"]).hexdigest(),
+                   "components": components}
+    receipt = {"schema": "airk-native-candidate/2", "target": target, "vsix_target": release.native.TARGETS[target],
+               "version": PAIR_VERSION, "commit": COMMIT, "dirty_checkout": False,
+               "cargo_lock_sha256": release.digest(release.ROOT / "Cargo.lock"),
+               "toolchain_file_sha256": release.digest(release.ROOT / "rust-toolchain.toml"),
+               "source": {"sha256": "d" * 64, "files": 4}, "signed_distribution": signed, "signing": signing,
+               "archive": f"airk-{PAIR_VERSION}-{target}.zip"}
+    save_pair_candidate(directory, files, receipt, executables)
+    return files, receipt, executables
+
+
+def pair_vsix(directory, native_dir, files, native_receipt, executables):
+    directory.mkdir(parents=True)
+    platform = native_receipt["vsix_target"]
+    wrapper = {"schema": 2, "version": PAIR_VERSION, "vsix_target": platform, "runtime_dir": "runtime",
+               "install_manifest_sha256": native_receipt["install_manifest_sha256"],
+               "payload": {name: native_receipt["payload"][name] for name in executables}}
+    files = {"package.json": b"{}", "README.md": b"fixture", "LICENSE": b"fixture",
+             "native/manifest.json": json.dumps(wrapper).encode(),
+             "native/candidate.json": (native_dir / "manifest.json").read_bytes(),
+             **{"native/runtime/" + name: data for name, data in files.items()}}
+    archive = directory / f"airk-{PAIR_VERSION}-{platform}.vsix"
+    with zipfile.ZipFile(archive, "w") as zipped:
+        for name, data in files.items():
+            normalized = "readme.md" if name == "README.md" else "LICENSE.txt" if name == "LICENSE" else name
+            info = zipfile.ZipInfo("extension/" + normalized)
+            info.external_attr = (0o100755 if name in {"native/runtime/" + entry for entry in executables} else 0o100644) << 16
+            zipped.writestr(info, data)
+        zipped.writestr("[Content_Types].xml", "<Types/>")
+        zipped.writestr("extension.vsixmanifest", f'<PackageManifest><Identity Id="airk" Publisher="iokaio" Version="{PAIR_VERSION}" TargetPlatform="{platform}"/><DisplayName>AIRK</DisplayName></PackageManifest>')
+    receipt = {"schema": "airk-extension-candidate/1", "commit": COMMIT, "version": PAIR_VERSION, "platform": platform,
+               "extension_id": "iokaio.airk", "display_name": "AIRK", "pre_release": False,
+               "archive": archive.name, "archive_sha256": release.digest(archive),
+               "native_manifest_sha256": release.digest(native_dir / "manifest.json"),
+               "native_archive_sha256": native_receipt["archive_sha256"],
+               "npm_lock_sha256": release.digest(release.ROOT / "packages/vscode/package-lock.json"),
+               "payload": {name: release.hashlib.sha256(data).hexdigest() for name, data in files.items()}}
+    write_receipt(directory, receipt)
+
+
+class ServicePairReleaseContracts(unittest.TestCase):
+    def test_all_platforms_verify_and_restore_the_real_service_layout(self):
+        for target in release.native.TARGETS:
+            with self.subTest(target=target), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                files, receipt, executables = pair_fixture(root / "candidate", target)
+                observed, archive = release.verify_native(root / "candidate", target, COMMIT, PAIR_VERSION, False)
+                self.assertEqual(observed, receipt)
+                with zipfile.ZipFile(archive) as zipped:
+                    for name in executables:
+                        self.assertEqual((zipped.getinfo(name).external_attr >> 16) & 0o777, 0o755)
+                if target not in release.SIGNED_TARGETS:
+                    continue
+                for name in ("Cargo.lock", "rust-toolchain.toml"):
+                    (root / name).write_bytes((release.ROOT / name).read_bytes())
+                with patch.object(release, "ROOT", root):
+                    release.stage_signing(root / "candidate", target, COMMIT, PAIR_VERSION)
+                    output = root / "artifacts/runtime" / target
+                    self.assertEqual(release.native.inventory(output), receipt["payload"])
+                    release.native.validate_runtime(output, PAIR_VERSION, target, receipt["source"])
+                    for name in executables:
+                        self.assertEqual((output / name).read_bytes(), files[name])
+                    with self.assertRaises(FileExistsError):
+                        release.stage_signing(root / "candidate", target, COMMIT, PAIR_VERSION)
+
+    def test_paired_release_assembles_all_platforms_with_original_producer_bindings(self):
+        for mutation in (None, "component_source", "source_install"):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                for target in release.native.TARGETS:
+                    signed = target in release.SIGNED_TARGETS
+                    original = root / "in" / f"airk-native-{target}-{COMMIT}-123-1"
+                    pair_fixture(original, target)
+                    prefix = "airk-signed" if signed else "airk"
+                    directory = root / "in" / f"{prefix}-native-{target}-{COMMIT}-456"
+                    files, receipt, executables = pair_fixture(directory, target, signed)
+                    if target == "aarch64-apple-darwin" and mutation:
+                        if mutation == "component_source":
+                            receipt["signing"]["components"][executables[1]]["source_sha256"] = "0" * 64
+                        else:
+                            receipt["signing"]["source_install_sha256"] = "0" * 64
+                        write_receipt(directory, receipt)
+                    pair_vsix(root / "in" / f"{prefix}-vsix-{target}-{COMMIT}-456", directory, files, receipt, executables)
+                producer = dict(schema="airk-ci-producer/1", commit=COMMIT, run_id="123", attempt="1")
+                with patch.object(release.producers, "verify_record") as verified:
+                    if mutation:
+                        with self.assertRaisesRegex(ValueError, "did not originate"):
+                            release.assemble(root / "in", root / "out", COMMIT, PAIR_VERSION, "v" + PAIR_VERSION, "stable", "456", "1", producer)
+                        self.assertFalse((root / "out").exists())
+                    else:
+                        repair = {"tooling_commit": "b" * 40, "source_commit": COMMIT}
+                        record = release.assemble(root / "in", root / "out", COMMIT, PAIR_VERSION, "v" + PAIR_VERSION, "stable", "456", "1", producer, repair=repair)
+                        self.assertEqual(record["producer"], producer)
+                        self.assertEqual(record["release_tooling_repair"], repair)
+                        self.assertEqual(record["commit"], COMMIT)
+                        self.assertEqual(len(record["assets"]), 16)
+                        self.assertEqual(release.verify_bundle(root / "out", COMMIT, PAIR_VERSION, "v" + PAIR_VERSION, "456", "1"), record)
+                    verified.assert_called_once_with(producer, COMMIT)
+                if mutation is None:
+                    assets = [{"id": index + 1, "name": path.name, "size": path.stat().st_size,
+                               "digest": "sha256:" + release.digest(path)}
+                              for index, path in enumerate((root / "out").iterdir())]
+                    remote = {"id": 7, "draft": False, "tag_name": "v" + PAIR_VERSION,
+                              "target_commitish": COMMIT, "prerelease": False, "assets": assets}
+                    def api(path, **_kwargs):
+                        return {"object": {"sha": COMMIT}} if path.startswith("git/ref/") else remote
+                    with patch.object(release.producers, "api", side_effect=api), \
+                            patch.object(release.producers.subprocess, "check_output", return_value=(root / "out/release.json").read_bytes()), \
+                            patch.object(release.producers, "verify_record") as verified:
+                        release.producers.verify_tag("v" + PAIR_VERSION, COMMIT)
+                        verified.assert_called_once_with(producer, COMMIT)
+                    with patch.object(release, "context", return_value=(repair["tooling_commit"], PAIR_VERSION, "v" + PAIR_VERSION)), \
+                            patch.dict(os.environ, {"GITHUB_RUN_ID": "456", "GITHUB_RUN_ATTEMPT": "2"}), \
+                            patch.object(release, "release_id_for_tag", return_value=7), \
+                            patch.object(release, "github", side_effect=api), patch.object(release.subprocess, "run") as run:
+                        release.publish(root / "out", resume=True, source_commit=COMMIT)
+                        run.assert_not_called()
+
+    def test_mac_pair_rejects_resealed_layout_and_signing_tampering(self):
+        for mutation in ("flat_names", "foreign_plist", "missing_helper", "unexpected_path", "missing_ticket",
+                         "crossed_notary", "unstapled", "wrong_scope", "component_digest", "flat_component", "install_digest"):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as temporary:
+                directory = Path(temporary) / "candidate"
+                target = "aarch64-apple-darwin"
+                files, receipt, executables = pair_fixture(directory, target, True)
+                if mutation == "flat_names":
+                    for name in executables:
+                        files[Path(name).name] = files.pop(name)
+                elif mutation == "foreign_plist":
+                    files["AIRK.app/Contents/Info.plist"] = b"resealed foreign app configuration"
+                elif mutation == "missing_helper":
+                    files.pop(executables[1])
+                elif mutation == "unexpected_path":
+                    files["AIRK.app/Contents/extra-private.txt"] = b"fictional excluded payload"
+                elif mutation == "missing_ticket":
+                    files.pop("AIRK.app/Contents/CodeResources")
+                elif mutation == "flat_component":
+                    receipt["signing"]["components"]["airk"] = receipt["signing"]["components"].pop(executables[0])
+                elif mutation == "install_digest":
+                    receipt["signing"]["install_manifest_sha256"] = "0" * 64
+                else:
+                    component = receipt["signing"]["components"][executables[1]]
+                    if mutation == "component_digest":
+                        component["binary_sha256"] = "0" * 64
+                    else:
+                        field, value = {"crossed_notary": ("id", "another-app-job"),
+                                        "unstapled": ("stapled", False), "wrong_scope": ("scope", "airk-embed")}[mutation]
+                        component["notarization"][field] = value
+                seal_pair_files(files)
+                save_pair_candidate(directory, files, receipt, executables)
+                with self.assertRaises(ValueError):
+                    release.verify_native(directory, target, COMMIT, PAIR_VERSION, True)
+
+
 class GithubReleaseContracts(unittest.TestCase):
     def test_service_native_release_requires_paired_inventory_and_rejects_legacy_schema(self):
         with tempfile.TemporaryDirectory() as temporary:

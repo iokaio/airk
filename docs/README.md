@@ -1,5 +1,7 @@
 # AIRK documentation
 
+The [1.4.4 release-tool repair](release-workflow.md#pinned-144-release-tool-repair) corrects macOS bundle verification and reuses the original artifacts verified by the successful routine CI run without rebuilding or relabeling native binaries. The original source commit and reviewed tooling commit are recorded separately.
+
 The 1.4.5 branch also incorporates the native lifecycle and CI fixes from `origin/feat/airksvc`: bounded Unix child cleanup, owner-only staged Windows runtime directories, complete macOS payload-root validation and retirement, and a registration bootstrap gate before source watching. Routine CI retains correctness, build and package smoke checks, uses lightweight default features for focused Windows/macOS regressions and bounds independent native fixture concurrency; extended platform and lifecycle campaigns remain explicit qualification. Local qualification of this merged branch is still required.
 
 **1.4.5 redb cutover:** all runtime, test, build and private storage paths use redb; the source/dependency packaging guard passes. Fresh setup, full indexing and ownership-checked removal of old fixed AIRK database files replace migration. Automatic file growth, sampled `airk_status` sizes and guarded manual compaction are implemented. See [validation and remaining qualification](release-1.4.5.md). Local final checks and artifact qualification remain in progress.

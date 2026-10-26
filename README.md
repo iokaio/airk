@@ -1,5 +1,7 @@
 # AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents
 
+The 1.4.4 GitHub release verifier now follows the same macOS app-bundle layout as native packaging and signing. A narrowly pinned release-tool repair reuses the already-tested 1.4.4 binaries; its original source and CI identity remain unchanged. See the [release record](docs/release-1.4.4.md).
+
 The 1.4.5 branch also incorporates the native lifecycle and CI fixes from `origin/feat/airksvc`: bounded Unix child cleanup, owner-only staged Windows runtime directories, complete macOS payload-root validation and retirement, and a registration bootstrap gate before source watching. Routine CI retains correctness, build and package smoke checks; extended platform and lifecycle campaigns remain explicit qualification. Local qualification of this merged branch is still required.
 
 **1.4.5: redb storage cutover.** Collections, lexical search, DiskANN records, publication, service registrations/jobs, usage/scheduler ledgers and private staging use redb. SQLite code and dependencies have been removed. Local qualification is in progress; see [validation and remaining limits](docs/release-1.4.5.md).
