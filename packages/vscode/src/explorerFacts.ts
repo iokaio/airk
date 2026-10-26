@@ -2,7 +2,7 @@
 import type { EvidenceClass, FactItemView, FactListView, ProvenanceView } from './explorerContracts';
 import { explorerError } from './explorerErrors';
 import { EvidenceClient, EvidenceFailure, NativeTool } from './explorerEvidence';
-import { HandleRegistry, RefRegistry, relativePrefix } from './explorerSearch';
+import { HandleRegistry, locationLabel, RefRegistry, relativePrefix } from './explorerSearch';
 
 type Value = Record<string, unknown>;
 const obj = (value: unknown): Value => value && typeof value === 'object' && !Array.isArray(value) ? value as Value : {};
@@ -36,12 +36,14 @@ function provenanceList(payload: Value): ProvenanceView[] {
 }
 
 /** Register a cited location and return its handle, or undefined when the citation is incomplete. */
-function citationRef(handles: FactHandles, project: string, publication: string | undefined, citation: Value): { ref?: string; path?: string; startLine?: number; endLine?: number } {
+function citationRef(handles: FactHandles, project: string, publication: string | undefined, citation: Value): { ref?: string; path?: string; startLine?: number; endLine?: number; location?: string } {
     const path = text(citation.path, 4096), start = line(citation.start_line), end = line(citation.end_line), hash = citation.content_hash;
     if (!path) { return {}; }
-    if (!start || !end || typeof hash !== 'string' || !HASH.test(hash)) { return { path, ...(start ? { startLine: start } : {}), ...(end ? { endLine: end } : {}) }; }
+    const location = locationLabel(citation.location);
+    const extra = location ? { location } : {};
+    if (!start || !end || typeof hash !== 'string' || !HASH.test(hash)) { return { path, ...(start ? { startLine: start } : {}), ...(end ? { endLine: end } : {}), ...extra }; }
     const ref = handles.refs.add({ project, path, startLine: start, endLine: end, contentHash: hash, ...(publication ? { publication } : {}) });
-    return { ref, path, startLine: start, endLine: end };
+    return { ref, path, startLine: start, endLine: end, ...extra };
 }
 
 function symbolRef(handles: FactHandles, project: string, id: unknown): string | undefined {

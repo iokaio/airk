@@ -7,7 +7,7 @@ import * as path from 'node:path';
 import { test } from 'node:test';
 import type { WebviewMessageOf } from '../explorerContracts';
 import { EvidenceFailure } from '../explorerEvidence';
-import { appliedMode, passageView, RefRegistry, relativePrefix, searchArgs, searchView } from '../explorerSearch';
+import { appliedMode, locationLabel, passageView, RefRegistry, relativePrefix, searchArgs, searchView } from '../explorerSearch';
 import { displayPath, inside, liveCheck, sourceFile } from '../explorerSource';
 
 const project = 'ab'.repeat(32), hash = 'ba'.repeat(32);
@@ -88,4 +88,14 @@ test('live checks hash raw saved bytes and source paths stay inside their root',
         for (const bad of ['../outside.ts', '/etc/passwd', 'sub/../../x']) { await assert.rejects(sourceFile(root, bad), failure('TOOL_ERROR'), bad); }
         await assert.rejects(sourceFile('relative/root', 'a.ts'), failure('TOOL_ERROR'));
     } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
+test('original document locations become readable labels; plain lines stay as line numbers', () => {
+    assert.equal(locationLabel({ Lines: { start: 1, end: 3 } }), undefined);
+    assert.equal(locationLabel({ Page: { number: 4 } }), 'page 4');
+    assert.equal(locationLabel({ Slide: { number: 2 } }), 'slide 2');
+    assert.equal(locationLabel({ TableRow: { table: 1, row: 9 } }), 'table 1 row 9');
+    assert.equal(locationLabel({ WorksheetRow: { sheet: 'Budget', row: 12 } }), 'sheet Budget row 12');
+    assert.equal(locationLabel({ Mapped: { region: {} } }), 'mapped region');
+    assert.equal(locationLabel('nonsense'), undefined);
 });

@@ -55,6 +55,11 @@ test('webview messages require the exact declared fields', () => {
     ];
     for (const message of rejected) { assert.equal(parseWebviewMessage(message), undefined, JSON.stringify(message)); }
     assert.ok(parseWebviewMessage({ v: 1, type: 'project.select', requestId: 'r', project: 'a'.repeat(64) }));
+    assert.ok(parseWebviewMessage({ v: 1, type: 'docs.facts', requestId: 'd', kind: 'requirement', limit: 10 }));
+    assert.equal(parseWebviewMessage({ v: 1, type: 'docs.facts', requestId: 'd', kind: 'secrets', limit: 10 }), undefined);
+    assert.equal(parseWebviewMessage({ v: 1, type: 'code.relationships', requestId: 'c', symbol: 's1', direction: 'sideways', hops: 1, limit: 5 }), undefined);
+    assert.equal(parseWebviewMessage({ v: 1, type: 'code.relationships', requestId: 'c', symbol: 's1', direction: 'incoming', hops: 4, limit: 5 }), undefined);
+    assert.ok(parseWebviewMessage({ v: 1, type: 'code.outline', requestId: 'o' }));
     for (const fields of Object.values(WEBVIEW_MESSAGES)) {
         for (const name of Object.keys(fields)) { assert.ok(!/path$|command|args|body/i.test(name) || name === 'pathPrefix', `message field ${name} could carry a path or command`); }
     }

@@ -128,6 +128,8 @@ export interface FactItemView {
     readonly resolution?: string;
     readonly target?: string;
     readonly heading?: readonly string[];
+    /** Original document location (page, slide, sheet row) when the citation is not plain lines. */
+    readonly location?: string;
     readonly detail?: string;
 }
 export interface FactListView {
@@ -175,6 +177,10 @@ export const WEBVIEW_MESSAGES = {
     'code.relationships': { symbol: REF, direction: { kind: 'enum', values: ['incoming', 'outgoing'] }, hops: { kind: 'int', min: 1, max: 3 }, limit: { kind: 'int', min: 1, max: 100 } },
     'code.outline': { ref: { ...REF, optional: true } },
     'list.more': { more: REF },
+    'docs.facts': {
+        kind: { kind: 'enum', values: ['any', 'requirement', 'decision', 'design', 'architecture', 'feature', 'acceptance', 'date', 'section', 'table_row', 'table_cell'] },
+        name: { kind: 'string', max: 256, optional: true }, pathPrefix: { kind: 'string', max: 1024, optional: true }, limit: { kind: 'int', min: 1, max: 100 },
+    },
     'manage.refresh': {},
 } as const satisfies Record<string, Record<string, FieldSpec>>;
 
