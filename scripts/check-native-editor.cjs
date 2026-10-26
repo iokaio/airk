@@ -22,6 +22,16 @@ async function runProcess(args,logfile,extra={}){
 }
 async function unusedPort(){const server=net.createServer();await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const value=server.address().port;await new Promise(resolve=>server.close(resolve));return value;}
 async function exists(file){return fs.access(file).then(()=>true,()=>false);}
+/** Installed AIRK Explorer: Search shows a cited fixture hit and Management lists the registered project. */
+async function checkExplorer(ui){
+    const inExplorer=expression=>ui.document("!!document.querySelector('.airk-explorer')",expression);
+    const hits=await ui.until(async()=>(await inExplorer("(()=>{const paths=[...document.querySelectorAll('.hit code.path')].map(n=>n.textContent);return paths.length?{paths,meta:document.querySelector('.result-meta')?.innerText}:false;})()"))?.value,'Explorer search hits');
+    if(!hits.paths.some(value=>value.startsWith('fixture.ts')))throw new Error('Explorer search did not cite the fixture: '+JSON.stringify(hits));
+    await ui.until(async()=>(await inExplorer("(()=>{const b=[...document.querySelectorAll('.rail button')].find(n=>n.textContent.startsWith('Management'));if(!b)return false;b.click();return true;})()"))?.value,'Explorer Management rail');
+    const rows=await ui.until(async()=>(await inExplorer("(()=>{const r=[...document.querySelectorAll('table.grid tbody tr')].map(x=>x.innerText);return r.length?r:false;})()"))?.value,'Explorer Management projects');
+    if(!rows.some(row=>row.includes('workspace-a')))throw new Error('Explorer Management did not list the project: '+JSON.stringify(rows));
+    return {hits,rows};
+}
 async function cleanupServices(){
     for(const folder of services.splice(0)){
         const control=path.join(folder,'native-service','control');
@@ -61,7 +71,9 @@ exports.activate=()=>{if(!process.env.AIRK_EDITOR_RUN)return;void require(${JSON
             // onboarding has its own installed-artifact installer acceptance.
             await fs.writeFile(path.join(profile,'User/settings.json'),JSON.stringify({'airk.service.installDir':path.join(folder,'native-service'),'airk.storage.path':storage,'airk.cli.autoInstall':false,
                 'workbench.startupEditor':'none','window.restoreWindows':'none','security.workspace.trust.startupPrompt':'never','extensions.autoUpdate':false,'extensions.autoCheckUpdates':false,
-                'telemetry.telemetryLevel':'off','update.mode':'none','files.simpleDialog.enable':true,'window.dialogStyle':'custom'}));
+                'telemetry.telemetryLevel':'off','update.mode':'none','files.simpleDialog.enable':true,'window.dialogStyle':'custom',
+                // Legacy console acceptance continues while the view is kept for one release.
+                'airk.explorer.showServiceConsole':true}));
             let workspace=path.join(folder,scenario==='different'&&role==='b'?'workspace-b':'workspace-a');
             if(['multi','usage'].includes(scenario)){workspace=path.join(folder,'two-roots.code-workspace');await fs.writeFile(workspace,JSON.stringify({folders:[{path:'workspace-a'},{path:'workspace-b'}]}));}
             ports[role]=await unusedPort();
@@ -76,7 +88,7 @@ exports.activate=()=>{if(!process.env.AIRK_EDITOR_RUN)return;void require(${JSON
             children.push(runProcess(args,path.join(folder,`${role}-editor.log`),{AIRK_EDITOR_RUN:run,AIRK_EDITOR_ROLE:role,AIRK_EDITOR_SCENARIO:scenario,
                 AIRK_EDITOR_DEVELOPMENT_STAGE:stage?source:'',AIRK_USAGE_MODE:scenario==='usage'?'aggregates-only':'disabled'}));
         }
-        let failure,usageTask,allExited=false;const exited=Promise.all(children).then(()=>{allExited=true;}).catch(error=>{failure=error;});const handled=new Map(),uiChecks={};
+        let failure,usageTask,explorerTask,allExited=false;const exited=Promise.all(children).then(()=>{allExited=true;}).catch(error=>{failure=error;});const handled=new Map(),uiChecks={};
         try{
             const end=Date.now()+600000;
             while(true){if(failure)throw failure;
@@ -89,12 +101,14 @@ exports.activate=()=>{if(!process.env.AIRK_EDITOR_RUN)return;void require(${JSON
                         else{if(scenario!=='multi'||!/^[a-f0-9]{64}$/.test(request.project))throw new Error('Invalid private repair selection');await uis[role].approveRepair(request.project);}
                         handled.set(role,request.sequence);await fs.writeFile(path.join(folder,`${role}-ui-done-${request.sequence}.json`),'{}');}
                 }
+                if(scenario==='same'&&await exists(path.join(folder,'a-explorer-ready.json'))&&!explorerTask){uis.a??=await editorUi(ports.a);
+                    explorerTask=checkExplorer(uis.a).then(value=>fs.writeFile(path.join(folder,'explorer-checked.json'),JSON.stringify(value,null,2))).catch(error=>{failure=error;});}
                 if(scenario==='usage'&&await exists(path.join(folder,'a-usage-ready.json'))&&!usageTask){usageTask=require('./check-usage-editor.cjs').checkUsage(ports.a,folder).then(value=>{uiChecks.a=value;}).catch(error=>{failure=error;});}
                 if((await Promise.all(roles.map(role=>exists(path.join(folder,`${role}-capture.json`))))).every(Boolean))break;
                 if(allExited)throw new Error(`Private editor exited before acceptance completed: ${scenario}`);
                 if(Date.now()>end)throw new Error(`Native editor scenario timed out: ${scenario}`);await delay(150);
             }
-            if(usageTask)await usageTask;if(failure)throw failure;
+            if(usageTask)await usageTask;if(explorerTask)await explorerTask;if(failure)throw failure;
             for(const role of roles){uis[role]??=await editorUi(ports[role]);const ui=uis[role];
                 const body=await ui.until(async()=>(await ui.service('document.body.innerText'))?.value,'native service console');
                 await fs.writeFile(path.join(folder,`${role}-service.txt`),body);

@@ -165,6 +165,13 @@ export async function run(): Promise<void> {
                 assert.ok(found,'Native accepted work published the fixture symbols');
             }finally{ready.close();}
         }
+        if (scenario === 'same' && role === 'a') {
+            // The installed Explorer: Search renders a cited hit and Management lists the project (checked over CDP).
+            await vscode.commands.executeCommand('airk.explorer.search', 'WindowAlphaEvidence');
+            await mark('explorer-ready');
+            await waitFor(path.join(folder, 'explorer-checked.json'));
+            checks.push('installed Explorer search cites the fixture', 'installed Explorer Management lists the project');
+        }
         if (scenario === 'usage') {
             const before = await Promise.all(specs.map(spec => runJson<any>(spec, 'usage', ['report'])));
             assert.ok(before.every(report => report.report.calls > 0));
