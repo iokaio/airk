@@ -51,8 +51,10 @@ jobs:
       - run: python scripts/build-service-runtime.py --profile release --destination artifacts/runtime/${{ matrix.target }}
       - name: Extension contracts and real native MCP adapter
         env:
-          AIRK_TEST_BINARY: ${{ github.workspace }}/artifacts/runtime/${{ matrix.target }}/airk
+          AIRK_TEST_BINARY: ${{ github.workspace }}/artifacts/runtime/${{ matrix.target }}/AIRK.app/Contents/MacOS/airk
         run: npm test --prefix packages/vscode
+      - name: Use TCP for Apple ticket requests on Mac runners
+        uses: ./.github/actions/macos-ticket-network
       - name: Sign and notarize using an isolated temporary keychain
         env:
           MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
