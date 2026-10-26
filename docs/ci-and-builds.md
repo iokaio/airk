@@ -1,6 +1,6 @@
 # GitHub CI, native artifacts and spending controls
 
-The current local candidate is **1.4.4**; see [its release record](release-1.4.4.md). Prior 1.4.0/1.4.1/1.4.2 build and qualification records below retain their original scope.
+The current package version is **1.4.4**; see [its release record](release-1.4.4.md). Prior 1.4.0/1.4.1/1.4.2 build and qualification records below retain their original scope.
 
 Native builds embed the pinned FP32 MiniLM assets. Before Cargo checks/builds, run `python scripts/provision-local-model.py --destination target/local-vector-model --download`, or supply verified offline assets there (or through `AIRK_BUNDLED_MODEL_DIR`). Cargo never downloads model assets. See [model provisioning](onnx-models.md).
 

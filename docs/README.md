@@ -22,7 +22,7 @@ Trusted VSIX activation now installs the native runtime and the `airk` terminal 
 
 **AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents**
 
-The **1.4.4 release candidate** corrects WAL admission and logical database sizing. Earlier 1.4.0/1.4.1/1.4.2 qualification remains historical. Start with the [current release record](release-1.4.4.md), [service plan](airkservice-architecture.md), [completion checklist](service-implementation-checklist.md), [project setup](service-project-setup.md) and [client adapters](service-client-adapters.md). Native Mac and the complete installed-platform/signing/policy matrix remain unqualified.
+The **1.4.4 release** corrects WAL admission and logical database sizing. Earlier 1.4.0/1.4.1/1.4.2 qualification remains historical. Start with the [current release record](release-1.4.4.md), [service plan](airkservice-architecture.md), [completion checklist](service-implementation-checklist.md), [project setup](service-project-setup.md) and [client adapters](service-client-adapters.md). Native Mac and the complete installed-platform/signing/policy matrix remain unqualified.
 
 The 1.3.x/1.2.x release records and former direct-helper/window-scheduler guides are historical references. They do not describe the 1.4 default lifecycle or authorize opening legacy stores through the service. Native and extension source/lockfile versions are synchronized at 1.4.4; publication is a separate action.
 
@@ -30,7 +30,7 @@ The [Windows build/editor guide](windows-local-build.md) describes pair builds, 
 
 - [Architecture and code boundaries](architecture.md)
 - [AIRK 1.4.0 local service architecture and implementation plan](airkservice-architecture.md)
-- [Current 1.4.4 release candidate](release-1.4.4.md)
+- [Current 1.4.4 release record](release-1.4.4.md)
 - [Historical 1.4.3 storage-recovery candidate](release-1.4.3.md)
 - [Storage reliability and embedded engine review](storage-reliability.md)
 - [Historical 1.4.2 resource-policy candidate](release-1.4.2.md)

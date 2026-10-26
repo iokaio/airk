@@ -1,6 +1,6 @@
 # Build and review the Windows app and VS Code extension
 
-The current release candidate is **1.4.4**; see [its release record](release-1.4.4.md). Prior 1.4.0/1.4.1/1.4.2 build and qualification records below retain their original scope.
+The current package version is **1.4.4**; see [its release record](release-1.4.4.md). Prior 1.4.0/1.4.1/1.4.2 build and qualification records below retain their original scope.
 
 Trusted VSIX installation and **Install or Repair CLI** refresh recognized existing workspace AIRK connections in Codex (`.codex/config.toml`), Claude Code (`.mcp.json`) and GitHub Copilot (`.vscode/mcp.json`) to the installed stable launcher and registered service arguments. Other servers, environment and tool policies remain intact; missing entries do not enable an agent. Foreign/custom launches, unsupported TOML, unsaved edits and unsafe files remain for manual review with a visible warning. Restart connected agents after installation. Targeted Windows installation is covered by the local installer harness; broader platform qualification remains pending.
 

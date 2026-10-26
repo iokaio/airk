@@ -1,6 +1,6 @@
 # Extension deployment: adapting VCP's approach
 
-The current local candidate is **1.4.4**; see [its release record](release-1.4.4.md). Prior 1.4.0/1.4.1/1.4.2 build and qualification records below retain their original scope.
+The current package version is **1.4.4**; see [its release record](release-1.4.4.md). Prior 1.4.0/1.4.1/1.4.2 build and qualification records below retain their original scope.
 
 AIRK's native-helper VS Code extension and native/VSIX candidate packaging are implemented. This page records the original packaging design and remains useful for its construction contract; use [extension behavior](vscode-extension.md) and the [release workflow](release-workflow.md) for current operation and publication. Full installed lifecycle qualification remains separate work. [Windows local build/review](windows-local-build.md) provides the PowerShell entry point.
 
@@ -23,7 +23,7 @@ The original construction record used **1.1.1** and later **1.2.4**. The current
 | macOS Apple Silicon | airk-1.4.4-darwin-arm64.vsix |
 | macOS Intel | airk-1.4.4-darwin-x64.vsix |
 
-Earlier local candidate receipts cover Windows x64; 1.4.4 requires the complete four-platform main CI candidate set before publication. The 1.4.4 candidate uses the stable channel and remains unpublished. Future previews must use a separate, deliberately selected version. A regular release must use a distinct version; the same Marketplace version cannot be both release and pre-release. Platform packages share the version and extension identity, with their target and bundled native helper distinguished in the artifact. No Marketplace listing or publication is created by the local build.
+Earlier local candidate receipts cover Windows x64; 1.4.4 requires the complete four-platform main CI candidate set before publication. Version 1.4.4 uses the stable channel; the release workflows control publication separately. Future previews must use a separate, deliberately selected version. A regular release must use a distinct version; the same Marketplace version cannot be both release and pre-release. Platform packages share the version and extension identity, with their target and bundled native helper distinguished in the artifact. No Marketplace listing or publication is created by the local build.
 
 The extension has its own package, checked-in npm lock and pinned Node/TypeScript/VSCE versions. CI restores with `npm ci --ignore-scripts` and compiles on the same native runner as its helper. [The extension packager](../scripts/package-extension.py) builds a fresh allowlisted stage containing compiled runtime modules, manifest, required media/docs, the verified helper and legal notices. Exclude tests, development dependencies, source maps, indexes, fixtures, reference files and arbitrary checkout contents.
 

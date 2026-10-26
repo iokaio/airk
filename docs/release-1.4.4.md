@@ -1,6 +1,6 @@
 # AIRK 1.4.4
 
-October 25, 2026. Release candidate for the native service and VS Code extension. Native workspace, local crate lock entries, extension manifest and npm lock entries are synchronized at **1.4.4**. Publication uses the protected PR, successful CI on the exact merged main commit, and the GitHub release and Marketplace workflows. This record does not itself establish publication or cross-platform qualification.
+October 25, 2026. Release record for the native service and VS Code extension. Native workspace, local crate lock entries, extension manifest and npm lock entries are synchronized at **1.4.4**. Publication uses the protected PR, successful CI on the exact merged main commit, and the GitHub release and Marketplace workflows. This record does not itself establish publication or cross-platform qualification.
 
 The release brings the 1.4 native service architecture to the public CLI, extension, container and packaging paths. A per-user service owns registration, durable work and resource policy; evidence retrieval remains direct between clients and isolated project workers. The lightweight `airk` executable and offline `airk-embed` helper share the package version. MCP defaults to Terse responses and retains explicit Full diagnostics, original citations and exact indexed revisions.
 

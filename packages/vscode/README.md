@@ -12,7 +12,7 @@ Installation now shows a completion notification with MCP Servers, Reload Window
 
 Trusted VSIX installation and **Install or Repair CLI** refresh recognized existing workspace AIRK connections in Codex (`.codex/config.toml`), Claude Code (`.mcp.json`) and GitHub Copilot (`.vscode/mcp.json`) to the installed stable launcher and registered service arguments. Other servers, environment and tool policies remain intact; missing entries do not enable an agent. Foreign/custom launches, unsupported TOML, unsaved edits and unsafe files remain for manual review with a visible warning. Restart connected agents after installation. Targeted Windows installation is covered by the local installer harness; broader platform qualification remains pending.
 
-The current local candidate is **1.4.4**, superseding the 1.4.2 resource-policy candidate. Validation and remaining qualification limits are recorded in its release notes.
+The current package version is **1.4.4**, superseding the 1.4.2 resource-policy candidate. Validation and remaining qualification limits are recorded in its release notes.
 
 CLI installation removes previous extension-managed terminal executable copies regardless of version. It also retires the previous native rollback payload after successful activation, preserving the selected runtime, sources, indexes and settings. Locked files report incomplete cleanup; disconnect old clients and use **AIRK: Install or Repair CLI**, or allow the next trusted activation to retry. Close old terminal sessions completely; **Developer: Reload Window** can preserve their environment.
 
@@ -20,7 +20,7 @@ Trusted VSIX activation now installs the native runtime and the `airk` terminal 
 
 Managed installations support a verified lightweight client launcher in user metadata while leaving the approved provider payload read-only and preserving its lifecycle policy. See the [native installation contract](https://github.com/iokaio/airk/blob/main/docs/service-installation.md).
 
-**1.4.4 release candidate.** See the [release record](https://github.com/iokaio/airk/blob/main/docs/release-1.4.4.md). Earlier 1.4.0/1.4.1/1.4.2 qualification remains historical; this candidate requires its own validation. This is an release candidate awaiting protected-main CI and publication.
+**1.4.4 native service and storage recovery.** See the [release record](https://github.com/iokaio/airk/blob/main/docs/release-1.4.4.md). Earlier 1.4.0/1.4.1/1.4.2 qualification remains historical; this candidate requires its own validation. Publication is controlled by protected-main CI and the release workflows.
 
 Private editor acceptance now exercises reviewed native registrations and Full/Terse panel choices. Development-stage tests and installed-VSIX qualification are recorded separately; neither implies native Mac qualification.
 
