@@ -12,6 +12,7 @@ fn copied_lightweight_main_exposes_catalog_without_installing_or_falling_back_to
     let root = tempfile::tempdir()?;
     let data = root.path().join("missing-state");
     let binary = owner.path().join(airk_cli::runtime_install::main_name());
+    fs::create_dir_all(binary.parent().unwrap())?;
     fs::copy(env!("CARGO_BIN_EXE_airk"), &binary)?;
     let report = Command::new(&binary)
         .arg("--root")
@@ -101,7 +102,7 @@ fn opted_out_native_indexing_serves_lexical_evidence_without_starting_inference(
 
 #[cfg(feature = "embedding-worker")]
 #[test]
-fn graceful_helper_stop_closes_idle_project_sessions_before_the_control_deadline() -> Result<()> {
+fn graceful_service_helper_stop_preserves_lexical_project_reads() -> Result<()> {
     use airk_core::service::{ControlMethod as Method, ControlResponse as Response, JobKind};
     use sha2::{Digest, Sha256};
     use std::time::{Duration, Instant};
@@ -131,11 +132,19 @@ fn graceful_helper_stop_closes_idle_project_sessions_before_the_control_deadline
             Response::EmbeddingStatus {
                 available: true,
                 worker: Some(worker),
-                sessions,
+                loads,
                 ..
-            } => {
-                assert!(sessions > 0, "the helper must retain an idle model session");
-                break worker;
+            } if loads > 0 => break worker,
+            // Publication proves completed inference, not a retained model
+            // session: RemoteModel closes that session when its job ends.
+            // The separate pool-shutdown fixture owns an explicit idle session.
+            Response::EmbeddingStatus {
+                available: true,
+                worker: Some(_),
+                loads: 0,
+                ..
+            } if Instant::now() < until => {
+                std::thread::sleep(Duration::from_millis(25));
             }
             Response::Failure { code }
                 if code == "embedding_observation_busy" && Instant::now() < until =>

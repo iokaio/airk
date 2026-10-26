@@ -1,5 +1,7 @@
 # AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents
 
+The 1.4.5 branch also incorporates the native lifecycle and CI fixes from `origin/feat/airksvc`: bounded Unix child cleanup, owner-only staged Windows runtime directories, complete macOS payload-root validation and retirement, and a registration bootstrap gate before source watching. Routine CI retains correctness, build and package smoke checks; extended platform and lifecycle campaigns remain explicit qualification. Local qualification of this merged branch is still required.
+
 **1.4.5: redb storage cutover.** Collections, lexical search, DiskANN records, publication, service registrations/jobs, usage/scheduler ledgers and private staging use redb. SQLite code and dependencies have been removed. Local qualification is in progress; see [validation and remaining limits](docs/release-1.4.5.md).
 
 **Fresh setup and full indexing are required.** Previous SQLite indexes, registrations, pending jobs and usage are not imported. Native activation excludes the old service, workers and helpers before removing fixed AIRK-owned database files using ownership receipts. Selected project setup removes its recognized old database files under writer/read exclusion. Sources, unknown files, unrelated projects and separately stored settings are preserved. Trusted automatic setup repeats the saved workspace registration at its selected data path, prepares the offline model and queues indexing. Existing coding-agent sessions must reconnect.
@@ -22,7 +24,7 @@ CLI installation removes previous extension-managed terminal executable copies r
 
 Trusted VSIX activation now installs the native runtime and the `airk` terminal command, registers new workspace folders, prepares the bundled offline model and queues indexing with automatic watching. No setup links are required. Open a new VS Code terminal after installation; restart external terminal applications to refresh PATH. User `airk.cli.autoInstall: false` disables automatic installation and registration. Compatible runtime updates preserve registered projects and saved choices. The 1.4.5 storage boundary requires fresh registration/full indexing, retains the selected data location, and enables native watching for that new registration. Managed runtime ownership and explicit Stop remain authoritative. Use **Choose Index Storage Folder** or **Choose Native Automatic Watching** to change defaults later. Storage selection creates a reviewed binding and retains old index files for separate cleanup. Agent connection remains a separate explicit action.
 
-**Historical 1.4.4 release candidate.** See the [release record](docs/release-1.4.4.md). Earlier 1.4.0/1.4.1/1.4.2 qualification remains historical; this candidate requires its own validation. This is an release candidate awaiting protected-main CI and publication.
+**Historical 1.4.4 release candidate.** See the [release record](docs/release-1.4.4.md). Earlier 1.4.0/1.4.1/1.4.2 qualification remains historical; this candidate requires its own validation. Its publication record remains historical; current publication is controlled by protected-main CI and the release workflows. [Routine CI](docs/ci-and-builds.md) runs the full workspace on Linux, focused Windows/macOS regressions and native/VSIX build and smoke gates; extended platform and lifecycle qualification is opt-in.
 
 The [Windows build and editor harness](docs/windows-local-build.md) now uses the verified runtime pair and reviewed native registrations. An allowlisted development stage can be exercised before creating a VSIX; final artifact acceptance remains separate.
 
@@ -85,7 +87,7 @@ Storage uses independent collection ownership, admitted publication/replacement 
 
 ## Development and records
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md), [architecture and dependency boundaries](docs/architecture.md) and the [documentation index](docs/README.md). The runtime builder stages a host-native executable pair without creating a VSIX. Formatting, Clippy, workspace tests, repository checks and exact artifact qualification remain release gates. Installed-platform evidence is recorded separately from development fixtures.
+Read [CONTRIBUTING.md](CONTRIBUTING.md), [architecture and dependency boundaries](docs/architecture.md) and the [documentation index](docs/README.md). The runtime builder stages a host-native executable pair without creating a VSIX. Formatting, Clippy, workspace tests, repository checks and exact artifact verification remain release gates. Installed-platform evidence is recorded separately from development fixtures.
 
 The [1.3.2](docs/release-1.3.2.md), [1.3.1](docs/release-1.3.1.md), [1.3.0](docs/release-1.3.0.md) and earlier release notes are historical records. Their direct-helper/window-scheduler instructions do not describe 1.4 defaults. Existing public releases are separate from this unpushed development branch.
 

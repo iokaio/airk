@@ -338,6 +338,11 @@ impl SourceSupervisor {
         let thread = std::thread::Builder::new()
             .name("airk-source-coordinator".into())
             .spawn(move || {
+                // The metadata owner releases this gate after its first registry
+                // open. Cold schema creation must not race a second adapter.
+                if receiver.recv().is_err() {
+                    return;
+                }
                 let mut child: Option<WatchChild> = None;
                 let mut registry = None;
                 let mut after = None;
@@ -666,4 +671,43 @@ fn send_configuration(
     child.send(commands)?;
     sent.insert(id, (epoch, Some(digest)));
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn source_coordination_waits_for_metadata_bootstrap_and_can_drop_before_release() -> Result<()>
+    {
+        let owner = tempfile::tempdir()?;
+        let root = owner.path().canonicalize()?.join("control");
+        crate::local_ipc::prepare_root(&root)?;
+        let service = new_instance_id()?;
+        let (log, _log_guard) = crate::service_logs::Log::start(root.clone(), service);
+        let held = SourceSupervisor::start(root.clone(), service, log.clone())?;
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(!root.join("service-1.4.airk").exists());
+        drop(held);
+        assert!(!root.join("service-1.4.airk").exists());
+
+        let sources = SourceSupervisor::start(root.clone(), service, log)?;
+        let registry = ServiceRegistry::open(&root, service)?;
+        let incarnation = registry.incarnation()?;
+        drop(registry);
+        sources.wake_handle().changed();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while sources.cache.lock().unwrap().coordinated.is_none() {
+            ensure!(
+                Instant::now() < deadline,
+                "source coordinator did not resume"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(
+            ServiceRegistry::open(&root, service)?.incarnation()?,
+            incarnation
+        );
+        Ok(())
+    }
 }

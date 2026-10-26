@@ -3,6 +3,8 @@
 test-threads = 4
 retries = 0
 fail-fast = false
+# Long workload/measurement campaigns remain available with --ignore-default-filter.
+default-filter = 'not (test(two_hundred_current_edits_reach_object_and_database_plateau) | test(compact_measurements_compare_small_reads_from_large_catalog))'
 slow-timeout = { period = "120s", terminate-after = 30 }
 
 [profile.ci.junit]
@@ -14,7 +16,15 @@ store-failure-output = false
 max-threads = 2
 
 [[profile.ci.overrides]]
-filter = 'test(two_hundred_real_edits)'
+filter = 'package(airk-process)'
+slow-timeout = { period = "10s", terminate-after = 3 }
+
+[[profile.ci.overrides]]
+filter = 'test(manager_command_deadline_covers_blocked_stdin_and_output_is_not_silently_truncated) | test(legacy_review_never_executes_the_selected_old_binary_or_creates_project_state) | test(distributed_cli_indexes_pdf_in_its_worker_and_preserves_source_locations) | test(guardian_keeps_direct_pipes_and_drains_after_worker_death) | test(graceful_pool_stop_closes_an_explicitly_held_idle_model_session)'
+slow-timeout = { period = "60s", terminate-after = 1 }
+
+[[profile.ci.overrides]]
+filter = 'test(two_hundred_current_edits_reach_object_and_database_plateau)'
 priority = 100
 test-group = "storage-heavy"
 threads-required = 2

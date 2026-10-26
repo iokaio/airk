@@ -3,7 +3,7 @@ use super::*;
 
 fn fixture() -> Result<(tempfile::TempDir, PathBuf, Intent)> {
     let owner = tempfile::tempdir()?;
-    let root = owner.path().join("install");
+    let root = owner.path().canonicalize()?.join("install");
     local_ipc::prepare_root(&root)?;
     layout::initialize(&root, Some(&root), RuntimeChannel::Stable)?;
     local_ipc::prepare_root(&root.join("runtimes"))?;
@@ -108,14 +108,14 @@ fn foreground_follows_only_probing_or_restoring_intents_without_advancing_public
     intent.phase(&root, Phase::Probe)?;
     let (main, _) = startup(&root)?.context("candidate startup missing")?;
     assert_eq!(
-        main.parent().unwrap().file_name().unwrap(),
+        runtime_pair::payload_root(&main)?.file_name().unwrap(),
         intent.candidate.as_str()
     );
     assert!(selection(&root)? == intent.prior);
     intent.phase(&root, Phase::Rollback)?;
     let (main, _) = startup(&root)?.context("predecessor startup missing")?;
     assert_eq!(
-        main.parent().unwrap().file_name().unwrap(),
+        runtime_pair::payload_root(&main)?.file_name().unwrap(),
         intent.prior.as_ref().unwrap().active.as_str()
     );
     assert!(selection(&root)? == intent.prior);

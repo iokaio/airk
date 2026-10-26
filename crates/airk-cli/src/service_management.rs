@@ -375,6 +375,7 @@ impl Management {
                     Ok(registry)
                 });
                 let _ = ready.send(());
+                source.changed();
                 let mut next_tick = std::time::Instant::now();
                 let mut metadata_failed = false;
                 loop {
@@ -515,6 +516,90 @@ mod tests {
     use airk_core::{
         identity::Incarnation, service::ProjectRegistration, service_console::MAX_PAGE_BYTES,
     };
+    #[test]
+    fn timed_out_metadata_keeps_ownership_and_exact_key_before_and_after_commit() -> Result<()> {
+        use airk_core::service::{JobKind, RequestKey};
+        for commit_before_timeout in [false, true] {
+            let owner = tempfile::tempdir()?;
+            let root = owner.path().join("runtime");
+            crate::local_ipc::prepare_root(&root)?;
+            let caller = Incarnation::from_bytes([91; 16]);
+            let mut registry = ServiceRegistry::open(&root, caller)?;
+            let project = ProjectRegistration::new(
+                owner.path().join("source").to_str().unwrap().into(),
+                owner.path().join("data").to_str().unwrap().into(),
+                "unknown-receipt".into(),
+            )?;
+            registry.register(&project)?;
+            let (namespace, epoch) = registry.request_epoch()?;
+            let request = ControlMethod::Enqueue {
+                project: project.binding,
+                caller,
+                key: RequestKey {
+                    namespace,
+                    epoch,
+                    nonce: caller,
+                },
+                kind: JobKind::Index,
+            };
+            let (sender, receiver) = sync_channel::<Envelope>(2);
+            let (release, gate) = sync_channel(1);
+            let (committed, receipt) = sync_channel(1);
+            let pending = Arc::new(AtomicUsize::new(0));
+            let active = pending.clone();
+            // Gate the actual registry operation or its acknowledgement. This
+            // forces both ambiguous outcomes without relying on disk speed.
+            let thread = std::thread::spawn(move || {
+                for attempt in 0..2 {
+                    let (method, reply) = receiver.recv_timeout(Duration::from_secs(15)).unwrap();
+                    if attempt == 0 && !commit_before_timeout {
+                        gate.recv_timeout(Duration::from_secs(15)).unwrap();
+                    }
+                    let response = execute(&mut registry, method).unwrap();
+                    if attempt == 0 {
+                        let ControlResponse::Job { job } = &response else {
+                            panic!("missing committed job")
+                        };
+                        committed.send(job.id).unwrap();
+                        if commit_before_timeout {
+                            gate.recv_timeout(Duration::from_secs(15)).unwrap();
+                        }
+                    }
+                    active.fetch_sub(1, Ordering::AcqRel);
+                    let _ = reply.send(response);
+                }
+            });
+            let management = Management {
+                sender: Some(sender),
+                thread: Some(thread),
+                pending,
+                plans: Arc::new(AtomicBool::new(false)),
+            };
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?;
+            let unknown = runtime.block_on(management.request(request.clone()));
+            assert!(
+                matches!(unknown, ControlResponse::Failure { code } if code == "registry_response_unknown_retry_with_key")
+            );
+            assert!(
+                !management.can_idle_exit(),
+                "unknown work released ownership"
+            );
+            let before = receipt.try_recv();
+            assert_eq!(before.is_ok(), commit_before_timeout);
+            release.send(())?;
+            let original = before.or_else(|_| receipt.recv_timeout(Duration::from_secs(15)))?;
+            let ControlResponse::Job { job } = runtime.block_on(management.request(request)) else {
+                panic!("same-key retry lost its receipt")
+            };
+            assert_eq!(job.id, original, "same-key retry duplicated native work");
+            assert!(management.can_idle_exit());
+            assert!(!owner.path().join("source").exists());
+            assert!(!owner.path().join("data").exists());
+        }
+        Ok(())
+    }
     #[test]
     fn console_observes_paused_queue_without_admitting_or_opening_project_state() -> Result<()> {
         let owner = tempfile::tempdir()?;

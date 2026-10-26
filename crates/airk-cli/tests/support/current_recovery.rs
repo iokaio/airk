@@ -115,17 +115,42 @@ fn cli_and_mcp_recover_captured_updates_after_process_exit_and_expire_old_tokens
                 root.path().join("captured.txt"),
                 "LIVE_UNINDEXED_SENTINEL\n",
             )?;
+            // Persist the pause before service startup can schedule recovery.
+            // Pausing after registration races the worker's first source turn.
+            let registration =
+                airk_kernel::service_projects::registration(root.path(), data.path(), "project-a")?;
+            {
+                let mut registry = airk_store::service::registry::ServiceRegistry::open(
+                    &owner.path().join("control"),
+                    airk_kernel::service_broker::new_instance_id()?,
+                )?;
+                registry.register(&registration)?;
+                registry.pause(registration.binding, true)?;
+            }
             let _service = common::Service::in_owner(root.path(), data.path(), "project-a", owner);
+            // Registration preserves the persisted pause. Verify it before
+            // checking what an ordinary read may observe.
+            ensure!(
+                matches!(
+                    _service.request(airk_core::service::ControlMethod::Pause {
+                        project: _service.project.binding,
+                        paused: true,
+                    }),
+                    airk_core::service::ControlResponse::Registered { project } if project.paused
+                ),
+                "recovery fixture did not pause"
+            );
             let recovered: Value = if mcp {
                 let mut session = Session::start(root.path(), data.path())?;
                 session.send(json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"recovery-fixture","version":"1"}}}))?;
                 session.receive(1)?;
                 session.send(json!({"jsonrpc":"2.0","method":"notifications/initialized"}))?;
-                let result = session.call(
-                    2,
-                    "airk_read_file",
-                    json!({"path":"captured.txt","start_line":1,"end_line":1}),
-                )?;
+                let arguments = json!({"path":"captured.txt","start_line":1,"end_line":1});
+                let result = if boundary.starts_with("cold-") {
+                    session.call(2, "airk_read_file", arguments)?
+                } else {
+                    session.read_retry(2, "airk_read_file", arguments)?
+                };
                 if boundary.starts_with("cold-") {
                     ensure!(
                         result["result"]["isError"] == true
@@ -187,7 +212,17 @@ fn cli_and_mcp_recover_captured_updates_after_process_exit_and_expire_old_tokens
                     .unwrap()
                     .parse()?;
             // Opening a read-only connection cannot authorize prepared replay.
-            assert_eq!(observed, old);
+            assert_eq!(observed, old, "{boundary}, mcp={mcp}");
+            ensure!(
+                matches!(
+                    _service.request(airk_core::service::ControlMethod::Pause {
+                        project: _service.project.binding,
+                        paused: false,
+                    }),
+                    airk_core::service::ControlResponse::Registered { project } if !project.paused
+                ),
+                "recovery fixture did not resume"
+            );
             _service.job(airk_core::service::JobKind::Recover);
             let recovered = common::call(
                 root.path(),

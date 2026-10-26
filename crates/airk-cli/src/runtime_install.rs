@@ -933,11 +933,7 @@ pub fn verify_runtime(root: &Path, identity: &str) -> Result<(PathBuf, Approval)
         return policy.verify();
     }
     let (main, approval, inventory) = owned_inventory(root, identity)?;
-    managed::verify_topology(
-        main.parent().context("runtime parent missing")?,
-        &inventory,
-        true,
-    )?;
+    managed::verify_topology(runtime_pair::payload_root(&main)?, &inventory, true)?;
     Ok((main, approval))
 }
 
@@ -1051,10 +1047,7 @@ fn self_test(main: &Path) -> Result<()> {
                 .recv_timeout(Duration::from_secs(1))
                 .context("native runtime self-test did not return a bounded result")??;
             let pair: runtime_pair::RuntimePair = serde_json::from_slice(&read_bounded(
-                &main
-                    .parent()
-                    .context("runtime directory missing")?
-                    .join("airk-runtime.json"),
+                &runtime_pair::payload_root(main)?.join("airk-runtime.json"),
                 4096,
             )?)?;
             return validate_self_test_result(&bytes, &pair.version);

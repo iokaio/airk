@@ -274,7 +274,7 @@ impl ServiceModelFiles {
 mod tests {
     use super::*;
     fn fixture(root: &Path, name: &str) -> Result<PathBuf> {
-        let directory = root.join(name);
+        let directory = root.canonicalize()?.join(name);
         fs::create_dir(&directory)?;
         let asset = b"original tokenizer input";
         fs::write(directory.join("tokenizer.json"), asset)?;

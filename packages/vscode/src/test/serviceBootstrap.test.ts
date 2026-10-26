@@ -75,7 +75,7 @@ test('configuration preparation uses bounded stdin and the verified bundled comm
 test('legacy startup review executes only the verified new main and binds exact targets, approvals and runtime scope',async()=>{
     const f=await fixture(),calls:string[][]=[];let authorized=true,crossed=false;
     const target={root:path.join(f.root,'old-source'),data_dir:path.join(f.root,'old-data'),collection:'old-fixture',executable:path.join(f.root,'old',f.main)};
-    await fs.mkdir(target.root);await fs.mkdir(target.data_dir);await fs.mkdir(path.dirname(target.executable));await fs.writeFile(target.executable,'Old command is data only.');
+    await fs.mkdir(target.root);await fs.mkdir(target.data_dir);await fs.mkdir(path.dirname(target.executable),{recursive:true});await fs.writeFile(target.executable,'Old command is data only.');
     const canonical={...target,root:await fs.realpath(target.root),data_dir:await fs.realpath(target.data_dir),executable:await fs.realpath(target.executable)};
     const binding={installDir:f.root,controlDir:path.join(f.root,'control'),executable:path.join(f.root,'selected-main'),launcher:null,
         runtimeSha256:f.digest,version:'1.4.0',lifecycle:'on-demand' as const,verificationBasis:'trusted_distribution'};

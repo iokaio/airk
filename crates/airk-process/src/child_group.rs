@@ -57,6 +57,20 @@ pub trait ProviderSpawner: Send + Sync {
     fn spawn(&self, command: &Command, limits: Option<ProviderLimits>) -> io::Result<GroupChild>;
 }
 static PROVIDER_SPAWNER: OnceLock<Arc<dyn ProviderSpawner>> = OnceLock::new();
+fn diagnostic(stage: &str) {
+    if cfg!(debug_assertions) && std::env::var_os("AIRK_PROCESS_DIAGNOSTICS").is_some() {
+        eprintln!("airk-process: {stage}");
+    }
+}
+fn diagnostic_error(stage: &str, error: &io::Error) {
+    if cfg!(debug_assertions) && std::env::var_os("AIRK_PROCESS_DIAGNOSTICS").is_some() {
+        eprintln!(
+            "airk-process: {stage}: kind={:?}, errno={:?}: {error}",
+            error.kind(),
+            error.raw_os_error()
+        );
+    }
+}
 pub fn install_provider_spawner(spawner: Arc<dyn ProviderSpawner>) -> io::Result<()> {
     PROVIDER_SPAWNER
         .set(spawner)
@@ -112,12 +126,14 @@ impl GroupChild {
         }
     }
     pub fn spawn(command: &mut Command) -> io::Result<Self> {
+        diagnostic("spawn: checking child wait ownership");
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         return Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "native process-group observation unavailable",
         ));
         require_waitable_children()?;
+        diagnostic("spawn: child wait ownership accepted");
         #[cfg(target_os = "linux")]
         {
             use std::os::fd::{FromRawFd, OwnedFd};
@@ -128,7 +144,9 @@ impl GroupChild {
             drop(unsafe { OwnedFd::from_raw_fd(fd as i32) });
         }
         command.process_group(0);
+        diagnostic("spawn: starting owned process group");
         let mut child = command.spawn()?;
+        diagnostic("spawn: owned process group started");
         Ok(Self {
             stdin: child.stdin.take().map(pipe_file),
             stdout: child.stdout.take().map(pipe_file),
@@ -151,7 +169,11 @@ impl GroupChild {
         if let Some(owner) = self.remote.as_mut() {
             return owner.try_wait();
         }
-        peek(self.id())
+        let status = peek(self.id())?;
+        if status.is_some() {
+            diagnostic("wait: owned leader has a terminal status");
+        }
+        Ok(status)
     }
     pub fn kill(&mut self) -> io::Result<()> {
         if self.reaped.is_some() {
@@ -180,6 +202,7 @@ impl GroupChild {
         Ok(())
     }
     pub fn terminate_and_wait(&mut self, timeout: Duration) -> io::Result<ExitStatus> {
+        diagnostic("drain: termination observation started");
         if let Some(status) = self.reaped {
             return Ok(status);
         }
@@ -191,23 +214,60 @@ impl GroupChild {
         let deadline = Instant::now()
             .checked_add(timeout)
             .ok_or_else(|| io::Error::other("group drain deadline overflow"))?;
-        self.kill()?;
-        loop {
-            if peek(self.id())?.is_some() && !has_live_members(self.id(), deadline)? {
-                // The leader is already waitable and no group member can still
-                // hold working memory or pipes. Only now release its PID.
-                let status = self.child.as_mut().expect("owned child missing").wait()?;
-                self.reaped = Some(status);
-                return Ok(status);
+        // Completion is a native observation, not a successful signal. On
+        // macOS, a group containing only zombies can reject SIGKILL with EPERM.
+        // Exit teardown can also temporarily prevent a complete observation.
+        let mut observation_error = match self.reap_if_drained(deadline) {
+            Ok(Some(status)) => return Ok(status),
+            Ok(None) => None,
+            Err(error) => {
+                diagnostic_error("drain: initial-group-observation", &error);
+                Some(error)
             }
-            if Instant::now() >= deadline {
-                return Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    "owned process group has not drained",
-                ));
-            }
-            std::thread::sleep(Duration::from_millis(5));
+        };
+        // kill independently verifies that the leader is still our unreaped
+        // child before signaling. Attempt it once, then retain ownership while
+        // looking for completion within this call's original deadline.
+        let signal_error = self.kill().err();
+        if let Some(error) = &signal_error {
+            diagnostic_error("drain: kill", error);
         }
+        let mut reported_observation = false;
+        loop {
+            if Instant::now() >= deadline {
+                return Err(signal_error.or(observation_error).unwrap_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "owned process group has not drained",
+                    )
+                }));
+            }
+            match self.reap_if_drained(deadline) {
+                Ok(Some(status)) => return Ok(status),
+                Ok(None) => {}
+                Err(error) => {
+                    if !reported_observation {
+                        diagnostic_error("drain: post-kill-group-observation", &error);
+                        reported_observation = true;
+                    }
+                    observation_error = Some(error);
+                }
+            }
+            std::thread::sleep(
+                Duration::from_millis(5).min(deadline.saturating_duration_since(Instant::now())),
+            );
+        }
+    }
+    fn reap_if_drained(&mut self, deadline: Instant) -> io::Result<Option<ExitStatus>> {
+        if peek(self.id())?.is_none() || has_live_members(self.id(), deadline)? {
+            return Ok(None);
+        }
+        // The leader is waitable and no group member can still hold working
+        // memory or pipes. Only now release its PID.
+        let status = self.child.as_mut().expect("owned child missing").wait()?;
+        self.reaped = Some(status);
+        diagnostic("drain: group empty and leader reaped");
+        Ok(Some(status))
     }
     pub fn wait(&mut self) -> io::Result<ExitStatus> {
         if let Some(status) = self.reaped {
@@ -221,10 +281,32 @@ impl GroupChild {
         }
     }
     pub fn drain(&mut self) {
-        while self.terminate_and_wait(Duration::from_secs(2)).is_err() {
-            // Unknown native state retains this owner and its capacity. Neither
-            // an expired wait nor a successful kill syscall proves process exit.
-            std::thread::sleep(Duration::from_millis(100));
+        diagnostic("drain: owner cleanup started");
+        let mut reported = false;
+        loop {
+            match self.terminate_and_wait(Duration::from_secs(2)) {
+                Ok(_) => {
+                    diagnostic("drain: owner cleanup completed");
+                    return;
+                }
+                Err(error) => {
+                    // Preserve ownership on unknown native state. The opt-in
+                    // diagnostic records only the first bounded observation
+                    // error; it never changes retry, kill, or release behavior.
+                    if !reported
+                        && cfg!(debug_assertions)
+                        && std::env::var_os("AIRK_PROCESS_DIAGNOSTICS").is_some()
+                    {
+                        eprintln!(
+                            "airk-process: first drain retry retains ownership: kind={:?}, errno={:?}: {error}",
+                            error.kind(),
+                            error.raw_os_error()
+                        );
+                        reported = true;
+                    }
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+            }
         }
     }
 }
@@ -260,7 +342,12 @@ fn peek(pid: u32) -> io::Result<Option<ExitStatus>> {
         libc::CLD_EXITED if (0..=255).contains(&status) => status << 8,
         libc::CLD_KILLED if (1..=127).contains(&status) => status,
         libc::CLD_DUMPED if (1..=127).contains(&status) => status | 0x80,
-        _ => return Err(io::Error::other("unsupported child exit observation")),
+        _ => {
+            return Err(io::Error::other(format!(
+                "unsupported child exit observation: code {}, status {status}",
+                info.si_code
+            )));
+        }
     };
     Ok(Some(ExitStatus::from_raw(raw)))
 }
@@ -351,8 +438,14 @@ fn has_live_members(group: u32, deadline: Instant) -> io::Result<bool> {
             std::mem::size_of_val(&pids) as libc::c_int,
         )
     };
-    if count < 0 || count == 0 && unsafe { *libc::__error() } != 0 {
-        return Err(io::Error::last_os_error());
+    let error = io::Error::last_os_error();
+    #[cfg(test)]
+    eprintln!(
+        "group {group}: proc_listpgrppids count={count}, errno={}",
+        error.raw_os_error().unwrap_or(0)
+    );
+    if count < 0 || count == 0 && error.raw_os_error() != Some(0) {
+        return Err(error);
     }
     if count as usize >= pids.len() {
         return Err(io::Error::other(
@@ -379,14 +472,23 @@ fn has_live_members(group: u32, deadline: Instant) -> io::Result<bool> {
                 std::mem::size_of_val(&info) as libc::c_int,
             )
         };
+        let error = io::Error::last_os_error();
+        #[cfg(test)]
+        eprintln!(
+            "group {group}, pid {pid}: proc_pidinfo bytes={bytes}, errno={}, observed_pid={}, observed_group={}, state={}",
+            error.raw_os_error().unwrap_or(0),
+            info.pbi_pid,
+            info.pbi_pgid,
+            info.pbi_status
+        );
         if bytes as usize != std::mem::size_of_val(&info) {
-            let error = io::Error::last_os_error();
             if error.raw_os_error() == Some(libc::ESRCH) {
                 continue;
             }
-            return Err(io::Error::other(
-                "native process-state observation unavailable",
-            ));
+            return Err(io::Error::other(format!(
+                "native process-state observation unavailable: {bytes}/{} bytes: {error}",
+                std::mem::size_of_val(&info)
+            )));
         }
         if info.pbi_pid == pid as u32 && info.pbi_pgid == group && info.pbi_status != libc::SZOMB {
             return Ok(true);
@@ -400,4 +502,88 @@ fn has_live_members(_: u32, _: Instant) -> io::Result<bool> {
         io::ErrorKind::Unsupported,
         "native process-group observation unavailable",
     ))
+}
+
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn naturally_exited_children_drain_without_signaling_an_empty_group() -> io::Result<()> {
+        for (code, expected_success) in [(0, true), (7, false)] {
+            let mut command = Command::new("/bin/sh");
+            command.args(["-c", if code == 0 { "exit 0" } else { "exit 7" }]);
+            let mut child = GroupChild::spawn(&mut command)?;
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let observed = loop {
+                if let Some(status) = child.try_wait()? {
+                    break status;
+                }
+                if Instant::now() >= deadline {
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "natural-exit fixture did not become waitable",
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            };
+            let reaped = child.terminate_and_wait(Duration::from_secs(5))?;
+            assert_eq!(reaped, observed);
+            assert_eq!(reaped.success(), expected_success);
+            assert_eq!(reaped.code(), Some(code));
+        }
+        Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn native_group_observations_distinguish_live_exited_and_killed_children() -> io::Result<()> {
+        for killed in [false, true] {
+            let mut command = Command::new("/bin/sh");
+            command.args([
+                "-c",
+                if killed {
+                    "exec /bin/sleep 30"
+                } else {
+                    "exit 7"
+                },
+            ]);
+            command.process_group(0);
+            let mut child = command.spawn()?;
+            let pid = child.id();
+            eprintln!("spawned owned fixture {pid}, killed={killed}");
+            let observation = (|| {
+                if killed {
+                    if !has_live_members(pid, Instant::now() + Duration::from_secs(5))? {
+                        return Err(io::Error::other("running fixture was not observed"));
+                    }
+                    child.kill()?;
+                }
+                let deadline = Instant::now() + Duration::from_secs(5);
+                let status = loop {
+                    if let Some(status) = peek(pid)? {
+                        break status;
+                    }
+                    if Instant::now() >= deadline {
+                        return Err(io::Error::other("fixture did not become waitable"));
+                    }
+                    std::thread::sleep(Duration::from_millis(5));
+                };
+                eprintln!("owned fixture {pid}: unreaped terminal status {status}");
+                let live = has_live_members(pid, deadline)?;
+                eprintln!("owned fixture {pid}: remaining live members={live}");
+                Ok((status, live))
+            })();
+            // This leaf has no descendants. Reap through std even when the
+            // observation fails, so the regression reports the native error
+            // instead of getting trapped in GroupChild's ownership-preserving Drop.
+            let _ = child.kill();
+            let reaped = child.wait()?;
+            let (observed, live) = observation?;
+            assert_eq!(observed, reaped);
+            assert!(!live, "terminal fixture was still classified as live");
+            assert_eq!(reaped.code(), if killed { None } else { Some(7) });
+        }
+        Ok(())
+    }
 }

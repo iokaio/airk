@@ -5,12 +5,13 @@ use std::collections::BTreeSet;
 
 const MAX_INTENT: u64 = MAX_MANIFEST * 8 + 16_384;
 const PARTS: &str = ".airk-stage-parts";
+#[cfg(windows)]
 fn create_private_directory(path: &Path) -> Result<()> {
-    #[cfg(unix)]
+    local_ipc::create_root(path)
+}
+#[cfg(unix)]
+fn create_private_directory(path: &Path) -> Result<()> {
     let mut builder = fs::DirBuilder::new();
-    #[cfg(not(unix))]
-    let builder = fs::DirBuilder::new();
-    #[cfg(unix)]
     {
         use std::os::unix::fs::DirBuilderExt;
         builder.mode(0o700);
@@ -474,18 +475,22 @@ fn copy_payload(
         }
         output.sync_all()?;
         drop(output);
-        fs::create_dir_all(to.parent().context("payload parent missing")?)?;
-        #[cfg(unix)]
+        let mut parent = directory.clone();
+        for component in to
+            .parent()
+            .context("payload parent missing")?
+            .strip_prefix(&directory)?
+            .components()
         {
-            use std::os::unix::fs::PermissionsExt;
-            for parent in to
-                .parent()
-                .unwrap()
-                .ancestors()
-                .take_while(|path| *path != directory)
-            {
-                fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
+            ensure!(
+                matches!(component, std::path::Component::Normal(_)),
+                "invalid payload parent"
+            );
+            parent.push(component);
+            if !parent.try_exists()? {
+                create_private_directory(&parent)?;
             }
+            local_ipc::prepare_root(&parent)?;
         }
         fs::rename(&partial, &to)?;
         sync_directory(to.parent().unwrap())?;

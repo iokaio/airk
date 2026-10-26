@@ -1,5 +1,7 @@
 # AIRK documentation
 
+The 1.4.5 branch also incorporates the native lifecycle and CI fixes from `origin/feat/airksvc`: bounded Unix child cleanup, owner-only staged Windows runtime directories, complete macOS payload-root validation and retirement, and a registration bootstrap gate before source watching. Routine CI retains correctness, build and package smoke checks; extended platform and lifecycle campaigns remain explicit qualification. Local qualification of this merged branch is still required.
+
 **1.4.5 redb cutover:** all runtime, test, build and private storage paths use redb; the source/dependency packaging guard passes. Fresh setup, full indexing and ownership-checked removal of old fixed AIRK database files replace migration. Automatic file growth, sampled `airk_status` sizes and guarded manual compaction are implemented. See [validation and remaining qualification](release-1.4.5.md). Local final checks and artifact qualification remain in progress.
 
 Historical 1.4.4 scales WAL/shared-memory allowances with admitted database capacity, preserves preceding-budget reads during recovery, and sizes growth using logical SQLite pages. See the [release record](release-1.4.4.md) and [reliability review, including Turso and other embedded engines](storage-reliability.md).

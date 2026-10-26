@@ -20,10 +20,10 @@ fn current_maintenance_replaces_retention_and_preserves_sources_and_token() -> R
     let service = common::Service::start(root.path(), state.path(), "default");
     fs::write(root.path().join("note.txt"), "original source")?;
     call(root.path(), state.path(), &["index"])?;
-    let before = call(root.path(), state.path(), &["status"])?;
+    let before = common::published_status(root.path(), state.path(), "default")?;
     service.repair(airk_core::service_maintenance::RepairOperation::Auto);
     assert_eq!(
-        call(root.path(), state.path(), &["status"])?["publication"],
+        common::published_status(root.path(), state.path(), "default")?["publication"],
         before["publication"]
     );
     for args in [

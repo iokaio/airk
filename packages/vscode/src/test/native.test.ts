@@ -105,17 +105,6 @@ test('index progress is validated and a silent native scan is stopped', async ()
         () => false, 150), /stopped after 150 ms without progress/);
 });
 
-test('registered native MCP verifies before the first publication without starting inference', {skip:!process.env.AIRK_TEST_BINARY,timeout:240000}, async()=>{
-    const fixture=await NativeServiceFixture.create(process.env.AIRK_TEST_BINARY!);
-    try{
-        const spec=await fixture.register('unindexed');
-        const result=await probeMcp(spec);assert.equal(result.tools.length,16);assert.equal(record(result.status).state,'index_unavailable');
-        const status=JSON.parse((record(result.status).content as {text:string}[])[0].text);assert.equal(status.index_state,'unavailable');assert.equal(status.files,null);
-        const embedding=await fixture.embedding();
-        assert.equal(embedding.loads,0);assert.equal(embedding.sessions,0);
-    }finally{await fixture.dispose();}
-});
-
 test('native process diagnostics stay bounded and retain both ends of stderr', async () => {
     await assert.rejects(runText(process.execPath, ['-e', 'process.stderr.write("first diagnostic\\n" + "x".repeat(20000) + "\\nlast diagnostic", () => process.exit(3))']), error => {
         assert.ok(error instanceof NativeProcessError);
@@ -275,9 +264,9 @@ test('extension native clients index, inspect, approve rebuilds, enforce limits 
         await fixture.configure(a,{operation:'vectors',enabled:false});
         await fixture.configure(b,{operation:'vectors',enabled:false});
         await fixture.job(a);await fixture.job(b);
-        const initial=await fixture.tool(a,'airk_status');assert.equal(initial.files,1);
+        const initial=await fixture.publishedStatus(a);assert.equal(initial.files,1);
         await fixture.job(a);
-        assert.deepEqual((await fixture.tool(a,'airk_status')).publication,initial.publication);
+        assert.deepEqual((await fixture.publishedStatus(a)).publication,initial.publication);
         const published=await fixture.settings(a,'extraction_policy');
         assert.equal(published.configured_detail,'agent_lean');assert.equal(published.published_detail,'agent_lean');
         const limits=await fixture.settings(a,'scan_limits'),effective=record(limits.effective);
@@ -286,11 +275,11 @@ test('extension native clients index, inspect, approve rebuilds, enforce limits 
         await fixture.configure(a,{operation:'scan_limits',path:selected});
         // Failed scans publish readiness metadata while preserving retained
         // artifacts. Check source changes and evidence independently of that marker.
-        const limited=await fixture.tool(a,'airk_status');
+        const limited=await fixture.publishedStatus(a);
         const retainedBefore=await fixture.tool(a,'airk_read_file',{path:'a.py',start_line:1,end_line:2});
         const accepted=await fixture.client!.submitJob(await fixture.client!.prepareJob(a.service!.project,'index'));
         assert.equal((await fixture.waitJob(String(record(accepted.job).id))).state,'failed');
-        const failed=await fixture.tool(a,'airk_status');
+        const failed=await fixture.publishedStatus(a);
         assert.equal(record(failed.publication).incarnation,record(limited.publication).incarnation);
         assert.equal(record(failed.discovery_readiness).state,'failed');
         const unchanged=await fixture.tool(a,'airk_changes',{since:record(limited.publication).token,limit:100,max_bytes:65536});
@@ -300,16 +289,16 @@ test('extension native clients index, inspect, approve rebuilds, enforce limits 
         assert.ok(Array.isArray(hits)&&hits.length>0);assert.equal(record(record(hits[0]).citation).path,'a.py');
         await fs.writeFile(selected,JSON.stringify(effective));
         await fixture.configure(a,{operation:'scan_limits',path:selected});await fixture.job(a);
-        const before=await fixture.tool(a,'airk_status');await fixture.repair(a,'verify');
-        assert.deepEqual((await fixture.tool(a,'airk_status')).publication,before.publication);
+        const before=await fixture.publishedStatus(a);await fixture.repair(a,'verify');
+        assert.deepEqual((await fixture.publishedStatus(a)).publication,before.publication);
         await fixture.repair(a,'rebuild');
-        const rebuilt=await fixture.tool(a,'airk_status');
+        const rebuilt=await fixture.publishedStatus(a);
         assert.notEqual(record(rebuilt.publication).incarnation,record(before.publication).incarnation);
         const probe=await probeMcp(a);assert.equal(probe.tools.length,16);assert.ok(probe.tools.includes('airk_changes'));
         const foreign=await fixture.tool(b,'airk_code_facts',{name:'authenticate_fixture',compact:false});
         assert.deepEqual(foreign.items,[]);
         await assert.rejects(runJson(a,'collections',['remove',b.collection]));
-        assert.equal((await fixture.tool(b,'airk_status')).files,1);
+        assert.equal((await fixture.publishedStatus(b)).files,1);
         assert.equal(await fs.readFile(path.join(a.root,'a.py'),'utf8'),'def authenticate_fixture():\n    return True\n');
         assert.equal(await fs.readFile(path.join(b.root,'b.py'),'utf8'),'def second_fixture():\n    return False\n');
         const usage=record(JSON.parse(await runText(a.command,[...launchArgs(a,'usage'),'report'],path.dirname(a.command),120000)));

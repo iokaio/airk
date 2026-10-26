@@ -1429,11 +1429,19 @@ mod tests {
     #[test]
     fn manager_command_deadline_covers_blocked_stdin_and_output_is_not_silently_truncated()
     -> Result<()> {
+        fn diagnostic(stage: &str) {
+            if std::env::var_os("AIRK_PROCESS_DIAGNOSTICS").is_some() {
+                eprintln!("airk-manager fixture: {stage}");
+            }
+        }
         let mut blocked = command_fixture("blocked-input")?;
         blocked.input = Some(vec![b'x'; MAX_CONFIG as usize]);
+        diagnostic("blocked-input command started");
         let began = Instant::now();
         assert!(execute_with_timeout(&blocked, Duration::from_millis(250)).is_err());
+        diagnostic("blocked-input command returned");
         assert!(began.elapsed() < Duration::from_secs(5));
+        diagnostic("oversized-output command started");
         assert!(
             execute_with_timeout(
                 &command_fixture("oversized-output")?,
@@ -1441,9 +1449,12 @@ mod tests {
             )
             .is_err()
         );
+        diagnostic("oversized-output command returned");
         let mut echo = command_fixture("echo")?;
         echo.input = Some(b"owned fixture input".to_vec());
+        diagnostic("echo command started");
         let output = execute_with_timeout(&echo, Duration::from_secs(5))?;
+        diagnostic("echo command returned");
         assert!(output.success && output.text.contains("owned fixture output"));
         Ok(())
     }

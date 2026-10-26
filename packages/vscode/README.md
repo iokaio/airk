@@ -1,5 +1,7 @@
 # AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents
 
+The 1.4.5 branch also incorporates the native lifecycle and CI fixes from `origin/feat/airksvc`: bounded Unix child cleanup, owner-only staged Windows runtime directories, complete macOS payload-root validation and retirement, and a registration bootstrap gate before source watching. Routine CI retains correctness, build and package smoke checks; extended platform and lifecycle campaigns remain explicit qualification. Local qualification of this merged branch is still required.
+
 **1.4.5: redb storage cutover.** Collections, lexical search, DiskANN records, publication, service registrations/jobs, usage/scheduler ledgers and private staging use redb. SQLite code and dependencies have been removed. Local qualification is in progress; see [validation and remaining limits](https://github.com/iokaio/airk/blob/main/docs/release-1.4.5.md).
 
 **Fresh setup and full indexing are required.** Previous SQLite indexes, registrations, pending jobs and usage are not imported. Native activation excludes the old service, workers and helpers before removing fixed AIRK-owned database files using ownership receipts. Selected project setup removes its recognized old database files under writer/read exclusion. Sources, unknown files, unrelated projects and separately stored settings are preserved. Trusted automatic setup repeats the saved workspace registration at its selected data path, prepares the offline model and queues indexing. Existing coding-agent sessions must reconnect.

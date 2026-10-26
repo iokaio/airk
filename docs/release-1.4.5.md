@@ -16,7 +16,7 @@ The accepted performance comparison uses a separately identified format-140 **1.
 
 ## CI integration before packaging
 
-The user requires compatible CI fixes from `origin/feat/airksvc` before any local VSIX build. The remote was fetched on October 26 at `62b463e0dbb6c18723b30acddd57109f2b93029f` (16 commits after common base `572da16`). Integrate those changes without restoring SQLite code/dependencies or replacing the native storage contracts. Record adapted/skipped conflicts and rerun affected checks after integration. Recheck the remote tip before packaging; no push is authorized.
+The user requires compatible CI fixes from `origin/feat/airksvc` before any local VSIX build. The remote was fetched on October 26 at `62b463e0dbb6c18723b30acddd57109f2b93029f` (16 commits after common base `572da16`). The merge retains its CI qualification split, native read-retry contract, bounded Unix cleanup, Windows staging ACLs, macOS payload-root handling and registration bootstrap gate. Native fixture adaptations retain selection leases rather than opening a second redb backend, use the native registry filename, and pause captured recovery work before starting the service. Documentation retains the 1.4.5 fresh-setup boundary. Two retired storage-test names were removed from the routine nextest filter; its two remaining long tests still run in full local qualification. No source commit was excluded and no SQLite code/dependency was restored. Post-merge checks remain pending. Recheck the remote tip before packaging; no push is authorized.
 
 ## Archived October 25 development checkpoint
 

@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Owned native-service fixtures; no installed runtime or user state is touched.
 #![allow(dead_code)]
+pub mod read_retry;
 use airk_core::service::{
     ControlMethod as Method, ControlResponse as Response, JobKind, JobOutcome, JobRecord,
     ProjectRegistration, RequestKey,
 };
 use std::{
     collections::HashMap,
+    io::{BufRead, BufReader},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{Arc, Mutex, OnceLock, Weak},
@@ -15,6 +17,12 @@ use std::{
 
 type Scope = (PathBuf, PathBuf, String);
 static FIXTURES: OnceLock<Mutex<HashMap<Scope, Weak<Service>>>> = OnceLock::new();
+
+fn diagnostic(stage: &str) {
+    if std::env::var_os("AIRK_PROCESS_DIAGNOSTICS").is_some() {
+        eprintln!("airk-service fixture: {stage}");
+    }
+}
 
 pub struct Service {
     child: Mutex<Child>,
@@ -76,6 +84,7 @@ impl Service {
         let control = owner.path().join("control");
         let project = airk_kernel::service_projects::registration(root, data, collection).unwrap();
         let log = std::fs::File::create(owner.path().join("stderr")).unwrap();
+        let diagnostics = std::env::var_os("AIRK_PROCESS_DIAGNOSTICS").is_some();
         let mut command = native_command();
         if helper {
             #[cfg(feature = "embedding-worker")]
@@ -109,15 +118,29 @@ impl Service {
             #[cfg(not(feature = "embedding-worker"))]
             panic!("helper fixture requires embedding-worker feature");
         }
-        let child = command
+        diagnostic("service process starting");
+        command
             .arg("serve")
             .arg("--runtime-dir")
             .arg(&control)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(log)
-            .spawn()
-            .unwrap();
+            .stderr(if diagnostics {
+                Stdio::piped()
+            } else {
+                Stdio::from(log)
+            });
+        let mut child = command.spawn().unwrap();
+        if diagnostics && let Some(stderr) = child.stderr.take() {
+            std::thread::spawn(move || {
+                for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+                    if line.starts_with("airk-process:") {
+                        eprintln!("airk-service child: {line}");
+                    }
+                }
+            });
+        }
+        diagnostic("service process started; probing health");
         // Install the guard immediately so failed assertions still reap the owned child.
         let service = Arc::new(Self {
             child: Mutex::new(child),
@@ -130,7 +153,12 @@ impl Service {
             .enable_all()
             .build()
             .unwrap();
+        let mut health_probe_logged = false;
         loop {
+            if !health_probe_logged {
+                diagnostic("first health request started");
+                health_probe_logged = true;
+            }
             if matches!(
                 runtime.block_on(airk_cli::service_runtime::request(
                     &service.control,
@@ -138,6 +166,7 @@ impl Service {
                 )),
                 Ok(Response::Health { .. })
             ) {
+                diagnostic("health request returned ready");
                 break;
             }
             assert!(
@@ -151,12 +180,39 @@ impl Service {
             );
             std::thread::sleep(Duration::from_millis(25));
         }
-        assert!(matches!(
-            service.request(Method::Register {
-                project: service.project.clone()
-            }),
-            Response::Registered { .. }
-        ));
+        diagnostic("registration request started");
+        let registered = service.request(Method::Register {
+            project: service.project.clone(),
+        });
+        diagnostic("registration request returned");
+        assert!(
+            matches!(&registered, Response::Registered { project } if project.registration == service.project)
+                || matches!(&registered, Response::Failure { code } if code == "registry_response_unknown_retry_with_key"),
+            "fixture registration failed: {}; stderr: {}",
+            serde_json::to_string(&registered).unwrap(),
+            std::fs::read_to_string(service.owner.path().join("stderr")).unwrap_or_default()
+        );
+        // An explicit unknown response does not prove whether registration
+        // committed. Observe its exact binding; never replay the mutation.
+        loop {
+            let observed = service.request(Method::Projects {
+                after: None,
+                revision: None,
+                limit: 32,
+            });
+            if matches!(&observed, Response::Projects { page } if page.projects.iter().any(|project| project.registration == service.project))
+            {
+                break;
+            }
+            assert!(
+                Instant::now() < until
+                    && matches!(&observed, Response::Failure { code } if matches!(code.as_str(), "registry_busy" | "registry_response_unknown_retry_with_key")),
+                "fixture registration was not observed: {}; initial response: {}",
+                serde_json::to_string(&observed).unwrap(),
+                serde_json::to_string(&registered).unwrap()
+            );
+            std::thread::sleep(Duration::from_millis(25));
+        }
         FIXTURES
             .get_or_init(Default::default)
             .lock()
@@ -175,9 +231,41 @@ impl Service {
     pub fn request(&self, method: Method) -> Response {
         rpc(&self.control, method)
     }
+    // Fixture setup may outlive one bounded metadata response. Only these
+    // read-only operations and receipt-keyed mutations may be repeated, with
+    // the complete original request retained across every attempt. Tests of
+    // failure responses keep using request() directly.
+    pub fn metadata(&self, method: Method, until: Instant) -> Response {
+        assert!(matches!(
+            &method,
+            Method::RequestEpoch
+                | Method::Job { .. }
+                | Method::Plan { .. }
+                | Method::Enqueue { .. }
+                | Method::ConfigureProject { .. }
+                | Method::PlanCreate { .. }
+        ));
+        loop {
+            let response = self.request(method.clone());
+            if matches!(&response, Response::Failure { code } if matches!(code.as_str(), "registry_busy" | "registry_response_unknown_retry_with_key"))
+                && Instant::now() < until
+            {
+                std::thread::sleep(Duration::from_millis(25));
+                continue;
+            }
+            return response;
+        }
+    }
     pub fn key(&self) -> RequestKey {
-        let Response::RequestEpoch { namespace, epoch } = self.request(Method::RequestEpoch) else {
-            panic!("request epoch unavailable")
+        let response = self.metadata(
+            Method::RequestEpoch,
+            Instant::now() + Duration::from_secs(60),
+        );
+        let Response::RequestEpoch { namespace, epoch } = response else {
+            panic!(
+                "request epoch unavailable: {}",
+                serde_json::to_string(&response).unwrap()
+            )
         };
         RequestKey {
             namespace,
@@ -197,24 +285,45 @@ impl Service {
     pub fn wait_outcome(&self, id: airk_core::identity::Sha256Digest) -> JobRecord {
         let until = Instant::now() + Duration::from_secs(90);
         loop {
-            let Response::Job { job } = self.request(Method::Job { id }) else {
-                panic!("job receipt unavailable")
+            let response = self.metadata(Method::Job { id }, until);
+            let Response::Job { job } = response else {
+                panic!(
+                    "job receipt unavailable: {}",
+                    serde_json::to_string(&response).unwrap()
+                )
             };
             if job.outcome.is_some() {
                 return job;
             }
-            assert!(Instant::now() < until, "native job timed out: {job:?}");
+            if Instant::now() >= until {
+                let resources = self.request(Method::Resources);
+                let worker = self.request(Method::Worker {
+                    project: self.project.binding,
+                });
+                let source = self.request(Method::SourceStatus);
+                panic!(
+                    "native job timed out: {job:?}; resources: {}; worker: {}; source: {}",
+                    serde_json::to_string(&resources).unwrap(),
+                    serde_json::to_string(&worker).unwrap(),
+                    serde_json::to_string(&source).unwrap()
+                );
+            }
             std::thread::sleep(Duration::from_millis(25));
         }
     }
     pub fn job(&self, kind: JobKind) -> JobRecord {
-        let Response::Job { job } = self.request(Method::Enqueue {
+        let request = Method::Enqueue {
             project: self.project.binding,
             caller: airk_kernel::service_broker::new_instance_id().unwrap(),
             key: self.key(),
             kind,
-        }) else {
-            panic!("job not accepted")
+        };
+        let response = self.metadata(request, Instant::now() + Duration::from_secs(60));
+        let Response::Job { job } = response else {
+            panic!(
+                "job not accepted: {}",
+                serde_json::to_string(&response).unwrap()
+            )
         };
         self.wait(job.id)
     }
@@ -237,6 +346,10 @@ impl Service {
                                 .clone(),
                         )
                         .await?;
+                    if let Some(retry) = read_retry::within(&envelope, deadline) {
+                        tokio::time::sleep(retry.delay).await;
+                        continue;
+                    }
                     anyhow::ensure!(envelope["isError"] != true, "{envelope}");
                     let status: serde_json::Value =
                         serde_json::from_str(envelope["content"][0]["text"].as_str().unwrap())?;
@@ -266,13 +379,18 @@ impl Service {
                 draft,
             ))
             .unwrap();
-        let Response::Job { job } = self.request(Method::ConfigureProject {
+        let request = Method::ConfigureProject {
             project: self.project.binding,
             caller: airk_kernel::service_broker::new_instance_id().unwrap(),
             key: self.key(),
             request: Box::new(request),
-        }) else {
-            panic!("configuration not accepted")
+        };
+        let response = self.metadata(request, Instant::now() + Duration::from_secs(60));
+        let Response::Job { job } = response else {
+            panic!(
+                "configuration not accepted: {}",
+                serde_json::to_string(&response).unwrap()
+            )
         };
         self.wait(job.id);
     }
@@ -285,19 +403,24 @@ impl Service {
         operation: airk_core::service_maintenance::RepairOperation,
     ) -> airk_core::identity::Sha256Digest {
         use airk_core::service_maintenance::{PlanPhase, RepairRequest, RepairSelection};
-        let Response::Plan { plan } = self.request(Method::PlanCreate {
+        let request = Method::PlanCreate {
             caller: airk_kernel::service_broker::new_instance_id().unwrap(),
             key: self.key(),
             request: RepairRequest {
                 selection: RepairSelection::Selected(vec![self.project.binding]),
                 operation,
             },
-        }) else {
-            panic!("repair preview not accepted")
+        };
+        let response = self.metadata(request, Instant::now() + Duration::from_secs(60));
+        let Response::Plan { plan } = response else {
+            panic!(
+                "repair preview not accepted: {}",
+                serde_json::to_string(&response).unwrap()
+            )
         };
         let until = Instant::now() + Duration::from_secs(90);
         let preview = loop {
-            let Response::Plan { plan } = self.request(Method::Plan { id: plan.id }) else {
+            let Response::Plan { plan } = self.metadata(Method::Plan { id: plan.id }, until) else {
                 panic!("preview lost")
             };
             if plan.phase == PlanPhase::Ready {
@@ -315,7 +438,8 @@ impl Service {
             Response::Plan { .. }
         ));
         loop {
-            let Response::Plan { plan } = self.request(Method::Plan { id: preview.id }) else {
+            let Response::Plan { plan } = self.metadata(Method::Plan { id: preview.id }, until)
+            else {
                 panic!("repair receipt lost")
             };
             if plan.phase == PlanPhase::Finished {
@@ -411,9 +535,93 @@ pub fn call(
     collection: &str,
     args: &[&str],
 ) -> anyhow::Result<serde_json::Value> {
+    call_until(
+        root,
+        data,
+        collection,
+        args,
+        Instant::now() + Duration::from_secs(60),
+    )
+}
+
+pub fn published_status(
+    root: &Path,
+    data: &Path,
+    collection: &str,
+) -> anyhow::Result<serde_json::Value> {
+    let project = airk_kernel::service_projects::registration(root, data, collection)?
+        .binding
+        .to_string();
     let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        let value = call_until(root, data, collection, &["status"], deadline)?;
+        if value["index_state"] == "available" {
+            anyhow::ensure!(
+                value["collection"] == collection
+                    && value["publication"]["token"].is_string()
+                    && value["files"].is_u64(),
+                "available status omitted its scoped publication/count: {value}"
+            );
+            return Ok(value);
+        }
+        anyhow::ensure!(
+            value["index_state"] == "unavailable"
+                && value["publication"].is_null()
+                && value["files"].is_null()
+                && value["chunks"].is_null()
+                && value["index_error"]["message"].is_string(),
+            "invalid status observation: {value}"
+        );
+        let scoped = match value["index_error"]["code"].as_str() {
+            Some("index_status_unavailable") => value["collection"] == collection,
+            Some("index_worker_unavailable") => {
+                let runtime = &value["runtime"];
+                let work = &value["work"];
+                let identity = &work["worker"]["identity"];
+                value["project"] == project
+                    && runtime["service_error"].is_null()
+                    && runtime["service"]["responsive"] == true
+                    && runtime["service"]["accepting"] == true
+                    && runtime["index_worker"]["process"].is_null()
+                    && work["basis"] == "instance_bound_service_metadata"
+                    && work["serving_worker_unavailable"] == true
+                    && work["failed_observations"] == serde_json::json!([])
+                    && work["worker"]["automatic_start_blocked"] == false
+                    && (identity.is_null()
+                        || (identity["project"] == project
+                            && identity["service"] == runtime["service"]["instance"]))
+            }
+            _ => false,
+        };
+        anyhow::ensure!(scoped, "unhealthy or foreign status observation: {value}");
+        anyhow::ensure!(
+            Instant::now() + Duration::from_millis(25) < deadline,
+            "published status remained unavailable: {}",
+            value["index_error"]
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
+fn call_until(
+    root: &Path,
+    data: &Path,
+    collection: &str,
+    args: &[&str],
+    deadline: Instant,
+) -> anyhow::Result<serde_json::Value> {
+    let mut invocation_started = false;
+    let mut invocation_returned = false;
     let output = loop {
+        if !invocation_started {
+            diagnostic("first native CLI invocation started");
+            invocation_started = true;
+        }
         let output = command(root, data, collection).args(args).output()?;
+        if !invocation_returned {
+            diagnostic("native CLI invocation returned");
+            invocation_returned = true;
+        }
         // Evidence commands are read-only. A typed rejection repeats these exact
         // arguments (including revision/cursor); never retry an accepted mutation.
         let read = args.starts_with(&["tools", "call"])
@@ -437,37 +645,7 @@ pub fn call(
                 )
             );
         let delay = if read {
-            serde_json::from_slice::<serde_json::Value>(&output.stdout)
-                .ok()
-                .filter(|envelope| envelope["isError"] == true)
-                .and_then(|envelope| {
-                    serde_json::from_str::<serde_json::Value>(
-                        envelope["content"][0]["text"].as_str()?,
-                    )
-                    .ok()
-                })
-                .filter(|hint| {
-                    (hint["status"] == "retry"
-                        && hint["retryable"] == true
-                        && hint["action"] == "repeat_same_request"
-                        && matches!(
-                            hint["code"].as_str(),
-                            Some("publication_busy" | "selection_busy")
-                        ))
-                        || (matches!(
-                            hint["error"]["code"].as_str(),
-                            Some("direct_query_admission" | "direct_query_setup")
-                        ) && hint["error"]["reason"] == "busy"
-                            && hint["error"]["query_submitted"] == false
-                            && hint["error"]["retryable"] == true)
-                })
-                .and_then(|hint| {
-                    hint["retry_after_ms"]
-                        .as_u64()
-                        .or_else(|| hint["error"]["retry_after_ms"].as_u64())
-                })
-                .filter(|delay| (1..=1000).contains(delay))
-                .map(Duration::from_millis)
+            read_retry::from_output(&output, deadline).map(|retry| retry.delay)
         } else {
             None
         };

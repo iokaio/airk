@@ -86,7 +86,9 @@ fn work<T>(identity: WorkerIdentity, turn: u8, operation: impl FnOnce() -> Resul
 #[test]
 fn source_and_replacement_publish_without_helper_and_semantics_resume_in_bounded_turns()
 -> Result<()> {
-    let owner = tempfile::tempdir()?;
+    // Retained reads require the exact saved spelling, including on hosts
+    // whose temporary directory is a symlink or a Windows short-name alias.
+    let owner = tempfile::tempdir_in(std::env::temp_dir().canonicalize()?)?;
     let source = owner.path().join("source");
     let data = owner.path().join("data");
     let runtime = owner.path().join("runtime");

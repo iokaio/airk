@@ -10,13 +10,26 @@ use std::{
 #[test]
 fn selection_waits_for_short_metadata_handoffs_and_marks_only_real_lock_contention() -> Result<()> {
     let owner = tempfile::tempdir()?;
-    let lease = acquire_file(owner.path(), "manifest.lock")?;
-    let releaser = std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(20));
-        drop(lease);
-    });
-    let selected = manifest_lock(owner.path())?;
-    releaser.join().unwrap();
+    let mut lease = Some(acquire_file(owner.path(), "manifest.lock")?);
+    let mut attempts = 0;
+    // Release only after observing real native contention. Thread startup and
+    // timer coalescing must not determine whether a short handoff fits 100 ms.
+    let selected = retry_manifest_lock(|| {
+        attempts += 1;
+        let acquired = acquire_file(owner.path(), "manifest.lock");
+        if attempts == 1 {
+            assert!(matches!(
+                acquired
+                    .as_ref()
+                    .err()
+                    .and_then(|error| error.downcast_ref::<std::fs::TryLockError>()),
+                Some(std::fs::TryLockError::WouldBlock)
+            ));
+            drop(lease.take());
+        }
+        acquired
+    })?;
+    assert_eq!(attempts, 2);
     let began = Instant::now();
     let error = manifest_lock(owner.path())
         .err()
@@ -26,6 +39,11 @@ fn selection_waits_for_short_metadata_handoffs_and_marks_only_real_lock_contenti
         began.elapsed() >= Duration::from_millis(100) && began.elapsed() < Duration::from_secs(2)
     );
     drop(selected);
+    // Native ownership also releases across threads, independently of how
+    // quickly the operating system schedules that thread.
+    let lease = acquire_file(owner.path(), "manifest.lock")?;
+    std::thread::spawn(move || drop(lease)).join().unwrap();
+    drop(manifest_lock(owner.path())?);
     fs::write(
         owner.path().join("manifest.lock"),
         b"unknown original bytes",

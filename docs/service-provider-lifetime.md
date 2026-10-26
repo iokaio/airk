@@ -1,5 +1,7 @@
 # Service provider lifetime
 
+In 1.4.4, owned Unix cleanup first checks for a waitable leader and an empty process group. If that proof is incomplete, it attempts one signal after independently rechecking ownership, then polls fresh completion observations within the original deadline. Native signal and observation errors do not authorize reaping. At expiry, the signal error, latest observation error, or timeout is returned with ownership retained. This handles macOS zombie-only groups, which can reject a group signal with `EPERM`, without releasing live descendants or treating permission denial as success.
+
 The default 1.4.0 service uses the existing `airk` executable in a private Unix guardian role for each admitted extraction provider, including the PDF subprocess. This adds a process role without adding a third deployed executable. Windows retains native Job Object containment. Providers must remain in their private group; these mechanisms are lifetime ownership for trusted providers, not a sandbox.
 
 The project worker passes three pipe endpoints and a duplicate of its native project-lease file description over a private socket pair. Provider stdin, stdout and stderr connect directly to the worker. The guardian receives bounded command metadata and lifecycle requests; it never forwards source or extraction bodies. It starts before any async runtime and does not load an inference model. Existing parser CPU/address-space limits still apply, with the existing macOS physical-memory observation policy.

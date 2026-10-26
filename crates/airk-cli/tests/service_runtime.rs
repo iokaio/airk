@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Native process election/control uses its own private fixture, never an installed service.
+#[path = "common/read_retry.rs"]
+mod read_retry;
 use anyhow::{Context, Result, ensure};
+use read_retry::ReadRetry;
 use serde_json::Value;
 use std::{
     fs,
@@ -609,7 +612,7 @@ fn missing_registered_source_still_brokers_retained_evidence_and_reports_a_typed
         let mut connection =
             airk_cli::project_client::Connection::connect(&runtime, project.binding).await?;
         let result = connection
-            .call(
+            .read_retry(
                 "airk_search".into(),
                 serde_json::json!({"query":"copper harbor", "mode":"lexical"})
                     .as_object()
@@ -628,7 +631,7 @@ fn missing_registered_source_still_brokers_retained_evidence_and_reports_a_typed
         ensure!(body(result)?.get("freshness").is_some(), "first client observation missing");
         let stable_until = tokio::time::Instant::now() + Duration::from_secs(10);
         loop {
-            let sampled = body(connection.call("airk_search".into(), serde_json::json!({"query":"copper harbor","mode":"lexical","include_status":true}).as_object().unwrap().clone()).await?)?;
+            let sampled = body(connection.read_retry("airk_search".into(), serde_json::json!({"query":"copper harbor","mode":"lexical","include_status":true}).as_object().unwrap().clone()).await?)?;
             if sampled["freshness"]["state"] == "unregistered" { break }
             ensure!(tokio::time::Instant::now() < stable_until, "service freshness was not forwarded: {sampled}");
             tokio::time::sleep(Duration::from_millis(50)).await;
@@ -639,10 +642,10 @@ fn missing_registered_source_still_brokers_retained_evidence_and_reports_a_typed
         let arguments = serde_json::json!({"query":"copper harbor", "mode":"lexical"}).as_object().unwrap().clone();
         let mut renewed = airk_cli::project_client::Connection::connect(&runtime, project.binding).await?;
         renewed.restore_status_receipt(receipt);
-        let repeated = body(renewed.call("airk_search".into(), arguments.clone()).await?)?;
+        let repeated = body(renewed.read_retry("airk_search".into(), arguments.clone()).await?)?;
         ensure!(repeated.get("freshness").is_none(), "renewal forgot client observations");
         let mut independent = airk_cli::project_client::Connection::connect(&runtime, project.binding).await?;
-        let independent = body(independent.call("airk_search".into(), arguments).await?)?;
+        let independent = body(independent.read_retry("airk_search".into(), arguments).await?)?;
         ensure!(independent.get("freshness").is_some(), "another client suppressed initial status");
         ensure!(repeated["publication"]["token"] == independent["publication"]["token"], "display state changed revision identity");
         drop(renewed);
@@ -677,7 +680,7 @@ fn missing_registered_source_still_brokers_retained_evidence_and_reports_a_typed
                 let fresh_until = tokio::time::Instant::now() + Duration::from_secs(10);
                 let mut cached = airk_cli::project_client::Connection::connect(&runtime, project.binding).await?;
                 loop {
-                    let sampled = body(cached.call("airk_search".into(), serde_json::json!({"query":"copper harbor","mode":"lexical","include_status":true}).as_object().unwrap().clone()).await?)?;
+                    let sampled = body(cached.read_retry("airk_search".into(), serde_json::json!({"query":"copper harbor","mode":"lexical","include_status":true}).as_object().unwrap().clone()).await?)?;
                     if sampled["freshness"]["state"] == "failed" {
                         ensure!(sampled["freshness"]["source_job"] == job.id.to_string() && sampled["freshness"]["error"] == "source_unavailable", "source failure lost attempt identity: {sampled}");
                         break;
@@ -936,7 +939,7 @@ fn service_watcher_owns_nested_changes_pause_and_restart_without_editor_events()
         let mut connection =
             airk_cli::project_client::Connection::connect(&root, project.binding).await?;
         let evidence = connection
-            .call(
+            .read_retry(
                 "airk_search".into(),
                 serde_json::json!({"query":"copper lighthouse","mode":"lexical","max_bytes":4096})
                     .as_object()
@@ -968,7 +971,7 @@ fn service_watcher_owns_nested_changes_pause_and_restart_without_editor_events()
         let until = tokio::time::Instant::now() + Duration::from_secs(60);
         loop {
             let mut connection = airk_cli::project_client::Connection::connect(&root, project.binding).await?;
-            let evidence = connection.call("airk_search".into(), serde_json::json!({"query":"lavender signal","mode":"lexical","max_bytes":4096}).as_object().unwrap().clone()).await?;
+            let evidence = connection.read_retry("airk_search".into(), serde_json::json!({"query":"lavender signal","mode":"lexical","max_bytes":4096}).as_object().unwrap().clone()).await?;
             if evidence.to_string().contains("original.txt") { break; }
             ensure!(tokio::time::Instant::now() < until, "restart did not reconcile changes saved without an editor");
             tokio::time::sleep(Duration::from_millis(100)).await;
@@ -1283,10 +1286,17 @@ fn probe_stdio_bridge(root: &Path, project: airk_core::service::ProjectBinding) 
                     .all(|tool| tool["annotations"]["readOnlyHint"] == true),
             "bridge exposed a management tool"
         );
-        send(
-            &serde_json::json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"airk_search","arguments":{"query":"cobalt harbor","mode":"lexical","max_bytes":4096}}}),
-        )?;
-        let evidence = receiver.recv_timeout(Duration::from_secs(10))?;
+        let query = serde_json::json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"airk_search","arguments":{"query":"cobalt harbor","mode":"lexical","max_bytes":4096}}});
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let evidence = loop {
+            send(&query)?;
+            let reply =
+                receiver.recv_timeout(deadline.saturating_duration_since(Instant::now()))?;
+            let Some(retry) = read_retry::within(&reply["result"], deadline) else {
+                break reply;
+            };
+            std::thread::sleep(retry.delay);
+        };
         ensure!(
             evidence["id"] == 3 && evidence.to_string().contains("original.txt"),
             "stdio bridge did not preserve evidence"
@@ -1653,7 +1663,7 @@ fn supervised_jobs_and_direct_queries_preserve_grants_and_stop_on_service_loss()
                 .context("invalid fixture query")?
                 .clone();
         let result = connection
-            .call("airk_search".into(), arguments.clone())
+            .read_retry("airk_search".into(), arguments.clone())
             .await?;
         ensure!(
             result.get("isError").and_then(Value::as_bool) != Some(true),
@@ -1711,7 +1721,7 @@ fn supervised_jobs_and_direct_queries_preserve_grants_and_stop_on_service_loss()
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
         let replaced = connection
-            .call("airk_search".into(), arguments.clone())
+            .read_retry("airk_search".into(), arguments.clone())
             .await?;
         ensure!(
             replaced.get("isError").and_then(Value::as_bool) != Some(true)
@@ -2300,7 +2310,7 @@ fn denied_registered_source_keeps_direct_queries_and_fails_new_work_without_data
         let mut connection =
             airk_cli::project_client::Connection::connect(&runtime, project.binding).await?;
         let result = connection
-            .call(
+            .read_retry(
                 "airk_search".into(),
                 serde_json::json!({"query":"copper", "mode":"lexical"})
                     .as_object()
@@ -2736,6 +2746,17 @@ fn identity_bound_project_restart_preserves_other_workers_and_unavailable_source
     wait_ready(&runtime)?;
     tokio::runtime::Builder::new_current_thread().enable_all().build()?.block_on(async {
         let request = |method| airk_cli::service_runtime::request(&runtime,method);
+        // This scenario requires two simultaneous resident workers. A small
+        // host's default Balanced policy intentionally admits only one.
+        let configured = request(Method::ConfigureResources {
+            configuration: airk_core::service_resources::ResourceConfiguration {
+                memory_bytes: Some(4 << 30),
+                extraction_threads: Some(1),
+                ..Default::default()
+            },
+        }).await?;
+        ensure!(matches!(&configured, Response::Resources { observation, configuration_error: false, .. }
+            if observation.resident_limit >= 2), "two-worker fixture admission unavailable: {}", serde_json::to_string(&configured)?);
         let Response::RequestEpoch { namespace, epoch } = request(Method::RequestEpoch).await? else { anyhow::bail!("epoch missing") };
         for project in &projects {
             request(Method::Register { project: project.clone() }).await?;
@@ -2754,7 +2775,8 @@ fn identity_bound_project_restart_preserves_other_workers_and_unavailable_source
         }
         let mut identities = Vec::new();
         for project in &projects {
-            let Response::Connection { grant, .. } = request(Method::Connect { project: project.binding }).await? else { anyhow::bail!("worker not connected") };
+            let response = request(Method::Connect { project: project.binding }).await?;
+            let Response::Connection { grant, .. } = response else { anyhow::bail!("worker not connected: {}", serde_json::to_string(&response)?) };
             identities.push(grant.identity);
         }
         let mut unaffected = airk_cli::project_client::Connection::connect(&runtime,projects[1].binding).await?;
@@ -2783,7 +2805,7 @@ fn identity_bound_project_restart_preserves_other_workers_and_unavailable_source
         let mut retained = airk_cli::project_client::Connection::connect(&runtime,old.project).await?;
         let arguments = serde_json::json!({"query":"copper beacon","mode":"lexical"}).as_object().unwrap().clone();
         for connection in [&mut unaffected,&mut retained] {
-            let result = connection.call("airk_search".into(),arguments.clone()).await?;
+            let result = connection.read_retry("airk_search".into(),arguments.clone()).await?;
             ensure!(result.get("isError").and_then(Value::as_bool)!=Some(true) && result.to_string().contains("memo.txt"),"restart lost retained citation: {result}");
         }
         ensure!(fs::read(moved.join("memo.txt"))?==b"Copper beacon original restart fixture.\n","restart changed source bytes");

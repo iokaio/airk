@@ -7,11 +7,37 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import {LaunchSpec,launchArgs} from '../model';
 import {runText} from '../native';
+import {readNative} from './nativeReadRetry';
 import {NativeControlTransport,RecordValue,ServiceClient,record,JobKind,ServiceError} from '../serviceClient';
 
 export function nativePayloadDirectory(binary:string):string {
     const directory=path.dirname(path.resolve(binary)),contents=path.dirname(directory),app=path.dirname(contents);
     return path.basename(directory)==='MacOS'&&path.basename(contents)==='Contents'&&path.basename(app)==='AIRK.app'?path.dirname(app):directory;
+}
+
+/** A diagnostic observation cannot substitute for a scoped publication snapshot. */
+export function publishedStatusPending(status:RecordValue,collection:string,project:string):boolean {
+    if(status.index_state==='available'){
+        assert.equal(status.collection,collection);
+        assert.equal(typeof record(status.publication).token,'string');
+        assert.ok(Number.isSafeInteger(status.files)&&Number(status.files)>=0);
+        return false;
+    }
+    assert.equal(status.index_state,'unavailable');
+    assert.equal(status.publication,null);assert.equal(status.files,null);assert.equal(status.chunks,null);
+    const observation=record(status.index_error);
+    assert.equal(typeof observation.message,'string');
+    if(observation.code==='index_status_unavailable')assert.equal(status.collection,collection);
+    else{
+        assert.equal(observation.code,'index_worker_unavailable');assert.equal(status.project,project);
+        const runtime=record(status.runtime),work=record(status.work),worker=record(work.worker),service=record(runtime.service);
+        assert.equal(runtime.service_error,null);assert.equal(service.responsive,true);assert.equal(service.accepting,true);
+        assert.equal(work.basis,'instance_bound_service_metadata');assert.equal(work.serving_worker_unavailable,true);
+        assert.deepEqual(work.failed_observations,[]);assert.equal(worker.automatic_start_blocked,false);
+        assert.equal(record(runtime.index_worker).process,null);
+        if(worker.identity!==null){const identity=record(worker.identity);assert.equal(identity.project,project);assert.equal(identity.service,service.instance);}
+    }
+    return true;
 }
 
 export class NativeServiceFixture {
@@ -23,7 +49,9 @@ export class NativeServiceFixture {
         const fixture=new NativeServiceFixture(path.resolve(binary),owner,path.join(owner,'i'));
         try{
             const source=nativePayloadDirectory(fixture.binary),bytes=await fs.readFile(path.join(source,'airk-install.json'));
-            const manifest=JSON.parse(bytes.toString());assert.equal(manifest.version,'1.4.0');
+            const manifest=JSON.parse(bytes.toString());
+            const extension=JSON.parse(await fs.readFile(path.resolve(__dirname,'../../package.json'),'utf8'));
+            assert.equal(manifest.version,extension.version);
             await fixture.run(['runtime','managed','--source',source,'--install-dir',fixture.install,
                 '--state-dir',path.join(owner,'s'),'--approved-sha256',createHash('sha256').update(bytes).digest('hex'),
                 '--verification-basis','organization-digest','--lifecycle','user-on-demand'],180000);
@@ -55,12 +83,24 @@ export class NativeServiceFixture {
         return {command:this.launcher,root:String(registration.root),dataDir:String(registration.data_root),collection:name,name,
             service:{installDir:this.install,project}};
     }
-    async tool(spec:LaunchSpec,name:string,args:RecordValue={}):Promise<RecordValue>{
+    async tool(spec:LaunchSpec,name:string,args:RecordValue={},deadline?:number):Promise<RecordValue>{
         process.stderr.write(`[native fixture] tool ${name}\n`);
-        const envelope=record(JSON.parse(await runText(spec.command,[...launchArgs(spec,'tools'),'call',name,'--args',
-            JSON.stringify({response_mode:'full',...args})],path.dirname(spec.command),120000)));
+        const envelope=record(await readNative(spec.command,[...launchArgs(spec,'tools'),'call',name,'--args',
+            JSON.stringify({response_mode:'full',...args})],path.dirname(spec.command),deadline));
         assert.notEqual(envelope.isError,true);assert.ok(Array.isArray(envelope.content));
         return record(JSON.parse(String(record(envelope.content[0]).text)));
+    }
+    async publishedStatus(spec:LaunchSpec,deadline=performance.now()+120000):Promise<RecordValue>{
+        let unavailable:RecordValue|undefined;
+        while(performance.now()<deadline){
+            const status=await this.tool(spec,'airk_status',{},deadline);
+            if(!publishedStatusPending(status,spec.collection,spec.service!.project))return status;
+            const observation=record(status.index_error);
+            if(unavailable===undefined)process.stderr.write(`[native fixture] waiting for published status: ${JSON.stringify(observation)}\n`);
+            unavailable=observation;
+            await new Promise(resolve=>setTimeout(resolve,25));
+        }
+        throw new Error(`Published status remained unavailable: ${JSON.stringify(unavailable)}`);
     }
     async settings(spec:LaunchSpec,view:string):Promise<RecordValue>{
         return record(JSON.parse(await runText(spec.command,[...launchArgs(spec,'settings'),view],path.dirname(spec.command),120000)));
@@ -104,9 +144,9 @@ export class NativeServiceFixture {
         const job=await this.waitJob(String(record(accepted.job).id));assert.equal(job.state,'succeeded',JSON.stringify(job));return job;
     }
     async ready(spec:LaunchSpec,files:number):Promise<RecordValue>{
-        const deadline=Date.now()+180000;
-        while(Date.now()<deadline){
-            const status=await this.tool(spec,'airk_status'),readiness=record(status.semantic_readiness);
+        const deadline=performance.now()+180000;
+        while(performance.now()<deadline){
+            const status=await this.publishedStatus(spec,deadline),readiness=record(status.semantic_readiness);
             if(readiness.state==='ready'&&readiness.completed_artifacts===files)return status;
             await new Promise(resolve=>setTimeout(resolve,50));
         }
