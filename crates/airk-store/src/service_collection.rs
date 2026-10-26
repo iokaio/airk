@@ -37,9 +37,15 @@ impl std::fmt::Display for SelectionContention {
 impl std::error::Error for SelectionContention {}
 
 fn manifest_lock(directory: &Path) -> Result<super::OwnershipFile> {
+    retry_manifest_lock(|| acquire_file(directory, "manifest.lock"))
+}
+
+fn retry_manifest_lock(
+    mut acquire: impl FnMut() -> Result<super::OwnershipFile>,
+) -> Result<super::OwnershipFile> {
     let deadline = std::time::Instant::now() + std::time::Duration::from_millis(100);
     loop {
-        match acquire_file(directory, "manifest.lock") {
+        match acquire() {
             Ok(lease) => return Ok(lease),
             Err(error)
                 if matches!(

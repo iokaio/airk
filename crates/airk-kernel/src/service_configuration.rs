@@ -194,8 +194,8 @@ mod tests {
     #[test]
     fn guarded_scan_limit_reset_removes_only_the_override_and_invalidates_the_old_guard()
     -> Result<()> {
-        let source = tempfile::tempdir()?;
-        let data = tempfile::tempdir()?;
+        let source = crate::unlinked_tempdir()?;
+        let data = crate::unlinked_tempdir()?;
         std::fs::write(
             source.path().join("original.txt"),
             b"original scan reset fixture",
@@ -247,7 +247,7 @@ mod tests {
             identity::Sha256Digest, model_objects::ModelAssetName, service_configuration::InputFile,
         };
         use sha2::{Digest, Sha256};
-        let owner = tempfile::tempdir()?;
+        let owner = crate::unlinked_tempdir()?;
         let source = owner.path().join("source");
         let data = owner.path().join("data");
         let runtime = owner.path().join("runtime");
@@ -324,7 +324,7 @@ mod tests {
     }
     #[test]
     fn settings_guard_refuses_stale_configuration_and_preserves_original_sources() -> Result<()> {
-        let owner = tempfile::tempdir()?;
+        let owner = crate::unlinked_tempdir()?;
         let source = owner.path().join("source");
         let data = owner.path().join("data");
         std::fs::create_dir(&source)?;

@@ -64,7 +64,7 @@ impl RemoteSession for FakeHelper {
 #[test]
 fn service_calibration_rejects_changed_helper_definition_before_counting_or_recording() -> Result<()>
 {
-    let owner = tempfile::tempdir()?;
+    let owner = tempfile::tempdir_in(std::env::temp_dir().canonicalize()?)?;
     let source = owner.path().join("source");
     let data = owner.path().join("data");
     let runtime = owner.path().join("runtime");

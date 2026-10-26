@@ -128,7 +128,7 @@ mod tests {
     #[test]
     fn first_lexical_publish_and_shared_metadata_work_without_an_inference_connector() -> Result<()>
     {
-        let owner = tempfile::tempdir()?;
+        let owner = crate::unlinked_tempdir()?;
         let source = owner.path().join("source");
         let data = owner.path().join("data");
         let runtime = owner.path().join("runtime");

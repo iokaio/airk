@@ -20,6 +20,21 @@ fn paused_unregister_drains_idle_clients_preserves_settings_and_other_projects_a
     fs::write(a.path().join("original.rs"), original_a)?;
     fs::write(b.path().join("other.rs"), original_b)?;
     let service = common::Service::start(a.path(), data.path(), "unregister-a");
+    // This scenario keeps direct clients for two projects alive together.
+    // Small hosts intentionally admit only one resident under default policy.
+    let configured = service.request(Method::ConfigureResources {
+        configuration: airk_core::service_resources::ResourceConfiguration {
+            memory_bytes: Some(4 << 30),
+            extraction_threads: Some(1),
+            ..Default::default()
+        },
+    });
+    ensure!(
+        matches!(&configured, Response::Resources { observation, configuration_error: false, .. }
+        if observation.resident_limit >= 2),
+        "two-worker fixture admission unavailable: {}",
+        serde_json::to_string(&configured)?
+    );
     service.configure(airk_cli::service_configuration::Draft::Vectors { enabled: false });
     service.job(JobKind::Index);
     let other = airk_kernel::service_projects::registration(b.path(), data.path(), "unregister-b")?;
