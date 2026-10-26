@@ -116,6 +116,18 @@ fn cli_and_mcp_recover_captured_updates_after_process_exit_and_expire_old_tokens
                 "LIVE_UNINDEXED_SENTINEL\n",
             )?;
             let _service = common::Service::in_owner(root.path(), data.path(), "project-a", owner);
+            // Worker startup queues recovery as durable service work. Hold its
+            // admission while checking what an ordinary read may observe.
+            ensure!(
+                matches!(
+                    _service.request(airk_core::service::ControlMethod::Pause {
+                        project: _service.project.binding,
+                        paused: true,
+                    }),
+                    airk_core::service::ControlResponse::Registered { project } if project.paused
+                ),
+                "recovery fixture did not pause"
+            );
             let recovered: Value = if mcp {
                 let mut session = Session::start(root.path(), data.path())?;
                 session.send(json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"recovery-fixture","version":"1"}}}))?;
@@ -190,7 +202,17 @@ fn cli_and_mcp_recover_captured_updates_after_process_exit_and_expire_old_tokens
                     .unwrap()
                     .parse()?;
             // Opening a read-only connection cannot authorize prepared replay.
-            assert_eq!(observed, old);
+            assert_eq!(observed, old, "{boundary}, mcp={mcp}");
+            ensure!(
+                matches!(
+                    _service.request(airk_core::service::ControlMethod::Pause {
+                        project: _service.project.binding,
+                        paused: false,
+                    }),
+                    airk_core::service::ControlResponse::Registered { project } if !project.paused
+                ),
+                "recovery fixture did not resume"
+            );
             _service.job(airk_core::service::JobKind::Recover);
             let recovered = common::call(
                 root.path(),
