@@ -18,10 +18,16 @@ export function App() {
     const [palette, setPalette] = useState(false);
     const [pill, setPill] = useState(false);
     const [incoming, setIncoming] = useState<{ query: string; serial: number }>();
+    const [inspectRef, setInspectRef] = useState<string>();
+    const [publications, setPublications] = useState<{ token: string; observedAt: number }[]>([]);
 
     useEffect(() => {
         const stop = onHost(message => {
-            if (message.type === 'state') { setState(message.state); }
+            if (message.type === 'state') {
+                setState(message.state);
+                const token = message.state.status?.publication;
+                if (token) { setPublications(prior => prior.some(entry => entry.token === token) ? prior : [{ token, observedAt: Date.now() }, ...prior].slice(0, 20)); }
+            }
             else if (message.type === 'navigate') { const next = parseRoute(message.route); if (next) { setRoute(next); } }
             else if (message.type === 'search') { setRoute({ workspace: 'search', tab: 'query' }); setIncoming(prior => ({ query: message.query, serial: (prior?.serial ?? 0) + 1 })); }
         });
@@ -59,7 +65,8 @@ export function App() {
                 <main class="content" aria-label={WORKSPACES.find(entry => entry.id === route.workspace)?.title}>
                     {route.workspace === 'overview'
                         ? <Overview state={state} project={project} go={go} />
-                        : <WorkspaceView route={route} state={state} go={go} incoming={incoming} />}
+                        : <WorkspaceView route={route} state={state} go={go} incoming={incoming} inspectRef={inspectRef} publications={publications}
+                            inspect={ref => { setInspectRef(ref); go({ workspace: 'evidence', tab: 'inspector' }); }} />}
                 </main>
             </div>
             {palette && <Palette state={state} go={go} close={() => setPalette(false)} />}

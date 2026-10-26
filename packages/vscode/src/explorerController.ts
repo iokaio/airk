@@ -9,6 +9,7 @@ import { FEATURES } from './explorerFeatures';
 import { ExplorerPanel } from './explorerPanel';
 import { formatRoute, parseRoute } from './explorerRoutes';
 import { continueFacts, FactHandles, runFacts, scoped } from './explorerFacts';
+import { changesSince, checkCitations, inspect } from './explorerInspect';
 import { passageView, RefRegistry, searchArgs, searchView } from './explorerSearch';
 import { headline, statusSummary } from './explorerStatus';
 import { displayPath } from './explorerSource';
@@ -294,6 +295,19 @@ export class ExplorerController implements vscode.Disposable {
                     args: scoped({ limit: typed.limit, max_bytes: 32768, ...(typed.kind !== 'any' ? { kind: typed.kind } : {}),
                         ...(typed.name?.trim() ? { name: typed.name.trim() } : {}) }, typed.pathPrefix) });
             }
+            case 'evidence.inspect': {
+                const typed = message as WebviewMessageOf<'evidence.inspect'>, project = this.requireProject();
+                return inspect(this.session(), this.refs, project, typed.ref, dirtyFile);
+            }
+            case 'evidence.check': {
+                const typed = message as WebviewMessageOf<'evidence.check'>, project = this.requireProject();
+                return checkCitations(this.session(), this.refs, project, typed.text, dirtyFile);
+            }
+            case 'evidence.changes': {
+                const typed = message as WebviewMessageOf<'evidence.changes'>;
+                this.requireProject();
+                return changesSince(this.session(), typed.since, typed.limit);
+            }
             case 'list.more': {
                 const typed = message as WebviewMessageOf<'list.more'>;
                 return continueFacts(this.session(), this.facts, this.requireProject(), typed.more);
@@ -311,6 +325,12 @@ export class ExplorerController implements vscode.Disposable {
         for (const listener of this.listeners.splice(0)) { listener.dispose(); }
         this.snapshotListeners.clear();
     }
+}
+
+/** True when an open editor holds unsaved edits for this file. */
+function dirtyFile(file: string): boolean {
+    const fold = (value: string) => process.platform === 'win32' ? value.toLowerCase() : value;
+    return vscode.workspace.textDocuments.some(document => document.uri.scheme === 'file' && fold(document.uri.fsPath) === fold(file) && document.isDirty);
 }
 
 export function failure(error: unknown): ExplorerError {

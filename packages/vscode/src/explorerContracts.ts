@@ -145,6 +145,83 @@ export interface FactListView {
     readonly notes: readonly string[];
 }
 
+/** One file's indexed record compared with its saved bytes (Evidence › Inspector). */
+export interface InspectView {
+    readonly ref: string;
+    readonly path: string;
+    readonly startLine: number;
+    readonly endLine: number;
+    readonly contentHash: string;
+    readonly publication?: string;
+    readonly live: LiveCheck;
+    readonly liveMessage: string;
+    readonly language?: string;
+    readonly parseStatus?: string;
+    readonly lineBasis?: string;
+    readonly extractionMethod?: string;
+    readonly indexedLines?: number;
+    readonly sourceBytes?: number;
+    readonly chunks?: number;
+    readonly facts?: number;
+    readonly sourceRoot?: string;
+}
+
+export type CitationStatus = 'valid' | 'changed_since_index' | 'not_saved' | 'missing' | 'not_found' | 'line_out_of_range' | 'outside_collection';
+export interface CitationResult {
+    readonly text: string;
+    readonly path: string;
+    readonly startLine: number;
+    readonly endLine: number;
+    readonly status: CitationStatus;
+    readonly message: string;
+    readonly ref?: string;
+}
+export interface CitationCheckView {
+    /** False when the text contains no supported citation: prose alone is never a pass. */
+    readonly supported: boolean;
+    readonly citations: readonly CitationResult[];
+    /** True when more citations were present than one check examines. */
+    readonly limited: boolean;
+    readonly publication?: string;
+}
+
+export interface ChangeItemView { readonly path?: string; readonly subject: string; readonly causes: readonly string[]; readonly dimensions: readonly string[]; readonly observations?: number }
+export interface ChangesView {
+    readonly since: string;
+    readonly baseline: string;
+    readonly status: string;
+    readonly items: readonly ChangeItemView[];
+    readonly truncated: boolean;
+    readonly publication?: string;
+    readonly coverage: readonly string[];
+}
+
+/** A citation parsed from free text, e.g. "src/a.ts:12", "src/a.ts:12-20", "src/a.ts#L12-L20". */
+export interface ParsedCitation { readonly text: string; readonly path: string; readonly startLine: number; readonly endLine: number; readonly absolute: boolean }
+const CITATION = /(?<![\w@.\\/-])((?:[A-Za-z]:[\\/]|\/)?(?:[\w@.-]+[\\/])*[\w@.-]+\.[A-Za-z0-9]+)(?::(\d{1,7})(?:\s*[-–]\s*(\d{1,7}))?|#L(\d{1,7})(?:-L?(\d{1,7}))?)/g;
+
+/** Extract supported citations; URLs and bare prose are ignored. At most `limit` unique citations are returned. */
+export function parseCitations(text: string, limit = 50): { citations: ParsedCitation[]; limited: boolean } {
+    const seen = new Set<string>(), citations: ParsedCitation[] = [];
+    let limited = false;
+    const input = text.slice(0, 65536);
+    for (const match of input.matchAll(CITATION)) {
+        const at = match.index ?? 0;
+        // Skip anything inside a URL ("https://host/path/file.ts:3").
+        if (/[a-z][a-z0-9+.-]*:\/\/\S*$/i.test(input.slice(Math.max(0, at - 200), at))) { continue; }
+        const raw = match[1].replaceAll('\\', '/');
+        const start = Number(match[2] ?? match[4]), end = Number(match[3] ?? match[5] ?? start);
+        if (!start) { continue; }
+        const absolute = /^([A-Za-z]:\/|\/)/.test(raw) || raw.split('/').includes('..');
+        const key = `${raw}:${start}:${end}`;
+        if (seen.has(key)) { continue; }
+        if (citations.length >= limit) { limited = true; break; }
+        seen.add(key);
+        citations.push({ text: match[0], path: raw.replace(/^\.\//, ''), startLine: start, endLine: Math.max(start, end), absolute });
+    }
+    return { citations, limited };
+}
+
 // ---- Webview → host messages. Each field is validated strictly; unknown keys are rejected.
 type FieldSpec =
     | { readonly kind: 'string'; readonly max: number; readonly min?: number; readonly pattern?: RegExp; readonly optional?: boolean }
@@ -177,6 +254,9 @@ export const WEBVIEW_MESSAGES = {
     'code.relationships': { symbol: REF, direction: { kind: 'enum', values: ['incoming', 'outgoing'] }, hops: { kind: 'int', min: 1, max: 3 }, limit: { kind: 'int', min: 1, max: 100 } },
     'code.outline': { ref: { ...REF, optional: true } },
     'list.more': { more: REF },
+    'evidence.inspect': { ref: REF },
+    'evidence.check': { text: { kind: 'string', min: 1, max: 65536 } },
+    'evidence.changes': { since: { kind: 'string', min: 9, max: 256, pattern: /^airk-r1:[0-9A-Za-z:_-]+$/ }, limit: { kind: 'int', min: 1, max: 100 } },
     'docs.facts': {
         kind: { kind: 'enum', values: ['any', 'requirement', 'decision', 'design', 'architecture', 'feature', 'acceptance', 'date', 'section', 'table_row', 'table_cell'] },
         name: { kind: 'string', max: 256, optional: true }, pathPrefix: { kind: 'string', max: 1024, optional: true }, limit: { kind: 'int', min: 1, max: 100 },
