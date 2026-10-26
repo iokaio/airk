@@ -1,6 +1,6 @@
 # AIRK documentation
 
-The current 1.4.4 follow-up corrects Unix cleanup ordering for naturally exited children while retaining exact child and descendant-exit proof. Routine CI keeps correctness/build/package checks; long workload and performance campaigns are available through explicit [CI qualification](ci-and-builds.md).
+The current 1.4.4 follow-up corrects Unix cleanup ordering for naturally exited children while retaining exact child and descendant-exit proof. Routine CI keeps correctness/build/package checks, uses lightweight default features for focused Windows/macOS regressions, and bounds independent native fixture concurrency. Long workload and performance campaigns are available through explicit [CI qualification](ci-and-builds.md).
 
 1.4.4 also creates staged Windows runtime directories with explicit current-user ownership and owner-only access, including nested payload directories, so elevated installations satisfy the same strict ownership checks. Installed macOS runtime validation, self-test and retirement read the complete app payload from its outer root. Cold service starts coordinate registration-metadata setup before source watching.
 

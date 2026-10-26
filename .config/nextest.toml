@@ -33,3 +33,12 @@ threads-required = 2
 filter = 'package(airk-kernel) | package(airk-store) | package(airk-retrieval)'
 test-group = "storage-heavy"
 
+
+# These integration binaries contain complete owned native service/process fixtures.
+# Their internal concurrency remains tested; unrelated library cases stay parallel.
+[test-groups.native-service]
+max-threads = 1
+
+[[profile.ci.overrides]]
+filter = 'package(airk-cli) & (binary(native_read_retry) | binary(legacy_native) | binary(pdf_worker) | binary(unix_guardian))'
+test-group = "native-service"
