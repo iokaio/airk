@@ -104,7 +104,8 @@
           "id": "airk.service",
           "name": "Service Console",
           "type": "webview",
-          "visibility": "collapsed"
+          "visibility": "collapsed",
+          "when": "config.airk.explorer.showServiceConsole"
         },
         {
           "id": "airk.collectionsView",
@@ -122,7 +123,7 @@
           {
             "id": "airk.indexStep",
             "title": "Index this workspace",
-            "description": "AIRK registers trusted roots with the per-user native service. If needed, use [Manage Workspace Trust](command:workbench.trust.manage). Review the source, collection and separate index storage before registration. Choose manual indexing or automatic watching; native watching continues after editor windows close. [Choose Index Storage Folder](command:airk.chooseStorage) reviews a new storage binding and preserves previous indexes.\n[Index Now](command:airk.index)\n[Open Service Console](command:airk.serviceConnect) to inspect cached readiness, native jobs and failures.",
+            "description": "AIRK registers trusted roots with the per-user native service. If needed, use [Manage Workspace Trust](command:workbench.trust.manage). Review the source, collection and separate index storage before registration. Choose manual indexing or automatic watching; native watching continues after editor windows close. [Choose Index Storage Folder](command:airk.chooseStorage) reviews a new storage binding and preserves previous indexes.\n[Index Now](command:airk.index)\n[Open AIRK Explorer](command:airk.explorer.open) to inspect readiness, native jobs and failures in Management.",
             "media": {
               "image": "images/index-to-context.png",
               "altText": "Saved files become a published index before an agent retrieves evidence."
@@ -491,6 +492,12 @@
             "default": "",
             "markdownDescription": "Optional absolute writable state directory for the organization runtime. Workspace values are ignored.",
             "scope": "machine"
+          },
+          "airk.explorer.showServiceConsole": {
+            "type": "boolean",
+            "default": false,
+            "scope": "machine",
+            "markdownDescription": "Show the legacy **Service Console** view in the AIRK activity bar. Its controls now live in **AIRK Explorer › Management**; this view is kept for one release and will be removed."
           }
         }
       },

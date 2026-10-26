@@ -785,6 +785,8 @@ The maintainer decided every item on 26 October 2026. Implementation is phases P
 
 ## Appendix B. Service Console → Management parity checklist
 
+**Status (1.5.0):** implemented. `packages/vscode/src/explorerCommands.ts` maps each former console command to its tab, `MANAGE_ACTIONS` equals the console's own action allowlist, and `explorerParity.test.ts` checks both. The legacy view is hidden behind `airk.explorer.showServiceConsole`.
+
 Management is at parity when every row below works from its tab, with the same confirmations and receipts as today. Only then can `airk.service` be hidden and the commands redirected.
 
 | Current console action or command | Management route |
