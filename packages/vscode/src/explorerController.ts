@@ -95,6 +95,8 @@ export class ExplorerController implements vscode.Disposable {
             ...(this.status && this.statusFor === this.selected ? { status: this.status } : {}),
             features: FEATURES,
             ...(this.notice ? { notice: this.notice } : {}),
+            ...(this.control.message() ? { controlMessage: this.control.message()!.slice(0, 600) } : {}),
+            ...(this.control.morePages() ? { moreProjects: true } : {}),
         };
     }
 
@@ -208,6 +210,14 @@ export class ExplorerController implements vscode.Disposable {
             }
             case 'status.refresh': await Promise.all([this.loadStatus(), this.control.refresh()]); return;
             case 'manage.refresh': await this.control.refresh(); return;
+            case 'manage.index': {
+                const typed = message as WebviewMessageOf<'manage.index'>;
+                if (!this.host.trusted()) { throw new EvidenceFailure(explorerError('WORKSPACE_UNTRUSTED')); }
+                if (!this.control.projects().some(entry => entry.project === typed.project)) { throw new EvidenceFailure(explorerError('NO_PROJECT')); }
+                // The shared console journals the request before sending it; its outcome code is published as controlMessage.
+                await this.control.index(typed.project);
+                return { message: this.control.message() ?? null };
+            }
             case 'search.run': {
                 const typed = message as WebviewMessageOf<'search.run'>;
                 const project = this.requireProject();
@@ -237,7 +247,7 @@ export class ExplorerController implements vscode.Disposable {
                 return openSource({ root: source.root, relative: source.relative_path, contentHash: ref.contentHash, startLine: ref.startLine,
                     ...(typeof info.line_basis === 'string' ? { lineBasis: info.line_basis } : {}) });
             }
-            default: throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED', `${message.type} is not available in this build.`));
+            default: throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED', `${(message as WebviewMessage).type} is not available in this build.`));
         }
     }
 

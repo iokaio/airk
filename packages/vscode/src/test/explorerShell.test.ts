@@ -78,7 +78,7 @@ test('the panel shell uses a nonce CSP, no command URIs and only the out/ bundle
 });
 
 test('the controller publishes state, loads published status and rejects invalid or unknown messages', async () => {
-    const { explorer, statusBar } = controller();
+    const { explorer, statusBar, runs } = controller();
     explorer.open('#search/query');
     const panel = panels.at(-1);
     assert.equal(panel.options.enableCommandUris, false);
@@ -98,6 +98,8 @@ test('the controller publishes state, loads published status and rejects invalid
     panel.send({ v: 1, type: 'search.run', requestId: 's1', query: 'x', mode: 'lexical', limit: 5, maxBytes: 8192, fullChunks: false });
     panel.send({ v: 1, type: 'source.open', requestId: 'o1', ref: 'h404' });
     panel.send({ v: 1, type: 'search.run', requestId: 's2', query: 'x', mode: 'lexical', limit: 5, maxBytes: 8192, fullChunks: false, pathPrefix: '../secret' });
+    panel.send({ v: 1, type: 'manage.index', requestId: 'm1', project });
+    panel.send({ v: 1, type: 'manage.index', requestId: 'm2', project: 'ef'.repeat(32) });
     panel.send({ v: 1, type: 'shell.exec', requestId: 'x1', command: 'rm -rf /' });
     await flush();
     const results = Object.fromEntries(panel.posted.filter((message: any) => message.type === 'result').map((message: any) => [message.requestId, message]));
@@ -107,6 +109,9 @@ test('the controller publishes state, loads published status and rejects invalid
     assert.equal(results.s1.data.ordering, 'index_identity');
     assert.equal(results.o1.ok, false); assert.equal(results.o1.error.code, 'UNKNOWN_REFERENCE');
     assert.equal(results.s2.ok, false); assert.equal(results.s2.error.code, 'INVALID_MESSAGE');
+    assert.equal(results.m1.ok, true);
+    assert.equal(results.m2.ok, false); assert.equal(results.m2.error.code, 'NO_PROJECT');
+    assert.deepEqual(runs, [['index', { project }]], 'index runs only through the shared console for a project on its page');
     assert.equal(results.x1, undefined, 'unrecognized messages are dropped before the controller');
     explorer.dispose();
     assert.equal(panel.disposed, true);
