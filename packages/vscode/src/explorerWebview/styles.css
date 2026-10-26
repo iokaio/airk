@@ -166,3 +166,7 @@ table.grid td.actions { white-space: nowrap; }
 .fact-name { margin-top: 0.25rem; overflow-wrap: anywhere; }
 .sig { color: var(--airk-muted); }
 details summary { cursor: pointer; color: var(--airk-muted); }
+
+.chips { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-bottom: 0.5rem; }
+.chip { color: var(--vscode-foreground); background: transparent; border: 1px solid var(--airk-border); border-radius: 12px; padding: 0.15rem 0.6rem; }
+.chip.selected { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border-color: transparent; }

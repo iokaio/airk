@@ -40,6 +40,26 @@ export class RefRegistry extends HandleRegistry<EvidenceRef> {
     constructor(limit = 2000) { super('h', limit); }
 }
 
+/**
+ * Human label for an AIRK DocumentLocation. Line locations return undefined (the line
+ * numbers are shown); extracted documents cite their original page, slide, row or block.
+ */
+export function locationLabel(location: unknown): string | undefined {
+    const value = obj(location);
+    const [kind] = Object.keys(value);
+    const fields = obj(value[kind]);
+    const number = (key: string) => typeof fields[key] === 'number' ? String(fields[key]) : '?';
+    switch (kind) {
+        case 'Page': return `page ${number('number')}`;
+        case 'Slide': return `slide ${number('number')}`;
+        case 'Block': return `block ${number('number')}`;
+        case 'TableRow': return `table ${number('table')} row ${number('row')}`;
+        case 'WorksheetRow': return `sheet ${typeof fields.sheet === 'string' ? fields.sheet.slice(0, 128) : '?'} row ${number('row')}`;
+        case 'Mapped': return 'mapped region';
+        default: return undefined;
+    }
+}
+
 /** A collection-relative path prefix: no absolute roots, drive letters, parent segments or control characters. */
 export function relativePrefix(value: string | undefined): string | undefined {
     if (value === undefined || value.trim() === '') { return undefined; }
@@ -82,11 +102,9 @@ function hitViews(project: string, payload: Value, publication: string | undefin
         const hash = typeof citation.content_hash === 'string' && /^[0-9a-f]{64}$/.test(citation.content_hash) ? citation.content_hash : undefined;
         if (!path || !start || !end || !hash) { return []; }
         const ref = refs.add({ project, path, startLine: start, endLine: end, contentHash: hash, ...(publication ? { publication } : {}) });
-        const location = obj(citation.location);
-        const lines = obj(location.Lines);
+        const location = locationLabel(citation.location);
         return [{ ref, path, startLine: start, endLine: end, text: typeof hit.text === 'string' ? hit.text : '',
-            truncated: hit.truncated === true, contentHash: hash, evidenceClass: 'E1',
-            ...(Object.keys(location).length && !lines.start ? { location: JSON.stringify(location).slice(0, 200) } : {}) } satisfies HitView];
+            truncated: hit.truncated === true, contentHash: hash, evidenceClass: 'E1', ...(location ? { location } : {}) } satisfies HitView];
     });
 }
 

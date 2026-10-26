@@ -64,6 +64,7 @@ export function FactList(props: { list: FactListView; empty: string; actions?: (
                     <li key={`${item.ref ?? item.path}-${index}`} class="hit card">
                         <div class="hit-head">
                             <code class="path">{item.path}{item.startLine ? `:${item.startLine}${item.endLine && item.endLine !== item.startLine ? `–${item.endLine}` : ''}` : ''}</code>
+                            {item.location && <span class="tag" title="Original document location">{item.location}</span>}
                             <span class="tag" title={CLASS_TITLE[item.evidenceClass]}>{item.evidenceClass}</span>
                             <span class="tag">{item.kind}</span>
                             {item.resolution && <span class="tag" title="Written targets are not resolved bindings">{item.resolution.replaceAll('_', ' ')}</span>}

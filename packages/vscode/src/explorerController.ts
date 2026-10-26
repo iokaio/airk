@@ -288,6 +288,12 @@ export class ExplorerController implements vscode.Disposable {
                 if (!path) { throw new EvidenceFailure(explorerError('INVALID_MESSAGE', 'Open a file from the selected project, or choose a result, to see its outline.')); }
                 return runFacts(this.session(), this.facts, project, { tool: 'airk_outline', limit: 100, args: { path, limit: 100, max_bytes: 32768 } });
             }
+            case 'docs.facts': {
+                const typed = message as WebviewMessageOf<'docs.facts'>, project = this.requireProject();
+                return runFacts(this.session(), this.facts, project, { tool: 'airk_document_facts', limit: typed.limit,
+                    args: scoped({ limit: typed.limit, max_bytes: 32768, ...(typed.kind !== 'any' ? { kind: typed.kind } : {}),
+                        ...(typed.name?.trim() ? { name: typed.name.trim() } : {}) }, typed.pathPrefix) });
+            }
             case 'list.more': {
                 const typed = message as WebviewMessageOf<'list.more'>;
                 return continueFacts(this.session(), this.facts, this.requireProject(), typed.more);

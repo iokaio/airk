@@ -97,6 +97,7 @@ export function SearchScreen(props: ScreenProps) {
                                     <div class="hit-head">
                                         <code class="path">{hit.path}:{hit.startLine}{hit.endLine !== hit.startLine ? `–${hit.endLine}` : ''}</code>
                                         <span class="tag" title="E1: indexed text — not a resolved binding or coverage">{hit.evidenceClass}</span>
+                                        {hit.location && <span class="tag" title="Original document location">{hit.location}</span>}
                                         {hit.truncated && <span class="tag">truncated</span>}
                                         <span class="spacer" />
                                         <button type="button" class="ghost" onClick={() => { void expand(hit.ref); }}>Expand</button>
