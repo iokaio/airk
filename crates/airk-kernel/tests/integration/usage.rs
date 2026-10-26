@@ -249,9 +249,7 @@ fn supplemental_client_import_is_separate_bounded_deduplicated_and_disabled_safe
         report.price_scenario.unwrap()["session_input_equivalents"][0]["unpriced_input_tokens_unknown_cache_split"],
         "120"
     );
-    let ledger = root
-        .path()
-        .join(".airk/collections-1.2/default/usage.sqlite3");
+    let ledger = root.path().join(".airk/collections-1.2/default/usage.airk");
     assert!(
         !String::from_utf8_lossy(&std::fs::read(&ledger)?).contains("private_supplement_fixture")
     );
@@ -301,7 +299,7 @@ fn offline_bpe_calibration_counts_exact_definition_without_retaining_samples() -
     assert!(
         !root
             .path()
-            .join(".airk/collections-1.2/default/usage.sqlite3")
+            .join(".airk/collections-1.2/default/usage.airk")
             .exists()
     );
     kernel.usage_calibrate(request(true))?;
@@ -311,10 +309,7 @@ fn offline_bpe_calibration_counts_exact_definition_without_retaining_samples() -
         stored.supplemental[0].summaries[0].stratum.provenance,
         MeasurementProvenance::LocalTokenizer
     );
-    let ledger = std::fs::read(
-        root.path()
-            .join(".airk/collections-1.2/default/usage.sqlite3"),
-    )?;
+    let ledger = std::fs::read(root.path().join(".airk/collections-1.2/default/usage.airk"))?;
     assert!(!String::from_utf8_lossy(&ledger).contains("hellohello"));
     // Byte fallback remains exact for multilingual text and has no hidden normalizer.
     std::fs::write(&returned, "\"é中🙂\"")?;
@@ -566,7 +561,7 @@ fn disabled_hooks_leave_usage_history_untouched() -> anyhow::Result<()> {
     assert!(
         !root
             .path()
-            .join(".airk/collections-1.2/default/usage.sqlite3")
+            .join(".airk/collections-1.2/default/usage.airk")
             .exists()
     );
     assert_eq!(kernel.usage_report(30)?.status, "disabled");
@@ -762,7 +757,7 @@ fn native_jobs_record_actual_work_once_in_the_jobs_collection() -> anyhow::Resul
     )?
     .expect("recording is enabled");
     target.configure_usage(RecordingMode::Disabled)?;
-    let ledger = state.path().join("collections-1.2/target/usage.sqlite3");
+    let ledger = state.path().join("collections-1.2/target/usage.airk");
     let before = std::fs::read(&ledger)?;
     target.scheduled_index(false, false)?;
     assert_eq!(

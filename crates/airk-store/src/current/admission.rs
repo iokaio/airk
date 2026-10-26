@@ -49,15 +49,6 @@ impl std::fmt::Display for CurrentOpenContention {
 }
 impl std::error::Error for CurrentOpenContention {}
 
-pub(super) fn writer_open_error(error: anyhow::Error) -> anyhow::Error {
-    if matches!(error.downcast_ref::<rusqlite::Error>(), Some(rusqlite::Error::SqliteFailure(code, _)) if matches!(code.code, rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked))
-    {
-        error.context(CurrentOpenContention)
-    } else {
-        error
-    }
-}
-
 pub(super) fn admit_open<T>(mut open: impl FnMut() -> Result<T>) -> Result<T> {
     let Some(policy) = ADMISSION.get() else {
         return open();
@@ -93,19 +84,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_sqlite_open_exclusion_is_retryable_and_terminal_errors_do_not_repeat_work() -> Result<()>
-    {
-        for (code, expected) in [
-            (rusqlite::ffi::SQLITE_BUSY, true),
-            (rusqlite::ffi::SQLITE_LOCKED, true),
-            (rusqlite::ffi::SQLITE_CORRUPT, false),
-            (rusqlite::ffi::SQLITE_IOERR, false),
-        ] {
-            let error = writer_open_error(
-                rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(code), None).into(),
-            );
-            assert_eq!(error.is::<CurrentOpenContention>(), expected);
-        }
+    fn terminal_errors_do_not_repeat_admitted_work() -> Result<()> {
         let mut turns = 0;
         let mut opens = 0;
         let result: Result<()> = with_work_admission(

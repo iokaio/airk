@@ -63,11 +63,14 @@ pub struct VectorSelectionPreview {
 impl Kernel {
     /// Explicit trusted setup; source scans never provision or load model weights.
     pub fn install_service_default_vector_model(&self) -> Result<VectorStatus> {
+        if let Some(selected) = self.active_service_view()? {
+            return selected.install_service_default_vector_model();
+        }
         anyhow::ensure!(
             self.store.shared_model_runtime().is_some(),
             "service model binding required"
         );
-        let _writer = self.store.lock()?;
+        let _writer = self.lock_current_writer()?;
         anyhow::ensure!(
             self.vectors_enabled()?,
             "vector search is disabled for this collection"
@@ -78,7 +81,7 @@ impl Kernel {
 
     /// Install an offline default once; never overwrite an existing/custom model.
     pub fn install_default_vector_model(&self, source: &std::path::Path) -> Result<VectorStatus> {
-        let _writer = self.store.lock()?;
+        let _writer = self.lock_current_writer()?;
         anyhow::ensure!(
             self.vectors_enabled()?,
             "vector search is disabled for this collection"
@@ -118,6 +121,9 @@ impl Kernel {
         source: &std::path::Path,
         manifest: Sha256Digest,
     ) -> Result<VectorStatus> {
+        if let Some(selected) = self.active_service_view()? {
+            return selected.install_service_vector_model(source, manifest);
+        }
         anyhow::ensure!(
             self.store.shared_model_runtime().is_some(),
             "service model binding required"
@@ -130,7 +136,7 @@ impl Kernel {
         source: &std::path::Path,
         expected: Option<Sha256Digest>,
     ) -> Result<VectorStatus> {
-        let _writer = self.store.lock()?;
+        let _writer = self.lock_current_writer()?;
         anyhow::ensure!(
             self.vectors_enabled()?,
             "vector search is disabled for this collection"
@@ -168,11 +174,14 @@ impl Kernel {
 
     /// Explicitly replace a custom selection with the paired bundled default.
     pub fn select_service_bundled_model(&self) -> Result<VectorStatus> {
+        if let Some(selected) = self.active_service_view()? {
+            return selected.select_service_bundled_model();
+        }
         anyhow::ensure!(
             self.store.shared_model_runtime().is_some(),
             "service model binding required"
         );
-        let writer = self.store.lock()?;
+        let writer = self.lock_current_writer()?;
         anyhow::ensure!(
             self.vectors_enabled()?,
             "vector search is disabled for this collection"
@@ -229,11 +238,17 @@ impl Kernel {
         Ok(self.vector_policy()?.model)
     }
     pub fn vectors_enabled(&self) -> Result<bool> {
+        if let Some(selected) = self.active_service_view()? {
+            return selected.vectors_enabled();
+        }
         Ok(self.vector_policy()?.enabled)
     }
 
     /// Saved policy used for the next publication; does not interpret old indexes.
     pub fn vector_selection(&self) -> Result<VectorSelectionPolicy> {
+        if let Some(selected) = self.active_service_view()? {
+            return selected.vector_selection();
+        }
         self.vector_policy()?
             .selection
             .map(Ok)
@@ -261,6 +276,9 @@ impl Kernel {
     }
 
     pub fn vector_status(&self) -> Result<VectorStatus> {
+        if let Some(selected) = self.active_service_view()? {
+            return selected.vector_status();
+        }
         self.status_for_vector_policy(self.vector_policy()?)
     }
 
@@ -326,7 +344,10 @@ impl Kernel {
     }
 
     pub fn configure_vectors(&self, enabled: bool) -> Result<VectorStatus> {
-        let writer = self.store.lock()?;
+        if let Some(selected) = self.active_service_view()? {
+            return selected.configure_vectors(enabled);
+        }
+        let writer = self.lock_current_writer()?;
         let mut policy = self.vector_policy()?;
         policy.enabled = enabled;
         let status = self.status_for_vector_policy(VectorPolicy {
@@ -344,6 +365,9 @@ impl Kernel {
     }
 
     pub fn vector_selection_status(&self) -> Result<VectorSelectionStatus> {
+        if let Some(selected) = self.active_service_view()? {
+            return selected.vector_selection_status();
+        }
         let policy = self.vector_policy()?;
         let origin = if policy.selection.is_some() {
             "explicit"
@@ -446,9 +470,12 @@ impl Kernel {
         &self,
         selection: VectorSelectionPolicy,
     ) -> Result<VectorSelectionStatus> {
+        if let Some(selected) = self.active_service_view()? {
+            return selected.configure_vector_selection(selection);
+        }
         let selection: VectorSelectionPolicy =
             serde_json::from_slice(&selection.canonical_bytes()?)?;
-        let writer = self.store.lock()?;
+        let writer = self.lock_current_writer()?;
         let mut policy = self.vector_policy()?;
         policy.selection = Some(selection.clone());
         let status = self.selection_status(selection, "explicit")?;

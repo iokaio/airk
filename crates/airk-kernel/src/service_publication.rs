@@ -18,18 +18,15 @@ impl Kernel {
             self.service_collection.is_some(),
             "service collection required"
         );
-        if self
-            .store
-            .directory()
-            .join("current-bootstrap.json")
-            .try_exists()?
-        {
+        let selected = self.refresh_service_snapshot()?;
+        if selected.store.runtime_bootstrap()?.is_some() {
             return Ok(true);
         }
-        let Some(scope) = self.current_scope()? else {
+        let Some(scope) = selected.current_scope()? else {
             return Ok(false);
         };
-        self.store.current_read(&scope)?.has_prepared_update()
+        Ok(selected.store.redb_read(&scope)?.snapshot().phase()?
+            != airk_store::current::TransactionPhase::Ready)
     }
     pub fn recover_service_publication(&self) -> Result<Option<RevisionToken>> {
         ensure!(
@@ -77,13 +74,63 @@ impl Kernel {
     }
     /// One request selects and pins its incarnation atomically with manifest
     /// handoff. Ordinary/legacy kernels remain unchanged; idle kernels pin none.
+    pub(crate) fn active_service_view(&self) -> Result<Option<Self>> {
+        if self.service_collection.is_some()
+            && self.service_selection.is_none()
+            && !self.service_candidate
+        {
+            Ok(Some(self.refresh_service_snapshot()?))
+        } else {
+            Ok(None)
+        }
+    }
+    pub(crate) fn lock_current_writer(&self) -> Result<airk_store::WriterLock> {
+        let selection = if !self.service_candidate {
+            self.service_collection
+                .as_ref()
+                .map(|collection| collection.select())
+                .transpose()?
+        } else {
+            None
+        };
+        if let Some(selection) = &selection {
+            ensure!(
+                selection.store.directory() == self.store.directory(),
+                collection::SelectionContention
+            );
+        }
+        let writer = self.store.lock()?;
+        if let Some(collection) = &self.service_collection
+            && !self.service_candidate
+        {
+            ensure!(
+                collection.selected_store()?.directory() == self.store.directory(),
+                collection::SelectionContention
+            );
+        }
+        drop(selection);
+        Ok(writer)
+    }
     pub fn refresh_service_snapshot(&self) -> Result<Self> {
         let Some(collection) = &self.service_collection else {
             return Ok(self.clone());
         };
         let selection = Arc::new(collection.select()?);
         let mut selected = self.clone();
-        selected.store = self.inherit_shared_models(selection.store.clone())?;
+        // Keep the selected engine owner between requests after handoff too.
+        // Retained requests own their previous store independently of this cache.
+        let mut cached = self
+            .service_active_store
+            .lock()
+            .map_err(|_| anyhow::anyhow!("active service store cache poisoned"))?;
+        if cached
+            .as_ref()
+            .is_none_or(|store| store.directory() != selection.store.directory())
+        {
+            *cached = Some(self.inherit_shared_models(selection.store.clone())?);
+        }
+        selected.store = cached.as_ref().unwrap().clone();
+        drop(cached);
         selected.service_selection = Some(selection);
         Ok(selected)
     }
@@ -108,6 +155,7 @@ impl Kernel {
         let mut next = self.clone();
         next.store = self.inherit_shared_models(replacement.store())?;
         next.service_selection = None;
+        next.service_candidate = true;
         let settings = collection::copy_settings(
             &previous.store,
             &next.store,
@@ -411,10 +459,50 @@ mod tests {
             .context("old publication missing")?
             .token;
         assert!(!old.search(&query("amber"))?.hits.is_empty());
+        let committed_old_read = old.current_reader()?;
         let changed = "# Cobalt harbor\nReplacement cobalt harbor source.\n";
         std::fs::write(source.path().join("memo.md"), changed)?;
         let token = kernel.rebuild_service(Sha256Digest::from_bytes([11; 32]))?;
         assert_ne!(old_token.incarnation, token.incarnation);
+        assert_eq!(
+            crate::current::runtime::revision(committed_old_read.token()?),
+            old_token
+        );
+        let active_status = kernel.status()?;
+        assert_eq!(active_status.publication.as_ref().unwrap().token, token);
+        let active_store = kernel
+            .service_collection
+            .as_ref()
+            .unwrap()
+            .selected_store()?;
+        assert_eq!(
+            active_status.storage_sizes.current_index_bytes,
+            Some(std::fs::metadata(active_store.directory().join("current.airk"))?.len())
+        );
+        assert!(!kernel.search(&query("cobalt"))?.hits.is_empty());
+        assert!(!kernel.service_recovery_required()?);
+        assert!(
+            old.configure_vectors(true)
+                .err()
+                .unwrap()
+                .is::<collection::SelectionContention>()
+        );
+        assert!(
+            old.index_paths(&["memo.md".into()])
+                .unwrap_err()
+                .is::<collection::SelectionContention>()
+        );
+        let stale_store = old.store.clone();
+        let stale_scope = old.current_scope()?.unwrap();
+        let stale_writer = stale_store.lock()?;
+        assert!(
+            stale_store
+                .redb_writer(&stale_writer, &kernel.collection_quota()?, &stale_scope)
+                .err()
+                .unwrap()
+                .is::<collection::SelectionContention>()
+        );
+        drop(stale_writer);
         let current = kernel.refresh_service_snapshot()?;
         assert_eq!(
             current
@@ -473,10 +561,32 @@ mod tests {
         );
         let old_directory = old.store.directory().to_path_buf();
         assert_eq!(kernel.retire_service_incarnations()?.removed_directories, 0);
+        drop(committed_old_read);
         drop(old);
         assert_eq!(kernel.retire_service_incarnations()?.removed_directories, 1);
         assert!(!old_directory.exists());
+        assert!(stale_store.lock().is_err());
+        assert!(
+            !old_directory.exists(),
+            "stale writer recreated a retired slot"
+        );
         assert_eq!(kernel.recover_service_publication()?, Some(token));
+        std::fs::write(
+            source.path().join("memo.md"),
+            "# Saffron harbor\nLater saffron harbor source.\n",
+        )?;
+        kernel.index_paths(&["memo.md".into()])?;
+        let updated = kernel.status()?.publication.unwrap().token;
+        assert_eq!(updated.incarnation, token.incarnation);
+        assert!(updated.generation > token.generation);
+        assert!(!kernel.search(&query("saffron"))?.hits.is_empty());
+        assert!(kernel.search(&query("cobalt"))?.hits.is_empty());
+        kernel.configure_vectors(true)?;
+        assert!(kernel.refresh_service_snapshot()?.vectors_enabled()?);
+        kernel.configure_vectors(false)?;
+        drop(current);
+        drop(reopened);
+        kernel.maintain_current()?;
         assert!(
             !old_directory.exists(),
             "recovery resurrected a retired initial slot"

@@ -1,14 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Reproduce fixed-WAL pressure with generated code and recover using a new runtime."""
+"""Qualify fresh setup from a separately supplied pre-cutover runtime with isolated source/data paths."""
 import argparse
-from contextlib import closing
 import hashlib
 import importlib.util
 import json
 from pathlib import Path
-import sqlite3
 import tempfile
 import time
+import uuid
 
 spec = importlib.util.spec_from_file_location("service_clients", Path(__file__).with_name("check-service-clients.py"))
 clients = importlib.util.module_from_spec(spec)
@@ -23,10 +22,10 @@ def qualify(previous, current):
         source.mkdir()
         data.mkdir()
         originals = {}
-        for number in range(128):
+        for number in range(8):
             text = "from normalizer import normalize\n\n" + "\n".join(
                 f"def polar_case_{number}_{function}(value: str) -> str:\n    return normalize(value)\n"
-                for function in range(1024)
+                for function in range(32)
             )
             path = source / f"fixture_{number}.py"
             path.write_text(text, encoding="utf-8")
@@ -35,41 +34,38 @@ def qualify(previous, current):
         try:
             old.start()
             old.register("pressure", source, data)
-            failed = old.wait(old.enqueue("pressure", "index"), expected="failed")
-            assert failed["outcome"]["code"] == "sqlite_storage_full", failed
-            projects = dict(old.projects)
+            old_job = old.wait(old.enqueue("pressure", "index"))
+            old_epoch = old.rpc("request_epoch")
+            old_namespace = old_epoch["namespace"]
         finally:
             old.close()
-        databases = list(data.glob("collections-1.4/pressure/incarnations/*/current.sqlite3"))
-        assert len(databases) == 1, databases
-        with closing(sqlite3.connect(databases[0].as_uri() + "?mode=ro", uri=True)) as connection:
-            phase = connection.execute("SELECT phase FROM current_state").fetchone()[0]
-            assert phase in ("ready", "prepared", "applying"), phase
-            pending_before = connection.execute("SELECT count(*) FROM current_pending").fetchone()[0]
-        print(f"Previous runtime reproduced sqlite_storage_full (phase={phase}); testing recovery and completion.", flush=True)
         new = clients.Fixture(current, owner, job_timeout=600)
         try:
             new.start()
-            new.projects = projects
-            recovered = new.wait(new.enqueue("pressure", "recover"))
-            new.wait(new.enqueue("pressure", "index"))
-            status = new.tool("pressure", "airk_status")
-            assert status["files"] == 128, status
-            hit = new.tool("pressure", "airk_symbols", {"name": "polar_case_127_63"})
-            assert hit.get("items") or hit.get("hits"), hit
-            assert all(hashlib.sha256(path.read_bytes()).hexdigest() == digest for path, digest in originals.items())
-            with closing(sqlite3.connect(databases[0].as_uri() + "?mode=ro", uri=True)) as connection:
-                assert connection.execute("SELECT phase FROM current_state").fetchone()[0] == "ready"
-                assert connection.execute("SELECT count(*) FROM current_pending").fetchone()[0] == 0
+            new.register("pressure", source, data)
+            recovered = new.wait(new.enqueue("pressure", "index"))
+            assert recovered["state"] == "succeeded", recovered
+            assert new.rpc("request_epoch")["namespace"] != old_namespace
+            stale={"enqueue":{"project":new.projects["pressure"]["binding"],"kind":"index","caller":uuid.uuid4().hex,"key":{"namespace":old_namespace,"epoch":old_epoch["epoch"],"nonce":uuid.uuid4().hex}}}
+            refused=new.run("service","rpc","--runtime-dir",new.control,"--stdin",input=json.dumps(stale),check=False)
+            refusal=json.loads(refused.stdout)
+            assert refusal["status"]=="failure",refusal
+            search=new.tool("pressure","airk_search",{"query":"polar_case_0_0","mode":"lexical","response_mode":"full"})
+            assert any(hit["citation"]["path"]=="fixture_0.py" for hit in search["hits"]),search
+            status=new.tool("pressure","airk_status",{"response_mode":"full"})
+            assert status["storage_sizes"]["current_index_file"]=="current.airk",status
+            assert not (new.control/"service-1.4.sqlite3").exists()
+            for path, expected in originals.items():
+                assert hashlib.sha256(path.read_bytes()).hexdigest() == expected
             return {
                 "schema": 1,
                 "previous_version": json.loads((previous / "airk-runtime.json").read_text())["version"],
                 "version": json.loads((current / "airk-runtime.json").read_text())["version"],
-                "files": 128, "functions_per_file": 1024,
-                "previous_failure": failed["outcome"]["code"], "previous_phase": phase,
-                "pending_publications_before": pending_before,
-                "recovery_state": recovered["state"], "final_phase": "ready",
-                "pending_replay_rows": 0, "source_bytes_preserved": True,
+                "files": 8, "functions_per_file": 32,
+                "previous_job_state": old_job["state"],
+                "fresh_setup": True, "fresh_registration": True,
+                "recovery_state": recovered["state"], "source_bytes_preserved": True,
+                "fresh_search_verified":True,"stale_request_rejected":True,"native_current_file":"current.airk",
                 "elapsed_seconds": round(time.monotonic() - started, 3),
             }
         finally:

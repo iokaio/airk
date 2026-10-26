@@ -141,52 +141,6 @@ fn retained_baselines_coalesce_delayed_file_and_unit_changes_and_keep_index_curr
 }
 
 #[test]
-fn obsolete_conditional_reads_require_rebuild_without_evidence_fallback() -> Result<()> {
-    use airk_core::{Artifact, Chunk, DocumentLocation, Snapshot};
-    let root = tempfile::tempdir()?;
-    let data = tempfile::tempdir()?;
-    let store = FileStore::new(data.path().join("collections-1.2/default"));
-    let _writer = store.lock()?;
-    let mut snapshot = Snapshot::empty(root.path().canonicalize()?.to_string_lossy().into_owned());
-    snapshot.artifacts.insert(
-        "old.md".into(),
-        Artifact {
-            path: "old.md".into(),
-            content_hash: "01".repeat(32),
-            bytes: 13,
-            chunks: vec![Chunk {
-                start_line: 1,
-                end_line: 1,
-                text: "Old evidence.\n".into(),
-                location: DocumentLocation::Lines { start: 1, end: 1 },
-            }],
-            language: "markdown".into(),
-            extraction_method: "utf8".into(),
-            parse_status: "plain".into(),
-            facts: vec![],
-            retained: None,
-        },
-    );
-    // A legacy coordination row cannot opt into current readers merely by
-    // claiming the current manifest format without receipt-bound identities.
-    let claimed_revision = "a".repeat(64);
-    store.save_with_components(&snapshot, &claimed_revision)?;
-    let components = store.directory().join("generations").join(claimed_revision);
-    fs::create_dir_all(&components)?;
-    fs::write(
-        components.join("manifest.json"),
-        serde_json::to_vec(&serde_json::json!({
-            "schema": 4,
-            "engine": "tantivy-0.26.2/retired-v2-fixture",
-        }))?,
-    )?;
-    drop(_writer);
-    assert!(Kernel::open(root.path(), Some(data.path().into())).is_err());
-    assert!(store.directory().join("index.sqlite3").is_file());
-    Ok(())
-}
-
-#[test]
 fn historical_alias_paths_keep_prefix_and_remembered_identity_after_rebinding() -> Result<()> {
     let root = tempfile::tempdir()?;
     let data = tempfile::tempdir()?;

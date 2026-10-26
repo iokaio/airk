@@ -176,3 +176,32 @@ fn windows_unicode_case_aliases_cannot_cross_the_data_boundary() -> Result<()> {
     );
     Ok(())
 }
+
+#[cfg(windows)]
+#[test]
+fn windows_verbatim_prefixes_preserve_drive_and_unc_share_isolation() -> Result<()> {
+    for (plain, canonical) in [
+        (r"C:\private\café", r"\\?\c:\PRIVATE\CAFÉ\collection"),
+        (
+            r"\\server\share\private",
+            r"\\?\UNC\SERVER\SHARE\private\collection",
+        ),
+    ] {
+        assert!(disjoint(Path::new(plain), Path::new(canonical)).is_err());
+        assert!(disjoint(Path::new(canonical), Path::new(plain)).is_err());
+    }
+    for (left, right) in [
+        (r"C:\private", r"\\?\D:\private\collection"),
+        (
+            r"\\server\share\private",
+            r"\\?\UNC\server\other-share\private",
+        ),
+        (
+            r"\\server\share\private",
+            r"\\?\UNC\other-server\share\private",
+        ),
+    ] {
+        disjoint(Path::new(left), Path::new(right))?;
+    }
+    Ok(())
+}

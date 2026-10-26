@@ -53,7 +53,10 @@ impl Kernel {
     }
 
     pub fn add_root(&self, alias: &str, path: &Path) -> Result<RootsReport> {
-        let lock = self.store.lock()?;
+        if let Some(selected) = self.active_service_view()? {
+            return selected.add_root(alias, path);
+        }
+        let lock = self.lock_current_writer()?;
         self.load_optional()?; // validate the collection owner before mutating configuration
         let mut config = RootConfig::load(self.store.directory(), &self.root_id())?;
         config.add(alias, path, &self.root, &self.data_root)?;
@@ -67,7 +70,10 @@ impl Kernel {
     }
 
     pub fn remove_root(&self, alias: &str) -> Result<RootsReport> {
-        let lock = self.store.lock()?;
+        if let Some(selected) = self.active_service_view()? {
+            return selected.remove_root(alias);
+        }
+        let lock = self.lock_current_writer()?;
         self.load_optional()?;
         let mut config = RootConfig::load(self.store.directory(), &self.root_id())?;
         config.remove(alias)?;

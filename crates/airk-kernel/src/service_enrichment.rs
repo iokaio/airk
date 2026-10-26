@@ -36,6 +36,9 @@ impl Kernel {
         }
     }
     pub fn index_service_sources(&self) -> Result<airk_ingest::IndexReport> {
+        if let Some(selected) = self.active_service_view()? {
+            return selected.index_service_sources();
+        }
         ensure!(
             self.is_service_collection(),
             "source-only service indexing requires its project owner"
@@ -49,6 +52,9 @@ impl Kernel {
     /// One bounded 32-artifact semantic batch; the soft deadline is checked at
     /// publication boundaries. Native inference still has its own hard budgets.
     pub fn service_enrichment_turn(&self) -> Result<airk_ingest::IndexReport> {
+        if let Some(selected) = self.active_service_view()? {
+            return selected.service_enrichment_turn();
+        }
         ensure!(
             self.is_service_collection(),
             "service enrichment requires its project owner"

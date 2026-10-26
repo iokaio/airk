@@ -30,7 +30,7 @@ pub struct RepackReport {
 
 impl Kernel {
     pub fn configure_compression(&self, mode: CompressionMode) -> Result<CompressionMode> {
-        let writer = self.store.lock()?;
+        let writer = self.lock_current_writer()?;
         self.store.configure_compression(
             &writer,
             &self.collection_quota()?,
@@ -120,7 +120,7 @@ impl Kernel {
         let scope = self.current_scope()?.context("workspace is not indexed")?;
         let quota = self.collection_quota()?;
         crate::current::recover_current(&self.store, &quota, &scope)?;
-        let writer = self.store.lock()?;
+        let writer = self.lock_current_writer()?;
         let reservation = quota.reserve_available(&self.collection, 256 << 20)?;
         let read = self.store.current_read(&scope)?;
         let base = read.token()?;
@@ -194,20 +194,20 @@ impl Kernel {
         )?;
         drop(read);
         let sealed = overlay.seal()?;
-        let capacity = self.store.current_database_capacity(&scope)?;
-        let mut current = self
-            .store
-            .current_write(&writer, &quota, &scope, capacity)?;
-        let pending = current.prepare_repack(&base, &sealed, &inputs, model)?;
+        let owned = self.store.redb_read(&scope)?;
+        ensure!(
+            owned.snapshot().head()?.token()? == base,
+            "repack base expired"
+        );
+        let current = self.store.redb_writer(&writer, &quota, &scope)?;
+        let pending = current.prepare_repack(owned.snapshot(), &sealed, &inputs, model)?;
         observer(crate::current::CurrentUpdateStage::Prepared);
         current.mark_applying(&pending)?;
         observer(crate::current::CurrentUpdateStage::Applying);
-        report.generation = current
-            .commit(&pending, pending.target.lexical_commit)?
-            .token
-            .sequence;
+        report.generation = current.commit(&pending)?.sequence;
         observer(crate::current::CurrentUpdateStage::Committed);
         drop(current);
+        drop(owned);
         drop(writer);
         drop(reservation);
         self.maintain_current()?;

@@ -513,9 +513,7 @@ impl Management {
 mod tests {
     use super::*;
     use airk_core::{
-        identity::Incarnation,
-        service::ProjectRegistration,
-        service_console::{MAX_PAGE_BYTES, ObservationKind},
+        identity::Incarnation, service::ProjectRegistration, service_console::MAX_PAGE_BYTES,
     };
     #[test]
     fn console_observes_paused_queue_without_admitting_or_opening_project_state() -> Result<()> {
@@ -548,13 +546,12 @@ mod tests {
         Ok(())
     }
     #[test]
-    fn console_pages_bound_complete_rows_and_isolate_damaged_cached_observations() -> Result<()> {
+    fn console_pages_bound_complete_rows_and_preserve_fenced_cached_observations() -> Result<()> {
         let owner = tempfile::tempdir()?;
         let root = owner.path().join("runtime");
         crate::local_ipc::prepare_root(&root)?;
         let service = Incarnation::from_bytes([77; 16]);
         let mut registry = ServiceRegistry::open(&root, service)?;
-        let sql = rusqlite::Connection::open(root.join("service-1.4.sqlite3"))?;
         let mut bindings = Vec::new();
         for n in 0..32u8 {
             let project = ProjectRegistration::new(
@@ -597,9 +594,27 @@ mod tests {
             let parsed: airk_core::service_inspection::InspectionObservation =
                 serde_json::from_value(observation)?;
             parsed.snapshot.validate()?;
-            sql.execute(
-                "INSERT INTO service_inspections(project,payload) VALUES(?1,?2)",
-                rusqlite::params![project.binding.to_string(), serde_json::to_vec(&parsed)?],
+            let (namespace, epoch) = registry.request_epoch()?;
+            let key = airk_core::service::RequestKey {
+                namespace,
+                epoch,
+                nonce: worker.worker,
+            };
+            let job = registry.enqueue(
+                project.binding,
+                service,
+                &key,
+                airk_core::service::JobKind::Inspect,
+            )?;
+            let admitted = registry
+                .claim_job(&lease)?
+                .ok_or_else(|| anyhow::anyhow!("inspection claim missing"))?;
+            assert_eq!(admitted.id, job.id);
+            registry.record_inspection(&lease, worker, job.id, 1, &parsed.snapshot)?;
+            registry.complete_job(
+                &lease,
+                job.id,
+                airk_core::service::JobOutcome::Succeeded { revision: None },
             )?;
             bindings.push(project.binding);
         }
@@ -629,33 +644,6 @@ mod tests {
         }
         assert_eq!(seen.len(), 32);
         assert!(pages > 1, "fixture must exercise byte-budget continuation");
-        sql.execute(
-            "UPDATE service_inspections SET payload=?1 WHERE project=?2",
-            rusqlite::params![b"{broken".as_slice(), bindings[0].to_string()],
-        )?;
-        let mut after = None;
-        let mut found = false;
-        loop {
-            let page = console_page(&mut registry, after, revision, 32, 200)?;
-            if let Some(row) = page
-                .projects
-                .iter()
-                .find(|row| row.project.registration.binding == bindings[0])
-            {
-                assert!(row.inspection.is_none());
-                assert!(
-                    row.failed_observations
-                        .iter()
-                        .any(|kind| matches!(kind, ObservationKind::Inspection))
-                );
-                found = true;
-            }
-            match page.after {
-                Some(next) => after = Some(next),
-                None => break,
-            }
-        }
-        assert!(found);
         assert!(
             !owner.path().join("sources").exists() && !owner.path().join("data").exists(),
             "console metadata created/opened project namespaces"

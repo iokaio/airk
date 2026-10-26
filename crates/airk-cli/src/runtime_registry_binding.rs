@@ -147,7 +147,8 @@ pub(super) fn validate(layout: &Layout, completed: bool) -> Result<()> {
         // first crash before DB creation. Preserve that ambiguity; never reset it.
         let control = layout.state.join("control");
         ensure!(
-            exists(&control.join("service-1.4.sqlite3"))?
+            (exists(&control.join("service-1.4.airk"))?
+                || exists(&control.join("service-1.4.sqlite3"))?)
                 && exists(&control.join("service-1.4.owner.json"))?,
             "earlier initialized control metadata is missing; restore its original registry"
         );
@@ -164,9 +165,11 @@ pub(super) fn begin(lease: &ServiceLease, layout: &Layout, completed: bool) -> R
     }
     let control = lease.root();
     let existing = completed
-        || exists(&control.join("service-1.4.sqlite3"))?
+        || exists(&control.join("service-1.4.airk"))?
         || exists(&control.join("service-1.4.owner.json"))?;
-    let namespace = if existing {
+    let namespace = if exists(&control.join("service-1.4.sqlite3"))? {
+        Some(retained_namespace(control)?)
+    } else if existing {
         let registry =
             ServiceRegistry::open(control, airk_kernel::service_broker::new_instance_id()?)?;
         Some(registry.incarnation()?)

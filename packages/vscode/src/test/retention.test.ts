@@ -23,3 +23,20 @@ test('current maintenance captures a native guarded preview and policy commands 
         for(const retired of ['airk.retention','airk.retentionPolicy','airk.retentionRun','airk.history','airk.checkpoints','airk.prune'])assert.equal(f.commands.has(retired),false);
     }finally{await f.close();}
 });
+
+test('compact storage command previews only the active workspace project and respects trust',async context=>{
+    const f=await serviceTestHost(context,{roots:2});
+    try{
+        f.stub.window.activeTextEditor={document:{uri:f.folders[1].uri}};
+        await f.commands.get('airk.compactStorage')!();
+        const requests=f.writes.filter(value=>value.plan_create);
+        assert.equal(requests.length,1);
+        assert.equal(requests[0].plan_create.request.operation,'compact');
+        const project=[...f.registrations.values()].find(value=>value.root===f.folders[1].uri.fsPath)!;
+        assert.deepEqual(requests[0].plan_create.request.selection,{selected:[project.binding]});
+        assert.equal(f.writes.some(value=>value.plan_execute),false);
+        f.stub.workspace.isTrusted=false;
+        await assert.rejects(f.commands.get('airk.compactStorage')!(),/runtime_client_no_longer_authorized/);
+        assert.equal(f.writes.filter(value=>value.plan_create).length,1);
+    }finally{await f.close();}
+});

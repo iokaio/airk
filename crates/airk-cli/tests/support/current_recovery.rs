@@ -129,7 +129,7 @@ fn cli_and_mcp_recover_captured_updates_after_process_exit_and_expire_old_tokens
                 if boundary.starts_with("cold-") {
                     ensure!(
                         result["result"]["isError"] == true
-                            && result.to_string().contains("rollback sidecar"),
+                            && result.to_string().contains("fresh setup"),
                         "{result}"
                     );
                     ensure!(
@@ -157,10 +157,7 @@ fn cli_and_mcp_recover_captured_updates_after_process_exit_and_expire_old_tokens
                         ],
                     )
                     .unwrap_err();
-                    ensure!(
-                        format!("{error:#}").contains("rollback sidecar"),
-                        "{error:#}"
-                    );
+                    ensure!(format!("{error:#}").contains("fresh setup"), "{error:#}");
                     ensure!(
                         fs::read_to_string(root.path().join("captured.txt"))?
                             == "LIVE_UNINDEXED_SENTINEL\n",

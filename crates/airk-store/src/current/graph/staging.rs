@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-use super::{GraphOverlayLimits, State, digest, merkle, private, sql};
+use super::{GraphOverlayLimits, State, digest, merkle, private, proof};
 use crate::quota::{PrivateKv, PrivateTable};
 use airk_core::{graph_storage::*, identity::Sha256Digest};
 use anyhow::{Result, ensure};
@@ -38,9 +38,9 @@ pub(super) fn seal(
                 Some(reader) => {
                     state.statistics.base_record_reads += 1;
                     state.statistics.proof_nodes += 32;
-                    reader.with_connection(|connection| sql::read_proof(connection, base, id))?
+                    reader.proof(base, id)?
                 }
-                None => sql::Proof::empty(base, id)?,
+                None => proof::Proof::empty(base, id)?,
             };
             update_counts(&mut counts, base, id, proof.record.as_ref(), &record)?;
             let connection = &state.database;

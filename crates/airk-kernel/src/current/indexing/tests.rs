@@ -19,6 +19,11 @@ fn direct_path_update_does_not_run_another_collections_queued_scan() -> Result<(
     kernel.configure_vectors(false)?;
     foreign.configure_vectors(false)?;
     kernel.index()?;
+    let storage = kernel.status()?.storage_sizes;
+    assert_eq!(storage.current_index_file.as_deref(), Some("current.airk"));
+    assert!(storage.current_index_bytes.unwrap_or_default() > 0);
+    assert!(storage.sampled_unix_ms > 0);
+    assert!(storage.total_bytes >= storage.current_index_bytes.unwrap_or_default());
     foreign.index()?;
     let foreign_head = foreign.status()?.publication;
     std::fs::write(root.path().join("edited.rs"), "pub fn current() {}\n")?;
@@ -37,6 +42,15 @@ fn direct_path_update_does_not_run_another_collections_queued_scan() -> Result<(
     let report = kernel.index_paths(&["edited.rs".into()])?;
     assert!(report.path_scoped);
     assert_eq!(report.indexed, 1);
+    let query = airk_core::SearchQuery {
+        text: "current".into(),
+        path_prefix: Some("edited.rs".into()),
+        limit: 10,
+        max_bytes: 4096,
+    };
+    assert_eq!(kernel.search(&query)?.hits.len(), 1);
+    let reopened = Kernel::open(root.path(), Some(data.path().into()))?;
+    assert_eq!(reopened.search(&query)?.hits.len(), 1);
     assert_eq!(foreign.status()?.publication, foreign_head);
     let pending = foreign.schedule_status()?.unwrap();
     assert_eq!(pending.requested_revision, queued.requested_revision);
@@ -45,6 +59,43 @@ fn direct_path_update_does_not_run_another_collections_queued_scan() -> Result<(
         kernel.schedule_status()?.is_none(),
         "a direct source command does not register an automatic worker"
     );
+    Ok(())
+}
+
+#[test]
+fn manual_redb_compaction_preserves_publication_and_search_results() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let data = tempfile::tempdir()?;
+    let mut source = String::from("pub fn current() {}\n");
+    for number in 0..5_000 {
+        source.push_str(&format!("// retained evidence {number}\n"));
+    }
+    std::fs::write(root.path().join("large.rs"), source)?;
+    let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    kernel.configure_vectors(false)?;
+    kernel.scheduled_index(false, false)?;
+    let query = airk_core::SearchQuery {
+        text: "current".into(),
+        path_prefix: Some("large.rs".into()),
+        limit: 10,
+        max_bytes: 4096,
+    };
+    assert_eq!(kernel.search(&query)?.hits.len(), 1);
+    std::fs::remove_file(root.path().join("large.rs"))?;
+    kernel.scheduled_index(false, false)?;
+    let token = kernel.status()?.publication.unwrap().token;
+    assert!(kernel.search(&query)?.hits.is_empty());
+    let report = kernel.compact_current_storage()?;
+    assert_eq!(
+        airk_core::identity::RevisionToken {
+            incarnation: report.token.incarnation,
+            generation: report.token.sequence,
+            revision: report.token.digest,
+        },
+        token
+    );
+    assert!(report.bytes_after < report.bytes_before);
+    assert_eq!(kernel.search(&query)?.hits.len(), 0);
     Ok(())
 }
 
@@ -206,41 +257,24 @@ fn reuse_presence_check_defers_same_size_corruption_to_authenticated_reads() -> 
 }
 
 #[test]
-fn retained_repair_admission_waits_for_readers_and_bounds_contention() -> Result<()> {
+fn retained_repair_admission_preserves_readers_and_refuses_a_competing_writer() -> Result<()> {
     let root = tempfile::tempdir()?;
     let data = tempfile::tempdir()?;
     std::fs::write(root.path().join("readers.txt"), "read gate fixture\n")?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
     kernel.configure_vectors(false)?;
     kernel.index()?;
-    let scope = kernel.current_scope()?.unwrap();
-    let reader = kernel.store.current_read(&scope)?;
+    let reader = kernel.current_reader()?;
     let before = reader.token()?;
-    let release = std::thread::spawn(move || {
-        // A bounded diagnostic page can legitimately outlive the former
-        // two-second repair admission limit, especially on a slower disk.
-        std::thread::sleep(std::time::Duration::from_millis(2250));
-        drop(reader);
-    });
-    let started = std::time::Instant::now();
-    let admitted = kernel.retained_repair_can_rescan();
-    release.join().unwrap();
-    assert!(admitted?);
-    assert!(started.elapsed() >= std::time::Duration::from_secs(2));
-    let reader = kernel.store.current_read(&scope)?;
+    assert!(kernel.retained_repair_can_rescan()?);
     assert_eq!(reader.token()?, before);
-    let started = std::time::Instant::now();
+    let writer = kernel.store.lock()?;
     let error = kernel
         .retained_repair_can_rescan_with_budget(std::time::Duration::from_millis(40))
         .unwrap_err();
-    assert!(
-        error
-            .downcast_ref::<crate::CurrentGateContention>()
-            .is_some()
-    );
-    assert!(started.elapsed() >= std::time::Duration::from_millis(40));
-    assert!(started.elapsed() < std::time::Duration::from_secs(2));
+    assert!(format!("{error:#}").contains("writer locked"), "{error:#}");
     assert_eq!(reader.token()?, before);
+    drop(writer);
     drop(reader);
     assert!(kernel.retained_repair_can_rescan()?);
     Ok(())
@@ -258,20 +292,15 @@ fn retained_repair_admission_observes_pause_and_explicit_manual_override() -> Re
     let scope = kernel.current_scope()?.unwrap();
     let reader = kernel.store.current_read(&scope)?;
     let before = reader.token()?;
-    let pause_root = kernel.root_id();
-    let pause_collection = kernel.collection.clone();
-    let pause_data = kernel.data_root.clone();
-    let pause = std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(100));
-        airk_store::scheduler::Queue::new(&pause_data).pause(&pause_collection, &pause_root, true)
-    });
-    let started = std::time::Instant::now();
-    let admission =
-        kernel.retained_repair_can_rescan_with_budget(std::time::Duration::from_secs(2));
-    pause.join().unwrap()?;
-    let error = admission.unwrap_err();
+    airk_store::scheduler::Queue::new(&kernel.data_root).pause(
+        &kernel.collection,
+        &kernel.root_id(),
+        true,
+    )?;
+    let error = kernel
+        .retained_repair_can_rescan_with_budget(std::time::Duration::from_secs(2))
+        .unwrap_err();
     assert!(error.is::<crate::scheduler::ScanPaused>(), "{error:#}");
-    assert!(started.elapsed() < std::time::Duration::from_millis(1500));
     assert_eq!(reader.token()?, before);
     let job = kernel.schedule_status()?.unwrap();
     assert!(job.paused && !job.manual && !job.blocked);
@@ -568,13 +597,12 @@ fn applying_missing_capture_never_reconstructs_from_changed_live_source() -> Res
     );
     assert_eq!(captures.load(Ordering::Acquire), 0);
     assert!(!missing.exists());
-    assert!(kernel.status().is_err());
+    // The old committed metadata remains readable during Applying, while
+    // missing captured input still prevents recovery or a fresh source scan.
+    assert!(kernel.status()?.publication.is_some());
     assert!(!kernel.retained_repair_can_rescan()?);
     let writer = kernel.store.lock()?;
-    let capacity = kernel.store.current_database_capacity(&scope)?;
-    let current = kernel
-        .store
-        .current_write(&writer, &quota, &scope, capacity)?;
+    let current = kernel.store.redb_writer(&writer, &quota, &scope)?;
     assert_eq!(
         current.phase()?,
         airk_store::current::TransactionPhase::Applying
@@ -1269,10 +1297,7 @@ fn progressive_flush_preserves_the_next_captured_input() -> Result<()> {
         let read = kernel.store.current_read(&scope)?;
         let plan = read.reclamation_plan(&kernel.store)?;
         drop(read);
-        let capacity = kernel.store.current_database_capacity(&scope)?;
-        let mut current = kernel
-            .store
-            .current_write(&writer, &quota, &scope, capacity)?;
+        let current = kernel.store.redb_writer(&writer, &quota, &scope)?;
         let nested_capture = writer.capture_objects();
         drop(captured_objects);
         let deferred = current.reclaim_objects(&plan)?;

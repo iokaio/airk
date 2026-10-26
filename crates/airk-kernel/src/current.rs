@@ -48,16 +48,16 @@ pub fn recover_current(
     quota: &Quota,
     scope: &CurrentScope,
 ) -> Result<CurrentRecovery> {
-    let capacity = store.current_database_capacity(scope)?;
     let lock = store.lock()?;
-    let mut writer = store.current_write(&lock, quota, scope, capacity)?;
+
+    let writer = store.redb_writer(&lock, quota, scope)?;
     match writer.phase()? {
         TransactionPhase::Ready => {
-            let head = writer.head()?;
-            writer.verify_current_lexical()?;
+            writer.verify_ready()?;
             writer.release_orphan_grants()?;
+            let token = writer.head()?.token()?;
             Ok(CurrentRecovery {
-                token: head.token()?,
+                token,
                 action: CurrentRecoveryAction::AlreadyReady,
                 aborted_reason: None,
                 maintenance_error: None,
@@ -66,26 +66,12 @@ pub fn recover_current(
         phase @ (TransactionPhase::Prepared | TransactionPhase::Applying) => {
             let pending = writer
                 .pending()?
-                .context("current transaction descriptor missing")?;
-            let target = writer.verify_pending_fts(&pending);
-            if let Err(error) = target {
-                if phase == TransactionPhase::Prepared {
-                    let base = writer.head()?;
-                    writer.verify_current_lexical()?;
-                    writer.abort_prepared(&pending)?;
-                    return Ok(CurrentRecovery {
-                        token: base.token()?,
-                        action: CurrentRecoveryAction::AbortedPrepared,
-                        aborted_reason: Some(format!("{error:#}")),
-                        maintenance_error: None,
-                    });
-                }
-                return Err(error.context("applying current lexical candidate unavailable"));
-            }
+                .context("redb current transaction descriptor missing")?;
             if let Err(error) = writer.mark_applying(&pending) {
-                if writer.phase()? == TransactionPhase::Prepared {
+                if phase == TransactionPhase::Prepared
+                    && writer.verify_pending_base(&pending).is_ok()
+                {
                     let base = writer.head()?;
-                    writer.verify_current_lexical()?;
                     writer.abort_prepared(&pending)?;
                     return Ok(CurrentRecovery {
                         token: base.token()?,
@@ -94,20 +80,20 @@ pub fn recover_current(
                         maintenance_error: None,
                     });
                 }
-                return Err(error.context("applying current after failed verification"));
+                return Err(error.context("native current publication recovery failed"));
             }
-            let committed = writer.commit(&pending, pending.target.lexical_commit)?;
+            let token = writer.commit(&pending)?;
             Ok(CurrentRecovery {
-                token: committed.token,
+                token,
                 action: CurrentRecoveryAction::Applied,
                 aborted_reason: None,
-                maintenance_error: committed.maintenance_error,
+                maintenance_error: None,
             })
         }
     }
 }
 
-/// Request-scoped FTS5 reader; the current gate spans candidate materialization.
+/// Request-scoped native lexical reader; the current gate spans candidate materialization.
 pub struct VerifiedCurrentLexical<'a> {
     read: &'a CurrentRead,
 }

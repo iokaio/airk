@@ -1,36 +1,70 @@
-# AIRK 1.4.5 development status
+# AIRK 1.4.5 redb cutover and local qualification
+
+October 26, 2026. Source cutover is implemented; final local checks are in progress. No installable 1.4.5 VSIX has been built, installed or published.
+
+All production, private staging, service, usage and scheduler databases use redb 4.4.0. SQLite code/dependencies and executable SQL comparison oracles have been removed. Frozen compatibility data retains its original provenance. The packaging gate rejects retired APIs/imports as well as every direct/transitive/dev/build/target/WASM dependency, including packaging with `SkipChecks`.
+
+Fresh setup, registration and full indexing replace migration. Native activation authenticates existing ownership and excludes the old service, workers and helpers before removing fixed old AIRK database files. A durable file-identity receipt resumes partial cleanup and refuses changed survivors, links or foreign files. Project setup applies the same boundary under selected writer/read exclusion. Sources, unknown files, other projects and separately stored settings survive. Installation/data-root ownership stays stable; a separate fresh request namespace rejects old requests, event cursors and registry handles.
+
+Trusted extension activation repeats saved selected workspace registrations at their retained data locations, prepares the offline model and queues full indexing once per fresh namespace/workspace. Setup reports the requirement and stale agent sessions must reconnect. Automatic watching is enabled on these fresh registrations. Normal compatible redb updates retain their identities, snapshots, quotas and sibling handoff.
+
+Files grow automatically under existing collection/root/job quotas. Logical decoded metadata bounds remain separate from physical allocator growth. Status samples actual logical lengths for `current.airk` and the collection usage ledger, with an explicit sample time. The shared scheduler is excluded from collection totals. The manual **AIRK: Compact Index Storage…** command opens a guarded selected-project preview, requires Ready/no pending work, drains readers/writers and verifies publication identity before/after; its fenced receipt reports measured before/after/reclaimed bytes, including zero. An interrupted receipt alone is not a successful job.
+
+Current evidence before CI-branch integration: the source/dependency guard passes (411 packages, 567 executable sources) and six guard regressions pass. The latest store-library run passes 186 tests; the replay-admission owner suite passes 17, including a real process exit, fragmented mixed rows, fixed root/collection budgets, unchanged funded ceiling and cold reopen. The native service-runtime suite passes all 21 tests. Same-path owned reset/full indexing/search, compaction after rebuild and the extension automatic 1.4.4 activation fixture pass. Extension tests pass 236 with six skipped; Python contracts pass 148 with four skipped. Repository checks pass for 1,075 public files. All-target/all-feature checks and Clippy passed before the final narrow recovery changes and require rerunning. The earlier whole-workspace campaign exposed fixture failures; those are ported, but no latest complete workspace pass is claimed. Native pair/archive and performance qualification remain pending.
+
+The accepted performance comparison uses a separately identified format-140 **1.4.4 debug** runtime and a matching **1.4.5 debug** pair, isolated sources/control/data and repeated p50/p95/p99 observations. The <=10% p95 query/publication gate remains pending. Windows local evidence does not qualify Linux/macOS, native power-loss behavior, signing, oldest supported systems or the complete installed-editor matrix.
+
+## CI integration before packaging
+
+The user requires compatible CI fixes from `origin/feat/airksvc` before any local VSIX build. The remote was fetched on October 26 at `62b463e0dbb6c18723b30acddd57109f2b93029f` (16 commits after common base `572da16`). Integrate those changes without restoring SQLite code/dependencies or replacing the native storage contracts. Record adapted/skipped conflicts and rerun affected checks after integration. Recheck the remote tip before packaging; no push is authorized.
+
+## Archived October 25 development checkpoint
+
+The following record predates the completed source cutover above. Its incomplete status and earlier test counts describe that checkpoint only.
 
 October 25, 2026. Implementation is in progress; this is not a release or a qualified installable candidate. No 1.4.5 VSIX has been built, installed or published.
 
 The accepted [redb implementation plan](storagekv/storagekv-design.md) now includes every collection, usage, scheduler, service registry/job and private-staging store. The user requires the entire branch to have no SQLite dependency before any VSIX build, including build/test dependencies and legacy adapters. Supported-platform native qualification remains a public-release gate.
 
+## Accepted fresh-setup boundary
+
+October 26 user decision: require fresh setup, full indexing and removal of old AIRK SQLite files. No SQLite code or dependency may remain in 1.4.5, including migration, legacy, runtime, test and build paths. No conversion utility is planned. Existing SQLite-backed registrations, settings, pending work and usage history are not migrated.
+
+The reset/cleanup implementation must exclude old workers/writers/readers, validate namespace ownership without opening a database, and remove only known AIRK database files and sidecars. Source files, unknown files, unrelated projects and separately stored settings remain protected. Setup and agent-binding refresh must make the full reindex requirement explicit. This cleanup is not yet qualified.
+
 ## Implemented so far
 
 - Rust workspace/local Cargo lock entries and extension/npm root versions agree at 1.4.5. redb is pinned to 4.4.0.
 - A store-owned backend enforces admitted length/write bounds, checks offset overflow, synchronizes file data and takes real OS file locks. Read snapshots retain the shared database handle. Durable writes select immediate durability and two-phase commit.
-- Catalog planning/proof code has a storage interface with a redb typed-table adapter while preserving existing catalog digest bytes. An interim differential test compares generated insert/update/delete roots with SQLite and rejects omitted buckets.
+- Catalog planning/proof code has a storage interface with a redb typed-table adapter while preserving existing catalog digest bytes. The catalog test now uses 192 frozen roots captured from an agreeing SQL/redb differential run, checks final contents independently and rejects omitted buckets.
 - A graph storage interface and redb adapter preserve DiskANN record bytes and graph authentication domains. Applying a sealed delta verifies record/node streams and derives the target root/counts; focused tests cover record reads, missing-record tampering and retained snapshots.
 - Redb journal primitives persist Prepared and Applying separately, authenticate bounded ordered afterimages/tombstones, and atomically install afterimages/head with a precommit verification callback. Tampering, failed verification, retained readers and actual child-process termination at phase boundaries have focused tests.
 - The Windows build preflight and both extension packaging entry points invoke `scripts/check-storage-engine.py`. It rejects SQLite packages in Cargo.lock, the all-feature Cargo metadata graph and all workspace/crate dependency sections, including aliases and target/dev/build dependencies. There is no bypass flag, including `-SkipChecks`.
 
-- Usage and scheduler ledgers now use bounded redb storage; focused suites passed 14 usage and nine scheduler tests. Large scheduler report bodies use separate typed rows. Existing SQLite ledgers are preserved and rejected pending an explicit upgrade import.
+- Authenticated lexical storage now implements ordered directories, separate delta posting blocks, document/citation bindings, paths, paged forward lists, monotonic allocation and explicit query work/cancellation limits. Frozen SQLite 3.53.3 results cover logical compatibility. See [the lexical format notes](storagekv/lexical-format.md).
+- Quota-owned lexical plans stream captured afterimages into the journal. Tests cover poisoned/corrupt staging, removed staging, reopen at Prepared/Applying and retained snapshots. A component publication test commits catalog, graph and lexical state under one head and removes old graph rows during repacking. This is adapter-level integration, not native-worker adoption.
+- Usage and scheduler ledgers now use bounded redb storage; focused suites passed 14 usage and nine scheduler tests. Large scheduler report bodies use separate typed rows. Existing SQLite ledgers currently fail closed; ownership-checked removal and fresh setup must replace the earlier import requirement before packaging.
 - Private graph overlays and vector registries use reservation-owned redb staging with bounded rows, checksums and capacity enforcement. The graph suite passed 12 tests and the vector-registry suite passed eight tests. A build-time compact empty database seeds small ledgers without raising their configured quotas.
+- New collection bootstrap and the normal selected-path updater now route through format-150 redb. Catalog, DiskANN graph records, lexical pages/postings, captured recovery inputs and the target head publish atomically; reads stay on the old snapshot through Prepared/Applying. Recovery validates retained objects before replay and preserves the old head on Prepared aborts.
+- `current.airk` grows in place after durable quota-grant and owner-header admission; private redb staging charges its caller reservation incrementally. `airk_status` reports collection-scoped logical lengths for `current.airk` and `usage.airk`, plus their sample time. The exact high-water/quota accounting and broad workload limits remain under qualification.
+- Manual selected-project compaction is wired through a fenced maintenance job and VS Code preview. It targets only `current.airk`, requires Ready/no pending transaction and drained readers, verifies the committed token/components before and after, and records bytes before/after/reclaimed. A Windows 5,000-line update/delete/query/compaction test and a store test preserving the head/query evidence pass; this is not cross-platform qualification.
 
-The collection primitives are not yet connected to production collection or service-registry paths. They do not establish completion of the cutover or capacity/power-loss/platform qualification.
+The collection path is connected for new format-150 collections, but old SQLite state still needs the accepted fresh-setup/cleanup path, and the service registry, jobs, watcher, configuration and lifecycle ledgers still use SQLite. This is not completion of the cutover or capacity/power-loss/platform qualification.
 
 ## Remaining before a local VSIX
 
-1. Complete lexical authentication, posting/document/path/forward storage, budgets and equivalence tests.
-2. Complete production graph-record integration and qualify the private-overlay/vector-registry ports; connect catalog and journal to production reads/publication/recovery with durable quota and ownership integration.
-3. Implement sibling-incarnation format-150 rebuild/selection/retirement and automatic upgrade scheduling while preserving old reads and insufficient-space behavior.
-4. Complete service registrations/jobs/configuration/watcher/lifecycle/maintenance ports and cross-component integration of the redb usage/scheduler ledgers. Establish and test a non-destructive upgrade path for existing settings, usage and pending work; dependency removal must not discard those records.
-5. Replace the temporary executable SQLite oracle with retained bounded fixture results; remove SQL adapters and all SQLite dependencies, including CLI/kernel dev dependencies and transitive WASM packages.
-6. Complete baseline/comparison measurements, fault/capacity campaigns, full Rust/repository/extension checks, notices and native model/runtime/archive verification. Build a VSIX only after the complete-cutover dependency gate passes.
+1. Finish lexical qualification, including broader corruption/workload coverage and the accepted performance gate.
+2. Implement ownership-checked old SQLite cleanup, fresh setup and full indexing. Finish format-150 redb sibling rebuild/selection/retirement, retained-object reclamation and recovery fault coverage; preserve old redb reads and insufficient-space behavior within the new format.
+3. Port service registrations/jobs/configuration/watcher/lifecycle/maintenance state and complete fresh redb usage/scheduler setup. Remove old executable SQLite adapters and tests; no import/export producer or compatibility reader is required or permitted.
+4. Retain and broaden the frozen differential fixtures; remove remaining SQL adapters and all SQLite dependencies, including CLI/kernel dev dependencies and transitive WASM packages.
+5. Complete baseline/comparison measurements, fault/capacity campaigns, full Rust/repository/extension checks, notices and native model/runtime/archive verification. Build a VSIX only after the complete-cutover dependency gate passes.
 
 ## Evidence and limitations
 
-Windows development evidence: nine focused redb tests passed across the backend/catalog/journal and graph targets. Four packaging-gate unit tests passed. A store-library run passed 299 tests before the final defensive metadata/bucket read-bound checks; the eight backend/catalog/journal tests passed again after those checks. Workspace formatting and all-target/all-feature Clippy passed again for this checkpoint, including the ledger/private-staging changes. Repository and whitespace checks, package-script syntax and offline 1.4.5 version agreement passed. These are development mechanism checks, not installed-VSIX qualification.
+Windows development evidence through October 26: the latest full store library suite passed 330 tests; focused checks passed for format-150 new-collection indexing/search/reopen, 5,000-line update/delete/query/compaction, automatic 4MiB current.airk growth, typed staging quota exhaustion, and compaction refusal with a retained reader. The VS Code suite passed 235 tests with six skipped. These are development mechanism checks, not installed-VSIX qualification. Workspace clippy, repository checks, whitespace and native-pair/archive checks remain to be rerun against the latest source.
 
 A previous all-feature workspace run had passing native CLI/model targets but no recorded final result. The checkpoint rerun was stopped during compilation to save the requested work-in-progress commit; full workspace tests remain outstanding and are not recorded as passing qualification.
 
-The packaging gate currently fails as intended because SQLite dependencies remain. No end-to-end redb indexing result, comparative performance result, native Linux/macOS qualification or 1.4.5 VSIX acceptance is claimed.
+The packaging gate currently fails as intended because SQLite dependencies remain. The kernel indexing/search/reopen and compaction tests above are local Windows development evidence. Comparative performance, native Linux/macOS qualification and 1.4.5 VSIX acceptance remain unqualified.
+
+October 26 development evidence: 330 store-library tests passed after production collection routing, growth admission, compaction and service receipt integration. The frozen catalog and lexical comparison tests no longer invoke an executable SQL oracle. The fresh SQLite reset/cleanup boundary, redb sibling handoff, service-registry conversion, the full dependency gate, latest all-feature Clippy/workspace/repository checks and packaging remain incomplete.

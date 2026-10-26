@@ -105,7 +105,7 @@ fn public_runtime_indexes_updates_and_reads_current_evidence() -> Result<()> {
     assert!(
         directory
             .path()
-            .join("state/collections-1.2/default/current.sqlite3")
+            .join("state/collections-1.2/default/current.airk")
             .is_file()
     );
     assert!(
@@ -836,6 +836,7 @@ fn interrupted_runtime_bootstrap_completes_before_any_source_scan() -> Result<()
     let manifest = airk_store::current::lexical::LexicalManifest::decode(
         &read.lexical_manifest()?,
         head.lexical_commit,
+        &scope,
     )?;
     let configuration = read.collection_state()?.unwrap().configuration;
     head.sequence = 0;
@@ -850,16 +851,18 @@ fn interrupted_runtime_bootstrap_completes_before_any_source_scan() -> Result<()
             configuration,
         })?,
     )?;
-    // Recreate the durable boundary after the recipe, before SQLite ownership.
+    drop(writer);
+    drop(kernel);
+    drop(store);
+    let store = airk_store::FileStore::new(data.path().join("collections-1.2/default"));
+    // Recreate the durable boundary after the recipe, before native ownership.
     for name in [
-        "current.sqlite3",
+        "current.airk",
         "current-owner.json",
         "current-bootstrap.json",
     ] {
         std::fs::remove_file(store.directory().join(name))?;
     }
-    drop(writer);
-    drop(kernel);
     let reopened = Kernel::open(root.path(), Some(data.path().into()))?;
     assert_eq!(reopened.status()?.files, 0);
     assert!(store.runtime_bootstrap()?.is_none());
@@ -947,5 +950,140 @@ fn delayed_progressive_publication_keeps_captures_through_enrichment_and_reopen(
     );
     assert_eq!(reopened.scheduled_index(false, false)?.reused, 65);
     assert!(!reopened.maintain_current()?.pending);
+    Ok(())
+}
+
+#[test]
+fn owned_pre_cutover_setup_reuses_selected_paths_and_requires_full_source_indexing() -> Result<()> {
+    use airk_core::{
+        identity::Incarnation,
+        service::{JobKind, ProjectRegistration, RequestKey},
+    };
+    use airk_store::service::{
+        ProjectLease, ServiceLease,
+        collection::Collection,
+        data_scope,
+        registry::{ServiceRegistry, reset_owned_sqlite},
+    };
+    #[derive(serde::Serialize)]
+    struct OldOwner {
+        version: u32,
+        scope: airk_store::current::CurrentScope,
+        capacity: u64,
+    }
+    let base = unlinked_tempdir()?;
+    let source = base.path().join("source");
+    let data = base.path().join("data");
+    let control = base.path().join("control");
+    for path in [&source, &data, &control] {
+        std::fs::create_dir(path)?;
+    }
+    std::fs::write(
+        source.join("original.txt"),
+        "FreshSetupNeedle original source",
+    )?;
+    let source = source.canonicalize()?;
+    let data = data.canonicalize()?;
+    let control = control.canonicalize()?;
+    let ownership = Incarnation::from_bytes([41; 16]);
+    let mut old = ServiceRegistry::open(&control, ownership)?;
+    let project = ProjectRegistration::new(
+        source.to_string_lossy().into_owned(),
+        data.to_string_lossy().into_owned(),
+        "fresh".into(),
+    )?;
+    old.register(&project)?;
+    let (namespace, epoch) = old.request_epoch()?;
+    let stale_key = RequestKey {
+        namespace,
+        epoch,
+        nonce: Incarnation::from_bytes([42; 16]),
+    };
+    data_scope::bind(&data, &control, ownership)?;
+    let slot = Incarnation::from_bytes([43; 16]);
+    let collection = Collection::initialize(&data, &project.root, &project.collection, slot)?;
+    let store = collection.selected_store()?;
+    let scope = airk_store::current::CurrentScope {
+        root: project.root.clone(),
+        collection: project.collection.clone(),
+        incarnation: slot,
+    };
+    std::fs::write(
+        store.directory().join("current-owner.json"),
+        serde_json::to_vec(&OldOwner {
+            version: 140,
+            scope,
+            capacity: 8 << 20,
+        })?,
+    )?;
+    for name in [
+        "current.sqlite3",
+        "current.sqlite3-wal",
+        "current.sqlite3-shm",
+    ] {
+        std::fs::write(
+            store.directory().join(name),
+            b"owned fictional legacy database image",
+        )?;
+    }
+    std::fs::write(
+        store.directory().join("unrelated-settings.json"),
+        b"keep unrelated settings",
+    )?;
+    std::fs::rename(
+        control.join("service-1.4.airk"),
+        control.join("retained-fixture.airk"),
+    )?;
+    for name in ["service-1.4.sqlite3", "service-1.4.sqlite3-wal"] {
+        std::fs::write(control.join(name), b"owned fictional old registry image")?;
+    }
+    let lease = ServiceLease::acquire(&control)?;
+    reset_owned_sqlite(&control, &lease, Incarnation::from_bytes([44; 16]))?;
+    let mut fresh = ServiceRegistry::open(&control, ownership)?;
+    assert_eq!(fresh.incarnation()?, ownership);
+    assert!(fresh.bindings()?.is_empty());
+    fresh.register(&project)?;
+    assert!(
+        fresh
+            .enqueue(project.binding, ownership, &stale_key, JobKind::Index)
+            .is_err()
+    );
+    assert!(old.list(None, None, 1).is_err());
+    data_scope::bind(&data, &control, ownership)?.check()?;
+    let mut worker = ProjectLease::acquire(&control, project.binding)?;
+    fresh.admit_worker(&mut worker)?;
+    assert!(collection.reset_preceding_storage(&worker)?);
+    assert!(!collection.reset_preceding_storage(&worker)?);
+    for name in [
+        "current.sqlite3",
+        "current.sqlite3-wal",
+        "current.sqlite3-shm",
+    ] {
+        assert!(!store.directory().join(name).exists());
+    }
+    let kernel =
+        Kernel::open_service_collection_for_diagnostics(&source, Some(data.clone()), "fresh")?;
+    kernel.configure_vectors(false)?;
+    kernel.index()?;
+    assert_eq!(
+        kernel
+            .search(&airk_core::SearchQuery {
+                text: "FreshSetupNeedle".into(),
+                path_prefix: None,
+                limit: 4,
+                max_bytes: 4096
+            })?
+            .hits
+            .len(),
+        1
+    );
+    assert_eq!(
+        std::fs::read_to_string(source.join("original.txt"))?,
+        "FreshSetupNeedle original source"
+    );
+    assert_eq!(
+        std::fs::read(store.directory().join("unrelated-settings.json"))?,
+        b"keep unrelated settings"
+    );
     Ok(())
 }

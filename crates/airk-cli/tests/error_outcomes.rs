@@ -21,8 +21,7 @@ fn cli_service_refusal_preserves_locked_legacy_storage_and_backtrace_independent
     let scope: CurrentScope = serde_json::from_value(owner["scope"].clone())?;
     let quota = Quota::open(data.path())?;
     let writer = store.lock()?;
-    let capacity = store.current_database_capacity(&scope)?;
-    let current = store.current_write(&writer, &quota, &scope, capacity)?;
+    let current = store.redb_writer(&writer, &quota, &scope)?;
     let before = fs::read(store.directory().join("current-owner.json"))?;
     for (arguments, backtrace) in [
         (vec!["status"], "0"),

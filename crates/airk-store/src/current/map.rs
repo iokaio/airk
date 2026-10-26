@@ -1,40 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Bounded authenticated key/bucket map for the current catalog and mappings.
-//! Publication calls `put` only inside the current owner's SQL transaction.
+//! Publication writes authenticated afterimages in the native transaction.
 use super::CurrentScope;
 use airk_core::identity::{Sha256Digest, framed_digest};
 use anyhow::{Context, Result, ensure};
-use rusqlite::{Connection, OptionalExtension, params};
 use std::collections::BTreeMap;
 
 const HEIGHT: u8 = 16;
 pub(crate) trait MapStorage {
     fn bucket_bytes(&self, prefix: u16) -> Result<Option<Vec<u8>>>;
     fn node_bytes(&self, height: u8, index: u16) -> Result<Option<Vec<u8>>>;
-}
-impl MapStorage for Connection {
-    fn bucket_bytes(&self, prefix: u16) -> Result<Option<Vec<u8>>> {
-        let row: Option<Option<Vec<u8>>> = self.query_row(
-            "SELECT CASE WHEN typeof(content)='blob' AND length(content)<=524288 THEN content END FROM current_map_buckets WHERE prefix=?1",
-            [i64::from(prefix)], |row| row.get(0)).optional()?;
-        row.map(|value| value.context("invalid current map bucket bytes"))
-            .transpose()
-    }
-    fn node_bytes(&self, height: u8, index: u16) -> Result<Option<Vec<u8>>> {
-        let row: Option<Option<Vec<u8>>> = self.query_row(
-            "SELECT CASE WHEN typeof(digest)='blob' AND length(digest)=32 THEN digest END FROM current_map_nodes WHERE height=?1 AND idx=?2",
-            params![i64::from(height), i64::from(index)], |row| row.get(0)).optional()?;
-        row.map(|value| value.context("invalid current map node digest"))
-            .transpose()
-    }
-}
-impl MapStorage for rusqlite::Transaction<'_> {
-    fn bucket_bytes(&self, prefix: u16) -> Result<Option<Vec<u8>>> {
-        MapStorage::bucket_bytes(&**self, prefix)
-    }
-    fn node_bytes(&self, height: u8, index: u16) -> Result<Option<Vec<u8>>> {
-        MapStorage::node_bytes(&**self, height, index)
-    }
 }
 pub const MAX_BUCKET_BYTES: usize = 512 * 1024;
 pub const MAX_VALUE_BYTES: usize = 256 * 1024;
@@ -43,11 +18,6 @@ pub const MAX_BUCKET_ENTRIES: usize = 128;
 #[cfg(test)]
 thread_local! {
     static BASE_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
-#[cfg(test)]
-pub(crate) fn base_visit_count() -> usize {
-    BASE_VISITS.get()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -268,11 +238,6 @@ fn encode(prefix: u16, entries: &[Entry]) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
-pub(crate) fn create(connection: &Connection) -> Result<()> {
-    connection.execute_batch("CREATE TABLE current_map_buckets(prefix INTEGER PRIMARY KEY CHECK(prefix BETWEEN 0 AND 65535),content BLOB NOT NULL CHECK(length(content) BETWEEN 2 AND 524288));
-        CREATE TABLE current_map_nodes(height INTEGER NOT NULL CHECK(height BETWEEN 0 AND 15),idx INTEGER NOT NULL CHECK(idx BETWEEN 0 AND 65535),digest BLOB NOT NULL CHECK(length(digest)=32),PRIMARY KEY(height,idx)) WITHOUT ROWID;")?;
-    Ok(())
-}
 fn bucket(
     connection: &dyn MapStorage,
     scope: &CurrentScope,
@@ -344,107 +309,7 @@ pub(crate) fn get(
         .ok()
         .map(|position| entries[position].value.clone()))
 }
-fn put_node(
-    connection: &Connection,
-    scope: &CurrentScope,
-    height: u8,
-    index: u16,
-    digest: Sha256Digest,
-) -> Result<()> {
-    if height == HEIGHT {
-        // The root has one owner: CurrentHead. Keeping a duplicate SQL row
-        // would create an unused physical value with no proof-checking role.
-        return Ok(());
-    }
-    let values = params![
-        i64::from(height),
-        i64::from(index),
-        digest.as_bytes().as_slice()
-    ];
-    if digest == empty(scope, height) {
-        connection.execute(
-            "DELETE FROM current_map_nodes WHERE height=?1 AND idx=?2",
-            params![i64::from(height), i64::from(index)],
-        )?;
-    } else if connection.execute(
-        "UPDATE OR ROLLBACK current_map_nodes SET digest=?3 WHERE height=?1 AND idx=?2",
-        values,
-    )? == 0
-    {
-        connection.execute(
-            "INSERT OR ROLLBACK INTO current_map_nodes(height,idx,digest) VALUES(?1,?2,?3)",
-            values,
-        )?;
-    }
-    Ok(())
-}
-/// The caller owns an exclusive current gate and a SQL transaction covering the
-/// eventual head change. This function never commits a partially changed root.
-pub(crate) fn put(
-    connection: &Connection,
-    scope: &CurrentScope,
-    root: Sha256Digest,
-    key: Sha256Digest,
-    value: Option<&[u8]>,
-) -> Result<Sha256Digest> {
-    if let Some(value) = value {
-        ensure!(value.len() <= MAX_VALUE_BYTES, "map value limit exceeded");
-    }
-    let prefix = prefix(key);
-    let mut entries = proof(connection, scope, root, key)?;
-    match entries.binary_search_by_key(&key, |entry| entry.key) {
-        Ok(position) if let Some(value) = value => entries[position].value = value.to_vec(),
-        Ok(position) => {
-            entries.remove(position);
-        }
-        Err(position) if let Some(value) = value => entries.insert(
-            position,
-            Entry {
-                key,
-                value: value.to_vec(),
-            },
-        ),
-        Err(_) => return Ok(root),
-    }
-    let mut digest = if entries.is_empty() {
-        connection.execute(
-            "DELETE FROM current_map_buckets WHERE prefix=?1",
-            [i64::from(prefix)],
-        )?;
-        empty(scope, 0)
-    } else {
-        let bytes = encode(prefix, &entries)?;
-        if connection.execute(
-            "UPDATE OR ROLLBACK current_map_buckets SET content=?2 WHERE prefix=?1",
-            params![i64::from(prefix), &bytes],
-        )? == 0
-        {
-            connection.execute(
-                "INSERT OR ROLLBACK INTO current_map_buckets(prefix,content) VALUES(?1,?2)",
-                params![i64::from(prefix), &bytes],
-            )?;
-        }
-        leaf(scope, prefix, &bytes)
-    };
-    let mut index = prefix;
-    put_node(connection, scope, 0, index, digest)?;
-    for height in 0..HEIGHT {
-        let sibling = node(connection, scope, height, index ^ 1)?;
-        let (left, right) = if index & 1 == 0 {
-            (digest, sibling)
-        } else {
-            (sibling, digest)
-        };
-        index >>= 1;
-        digest = branch(scope, height + 1, index, left, right)?;
-        put_node(connection, scope, height + 1, index, digest)?;
-    }
-    Ok(digest)
-}
-
-/// Predicts the exact post-commit map root while the committed SQL tree stays
-/// readable. The final SQL transaction must replay the same ordered mutations
-/// with `put` and require equality with `root()` before publishing the head.
+/// Predicts authenticated native map afterimages against a pinned base.
 pub(crate) struct MapPlan<'a> {
     connection: &'a dyn MapStorage,
     scope: &'a CurrentScope,
@@ -501,6 +366,33 @@ impl<'a> MapPlan<'a> {
             }
         }
         Ok(self.root)
+    }
+    pub(crate) fn visit_kv(
+        &self,
+        visitor: &mut dyn FnMut(&super::kv::journal::Operation) -> Result<()>,
+    ) -> Result<()> {
+        use super::kv::journal::{Operation, Table};
+        ensure!(!self.poisoned, "current map plan is poisoned");
+        for (&prefix, entries) in &self.buckets {
+            visitor(&Operation {
+                table: Table::MapBucket,
+                key: prefix.to_be_bytes().to_vec(),
+                value: if entries.is_empty() {
+                    None
+                } else {
+                    Some(encode(prefix, entries)?)
+                },
+            })?;
+        }
+        for (&(height, index), digest) in &self.nodes {
+            let key = (u32::from(height) << 16) | u32::from(index);
+            visitor(&Operation {
+                table: Table::MapNode,
+                key: key.to_be_bytes().to_vec(),
+                value: (*digest != empty(self.scope, height)).then(|| digest.as_bytes().to_vec()),
+            })?;
+        }
+        Ok(())
     }
 
     /// Prove a complete, bounded traversal of the immutable committed base.
@@ -729,6 +621,3 @@ pub(crate) fn visit_all(
     }
     Ok(())
 }
-
-#[cfg(test)]
-mod tests;

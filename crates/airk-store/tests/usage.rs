@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-use airk_core::{Snapshot, SnapshotStore, usage::*};
+use airk_core::usage::*;
 use airk_store::{
     FileStore,
     usage::{self, DAY_MS, UsageStore},
@@ -8,9 +8,7 @@ use airk_store::{
 fn setup() -> anyhow::Result<(tempfile::TempDir, std::path::PathBuf, UsageScope)> {
     let root = tempfile::tempdir()?;
     let directory = root.path().join("collections-1.2/project");
-    let mut snapshot = Snapshot::empty("fixture-root".into());
-    snapshot.collection = "project".into();
-    FileStore::new(&directory).save(&snapshot)?;
+    initialize_native(root.path(), &directory, 1)?;
     Ok((
         root,
         directory,
@@ -211,8 +209,8 @@ fn shared_quota_rejects_usage_growth_but_clear_reclaims_when_full() -> anyhow::R
     let quota = airk_store::quota::Quota::open(root.path())?;
     let status = quota.status()?;
     quota.configure(airk_store::quota::QuotaPolicy {
-        root_bytes: status.used_bytes,
-        default_collection_bytes: status.used_bytes,
+        root_bytes: status.used_bytes + status.reserved_bytes,
+        default_collection_bytes: status.used_bytes + status.reserved_bytes,
         collections: Default::default(),
     })?;
     let before = std::fs::read(directory.join("usage.airk"))?;
@@ -225,7 +223,11 @@ fn shared_quota_rejects_usage_growth_but_clear_reclaims_when_full() -> anyhow::R
     usage::clear(&directory)?;
     assert!(!directory.join("usage.airk").exists());
     assert!(quota.status()?.used_bytes < status.used_bytes);
-    assert!(FileStore::new(&directory).load()?.is_some());
+    assert!(
+        FileStore::new(&directory)
+            .current_scope("fixture-root", "project")?
+            .is_some()
+    );
     Ok(())
 }
 
@@ -403,7 +405,11 @@ fn clearing_rejects_late_writers_and_preserves_index() -> anyhow::Result<()> {
     store.record(&observation(&scope, 1))?;
     usage::clear(&directory)?;
     assert!(store.record(&observation(&scope, 2)).is_err());
-    assert!(FileStore::new(&directory).load()?.is_some());
+    assert!(
+        FileStore::new(&directory)
+            .current_scope("fixture-root", "project")?
+            .is_some()
+    );
     assert_eq!(
         UsageStore::read(&directory, &scope, 0, usage::unix_ms() + DAY_MS)?
             .buckets
@@ -415,63 +421,13 @@ fn clearing_rejects_late_writers_and_preserves_index() -> anyhow::Result<()> {
 
 #[test]
 fn deletion_and_recreation_cannot_receive_an_old_workers_history() -> anyhow::Result<()> {
-    use airk_core::{
-        graph_storage::{GraphHead, GraphScope},
-        identity::{Incarnation, Sha256Digest, framed_digest},
-    };
-    use airk_store::current::{
-        CurrentHead, CurrentScope, collection::CollectionConfiguration, map,
-    };
     let root = tempfile::tempdir()?;
     let directory = root.path().join("collections-1.2/project");
     let scope = UsageScope {
         collection: "project".into(),
         root_binding: [7; 32],
     };
-    let initialize = |incarnation: u8| -> anyhow::Result<()> {
-        let current_scope = CurrentScope {
-            root: "fixture-root".into(),
-            collection: "project".into(),
-            incarnation: Incarnation::from_bytes([incarnation; 16]),
-        };
-        let graph_scope = GraphScope {
-            root: current_scope.root.clone(),
-            collection: current_scope.collection.clone(),
-            incarnation: current_scope.incarnation,
-            graph_instance: Incarnation::from_bytes([incarnation; 16]),
-            specification: Sha256Digest::from_bytes([3; 32]),
-            record_bytes: 16,
-        };
-        let manifest = br#"{"fixture":"empty"}"#;
-        let head = CurrentHead {
-            version: 2,
-            scope: current_scope.clone(),
-            sequence: 0,
-            artifact_root: map::empty_root(&current_scope)?,
-            lexical_sequence: 0,
-            lexical_commit: framed_digest(b"current-lexical-manifest/1", &[manifest]),
-            graph_head: GraphHead::empty(graph_scope)?,
-        };
-        let file = FileStore::new(&directory);
-        let writer = file.lock()?;
-        let quota = airk_store::quota::Quota::open(root.path())?;
-        let mut current = file.current_write(&writer, &quota, &current_scope, 8 << 20)?;
-        let token = head.token()?;
-        current.initialize(head)?;
-        current.install_initial_lexical_manifest(&token, manifest)?;
-        current.initialize_collection(
-            &token,
-            &CollectionConfiguration {
-                roots: Default::default(),
-                extractor_version: "fixture".into(),
-                extraction_policy_digest: Sha256Digest::from_bytes([4; 32]),
-                index_detail: Default::default(),
-                vector_selection: Default::default(),
-                model: None,
-            },
-        )?;
-        Ok(())
-    };
+    let initialize = |incarnation: u8| initialize_native(root.path(), &directory, incarnation);
     initialize(1)?;
     let store = UsageStore::open(&directory, &scope, &UsagePolicy::default())?.unwrap();
     airk_store::remove_collection(root.path(), "project")?;
@@ -558,7 +514,7 @@ fn page_and_root_quotas_fail_closed_without_partial_commits() -> anyhow::Result<
             }
         }
     }
-    assert!(exhausted, "fixture must exercise SQLITE_FULL rollback");
+    assert!(exhausted, "fixture must exercise quota-admitted rollback");
     let report = UsageStore::read(&directory, &scope, 0, usage::unix_ms() + DAY_MS)?;
     assert_eq!(
         report.buckets.iter().map(|b| b.calls).sum::<u64>(),
@@ -568,11 +524,13 @@ fn page_and_root_quotas_fail_closed_without_partial_commits() -> anyhow::Result<
     assert!(report.health.database_bytes <= limited.max_collection_bytes);
     assert!(!directory.join("usage.airk-journal").exists());
     assert!(!directory.join("usage.airk-wal").exists());
-    assert!(FileStore::new(&directory).load()?.is_some());
+    assert!(
+        FileStore::new(&directory)
+            .current_scope("fixture-root", "project")?
+            .is_some()
+    );
     let other_dir = root.path().join("collections-1.2/other");
-    let mut snapshot = Snapshot::empty("other-fixture".into());
-    snapshot.collection = "other".into();
-    FileStore::new(&other_dir).save(&snapshot)?;
+    std::fs::create_dir_all(&other_dir)?;
     let other_scope = UsageScope {
         collection: "other".into(),
         root_binding: [9; 32],
@@ -595,4 +553,55 @@ fn ledger_state(directory: &std::path::Path) -> anyhow::Result<serde_json::Value
     Ok(serde_json::from_slice(
         &lz4_flex::decompress_size_prepended(value.value())?,
     )?)
+}
+
+fn initialize_native(
+    root: &std::path::Path,
+    directory: &std::path::Path,
+    incarnation: u8,
+) -> anyhow::Result<()> {
+    use airk_core::{
+        graph_storage::{GraphHead, GraphScope},
+        identity::{Incarnation, Sha256Digest},
+    };
+    use airk_store::current::{CurrentHead, CurrentScope, map};
+    let scope = CurrentScope {
+        root: "fixture-root".into(),
+        collection: "project".into(),
+        incarnation: Incarnation::from_bytes([incarnation; 16]),
+    };
+    let graph = GraphScope {
+        root: scope.root.clone(),
+        collection: scope.collection.clone(),
+        incarnation: scope.incarnation,
+        graph_instance: scope.incarnation,
+        specification: Sha256Digest::from_bytes([3; 32]),
+        record_bytes: 16,
+    };
+    let head = CurrentHead {
+        version: 2,
+        sequence: 0,
+        lexical_sequence: 0,
+        artifact_root: map::empty_root(&scope)?,
+        lexical_commit: airk_store::current::kv::lexical::Manifest::empty(&scope)?.digest()?,
+        graph_head: GraphHead::empty(graph)?,
+        scope,
+    };
+    let file = FileStore::new(directory);
+    let writer = file.lock()?;
+    let quota = airk_store::quota::Quota::open(root)?;
+    drop(file.bootstrap_redb(&writer, &quota, &head, 2 << 20)?);
+    let current = file.redb_writer(&writer, &quota, &head.scope)?;
+    current.initialize_collection(
+        &head.token()?,
+        &airk_store::current::collection::CollectionConfiguration {
+            roots: Default::default(),
+            extractor_version: "native-usage-fixture/1".into(),
+            extraction_policy_digest: Sha256Digest::from_bytes([4; 32]),
+            index_detail: airk_core::extraction::IndexDetail::AgentLean,
+            vector_selection: Default::default(),
+            model: None,
+        },
+    )?;
+    Ok(())
 }

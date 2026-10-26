@@ -319,7 +319,7 @@ impl Resources {
                         JobKind::Reconcile => 2,
                         JobKind::Vectors | JobKind::ModelSetup => 3,
                         JobKind::Inspect | JobKind::PlanInspect | JobKind::Verify => 4,
-                        JobKind::Maintain => 5,
+                        JobKind::Maintain | JobKind::Compact => 5,
                     }
                 };
                 (rank, Some(**project) == self.last_project, waiting.sequence)

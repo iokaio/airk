@@ -247,13 +247,14 @@ impl UsageStore {
                 count.saturating_mul(1 << 20) <= requested.max_data_root_bytes,
                 "usage data-root capacity reached"
             );
-            let _quota = reserve_ledger(directory, requested, best_effort)?;
+            let reservation = reserve_ledger(directory, requested, best_effort)?;
             let state = State::new(scope.clone())?;
             crate::ledger::create(
                 &directory.join(FILE),
                 KIND,
                 requested.max_collection_bytes,
                 MAXIMUM,
+                &reservation,
                 state,
             )?;
             read_state(directory, scope)?
@@ -270,12 +271,13 @@ impl UsageStore {
         policy: &UsagePolicy,
         operation: impl FnOnce(&mut State) -> Result<R>,
     ) -> Result<R> {
-        let _quota = reserve_ledger(&self.directory, policy, self.best_effort)?;
+        let reservation = reserve_ledger(&self.directory, policy, self.best_effort)?;
         crate::ledger::write(
             &self.directory.join(FILE),
             KIND,
             policy.max_collection_bytes,
             MAXIMUM,
+            &reservation,
             |state: &mut State| {
                 state.validate(&self.scope)?;
                 ensure!(
@@ -501,12 +503,13 @@ pub fn feedback(
         policy.mode != RecordingMode::Disabled,
         "usage recording is disabled"
     );
-    let _quota = reserve_ledger(directory, &policy, false)?;
+    let reservation = reserve_ledger(directory, &policy, false)?;
     crate::ledger::write(
         &directory.join(FILE),
         KIND,
         policy.max_collection_bytes,
         MAXIMUM,
+        &reservation,
         |state: &mut State| {
             state.validate(scope)?;
             let id = request_id.to_ascii_lowercase();

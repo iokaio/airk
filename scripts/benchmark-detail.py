@@ -13,7 +13,6 @@ import os
 from pathlib import Path
 import queue
 import shutil
-import sqlite3
 import subprocess
 import threading
 import time
@@ -102,7 +101,7 @@ class Mcp:
         self.errors.close()
 
 
-def storage(directory):
+def storage(directory, status):
     parts = {}
     for path in directory.rglob("*"):
         if path.is_file():
@@ -110,18 +109,9 @@ def storage(directory):
             category = "/".join(relative[:2]) if relative[0] == "objects" else (
                 path.name if relative[0] == "generations" and len(relative) == 3 else relative[0])
             parts[category] = parts.get(category, 0) + path.stat().st_size
-    generations = list((directory / "generations").glob("*/inventory.json"))
-    with sqlite3.connect((directory / "index.sqlite3").as_uri() + "?mode=ro", uri=True) as db:
-        header = json.loads(db.execute("SELECT payload FROM index_components WHERE id=1").fetchone()[0])
-    active = directory / "generations" / header["revision"]
-    inv = json.loads((active / "inventory.json").read_text(encoding="utf-8"))
-    catalog = active / "catalog.sqlite"
-    with sqlite3.connect(catalog.as_uri() + "?mode=ro&immutable=1", uri=True) as db:
-        rows = {name: db.execute("SELECT count(*) FROM " + name).fetchone()[0]
-            for name in ("facts", "relationships", "files", "continuity_records")}
-    return {"logical_bytes": sum(parts.values()), "components": parts, "rows": rows,
-        "files": len(inv["files"]), "source_bytes": sum(f["source_bytes"] for f in inv["files"].values()),
-        "detail": inv.get("index_detail"), "generation": inv["generation"], "retained_generations": len(generations)}
+    return {"logical_bytes": sum(parts.values()), "components": parts,
+        "files": status["files"], "source_bytes": status["source_bytes"],
+        "detail": status.get("index_detail"), "generation": status["generation"]}
 
 
 def main():
@@ -160,7 +150,7 @@ def main():
                 print(label + ": indexing original workspace", flush=True)
                 run(command, label + "-configure", "collections", "extraction", "detail", level)
                 report, timing = run(command, label + "-initial", "index", "--scheduled", "--automatic")
-                initial = storage(state / "collections" / collection)
+                initial = storage(state / "collections-1.2" / collection, run(command, label + "-status", "status")[0])
                 noop, noop_timing = run(command, label + "-noop", "index", "--scheduled", "--automatic")
                 assert noop["indexed"] == 0 and noop["generation"] == report["generation"], "no-change index republished"
                 row = {"workspace": workspace["label"], "level": level, "initial": timing,
@@ -212,7 +202,7 @@ def main():
                 print(label + ": indexing isolated source copy", flush=True)
                 run(command, label + "-configure", "collections", "extraction", "detail", level)
                 run(command, label + "-baseline", "index", "--scheduled", "--automatic")
-                copied_storage = storage(state / "collections" / collection)
+                copied_storage = storage(state / "collections-1.2" / collection, run(command, label + "-status", "status")[0])
                 original_row = next(r for r in result["runs"] if r["workspace"] == workspace["label"] and r["level"] == level)
                 assert copied_storage["files"] == original_row["storage"]["files"], "copy changed eligible file count"
                 assert copied_storage["source_bytes"] == original_row["storage"]["source_bytes"], "copy changed eligible source size"
@@ -222,7 +212,7 @@ def main():
                     assert report["indexed"] == 1 and report["reused"] == copied_storage["files"] - 1, report
                     row = next(r for r in result["runs"] if r["workspace"] == workspace["label"] and r["level"] == level)
                     row["one_file_edit_in_isolated_copy"] = {"timing": timing, "report": report,
-                        "storage_after_cleanup": storage(state / "collections" / collection)}
+                        "storage_after_cleanup": storage(state / "collections-1.2" / collection, run(command, label + "-status", "status")[0])}
                     client = Mcp(command, copied, collection, output / (label + "-mcp.stderr"))
                     try:
                         facts, _ = client.call("airk_symbols", {"name": workspace["query"]})
@@ -245,7 +235,7 @@ def main():
                                 break
                         completed = cleanup is None or (not cleanup["receipt"]["pending"] and not cleanup["receipt"]["error"])
                         row["automatic_cleanup"] = {"passes": passes, "completed": completed,
-                            "storage": storage(state / "collections" / collection)}
+                            "storage": storage(state / "collections-1.2" / collection, run(command, label + "-status", "status")[0])}
                         save(output / "summary-private.json", result)
                         assert completed, "automatic cleanup still pending; inspect recorded receipts"
                         assert row["automatic_cleanup"]["storage"]["retained_generations"] == 1, "automatic cleanup did not reach retention target"

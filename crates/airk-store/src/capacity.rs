@@ -4,8 +4,59 @@ use anyhow::{Context, Result, ensure};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
+/// Sample a managed database's logical length without reading its contents.
+/// Missing files are distinct from unsafe aliases and failed observations.
+pub fn logical_database_bytes(path: &Path) -> Result<Option<u64>> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            crate::managed_collection::reject_file_aliases(path, &metadata)?;
+            Ok(Some(metadata.len()))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn logical_database_sample_distinguishes_missing_and_refuses_aliases() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let path = root.path().join("usage.airk");
+    assert_eq!(logical_database_bytes(&path)?, None);
+    std::fs::write(&path, b"sample")?;
+    assert_eq!(logical_database_bytes(&path)?, Some(6));
+    std::fs::hard_link(&path, root.path().join("alias"))?;
+    assert!(logical_database_bytes(&path).is_err());
+    assert!(logical_database_bytes(root.path()).is_err());
+    Ok(())
+}
+
 /// Leave room for filesystem metadata and recovery. This is not an OS reservation.
 pub const SAFETY_HEADROOM_BYTES: u64 = 16 * 1024 * 1024;
+#[cfg(test)]
+static TEST_HEADROOM: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::BTreeMap<PathBuf, u64>>,
+> = std::sync::OnceLock::new();
+#[cfg(test)]
+pub(crate) struct TestHeadroom(PathBuf);
+#[cfg(test)]
+impl Drop for TestHeadroom {
+    fn drop(&mut self) {
+        if let Some(values) = TEST_HEADROOM.get() {
+            values.lock().unwrap().remove(&self.0);
+        }
+    }
+}
+#[cfg(test)]
+pub(crate) fn test_growth_headroom(path: &Path, bytes: u64) -> Result<TestHeadroom> {
+    let path = path.canonicalize()?;
+    TEST_HEADROOM
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap()
+        .insert(path.clone(), bytes);
+    Ok(TestHeadroom(path))
+}
 
 #[derive(Clone, Debug)]
 pub struct StoragePressure {
@@ -24,21 +75,41 @@ impl std::fmt::Display for StoragePressure {
 }
 impl std::error::Error for StoragePressure {}
 
-/// Keep SQLite/provider-specific pressure recognition in the storage adapter.
+/// Keep provider-specific pressure recognition in the storage adapter.
 /// No string matching: unrelated permission/corruption failures are not retried.
 pub fn is_storage_pressure(error: &anyhow::Error) -> bool {
+    if error
+        .downcast_ref::<crate::quota::QuotaPressure>()
+        .is_some()
+        || error.downcast_ref::<StoragePressure>().is_some()
+    {
+        return true;
+    }
     error.chain().any(|cause| {
-        cause.is::<crate::quota::QuotaPressure>() || cause.is::<StoragePressure>()
-        || cause.downcast_ref::<std::io::Error>().is_some_and(|error|
-            error.kind()==std::io::ErrorKind::StorageFull)
-        || matches!(cause.downcast_ref::<rusqlite::Error>(),
-            Some(rusqlite::Error::SqliteFailure(error,_)) if error.code==rusqlite::ErrorCode::DiskFull)
+        cause.is::<crate::quota::QuotaPressure>()
+            || cause.is::<StoragePressure>()
+            || cause
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|error| error.kind() == std::io::ErrorKind::StorageFull)
     })
 }
 
 /// Stable path-free job diagnostics. Preserve the typed cause rather than
 /// conflating a reservation ceiling with physical disk exhaustion.
 pub fn storage_pressure_code(error: &anyhow::Error) -> Option<&'static str> {
+    // anyhow context retains typed admission witnesses even when redb's I/O
+    // boundary rendered its original error to text. Error::chain alone exposes
+    // the context wrapper rather than that witness's concrete type.
+    if let Some(quota) = error.downcast_ref::<crate::quota::QuotaPressure>() {
+        return Some(match quota.scope {
+            crate::quota::PressureScope::Root => "storage_quota_root",
+            crate::quota::PressureScope::Collection => "storage_quota_collection",
+            crate::quota::PressureScope::Reservation => "storage_quota_reservation",
+        });
+    }
+    if error.downcast_ref::<StoragePressure>().is_some() {
+        return Some("physical_storage_headroom");
+    }
     for cause in error.chain() {
         if let Some(quota) = cause.downcast_ref::<crate::quota::QuotaPressure>() {
             return Some(match quota.scope {
@@ -55,10 +126,6 @@ pub fn storage_pressure_code(error: &anyhow::Error) -> Option<&'static str> {
             .is_some_and(|error| error.kind() == std::io::ErrorKind::StorageFull)
         {
             return Some("filesystem_storage_full");
-        }
-        if matches!(cause.downcast_ref::<rusqlite::Error>(), Some(rusqlite::Error::SqliteFailure(error, _)) if error.code == rusqlite::ErrorCode::DiskFull)
-        {
-            return Some("sqlite_storage_full");
         }
     }
     None
@@ -108,13 +175,21 @@ pub fn probe(path: &Path) -> Result<Capacity> {
         available <= free && available <= total,
         "filesystem returned inconsistent capacity"
     );
+    let available_growth_bytes = available.saturating_sub(SAFETY_HEADROOM_BYTES);
+    #[cfg(test)]
+    let available_growth_bytes = TEST_HEADROOM
+        .get()
+        .and_then(|values| values.lock().unwrap().get(&existing).copied())
+        .map_or(available_growth_bytes, |bytes| {
+            available_growth_bytes.min(bytes)
+        });
     Ok(Capacity {
         observed_path: existing,
         total_to_caller_bytes: total,
         free_bytes: free,
         available_to_caller_bytes: available,
         safety_headroom_bytes: SAFETY_HEADROOM_BYTES,
-        available_growth_bytes: available.saturating_sub(SAFETY_HEADROOM_BYTES),
+        available_growth_bytes,
         guarantee: "point-in-time OS free space; not reserved against concurrent or external writes",
     })
 }
@@ -298,13 +373,6 @@ mod tests {
         )));
         assert!(!is_storage_pressure(
             &std::io::Error::from(std::io::ErrorKind::PermissionDenied).into()
-        ));
-        assert!(is_storage_pressure(
-            &rusqlite::Error::SqliteFailure(
-                rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_FULL),
-                None
-            )
-            .into()
         ));
     }
 }

@@ -323,7 +323,7 @@ fn record_scan_failure(
 #[serde(deny_unknown_fields)]
 struct RuntimeBootstrap {
     head: CurrentHead,
-    manifest: airk_store::current::lexical::LexicalManifest,
+    manifest: airk_store::current::kv::lexical::Manifest,
     configuration: CollectionConfiguration,
 }
 
@@ -341,19 +341,18 @@ impl Kernel {
             "foreign runtime bootstrap"
         );
         recipe.configuration.validate()?;
-        let lock = self.store.lock()?;
+        let lock = self.lock_current_writer()?;
         let quota = self.collection_quota()?;
-        let mut current = self
+        ensure!(
+            recipe.manifest.digest()? == recipe.head.lexical_commit,
+            "native runtime bootstrap lexical manifest differs from head"
+        );
+        let engine = self
             .store
-            .current_write(&lock, &quota, &recipe.head.scope, 16 << 20)?;
-        if current.head().is_ok_and(|h| h.sequence > 0) {
-            self.store.finish_runtime_bootstrap(&lock)?;
-            return Ok(());
+            .bootstrap_redb(&lock, &quota, &recipe.head, 16 << 20)?;
+        if engine.snapshot()?.head()?.sequence == 0 {
+            engine.initialize_collection(&self.store, &recipe.configuration)?;
         }
-        let token = recipe.head.token()?;
-        current.initialize(recipe.head)?;
-        current.install_initial_lexical_manifest(&token, &recipe.manifest.canonical_bytes()?)?;
-        current.initialize_collection(&token, &recipe.configuration)?;
         self.store.finish_runtime_bootstrap(&lock)
     }
 
@@ -362,7 +361,7 @@ impl Kernel {
         if self.current_scope()?.is_some() {
             return self.status();
         }
-        let writer = self.store.lock()?;
+        let writer = self.lock_current_writer()?;
         let quota = self.collection_quota()?;
         let reservation = self.publication_reservation()?;
         let policy = self.rebuild_extraction_policy()?.policy;
@@ -424,7 +423,7 @@ impl Kernel {
             )?,
             record_bytes: mutable::record_bytes(dimensions)?,
         };
-        let manifest = airk_store::current::lexical::LexicalManifest::empty()?;
+        let manifest = airk_store::current::kv::lexical::Manifest::empty(&scope)?;
         let head = CurrentHead {
             version: 2,
             scope: scope.clone(),
@@ -441,11 +440,8 @@ impl Kernel {
         })?;
         reservation.charge(recipe.len() as u64)?;
         self.store.write_runtime_bootstrap(writer, &recipe)?;
-        let mut current = self.store.current_write(writer, quota, &scope, 16 << 20)?;
-        let token = head.token()?;
-        current.initialize(head)?;
-        current.install_initial_lexical_manifest(&token, &manifest.canonical_bytes()?)?;
-        current.initialize_collection(&token, configuration)?;
+        let engine = self.store.bootstrap_redb(writer, quota, &head, 16 << 20)?;
+        engine.initialize_collection(&self.store, configuration)?;
         self.store.finish_runtime_bootstrap(writer)?;
         Ok(scope)
     }
@@ -460,6 +456,9 @@ impl Kernel {
 
     /// Refresh saved logical paths; untouched bindings retain their indexed revision.
     pub fn index_paths(&self, paths: &[String]) -> Result<airk_ingest::IndexReport> {
+        if let Some(selected) = self.active_service_view()? {
+            return selected.index_paths(paths);
+        }
         self.index_current_paths(paths, true)
     }
 
@@ -566,15 +565,12 @@ impl Kernel {
     }
 
     fn retained_repair_admission(&self) -> Result<bool> {
-        let writer = self.store.lock()?;
+        let writer = self.lock_current_writer()?;
         let Some(scope) = self.current_scope()? else {
             return Ok(false);
         };
         let quota = self.collection_quota()?;
-        let capacity = self.store.current_database_capacity(&scope)?;
-        let current = self
-            .store
-            .current_write(&writer, &quota, &scope, capacity)?;
+        let current = self.store.redb_writer(&writer, &quota, &scope)?;
         Ok(
             current.phase()? == airk_store::current::TransactionPhase::Ready
                 && current.pending()?.is_none(),
@@ -584,7 +580,7 @@ impl Kernel {
     /// Discard obsolete derived index state, including retained copies, before model setup.
     /// Current-format collections are unchanged; explicit full indexing follows.
     pub fn prepare_full_rebuild(&self) -> Result<bool> {
-        let writer = self.store.lock()?;
+        let writer = self.lock_current_writer()?;
         self.store.rebuild_obsolete_index(
             &writer,
             &self.collection_quota()?,
@@ -626,7 +622,7 @@ impl Kernel {
         if let Some(scope) = self.current_scope()? {
             super::recover_current(&self.store, &self.collection_quota()?, &scope)?;
         }
-        let writer = self.store.lock()?;
+        let writer = self.lock_current_writer()?;
         let quota = self.collection_quota()?;
         ensure!(
             !self.root.starts_with(quota.root()),
@@ -646,7 +642,7 @@ impl Kernel {
         // Keep a small independent allowance alive before capture/publication
         // can exhaust quota. Failure reporting must not require a fresh grant.
         let failure_reservation = self.publication_reservation_with_limit(2 << 20)?;
-        // Do not reserve all remaining capacity: durable SQL growth/replay owns
+        // Do not reserve all remaining capacity: durable database growth/replay owns
         // an independent grant while preparation is still alive.
         let available = quota.status()?;
         let root_free = available

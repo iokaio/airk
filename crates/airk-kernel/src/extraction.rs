@@ -61,7 +61,6 @@ impl Kernel {
             } else {
                 "default"
             },
-            None,
         )
     }
 
@@ -79,17 +78,15 @@ impl Kernel {
         policy: ExtractionPolicy,
         origin: &str,
     ) -> Result<ExtractionPolicyStatus> {
-        self.extraction_policy_status_with_catalog(policy, origin, None)
+        self.extraction_policy_status_with_catalog(policy, origin)
     }
     fn extraction_policy_status_with_catalog(
         &self,
         policy: ExtractionPolicy,
         origin: &str,
-        catalog: Option<airk_store::blobs::Catalog>,
     ) -> Result<ExtractionPolicyStatus> {
         let registry = airk_ingest::adapters::registry::AdapterRegistry::baseline();
         policy.validate(&registry)?;
-        let _ = catalog;
         let current = self
             .current_scope()?
             .map(|scope| self.store.current_read(&scope))
@@ -129,7 +126,10 @@ impl Kernel {
         &self,
         detail: airk_core::extraction::IndexDetail,
     ) -> Result<ExtractionPolicyStatus> {
-        let writer = self.store.lock()?;
+        if let Some(selected) = self.active_service_view()? {
+            return selected.configure_index_detail(detail);
+        }
+        let writer = self.lock_current_writer()?;
         let mut policy = self.extraction_policy()?.policy;
         policy.version = 3;
         policy.detail = Some(detail);
@@ -147,7 +147,10 @@ impl Kernel {
         &self,
         policy: ExtractionPolicy,
     ) -> Result<ExtractionPolicyStatus> {
-        let writer = self.store.lock()?;
+        if let Some(selected) = self.active_service_view()? {
+            return selected.configure_extraction_policy(policy);
+        }
+        let writer = self.lock_current_writer()?;
         self.validate_extraction_policy(&policy)?;
         let quota = self.collection_quota()?;
         self.store.configure_extraction_policy_bytes(

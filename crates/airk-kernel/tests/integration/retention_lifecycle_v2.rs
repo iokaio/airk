@@ -40,7 +40,7 @@ fn two_hundred_current_edits_reach_object_and_database_plateau() -> Result<()> {
                 .count(),
             0
         );
-        let bytes = fs::metadata(directory.join("current.sqlite3"))?.len();
+        let bytes = fs::metadata(directory.join("current.airk"))?.len();
         if index == 100 {
             steady_bytes = bytes;
         }
@@ -75,7 +75,25 @@ fn corrupt_live_ownership_refuses_cleanup_without_deleting_unowned_objects() -> 
     let store = FileStore::new(data.path().join("collections-1.2/default"));
     let observation = store.current_test_catalog()?.unwrap();
     let path = store.directory().join("current-metadata");
-    let live = fs::read_dir(&path)?.next().unwrap()?.path();
+    let read = read_current(&store)?;
+    let binding: airk_store::current::metadata::FileMetadataRef = serde_json::from_slice(
+        &read
+            .map_get(
+                airk_store::current::map::MapDomain::FileMetadata,
+                b"note.txt",
+            )?
+            .unwrap(),
+    )?;
+    let live = path.join(format!(
+        "{}.json",
+        binding
+            .encoding
+            .as_ref()
+            .map_or(binding.digest.to_string(), |encoding| encoding
+                .stored_digest
+                .clone())
+    ));
+    drop(read);
     let saved = fs::read(&live)?;
     let orphan = path.join(format!("{}.json", "b".repeat(64)));
     fs::write(&orphan, b"orphan fixture")?;
@@ -88,7 +106,7 @@ fn corrupt_live_ownership_refuses_cleanup_without_deleting_unowned_objects() -> 
         observation.token.generation
     );
     let read = read_current(&store)?;
-    assert!(kernel.maintain_current().is_err());
+    assert!(kernel.maintain_current()?.pending);
     assert!(orphan.exists());
     drop(read);
     assert_eq!(kernel.maintain_current()?.removed_files, 1);

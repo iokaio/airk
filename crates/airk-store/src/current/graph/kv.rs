@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Typed redb graph records using the existing DiskANN codec and authentication domains.
-use super::{GraphStorage, digest, merkle, sql, staging};
+use super::{GraphStorage, digest, merkle, proof, staging};
 use crate::current::kv::tables;
 use airk_core::{graph_storage::*, identity::Sha256Digest};
 use anyhow::{Result, ensure};
@@ -43,6 +43,116 @@ fn coordinate(height: u8, index: u32) -> Result<u64> {
     validate_coordinate(height, index)?;
     Ok((u64::from(height) << 32) | u64::from(index))
 }
+
+/// Capture typed afterimages in canonical journal order. Replacements also
+/// retire old rows absent from the new graph; no old-instance node may leak
+/// into a target proof. The caller binds both descriptor heads to publication.
+pub fn visit_operations(
+    base: &redb::ReadTransaction,
+    delta: &dyn PreparedGraphDelta,
+    visitor: &mut dyn FnMut(&crate::current::kv::journal::Operation) -> Result<()>,
+) -> Result<()> {
+    use crate::current::kv::journal::{Operation, Table};
+    let descriptor = delta.descriptor();
+    digest::descriptor_bounds(descriptor)?;
+    let mut emitted = 0usize;
+    let mut emit = |operation: &Operation| {
+        ensure!(
+            emitted < crate::current::MAX_PENDING_MAP_CHANGES,
+            "graph capture operation bound exceeded"
+        );
+        emitted += 1;
+        visitor(operation)
+    };
+    let replacing = descriptor.base.scope != descriptor.target.scope;
+    let old = base.open_table(tables::GRAPH_RECORD)?;
+    let mut previous = old.iter()?;
+    let mut next = if replacing {
+        previous.next().transpose()?.map(|(k, _)| k.value())
+    } else {
+        None
+    };
+    let mut records = digest::Stream::new(true, &descriptor.base, &descriptor.target)?;
+    delta.visit_records(&mut |id, record| {
+        ensure!(
+            u64::from(id) < descriptor.target.allocated_count,
+            "captured graph record outside target allocation"
+        );
+        records.record(&descriptor.target.scope, id, record)?;
+        while next.is_some_and(|old| old < id) {
+            emit(&Operation {
+                table: Table::GraphRecord,
+                key: next.unwrap().to_be_bytes().to_vec(),
+                value: None,
+            })?;
+            next = previous.next().transpose()?.map(|(k, _)| k.value());
+        }
+        if next == Some(id) {
+            next = previous.next().transpose()?.map(|(k, _)| k.value());
+        }
+        emit(&Operation {
+            table: Table::GraphRecord,
+            key: id.to_be_bytes().to_vec(),
+            value: Some(encode(record)),
+        })
+    })?;
+    while let Some(id) = next {
+        emit(&Operation {
+            table: Table::GraphRecord,
+            key: id.to_be_bytes().to_vec(),
+            value: None,
+        })?;
+        next = previous.next().transpose()?.map(|(k, _)| k.value());
+    }
+    ensure!(
+        records.count == descriptor.record_count
+            && records.bytes == descriptor.record_bytes
+            && records.finish() == descriptor.records_digest,
+        "captured graph record stream mismatch"
+    );
+    let old = base.open_table(tables::GRAPH_NODE)?;
+    let mut previous = old.iter()?;
+    let mut next = if replacing {
+        previous.next().transpose()?.map(|(k, _)| k.value())
+    } else {
+        None
+    };
+    let mut nodes = digest::Stream::new(false, &descriptor.base, &descriptor.target)?;
+    delta.visit_nodes(&mut |node| {
+        nodes.node(node)?;
+        let key = coordinate(node.height, node.index)?;
+        while next.is_some_and(|old| old < key) {
+            emit(&Operation {
+                table: Table::GraphNode,
+                key: next.unwrap().to_be_bytes().to_vec(),
+                value: None,
+            })?;
+            next = previous.next().transpose()?.map(|(k, _)| k.value());
+        }
+        if next == Some(key) {
+            next = previous.next().transpose()?.map(|(k, _)| k.value());
+        }
+        emit(&Operation {
+            table: Table::GraphNode,
+            key: key.to_be_bytes().to_vec(),
+            value: (node.digest != empty_hash(&descriptor.target.scope, node.height)?)
+                .then(|| node.digest.as_bytes().to_vec()),
+        })
+    })?;
+    while let Some(key) = next {
+        emit(&Operation {
+            table: Table::GraphNode,
+            key: key.to_be_bytes().to_vec(),
+            value: None,
+        })?;
+        next = previous.next().transpose()?.map(|(k, _)| k.value());
+    }
+    ensure!(
+        nodes.count == descriptor.node_count && nodes.finish() == descriptor.nodes_digest,
+        "captured graph node stream mismatch"
+    );
+    Ok(())
+}
 macro_rules! graph_storage {
     ($transaction:ty) => {
         impl GraphStorage for $transaction {
@@ -68,7 +178,7 @@ graph_storage!(redb::ReadTransaction);
 graph_storage!(redb::WriteTransaction);
 
 pub fn read(transaction: &redb::ReadTransaction, head: &GraphHead, id: u32) -> Result<GraphRecord> {
-    super::sql::read_record(transaction, head, id)
+    super::proof::read_record(transaction, head, id)
 }
 
 /// Apply a validated, bounded retained delta inside the caller's atomic transaction.
@@ -99,7 +209,7 @@ pub fn apply(
             "extra redb graph afterimage"
         );
         records.record(&head.scope, id, record)?;
-        let proof = sql::read_proof(transaction, &head, id)?;
+        let proof = proof::read_proof(transaction, &head, id)?;
         let mut counts = head.counts();
         staging::update_counts(&mut counts, &base, id, proof.record.as_ref(), record)?;
         let root = merkle::update_path(
@@ -166,21 +276,88 @@ pub fn verify_all(
     head: &GraphHead,
     maximum_records: u64,
 ) -> Result<()> {
+    let records = transaction.open_table(tables::GRAPH_RECORD)?.len()?;
+    verify_storage(transaction, head, maximum_records, records)?;
+    verify_node_rows(&transaction.open_table(tables::GRAPH_NODE)?, head)
+}
+pub fn verify_write(
+    transaction: &redb::WriteTransaction,
+    head: &GraphHead,
+    maximum_records: u64,
+) -> Result<()> {
+    let records = transaction.open_table(tables::GRAPH_RECORD)?.len()?;
+    verify_storage(transaction, head, maximum_records, records)?;
+    verify_node_rows(&transaction.open_table(tables::GRAPH_NODE)?, head)
+}
+fn verify_storage(
+    transaction: &dyn GraphStorage,
+    head: &GraphHead,
+    maximum_records: u64,
+    records: u64,
+) -> Result<()> {
+    head.validate()?;
     ensure!(
         head.allocated_count <= maximum_records,
         "graph verification budget exceeded"
     );
     let mut live = 0u64;
     for id in 0..head.allocated_count {
-        let record = read(transaction, head, u32::try_from(id)?)?;
+        let record = proof::read_record(transaction, head, u32::try_from(id)?)?;
         record.validate(&head.scope, u32::try_from(id)?)?;
         live += u64::from(record.live);
+        ensure!(
+            transaction.graph_node(0, id as u32)?
+                == Some(leaf_hash(&head.scope, id as u32, &record)?),
+            "redb graph leaf node mismatch"
+        );
+        for height in 1..=32u8 {
+            if id % (1u64 << height) != 0 {
+                continue;
+            }
+            let index = (id >> height) as u32;
+            let left = transaction
+                .graph_node(height - 1, index * 2)?
+                .unwrap_or(empty_hash(&head.scope, height - 1)?);
+            let right = transaction
+                .graph_node(height - 1, index * 2 + 1)?
+                .unwrap_or(empty_hash(&head.scope, height - 1)?);
+            let expected = branch_hash(&head.scope, height, index, left, right)?;
+            ensure!(
+                transaction.graph_node(height, index)? == Some(expected),
+                "redb graph branch node mismatch"
+            );
+            if height == 32 {
+                ensure!(expected == head.merkle_root, "redb graph root mismatch");
+            }
+        }
     }
     ensure!(live == head.live_nodes, "redb graph live count mismatch");
     ensure!(
-        transaction.open_table(tables::GRAPH_RECORD)?.len()? == head.allocated_count,
+        records == head.allocated_count,
         "unexpected redb graph record count"
     );
+    Ok(())
+}
+fn verify_node_rows(
+    nodes: &impl ReadableTable<u64, &'static [u8]>,
+    head: &GraphHead,
+) -> Result<()> {
+    ensure!(
+        nodes.len()? <= head.allocated_count.saturating_mul(33),
+        "too many redb graph nodes"
+    );
+    for row in nodes.iter()? {
+        let (key, value) = row?;
+        let height = u8::try_from(key.value() >> 32)?;
+        let index = key.value() as u32;
+        validate_coordinate(height, index)?;
+        ensure!(
+            (u64::from(index) << height) < head.allocated_count
+                && value.value().len() == 32
+                && value.value() != empty_hash(&head.scope, height)?.as_bytes(),
+            "invalid/outside redb graph node"
+        );
+    }
     Ok(())
 }
 

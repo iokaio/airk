@@ -149,7 +149,7 @@ fn legacy_policy_stays_detailed_and_detail_selection_keeps_adapter_rules() -> Re
 }
 
 #[test]
-fn current_fact_reads_hold_publication_gate_until_request_release() -> Result<()> {
+fn current_fact_reads_preserve_old_snapshot_through_publication() -> Result<()> {
     use super::current_inspection::read_current;
     let root = tempfile::tempdir()?;
     let data = tempfile::tempdir()?;
@@ -167,7 +167,7 @@ fn current_fact_reads_hold_publication_gate_until_request_release() -> Result<()
         root.path().join("sample.rs"),
         "pub fn after_publication() {}\n",
     )?;
-    assert!(kernel.index().is_err());
+    kernel.index()?;
     assert_eq!(
         request
             .native_facts_page(&store, &facts(), false, &Default::default())?

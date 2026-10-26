@@ -150,7 +150,7 @@ pub struct EmbeddingCacheStats {
     pub vector_graph_nodes: u64,
     /// Distinct outcomes in the private per-build exact-input registry.
     pub vector_registry_rows: u64,
-    /// Allocated registry SQLite pages in bytes, not physical disk I/O.
+    /// Allocated registry redb bytes in bytes, not physical disk I/O.
     pub vector_registry_bytes: u64,
     /// Application cache file opens, including verification and compaction.
     pub cache_file_opens: u64,

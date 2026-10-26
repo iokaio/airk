@@ -2,11 +2,7 @@
 //! Atomic metadata-only separation of source roots from all registered derived state.
 use airk_core::service::ProjectRegistration;
 use anyhow::{Result, ensure};
-use rusqlite::Connection;
 use std::path::Path;
-
-pub(super) const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS service_private_paths(
-    path TEXT PRIMARY KEY CHECK(length(path)<=4096)) WITHOUT ROWID;";
 
 #[derive(serde::Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -42,14 +38,15 @@ fn binding(path: &Path) -> Result<StateBinding> {
 /// Match both install/state receipts before adopting their fixed directory names.
 /// Keep proven paths in the private ledger if a receipt later disappears. A raw
 /// development namespace has no installer receipt and protects only its own root.
-fn private_paths(connection: &Connection, runtime: &Path) -> Result<Vec<std::path::PathBuf>> {
+pub(super) fn private_paths(runtime: &Path) -> Result<Vec<std::path::PathBuf>> {
     let state = runtime
         .parent()
         .ok_or_else(|| anyhow::anyhow!("runtime parent missing"))?;
-    let owner_path = state.join("airk-state-1.4.owner.json");
-    match std::fs::symlink_metadata(&owner_path) {
+    let path = state.join("airk-state-1.4.owner.json");
+    let mut paths = vec![runtime.to_path_buf()];
+    match std::fs::symlink_metadata(&path) {
         Ok(_) => {
-            let owner = binding(&owner_path)?;
+            let owner = binding(&path)?;
             ensure!(
                 owner.schema == 1
                     && owner.ready
@@ -73,36 +70,16 @@ fn private_paths(connection: &Connection, runtime: &Path) -> Result<Vec<std::pat
                         && !path.components().any(|part| matches!(
                             part,
                             std::path::Component::ParentDir | std::path::Component::CurDir
-                        )),
+                        ))
+                        && path.to_str().is_some_and(|value| value.len() <= 4096),
                     "invalid private runtime path"
                 );
-                let path = path
-                    .to_str()
-                    .ok_or_else(|| anyhow::anyhow!("non-UTF-8 private runtime path"))?;
-                ensure!(path.len() <= 4096, "private runtime path exceeds bound");
-                connection.execute(
-                    "INSERT OR IGNORE INTO service_private_paths VALUES(?1)",
-                    [path],
-                )?;
+                paths.push(path.clone());
             }
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(error.into()),
     }
-    let mut statement =
-        connection.prepare("SELECT path FROM service_private_paths ORDER BY path LIMIT 17")?;
-    let paths = statement
-        .query_map([], |row| row.get::<_, String>(0))?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
-    ensure!(
-        paths.len() <= 16 && paths.iter().all(|path| path.len() <= 4096),
-        "private runtime path inventory exceeds bound"
-    );
-    let mut paths = paths
-        .into_iter()
-        .map(std::path::PathBuf::from)
-        .collect::<Vec<_>>();
-    paths.push(runtime.into());
     Ok(paths)
 }
 
@@ -149,13 +126,38 @@ fn contains(parent: &Path, child: &Path) -> Result<bool> {
         let Some(next) = child.next() else {
             return Ok(false);
         };
-        if !component_equal(component.as_os_str(), next.as_os_str())? {
+        #[cfg(windows)]
+        let equal = match (component, next) {
+            (std::path::Component::Prefix(left), std::path::Component::Prefix(right)) => {
+                use std::path::Prefix;
+                match (left.kind(), right.kind()) {
+                    (
+                        Prefix::Disk(left) | Prefix::VerbatimDisk(left),
+                        Prefix::Disk(right) | Prefix::VerbatimDisk(right),
+                    ) => left.eq_ignore_ascii_case(&right),
+                    (
+                        Prefix::UNC(left_server, left_share)
+                        | Prefix::VerbatimUNC(left_server, left_share),
+                        Prefix::UNC(right_server, right_share)
+                        | Prefix::VerbatimUNC(right_server, right_share),
+                    ) => {
+                        component_equal(left_server, right_server)?
+                            && component_equal(left_share, right_share)?
+                    }
+                    _ => component_equal(left.as_os_str(), right.as_os_str())?,
+                }
+            }
+            _ => component_equal(component.as_os_str(), next.as_os_str())?,
+        };
+        #[cfg(not(windows))]
+        let equal = component_equal(component.as_os_str(), next.as_os_str())?;
+        if !equal {
             return Ok(false);
         }
     }
     Ok(true)
 }
-fn disjoint(left: &Path, right: &Path) -> Result<()> {
+pub(super) fn disjoint(left: &Path, right: &Path) -> Result<()> {
     ensure!(
         !contains(left, right)? && !contains(right, left)?,
         SourceBoundary
@@ -163,56 +165,68 @@ fn disjoint(left: &Path, right: &Path) -> Result<()> {
     Ok(())
 }
 
-/// The caller holds one IMMEDIATE transaction for validation and metadata update.
-/// Canonical filesystem identity is the native/kernel adapter's responsibility;
-/// this bounded ledger operation never opens a collection or source directory.
-pub(super) fn validate(
-    connection: &Connection,
+/// Redb registry equivalent of `validate`: registration and all known source
+/// roots are checked against retained data/control boundaries before mutation.
+pub(super) fn validate_native(
     runtime: &Path,
     proposed: &ProjectRegistration,
-    additional: &[String],
+    proposed_additional: &[String],
+    existing: &[(ProjectRegistration, Vec<String>)],
+    protected: &[std::path::PathBuf],
 ) -> Result<()> {
     proposed.validate()?;
-    let sources =
-        std::iter::once(proposed.root.as_str()).chain(additional.iter().map(String::as_str));
-    let sources = sources.map(Path::new).collect::<Vec<_>>();
+    ensure!(
+        proposed_additional.len() <= 16,
+        "source watch root limit exceeded"
+    );
+    let mut unique = std::collections::BTreeSet::new();
+    for source in proposed_additional {
+        ensure!(
+            !source.is_empty()
+                && source.len() <= 4096
+                && !source.chars().any(char::is_control)
+                && unique.insert(source),
+            "invalid or duplicate source watch root"
+        );
+    }
+    let sources = std::iter::once(proposed.root.as_str())
+        .chain(proposed_additional.iter().map(String::as_str))
+        .collect::<Vec<_>>();
     let data = Path::new(&proposed.data_root);
-    for protected in private_paths(connection, runtime)? {
-        disjoint(data, &protected)?;
+    for private in std::iter::once(runtime).chain(protected.iter().map(std::path::PathBuf::as_path))
+    {
+        disjoint(data, private)?;
         for source in &sources {
-            disjoint(source, &protected)?;
+            disjoint(Path::new(source), private)?;
         }
     }
     for source in &sources {
-        disjoint(source, data)?;
+        disjoint(Path::new(source), data)?;
     }
-    let mut statement = connection.prepare("SELECT substr(p.payload,1,20481),substr(coalesce(w.roots,x'5b5d'),1,98305)
-        FROM projects p LEFT JOIN service_watch w ON w.project=p.binding ORDER BY p.binding LIMIT 1025")?;
-    let mut rows = statement.query([])?;
-    let mut count = 0;
     let mut root_bytes = 0usize;
-    while let Some(row) = rows.next()? {
-        count += 1;
-        ensure!(
-            count <= super::MAX_PROJECTS,
-            "source isolation registry bound exceeded"
-        );
-        let payload: Vec<u8> = row.get(0)?;
-        let existing = super::decode(&payload, 0, false)?.registration;
-        let bytes: Vec<u8> = row.get(1)?;
-        root_bytes = root_bytes.saturating_add(bytes.len());
+    for (registration, watched_roots) in existing {
+        root_bytes =
+            root_bytes.saturating_add(watched_roots.iter().map(String::len).sum::<usize>());
         ensure!(
             root_bytes <= 8 * 1024 * 1024,
-            "source isolation root metadata bound exceeded"
+            "source isolation root metadata exceeds bound"
         );
-        let roots = super::watch::roots(&bytes)?;
         for source in &sources {
-            disjoint(source, Path::new(&existing.data_root))?;
+            disjoint(Path::new(source), Path::new(&registration.data_root))?;
         }
-        for source in
-            std::iter::once(existing.root.as_str()).chain(roots.iter().map(String::as_str))
+        for source in std::iter::once(registration.root.as_str())
+            .chain(watched_roots.iter().map(String::as_str))
         {
             disjoint(data, Path::new(source))?;
+        }
+        disjoint(
+            Path::new(&proposed.root),
+            Path::new(&registration.data_root),
+        )?;
+        for existing_source in std::iter::once(registration.root.as_str())
+            .chain(watched_roots.iter().map(String::as_str))
+        {
+            disjoint(Path::new(existing_source), data)?;
         }
     }
     Ok(())

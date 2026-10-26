@@ -3,10 +3,6 @@
 //! Every participating writer must charge growth before issuing writes. This is
 //! not an operating-system filesystem quota or a cap on allocation-unit overhead.
 use anyhow::{Context, Result, ensure};
-use rusqlite::{
-    Connection, OpenFlags,
-    hooks::{AuthAction, AuthContext, Authorization},
-};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -27,18 +23,8 @@ const POLICY_MAX: u64 = 65_536;
 const RECORD_MAX: u64 = 1024;
 const MAX_RESERVATIONS: usize = 1024;
 const MAX_ENTRIES: usize = 1_000_000;
-pub(crate) const PREPARED_PUBLICATION_MAX: u64 = 4096;
-const PREPARED_PUBLICATION: &str = "prepared-publication.json";
 mod current;
 pub use current::{CurrentGrant, CurrentGrantScope};
-
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PreparedPublication {
-    version: u32,
-    expected: crate::ExpectedHead,
-    receipt: airk_core::identity::PublicationReceipt,
-}
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -264,9 +250,19 @@ fn acquire_lifecycle(
 struct Record {
     collection: String,
     bytes: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    backing: Option<RootBacking>,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RootBacking {
+    name: String,
+    identity: String,
+    offset: u64,
 }
 struct LiveRecord {
     record: Record,
+    current_scope: Option<CurrentGrantScope>,
 }
 
 fn unlinked(path: &Path) -> Result<()> {
@@ -516,6 +512,10 @@ impl Quota {
     pub fn reserve_root(&self, bytes: u64) -> Result<Reservation> {
         self.reserve_before("", bytes, None, false)
     }
+    /// Atomically admits shared metadata growth up to the remaining root quota.
+    pub(crate) fn reserve_root_available(&self, maximum: u64) -> Result<Reservation> {
+        self.reserve_before("", maximum, None, true)
+    }
     /// Caller holds lifecycle EX, so no participating allocation can race this
     /// check. Recovery markers retain that exclusion after a crashed relocation.
     pub(crate) fn relocation_capacity(
@@ -525,20 +525,33 @@ impl Quota {
     ) -> Result<()> {
         let policy = self.read_policy()?;
         let records = self.live_records()?;
-        ensure!(
-            records.is_empty(),
-            "active quota reservations prevent relocation"
-        );
+        for record in &records {
+            let scope = record
+                .current_scope
+                .as_ref()
+                .context("active quota reservations prevent relocation")?;
+            let store = crate::FileStore::new(
+                self.root
+                    .join(self.collection_namespace())
+                    .join(&scope.collection),
+            );
+            ensure!(
+                crate::current::kv::owner::accounting_scope(&store)?.as_ref() == Some(scope),
+                "non-lifetime or foreign capacity grant prevents relocation"
+            );
+        }
         let status = self.measure(&policy, &records, None)?;
         ensure!(
-            checked_add(status.used_bytes, additional_root_bytes)? <= policy.root_bytes,
+            checked_add(
+                checked_add(status.used_bytes, status.reserved_bytes)?,
+                additional_root_bytes
+            )? <= policy.root_bytes,
             "relocation copy exceeds root quota headroom"
         );
         for (collection, bytes) in copies {
-            let existing = status
-                .collections
-                .get(collection)
-                .map_or(0, |item| item.used_bytes);
+            let existing = status.collections.get(collection).map_or(0, |item| {
+                item.used_bytes.saturating_add(item.reserved_bytes)
+            });
             ensure!(
                 checked_add(existing, *bytes)? <= policy.limit(collection),
                 "relocation copy exceeds collection quota headroom"
@@ -656,6 +669,7 @@ impl Quota {
             &Record {
                 collection: collection.into(),
                 bytes,
+                backing: None,
             },
         )?;
         record_file.as_file().sync_all()?;
@@ -697,7 +711,10 @@ impl Quota {
             }
             // Counting abandoned allowances is conservative and avoids deleting
             // potentially large staging trees during an implicit usage hook.
-            records.push(LiveRecord { record });
+            records.push(LiveRecord {
+                record,
+                current_scope: None,
+            });
         }
         records.extend(current::records(self, false, deadline)?);
         ensure!(
@@ -754,7 +771,10 @@ impl Quota {
                     if !record.collection.is_empty() {
                         crate::validate_collection(&record.collection)?;
                     }
-                    live.push(LiveRecord { record });
+                    live.push(LiveRecord {
+                        record,
+                        current_scope: None,
+                    });
                 }
                 Ok(()) => {
                     // No writer survives with this OS lease. Only service-owned
@@ -807,11 +827,12 @@ impl Quota {
             root_limit_bytes: policy.root_bytes,
             collections: BTreeMap::new(),
             active_reservations: records.len(),
-            accounting: "logical managed file lengths plus full outstanding reservations; quota control metadata excluded",
+            accounting: "logical managed file lengths plus outstanding reservations; owned redb capacity already materialized in its exact backing file is counted once; quota control metadata excluded",
             physical_capacity: crate::capacity::probe(&self.root)?,
         };
         let mut pending = vec![self.root.clone()];
         let mut visited = 0usize;
+        let mut materialized = BTreeMap::<usize, u64>::new();
         while let Some(directory) = pending.pop() {
             within_deadline(deadline)?;
             // Another collection may retire a generation, and short-lived
@@ -886,6 +907,50 @@ impl Quota {
                     continue;
                 };
                 let bytes = metadata.len();
+                if directory == self.root {
+                    for (index, record) in records.iter().enumerate() {
+                        if let Some(backing) = &record.record.backing
+                            && record.record.collection.is_empty()
+                            && path
+                                .file_name()
+                                .is_some_and(|name| name == backing.name.as_str())
+                        {
+                            crate::managed_collection::reject_file_aliases(&path, &metadata)?;
+                            ensure!(
+                                backing.identity
+                                    == crate::current::legacy_retirement::identity(
+                                        &path, &metadata
+                                    )?,
+                                "root ledger growth backing changed"
+                            );
+                            materialized.insert(
+                                index,
+                                bytes
+                                    .saturating_sub(backing.offset)
+                                    .min(record.record.bytes),
+                            );
+                        }
+                    }
+                }
+                if path.file_name().is_some_and(|name| name == "current.airk") {
+                    let store = crate::FileStore::new(&directory);
+                    // Use this same length observation for both used bytes and
+                    // the offset against an exact durable capacity grant. A
+                    // second length sample could undercount concurrent shrink.
+                    if let Some(scope) = crate::current::kv::owner::accounting_scope(&store)? {
+                        crate::managed_collection::reject_file_aliases(&path, &metadata)?;
+                        for (index, record) in records.iter().enumerate() {
+                            if record.current_scope.as_ref() == Some(&scope) {
+                                ensure!(
+                                    materialized
+                                        .insert(index, bytes.min(record.record.bytes))
+                                        .is_none(),
+                                    "multiple redb files claim one durable capacity grant"
+                                );
+                            }
+                        }
+                    }
+                }
                 result.used_bytes = checked_add(result.used_bytes, bytes)?;
                 if let Ok(relative) =
                     path.strip_prefix(self.root.join(self.namespace.collections()))
@@ -907,8 +972,12 @@ impl Quota {
                 }
             }
         }
-        for record in records {
-            result.reserved_bytes = checked_add(result.reserved_bytes, record.record.bytes)?;
+        for (index, record) in records.iter().enumerate() {
+            let outstanding = record
+                .record
+                .bytes
+                .saturating_sub(materialized.get(&index).copied().unwrap_or(0));
+            result.reserved_bytes = checked_add(result.reserved_bytes, outstanding)?;
             if record.record.collection.is_empty() {
                 continue;
             }
@@ -920,7 +989,7 @@ impl Quota {
                     reserved_bytes: 0,
                     limit_bytes: policy.limit(&record.record.collection),
                 });
-            item.reserved_bytes = checked_add(item.reserved_bytes, record.record.bytes)?;
+            item.reserved_bytes = checked_add(item.reserved_bytes, outstanding)?;
         }
         Ok(result)
     }
@@ -940,6 +1009,70 @@ struct ReservationInner {
 #[derive(Clone)]
 pub struct Reservation(Arc<ReservationInner>);
 impl Reservation {
+    /// Bind one newly admitted root-file extension to its exact existing inode.
+    /// The offset is the backend's previous admitted high-water; successive
+    /// grants cover disjoint ranges, including temporarily unwritten slack.
+    pub(crate) fn bind_root_file_growth(&self, path: &Path, offset: u64) -> Result<()> {
+        ensure!(
+            self.0.collection.is_empty(),
+            "root file growth cannot use a collection job grant"
+        );
+        let path = path.canonicalize()?;
+        ensure!(
+            path.parent() == Some(self.0.quota.root.as_path()),
+            "root ledger backing escapes quota root"
+        );
+        let metadata = fs::symlink_metadata(&path)?;
+        crate::managed_collection::reject_file_aliases(&path, &metadata)?;
+        ensure!(
+            metadata.len() <= offset,
+            "root ledger grew before quota admission"
+        );
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .context("invalid root ledger backing name")?
+            .to_owned();
+        ensure!(name.len() <= 128, "root ledger backing name exceeds bound");
+        let backing = RootBacking {
+            name,
+            identity: crate::current::legacy_retirement::identity(&path, &metadata)?,
+            offset,
+        };
+        let _lock = self.0.quota.lock()?;
+        let record: Record = json_read(&self.0.record_path, RECORD_MAX)?;
+        ensure!(
+            record.collection.is_empty()
+                && record.bytes == self.limit()
+                && record.backing.is_none(),
+            "root growth grant changed before binding"
+        );
+        let record = Record {
+            collection: String::new(),
+            bytes: self.limit(),
+            backing: Some(backing),
+        };
+        let bytes = serde_json::to_vec(&record)?;
+        ensure!(
+            bytes.len() as u64 <= RECORD_MAX,
+            "root growth record exceeds bound"
+        );
+        let mut temporary = tempfile::Builder::new().prefix("r-").tempfile_in(
+            self.0
+                .record_path
+                .parent()
+                .context("root grant parent missing")?,
+        )?;
+        temporary.write_all(&bytes)?;
+        temporary.as_file().sync_all()?;
+        temporary.persist(&self.0.record_path)?;
+        crate::maintenance::sync_parent(
+            self.0
+                .record_path
+                .parent()
+                .context("root grant parent missing")?,
+        )
+    }
     pub(crate) fn validate_collection_directory(&self, directory: &Path) -> Result<()> {
         let store = crate::FileStore::new(directory);
         let expected = self
@@ -1038,42 +1171,6 @@ impl Reservation {
         self.checked_destination(&path.join("ownership-check"))?;
         Ok(path)
     }
-    /// Record ownership before an immutable generation leaves private staging.
-    /// Recovery may discard only this receipt-bound, still-uncommitted build.
-    pub fn track_prepared_publication(
-        &self,
-        expected: &crate::ExpectedHead,
-        receipt: &airk_core::identity::PublicationReceipt,
-    ) -> Result<()> {
-        let stage = self.staging_directory()?;
-        let collection = stage.parent().context("publication collection missing")?;
-        ensure!(
-            crate::sqlite::expected_head(collection)? == *expected,
-            "publication journal head changed"
-        );
-        ensure!(
-            !collection
-                .join("generations")
-                .join(receipt.token.revision.to_string())
-                .try_exists()?,
-            "publication journal cannot adopt an existing generation"
-        );
-        let bytes = serde_json::to_vec(&PreparedPublication {
-            version: 1,
-            expected: expected.clone(),
-            receipt: receipt.clone(),
-        })?;
-        ensure!(
-            bytes.len() as u64 <= PREPARED_PUBLICATION_MAX,
-            "publication journal too large"
-        );
-        self.charge(bytes.len() as u64)?;
-        let mut pending = tempfile::NamedTempFile::new_in(&stage)?;
-        pending.write_all(&bytes)?;
-        pending.as_file().sync_all()?;
-        pending.persist_noclobber(stage.join(PREPARED_PUBLICATION))?;
-        Ok(())
-    }
     pub fn create_file(&self, path: impl AsRef<Path>) -> Result<QuotaWriter> {
         let path = self.checked_destination(path.as_ref())?;
         let file = OpenOptions::new()
@@ -1097,55 +1194,6 @@ impl Reservation {
         let copied = io::copy(&mut source, &mut destination)?;
         destination.sync_all()?;
         Ok(copied)
-    }
-    /// An unpublished SQLite file has no recovery journal: a failed/crashed build
-    /// is discarded, while the old published database remains untouched.
-    pub fn open_private_sqlite(
-        &self,
-        path: impl AsRef<Path>,
-        maximum: u64,
-    ) -> Result<PrivateDatabase> {
-        let pages = maximum / 4096;
-        ensure!(
-            (4..=u32::MAX as u64 - 1).contains(&pages),
-            "private SQLite quota must allow at least four pages"
-        );
-        let bytes = pages * 4096;
-        self.charge(bytes)?;
-        let path = self.checked_destination(path.as_ref())?;
-        drop(
-            OpenOptions::new()
-                .create_new(true)
-                .write(true)
-                .open(&path)?,
-        );
-        let connection = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
-        connection.execute_batch(&format!("PRAGMA page_size=4096; PRAGMA journal_mode=OFF; PRAGMA temp_store=MEMORY; PRAGMA cache_size=-16384; PRAGMA cache_spill=ON; PRAGMA max_page_count={pages};"))?;
-        let actual_pages: i64 =
-            connection.query_row("PRAGMA max_page_count", [], |row| row.get(0))?;
-        ensure!(
-            u64::try_from(actual_pages)? == pages,
-            "SQLite refused private database byte cap"
-        );
-        connection.authorizer(Some(|context: AuthContext<'_>| match context.action {
-            AuthAction::Attach { .. } | AuthAction::Detach { .. } => Authorization::Deny,
-            AuthAction::Pragma {
-                pragma_name,
-                pragma_value: Some(_),
-            } if !["user_version", "application_id"]
-                .iter()
-                .any(|allowed| pragma_name.eq_ignore_ascii_case(allowed)) =>
-            {
-                Authorization::Deny
-            }
-            _ => Authorization::Allow,
-        }))?;
-        Ok(PrivateDatabase {
-            connection: Some(connection),
-            path,
-            maximum: bytes,
-            _reservation: self.clone(),
-        })
     }
 }
 
@@ -1202,58 +1250,6 @@ impl Seek for QuotaWriter {
     }
 }
 
-pub struct PrivateDatabase {
-    connection: Option<Connection>,
-    path: PathBuf,
-    maximum: u64,
-    _reservation: Reservation,
-}
-impl PrivateDatabase {
-    pub(crate) fn write_error(&self, error: anyhow::Error) -> anyhow::Error {
-        let full = error.chain().any(|cause| matches!(cause.downcast_ref::<rusqlite::Error>(), Some(rusqlite::Error::SqliteFailure(code, _)) if code.code == rusqlite::ErrorCode::DiskFull));
-        if full {
-            let pages = self
-                .connection
-                .as_ref()
-                .and_then(|db| {
-                    db.query_row("PRAGMA page_count", [], |row| row.get::<_, u32>(0))
-                        .ok()
-                })
-                .unwrap_or(0);
-            let bytes = fs::metadata(&self.path).map_or(0, |entry| entry.len());
-            if bytes >= self.maximum || u64::from(pages).saturating_mul(4096) >= self.maximum {
-                return error.context(QuotaPressure {
-                    scope: PressureScope::Reservation,
-                    required_bytes: self.maximum.saturating_add(4096),
-                    available_bytes: self.maximum,
-                    protected_bytes: None,
-                });
-            }
-            return error.context(format!("private catalog cannot grow within its {}-byte database cap or available disk space; previous generation retained", self.maximum));
-        }
-        error
-    }
-    pub fn connection(&self) -> &Connection {
-        self.connection.as_ref().expect("private database open")
-    }
-    pub fn connection_mut(&mut self) -> &mut Connection {
-        self.connection.as_mut().expect("private database open")
-    }
-    pub fn finish(mut self) -> Result<()> {
-        self.connection
-            .take()
-            .expect("private database open")
-            .close()
-            .map_err(|(_, error)| error)?;
-        let file = OpenOptions::new().read(true).write(true).open(&self.path)?;
-        ensure!(
-            file.metadata()?.len() <= self.maximum,
-            "private SQLite database exceeded allocation"
-        );
-        file.sync_all()?;
-        Ok(())
-    }
-}
 fn staging_path(quota: &Quota, collection: &str, record: &Path) -> Result<PathBuf> {
     crate::validate_collection(collection)?;
     let name = record
@@ -1291,7 +1287,10 @@ fn cleanup_staging(quota: &Quota, collection: &str, record: &Path) -> Result<()>
     ] {
         unlinked(&path)?;
     }
-    recover_prepared_publication(&stage)?;
+    ensure!(
+        !stage.join("prepared-publication.json").try_exists()?,
+        "retired publication staging requires owned fresh setup cleanup"
+    );
     let mut pending = vec![stage.clone()];
     let mut visited = 0usize;
     while let Some(directory) = pending.pop() {
@@ -1315,46 +1314,6 @@ fn cleanup_staging(quota: &Quota, collection: &str, record: &Path) -> Result<()>
     Ok(())
 }
 
-fn recover_prepared_publication(stage: &Path) -> Result<()> {
-    let journal = stage.join(PREPARED_PUBLICATION);
-    if !journal.try_exists()? {
-        return Ok(());
-    }
-    let prepared: PreparedPublication = json_read(&journal, PREPARED_PUBLICATION_MAX)?;
-    ensure!(prepared.version == 1, "unsupported publication journal");
-    let collection = stage.parent().context("publication collection missing")?;
-    if collection.join("index.sqlite3").try_exists()?
-        && let Some(committed) = crate::sqlite::receipt(collection, &prepared.receipt.token)?
-    {
-        ensure!(
-            committed == prepared.receipt,
-            "publication journal receipt mismatch"
-        );
-        return Ok(()); // Commit succeeded: never discard published evidence.
-    }
-    ensure!(
-        crate::sqlite::expected_head(collection)? == prepared.expected,
-        "publication journal no longer matches the authoritative head"
-    );
-    let target = collection
-        .join("generations")
-        .join(prepared.receipt.token.revision.to_string());
-    if !target.try_exists()? {
-        return Ok(()); // Before rename, or already detached by interrupted cleanup.
-    }
-    let _lease = crate::retention::exclusive(&target)?
-        .context("uncommitted publication still has a reader")?;
-    let inventory = crate::blobs::verify_v2_generation(collection, &prepared.receipt)?;
-    ensure!(
-        collection.file_name().and_then(|name| name.to_str())
-            == Some(inventory.collection.as_str()),
-        "publication journal belongs to another collection"
-    );
-    // Detach only after receipt verification. A crash during recursive removal
-    // is then handled by ordinary reservation-owned staging cleanup.
-    fs::rename(&target, stage.join("abandoned-publication"))?;
-    Ok(())
-}
 impl Drop for ReservationInner {
     fn drop(&mut self) {
         let deadline = self
@@ -1382,6 +1341,40 @@ impl Drop for ReservationInner {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn exact_root_backing_counts_disjoint_materialized_growth_once() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let quota = Quota::open(directory.path())?;
+        let mut policy = quota.policy()?;
+        policy.root_bytes = 160 << 10;
+        quota.configure(policy)?;
+        let path = directory.path().join("fixture.airk");
+        fs::write(&path, [])?;
+        let first = quota.reserve_root(64 << 10)?;
+        first.bind_root_file_growth(&path, 0)?;
+        first.charge(64 << 10)?;
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&path)?
+            .set_len(64 << 10)?;
+        let status = quota.status()?;
+        assert_eq!(status.used_bytes, 64 << 10);
+        assert_eq!(status.reserved_bytes, 0);
+        let second = quota.reserve_root(64 << 10)?;
+        second.bind_root_file_growth(&path, 64 << 10)?;
+        second.charge(64 << 10)?;
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&path)?
+            .set_len(128 << 10)?;
+        let status = quota.status()?;
+        assert_eq!(status.used_bytes, 128 << 10);
+        assert_eq!(status.reserved_bytes, 0);
+        fs::write(directory.path().join("unrelated"), [0; 8192])?;
+        assert_eq!(quota.status()?.used_bytes, (128 << 10) + 8192);
+        assert!(quota.reserve_root(32 << 10).is_err());
+        Ok(())
+    }
 
     #[test]
     fn inventory_retry_distinguishes_deletion_from_persistent_denial() -> Result<()> {
@@ -1468,6 +1461,65 @@ mod tests {
         drop(lock);
         assert!(quota.try_reserve("fixture", 1, Duration::ZERO).is_err());
         assert_eq!(quota.status()?.active_reservations, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn private_redb_charges_incremental_growth_and_preserves_typed_pressure() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let quota = Quota::open(root.path())?;
+        quota.configure(policy(32 << 20, 32 << 20))?;
+        let reservation = quota.reserve("fixture", 8 << 20)?;
+        let stage = reservation.staging_directory()?;
+        let path = stage.join("private.airk");
+        let mut database = reservation.open_private_kv(&path, 4 << 30)?;
+        assert_eq!(
+            reservation.charged(),
+            65536,
+            "maximum is not charged upfront"
+        );
+        let value = vec![b'x'; 16 << 10];
+        for index in 0u32..64 {
+            database.put(PrivateTable::Records, &index.to_be_bytes(), &value)?;
+        }
+        database.seal()?;
+        let bytes = database.bytes()?;
+        assert!(bytes > 65536);
+        assert!(reservation.charged() >= bytes);
+        assert!(reservation.charged() <= reservation.limit());
+        drop(database);
+        drop(reservation);
+
+        let limited = quota.reserve("fixture", 65536 + 128 * 1024)?;
+        let limited_stage = limited.staging_directory()?;
+        let limited_db = limited.open_private_kv(limited_stage.join("limited.airk"), 4 << 30)?;
+        let mut pressure = None;
+        for index in 0u32..512 {
+            if let Err(error) = limited_db.put(PrivateTable::Records, &index.to_be_bytes(), &value)
+            {
+                pressure = Some(error);
+                break;
+            }
+        }
+        let error = pressure.expect("small reservation must deny real staged growth");
+        assert!(
+            error.downcast_ref::<QuotaPressure>().is_some(),
+            "expected reservation pressure, got {error:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn private_redb_large_job_budget_has_no_four_gib_file_ceiling() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let quota = Quota::open(root.path())?;
+        quota.configure(policy(8u64 << 30, 8u64 << 30))?;
+        let reservation = quota.reserve("fixture", 5u64 << 30)?;
+        let path = reservation.staging_directory()?.join("large-budget.airk");
+        let database = reservation.open_private_kv(path, 5u64 << 30)?;
+        assert_eq!(database.physical_maximum(), 5u64 << 30);
+        assert_eq!(reservation.charged(), 65536);
+        assert!(database.bytes()? <= 65536);
         Ok(())
     }
 
@@ -1686,73 +1738,6 @@ mod tests {
             "overwrites do not consume another file allocation"
         );
         assert_eq!(fs::read(outside.path().join("source"))?, b"original");
-        Ok(())
-    }
-
-    #[test]
-    fn private_sqlite_stops_at_page_cap_and_blocks_budget_escapes() -> Result<()> {
-        let root = tempfile::tempdir()?;
-        let quota = Quota::open(root.path())?;
-        let reservation = quota.reserve("fixture", 16 * 1024)?;
-        let path = reservation.staging_directory()?.join("private.sqlite3");
-        let database = reservation.open_private_sqlite(&path, 16 * 1024)?;
-        let connection = database.connection();
-        connection.execute_batch(
-            "CREATE TABLE payload(bytes BLOB); INSERT INTO payload VALUES(zeroblob(1000));",
-        )?;
-        assert!(
-            connection
-                .execute_batch("INSERT INTO payload VALUES(zeroblob(20000));")
-                .is_err()
-        );
-        assert!(
-            connection
-                .execute_batch("PRAGMA max_page_count=100000;")
-                .is_err()
-        );
-        assert!(
-            connection
-                .execute_batch("PRAGMA journal_mode=WAL;")
-                .is_err()
-        );
-        assert!(
-            connection
-                .execute_batch("ATTACH DATABASE ':memory:' AS escaped;")
-                .is_err()
-        );
-        assert!(fs::metadata(&path)?.len() <= 16 * 1024);
-        assert!(!path.with_extension("sqlite3-wal").exists());
-        // A SQLITE_FULL private build is disposable; its old published peer is
-        // never updated, so no rollback-journal guarantee is assumed here.
-        database.finish()?;
-        Ok(())
-    }
-
-    #[test]
-    fn full_private_catalog_reports_typed_pressure_only_at_its_cap() -> Result<()> {
-        let root = tempfile::tempdir()?;
-        let quota = Quota::open(root.path())?;
-        let reservation = quota.reserve("fixture", 16 * 1024)?;
-        let path = reservation.staging_directory()?.join("private.sqlite3");
-        let database = reservation.open_private_sqlite(&path, 16 * 1024)?;
-        database
-            .connection()
-            .execute_batch("CREATE TABLE payload(bytes BLOB);")?;
-        let failure = loop {
-            if let Err(error) = database
-                .connection()
-                .execute("INSERT INTO payload VALUES(zeroblob(1000))", [])
-            {
-                break error;
-            }
-        };
-        let failure = database.write_error(failure.into());
-        assert!(
-            failure.downcast_ref::<QuotaPressure>().is_some(),
-            "{failure:#}"
-        );
-        let other = database.write_error(anyhow::anyhow!("unrelated fixture error"));
-        assert!(!other.chain().any(|cause| cause.is::<QuotaPressure>()));
         Ok(())
     }
 

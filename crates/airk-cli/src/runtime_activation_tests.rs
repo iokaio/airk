@@ -91,7 +91,7 @@ async fn completed_reviewed_activation_acknowledges_without_starting_or_reinitia
             == intent.selected()
     );
     assert_eq!(fs::read(root.join("bootstrap.json"))?, sentinel);
-    assert!(!layout::control(&root)?.join("service-1.4.sqlite3").exists());
+    assert!(!layout::control(&root)?.join("service-1.4.airk").exists());
     assert!(reviewed_request(&root, &intent.candidate, &"f".repeat(64)).is_err());
     Ok(())
 }

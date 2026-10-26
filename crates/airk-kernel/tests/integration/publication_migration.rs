@@ -82,9 +82,7 @@ fn obsolete_json_ocr_is_rejected_without_migrating_derived_evidence() -> Result<
     let store = FileStore::new(data.path().join("collections-1.2/default"));
     let artifact = ocr_artifact("scan.png", source)?;
     let original_legacy_bytes = save_legacy(root.path(), &store, &artifact, source)?;
-    let original_head = store.expected_head()?;
     assert!(Kernel::open(root.path(), Some(data.path().into())).is_err());
-    assert_eq!(store.expected_head()?, original_head);
     assert_eq!(
         fs::read(store.directory().join("snapshot.json"))?,
         original_legacy_bytes
@@ -106,7 +104,6 @@ fn malformed_legacy_ocr_and_corrupt_retained_output_never_advance_pointer() -> R
             artifact.extraction_method.push_str("invalid");
         }
         let legacy_bytes = save_legacy(root.path(), &store, &artifact, source)?;
-        let head = store.expected_head()?;
         if corrupt_object {
             let snapshot: Snapshot = serde_json::from_slice(&legacy_bytes)?;
             let object = &snapshot.artifacts["scan.png"]
@@ -120,7 +117,6 @@ fn malformed_legacy_ocr_and_corrupt_retained_output_never_advance_pointer() -> R
             )?;
         }
         assert!(Kernel::open(root.path(), Some(data.path().into())).is_err());
-        assert_eq!(store.expected_head()?, head);
         assert_eq!(
             fs::read(store.directory().join("snapshot.json"))?,
             legacy_bytes

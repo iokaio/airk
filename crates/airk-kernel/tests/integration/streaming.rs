@@ -91,7 +91,9 @@ fn quota_failure_preserves_published_evidence_and_orphans_are_reclaimed() -> Res
     let quota = Quota::open(data.path())?;
     let before = quota.status()?;
     let mut policy = QuotaPolicy::default();
-    let collection_limit = before.collections["default"].used_bytes + 131_072;
+    let collection_limit = before.collections["default"].used_bytes
+        + before.collections["default"].reserved_bytes
+        + 131_072;
     policy
         .collections
         .insert("default".into(), collection_limit);

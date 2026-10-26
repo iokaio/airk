@@ -687,10 +687,7 @@ mod join_tests {
         let writer = kernel.store.lock()?;
         let quota = airk_store::quota::Quota::open(data.path())?;
         let scope = kernel.current_scope()?.unwrap();
-        let capacity = kernel.store.current_database_capacity(&scope)?;
-        let current = kernel
-            .store
-            .current_write(&writer, &quota, &scope, capacity)?;
+        let current = kernel.store.redb_writer(&writer, &quota, &scope)?;
         let request = kernel.schedule_enqueue(true)?;
         let reopened = Kernel::open_collection_for_diagnostics(
             root.path(),

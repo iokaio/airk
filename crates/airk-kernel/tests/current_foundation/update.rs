@@ -149,7 +149,7 @@ fn coordinator_reuses_shared_vectors_tombstones_and_resurrects_exact_ids() -> Re
     let lock = fixture.store.lock()?;
     fixture
         .store
-        .current_write(&lock, &fixture.quota, &fixture.scope, CAPACITY)?
+        .redb_writer(&lock, &fixture.quota, &fixture.scope)?
         .initialize_collection(&initial, &applied)?;
     drop(lock);
     let apply = |changes: Vec<ArtifactChange>| -> Result<EmbeddingCacheStats> {
@@ -275,13 +275,18 @@ fn coordinator_reuses_shared_vectors_tombstones_and_resurrects_exact_ids() -> Re
     assert_eq!(search(&fixture, "alpha")?.hits[0].citation.path, "d.txt");
     let restored = current_search(CurrentSearchMode::Vector, None, 4096, None)?;
     assert_eq!(restored.hits[0].citation.path, "d.txt");
-    // Shared current gates prevent observing an applying writer, and a corrupt
+    // A concurrent native writer preserves committed MVCC evidence; a corrupt
     // retained source cannot be replaced with the live workspace's contents.
     let lock = fixture.store.lock()?;
     let writer = fixture
         .store
-        .current_write(&lock, &fixture.quota, &fixture.scope, CAPACITY)?;
-    assert!(current_search(CurrentSearchMode::Vector, None, 4096, None).is_err());
+        .redb_writer(&lock, &fixture.quota, &fixture.scope)?;
+    assert_eq!(
+        current_search(CurrentSearchMode::Vector, None, 4096, None)?.hits[0]
+            .citation
+            .path,
+        "d.txt"
+    );
     drop(writer);
     drop(lock);
     let source = fixture
@@ -449,6 +454,14 @@ fn coordinator_process_exit_replays_captured_components_without_live_sources() -
             input,
             applying,
         };
+        let store_path = fixture.store.directory().to_path_buf();
+        let Fixture {
+            _directory,
+            quota,
+            store,
+            scope,
+        } = fixture;
+        drop(store);
         let output = std::process::Command::new(std::env::current_exe()?)
             .args([
                 "--exact",
@@ -462,11 +475,14 @@ fn coordinator_process_exit_replays_captured_components_without_live_sources() -
             "current updater child failed: {}",
             String::from_utf8_lossy(&output.stderr)
         );
-        if applying {
-            assert!(fixture.store.current_read(&fixture.scope).is_err());
-        } else {
-            assert_eq!(fixture.store.current_read(&fixture.scope)?.token()?, before);
-        }
+        let fixture = Fixture {
+            _directory,
+            quota,
+            store: FileStore::new(store_path),
+            scope,
+        };
+        let applying_read = fixture.store.current_read(&fixture.scope)?;
+        assert_eq!(applying_read.token()?, before);
         let root = std::path::Path::new(&fixture.scope.root);
         std::fs::create_dir_all(root)?;
         std::fs::write(root.join("a.txt"), b"later live edit")?;
@@ -478,6 +494,9 @@ fn coordinator_process_exit_replays_captured_components_without_live_sources() -
         );
         let result = search(&fixture, "alpha")?;
         assert_eq!(result.token, recovered.token);
+        assert_eq!(applying_read.token()?, before);
+        assert!(applying_read.artifact("a.txt")?.is_none());
+        drop(applying_read);
         assert_eq!(result.hits[0].text, "captured alpha");
         let read = fixture.store.current_read(&fixture.scope)?;
         assert_eq!(read.collection_state()?.unwrap().counts.files, 1);
@@ -499,10 +518,9 @@ fn collection_configuration_and_counters_follow_atomic_updates() -> Result<()> {
     let initial = fixture.store.current_read(&fixture.scope)?.token()?;
     let config = configuration();
     let lock = fixture.store.lock()?;
-    let mut current =
-        fixture
-            .store
-            .current_write(&lock, &fixture.quota, &fixture.scope, CAPACITY)?;
+    let current = fixture
+        .store
+        .redb_writer(&lock, &fixture.quota, &fixture.scope)?;
     let initialized = current.initialize_collection(&initial, &config)?;
     assert!(
         current
@@ -555,7 +573,7 @@ fn collection_configuration_and_counters_follow_atomic_updates() -> Result<()> {
     let lock = fixture.store.lock()?;
     let mut update = updater(&fixture, &lock, &reservation);
     update.configuration = Some(&next_config);
-    let second = update.apply(&changes, None)?;
+    update.apply(&changes, None)?;
     drop(lock);
     drop(reservation);
     let read = fixture.store.current_read(&fixture.scope)?;
@@ -570,14 +588,14 @@ fn collection_configuration_and_counters_follow_atomic_updates() -> Result<()> {
         (2, 2, 9)
     );
     drop(read);
+    let reservation = fixture
+        .quota
+        .reserve(&fixture.scope.collection, 512 << 20)?;
     let lock = fixture.store.lock()?;
-    let mut current =
-        fixture
-            .store
-            .current_write(&lock, &fixture.quota, &fixture.scope, CAPACITY)?;
-    current.commit_artifact(&second.commit.token, "a.txt", None)?;
-    drop(current);
+    updater(&fixture, &lock, &reservation)
+        .apply(&[ArtifactChange::Delete("a.txt".into())], None)?;
     drop(lock);
+    drop(reservation);
     let state = fixture
         .store
         .current_read(&fixture.scope)?

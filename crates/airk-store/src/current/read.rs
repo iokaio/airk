@@ -1,19 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::{
-    CurrentHead, CurrentScope, CurrentToken, database, decode_head,
-    gate::Gate,
-    graph,
-    journal::{CapturedInput, committed_lexical_manifest},
+    CurrentHead, CurrentScope, CurrentToken, graph,
+    journal::CapturedInput,
     map,
     vector_map::{OccurrencePointer, PathOccurrences, VectorBinding},
 };
 use crate::FileStore;
 use airk_core::graph_storage::{GraphCounts, GraphRecord, GraphRecordReader, GraphScope};
 use anyhow::{Context, Result, ensure};
-use rusqlite::Connection;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-/// Only a read-only SQLite operation returning BUSY/LOCKED carries this marker.
+/// Only a native read gate contention carries this marker.
 /// Corruption, expired revisions, permissions and other I/O errors never do.
 #[derive(Clone, Copy, Debug)]
 pub struct CurrentReadContention;
@@ -25,23 +22,69 @@ impl std::fmt::Display for CurrentReadContention {
 impl std::error::Error for CurrentReadContention {}
 
 fn read_error(error: anyhow::Error) -> anyhow::Error {
-    if matches!(error.downcast_ref::<rusqlite::Error>(), Some(rusqlite::Error::SqliteFailure(code, _)) if matches!(code.code, rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked))
-    {
+    if error.is::<super::CurrentGateContention>() {
         error.context(CurrentReadContention)
     } else {
         error
     }
 }
 
-/// The connection/read transaction drops before the gate. Providers may clone
+/// The owned native snapshot drops before its external-object gate. Providers may clone
 /// the Arc for one request, but neither a kernel cache nor a sealed delta owns it.
 pub struct CurrentRead {
-    connection: Mutex<Connection>,
+    storage: super::kv::OwnedSnapshot,
     head: CurrentHead,
-    pub(super) lexical_path: std::path::PathBuf,
-    pub(super) lexical_verified: std::sync::OnceLock<()>,
     deadline: Option<std::time::Instant>,
-    _gate: Gate,
+}
+pub(crate) struct RedbRead<'a> {
+    reader: &'a CurrentRead,
+    transaction: &'a redb::ReadTransaction,
+}
+impl map::MapStorage for RedbRead<'_> {
+    fn bucket_bytes(&self, prefix: u16) -> Result<Option<Vec<u8>>> {
+        self.reader.live()?;
+        map::MapStorage::bucket_bytes(self.transaction, prefix)
+    }
+    fn node_bytes(&self, height: u8, index: u16) -> Result<Option<Vec<u8>>> {
+        self.reader.live()?;
+        map::MapStorage::node_bytes(self.transaction, height, index)
+    }
+}
+impl graph::GraphStorage for RedbRead<'_> {
+    fn graph_record(&self, scope: &GraphScope, id: u32) -> Result<Option<GraphRecord>> {
+        self.reader.live()?;
+        graph::GraphStorage::graph_record(self.transaction, scope, id)
+    }
+    fn graph_node(
+        &self,
+        height: u8,
+        index: u32,
+    ) -> Result<Option<airk_core::identity::Sha256Digest>> {
+        self.reader.live()?;
+        graph::GraphStorage::graph_node(self.transaction, height, index)
+    }
+}
+impl super::kv::directory::ReadPages for RedbRead<'_> {
+    fn read_page(&self, digest: airk_core::identity::Sha256Digest) -> Result<Vec<u8>> {
+        self.reader.live()?;
+        super::kv::directory::ReadPages::read_page(self.transaction, digest)
+    }
+}
+impl super::kv::posting::ReadPostings for RedbRead<'_> {
+    fn read_block(
+        &self,
+        key: &[u8; 40],
+        budget: &mut super::kv::directory::Budget,
+    ) -> Result<Vec<u8>> {
+        self.reader.live()?;
+        super::kv::posting::ReadPostings::read_block(self.transaction, key, budget)
+    }
+}
+impl super::kv::lexical::ReadLexical for RedbRead<'_> {
+    fn document(&self, id: u64, budget: &mut super::kv::directory::Budget) -> Result<Vec<u8>> {
+        self.reader.live()?;
+        super::kv::lexical::ReadLexical::document(self.transaction, id, budget)
+    }
 }
 
 impl CurrentRead {
@@ -107,12 +150,16 @@ impl CurrentRead {
     }
 
     /// Exact manifest bytes bound to this request's current head. Retrieval
-    /// must also verify the FTS5 shadow rows before trusting candidates.
+    /// authenticates the pinned native lexical roots before lookup.
     pub fn lexical_manifest(&self) -> Result<Vec<u8>> {
-        self.with_connection(|connection| committed_lexical_manifest(connection, &self.head))
+        self.live()?;
+        self.storage
+            .snapshot()
+            .lexical_manifest()?
+            .canonical_bytes()
     }
     /// An exact embedding-key lookup checked against the authenticated graph
-    /// record. An absent key has a complete bucket proof; no SQL candidate list
+    /// record. An absent key has a complete bucket proof; no unauthenticated candidate list
     /// is trusted to establish absence.
     pub fn vector_binding(
         &self,
@@ -202,7 +249,7 @@ impl CurrentRead {
     /// still be loaded through FileStore's verified object readers.
     pub fn map_get(&self, domain: map::MapDomain, identity: &[u8]) -> Result<Option<Vec<u8>>> {
         let key = map::key(&self.head.scope, domain, identity)?;
-        self.with_connection(|connection| {
+        self.with_map(|connection| {
             map::get(connection, &self.head.scope, self.head.artifact_root, key)
         })
     }
@@ -213,7 +260,7 @@ impl CurrentRead {
         &self,
         limits: map::MapVisitLimits,
     ) -> Result<Vec<(airk_core::identity::Sha256Digest, Vec<u8>)>> {
-        self.with_connection(|connection| {
+        self.with_map(|connection| {
             let mut entries = Vec::new();
             map::visit_all(
                 connection,
@@ -229,13 +276,8 @@ impl CurrentRead {
         })
     }
     pub fn has_prepared_update(&self) -> Result<bool> {
-        self.with_connection(|connection| {
-            Ok(
-                connection.query_row("SELECT phase FROM current_state WHERE id=1", [], |row| {
-                    row.get::<_, String>(0)
-                })? != "ready",
-            )
-        })
+        self.live()?;
+        Ok(self.storage.snapshot().phase()? != super::TransactionPhase::Ready)
     }
     pub fn head(&self) -> &CurrentHead {
         &self.head
@@ -251,13 +293,48 @@ impl CurrentRead {
         );
         Ok(())
     }
-    pub(crate) fn with_connection<T>(&self, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
+    pub(crate) fn with_redb<T>(
+        &self,
+        f: impl FnOnce(&super::kv::Snapshot, &RedbRead<'_>) -> Result<T>,
+    ) -> Result<Option<T>> {
         self.live()?;
-        let connection = self
-            .connection
-            .lock()
-            .map_err(|_| anyhow::anyhow!("current reader connection poisoned"))?;
-        let result = f(&connection).map_err(read_error)?;
+        let snapshot = self.storage.snapshot();
+        let result = f(
+            snapshot,
+            &RedbRead {
+                reader: self,
+                transaction: snapshot.transaction(),
+            },
+        )?;
+        self.live()?;
+        Ok(Some(result))
+    }
+    /// Run bounded native planning against this request's pinned redb revision.
+    /// The callback must not retain the borrowed snapshot after it returns.
+    pub fn with_redb_snapshot<T>(
+        &self,
+        f: impl FnOnce(&super::kv::Snapshot) -> Result<T>,
+    ) -> Result<Option<T>> {
+        self.with_redb(|snapshot, _| f(snapshot))
+    }
+    fn with_map<T>(&self, f: impl FnOnce(&dyn map::MapStorage) -> Result<T>) -> Result<T> {
+        self.live()?;
+        let result = f(&RedbRead {
+            reader: self,
+            transaction: self.storage.snapshot().transaction(),
+        })?;
+        self.live()?;
+        Ok(result)
+    }
+    pub(crate) fn with_graph<T>(
+        &self,
+        f: impl FnOnce(&dyn graph::GraphStorage) -> Result<T>,
+    ) -> Result<T> {
+        self.live()?;
+        let result = f(&RedbRead {
+            reader: self,
+            transaction: self.storage.snapshot().transaction(),
+        })?;
         self.live()?;
         Ok(result)
     }
@@ -280,106 +357,22 @@ impl GraphRecordReader for CurrentRead {
         Ok(self.head.graph_head.counts())
     }
     fn read(&self, id: u32) -> Result<GraphRecord> {
-        self.with_connection(|connection| graph::read_record(connection, &self.head.graph_head, id))
+        self.with_graph(|connection| graph::read_record(connection, &self.head.graph_head, id))
     }
 }
 
 impl FileStore {
-    pub fn current_read(&self, scope: &CurrentScope) -> Result<Arc<CurrentRead>> {
-        super::admission::admit_open(|| self.current_read_once(scope).map_err(read_error))
-    }
-    fn current_read_once(&self, scope: &CurrentScope) -> Result<Arc<CurrentRead>> {
-        scope.validate()?;
-        ensure!(
-            self.collection_id()? == scope.collection,
-            "foreign current collection path"
-        );
-        let gate = Gate::shared(self)?;
-        let deadline = super::wal::enabled(self.directory())
-            .then(|| std::time::Instant::now() + std::time::Duration::from_secs(120));
-        database::reject_legacy_collection(self.directory())?;
-        self.ensure_index_ready()?;
-        let capacity = database::check_owner(self.directory(), scope)?;
-        let mut legacy_budget = false;
-        if super::wal::enabled(self.directory()) {
-            let allowance = crate::quota::Quota::for_store(self)?.verify_current_allowance(
-                &crate::quota::CurrentGrantScope {
-                    collection: scope.collection.clone(),
-                    incarnation: scope.incarnation,
-                    transaction: super::wal::id(scope),
-                },
-                super::wal::legacy_total(capacity)?,
-            )?;
-            legacy_budget = allowance < super::wal::total(capacity)?;
-            if legacy_budget {
-                // Retained reads must remain available before the first upgraded
-                // writer can reserve more capacity, including during recovery.
-                super::wal::validate_legacy_files(self.directory(), capacity)?;
-            }
-        }
-        ensure!(
-            std::fs::metadata(self.directory().join("current.sqlite3"))?.len() <= capacity,
-            "current database exceeds captured capacity"
-        );
-        let connection =
-            database::open_reader_budget(&self.directory().join("current.sqlite3"), legacy_budget)
-                .map_err(read_error)?;
-        if let Some(deadline) = deadline {
-            connection
-                .progress_handler(1000, Some(move || std::time::Instant::now() >= deadline))?;
-        }
-        let (phase, bytes): (String, Vec<u8>) = connection
-            .query_row(
-                "SELECT phase,head FROM current_state WHERE id=1 AND length(head)<=65536",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .map_err(|error| read_error(error.into()))
-            .context("current index metadata missing")?;
-        ensure!(
-            phase == "ready"
-                || phase == "prepared"
-                || (phase == "applying" && super::wal::enabled(self.directory())),
-            "current index requires writer recovery before reads"
-        );
-        let head = decode_head(&bytes, scope)?;
+    pub fn current_redb_read(&self, scope: &CurrentScope) -> Result<Arc<CurrentRead>> {
+        let owned = self.redb_read(scope)?;
+        owned.snapshot().phase()?;
+        let head = owned.snapshot().head()?;
         Ok(Arc::new(CurrentRead {
-            connection: Mutex::new(connection),
+            storage: owned,
             head,
-            lexical_path: self.directory().join("current.sqlite3"),
-            lexical_verified: std::sync::OnceLock::new(),
-            deadline,
-            _gate: gate,
+            deadline: Some(std::time::Instant::now() + std::time::Duration::from_secs(120)),
         }))
     }
-}
-
-#[cfg(test)]
-mod retry_tests {
-    use super::*;
-    #[test]
-    fn only_sqlite_busy_and_locked_read_errors_gain_a_retry_marker() {
-        for (code, retryable) in [
-            (rusqlite::ffi::SQLITE_BUSY, true),
-            (rusqlite::ffi::SQLITE_LOCKED, true),
-            (rusqlite::ffi::SQLITE_CORRUPT, false),
-            (rusqlite::ffi::SQLITE_IOERR, false),
-            (rusqlite::ffi::SQLITE_PERM, false),
-            (rusqlite::ffi::SQLITE_READONLY, false),
-        ] {
-            let error = rusqlite::Error::SqliteFailure(
-                rusqlite::ffi::Error::new(code),
-                Some("busy fixture wording".into()),
-            );
-            let marked = read_error(anyhow::Error::new(error).context("read-only query"));
-            assert_eq!(
-                marked.downcast_ref::<CurrentReadContention>().is_some(),
-                retryable
-            );
-            assert!(marked.downcast_ref::<rusqlite::Error>().is_some());
-        }
-        let io =
-            read_error(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "busy").into());
-        assert!(io.downcast_ref::<CurrentReadContention>().is_none());
+    pub fn current_read(&self, scope: &CurrentScope) -> Result<Arc<CurrentRead>> {
+        super::admission::admit_open(|| self.current_redb_read(scope).map_err(read_error))
     }
 }

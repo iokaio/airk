@@ -82,7 +82,7 @@ pub(super) fn read(
     let mut registry_error = None;
     let mut configuration = (Vec::new(), false);
     if let Ok(control) = &control {
-        if control.join("service-1.4.sqlite3").try_exists()? {
+        if control.join("service-1.4.airk").try_exists()? {
             let observed = (|| -> Result<_> {
                 let mut registry = ServiceRegistry::open_saved(control)?;
                 let (identity, current_epoch) = registry.saved_request_epoch()?;

@@ -3,14 +3,11 @@
 //! to retrieval; transactions/gates belong to current. No authoritative connection
 //! is opened here and no current reader survives sealing.
 mod digest;
-mod journal;
 pub mod kv;
 mod merkle;
 mod private;
-mod sql;
+mod proof;
 mod staging;
-#[cfg(test)]
-mod tests;
 
 use crate::quota::{PrivateKv, PrivateTable, Reservation};
 use airk_core::graph_storage::*;
@@ -24,8 +21,7 @@ use std::{
     },
 };
 
-pub(crate) use journal::{apply, cleanup, stage};
-pub(crate) use sql::{create, read_record};
+pub(crate) use proof::read_record;
 
 static NEXT_OVERLAY: AtomicU64 = AtomicU64::new(0);
 const MAX_OVERLAY_BYTES: u64 = 4 * 1024 * 1024 * 1024;
@@ -56,31 +52,6 @@ impl<T: GraphStorage + ?Sized> GraphStorage for &T {
     }
 }
 
-impl GraphStorage for rusqlite::Connection {
-    fn graph_record(&self, scope: &GraphScope, id: u32) -> Result<Option<GraphRecord>> {
-        sql::stored_record(self, scope, id)
-    }
-    fn graph_node(
-        &self,
-        height: u8,
-        index: u32,
-    ) -> Result<Option<airk_core::identity::Sha256Digest>> {
-        sql::node(self, "graph_merkle", height, index)
-    }
-}
-impl GraphStorage for rusqlite::Transaction<'_> {
-    fn graph_record(&self, scope: &GraphScope, id: u32) -> Result<Option<GraphRecord>> {
-        GraphStorage::graph_record(&**self, scope, id)
-    }
-    fn graph_node(
-        &self,
-        height: u8,
-        index: u32,
-    ) -> Result<Option<airk_core::identity::Sha256Digest>> {
-        GraphStorage::graph_node(&**self, height, index)
-    }
-}
-
 #[derive(Clone, Copy, Debug)]
 pub struct GraphOverlayLimits {
     pub maximum_bytes: u64,
@@ -96,7 +67,7 @@ impl Default for GraphOverlayLimits {
 }
 impl GraphOverlayLimits {
     /// Leave at least three quarters of the remaining preparation allowance for
-    /// retained objects, cache packs and lexical staging. SQLite charges this
+    /// retained objects, cache packs and lexical staging. The backend charges this
     /// capacity before opening; it does not allocate the whole amount on disk.
     pub fn for_indexing(reservation: &Reservation) -> Self {
         Self {
@@ -133,12 +104,26 @@ pub struct GraphStatistics {
 }
 struct State {
     database: PrivateKv,
-    base: Option<Arc<super::CurrentRead>>,
+    base: Option<BaseReader>,
     counts: GraphCounts,
     statistics: GraphStatistics,
-    base_proofs: BTreeMap<u32, sql::Proof>,
+    base_proofs: BTreeMap<u32, proof::Proof>,
     base_proof_order: VecDeque<u32>,
     failed: bool,
+}
+enum BaseReader {
+    Current(Arc<super::CurrentRead>),
+    Redb(Arc<super::kv::Snapshot>),
+}
+impl BaseReader {
+    fn proof(&self, head: &GraphHead, id: u32) -> Result<proof::Proof> {
+        match self {
+            Self::Current(reader) => {
+                reader.with_graph(|connection| proof::read_proof(connection, head, id))
+            }
+            Self::Redb(reader) => proof::read_proof(reader.transaction(), head, id),
+        }
+    }
 }
 pub struct GraphOverlay {
     base_head: GraphHead,
@@ -152,7 +137,17 @@ impl GraphOverlay {
         limits: GraphOverlayLimits,
     ) -> Result<Self> {
         let head = base.head().graph_head.clone();
-        Self::build(reservation, head, Some(base), limits)
+        Self::build(reservation, head, Some(BaseReader::Current(base)), limits)
+    }
+    /// The publication owner supplies a pinned, scoped redb base. Sealing drops
+    /// this snapshot just as it drops the preceding current-reader adapter.
+    pub fn from_redb(
+        reservation: &Reservation,
+        base: Arc<super::kv::Snapshot>,
+        limits: GraphOverlayLimits,
+    ) -> Result<Self> {
+        let head = base.head()?.graph_head;
+        Self::build(reservation, head, Some(BaseReader::Redb(base)), limits)
     }
     /// Fresh deltas begin at zero allocation. Append the non-live reserved seed
     /// before opening the DiskANN provider or inserting ordinary nodes.
@@ -166,7 +161,7 @@ impl GraphOverlay {
     fn build(
         reservation: &Reservation,
         base_head: GraphHead,
-        base: Option<Arc<super::CurrentRead>>,
+        base: Option<BaseReader>,
         limits: GraphOverlayLimits,
     ) -> Result<Self> {
         limits.validate()?;
@@ -212,7 +207,7 @@ impl GraphOverlay {
     fn record_read(&self, state: &mut State, bytes: u64) {
         state.statistics.read_bytes = state.statistics.read_bytes.saturating_add(bytes);
     }
-    fn base_proof(&self, state: &mut State, id: u32) -> Result<sql::Proof> {
+    fn base_proof(&self, state: &mut State, id: u32) -> Result<proof::Proof> {
         self.record_read(
             state,
             u64::from(self.base_head.scope.record_bytes) + 32 * 32,
@@ -225,9 +220,7 @@ impl GraphOverlay {
                 }
                 state.statistics.base_record_reads += 1;
                 state.statistics.proof_nodes += 32;
-                let proof = base.with_connection(|connection| {
-                    sql::read_proof(connection, &self.base_head, id)
-                })?;
+                let proof = base.proof(&self.base_head, id)?;
                 let bytes = usize::try_from(self.base_head.scope.record_bytes)? + 32 * 32;
                 let capacity = (MAX_BASE_PROOF_CACHE_BYTES / bytes).clamp(1, MAX_BASE_PROOFS);
                 if state.base_proof_order.len() == capacity {
@@ -242,7 +235,7 @@ impl GraphOverlay {
                 state.base_proofs.insert(id, proof.clone());
                 Ok(proof)
             }
-            None => sql::Proof::empty(&self.base_head, id),
+            None => proof::Proof::empty(&self.base_head, id),
         }
     }
     fn read_inner(&self, state: &mut State, id: u32) -> Result<GraphRecord> {

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! One changed-path publication across retained evidence, SQLite FTS5 and DiskANN.
+//! One changed-path publication across retained evidence, native lexical search and DiskANN.
 use airk_core::{
     embedding::{EmbeddingDescriptor, embedding_key},
     graph_storage::{GraphRecordOverlay, GraphRecordReader, PreparedGraphDelta},
@@ -44,10 +44,8 @@ pub(super) fn reclaim_current_objects(
     }
     let plan = read.reclamation_plan(store)?;
     drop(read);
-    let capacity = store.current_database_capacity(scope)?;
-    store
-        .current_write(writer, quota, scope, capacity)?
-        .reclaim_objects(&plan)?;
+    let native = store.redb_writer(writer, quota, scope)?;
+    native.reclaim_objects(&plan)?;
     Ok(())
 }
 
@@ -454,7 +452,6 @@ impl CurrentUpdater<'_> {
             }),
             "invalid current semantic-only input batch"
         );
-        let capacity = self.store.current_database_capacity(self.scope)?;
         let read = self
             .store
             .current_read(self.scope)
@@ -859,51 +856,115 @@ impl CurrentUpdater<'_> {
         } else {
             sealed
         };
-        let mut target = base.clone();
-        target.sequence = target
-            .sequence
-            .checked_add(1)
-            .context("current sequence overflow")?;
-        target.lexical_sequence = target.sequence;
-        target.graph_head = sealed.descriptor().target.clone();
-        let mut writer = self
-            .store
-            .current_write(self.writer, self.quota, self.scope, capacity)?;
-        let (pending, lexical_work) = writer
-            .prepare_artifacts_with_fts(
-                &base.token()?,
-                target,
-                &sealed,
-                ArtifactVectorChanges {
-                    artifacts: changes,
-                    vector_inputs: semantic_inputs,
-                    occurrences: &occurrences,
-                    configuration: self.configuration,
+        let (mut committed, lexical_work) = {
+            let owned = self.store.redb_read(self.scope)?;
+            let base_snapshot = owned.snapshot();
+            let native_base = base_snapshot.head()?;
+            ensure!(
+                native_base.token()? == base.token()?,
+                "redb update base changed during planning"
+            );
+            let mut native_target = native_base.clone();
+            native_target.sequence = native_target
+                .sequence
+                .checked_add(1)
+                .context("current sequence overflow")?;
+            native_target.graph_head = sealed.descriptor().target.clone();
+
+            let (catalog, inputs) = airk_store::current::kv::catalog::Plan::artifacts(
+                base_snapshot,
+                &native_base,
+                airk_store::current::kv::catalog::ArtifactRequest {
+                    store: self.store,
+                    target: &native_target,
+                    graph: &sealed,
+                    update: ArtifactVectorChanges {
+                        artifacts: changes,
+                        vector_inputs: semantic_inputs,
+                        occurrences: &occurrences,
+                        configuration: self.configuration,
+                    },
+                    model: &captured_model,
+                    metadata: &metadata,
+                    resources: &resources,
                 },
-                captured_model,
-                &metadata,
-                &resources,
+            )?;
+
+            let mut lexical_work = airk_store::current::lexical::LexicalWork {
+                changed_artifacts: changes.len(),
+                added_documents: 0,
+            };
+            let lexical = if changes.is_empty() {
+                None
+            } else {
+                let stage = self.reservation.staging_directory()?;
+                let lexical_capacity = (4u64 << 30).min(self.reservation.remaining());
+                let mut plan = airk_store::current::kv::lexical_plan::Plan::new(
+                    base_snapshot,
+                    self.reservation,
+                    stage.join("current-lexical-plan.airk"),
+                    lexical_capacity,
+                )?;
+                let mut budget = airk_store::current::kv::directory::Budget::publication();
+                for change in changes {
+                    let (name, artifact) = match change {
+                        ArtifactChange::Upsert(input) => {
+                            let artifact = self
+                                .store
+                                .load_retrieval_artifact(&input.artifact)?
+                                .artifact;
+                            lexical_work.added_documents = lexical_work
+                                .added_documents
+                                .checked_add(artifact.chunks.len() as u64)
+                                .context("lexical document count overflow")?;
+                            (input.artifact.path.as_str(), Some(artifact))
+                        }
+                        ArtifactChange::Delete(path) => (path.as_str(), None),
+                    };
+                    plan.replace(name, artifact.as_ref(), &mut budget)?;
+                }
+                Some(plan.seal(&mut budget)?)
+            };
+
+            let writer = self
+                .store
+                .redb_writer(self.writer, self.quota, self.scope)?;
+            let pending = writer.prepare_components(
+                base_snapshot,
+                &catalog,
+                &sealed,
+                lexical.as_ref(),
+                &inputs,
+                captured_model.clone(),
+            )?;
+            crate::service_execution::progress_prepared(
+                semantic_inputs.map_or(changes.len(), |inputs| inputs.len()) as u64,
+            );
+            observer(CurrentUpdateStage::Prepared);
+            crate::service_execution::progress_phase(
+                airk_core::service_progress::WorkPhase::Publishing,
+            );
+            writer
+                .mark_applying(&pending)
+                .context("mark redb current journal applying")?;
+            observer(CurrentUpdateStage::Applying);
+            let token = writer
+                .commit(&pending)
+                .context("commit redb current journal")?;
+            crate::service_execution::progress_committed(
+                semantic_inputs.map_or(changes.len(), |inputs| inputs.len()) as u64,
+            );
+            observer(CurrentUpdateStage::Committed);
+            drop(writer);
+            drop(owned);
+            (
+                airk_store::current::CurrentCommit {
+                    token,
+                    maintenance_error: None,
+                },
+                lexical_work,
             )
-            .context("prepare current journal")?;
-        crate::service_execution::progress_prepared(
-            semantic_inputs.map_or(changes.len(), |inputs| inputs.len()) as u64,
-        );
-        observer(CurrentUpdateStage::Prepared);
-        crate::service_execution::progress_phase(
-            airk_core::service_progress::WorkPhase::Publishing,
-        );
-        writer
-            .mark_applying(&pending)
-            .context("mark current journal applying")?;
-        observer(CurrentUpdateStage::Applying);
-        let mut committed = writer
-            .commit(&pending, pending.target.lexical_commit)
-            .context("commit current journal")?;
-        crate::service_execution::progress_committed(
-            semantic_inputs.map_or(changes.len(), |inputs| inputs.len()) as u64,
-        );
-        observer(CurrentUpdateStage::Committed);
-        drop(writer);
+        };
         let cleanup = reclaim_current_objects(self.store, self.quota, self.scope, self.writer);
         if let Err(error) = cleanup {
             let message = format!("current object cleanup: {error:#}");

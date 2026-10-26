@@ -81,6 +81,10 @@ impl Kernel {
         project: ProjectBinding,
         request: &ConfigurationRequest,
     ) -> Result<Value> {
+        if let Some(selected) = self.active_service_view()? {
+            return selected.configure_service_project(project, request);
+        }
+
         self.validate_service_configuration(project, request)?;
         crate::service_execution::checkpoint()?;
         let result = match &request.configuration {

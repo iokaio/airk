@@ -11,6 +11,125 @@ use std::{
 
 struct Children(Vec<Child>);
 
+async fn native_status(
+    control: &Path,
+    project: airk_core::service::ProjectBinding,
+) -> Result<Value> {
+    let tools = airk_cli::project_client::tools(control.to_path_buf(), project);
+    let result = tools
+        .call(
+            "airk_status".into(),
+            serde_json::json!({"response_mode":"full"})
+                .as_object()
+                .unwrap()
+                .clone(),
+        )
+        .await?;
+    ensure!(result["isError"] != true, "native status failed: {result}");
+    Ok(serde_json::from_str(
+        result["content"][0]["text"]
+            .as_str()
+            .context("missing status body")?,
+    )?)
+}
+async fn configure_native_vectors(
+    control: &Path,
+    project: airk_core::service::ProjectBinding,
+    enabled: bool,
+) -> Result<()> {
+    use airk_core::service::{
+        ControlMethod as Method, ControlResponse as Response, JobOutcome, RequestKey,
+    };
+    let Response::RequestEpoch { namespace, epoch } =
+        airk_cli::service_runtime::request(control, Method::RequestEpoch).await?
+    else {
+        anyhow::bail!("missing epoch")
+    };
+    let Response::Job { job } = airk_cli::service_runtime::request(
+        control,
+        Method::Enqueue {
+            project,
+            caller: airk_kernel::service_broker::new_instance_id()?,
+            key: RequestKey {
+                namespace,
+                epoch,
+                nonce: airk_kernel::service_broker::new_instance_id()?,
+            },
+            kind: airk_core::service::JobKind::Inspect,
+        },
+    )
+    .await?
+    else {
+        anyhow::bail!("inspection not accepted")
+    };
+    let until = tokio::time::Instant::now() + Duration::from_secs(60);
+    loop {
+        let Response::Job { job } =
+            airk_cli::service_runtime::request(control, Method::Job { id: job.id }).await?
+        else {
+            anyhow::bail!("inspection lost")
+        };
+        if let Some(outcome) = job.outcome {
+            ensure!(
+                matches!(outcome, JobOutcome::Succeeded { .. }),
+                "inspection failed: {outcome:?}"
+            );
+            break;
+        }
+        ensure!(tokio::time::Instant::now() < until, "inspection timed out");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let request = airk_cli::service_configuration::prepare(
+        control,
+        project,
+        airk_cli::service_configuration::Draft::Vectors { enabled },
+    )
+    .await?;
+    let Response::RequestEpoch { namespace, epoch } =
+        airk_cli::service_runtime::request(control, Method::RequestEpoch).await?
+    else {
+        anyhow::bail!("missing request epoch")
+    };
+    let Response::Job { job } = airk_cli::service_runtime::request(
+        control,
+        Method::ConfigureProject {
+            project,
+            caller: airk_kernel::service_broker::new_instance_id()?,
+            key: RequestKey {
+                namespace,
+                epoch,
+                nonce: airk_kernel::service_broker::new_instance_id()?,
+            },
+            request: Box::new(request),
+        },
+    )
+    .await?
+    else {
+        anyhow::bail!("configuration not accepted")
+    };
+    let until = tokio::time::Instant::now() + Duration::from_secs(60);
+    loop {
+        let Response::Job { job } =
+            airk_cli::service_runtime::request(control, Method::Job { id: job.id }).await?
+        else {
+            anyhow::bail!("configuration lost")
+        };
+        if let Some(outcome) = job.outcome {
+            ensure!(
+                matches!(outcome, JobOutcome::Succeeded { .. }),
+                "configuration failed: {outcome:?}"
+            );
+            break;
+        }
+        ensure!(
+            tokio::time::Instant::now() < until,
+            "configuration timed out"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    Ok(())
+}
+
 // Existing evidence fixtures explicitly bind their storage before pre-populating
 // it. Production workers bind after activation and never adopt unbound 1.4 data.
 fn bind_fixture_data(runtime: &Path, data: &Path) -> Result<()> {
@@ -135,7 +254,8 @@ fn maintenance_preview_survives_restart_and_rejects_changed_settings_before_muta
     )?;
     let project = airk_kernel::service_projects::registration(&source, &data, "maintenance")?;
     bind_fixture_data(&runtime, &data)?;
-    let kernel = airk_kernel::Kernel::open_service_collection(&source, Some(data), "maintenance")?;
+    let kernel =
+        airk_kernel::Kernel::open_service_collection(&source, Some(data.clone()), "maintenance")?;
     kernel.configure_vectors(false)?;
     kernel.index()?;
     let token = kernel
@@ -143,6 +263,7 @@ fn maintenance_preview_survives_restart_and_rejects_changed_settings_before_muta
         .publication
         .context("initial publication missing")?
         .token;
+    drop(kernel);
     let mut children = Children(vec![start(&runtime)?]);
     wait_ready(&runtime)?;
     let executor = tokio::runtime::Runtime::new()?;
@@ -209,7 +330,10 @@ fn maintenance_preview_survives_restart_and_rejects_changed_settings_before_muta
     ensure!(wait_exit(&mut children.0[0])?, "service did not drain");
     // The next service must retain the exact original preview, then reject its
     // guard after an independently saved setting changes. No source rebuild runs.
+    let kernel =
+        airk_kernel::Kernel::open_service_collection(&source, Some(data.clone()), "maintenance")?;
     kernel.configure_vectors(true)?;
+    drop(kernel);
     children.0.push(start(&runtime)?);
     wait_ready(&runtime)?;
     executor.block_on(async {
@@ -246,16 +370,11 @@ fn maintenance_preview_survives_restart_and_rejects_changed_settings_before_muta
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
         ensure!(
-            kernel
-                .refresh_service_snapshot()?
-                .status()?
-                .publication
-                .context("retained publication missing")?
-                .token
-                == token,
+            native_status(&runtime, project.binding).await?["publication"]["token"]
+                == serde_json::to_value(token)?,
             "stale repair mutated publication"
         );
-        kernel.configure_vectors(false)?;
+        configure_native_vectors(&runtime, project.binding, false).await?;
         for operation in [
             RepairOperation::Verify,
             RepairOperation::Reconcile,
@@ -349,12 +468,9 @@ fn maintenance_preview_survives_restart_and_rejects_changed_settings_before_muta
                 "repair preview omitted availability/storage observations"
             );
         }
-        let updated = kernel
-            .refresh_service_snapshot()?
-            .status()?
-            .publication
-            .context("replacement publication missing")?
-            .token;
+        let updated: airk_core::identity::RevisionToken = serde_json::from_value(
+            native_status(&runtime, project.binding).await?["publication"]["token"].clone(),
+        )?;
         ensure!(
             updated.incarnation != token.incarnation,
             "approved rebuild did not replace the incarnation"
@@ -472,6 +588,7 @@ fn missing_registered_source_still_brokers_retained_evidence_and_reports_a_typed
         .publication
         .context("initial publication missing")?
         .token;
+    drop(kernel);
     let mut children = Children(vec![start(&runtime)?]);
     wait_ready(&runtime)?;
     tokio::runtime::Runtime::new()?.block_on(async {
@@ -684,12 +801,7 @@ fn missing_registered_source_still_brokers_retained_evidence_and_reports_a_typed
         ensure!(paused.paused,"inspection resumed paused source work");
         ensure!(!serde_json::to_string(&observation.snapshot)?.contains("memo.md"),"inspection retained source payload");
         ensure!(
-            kernel
-                .status()?
-                .publication
-                .context("retained publication missing")?
-                .token
-                == token,
+            native_status(&runtime,project.binding).await?["publication"]["token"] == serde_json::to_value(token)?,
             "missing-root scan changed retained evidence"
         );
         ensure!(
@@ -1299,9 +1411,12 @@ fn management_survives_restart_and_busy_registry_does_not_block_health(
             anyhow::bail!("receipt retry failed")
         };
         ensure!(job.id == again.id, "duplicate request repeated work");
-        // Lock only the metadata ledger; health must still answer without waiting for SQLite.
-        let lock = rusqlite::Connection::open(root.join("service-1.4.sqlite3"))?;
-        lock.execute_batch("BEGIN EXCLUSIVE")?;
+        // Lock only the metadata ledger; health must still answer without waiting for the registry.
+        let lock = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(root.join("service-1.4.registry.lock"))?;
+        lock.try_lock()?;
         let blocked = request(Method::Projects {
             after: None,
             revision: None,
@@ -1326,7 +1441,7 @@ fn management_survives_restart_and_busy_registry_does_not_block_health(
             matches!(blocked?, Response::Failure { .. }),
             "locked ledger did not return bounded failure"
         );
-        lock.execute_batch("ROLLBACK")?;
+        drop(lock);
         ensure!(
             fs::read_dir(&data)?.next().is_none(),
             "management opened collection state"
@@ -1550,17 +1665,12 @@ fn supervised_jobs_and_direct_queries_preserve_grants_and_stop_on_service_loss()
             "direct response lost original citation"
         );
         probe_stdio_bridge(&root, project.binding)?;
-        let pinned = airk_kernel::Kernel::open_service_collection_for_diagnostics(
-            &source,
-            Some(data.clone()),
-            "fixture",
-        )?
-        .refresh_service_snapshot()?;
-        let pinned_revision = pinned
-            .status()?
-            .publication
-            .context("old native snapshot missing")?
-            .token;
+        // A process-external selection pins old object retirement without
+        // opening a competing database backend. Worker RPC owns evidence reads.
+        let pinned =
+            airk_store::service::collection::Collection::existing(&data, &project.root, "fixture")?
+                .select()?;
+        let pinned_revision = indexed_revision;
         let Response::Job { job: rebuild } = request(Method::Enqueue {
             project: project.binding,
             caller,
@@ -1610,11 +1720,11 @@ fn supervised_jobs_and_direct_queries_preserve_grants_and_stop_on_service_loss()
         );
         ensure!(
             pinned
-                .status()?
-                .publication
-                .context("pinned publication missing")?
-                .token
-                == pinned_revision,
+                .store
+                .current_scope(&project.root, "fixture")?
+                .context("pinned ownership lost")?
+                .incarnation
+                == pinned_revision.incarnation,
             "replacement changed a pinned old request"
         );
         let registry = airk_store::service::registry::ServiceRegistry::open(&root, caller)?;
@@ -1690,7 +1800,7 @@ fn foreign_registry_state_is_preserved_and_does_not_disable_native_health() -> R
     let owner = tempfile::tempdir()?;
     let root = owner.path().join("runtime");
     airk_cli::local_ipc::prepare_root(&root)?;
-    let path = root.join("service-1.4.sqlite3");
+    let path = root.join("service-1.4.airk");
     let original = b"foreign metadata fixture must not be initialized or deleted";
     fs::write(&path, original)?;
     let mut children = Children(vec![start(&root)?]);
@@ -2156,6 +2266,7 @@ fn denied_registered_source_keeps_direct_queries_and_fails_new_work_without_data
         .publication
         .context("initial publication missing")?
         .token;
+    drop(kernel);
     let mut children = Children(vec![start(&runtime)?]);
     wait_ready(&runtime)?;
     tokio::runtime::Runtime::new()?.block_on(async {
@@ -2202,17 +2313,13 @@ fn denied_registered_source_keeps_direct_queries_and_fails_new_work_without_data
                 && result.to_string().contains("memo.txt"),
             "denied source blocked retained query: {result}"
         );
-        let status = kernel.status()?;
+        let status = native_status(&runtime, project.binding).await?;
         ensure!(
-            status.publication.context("publication lost")?.token == token,
+            status["publication"]["token"] == serde_json::to_value(token)?,
             "denied source changed publication"
         );
         ensure!(
-            status
-                .source_availability
-                .context("availability missing")?
-                .reason
-                == Some(airk_kernel::service_projects::SourceProblem::PermissionDenied),
+            status["source_availability"]["reason"] == "permission_denied",
             "permission reason missing"
         );
         let Response::RequestEpoch { namespace, epoch } = request(Method::RequestEpoch).await?
@@ -2428,7 +2535,7 @@ fn installed_control_loss_rejects_native_startup_and_restoration_retains_registr
             && namespace_binding["namespace"] == namespace.to_string(),
         "service accepted metadata before its independent namespace binding"
     );
-    let database = fs::read(root.join("service-1.4.sqlite3"))?;
+    let database = fs::read(root.join("service-1.4.airk"))?;
     let saved = state.join("original-control");
     fs::rename(&root, &saved)?;
     ensure!(
@@ -2452,7 +2559,7 @@ fn installed_control_loss_rejects_native_startup_and_restoration_retains_registr
         "initialization receipt changed"
     );
     ensure!(
-        fs::read(saved.join("service-1.4.sqlite3"))? == database,
+        fs::read(saved.join("service-1.4.airk"))? == database,
         "original registry changed"
     );
     fs::rename(&saved, &root)?;
@@ -2476,7 +2583,7 @@ fn installed_control_loss_rejects_native_startup_and_restoration_retains_registr
         wait_exit(children.0.last_mut().unwrap())?,
         "restored service did not stop"
     );
-    let names = ["service-1.4.sqlite3", "service-1.4.owner.json"];
+    let names = ["service-1.4.airk", "service-1.4.owner.json"];
     let originals = names
         .iter()
         .map(|name| fs::read(root.join(name)))

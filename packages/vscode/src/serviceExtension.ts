@@ -179,7 +179,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         try{this.trusted();await client.rpc({configure_watch:{project:spec.service!.project,enabled:selected.enabled}});this.trusted();}finally{client.dispose();}
         await this.console.command('connect');
     }
-    async repair(operation:'rebuild'|'auto'|'verify',requested?:LaunchSpec):Promise<void>{
+    async repair(operation:'rebuild'|'auto'|'verify'|'compact',requested?:LaunchSpec):Promise<void>{
         const spec=await this.chooseSpec(requested);if(!spec)return;this.trusted();await this.runtime().ensure();this.trusted();
         await this.console.previewRepair(spec.service!.project,operation);
     }
@@ -334,16 +334,21 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             const observation=await this.runtime().discover();this.trusted();
             const dataRoot=vscode.workspace.getConfiguration('airk').inspect<string>('storage.path')?.globalValue||record(observation.location.user_paths).data;
             if(typeof dataRoot!=='string'||!path.isAbsolute(dataRoot))throw new ServiceError('invalid_project_data_location');
+            const reset=record(record(observation.inspection??{}).lifecycle??{}).fresh_setup;
+            const resetNamespace=reset?identifier(record(reset).request_namespace,16):undefined;
             for(const folder of folders){
-                if(this.workspace.hasRegistration(binding,folder.uri.fsPath))continue;
+                const preceding=resetNamespace?this.workspace.pendingFreshSetup(binding,folder.uri.fsPath,resetNamespace):undefined;
+                if(!preceding&&this.workspace.hasRegistration(binding,folder.uri.fsPath))continue;
                 this.trusted();const canonical=await fs.realpath(folder.uri.fsPath);this.trusted();
-                if(specs.some(spec=>same(spec.root,canonical)))continue;
-                const project=await this.workspace.register(binding,folder.uri.fsPath,dataRoot,collectionId(canonical),async()=>true);
+                if(!preceding&&specs.some(spec=>same(spec.root,canonical)))continue;
+                if(preceding)this.reportInstall('AIRK 1.4.5 requires fresh registration and full indexing. Owned old database files are removed; restart coding-agent connections after setup.');
+                const project=await this.workspace.register(binding,folder.uri.fsPath,preceding?.data_root??dataRoot,preceding?.collection??collectionId(canonical),async()=>true);
                 if(!project)continue;this.trusted();const client=this.runtime().client(binding);
                 try{
                     await client.rpc({configure_watch:{project:project.binding,enabled:true}});this.trusted();
                     await this.enqueue(binding,project.binding,'model_setup',client);
                     await this.enqueue(binding,project.binding,'index',client);
+                    if(resetNamespace)await this.workspace.completeFreshSetup(binding,folder.uri.fsPath,resetNamespace);
                 }finally{client.dispose();}
                 this.output.appendLine(`Automatically registered ${folder.uri.fsPath}. Index data: ${dataRoot}. Automatic watching enabled; change storage or watching with AIRK commands.`);
             }
@@ -415,6 +420,7 @@ export async function activate(context:vscode.ExtensionContext):Promise<{getServ
     for(const name of ['menu','reindex','diagnose','collections','removeCollection','currentMaintenance','extractionPolicy','configureExtractionPolicy','ingestionLimits','configureIngestionLimits','status','usage','storageLimits','treeReindex','treeRemove'])commands[name]=consoleAction();
     commands.reindex=()=>controller.repair('rebuild');commands.treeReindex=spec=>controller.repair('rebuild',spec as LaunchSpec|undefined);
     commands.diagnose=()=>controller.repair('verify');commands.currentMaintenance=()=>controller.repair('auto');
+    commands.compactStorage=()=>controller.repair('compact');
     commands.status=()=>controller.showTool('airk_status');
     commands.chooseStorage=async()=>{controller.trusted();const selected=await vscode.window.showOpenDialog({canSelectFolders:true,canSelectFiles:false,canSelectMany:false,openLabel:'Review new project storage'});
         if(selected?.length){controller.trusted();await vscode.workspace.getConfiguration('airk').update('storage.path',selected[0].fsPath,vscode.ConfigurationTarget.Global);

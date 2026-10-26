@@ -77,6 +77,28 @@ test('console messages reject stale revisions, injected bodies and out-of-scope 
     f.controller.dispose();
 });
 
+test('compaction console action binds an observed project and explains exclusive maintenance',async()=>{
+    const f=fixture();
+    try{
+        await f.controller.refresh();const state=f.controller.state;
+        const action={type:'service',revision:state.revision,action:'repair',scope:'one',operation:'compact',project};
+        assert.ok(consoleAction(action,state));
+        assert.equal(consoleAction({...action,project:'ff'.repeat(32)},state),undefined);
+        assert.equal(consoleAction({...action,command:'compact-all'},state),undefined);
+        assert.match(renderConsole(state),/data-operation="compact"/);
+        state.plan={value:{operation:'compact',counts:{selected:1},phase:'ready'},items:[{project}],after:null};
+        assert.match(renderConsole(state),/preserving committed records/);
+        assert.match(renderConsole(state),/active readers and writes finish/);
+        assert.match(renderConsole(state),/Before \(bytes\)/);
+        assert.doesNotMatch(renderConsole(state),/<td>0<\/td>/,'missing receipt is not zero bytes');
+        state.plan.items[0].compaction={token:'retained-token',bytes_before:131072,bytes_after:131072,bytes_reclaimed:0};
+        assert.ok(renderConsole(state).includes(`<td>${(131072).toLocaleString()}</td><td>${(131072).toLocaleString()}</td><td>0</td>`));
+        state.inactiveProjects=true;
+        assert.equal(consoleAction(action,state),undefined);
+        assert.doesNotMatch(renderConsole(state),/data-operation="compact"/);
+    }finally{f.controller.dispose();}
+});
+
 test('console binds sampled wait reasons and queued cancellation to observed jobs',async()=>{
     const f=fixture();await f.controller.refresh();const state=f.controller.state,row=state.page!.projects[0],worker=(state.workers!.observations as RecordValue[])[0];
     row.pending_job={id:job,project,kind:'index',state:'pending'};

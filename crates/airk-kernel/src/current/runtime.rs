@@ -24,18 +24,88 @@ pub(crate) fn envelope(read: &CurrentRead) -> Result<RevisionEnvelope> {
 }
 
 impl Kernel {
+    pub fn compact_current_storage(
+        &self,
+    ) -> Result<airk_store::current::kv::writer::CompactionReport> {
+        self.compact_current_storage_expected(None)
+    }
+    pub fn compact_current_storage_expected(
+        &self,
+        expected: Option<airk_core::identity::RevisionToken>,
+    ) -> Result<airk_store::current::kv::writer::CompactionReport> {
+        // A service Kernel may still refer to the slot it originally opened.
+        // Hold selection until the writer is acquired, then release this job's
+        // own pin before draining readers. The writer fences handoff/retirement.
+        let selection = self
+            .service_collection
+            .as_ref()
+            .map(|collection| collection.select())
+            .transpose()?;
+        let store = if let Some(selection) = &selection {
+            self.inherit_shared_models(selection.store.clone())?
+        } else {
+            self.store.clone()
+        };
+        let scope = store
+            .current_scope(&self.root_id(), &self.collection)?
+            .context("workspace is not indexed; no current storage to compact")?;
+        let quota = self.collection_quota()?;
+        let writer = store.lock()?;
+        if let Some(collection) = &self.service_collection {
+            ensure!(
+                collection.selected_store()?.directory() == store.directory(),
+                airk_core::service_maintenance::PlanError::Stale
+            );
+        }
+        drop(selection);
+        let mut redb = store.redb_writer(&writer, &quota, &scope)?;
+        if let Some(expected) = expected {
+            ensure!(
+                revision(redb.head()?.token()?) == expected,
+                airk_core::service_maintenance::PlanError::Stale
+            );
+        }
+        redb.compact()
+    }
+
     pub fn maintain_current(&self) -> Result<airk_store::current::maintenance::ReclamationReport> {
+        let selection = if self.service_selection.is_none() && !self.service_candidate {
+            self.service_collection
+                .as_ref()
+                .map(|collection| collection.select())
+                .transpose()?
+        } else {
+            None
+        };
+        let store = if let Some(selection) = &selection {
+            self.inherit_shared_models(selection.store.clone())?
+        } else {
+            self.store.clone()
+        };
+        let mut selected = self.clone();
+        selected.store = store;
+        selected.maintain_selected_current(selection)
+    }
+
+    fn maintain_selected_current(
+        &self,
+        selection: Option<airk_store::service::collection::Selection>,
+    ) -> Result<airk_store::current::maintenance::ReclamationReport> {
         let scope = self.current_scope()?.context("workspace is not indexed")?;
         let quota = self.collection_quota()?;
         super::recover_current(&self.store, &quota, &scope)?;
-        let writer = self.store.lock()?;
+        let writer = self.lock_current_writer()?;
+        if let Some(collection) = &self.service_collection {
+            ensure!(
+                collection.selected_store()?.directory() == self.store.directory(),
+                airk_core::service_maintenance::PlanError::Stale
+            );
+        }
+        drop(selection);
         let read = self.store.current_read(&scope)?;
         let plan = read.reclamation_plan(&self.store)?;
         drop(read);
-        let capacity = self.store.current_database_capacity(&scope)?;
-        let mut current = self
-            .store
-            .current_write(&writer, &quota, &scope, capacity)?;
+        let current = self.store.redb_writer(&writer, &quota, &scope)?;
         current.reclaim_objects(&plan)
     }
 
@@ -104,6 +174,30 @@ impl Kernel {
         let c = &state.configuration;
         let semantic_readiness = super::enrichment::readiness(&read, &self.store)?;
         let discovery_readiness = super::progress::readiness(&read, &self.store)?;
+        let (current_index_file, current_index_bytes) =
+            if self.store.directory().join("current.airk").try_exists()? {
+                (
+                    Some("current.airk".to_owned()),
+                    airk_store::capacity::logical_database_bytes(
+                        &self.store.directory().join("current.airk"),
+                    )?,
+                )
+            } else {
+                (None, None)
+            };
+        let usage_directory = self.store.managed_collection_directory()?.to_path_buf();
+        let usage_ledger_bytes =
+            airk_store::capacity::logical_database_bytes(&usage_directory.join("usage.airk"))?;
+        let storage_total = current_index_bytes
+            .unwrap_or(0)
+            .checked_add(usage_ledger_bytes.unwrap_or(0))
+            .context("storage size sample overflow")?;
+        let admitted_bytes = self.store.current_database_capacity(&read.head().scope)?;
+        let sampled_unix_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_millis()
+            .try_into()
+            .unwrap_or(u64::MAX);
         Ok(Status {
             source_availability: self.service_source_observation(),
             execution: self.execution_status()?,
@@ -131,8 +225,8 @@ impl Kernel {
             chunks: usize::try_from(state.counts.chunks)?,
             source_bytes: usize::try_from(state.counts.source_bytes)?,
             extractor_version: c.extractor_version.clone(),
-            exact_fact_backend: "sqlite",
-            lexical_backend: "sqlite-fts5-current",
+            exact_fact_backend: "redb-authenticated-map",
+            lexical_backend: "redb-paged-postings",
             vector_backend: "microsoft-diskann-0.59.0/airk-current-provider",
             local_model_ready: c.model.is_some(),
             vectors_enabled: self.vectors_enabled()?,
@@ -143,6 +237,16 @@ impl Kernel {
             semantic_producer: analysis.as_ref().map(|a| a.manifest.producer.clone()),
             imported_facts: analysis.as_ref().map_or(0, |a| a.facts.len()),
             imported_relationships: analysis.as_ref().map_or(0, |a| a.relationships.len()),
+            storage_sizes: crate::StorageSizes {
+                current_index_file,
+                current_index_bytes,
+                current_index_admitted_bytes: Some(admitted_bytes),
+                current_index_unused_admitted_bytes: current_index_bytes
+                    .map(|bytes| admitted_bytes.saturating_sub(bytes)),
+                usage_ledger_bytes,
+                total_bytes: storage_total,
+                sampled_unix_ms,
+            },
         })
     }
 

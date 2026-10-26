@@ -195,6 +195,7 @@ fn secondary_gate_contention_preserves_primary_permission_and_corruption_errors(
         ErrorKind::PermissionDenied,
         "primary source permission fixture",
     ));
+    let writer = kernel.store.lock()?;
     for original in [permission, corrupt] {
         let original_message = format!("{original:#}");
         let permission = original
@@ -219,14 +220,12 @@ fn secondary_gate_contention_preserves_primary_permission_and_corruption_errors(
             message.contains("record failed semantic enrichment"),
             "{message}"
         );
-        assert!(
-            message.contains("current index has active readers"),
-            "{message}"
-        );
+        assert!(message.contains("locked"), "{message}");
         assert_eq!(read.token()?, token);
         assert!(read_work(&read, &kernel.store)?.unwrap().failure.is_none());
     }
     drop(read);
+    drop(writer);
     assert_eq!(
         kernel.status()?.publication.unwrap().token,
         super::super::runtime::revision(token)
@@ -253,7 +252,7 @@ fn drain_validation_failure_is_not_replaced_by_failure_recording_contention() ->
             ..Default::default()
         });
     let error = kernel
-        .drain_with_failure_record(
+        .drain_current_enrichment(
             &model,
             &selection,
             &mut EmbeddingCacheStats::default(),
@@ -264,7 +263,10 @@ fn drain_validation_failure_is_not_replaced_by_failure_recording_contention() ->
                 deadline: None,
             },
         )
-        .unwrap_err();
+        .err()
+        .context("invalid selection accepted")?;
+    let _writer = kernel.store.lock()?;
+    let error = kernel.semantic_failure(error);
     assert!(
         error
             .downcast_ref::<crate::CurrentGateContention>()
@@ -291,12 +293,11 @@ fn resolved_gate_contention_does_not_publish_failed_semantic_state() -> Result<(
     let scope = read.head().scope.clone();
     let quota = kernel.collection_quota()?;
     let writer = kernel.store.lock()?;
-    let capacity = kernel.store.current_database_capacity(&scope)?;
     let original = kernel
         .store
-        .current_write(&writer, &quota, &scope, capacity)
-        .err()
-        .context("fixture gate was not held")?;
+        .redb_writer(&writer, &quota, &scope)?
+        .compact()
+        .unwrap_err();
     assert!(
         original
             .downcast_ref::<crate::CurrentGateContention>()

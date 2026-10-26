@@ -15,12 +15,11 @@ use airk_core::{
     identity::Sha256Digest,
 };
 use anyhow::{Context, Result, ensure};
-use rusqlite::Connection;
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) struct VectorPlanContext<'plan, 'state> {
     pub plan: &'plan mut map::MapPlan<'state>,
-    pub connection: &'state Connection,
+    pub connection: &'state dyn graph::GraphStorage,
     pub store: &'state FileStore,
     pub scope: &'state CurrentScope,
     pub base: &'state CurrentHead,

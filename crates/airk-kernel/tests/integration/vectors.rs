@@ -130,7 +130,8 @@ fn model_installation_respects_quota_and_never_overwrites_existing_inputs() -> R
     kernel.initialize()?;
     let quota = airk_store::quota::Quota::open(limited.path())?;
     let mut policy = quota.policy()?;
-    policy.root_bytes = quota.status()?.used_bytes;
+    let status = quota.status()?;
+    policy.root_bytes = status.used_bytes + status.reserved_bytes;
     quota.configure(policy)?;
     assert!(kernel.install_vector_model(source.path()).is_err());
     assert!(!limited.path().join("models/local").exists());

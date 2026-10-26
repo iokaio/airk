@@ -86,6 +86,10 @@ pub(crate) fn check_writer(store: &FileStore, writer: &WriterLock) -> Result<Pat
 }
 
 impl Gate {
+    pub(crate) fn restore_shared(&self) -> Result<()> {
+        self.file.unlock()?;
+        acquired(self.file.try_lock_shared(), CurrentGateContention::Applying)
+    }
     /// Convert this writer's object-protection lease into reclamation exclusion.
     /// If a reader is present, restore shared protection and defer cleanup.
     pub(crate) fn try_exclusive(&self) -> Result<bool> {

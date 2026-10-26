@@ -1,18 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Measure indexing stages and chunk granularity in fresh, isolated local state.
+"""Measure indexing stages in fresh, isolated local state.
 
-Requires the optional Python tokenizers package for the chunk audit. Never opens
+Never opens
 an existing collection. Reports contain aggregate measurements, not source text.
 """
 import argparse
-from collections import Counter
 import hashlib
 import json
 import os
 from pathlib import Path
 import platform
 import statistics
-import sqlite3
 import subprocess
 import tempfile
 import time
@@ -76,148 +74,6 @@ def framed_digest(domain, *fields):
         digest.update(len(field).to_bytes(8, "big"))
         digest.update(field)
     return digest.digest()
-
-
-def current_inventory(state):
-    """Diagnostic audit of this harness's fresh, quiescent 1.2 state only.
-
-    This is not an authenticated public reader: native requests own that contract.
-    Bound decoding, check domain keys/counts, and verify retained payload hashes.
-    """
-    databases = list(state.glob("collections-1.2/*/current.sqlite3"))
-    if len(databases) != 1:
-        raise ValueError(f"expected one fresh current database, found {len(databases)}")
-    database = sqlite3.connect(databases[0].resolve().as_uri() + "?mode=ro", uri=True)
-    files = {}
-    counts = None
-    consumed = 0
-    try:
-        database.execute("BEGIN")
-        if database.execute("PRAGMA user_version").fetchone()[0] != 120:
-            raise ValueError("benchmark requires current format 120")
-        phase, raw_head = database.execute("SELECT phase, head FROM current_state WHERE id=1").fetchone()
-        if phase != "ready" or len(raw_head) > 65536:
-            raise ValueError("benchmark requires a bounded Ready head")
-        scope = json.loads(raw_head)["scope"]
-        scope_hash = framed_digest(b"current-keyed-map-scope/1", scope["root"].encode(),
-                                   scope["collection"].encode(), bytes.fromhex(scope["incarnation"]))
-
-        def key(domain, identity):
-            return framed_digest(b"current-keyed-map-key/1", scope_hash, domain, identity)
-
-        for prefix, bucket in database.execute("SELECT prefix, content FROM current_map_buckets"):
-            consumed += len(bucket)
-            if not 2 <= len(bucket) <= 512 * 1024 or consumed > 512 * 1024 * 1024:
-                raise ValueError("benchmark map byte bound exceeded")
-            count = int.from_bytes(bucket[:2], "big")
-            if not 1 <= count <= 128:
-                raise ValueError("invalid map entry count")
-            offset, previous = 2, b""
-            for _ in range(count):
-                if offset + 36 > len(bucket):
-                    raise ValueError("truncated map entry")
-                identity = bucket[offset:offset+32]
-                length = int.from_bytes(bucket[offset+32:offset+36], "big")
-                offset += 36
-                if (length > 256 * 1024 or offset + length > len(bucket)
-                        or int.from_bytes(identity[:2], "big") != prefix or identity <= previous):
-                    raise ValueError("invalid map entry")
-                raw = bucket[offset:offset+length]
-                offset += length
-                previous = identity
-                if identity == key(b"metadata", b"collection"):
-                    counts = json.loads(raw)["counts"]
-                # Other map domains include binary handles and measured-size rows.
-                if not raw.startswith(b'{"artifact":'):
-                    continue
-                value = json.loads(raw)["artifact"]
-                if "retained" not in value or "content_hash" not in value:
-                    continue
-                path = value["path"]
-                if identity != key(b"artifact", path.encode()) or path in files:
-                    raise ValueError("invalid artifact map identity")
-                if len(files) >= 100000:
-                    raise ValueError("benchmark file bound exceeded")
-                files[path] = {"state": {"source_hash": value["content_hash"],
-                                          "payload_digest": value["retained"]["object"]}}
-            if offset != len(bucket):
-                raise ValueError("trailing map bytes")
-        if counts is None or len(files) != counts["files"]:
-            raise ValueError("incomplete current benchmark inventory")
-    finally:
-        database.close()
-    return databases[0].parent, {"files": files}, counts
-
-
-def audit(state, tokenizer_path):
-    from tokenizers import Tokenizer
-
-    tokenizer = Tokenizer.from_file(str(tokenizer_path))
-    tokenizer.no_padding()
-    tokenizer.no_truncation()
-    collection, inventory, indexed_counts = current_inventory(state)
-    corpus_digest = hashlib.sha256(json.dumps(
-        [(path, record["state"]["source_hash"]) for path, record in sorted(inventory["files"].items())],
-        ensure_ascii=True, separators=(",", ":")).encode()).hexdigest()
-    counts = Counter()
-    groups = {}
-    unique = set()
-    token_lengths = []
-    per_file = []
-    for path, record in inventory["files"].items():
-        digest = record["state"]["payload_digest"]
-        if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
-            raise ValueError("invalid retained payload digest")
-        payload_path = collection / "objects" / "artifacts" / digest
-        raw = payload_path.read_bytes()
-        assert hashlib.sha256(raw).hexdigest() == digest
-        payload = json.loads(raw)
-        group = "tests" if "/tests/" in path or "/test/" in path else (
-            "docs" if path.startswith("docs/") or path.endswith(".md") else (
-                "locks" if Path(path).name in ("Cargo.lock", "package-lock.json") else
-                "code/config/other"))
-        subtotal = groups.setdefault(group, Counter())
-        nonblank = 0
-        for chunk in payload["chunks"]:
-            region = chunk.get("region")
-            text = payload["text"] if region is None else next(
-                item["text"] for item in payload["regions"] if item["id"] == region)
-            span = chunk["span"]
-            text = text.encode()[span["start"]:span["end"]].decode()
-            counts["chunks"] += 1
-            subtotal["chunks"] += 1
-            counts["chunk_bytes"] += len(text.encode())
-            if not text.strip():
-                counts["blank"] += 1
-                subtotal["blank"] += 1
-                continue
-            ids = tokenizer.encode(text, add_special_tokens=True).ids
-            size = len(ids)
-            token_lengths.append(size)
-            counts["nonblank"] += 1
-            nonblank += 1
-            subtotal["nonblank"] += 1
-            subtotal["bytes"] += len(text.encode())
-            unique.add(hashlib.sha256(text.encode()).digest())
-            for threshold in (16, 32, 64):
-                counts[f"tokens_le_{threshold}"] += size <= threshold
-            counts["tokens_gt_256"] += size > 256
-            counts["untruncated_tokens"] += size
-            counts["used_slots_256"] += min(size, 256)
-        counts["facts"] += len(payload["facts"])
-        counts["payload_relationships"] += len(payload["relationships"])
-        counts["continuity"] += len(payload["continuity"])
-        per_file.append({"path": path, "nonblank_chunks": nonblank})
-    counts["unique_nonblank_inputs"] = len(unique)
-    counts["catalog_facts"] = indexed_counts["facts"]
-    # No current aggregate includes every constructed native relationship.
-    counts["catalog_relationships"] = None
-    ordered = sorted(token_lengths)
-    return {"corpus_path_hash_digest": corpus_digest, "counts": dict(counts), "groups": groups,
-            "top_files_by_nonblank_chunks": sorted(per_file, key=lambda row: (-row["nonblank_chunks"], row["path"]))[:12],
-            "token_quantiles": {str(p): ordered[min(len(ordered)-1, int(len(ordered)*p))]
-                                for p in (0.5, 0.9, 0.95, 0.99)} if ordered else {},
-            "padding_fraction_256": 1 - counts["used_slots_256"] / max(1, counts["nonblank"]*256)}
 
 
 def fixture(root):
@@ -312,8 +168,7 @@ def main():
               "limitations": ["fresh processes; OS caches uncontrolled; timings are observations, not performance guarantees",
                               "synthetic retrieval relevance is a smoke test, not production quality qualification",
                               "report excludes source text and retained state; working files remain under work-dir",
-                              "audit reads only harness-owned quiescent current state; it is not an authenticated evidence API",
-                              "catalog_relationships is unavailable; payload counts exclude constructed native relationships"]}
+                              "measurements use native CLI contracts; private database formats are not decoded"]}
 
     def save():
         args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -349,7 +204,6 @@ def main():
             run("cold", "index")
             status = run(None, "status")
             entry["status"] = {key: status[key] for key in ("files", "chunks", "indexed_vectors", "source_bytes")}
-            entry["audit"] = audit(state, model / "tokenizer.json")
             entry["logical_disk_bytes_after_cold"] = sum(p.stat().st_size for p in state.rglob("*") if p.is_file())
             run("unchanged", "index")
             if not args.corpus:

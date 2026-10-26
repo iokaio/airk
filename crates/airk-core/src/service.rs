@@ -422,6 +422,7 @@ pub enum JobKind {
     Rebuild,
     Recover,
     Maintain,
+    Compact,
 }
 
 impl JobKind {
@@ -439,6 +440,7 @@ impl JobKind {
             Self::Rebuild => "rebuild",
             Self::Recover => "recover",
             Self::Maintain => "maintain",
+            Self::Compact => "compact",
         }
     }
 }

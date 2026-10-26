@@ -24,6 +24,7 @@ pub enum RepairOperation {
     Reconcile,
     Vectors,
     Rebuild,
+    Compact,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -39,7 +40,9 @@ impl RepairOperation {
             Self::Auto => return None,
             Self::Verify => AvailabilityImpact::ReadOnly,
             Self::Recover => AvailabilityImpact::RecoveryMayBeUnavailable,
-            Self::Reconcile | Self::Vectors => AvailabilityImpact::PreservesCommittedEvidence,
+            Self::Reconcile | Self::Vectors | Self::Compact => {
+                AvailabilityImpact::PreservesCommittedEvidence
+            }
             Self::Rebuild => AvailabilityImpact::ReplacesIncarnation,
         })
     }
@@ -51,6 +54,7 @@ impl RepairOperation {
             Self::Reconcile => Some(JobKind::Reconcile),
             Self::Vectors => Some(JobKind::Vectors),
             Self::Rebuild => Some(JobKind::Rebuild),
+            Self::Compact => Some(JobKind::Compact),
         }
     }
 }
@@ -165,6 +169,17 @@ pub struct PlanItem {
     pub cleanup_pending: bool,
     pub result_revision: Option<RevisionToken>,
     pub progress: Option<crate::service_progress::ProgressObservation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compaction: Option<CompactionReceipt>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompactionReceipt {
+    pub token: RevisionToken,
+    pub bytes_before: u64,
+    pub bytes_after: u64,
+    pub bytes_reclaimed: u64,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

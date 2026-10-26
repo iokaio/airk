@@ -23,6 +23,8 @@ const MAX_RETIRED: usize = 8;
 
 #[path = "service_collection_cleanup.rs"]
 mod cleanup;
+#[path = "service_collection_fresh_setup.rs"]
+mod fresh_setup;
 
 #[derive(Clone, Copy, Debug)]
 pub struct SelectionContention;
@@ -163,6 +165,7 @@ fn retirement_inventory(directory: &Path) -> Result<(Vec<PathBuf>, Vec<PathBuf>)
                 [name] if metadata.is_file() => matches!(
                     *name,
                     "writer.lock"
+                        | "current.airk"
                         | "current.sqlite3"
                         | "current.sqlite3-wal"
                         | "current.sqlite3-shm"
@@ -337,6 +340,13 @@ impl Collection {
             let directory = self.slot(retired.slot);
             // Recreate only a receipt-bound empty slot when a crash separated
             // deletion from allowance retirement; never initialize a database.
+            if !directory.try_exists()? {
+                crate::managed_collection::validate_ancestors(&directory)?;
+                fs::create_dir(&directory)?;
+                crate::maintenance::sync_parent(
+                    directory.parent().context("retirement parent missing")?,
+                )?;
+            }
             let store = FileStore::new(&directory);
             let writer = store.lock()?;
             if directory.try_exists()? {
@@ -360,6 +370,7 @@ impl Collection {
                     }
                     Err(error) => return Err(error),
                 };
+                crate::current::kv::owner::release_idle();
                 let (files, mut directories) = retirement_inventory(&directory)?;
                 for file in files.iter().take(4096) {
                     fs::remove_file(file)?;
@@ -671,6 +682,9 @@ impl Replacement {
             "replacement selection plan expired"
         );
         let old = FileStore::new(self.collection.slot(manifest.active));
+        // The candidate's writer includes the logical collection advisory lock,
+        // freezing old-slot publishers/settings through the pointer switch too.
+        // Shared committed readers remain usable throughout this exclusion.
         let old_scope = old.current_scope(
             &self.collection.owner.root,
             &self.collection.owner.collection,
@@ -873,4 +887,54 @@ pub fn copy_settings(
         destination.sync_all()?;
     }
     Ok(settings_id(&settings))
+}
+
+pub(crate) fn has_container_metadata(directory: &Path) -> Result<bool> {
+    for name in ["service-owner.json", "active.json"] {
+        match fs::symlink_metadata(directory.join(name)) {
+            Ok(_) => return Ok(true),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(false)
+}
+
+/// Fence writes to bound service slots after acquiring their writer lock.
+/// Standalone engine stores retain their own scope/owner contract. Service
+/// Kernel owners require a complete Collection and its selection lease.
+pub(crate) fn check_mutation_location(store: &FileStore) -> Result<()> {
+    let managed = store.managed_path()?;
+    if managed.namespace != "collections-1.4" {
+        return Ok(());
+    }
+    let Some(slot) = managed.slot else {
+        return Ok(());
+    };
+    if !has_container_metadata(managed.logical)? {
+        return Ok(());
+    }
+    let owner: Owner = json(&managed.logical.join("service-owner.json"))?;
+    let collection = Collection::existing(managed.root, &owner.root, managed.collection)?;
+    let _lock = manifest_lock(&collection.directory)?;
+    let manifest = collection.manifest()?;
+    let slot: Incarnation = slot.parse()?;
+    if manifest.active == slot {
+        return Ok(());
+    }
+    if collection.directory.join("replacement.json").try_exists()? {
+        let intent: Intent = json(&collection.directory.join("replacement.json"))?;
+        ensure!(
+            intent.version == 140 && intent.owner == collection.binding,
+            "foreign replacement write authority"
+        );
+        if intent.slot == slot {
+            ensure!(
+                intent.expected == digest(&manifest)?,
+                "replacement write phase expired"
+            );
+            return Ok(());
+        }
+    }
+    Err(SelectionContention.into())
 }

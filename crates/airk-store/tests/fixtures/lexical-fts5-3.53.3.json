@@ -1,0 +1,994 @@
+{
+  "batches": [
+    [
+      {
+        "incomplete": true,
+        "limit": 3,
+        "prefix": null,
+        "text": "shared",
+        "values": [
+          [
+            "01d0a65a0024f0db8d31a0d8c6736f1c8b34aeb99cc4b9094796e01a4f269b17",
+            "{\"path\":\"src/16_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "2f15405eaeeb647a6f926ffa1dcd089461a2fb9c31cf61b3f9919a7325b59b6d",
+            "{\"path\":\"src/01_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "4025dcd03106fa3072c37cace2f64dd57283ac7666920f031ad1e82b97f8fdb2",
+            "{\"path\":\"src/11_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ]
+        ]
+      },
+      {
+        "incomplete": false,
+        "limit": 20,
+        "prefix": "src/0",
+        "text": "caf\u00e9 \u03bb",
+        "values": [
+          [
+            "40469204cdbf67eae8382226cc3c1de4cc526af0701f52ecd71ffcf9d26282d1",
+            "{\"path\":\"src/04_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "7923210410d462dccb71d7eb32bf2f3ee07a14e251fd5544c595b9048aef4e6a",
+            "{\"path\":\"src/00_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "81cc544dcb80eb1fd2a3169ee759eaff06bd5489bfc91158b274f941e4b5a53c",
+            "{\"path\":\"src/06_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "83253526634f59f3d636ee73793d682414eea515154a677afa8be9084beec045",
+            "{\"path\":\"src/01_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "86be597236881ae983e0416b4101f98bab6d6e547a374bb39dc1c10eece6cabf",
+            "{\"path\":\"src/09_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "92365ad90d29f0ad9497781f84304547524add948cb4311a3cf563c797b38514",
+            "{\"path\":\"src/07_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "b82232c95be12618f2784a272be92641182dd0aab5ce59909efaff9e1fbdaf8c",
+            "{\"path\":\"src/02_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ]
+        ]
+      },
+      {
+        "incomplete": false,
+        "limit": 100,
+        "prefix": null,
+        "text": "snake_case",
+        "values": [
+          [
+            "4025dcd03106fa3072c37cace2f64dd57283ac7666920f031ad1e82b97f8fdb2",
+            "{\"path\":\"src/11_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "40469204cdbf67eae8382226cc3c1de4cc526af0701f52ecd71ffcf9d26282d1",
+            "{\"path\":\"src/04_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "5455aa8654d990ea45bf267280aa4fc09329470b96a69fdcaed16cbba1f0a774",
+            "{\"path\":\"src/18_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "791456ef4d66e2fa43e2971db78d3cb6189372f5ff046536c00ec888a9e131f1",
+            "{\"path\":\"src/16_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "7923210410d462dccb71d7eb32bf2f3ee07a14e251fd5544c595b9048aef4e6a",
+            "{\"path\":\"src/00_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "80710204eb73311da3a9eb3a92141fa861c9665918fd73a5e78f0eab76c9ebb5",
+            "{\"path\":\"src/14_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "81cc544dcb80eb1fd2a3169ee759eaff06bd5489bfc91158b274f941e4b5a53c",
+            "{\"path\":\"src/06_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "83253526634f59f3d636ee73793d682414eea515154a677afa8be9084beec045",
+            "{\"path\":\"src/01_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "86be597236881ae983e0416b4101f98bab6d6e547a374bb39dc1c10eece6cabf",
+            "{\"path\":\"src/09_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "92365ad90d29f0ad9497781f84304547524add948cb4311a3cf563c797b38514",
+            "{\"path\":\"src/07_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "b82232c95be12618f2784a272be92641182dd0aab5ce59909efaff9e1fbdaf8c",
+            "{\"path\":\"src/02_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "ca61244102717de00a3081c1f938c995c439df2bc5cf1995527999c942d07094",
+            "{\"path\":\"src/13_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ]
+        ]
+      },
+      {
+        "incomplete": false,
+        "limit": 100,
+        "prefix": null,
+        "text": "CamelCase second",
+        "values": [
+          [
+            "01d0a65a0024f0db8d31a0d8c6736f1c8b34aeb99cc4b9094796e01a4f269b17",
+            "{\"path\":\"src/16_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "2f15405eaeeb647a6f926ffa1dcd089461a2fb9c31cf61b3f9919a7325b59b6d",
+            "{\"path\":\"src/01_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "47d03b1432e9ff43a70118d574507667c603631b6aae75729f56ac5bb9e519e0",
+            "{\"path\":\"src/02_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "4aa83a9bb82b69eae05a85bb978bc7ff4b9f640bcd079b52dbf42cf645712adb",
+            "{\"path\":\"src/06_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "524a1460dae239b5169ae5c222d8818f5bcdb0ff52944801313e1f2c5a2abfcf",
+            "{\"path\":\"src/04_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "7da9e710fa7136fa3296d9f98a02715c7062479df1b04b4d3b7c94242f41b6dc",
+            "{\"path\":\"src/00_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "81117080e7c9e1e0fab154ca3d938177e6c5102bca355a5463a041bb600c45ef",
+            "{\"path\":\"src/07_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "9f4c54c1af6af82085229151e5bb449a38ee728cb6d50e3fdf54323b1a40064f",
+            "{\"path\":\"src/09_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "9fb8cd0ea0f9bb524ab5708765ff912311c9e4a0d29cf39da73fd201161a1ce2",
+            "{\"path\":\"src/13_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "b5e1087152c339825b3b427a742fdb7512533d9149d3fdc4b009663d46ec1ec7",
+            "{\"path\":\"src/18_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "cb05e72525f074825150724edcc451a02a63f5ed006e700a743e947dc86d8787",
+            "{\"path\":\"src/11_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "e7a605ffacd7bf34937a2240deb8616c7e899df08c25df2128ec88ea7c3406ac",
+            "{\"path\":\"src/14_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ]
+        ]
+      },
+      {
+        "incomplete": false,
+        "limit": 4,
+        "prefix": null,
+        "text": "absent",
+        "values": []
+      },
+      {
+        "incomplete": false,
+        "limit": 1,
+        "prefix": "missing/",
+        "text": "shared",
+        "values": []
+      }
+    ],
+    [
+      {
+        "incomplete": true,
+        "limit": 3,
+        "prefix": null,
+        "text": "shared",
+        "values": [
+          [
+            "01d0a65a0024f0db8d31a0d8c6736f1c8b34aeb99cc4b9094796e01a4f269b17",
+            "{\"path\":\"src/16_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "1a477a689bd88644fc3a83913b6f4205e9111926862128f715df7886d45e34fa",
+            "{\"path\":\"src/17_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "2f15405eaeeb647a6f926ffa1dcd089461a2fb9c31cf61b3f9919a7325b59b6d",
+            "{\"path\":\"src/01_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ]
+        ]
+      },
+      {
+        "incomplete": false,
+        "limit": 20,
+        "prefix": "src/0",
+        "text": "caf\u00e9 \u03bb",
+        "values": [
+          [
+            "40469204cdbf67eae8382226cc3c1de4cc526af0701f52ecd71ffcf9d26282d1",
+            "{\"path\":\"src/04_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "7923210410d462dccb71d7eb32bf2f3ee07a14e251fd5544c595b9048aef4e6a",
+            "{\"path\":\"src/00_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "81cc544dcb80eb1fd2a3169ee759eaff06bd5489bfc91158b274f941e4b5a53c",
+            "{\"path\":\"src/06_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "83253526634f59f3d636ee73793d682414eea515154a677afa8be9084beec045",
+            "{\"path\":\"src/01_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "86be597236881ae983e0416b4101f98bab6d6e547a374bb39dc1c10eece6cabf",
+            "{\"path\":\"src/09_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "92365ad90d29f0ad9497781f84304547524add948cb4311a3cf563c797b38514",
+            "{\"path\":\"src/07_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "d431e9fdfe33f59b4e201448e893050acbf584b8ece90546660d2cd66eb7c445",
+            "{\"path\":\"src/05_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ]
+        ]
+      },
+      {
+        "incomplete": false,
+        "limit": 100,
+        "prefix": null,
+        "text": "snake_case",
+        "values": [
+          [
+            "1a477a689bd88644fc3a83913b6f4205e9111926862128f715df7886d45e34fa",
+            "{\"path\":\"src/17_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "4025dcd03106fa3072c37cace2f64dd57283ac7666920f031ad1e82b97f8fdb2",
+            "{\"path\":\"src/11_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "40469204cdbf67eae8382226cc3c1de4cc526af0701f52ecd71ffcf9d26282d1",
+            "{\"path\":\"src/04_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "5455aa8654d990ea45bf267280aa4fc09329470b96a69fdcaed16cbba1f0a774",
+            "{\"path\":\"src/18_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "791456ef4d66e2fa43e2971db78d3cb6189372f5ff046536c00ec888a9e131f1",
+            "{\"path\":\"src/16_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "7923210410d462dccb71d7eb32bf2f3ee07a14e251fd5544c595b9048aef4e6a",
+            "{\"path\":\"src/00_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "80710204eb73311da3a9eb3a92141fa861c9665918fd73a5e78f0eab76c9ebb5",
+            "{\"path\":\"src/14_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "81cc544dcb80eb1fd2a3169ee759eaff06bd5489bfc91158b274f941e4b5a53c",
+            "{\"path\":\"src/06_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "83253526634f59f3d636ee73793d682414eea515154a677afa8be9084beec045",
+            "{\"path\":\"src/01_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "86be597236881ae983e0416b4101f98bab6d6e547a374bb39dc1c10eece6cabf",
+            "{\"path\":\"src/09_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "92365ad90d29f0ad9497781f84304547524add948cb4311a3cf563c797b38514",
+            "{\"path\":\"src/07_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "ca61244102717de00a3081c1f938c995c439df2bc5cf1995527999c942d07094",
+            "{\"path\":\"src/13_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "ceb054145411fba10e78ce2c82d2eb21f74d4d6de0c12c2eb10f3df622ff30c6",
+            "{\"path\":\"src/10_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "d431e9fdfe33f59b4e201448e893050acbf584b8ece90546660d2cd66eb7c445",
+            "{\"path\":\"src/05_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ]
+        ]
+      },
+      {
+        "incomplete": false,
+        "limit": 100,
+        "prefix": null,
+        "text": "CamelCase second",
+        "values": [
+          [
+            "01d0a65a0024f0db8d31a0d8c6736f1c8b34aeb99cc4b9094796e01a4f269b17",
+            "{\"path\":\"src/16_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "2f15405eaeeb647a6f926ffa1dcd089461a2fb9c31cf61b3f9919a7325b59b6d",
+            "{\"path\":\"src/01_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "4aa83a9bb82b69eae05a85bb978bc7ff4b9f640bcd079b52dbf42cf645712adb",
+            "{\"path\":\"src/06_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "51f07c6105732e648e9baee7e1f57c0ec92564cffc44c5408e011cb339358936",
+            "{\"path\":\"src/17_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "524a1460dae239b5169ae5c222d8818f5bcdb0ff52944801313e1f2c5a2abfcf",
+            "{\"path\":\"src/04_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "7da9e710fa7136fa3296d9f98a02715c7062479df1b04b4d3b7c94242f41b6dc",
+            "{\"path\":\"src/00_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "81117080e7c9e1e0fab154ca3d938177e6c5102bca355a5463a041bb600c45ef",
+            "{\"path\":\"src/07_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "91ccd9731d7f548e7ee4fd47d48ac78c9ad270880a296910c5d45d324737f3b1",
+            "{\"path\":\"src/10_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "9f4c54c1af6af82085229151e5bb449a38ee728cb6d50e3fdf54323b1a40064f",
+            "{\"path\":\"src/09_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "9fb8cd0ea0f9bb524ab5708765ff912311c9e4a0d29cf39da73fd201161a1ce2",
+            "{\"path\":\"src/13_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "b5e1087152c339825b3b427a742fdb7512533d9149d3fdc4b009663d46ec1ec7",
+            "{\"path\":\"src/18_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "b66bd65a61881569c5b73d158961702b875db883e7a20b1038db8359d922825f",
+            "{\"path\":\"src/05_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "cb05e72525f074825150724edcc451a02a63f5ed006e700a743e947dc86d8787",
+            "{\"path\":\"src/11_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "e7a605ffacd7bf34937a2240deb8616c7e899df08c25df2128ec88ea7c3406ac",
+            "{\"path\":\"src/14_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ]
+        ]
+      },
+      {
+        "incomplete": false,
+        "limit": 4,
+        "prefix": null,
+        "text": "absent",
+        "values": []
+      },
+      {
+        "incomplete": false,
+        "limit": 1,
+        "prefix": "missing/",
+        "text": "shared",
+        "values": []
+      }
+    ],
+    [
+      {
+        "incomplete": true,
+        "limit": 3,
+        "prefix": null,
+        "text": "shared",
+        "values": [
+          [
+            "01d0a65a0024f0db8d31a0d8c6736f1c8b34aeb99cc4b9094796e01a4f269b17",
+            "{\"path\":\"src/16_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "109e236994497edb37ca2270989f7489011897865630fd62971f0d8d216dc0db",
+            "{\"path\":\"src/12_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "1a477a689bd88644fc3a83913b6f4205e9111926862128f715df7886d45e34fa",
+            "{\"path\":\"src/17_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ]
+        ]
+      },
+      {
+        "incomplete": false,
+        "limit": 20,
+        "prefix": "src/0",
+        "text": "caf\u00e9 \u03bb",
+        "values": [
+          [
+            "40469204cdbf67eae8382226cc3c1de4cc526af0701f52ecd71ffcf9d26282d1",
+            "{\"path\":\"src/04_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "7923210410d462dccb71d7eb32bf2f3ee07a14e251fd5544c595b9048aef4e6a",
+            "{\"path\":\"src/00_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "83253526634f59f3d636ee73793d682414eea515154a677afa8be9084beec045",
+            "{\"path\":\"src/01_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "86be597236881ae983e0416b4101f98bab6d6e547a374bb39dc1c10eece6cabf",
+            "{\"path\":\"src/09_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "92365ad90d29f0ad9497781f84304547524add948cb4311a3cf563c797b38514",
+            "{\"path\":\"src/07_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "dbc7e4553db215030710d67846fc35a71599efde3f7ce2a93ae03b182b8f1254",
+            "{\"path\":\"src/08_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "e77e57c07ac0f04a6842c6bd363e8be6f6704ff5d532c1902d14704f9cccd500",
+            "{\"path\":\"src/03_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ]
+        ]
+      },
+      {
+        "incomplete": false,
+        "limit": 100,
+        "prefix": null,
+        "text": "snake_case",
+        "values": [
+          [
+            "1a477a689bd88644fc3a83913b6f4205e9111926862128f715df7886d45e34fa",
+            "{\"path\":\"src/17_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "4025dcd03106fa3072c37cace2f64dd57283ac7666920f031ad1e82b97f8fdb2",
+            "{\"path\":\"src/11_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "40469204cdbf67eae8382226cc3c1de4cc526af0701f52ecd71ffcf9d26282d1",
+            "{\"path\":\"src/04_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "5455aa8654d990ea45bf267280aa4fc09329470b96a69fdcaed16cbba1f0a774",
+            "{\"path\":\"src/18_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "791456ef4d66e2fa43e2971db78d3cb6189372f5ff046536c00ec888a9e131f1",
+            "{\"path\":\"src/16_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "7923210410d462dccb71d7eb32bf2f3ee07a14e251fd5544c595b9048aef4e6a",
+            "{\"path\":\"src/00_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "80710204eb73311da3a9eb3a92141fa861c9665918fd73a5e78f0eab76c9ebb5",
+            "{\"path\":\"src/14_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "83253526634f59f3d636ee73793d682414eea515154a677afa8be9084beec045",
+            "{\"path\":\"src/01_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "86be597236881ae983e0416b4101f98bab6d6e547a374bb39dc1c10eece6cabf",
+            "{\"path\":\"src/09_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "8991dab78948ec2cdbbdc76770097603c79a983f22cec975abde8be7729a73cd",
+            "{\"path\":\"src/12_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "92365ad90d29f0ad9497781f84304547524add948cb4311a3cf563c797b38514",
+            "{\"path\":\"src/07_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "ca61244102717de00a3081c1f938c995c439df2bc5cf1995527999c942d07094",
+            "{\"path\":\"src/13_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "ceb054145411fba10e78ce2c82d2eb21f74d4d6de0c12c2eb10f3df622ff30c6",
+            "{\"path\":\"src/10_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "dbc7e4553db215030710d67846fc35a71599efde3f7ce2a93ae03b182b8f1254",
+            "{\"path\":\"src/08_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "e77e57c07ac0f04a6842c6bd363e8be6f6704ff5d532c1902d14704f9cccd500",
+            "{\"path\":\"src/03_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ]
+        ]
+      },
+      {
+        "incomplete": false,
+        "limit": 100,
+        "prefix": null,
+        "text": "CamelCase second",
+        "values": [
+          [
+            "01d0a65a0024f0db8d31a0d8c6736f1c8b34aeb99cc4b9094796e01a4f269b17",
+            "{\"path\":\"src/16_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "109e236994497edb37ca2270989f7489011897865630fd62971f0d8d216dc0db",
+            "{\"path\":\"src/12_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "2f15405eaeeb647a6f926ffa1dcd089461a2fb9c31cf61b3f9919a7325b59b6d",
+            "{\"path\":\"src/01_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "51f07c6105732e648e9baee7e1f57c0ec92564cffc44c5408e011cb339358936",
+            "{\"path\":\"src/17_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "524a1460dae239b5169ae5c222d8818f5bcdb0ff52944801313e1f2c5a2abfcf",
+            "{\"path\":\"src/04_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "7da9e710fa7136fa3296d9f98a02715c7062479df1b04b4d3b7c94242f41b6dc",
+            "{\"path\":\"src/00_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "81117080e7c9e1e0fab154ca3d938177e6c5102bca355a5463a041bb600c45ef",
+            "{\"path\":\"src/07_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "91ccd9731d7f548e7ee4fd47d48ac78c9ad270880a296910c5d45d324737f3b1",
+            "{\"path\":\"src/10_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "9601328501a263602a6695d3e11c7a5aa7061466d5cc342b2f65c4a84f267d6e",
+            "{\"path\":\"src/08_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "9f4c54c1af6af82085229151e5bb449a38ee728cb6d50e3fdf54323b1a40064f",
+            "{\"path\":\"src/09_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "9fb8cd0ea0f9bb524ab5708765ff912311c9e4a0d29cf39da73fd201161a1ce2",
+            "{\"path\":\"src/13_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "b5e1087152c339825b3b427a742fdb7512533d9149d3fdc4b009663d46ec1ec7",
+            "{\"path\":\"src/18_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "cb05e72525f074825150724edcc451a02a63f5ed006e700a743e947dc86d8787",
+            "{\"path\":\"src/11_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "e7a605ffacd7bf34937a2240deb8616c7e899df08c25df2128ec88ea7c3406ac",
+            "{\"path\":\"src/14_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "eac5c5515d88b311c82f795d8dab8bf38322c5bde4aac18391bcf5cbbd9e29c6",
+            "{\"path\":\"src/03_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ]
+        ]
+      },
+      {
+        "incomplete": false,
+        "limit": 4,
+        "prefix": null,
+        "text": "absent",
+        "values": []
+      },
+      {
+        "incomplete": false,
+        "limit": 1,
+        "prefix": "missing/",
+        "text": "shared",
+        "values": []
+      }
+    ],
+    [
+      {
+        "incomplete": true,
+        "limit": 3,
+        "prefix": null,
+        "text": "shared",
+        "values": [
+          [
+            "01d0a65a0024f0db8d31a0d8c6736f1c8b34aeb99cc4b9094796e01a4f269b17",
+            "{\"path\":\"src/16_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "109e236994497edb37ca2270989f7489011897865630fd62971f0d8d216dc0db",
+            "{\"path\":\"src/12_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "1a477a689bd88644fc3a83913b6f4205e9111926862128f715df7886d45e34fa",
+            "{\"path\":\"src/17_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ]
+        ]
+      },
+      {
+        "incomplete": false,
+        "limit": 20,
+        "prefix": "src/0",
+        "text": "caf\u00e9 \u03bb",
+        "values": [
+          [
+            "40469204cdbf67eae8382226cc3c1de4cc526af0701f52ecd71ffcf9d26282d1",
+            "{\"path\":\"src/04_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "7923210410d462dccb71d7eb32bf2f3ee07a14e251fd5544c595b9048aef4e6a",
+            "{\"path\":\"src/00_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "81cc544dcb80eb1fd2a3169ee759eaff06bd5489bfc91158b274f941e4b5a53c",
+            "{\"path\":\"src/06_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "83253526634f59f3d636ee73793d682414eea515154a677afa8be9084beec045",
+            "{\"path\":\"src/01_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "92365ad90d29f0ad9497781f84304547524add948cb4311a3cf563c797b38514",
+            "{\"path\":\"src/07_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "e77e57c07ac0f04a6842c6bd363e8be6f6704ff5d532c1902d14704f9cccd500",
+            "{\"path\":\"src/03_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ]
+        ]
+      },
+      {
+        "incomplete": false,
+        "limit": 100,
+        "prefix": null,
+        "text": "snake_case",
+        "values": [
+          [
+            "1a477a689bd88644fc3a83913b6f4205e9111926862128f715df7886d45e34fa",
+            "{\"path\":\"src/17_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "4025dcd03106fa3072c37cace2f64dd57283ac7666920f031ad1e82b97f8fdb2",
+            "{\"path\":\"src/11_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "40469204cdbf67eae8382226cc3c1de4cc526af0701f52ecd71ffcf9d26282d1",
+            "{\"path\":\"src/04_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "791456ef4d66e2fa43e2971db78d3cb6189372f5ff046536c00ec888a9e131f1",
+            "{\"path\":\"src/16_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "7923210410d462dccb71d7eb32bf2f3ee07a14e251fd5544c595b9048aef4e6a",
+            "{\"path\":\"src/00_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "80710204eb73311da3a9eb3a92141fa861c9665918fd73a5e78f0eab76c9ebb5",
+            "{\"path\":\"src/14_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "81cc544dcb80eb1fd2a3169ee759eaff06bd5489bfc91158b274f941e4b5a53c",
+            "{\"path\":\"src/06_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "83253526634f59f3d636ee73793d682414eea515154a677afa8be9084beec045",
+            "{\"path\":\"src/01_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "8991dab78948ec2cdbbdc76770097603c79a983f22cec975abde8be7729a73cd",
+            "{\"path\":\"src/12_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "92365ad90d29f0ad9497781f84304547524add948cb4311a3cf563c797b38514",
+            "{\"path\":\"src/07_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "ca61244102717de00a3081c1f938c995c439df2bc5cf1995527999c942d07094",
+            "{\"path\":\"src/13_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "ceb054145411fba10e78ce2c82d2eb21f74d4d6de0c12c2eb10f3df622ff30c6",
+            "{\"path\":\"src/10_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "e77e57c07ac0f04a6842c6bd363e8be6f6704ff5d532c1902d14704f9cccd500",
+            "{\"path\":\"src/03_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "f853411b13ab1248dd31f83e56da5a3e7f277717ebcd9390c1ed8886978fa2d6",
+            "{\"path\":\"src/15_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ]
+        ]
+      },
+      {
+        "incomplete": false,
+        "limit": 100,
+        "prefix": null,
+        "text": "CamelCase second",
+        "values": [
+          [
+            "01d0a65a0024f0db8d31a0d8c6736f1c8b34aeb99cc4b9094796e01a4f269b17",
+            "{\"path\":\"src/16_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "109e236994497edb37ca2270989f7489011897865630fd62971f0d8d216dc0db",
+            "{\"path\":\"src/12_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "2f15405eaeeb647a6f926ffa1dcd089461a2fb9c31cf61b3f9919a7325b59b6d",
+            "{\"path\":\"src/01_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "4aa83a9bb82b69eae05a85bb978bc7ff4b9f640bcd079b52dbf42cf645712adb",
+            "{\"path\":\"src/06_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "4ca598d46d1173a59ccdfc158dbe9f1b245475ae1ba722c6aca5fa1e8267b3d3",
+            "{\"path\":\"src/15_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "51f07c6105732e648e9baee7e1f57c0ec92564cffc44c5408e011cb339358936",
+            "{\"path\":\"src/17_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "524a1460dae239b5169ae5c222d8818f5bcdb0ff52944801313e1f2c5a2abfcf",
+            "{\"path\":\"src/04_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "7da9e710fa7136fa3296d9f98a02715c7062479df1b04b4d3b7c94242f41b6dc",
+            "{\"path\":\"src/00_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "81117080e7c9e1e0fab154ca3d938177e6c5102bca355a5463a041bb600c45ef",
+            "{\"path\":\"src/07_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "91ccd9731d7f548e7ee4fd47d48ac78c9ad270880a296910c5d45d324737f3b1",
+            "{\"path\":\"src/10_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "9fb8cd0ea0f9bb524ab5708765ff912311c9e4a0d29cf39da73fd201161a1ce2",
+            "{\"path\":\"src/13_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "cb05e72525f074825150724edcc451a02a63f5ed006e700a743e947dc86d8787",
+            "{\"path\":\"src/11_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "e7a605ffacd7bf34937a2240deb8616c7e899df08c25df2128ec88ea7c3406ac",
+            "{\"path\":\"src/14_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "eac5c5515d88b311c82f795d8dab8bf38322c5bde4aac18391bcf5cbbd9e29c6",
+            "{\"path\":\"src/03_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ]
+        ]
+      },
+      {
+        "incomplete": false,
+        "limit": 4,
+        "prefix": null,
+        "text": "absent",
+        "values": []
+      },
+      {
+        "incomplete": false,
+        "limit": 1,
+        "prefix": "missing/",
+        "text": "shared",
+        "values": []
+      }
+    ],
+    [
+      {
+        "incomplete": true,
+        "limit": 3,
+        "prefix": null,
+        "text": "shared",
+        "values": [
+          [
+            "01d0a65a0024f0db8d31a0d8c6736f1c8b34aeb99cc4b9094796e01a4f269b17",
+            "{\"path\":\"src/16_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "1a477a689bd88644fc3a83913b6f4205e9111926862128f715df7886d45e34fa",
+            "{\"path\":\"src/17_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "2f15405eaeeb647a6f926ffa1dcd089461a2fb9c31cf61b3f9919a7325b59b6d",
+            "{\"path\":\"src/01_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ]
+        ]
+      },
+      {
+        "incomplete": false,
+        "limit": 20,
+        "prefix": "src/0",
+        "text": "caf\u00e9 \u03bb",
+        "values": [
+          [
+            "40469204cdbf67eae8382226cc3c1de4cc526af0701f52ecd71ffcf9d26282d1",
+            "{\"path\":\"src/04_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "7923210410d462dccb71d7eb32bf2f3ee07a14e251fd5544c595b9048aef4e6a",
+            "{\"path\":\"src/00_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "81cc544dcb80eb1fd2a3169ee759eaff06bd5489bfc91158b274f941e4b5a53c",
+            "{\"path\":\"src/06_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "83253526634f59f3d636ee73793d682414eea515154a677afa8be9084beec045",
+            "{\"path\":\"src/01_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "86be597236881ae983e0416b4101f98bab6d6e547a374bb39dc1c10eece6cabf",
+            "{\"path\":\"src/09_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "92365ad90d29f0ad9497781f84304547524add948cb4311a3cf563c797b38514",
+            "{\"path\":\"src/07_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "e77e57c07ac0f04a6842c6bd363e8be6f6704ff5d532c1902d14704f9cccd500",
+            "{\"path\":\"src/03_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ]
+        ]
+      },
+      {
+        "incomplete": false,
+        "limit": 100,
+        "prefix": null,
+        "text": "snake_case",
+        "values": [
+          [
+            "1a477a689bd88644fc3a83913b6f4205e9111926862128f715df7886d45e34fa",
+            "{\"path\":\"src/17_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "40469204cdbf67eae8382226cc3c1de4cc526af0701f52ecd71ffcf9d26282d1",
+            "{\"path\":\"src/04_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "5455aa8654d990ea45bf267280aa4fc09329470b96a69fdcaed16cbba1f0a774",
+            "{\"path\":\"src/18_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "791456ef4d66e2fa43e2971db78d3cb6189372f5ff046536c00ec888a9e131f1",
+            "{\"path\":\"src/16_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "7923210410d462dccb71d7eb32bf2f3ee07a14e251fd5544c595b9048aef4e6a",
+            "{\"path\":\"src/00_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "80710204eb73311da3a9eb3a92141fa861c9665918fd73a5e78f0eab76c9ebb5",
+            "{\"path\":\"src/14_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "81cc544dcb80eb1fd2a3169ee759eaff06bd5489bfc91158b274f941e4b5a53c",
+            "{\"path\":\"src/06_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "83253526634f59f3d636ee73793d682414eea515154a677afa8be9084beec045",
+            "{\"path\":\"src/01_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "86be597236881ae983e0416b4101f98bab6d6e547a374bb39dc1c10eece6cabf",
+            "{\"path\":\"src/09_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "92365ad90d29f0ad9497781f84304547524add948cb4311a3cf563c797b38514",
+            "{\"path\":\"src/07_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "ca61244102717de00a3081c1f938c995c439df2bc5cf1995527999c942d07094",
+            "{\"path\":\"src/13_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "ceb054145411fba10e78ce2c82d2eb21f74d4d6de0c12c2eb10f3df622ff30c6",
+            "{\"path\":\"src/10_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "e77e57c07ac0f04a6842c6bd363e8be6f6704ff5d532c1902d14704f9cccd500",
+            "{\"path\":\"src/03_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ],
+          [
+            "f853411b13ab1248dd31f83e56da5a3e7f277717ebcd9390c1ed8886978fa2d6",
+            "{\"path\":\"src/15_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":1,\"end_line\":1,\"location\":{\"Lines\":{\"start\":1,\"end\":1}}}"
+          ]
+        ]
+      },
+      {
+        "incomplete": false,
+        "limit": 100,
+        "prefix": null,
+        "text": "CamelCase second",
+        "values": [
+          [
+            "01d0a65a0024f0db8d31a0d8c6736f1c8b34aeb99cc4b9094796e01a4f269b17",
+            "{\"path\":\"src/16_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "2f15405eaeeb647a6f926ffa1dcd089461a2fb9c31cf61b3f9919a7325b59b6d",
+            "{\"path\":\"src/01_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "4aa83a9bb82b69eae05a85bb978bc7ff4b9f640bcd079b52dbf42cf645712adb",
+            "{\"path\":\"src/06_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "4ca598d46d1173a59ccdfc158dbe9f1b245475ae1ba722c6aca5fa1e8267b3d3",
+            "{\"path\":\"src/15_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "51f07c6105732e648e9baee7e1f57c0ec92564cffc44c5408e011cb339358936",
+            "{\"path\":\"src/17_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "524a1460dae239b5169ae5c222d8818f5bcdb0ff52944801313e1f2c5a2abfcf",
+            "{\"path\":\"src/04_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "7da9e710fa7136fa3296d9f98a02715c7062479df1b04b4d3b7c94242f41b6dc",
+            "{\"path\":\"src/00_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "81117080e7c9e1e0fab154ca3d938177e6c5102bca355a5463a041bb600c45ef",
+            "{\"path\":\"src/07_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "91ccd9731d7f548e7ee4fd47d48ac78c9ad270880a296910c5d45d324737f3b1",
+            "{\"path\":\"src/10_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "9f4c54c1af6af82085229151e5bb449a38ee728cb6d50e3fdf54323b1a40064f",
+            "{\"path\":\"src/09_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "9fb8cd0ea0f9bb524ab5708765ff912311c9e4a0d29cf39da73fd201161a1ce2",
+            "{\"path\":\"src/13_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "b5e1087152c339825b3b427a742fdb7512533d9149d3fdc4b009663d46ec1ec7",
+            "{\"path\":\"src/18_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "e7a605ffacd7bf34937a2240deb8616c7e899df08c25df2128ec88ea7c3406ac",
+            "{\"path\":\"src/14_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ],
+          [
+            "eac5c5515d88b311c82f795d8dab8bf38322c5bde4aac18391bcf5cbbd9e29c6",
+            "{\"path\":\"src/03_CamelCase.rs\",\"content_hash\":\"0404040404040404040404040404040404040404040404040404040404040404\",\"start_line\":2,\"end_line\":2,\"location\":{\"Lines\":{\"start\":2,\"end\":2}}}"
+          ]
+        ]
+      },
+      {
+        "incomplete": false,
+        "limit": 4,
+        "prefix": null,
+        "text": "absent",
+        "values": []
+      },
+      {
+        "incomplete": false,
+        "limit": 1,
+        "prefix": "missing/",
+        "text": "shared",
+        "values": []
+      }
+    ]
+  ],
+  "sqlite_version": "3.53.3",
+  "version": 1
+}

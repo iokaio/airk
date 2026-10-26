@@ -80,14 +80,6 @@ impl Observation {
             document_gap: None,
         }
     }
-    pub(crate) fn omitted() -> Self {
-        Self {
-            file_gap: Some(CoverageReason::Omitted),
-            code_gap: Some(CoverageReason::Omitted),
-            document_gap: Some(CoverageReason::Omitted),
-            events: vec![],
-        }
-    }
 }
 
 fn revision(token: CurrentToken) -> RevisionToken {

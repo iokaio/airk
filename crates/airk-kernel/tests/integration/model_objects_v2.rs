@@ -141,7 +141,7 @@ fn committed_model_survives_provisioning_changes_and_idle_readers_do_not_keep_ol
     );
     model(data.path(), "second model", true)?;
     let request = read_current(&store)?;
-    assert!(kernel.index().is_err());
+    kernel.index()?;
     assert!(object(&store, first.assets[&ModelAssetName::VocabularyJson].sha256).exists());
     drop(request);
     kernel.index()?;
@@ -170,7 +170,9 @@ fn corrupt_object_and_quota_failure_do_not_advance_head() -> Result<()> {
     fs::write(&path, original)?;
     assert_eq!(active(&store)?.0, receipt);
     let quota = airk_store::quota::Quota::open(data.path())?;
-    let used = quota.status()?.collections["default"].used_bytes;
+    let status = quota.status()?;
+    let used =
+        status.collections["default"].used_bytes + status.collections["default"].reserved_bytes;
     let mut policy = quota.policy()?;
     policy.collections.insert("default".into(), used + 1);
     quota.configure(policy)?;
@@ -217,10 +219,12 @@ fn obsolete_database_version_is_rejected_before_reads_or_updates() -> Result<()>
     fs::write(source.path().join("original.txt"), "original evidence")?;
     let kernel = Kernel::open(source.path(), Some(data.path().into()))?;
     kernel.index()?;
-    let path = data.path().join("collections-1.2/default/current.sqlite3");
-    let db = rusqlite::Connection::open(path)?;
-    db.execute_batch("PRAGMA user_version=119")?;
-    drop(db);
+    let path = data
+        .path()
+        .join("collections-1.2/default/current-owner.json");
+    let mut owner: serde_json::Value = serde_json::from_slice(&fs::read(&path)?)?;
+    owner["version"] = serde_json::json!(119);
+    fs::write(&path, serde_json::to_vec(&owner)?)?;
     assert!(kernel.search(&query()).is_err());
     assert!(kernel.index().is_err());
     assert!(Kernel::open(source.path(), Some(data.path().into())).is_err());

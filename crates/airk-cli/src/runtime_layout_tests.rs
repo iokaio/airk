@@ -559,7 +559,7 @@ fn completed_namespace_pin_refuses_loss_of_both_registry_files_and_retains_accep
     record_registry(&lease, namespace)?;
     drop(registry);
     let pin = fs::read(state.join(registry_binding::PIN))?;
-    let files = ["service-1.4.sqlite3", "service-1.4.owner.json"];
+    let files = ["service-1.4.airk", "service-1.4.owner.json"];
     let originals = files
         .iter()
         .map(|name| fs::read(control.join(name)))
@@ -664,7 +664,7 @@ fn earlier_control_receipt_requires_complete_metadata_before_namespace_upgrade()
             assert!(validate_control(&control).is_err());
             assert!(record_control(&lease).is_err());
             assert!(!state.join(registry_binding::PIN).exists());
-            assert!(!control.join("service-1.4.sqlite3").exists());
+            assert!(!control.join("service-1.4.airk").exists());
         }
     }
     Ok(())

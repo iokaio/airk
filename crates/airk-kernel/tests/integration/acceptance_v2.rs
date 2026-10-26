@@ -210,7 +210,7 @@ fn actual_case_only_rename_preserves_exact_observed_identity() -> Result<()> {
 }
 
 #[test]
-fn active_requests_exclude_update_relocation_and_removal_but_idle_kernels_do_not() -> Result<()> {
+fn active_requests_preserve_publication_and_exclude_relocation_and_removal() -> Result<()> {
     let root = tempfile::tempdir()?;
     let data = tempfile::tempdir()?;
     fs::write(root.path().join("original.rs"), SOURCE)?;
@@ -224,14 +224,16 @@ fn active_requests_exclude_update_relocation_and_removal_but_idle_kernels_do_not
     let second = store.current_read(&scope)?;
     let before = first.token()?;
     fs::write(root.path().join("original.rs"), SOURCE.replace("17", "29"))?;
-    assert!(kernel.index().is_err());
+    kernel.index()?;
+    assert_ne!(store.current_read(&scope)?.token()?, before);
     assert_eq!(first.token()?, before);
     let destination_parent = tempfile::tempdir()?;
     let destination = destination_parent.path().join("relocated");
     assert!(airk_store::relocation::relocate(data.path(), &destination).is_err());
     assert!(kernel.remove_collection("default").is_err());
     drop(first);
-    assert!(kernel.index().is_err());
+    kernel.index()?;
+    assert_eq!(second.token()?, before);
     drop(second);
     kernel.index()?;
     assert_ne!(store.current_read(&scope)?.token()?, before);

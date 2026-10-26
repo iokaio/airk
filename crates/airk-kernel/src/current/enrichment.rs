@@ -362,7 +362,7 @@ impl Kernel {
         let scope = self.current_scope()?.context("workspace is not indexed")?;
         let quota = self.collection_quota()?;
         super::recover_current(&self.store, &quota, &scope)?;
-        let writer = self.store.lock()?;
+        let writer = self.lock_current_writer()?;
         let read = self.store.current_read(&scope)?;
         if let Some(work) = read_work(&read, &self.store)?
             && work.regeneration_job == Some(job)
@@ -472,7 +472,7 @@ impl Kernel {
         let scope = self.current_scope()?.context("workspace is not indexed")?;
         super::recover_current(&self.store, &self.collection_quota()?, &scope)
             .context("recover current before semantic enrichment")?;
-        let writer = self.store.lock()?;
+        let writer = self.lock_current_writer()?;
         let read = self.store.current_read(&scope)?;
         if read_policy(&read, &self.store)? == policy {
             return readiness(&read, &self.store);
@@ -505,7 +505,7 @@ impl Kernel {
 
     fn record_semantic_failure(&self, error: &anyhow::Error) -> Result<()> {
         let scope = self.current_scope()?.context("workspace is not indexed")?;
-        let writer = self.store.lock()?;
+        let writer = self.lock_current_writer()?;
         let read = self.store.current_read(&scope)?;
         let Some(mut work) = read_work(&read, &self.store)? else {
             return Ok(());
@@ -746,7 +746,7 @@ impl Kernel {
         let scope = self.current_scope()?.context("workspace is not indexed")?;
         let execution = admission.execution;
         let deadline = admission.deadline;
-        let writer = self.store.lock()?;
+        let writer = self.lock_current_writer()?;
         let quota = self.collection_quota()?;
         let captures = writer.capture_objects();
         let mut generation = None;

@@ -16,6 +16,9 @@ pub(crate) enum PrivateTable {
     Nodes,
     Registry,
     GraphIds,
+    LexicalPages,
+    LexicalDocuments,
+    LexicalBlocks,
 }
 impl PrivateTable {
     pub(crate) fn definition(self) -> TableDefinition<'static, &'static [u8], &'static [u8]> {
@@ -24,13 +27,18 @@ impl PrivateTable {
             Self::Nodes => "private_nodes",
             Self::Registry => "private_registry",
             Self::GraphIds => "private_graph_ids",
+            Self::LexicalPages => "private_lexical_pages",
+            Self::LexicalDocuments => "private_lexical_documents",
+            Self::LexicalBlocks => "private_lexical_blocks",
         })
     }
     fn key_length(self) -> usize {
         match self {
             Self::Records | Self::GraphIds => 4,
             Self::Nodes => 5,
-            Self::Registry => 32,
+            Self::Registry | Self::LexicalPages => 32,
+            Self::LexicalDocuments => 8,
+            Self::LexicalBlocks => 40,
         }
     }
     fn maximum(self) -> usize {
@@ -38,6 +46,7 @@ impl PrivateTable {
             Self::Records => 16384 + 66,
             Self::Nodes | Self::GraphIds => 32,
             Self::Registry => 36,
+            Self::LexicalPages | Self::LexicalDocuments | Self::LexicalBlocks => 65537,
         }
     }
     fn validate(self, key: &[u8], value: &[u8]) -> Result<()> {
@@ -62,7 +71,9 @@ impl Reservation {
         path: impl AsRef<Path>,
         maximum: u64,
     ) -> Result<PrivateKv> {
-        ensure!(maximum <= 4u64 << 30, "private redb capacity exceeds bound");
+        // Physical allocator overhead grows under the caller's remaining job
+        // reservation. The input estimate is not a per-file growth ceiling.
+        let physical_maximum = self.remaining().min(16u64 << 40);
         if maximum < 65536 {
             return Err(QuotaPressure {
                 scope: PressureScope::Reservation,
@@ -72,8 +83,9 @@ impl Reservation {
             }
             .into());
         }
-        self.charge(maximum)?;
         let path = self.checked_destination(path.as_ref())?;
+        let initial = 65536u64;
+        self.charge(initial)?;
         let mut file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -87,7 +99,36 @@ impl Reservation {
         file.write_all(empty)?;
         let mut builder = redb::Builder::new();
         builder.set_cache_size(16 << 20);
-        let backend = crate::current::kv::AirkBackend::new(file, maximum)?;
+        let reservation = self.clone();
+        let backend = crate::current::kv::AirkBackend::new_growing(
+            file,
+            initial,
+            physical_maximum,
+            Some(std::sync::Arc::new(move |requested, admitted| {
+                let required = requested.saturating_sub(admitted);
+                const GRANULE: u64 = 1 << 20;
+                let rounded = required
+                    .checked_add(GRANULE - 1)
+                    .map(|value| value / GRANULE * GRANULE)
+                    .unwrap_or(required);
+                let charge = rounded
+                    .min(reservation.remaining())
+                    .min(physical_maximum.saturating_sub(admitted))
+                    .max(required);
+                reservation
+                    .charge(charge)
+                    .map(|()| admitted.saturating_add(charge))
+                    .map_err(|error| {
+                        if let Some(pressure) = error.downcast_ref::<QuotaPressure>() {
+                            std::io::Error::other(crate::current::kv::ReservationGrowthDenied(
+                                pressure.clone(),
+                            ))
+                        } else {
+                            std::io::Error::other(error)
+                        }
+                    })
+            })),
+        )?;
         let denied = backend.denial_witness();
         let database = builder.create_with_backend(backend)?;
         let mut transaction = database.begin_write()?;
@@ -97,6 +138,9 @@ impl Reservation {
             PrivateTable::Nodes,
             PrivateTable::Registry,
             PrivateTable::GraphIds,
+            PrivateTable::LexicalPages,
+            PrivateTable::LexicalDocuments,
+            PrivateTable::LexicalBlocks,
         ] {
             transaction.open_table(table.definition())?;
         }
@@ -104,7 +148,7 @@ impl Reservation {
             transaction: Some(transaction),
             database,
             path,
-            maximum,
+            maximum: physical_maximum,
             denied,
             _reservation: self.clone(),
         })
@@ -146,6 +190,20 @@ fn page_from(
     Ok(result)
 }
 impl PrivateKv {
+    pub(crate) fn remove(&self, table: PrivateTable, key: &[u8]) -> Result<()> {
+        ensure!(
+            key.len() == table.key_length(),
+            "invalid private redb key size"
+        );
+        self.denied.store(0, std::sync::atomic::Ordering::Relaxed);
+        self.transaction
+            .as_ref()
+            .context("private redb store is sealed")?
+            .open_table(table.definition())?
+            .remove(key)
+            .map_err(|e| self.write_error(e.into()))?;
+        Ok(())
+    }
     pub(crate) fn get(&self, table: PrivateTable, key: &[u8]) -> Result<Option<Vec<u8>>> {
         ensure!(
             key.len() == table.key_length(),
@@ -234,7 +292,16 @@ impl PrivateKv {
                 || cause.is::<crate::current::kv::CapacityExceeded>()
         });
         let denied = self.denied.load(std::sync::atomic::Ordering::Relaxed);
-        if admitted || denied > self.maximum {
+        if denied & (1u64 << 63) != 0 {
+            error.context(QuotaPressure {
+                scope: PressureScope::Reservation,
+                required_bytes: denied & !(1u64 << 63),
+                available_bytes: self._reservation.remaining(),
+                protected_bytes: None,
+            })
+        } else if error.downcast_ref::<QuotaPressure>().is_some() {
+            error
+        } else if admitted || denied > self.maximum {
             error.context(QuotaPressure {
                 scope: PressureScope::Reservation,
                 required_bytes: denied.max(self.maximum.saturating_add(4096)),
@@ -244,6 +311,10 @@ impl PrivateKv {
         } else {
             error
         }
+    }
+    #[cfg(test)]
+    pub(crate) fn physical_maximum(&self) -> u64 {
+        self.maximum
     }
     #[cfg(test)]
     pub(crate) fn transaction(&self) -> &redb::WriteTransaction {

@@ -54,7 +54,10 @@ pub fn automatic_scan_limits(memory_bytes: Option<u64>) -> ScanLimits {
 impl Kernel {
     /// Remove only this collection's explicit override. Existing evidence is retained.
     pub fn reset_scan_limits(&self) -> Result<ScanLimits> {
-        let _lock = self.store.lock()?;
+        if let Some(selected) = self.active_service_view()? {
+            return selected.reset_scan_limits();
+        }
+        let _lock = self.lock_current_writer()?;
         self.load_optional()?;
         self.scan_limits()?; // reject linked/corrupt/foreign existing policy
         match fs::remove_file(self.store.directory().join("scan-limits.json")) {
@@ -121,8 +124,11 @@ impl Kernel {
         limits: ScanLimits,
         expected: Option<ScanLimits>,
     ) -> Result<ScanLimits> {
+        if let Some(selected) = self.active_service_view()? {
+            return selected.configure_scan_limits_if_current(limits, expected);
+        }
         limits.validate()?;
-        let _lock = self.store.lock()?;
+        let _lock = self.lock_current_writer()?;
         self.load_optional()?;
         let current = self.scan_limits()?; // reject linked/corrupt/foreign existing policy
         ensure!(

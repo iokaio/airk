@@ -154,7 +154,7 @@ export function validateConfigurationRequest(input:unknown):ProjectConfiguration
     }
     return input as ProjectConfigurationRequest;
 }
-export type RepairOperation = 'auto' | 'verify' | 'recover' | 'reconcile' | 'vectors' | 'rebuild';
+export type RepairOperation = 'auto' | 'verify' | 'recover' | 'reconcile' | 'vectors' | 'rebuild' | 'compact';
 export function validateMutationIntent(input:unknown): MutationIntent {
     const intent=record(input),variants=Object.keys(intent);
     if(variants.length!==1||!['enqueue','retry','plan_create','configure_project'].includes(variants[0]))throw new ServiceError('invalid_mutation_intent');
@@ -170,7 +170,7 @@ export function validateMutationIntent(input:unknown): MutationIntent {
     else if(kind==='configure_project'){identifier(value.project,32);validateConfigurationRequest(value.request);}
     else {
         const request=record(value.request);
-        if(Object.keys(request).sort().join(',')!=='operation,selection'||!['auto','verify','recover','reconcile','vectors','rebuild'].includes(String(request.operation)))throw new ServiceError('invalid_repair_intent');
+        if(Object.keys(request).sort().join(',')!=='operation,selection'||!['auto','verify','recover','reconcile','vectors','rebuild','compact'].includes(String(request.operation)))throw new ServiceError('invalid_repair_intent');
         if(request.selection!=='all'){
             const selection=record(request.selection),members=selection.selected;
             if(Object.keys(selection).join(',')!=='selected'||!Array.isArray(members)||!members.length||members.length>256||new Set(members).size!==members.length)throw new ServiceError('invalid_repair_selection');

@@ -25,7 +25,7 @@ fn registry(root: &Path) -> Result<ServiceRegistry> {
     layout::validate_control(&control)?;
     // Lifecycle never creates a replacement registry in order to stop something.
     ensure!(
-        control.join("service-1.4.sqlite3").try_exists()?,
+        control.join("service-1.4.airk").try_exists()?,
         "service_registry_unavailable"
     );
     ServiceRegistry::open(&control, airk_kernel::service_broker::new_instance_id()?)
@@ -42,7 +42,13 @@ fn owner(root: &Path) -> Result<bool> {
 }
 pub(super) fn inspect(root: &Path) -> Result<serde_json::Value> {
     let control = layout::control(root)?;
-    if !control.join("service-1.4.sqlite3").try_exists()? {
+    if control.join("service-1.4.sqlite3").try_exists()? {
+        airk_store::service::registry::retained_namespace(&control)?;
+        return Ok(
+            serde_json::json!({"explicitly_stopped":false,"pending":null,"fresh_setup_required":true,"full_indexing_required":true,"stale_agent_bindings":true}),
+        );
+    }
+    if !control.join("service-1.4.airk").try_exists()? {
         ensure!(
             !control.join("service-1.4.owner.json").try_exists()?,
             "initialized_service_registry_is_missing"
@@ -53,7 +59,8 @@ pub(super) fn inspect(root: &Path) -> Result<serde_json::Value> {
     let registry = ServiceRegistry::open_saved(&control)?;
     Ok(
         serde_json::json!({"explicitly_stopped":registry.service_explicitly_stopped()?,"pending":registry.pending_lifecycle()?,
-            "recorded_instance":registry.recorded_service_instance()?,"namespace":registry.incarnation()?,"epoch":registry.saved_request_epoch()?.1}),
+            "recorded_instance":registry.recorded_service_instance()?,"namespace":registry.saved_request_epoch()?.0,"epoch":registry.saved_request_epoch()?.1,
+            "fresh_setup":airk_store::service::registry::fresh_setup_namespaces(&control)?.map(|(_,namespace)|serde_json::json!({"request_namespace":namespace,"full_indexing_required":true,"stale_agent_bindings":true}))}),
     )
 }
 
@@ -91,7 +98,7 @@ pub(super) fn abandon(root: &Path, identity: Sha256Digest) -> Result<LifecycleRe
 /// across automatic bridge reconnects and extension reloads.
 pub(super) async fn settle(root: &Path) -> Result<()> {
     let control = layout::control(root)?;
-    if !control.join("service-1.4.sqlite3").try_exists()? {
+    if !control.join("service-1.4.airk").try_exists()? {
         return require_start_allowed(root);
     }
     if let Some(record) = registry(root)?.pending_lifecycle()? {
@@ -104,7 +111,7 @@ pub(super) async fn explicit_start(root: &Path) -> Result<ServiceHealth> {
     payload_repair::require_settled(root)?;
     owner(root)?;
     let control = layout::control(root)?;
-    if control.join("service-1.4.sqlite3").try_exists()? {
+    if control.join("service-1.4.airk").try_exists()? {
         let mut ledger = registry(root)?;
         if let Some(record) = ledger.pending_lifecycle()? {
             resume(root, record, false).await?;
@@ -302,8 +309,7 @@ async fn resume(root: &Path, mut record: LifecycleRecord, force: bool) -> Result
 mod tests {
     use super::*;
     #[test]
-    fn lifecycle_observation_preserves_an_older_completed_registry_without_migration() -> Result<()>
-    {
+    fn lifecycle_observation_preserves_a_completed_native_registry() -> Result<()> {
         let owner = tempfile::tempdir()?;
         let root = owner.path().join("install");
         local_ipc::prepare_root(&root)?;
@@ -321,20 +327,12 @@ mod tests {
         let namespace = registry.incarnation()?;
         layout::record_registry(&lease, namespace)?;
         drop(registry);
-        let database = control.join("service-1.4.sqlite3");
-        rusqlite::Connection::open(&database)?
-            .execute_batch("DROP TABLE service_configuration; PRAGMA user_version=2;")?;
+        let database = control.join("service-1.4.airk");
         let before = fs::read(&database)?;
         let observation = inspect(&root)?;
         assert_eq!(observation["explicitly_stopped"], false);
         assert_eq!(observation["namespace"], namespace.to_string());
         assert_eq!(fs::read(&database)?, before);
-        let version: i64 = rusqlite::Connection::open(&database)?.pragma_query_value(
-            None,
-            "user_version",
-            |row| row.get(0),
-        )?;
-        assert_eq!(version, 2);
         Ok(())
     }
 }

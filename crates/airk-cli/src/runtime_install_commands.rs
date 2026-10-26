@@ -262,7 +262,7 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
             let registry_namespace = control
                 .as_ref()
                 .ok()
-                .filter(|path| path.join("service-1.4.sqlite3").is_file())
+                .filter(|path| path.join("service-1.4.airk").is_file())
                 .map(|path| {
                     airk_store::service::registry::ServiceRegistry::open_saved(path)
                         .and_then(|registry| registry.incarnation())

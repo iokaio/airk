@@ -107,6 +107,7 @@ impl FileStore {
                 == self.managed_path()?.logical.canonicalize()?,
             "foreign vector policy quota"
         );
+        crate::maintenance::check_writer(self, writer, quota)?;
         self.owned_policy_bytes(owner_root, name)?;
         let policy = StoredPolicy {
             version: 1,

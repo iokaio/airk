@@ -120,7 +120,7 @@ fn inactive_cleanup_runs_without_query_admission_preserves_configuration_and_all
     )?)?;
     preview.validate()?;
     assert!(!preview.resuming);
-    assert!(old.join("current.sqlite3").is_file());
+    assert!(old.join("current.airk").is_file());
     let report: DerivedCleanupReport = serde_json::from_value(configure(
         airk_cli::service_configuration::Draft::DeleteDerived {
             preview: preview.guard,
@@ -140,7 +140,7 @@ fn inactive_cleanup_runs_without_query_admission_preserves_configuration_and_all
         .join("incarnations")
         .join(active["active"].as_str().unwrap());
     assert_eq!(fs::read(fresh.join("vector-policy.json"))?, policy);
-    assert!(!fresh.join("current.sqlite3").try_exists()?);
+    assert!(!fresh.join("current.airk").try_exists()?);
     let until = Instant::now() + Duration::from_secs(20);
     loop {
         if matches!(

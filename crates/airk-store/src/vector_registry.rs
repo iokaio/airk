@@ -221,7 +221,11 @@ mod tests {
         assert_eq!(registry.lookup(key(2))?, Some(empty));
         assert_eq!(registry.lookup(key(4))?, None);
         assert_eq!(registry.statistics()?.rows, 3);
-        assert_eq!(reservation.charged(), 128 * 1024);
+        assert!(
+            reservation.charged()
+                >= fs::metadata(reservation.staging_directory()?.join(FILE_NAME))?.len()
+        );
+        assert!(reservation.charged() <= reservation.limit());
         assert!(registry.remember(key(1), empty).is_err());
         assert!(registry.lookup(key(1)).is_err());
         Ok(())

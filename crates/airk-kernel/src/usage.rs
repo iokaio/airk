@@ -1445,10 +1445,7 @@ mod tests {
             1,
             "reports must not count themselves"
         );
-        let ledger = std::fs::read(
-            root.path()
-                .join(".airk/collections-1.2/default/usage.sqlite3"),
-        )?;
+        let ledger = std::fs::read(root.path().join(".airk/collections-1.2/default/usage.airk"))?;
         assert!(!String::from_utf8_lossy(&ledger).contains("confidential_zircon_word"));
         assert!(!String::from_utf8_lossy(&ledger).contains("memo.md"));
         kernel.usage_feedback(&request_id, Usefulness::Useful)?;

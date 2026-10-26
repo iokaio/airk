@@ -12,7 +12,7 @@ impl Kernel {
             matches!(adapter, "lsp" | "ctags"),
             "unknown live provider adapter"
         );
-        let writer = self.store.lock()?;
+        let writer = self.lock_current_writer()?;
         let baseline = self.load()?;
         let source = airk_store::blobs::RetainedSource {
             store: &self.store,
@@ -77,7 +77,7 @@ impl Kernel {
     }
 
     pub fn extract_ocr(&self, path: &str, request: &OcrRequest) -> Result<Value> {
-        let writer = self.store.lock()?;
+        let writer = self.lock_current_writer()?;
         let baseline = self.load()?;
         let policy = self.extraction_policy()?;
         ensure!(

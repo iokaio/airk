@@ -9,8 +9,7 @@ import urllib.error
 import urllib.request
 
 # The published subcrate inherits its workspace license but omits repository.
-# Its .cargo_vcs_info.json pins this parent repository and crates/rsqlite-vfs path.
-REPOSITORY_OVERRIDES = {("rsqlite-vfs", "0.1.1"): "https://github.com/Spxg/sqlite-wasm-rs"}
+REPOSITORY_OVERRIDES = {}
 # Older Cargo omitted VCS metadata. Every distributed payload file (1,389 i686;
 # 1,418 x86_64) matches Git blob hashes at this exact publication commit, whose
 # architecture manifests identify version 0.4.0 and the MIT/Apache-2.0 choice.

@@ -371,6 +371,11 @@
         "category": "AIRK"
       },
       {
+        "command": "airk.compactStorage",
+        "title": "Compact Index Storage…",
+        "category": "AIRK"
+      },
+      {
         "command": "airk.serviceConnect",
         "category": "AIRK",
         "title": "Connect / Reconnect Service"

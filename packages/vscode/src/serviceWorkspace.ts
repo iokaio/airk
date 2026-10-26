@@ -29,6 +29,19 @@ export class ServiceWorkspace {
         return this.saved().some(value=>same(value.opened,opened)&&same(value.registration.installDir,binding.installDir)
             &&same(value.registration.controlDir,binding.controlDir));
     }
+    pendingFreshSetup(binding:RuntimeBinding,opened:string,namespace:string):ProjectRegistrationReview|undefined {
+        this.active();identifier(namespace,16);
+        if(this.storage.get(this.selection(binding.installDir,opened)+'.fresh')===namespace)return;
+        const selected=this.storage.get<string>(this.selection(binding.installDir,opened));
+        const candidates=this.saved().filter(value=>same(value.opened,opened)&&same(value.registration.installDir,binding.installDir)
+            &&same(value.registration.controlDir,binding.controlDir)&&(!selected||value.registration.binding===selected));
+        if(candidates.length>1)throw new ServiceError('workspace_binding_review_required');
+        return candidates[0]?.registration;
+    }
+    async completeFreshSetup(binding:RuntimeBinding,opened:string,namespace:string):Promise<void>{
+        this.active();identifier(namespace,16);
+        await this.storage.update(this.selection(binding.installDir,opened)+'.fresh',namespace);this.active();
+    }
     private saved():SavedProject[]{
         const keys=this.storage.keys().filter(key=>key.startsWith(PREFIX)).sort();
         if(keys.length>1024)throw new ServiceError('workspace_registration_capacity');

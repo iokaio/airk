@@ -20,7 +20,7 @@ export interface ServiceConsoleState {
 export type ConsoleAction = {type:'service';revision:string;action:string;project?:string;id?:string;selected?:boolean;scope?:'one'|'selected'|'all';operation?:RepairOperation;includePaths?:boolean;allowFallback?:boolean};
 const simple=['reviewLegacyStartup','legacyStartupReceipts','removeLegacyStartup','copyLegacyStartup','registeredProjects','inactiveProjects','registerWorkspace','refresh','connect','start','stop','restart','repairRuntime','upgradeRuntime','rollbackRuntime','resumeActivation','logs','resources','responseMode','recoverLifecycle','abandonLifecycle','startEmbedding','stopEmbedding','forceEmbedding','firstPage','nextPage','morePlan','refreshPlan','pausePlan','resumePlan','cancelPlan','approvePlan','previewReport','copyReport'];
 const projects=['previewCleanup','deleteDerived','inspect','index','pause','resume','restartProject','watch','modelSetup','configureProject','copyConfiguration'];
-const operations=['auto','verify','recover','reconcile','vectors','rebuild'];
+const operations=['auto','verify','recover','reconcile','vectors','rebuild','compact'];
 /** Messages select fixed host-owned operations; no paths, commands, tokens or RPC bodies are accepted. */
 export function consoleAction(value:unknown,current:ServiceConsoleState):ConsoleAction|undefined {
     try {
@@ -128,7 +128,8 @@ function projectRow(row:RecordValue,state:ServiceConsoleState):string {
         ${button(project.paused?'resume':'pause',project.paused?'Resume project':'Pause project',attr,unavailable)}
         ${button('restartProject','Restart project worker',attr,unavailable)}${button('modelSetup','Install bundled model',attr,unavailable)}
         ${button('configureProject','Project settings',attr,unavailable)}
-        ${button('repair','Diagnose & repair',`${attr} data-scope="one" data-operation="auto"`,unavailable)}</div>
+        ${button('repair','Diagnose & repair',`${attr} data-scope="one" data-operation="auto"`,unavailable)}
+        ${button('repair','Compact index storage…',`${attr} data-scope="one" data-operation="compact"`,unavailable)}</div>
         ${obj(configuration.outcome).code==='configuration_outcome_unknown_reinspect'?'<p>The configuration effect is uncertain. Inspect the current settings before deliberately requesting another change.</p>':''}
         <label><input type="checkbox" data-action="watch" ${attr}${watch.enabled?' checked':''}${unavailable?' disabled':''}> Continue automatic source watching when workspaces are closed</label>`}
         ${job.state==='failed'||job.state==='canceled'?button('retryJob','Retry job',`data-id="${e(job.id)}"`,unavailable):''}
@@ -140,14 +141,16 @@ function projectRow(row:RecordValue,state:ServiceConsoleState):string {
 function planView(state:ServiceConsoleState):string {
     if(!state.plan)return '<p>Create a plan for one project, selected projects, or all registered projects. Planning inspects state before choosing actions.</p>';
     const plan=state.plan.value,counts=obj(plan.counts),unavailable=state.busy||!state.connected||!state.trusted;
-    const rows=state.plan.items.map(item=>{const inspection=obj(item.inspection),snapshot=obj(inspection.snapshot),storage=obj(snapshot.storage);
+    const rows=state.plan.items.map(item=>{const inspection=obj(item.inspection),snapshot=obj(inspection.snapshot),storage=obj(snapshot.storage),compaction=obj(item.compaction);
         return `<tr><td>${e(item.project)}</td><td>${e(item.phase)}</td><td>${e(item.action)}</td><td>${e(item.availability)}</td>
             <td>${e(storage.replacement_estimate_bytes)}</td><td>${e(snapshot.source_state)}</td><td>${e(item.explicit_fallback_required)}</td>
-            <td>${e(item.code??obj(item.outcome).state)}</td><td>${e(item.cleanup_pending)}</td></tr>`;}).join('');
+            <td>${e(item.code??obj(item.outcome).state)}</td><td>${e(item.cleanup_pending)}</td>
+            ${plan.operation==='compact'?`<td>${e(compaction.bytes_before)}</td><td>${e(compaction.bytes_after)}</td><td>${e(compaction.bytes_reclaimed)}</td>`:''}</tr>`;}).join('');
     return facts([['Plan',plan.id],['Operation',plan.operation],['All registered projects',plan.all_registered],['Phase',plan.phase],
         ['Paused',plan.paused],['Total projects',counts.selected],['Ready',counts.ready],['Running',counts.running],['Succeeded',counts.succeeded],
         ['Failed',counts.failed],['Stale',counts.stale],['Skipped',counts.skipped],['Canceled',counts.canceled],['Cleanup pending',counts.cleanup_pending]])+
-        `<div class="scroll"><table><thead><tr><th>Project</th><th>Phase</th><th>Action</th><th>Availability impact</th><th>Temporary disk estimate (bytes)</th><th>Source</th><th>Fallback approval required</th><th>Result</th><th>Cleanup pending</th></tr></thead><tbody>${rows}</tbody></table></div>
+        `${plan.operation==='compact'?'<p>Compaction reclaims unused space in the selected project’s current.airk index database while preserving committed records. It requires exclusive storage access after active readers and writes finish. A database with little unused space may shrink very little.</p>':''}
+        <div class="scroll"><table><thead><tr><th>Project</th><th>Phase</th><th>Action</th><th>Availability impact</th><th>Temporary disk estimate (bytes)</th><th>Source</th><th>Fallback approval required</th><th>Result</th><th>Cleanup pending</th>${plan.operation==='compact'?'<th>Before (bytes)</th><th>After (bytes)</th><th>Reclaimed (bytes)</th>':''}</tr></thead><tbody>${rows}</tbody></table></div>
         ${state.plan.after?button('morePlan','More plan projects','',unavailable):''}
         ${button('refreshPlan','Refresh cached plan rows','',unavailable)}
         <p>Plan rows are cached observations. Read every preview page before approving the complete plan.</p>

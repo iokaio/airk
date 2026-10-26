@@ -2,7 +2,7 @@
 //! Qualified single-current-index storage foundation. Runtime adoption is separate.
 pub mod analysis;
 pub mod collection;
-mod database;
+pub(crate) mod database;
 pub mod discovery;
 pub(crate) mod gate;
 pub mod graph;
@@ -13,9 +13,8 @@ pub mod lexical;
 pub mod maintenance;
 pub mod map;
 pub mod metadata;
+mod planning;
 pub mod postings;
-#[cfg(test)]
-mod publication_spike_tests;
 mod read;
 mod rebuild;
 pub mod recent;
@@ -23,16 +22,12 @@ mod recent_events;
 pub mod relationships;
 pub mod resources;
 pub mod vector_map;
-mod wal;
-mod wal_budget;
-#[cfg(test)]
-mod wal_budget_spike;
 
-pub use database::{DATABASE_VERSION, PAGE_BYTES, journal_bound};
+pub use database::{DATABASE_VERSION, PAGE_BYTES};
 pub use gate::CurrentGateContention;
 pub use journal::{
     ArtifactChange, ArtifactVectorChanges, CapturedInput, CapturedInputs, CurrentCapacityChange,
-    CurrentCommit, CurrentWriter, PendingTransaction, TransactionPhase,
+    CurrentCommit, PendingTransaction, TransactionPhase,
 };
 mod admission;
 pub use admission::{CurrentOpenContention, with_work_admission};
@@ -56,7 +51,7 @@ impl crate::FileStore {
 /// Idle verification observers must not pin Windows files during derived-state
 /// disposal or data-root relocation. No active request gates are released here.
 pub(crate) fn release_lexical_cache() {
-    lexical::cache::clear();
+    kv::owner::release_idle();
 }
 
 use airk_core::{
@@ -78,19 +73,6 @@ pub const MAX_CURRENT_METADATA_READ_BYTES: usize = 8 * 1024 * 1024 * 1024;
 pub const MAX_INPUT_METADATA_BYTES: usize = 262_144;
 pub const MAX_PENDING_METADATA_BYTES: u64 = 256 * 1024 * 1024;
 pub const MAX_LEXICAL_MANIFEST_BYTES: usize = 1024 * 1024;
-
-pub(crate) fn verify_lexical_manifest(bytes: &[u8], expected: Sha256Digest) -> Result<()> {
-    ensure!(
-        !bytes.is_empty() && bytes.len() <= MAX_LEXICAL_MANIFEST_BYTES,
-        "current lexical manifest byte bound exceeded"
-    );
-    serde_json::from_slice::<serde_json::Value>(bytes)?;
-    ensure!(
-        framed_digest(b"current-lexical-manifest/1", &[bytes]) == expected,
-        "current lexical manifest digest mismatch"
-    );
-    Ok(())
-}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -242,8 +224,8 @@ impl crate::FileStore {
     /// malformed or interrupted ownership is never silently reset.
     pub fn current_scope(&self, root: &str, collection: &str) -> Result<Option<CurrentScope>> {
         ensure!(
-            !self.directory().join(rebuild::MARKER).try_exists()?,
-            "FTS5 rebuild was interrupted; run airk index --full to resume"
+            !self.directory().join("fts5-rebuild.json").try_exists()?,
+            "old derived reset was interrupted; ownership-checked fresh setup and full indexing are required"
         );
         crate::validate_collection(collection)?;
         ensure!(
@@ -258,6 +240,7 @@ impl crate::FileStore {
         if !self.directory().join(database::OWNER_FILE).try_exists()? {
             ensure!(
                 !self.directory().join("current.sqlite3").try_exists()?
+                    && !self.directory().join("current.airk").try_exists()?
                     && !self
                         .directory()
                         .join("current-bootstrap.json")
@@ -278,19 +261,10 @@ impl crate::FileStore {
         );
         database::check_owner(self.directory(), scope)
     }
-}
 
-pub(crate) fn decode_head(bytes: &[u8], scope: &CurrentScope) -> Result<CurrentHead> {
-    ensure!(
-        bytes.len() <= MAX_HEAD_BYTES,
-        "current head exceeds byte bound"
-    );
-    let head: CurrentHead = serde_json::from_slice(bytes)?;
-    ensure!(
-        head.canonical_bytes()? == bytes && &head.scope == scope,
-        "foreign or noncanonical current head"
-    );
-    Ok(head)
+    pub fn current_uses_redb(&self) -> Result<bool> {
+        database::redb_owner(self.directory())
+    }
 }
 
 /// Relocation owns the exclusive root lifecycle lock, so it must not acquire a
@@ -300,30 +274,31 @@ pub(crate) fn frozen_roots(
 ) -> Result<std::collections::BTreeMap<String, String>> {
     use anyhow::Context;
     let scope = database::owned_scope(directory)?;
-    let capacity = database::check_owner(directory, &scope)?;
-    ensure!(
-        std::fs::metadata(directory.join("current.sqlite3"))?.len() <= capacity,
-        "current relocation capacity mismatch"
-    );
-    let connection = database::open_reader(&directory.join("current.sqlite3"))?;
-    let (phase, bytes): (String, Vec<u8>) = connection.query_row(
-        "SELECT phase,head FROM current_state WHERE id=1 AND length(head)<=65536",
-        [],
-        |r| Ok((r.get(0)?, r.get(1)?)),
-    )?;
-    ensure!(
-        phase == "ready",
-        "recover the current index before relocation"
-    );
-    let head = decode_head(&bytes, &scope)?;
-    journal::committed_lexical_manifest(&connection, &head)?;
-    let bytes = map::get(
-        &connection,
-        &scope,
-        head.artifact_root,
-        map::key(&scope, map::MapDomain::Metadata, b"collection")?,
-    )?
-    .context("current relocation configuration missing")?;
+    let store = crate::FileStore::new(directory);
+    let bytes = kv::owner::frozen_snapshot(&store, &scope, |transaction| {
+        let meta = transaction.open_table(kv::tables::META)?;
+        let head_bytes = meta.get(0)?.context("current relocation head missing")?;
+        let head: CurrentHead = serde_json::from_slice(head_bytes.value())?;
+        ensure!(
+            head.canonical_bytes()? == head_bytes.value() && head.scope == scope,
+            "current relocation head changed"
+        );
+        ensure!(
+            meta.get(1)?.is_some_and(|v| v.value() == b"ready") && meta.get(4)?.is_none(),
+            "recover current publication before relocation"
+        );
+        let lexical = meta
+            .get(2)?
+            .context("current relocation lexical manifest missing")?;
+        kv::lexical::Manifest::decode(lexical.value(), head.lexical_commit, &scope)?;
+        map::get(
+            transaction,
+            &scope,
+            head.artifact_root,
+            map::key(&scope, map::MapDomain::Metadata, b"collection")?,
+        )?
+        .context("current relocation configuration missing")
+    })?;
     let state = collection::CollectionState::decode(&bytes)?;
     let mut roots = crate::roots::RootConfig::load(directory, &scope.root)?.roots;
     roots.insert(String::new(), scope.root);
@@ -332,6 +307,3 @@ pub(crate) fn frozen_roots(
     }
     Ok(roots)
 }
-
-#[cfg(test)]
-mod tests;

@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Explicit, quiescent relocation. Old managed data and source workspaces remain intact.
 use anyhow::{Context, Result, ensure};
-use rusqlite::{Connection, OpenFlags};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -219,57 +218,7 @@ fn validate_workspace_boundaries(
             }
             continue;
         }
-        let database = directory.join("index.sqlite3");
-        ensure!(
-            database.exists(),
-            "relocation requires current SQLite collection metadata"
-        );
-        plain(&database)?;
-        let connection = Connection::open_with_flags(database, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-        let version: u32 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-        ensure!(
-            (1..=crate::ROOT_POINTER_VERSION).contains(&version),
-            "unsupported relocation root pointer version"
-        );
-        let root: String =
-            connection.query_row("SELECT root FROM revision WHERE id=1", [], |row| row.get(0))?;
-        let mut roots = crate::roots::RootConfig::load(&directory, &root)?.roots;
-        roots.insert(String::new(), root);
-        // The published pointer can retain aliases removed from pending config.
-        if let Some(header) = crate::sqlite::persistent_revision(&directory)? {
-            for (alias, path) in header.roots {
-                roots.insert(format!("published:{alias}"), path);
-            }
-        }
-        let mut history_work =
-            crate::maintenance::WorkBudget::history(crate::history_policy::HistoryWorkBudget {
-                maintenance: crate::retention::MaintenanceBudget {
-                    max_metadata_bytes: 64 * 1024 * 1024,
-                    max_duration_ms: 60_000,
-                    ..Default::default()
-                },
-                verification_bytes: 8 * 1024 * 1024 * 1024,
-            })?;
-        for historical in crate::history::verified_roots_work(
-            &crate::FileStore::new(&directory),
-            &mut history_work,
-        )? {
-            let token = historical.descriptor.publication.token;
-            roots.insert(
-                format!("historical:{token}:primary"),
-                historical.inventory.root,
-            );
-            for (alias, path) in historical.inventory.roots {
-                roots.insert(format!("historical:{token}:{alias}"), path);
-            }
-        }
-        for root in roots.values() {
-            let root = Path::new(root);
-            ensure!(
-                !root.starts_with(source) && !root.starts_with(destination),
-                "data relocation target must not contain a source workspace"
-            );
-        }
+        anyhow::bail!("relocation requires a fresh format-150 setup and full indexing");
     }
     Ok(())
 }
@@ -293,7 +242,16 @@ fn excluded(relative: &Path) -> bool {
         return false;
     }
     if value.starts_with(".quota-1.2/") {
-        return value != ".quota-1.2/policy.json";
+        return value != ".quota-1.2/policy.json"
+            && value != ".quota-1.2/current-grants"
+            && !value
+                .strip_prefix(".quota-1.2/current-grants/")
+                .is_some_and(|name| {
+                    name.starts_with("g-")
+                        && name.ends_with(".json")
+                        && name.len() == 71
+                        && crate::blobs::valid_digest(&name[2..66])
+                });
     }
     if value == "scheduler-1.3-workers"
         || value.starts_with("scheduler-1.3-workers/")
@@ -766,15 +724,53 @@ pub fn recover(source: &Path) -> Result<RelocationResult> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use airk_core::{Snapshot, SnapshotStore};
+    use crate::current::{CurrentHead, CurrentScope};
+    use airk_core::{
+        graph_storage::{GraphHead, GraphScope},
+        identity::{Incarnation, Sha256Digest},
+    };
 
     fn fixture(base: &Path, workspace: &Path) -> Result<PathBuf> {
         let root = base.join("state");
         let store = crate::FileStore::new(root.join("collections-1.2/default"));
-        let mut snapshot =
-            Snapshot::empty(workspace.canonicalize()?.to_string_lossy().into_owned());
-        snapshot.generation = 7;
-        store.save(&snapshot)?;
+        let scope = CurrentScope {
+            root: workspace.canonicalize()?.to_string_lossy().into_owned(),
+            collection: "default".into(),
+            incarnation: Incarnation::from_bytes([1; 16]),
+        };
+        let graph = GraphScope {
+            root: scope.root.clone(),
+            collection: scope.collection.clone(),
+            incarnation: scope.incarnation,
+            graph_instance: Incarnation::from_bytes([2; 16]),
+            specification: Sha256Digest::from_bytes([3; 32]),
+            record_bytes: 16,
+        };
+        let head = CurrentHead {
+            version: 2,
+            sequence: 0,
+            lexical_sequence: 0,
+            artifact_root: crate::current::map::empty_root(&scope)?,
+            lexical_commit: crate::current::kv::lexical::Manifest::empty(&scope)?.digest()?,
+            graph_head: GraphHead::empty(graph)?,
+            scope,
+        };
+        let writer = store.lock()?;
+        let quota = crate::quota::Quota::open(&root)?;
+        let engine = store.bootstrap_redb(&writer, &quota, &head, 2 << 20)?;
+        engine.initialize_collection(
+            &store,
+            &crate::current::collection::CollectionConfiguration {
+                roots: Default::default(),
+                extractor_version: "fixture".into(),
+                extraction_policy_digest: Sha256Digest::from_bytes([4; 32]),
+                index_detail: Default::default(),
+                vector_selection: Default::default(),
+                model: None,
+            },
+        )?;
+        drop(engine);
+        drop(writer);
         Ok(root)
     }
     #[test]
@@ -814,16 +810,12 @@ mod tests {
         check_root(&destination)?;
         assert_eq!(
             crate::FileStore::new(destination.join("collections-1.2/default"))
-                .load()?
-                .expect("copied collection")
-                .generation,
-            7
+                .current_owned_scope()?
+                .expect("copied scope")
+                .incarnation,
+            Incarnation::from_bytes([1; 16])
         );
-        assert!(
-            source
-                .join("collections-1.2/default/index.sqlite3")
-                .exists()
-        );
+        assert!(source.join("collections-1.2/default/current.airk").exists());
         assert_eq!(fs::read_to_string(source.join(".airkignore"))?, "*\n");
         assert_eq!(
             fs::read_to_string(workspace.path().join("source.txt"))?,
@@ -876,7 +868,8 @@ mod tests {
         let destination = base.path().join("moved");
         let preview = plan(&source, &destination)?;
         let quota = crate::quota::Quota::open(&source)?;
-        let used = quota.status()?.used_bytes;
+        let status = quota.status()?;
+        let used = status.used_bytes + status.reserved_bytes;
         quota.configure(crate::quota::QuotaPolicy {
             root_bytes: used + preview.required_copy_headroom - 1,
             default_collection_bytes: u64::MAX,
@@ -887,10 +880,10 @@ mod tests {
         assert!(!destination.exists());
         assert_eq!(
             crate::FileStore::new(source.join("collections-1.2/default"))
-                .load()?
-                .expect("old publication")
-                .generation,
-            7
+                .current_owned_scope()?
+                .expect("old scope")
+                .incarnation,
+            Incarnation::from_bytes([1; 16])
         );
         Ok(())
     }
@@ -912,19 +905,15 @@ mod tests {
             .status()?;
         assert!(status.success());
         assert!(check_root(&source).is_err());
-        assert!(
-            source
-                .join("collections-1.2/default/index.sqlite3")
-                .exists()
-        );
+        assert!(source.join("collections-1.2/default/current.airk").exists());
         recover(&source)?;
         check_root(&destination)?;
         assert_eq!(
             crate::FileStore::new(destination.join("collections-1.2/default"))
-                .load()?
-                .expect("recovered publication")
-                .generation,
-            7
+                .current_owned_scope()?
+                .expect("recovered scope")
+                .incarnation,
+            Incarnation::from_bytes([1; 16])
         );
         Ok(())
     }

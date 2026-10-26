@@ -189,7 +189,8 @@ impl Service {
         let job = self.wait_outcome(id);
         assert!(
             matches!(job.outcome, Some(JobOutcome::Succeeded { .. })),
-            "native job failed: {job:?}"
+            "native job failed: {job:?}; {}",
+            std::fs::read_to_string(self.owner.path().join("stderr")).unwrap_or_default()
         );
         job
     }
@@ -277,6 +278,12 @@ impl Service {
     }
 
     pub fn repair(&self, operation: airk_core::service_maintenance::RepairOperation) {
+        self.repair_plan(operation);
+    }
+    pub fn repair_plan(
+        &self,
+        operation: airk_core::service_maintenance::RepairOperation,
+    ) -> airk_core::identity::Sha256Digest {
         use airk_core::service_maintenance::{PlanPhase, RepairRequest, RepairSelection};
         let Response::Plan { plan } = self.request(Method::PlanCreate {
             caller: airk_kernel::service_broker::new_instance_id().unwrap(),
@@ -317,7 +324,7 @@ impl Service {
                     Some(airk_core::service_maintenance::PlanOutcome::Succeeded),
                     "{plan:?}"
                 );
-                break;
+                return plan.id;
             }
             assert!(Instant::now() < until, "repair did not settle: {plan:?}");
             std::thread::sleep(Duration::from_millis(25));

@@ -30,7 +30,11 @@ pub struct Pending {
 }
 fn namespace(control: &Path) -> Result<Incarnation> {
     crate::runtime_install::validate_control_root(control)?;
-    airk_store::service::registry::ServiceRegistry::open_saved(control)?.incarnation()
+    Ok(
+        airk_store::service::registry::ServiceRegistry::open_saved(control)?
+            .saved_request_epoch()?
+            .0,
+    )
 }
 fn directory(control: &Path) -> PathBuf {
     control.join("client-requests")

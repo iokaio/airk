@@ -64,6 +64,9 @@ impl Kernel {
         max_files: usize,
         max_bytes: u64,
     ) -> Result<IntegrityReport> {
+        if let Some(selected) = self.active_service_view()? {
+            return selected.diagnose_current(revision, after, max_files, max_bytes);
+        }
         crate::service_execution::progress_phase(airk_core::service_progress::WorkPhase::Verifying);
         ensure!(
             (1..=128).contains(&max_files)
@@ -298,7 +301,7 @@ mod tests {
                     let entry = entry?;
                     if entry.file_type()?.is_dir() {
                         pending.push(entry.path());
-                    } else {
+                    } else if entry.file_name() != "current.airk" {
                         files.insert(
                             entry.path().strip_prefix(root)?.to_owned(),
                             fs::read(entry.path())?,
@@ -349,10 +352,7 @@ mod tests {
         }));
         assert!(interrupted.is_err());
         drop(reservation);
-        let capacity = kernel.store.current_database_capacity(&scope)?;
-        let current = kernel
-            .store
-            .current_write(&writer, &quota, &scope, capacity)?;
+        let current = kernel.store.redb_writer(&writer, &quota, &scope)?;
         assert_eq!(current.phase()?, TransactionPhase::Applying);
         let pending = current.pending()?.unwrap();
         drop(current);
@@ -363,18 +363,21 @@ mod tests {
 
         let diagnostic =
             Kernel::open_collection_for_diagnostics(&root, Some(data.clone()), "default")?;
-        let error = diagnostic
-            .diagnose_current(None, None, 128, 1 << 20)
-            .unwrap_err();
-        assert!(
-            format!("{error:#}").contains("requires writer recovery before reads"),
-            "{error:#}"
+        let retained = diagnostic.diagnose_current(None, None, 128, 1 << 20)?;
+        assert!(retained.complete && retained.failed_objects == 0);
+        assert_eq!(
+            retained.publication.token,
+            crate::current::runtime::revision(pending.expected)
         );
+        // Native redb opening can update its recovery header. Diagnostic reads
+        // must preserve the durable pending descriptor and all external inputs.
         assert_eq!(retained_state(&data)?, before);
+        assert!(
+            diagnostic.compact_current_storage().is_err(),
+            "compaction must not replay pending publication implicitly"
+        );
         let writer = diagnostic.store.lock()?;
-        let current = diagnostic
-            .store
-            .current_write(&writer, &quota, &scope, capacity)?;
+        let current = diagnostic.store.redb_writer(&writer, &quota, &scope)?;
         assert_eq!(current.phase()?, TransactionPhase::Applying);
         assert_eq!(current.pending()?.as_ref(), Some(&pending));
         drop(current);

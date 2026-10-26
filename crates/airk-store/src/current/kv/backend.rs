@@ -16,6 +16,14 @@ pub struct CapacityExceeded {
     pub requested: u64,
     pub admitted: u64,
 }
+#[derive(Debug)]
+pub(crate) struct ReservationGrowthDenied(pub crate::quota::QuotaPressure);
+impl std::fmt::Display for ReservationGrowthDenied {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+impl std::error::Error for ReservationGrowthDenied {}
 impl std::fmt::Display for CapacityExceeded {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -36,16 +44,40 @@ struct State {
 
 /// Owns one validated file handle and an immutable ceiling captured from its grant.
 /// The caller validates ownership/aliases and reserves capacity before constructing it.
-#[derive(Debug)]
+pub type GrowthAdmission = dyn Fn(u64, u64) -> io::Result<u64> + Send + Sync;
+
 pub struct AirkBackend {
     state: Mutex<State>,
-    ceiling: u64,
+    ceiling: AtomicU64,
+    maximum: u64,
+    grow: Option<Arc<GrowthAdmission>>,
+    admission: Mutex<()>,
     denied: Arc<AtomicU64>,
+}
+impl std::fmt::Debug for AirkBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AirkBackend")
+            .field("ceiling", &self.ceiling.load(Ordering::Relaxed))
+            .field("maximum", &self.maximum)
+            .finish_non_exhaustive()
+    }
 }
 impl AirkBackend {
     pub fn new(file: File, ceiling: u64) -> io::Result<Self> {
+        Self::new_growing(file, ceiling, ceiling, None)
+    }
+    pub fn new_growing(
+        file: File,
+        initial: u64,
+        maximum: u64,
+        grow: Option<Arc<GrowthAdmission>>,
+    ) -> io::Result<Self> {
         let metadata = file.metadata()?;
-        if !metadata.is_file() || metadata.len() > ceiling || ceiling < 64 << 10 {
+        if !metadata.is_file()
+            || metadata.len() > initial
+            || initial < 64 << 10
+            || maximum < initial
+        {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "invalid admitted redb file or capacity",
@@ -57,7 +89,10 @@ impl AirkBackend {
                 locked: false,
                 closed: false,
             }),
-            ceiling,
+            ceiling: AtomicU64::new(initial),
+            maximum,
+            grow,
+            admission: Mutex::new(()),
             denied: Arc::new(AtomicU64::new(0)),
         })
     }
@@ -72,14 +107,49 @@ impl AirkBackend {
         Ok(state)
     }
     fn admit(&self, end: u64) -> io::Result<()> {
-        if end > self.ceiling {
-            self.denied.store(end, Ordering::Relaxed);
+        let _admission = self
+            .admission
+            .lock()
+            .map_err(|_| io::Error::other("redb admission mutex poisoned"))?;
+        let current = self.ceiling.load(Ordering::Relaxed);
+        if end <= current {
+            return Ok(());
+        }
+        self.denied.store(end, Ordering::Relaxed);
+        if end > self.maximum {
+            return Err(io::Error::other(CapacityExceeded {
+                requested: end,
+                admitted: self.maximum,
+            }));
+        }
+        if let Some(grow) = &self.grow {
+            let admitted = match grow(end, current) {
+                Ok(admitted) if admitted >= end && admitted <= self.maximum => admitted,
+                Ok(admitted) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("growth callback admitted invalid high-water {admitted}"),
+                    ));
+                }
+                Err(error) => {
+                    let quota_pressure = error.get_ref().is_some_and(|source| {
+                        source.downcast_ref::<ReservationGrowthDenied>().is_some()
+                    });
+                    if quota_pressure {
+                        self.denied
+                            .store((end - current) | (1u64 << 63), Ordering::Relaxed);
+                    }
+                    return Err(error);
+                }
+            };
+            self.ceiling.store(admitted, Ordering::Release);
+            self.denied.store(0, Ordering::Relaxed);
+            Ok(())
+        } else {
             Err(io::Error::other(CapacityExceeded {
                 requested: end,
-                admitted: self.ceiling,
+                admitted: current,
             }))
-        } else {
-            Ok(())
         }
     }
     /// Preserve admission evidence even if redb normalizes the inner I/O error.
@@ -205,6 +275,41 @@ mod tests {
         let mut byte = [0];
         backend.read(65535, &mut byte)?;
         assert_eq!(byte, [7]);
+        Ok(())
+    }
+    #[test]
+    fn external_capacity_failure_keeps_its_io_classification() -> io::Result<()> {
+        let file = tempfile::tempfile()?;
+        let backend = AirkBackend::new_growing(
+            file,
+            65536,
+            1 << 20,
+            Some(Arc::new(|_, _| {
+                Err(io::Error::from(io::ErrorKind::OutOfMemory))
+            })),
+        )?;
+        let error = backend.set_len(131072).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::OutOfMemory);
+        assert_eq!(backend.denial_witness().load(Ordering::Relaxed), 131072);
+        Ok(())
+    }
+    #[test]
+    fn admitted_growth_high_water_avoids_recharging_the_same_extent() -> io::Result<()> {
+        let file = tempfile::tempfile()?;
+        let calls = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let callback_calls = calls.clone();
+        let backend = AirkBackend::new_growing(
+            file,
+            65536,
+            1 << 20,
+            Some(Arc::new(move |end, current| {
+                callback_calls.fetch_add(1, Ordering::Relaxed);
+                Ok((current + (1 << 16)).max(end))
+            })),
+        )?;
+        backend.set_len(65537)?;
+        backend.set_len(65538)?;
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
         Ok(())
     }
     #[test]

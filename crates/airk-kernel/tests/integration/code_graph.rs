@@ -115,7 +115,7 @@ fn call_candidates_are_available_at_each_structured_detail() -> anyhow::Result<(
 }
 
 #[test]
-fn sqlite_facts_graph_budgets_scope_refresh_and_candidates() -> anyhow::Result<()> {
+fn authenticated_facts_graph_budgets_scope_refresh_and_candidates() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let state = tempfile::tempdir()?;
     fs::write(
@@ -129,7 +129,10 @@ fn sqlite_facts_graph_budgets_scope_refresh_and_candidates() -> anyhow::Result<(
     let kernel = Kernel::open_collection(root.path(), Some(state.path().into()), "fixture")?;
     kernel.configure_index_detail(airk_core::extraction::IndexDetail::Detailed)?;
     kernel.index()?;
-    assert_eq!(kernel.status()?.exact_fact_backend, "sqlite");
+    assert_eq!(
+        kernel.status()?.exact_fact_backend,
+        "redb-authenticated-map"
+    );
     let facts = kernel.code_facts(&fact_query(Some("Auth::run"), Some("definition")))?;
     assert_eq!(facts.facts.len(), 1);
     let method = facts.facts[0].code.as_ref().expect("method");

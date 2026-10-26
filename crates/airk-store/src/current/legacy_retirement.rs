@@ -28,7 +28,7 @@ pub struct Target {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Witness {
+pub(crate) struct Witness {
     bytes: u64,
     modified_ns: String,
     identity: String,
@@ -116,7 +116,7 @@ fn plain(path: &Path) -> Result<fs::Metadata> {
     }
     Ok(metadata)
 }
-fn identity(path: &Path, metadata: &fs::Metadata) -> Result<String> {
+pub(crate) fn identity(path: &Path, metadata: &fs::Metadata) -> Result<String> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
@@ -154,7 +154,7 @@ fn identity(path: &Path, metadata: &fs::Metadata) -> Result<String> {
 }
 #[cfg(windows)]
 use std::os::windows::fs::OpenOptionsExt;
-fn witness(path: &Path) -> Result<Witness> {
+pub(crate) fn witness(path: &Path) -> Result<Witness> {
     let metadata = plain(path)?;
     ensure!(metadata.is_file(), "legacy retirement file changed type");
     Ok(Witness {

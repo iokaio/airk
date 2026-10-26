@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 const HEAD: u8 = 0;
 const PHASE: u8 = 1;
 const DESCRIPTOR: u8 = 4;
+const DESCRIPTOR_HASH: u8 = 5;
 const READY: &[u8] = b"ready";
 const PREPARED: &[u8] = b"prepared";
 const APPLYING: &[u8] = b"applying";
@@ -29,6 +30,7 @@ pub enum Table {
     LexPath = 8,
     LexForward = 9,
     LexicalManifest = 10,
+    CapturedInput = 11,
 }
 impl TryFrom<u8> for Table {
     type Error = anyhow::Error;
@@ -45,6 +47,7 @@ impl TryFrom<u8> for Table {
             8 => Self::LexPath,
             9 => Self::LexForward,
             10 => Self::LexicalManifest,
+            11 => Self::CapturedInput,
             _ => anyhow::bail!("unknown redb pending table"),
         })
     }
@@ -83,6 +86,8 @@ pub struct Prepared {
     pub operations: u64,
     pub bytes: u64,
     pub digest: Sha256Digest,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intent: Option<crate::current::PendingTransaction>,
 }
 
 fn value(transaction: &redb::WriteTransaction, key: u8) -> Result<Vec<u8>> {
@@ -91,7 +96,8 @@ fn value(transaction: &redb::WriteTransaction, key: u8) -> Result<Vec<u8>> {
     let maximum = match key {
         HEAD => crate::current::MAX_HEAD_BYTES,
         PHASE => 8,
-        DESCRIPTOR => 192 << 10,
+        DESCRIPTOR => 512 << 10,
+        DESCRIPTOR_HASH => 32,
         _ => anyhow::bail!("unsupported journal metadata slot"),
     };
     ensure!(
@@ -113,10 +119,14 @@ fn current(transaction: &redb::WriteTransaction) -> Result<CurrentHead> {
 fn pending(transaction: &redb::WriteTransaction) -> Result<Prepared> {
     let bytes = value(transaction, DESCRIPTOR)?;
     ensure!(
-        bytes.len() <= 192 << 10,
+        bytes.len() <= 512 << 10,
         "oversized redb pending descriptor"
     );
     let descriptor: Prepared = serde_json::from_slice(&bytes)?;
+    ensure!(
+        value(transaction, DESCRIPTOR_HASH)?.as_slice() == identity(&descriptor)?.as_bytes(),
+        "redb pending descriptor digest mismatch"
+    );
     descriptor.target.validate()?;
     ensure!(
         descriptor.version == 1 && serde_json::to_vec(&descriptor)? == bytes,
@@ -126,6 +136,13 @@ fn pending(transaction: &redb::WriteTransaction) -> Result<Prepared> {
         descriptor.expected == current(transaction)?.token()?,
         "redb pending base mismatch"
     );
+    if let Some(intent) = &descriptor.intent {
+        intent.bytes()?;
+        ensure!(
+            intent.expected == descriptor.expected && intent.target == descriptor.target,
+            "redb native intention differs from publication"
+        );
+    }
     Ok(descriptor)
 }
 fn operations_digest(table: &redb::Table<'_, &[u8], &[u8]>) -> Result<(u64, u64, Sha256Digest)> {
@@ -169,16 +186,74 @@ fn operations_digest(table: &redb::Table<'_, &[u8], &[u8]>) -> Result<(u64, u64,
         Sha256Digest::from_bytes(hash.finalize().into()),
     ))
 }
+pub(crate) fn captured_inputs(
+    table: &impl ReadableTable<&'static [u8], &'static [u8]>,
+    intent: Option<&crate::current::PendingTransaction>,
+    visitor: &mut dyn FnMut(&crate::current::CapturedInput) -> Result<()>,
+) -> Result<()> {
+    let start = [Table::CapturedInput as u8];
+    let end = [Table::CapturedInput as u8 + 1];
+    let mut digest = crate::current::journal::InputDigest::new();
+    for row in table.range::<&[u8]>(start.as_slice()..end.as_slice())? {
+        let (key, value) = row?;
+        let key = key.value();
+        let value = value.value();
+        ensure!(
+            (2..=8193).contains(&key.len())
+                && !value.is_empty()
+                && value[0] == 1
+                && value.len() <= crate::current::MAX_INPUT_METADATA_BYTES + 1,
+            "invalid captured input row"
+        );
+        let input: crate::current::CapturedInput = serde_json::from_slice(&value[1..])?;
+        ensure!(
+            input.artifact.path.as_bytes() == &key[1..] && input.bytes()? == value[1..],
+            "captured input identity/encoding mismatch"
+        );
+        digest.add(&input, &value[1..])?;
+        visitor(&input)?;
+    }
+    if let Some(intent) = intent {
+        ensure!(
+            digest.count == intent.inputs_count
+                && digest.bytes == intent.metadata_bytes
+                && digest.objects == intent.object_bytes
+                && digest.finish() == intent.inputs_digest,
+            "captured input counts/digest mismatch"
+        );
+    } else {
+        ensure!(
+            digest.count == 0,
+            "captured inputs require a native intention"
+        );
+    }
+    Ok(())
+}
 fn verify_operations(transaction: &redb::WriteTransaction, expected: &Prepared) -> Result<()> {
     let actual = operations_digest(&transaction.open_table(tables::PENDING)?)?;
     ensure!(
         actual == (expected.operations, expected.bytes, expected.digest),
         "pending afterimages digest/count mismatch"
     );
+    captured_inputs(
+        &transaction.open_table(tables::PENDING)?,
+        expected.intent.as_ref(),
+        &mut |_| Ok(()),
+    )?;
     Ok(())
 }
 
 impl Snapshot {
+    pub fn phase(&self) -> Result<crate::current::TransactionPhase> {
+        let meta = self.transaction().open_table(tables::META)?;
+        let phase = meta.get(PHASE)?.context("redb phase missing")?;
+        Ok(match phase.value() {
+            READY => crate::current::TransactionPhase::Ready,
+            PREPARED => crate::current::TransactionPhase::Prepared,
+            APPLYING => crate::current::TransactionPhase::Applying,
+            _ => anyhow::bail!("invalid redb transaction phase"),
+        })
+    }
     pub fn head(&self) -> Result<CurrentHead> {
         let meta = self.transaction().open_table(tables::META)?;
         let bytes = meta.get(HEAD)?.context("redb head missing")?;
@@ -213,9 +288,42 @@ impl Database {
         target: CurrentHead,
         operations: &[Operation],
     ) -> Result<Prepared> {
+        self.prepare_stream(expected, target, |visitor| {
+            for operation in operations {
+                visitor(operation)?;
+            }
+            Ok(())
+        })
+    }
+    /// Consume an ordered bounded stream without materializing the publication
+    /// in RAM. A source/visitor error aborts this entire preparation transaction.
+    pub fn prepare_stream(
+        &self,
+        expected: CurrentToken,
+        target: CurrentHead,
+        source: impl FnOnce(&mut dyn FnMut(&Operation) -> Result<()>) -> Result<()>,
+    ) -> Result<Prepared> {
+        self.prepare_intent_stream(expected, target, None, source)
+    }
+    pub fn prepare_intent_stream(
+        &self,
+        expected: CurrentToken,
+        target: CurrentHead,
+        intent: Option<crate::current::PendingTransaction>,
+        source: impl FnOnce(&mut dyn FnMut(&Operation) -> Result<()>) -> Result<()>,
+    ) -> Result<Prepared> {
         target.validate()?;
         let transaction = self.write()?;
         let base = current(&transaction)?;
+        if let Some(intent) = &intent {
+            intent.bytes()?;
+            ensure!(
+                intent.expected == expected
+                    && intent.target == target
+                    && intent.graph.base == base.graph_head,
+                "native intention components differ from publication"
+            );
+        }
         ensure!(
             value(&transaction, PHASE)? == READY && base.token()? == expected,
             "redb prepare base expired or already pending"
@@ -227,13 +335,15 @@ impl Database {
         );
         let mut rows = transaction.open_table(tables::PENDING)?;
         ensure!(rows.is_empty()?, "orphan pending rows require recovery");
-        ensure!(
-            operations.len() <= MAX_PENDING_MAP_CHANGES,
-            "too many pending operations"
-        );
         let mut previous: Option<Vec<u8>> = None;
         let mut encoded_bytes = 0usize;
-        for operation in operations {
+        let mut operations = 0usize;
+        source(&mut |operation| {
+            ensure!(
+                operations < MAX_PENDING_MAP_CHANGES,
+                "too many pending operations"
+            );
+            operations += 1;
             let key = operation.encoded_key()?;
             let value = operation.encoded_value()?;
             ensure!(
@@ -249,8 +359,10 @@ impl Database {
             );
             rows.insert(key.as_slice(), value.as_slice())?;
             previous = Some(key);
-        }
+            Ok(())
+        })?;
         let (count, bytes, digest) = operations_digest(&rows)?;
+        captured_inputs(&rows, intent.as_ref(), &mut |_| Ok(()))?;
         let descriptor = Prepared {
             version: 1,
             expected,
@@ -258,15 +370,40 @@ impl Database {
             operations: count,
             bytes,
             digest,
+            intent,
         };
         drop(rows);
         {
             let mut meta = transaction.open_table(tables::META)?;
             meta.insert(DESCRIPTOR, serde_json::to_vec(&descriptor)?.as_slice())?;
+            meta.insert(
+                DESCRIPTOR_HASH,
+                identity(&descriptor)?.as_bytes().as_slice(),
+            )?;
             meta.insert(PHASE, PREPARED)?;
         }
         transaction.commit()?;
         Ok(descriptor)
+    }
+    pub fn visit_captured(
+        &self,
+        expected: &Prepared,
+        visitor: &mut dyn FnMut(&crate::current::CapturedInput) -> Result<()>,
+    ) -> Result<()> {
+        let pending = self
+            .pending_publication()?
+            .context("captured publication missing")?;
+        ensure!(pending == *expected, "captured publication changed");
+        let snapshot = self.snapshot()?;
+        ensure!(
+            snapshot.head()?.token()? == expected.expected,
+            "captured publication base expired"
+        );
+        captured_inputs(
+            &snapshot.transaction().open_table(tables::PENDING)?,
+            expected.intent.as_ref(),
+            visitor,
+        )
     }
     pub fn pending_publication(&self) -> Result<Option<Prepared>> {
         let transaction = self.write()?;
@@ -277,6 +414,10 @@ impl Database {
                     && transaction
                         .open_table(tables::META)?
                         .get(DESCRIPTOR)?
+                        .is_none()
+                    && transaction
+                        .open_table(tables::META)?
+                        .get(DESCRIPTOR_HASH)?
                         .is_none(),
                 "ready redb state retains pending journal"
             );
@@ -319,6 +460,10 @@ impl Database {
                     && transaction
                         .open_table(tables::META)?
                         .get(DESCRIPTOR)?
+                        .is_none()
+                    && transaction
+                        .open_table(tables::META)?
+                        .get(DESCRIPTOR_HASH)?
                         .is_none(),
                 "completed publication retains pending rows"
             );
@@ -328,33 +473,56 @@ impl Database {
             value(&transaction, PHASE)? == APPLYING && pending(&transaction)? == *expected,
             "redb publication is not applying this intention"
         );
-        verify_operations(&transaction, expected)?;
-        {
-            let rows = transaction.open_table(tables::PENDING)?;
-            for row in rows.iter()? {
-                let (key, value) = row?;
-                let key = key.value();
-                let value = value.value();
-                install(
-                    &transaction,
-                    Table::try_from(key[0])?,
-                    &key[1..],
-                    (value[0] == 1).then_some(&value[1..]),
-                )?;
-            }
-        }
-        verify(&transaction, &expected.target)?;
-        {
-            let mut meta = transaction.open_table(tables::META)?;
-            meta.insert(HEAD, expected.target.canonical_bytes()?.as_slice())?;
-            meta.insert(PHASE, READY)?;
-            meta.remove(DESCRIPTOR)?;
-        }
-        transaction
-            .open_table(tables::PENDING)?
-            .retain(|_, _| false)?;
+        stage_application(&transaction, expected, verify)?;
         transaction.commit()?;
         expected.target.token()
+    }
+
+    /// Exercise the exact captured installation while the old Prepared head
+    /// remains committed. Sample allocator high-water before restoring exact
+    /// roots; this is admission/verification, never a second publication.
+    pub(crate) fn probe_application(
+        &self,
+        expected: &Prepared,
+        verify: impl FnOnce(&redb::WriteTransaction, &CurrentHead) -> Result<()>,
+        sample: impl FnOnce() -> Result<u64>,
+    ) -> Result<u64> {
+        let mut transaction = self.write()?;
+        let savepoint = transaction.ephemeral_savepoint()?;
+        ensure!(
+            value(&transaction, PHASE)? == PREPARED
+                && pending(&transaction)? == *expected
+                && current(&transaction)?.token()? == expected.expected,
+            "replay admission base changed"
+        );
+        stage_application(&transaction, expected, verify)?;
+        let allocated = transaction.stats()?.allocated_pages();
+        // Fund actual pages for separate marker/commit/recovery metadata too.
+        // The pinned allocator stores eight-byte page numbers; this allows
+        // multiple copies/tree overhead plus bounded head/descriptor pages.
+        let padding = allocated
+            .checked_mul(64)
+            .and_then(|bytes| bytes.checked_add(2 << 20))
+            .context("replay padding overflow")?;
+        {
+            let mut table = transaction.open_table(redb::TableDefinition::<u64, &[u8]>::new(
+                "replay_admission_padding",
+            ))?;
+            // Leave space for the leaf/key header so a padding record fits
+            // one 1MiB allocator block instead of rounding up to 2MiB.
+            const CHUNK: usize = (1 << 20) - 4096;
+            let bytes = vec![0u8; CHUNK];
+            for index in 0..padding.div_ceil(CHUNK as u64) {
+                table.insert(index, bytes.as_slice())?;
+            }
+        }
+        let high_water = sample()?;
+        // Restore exact Prepared roots, then persist allocator bookkeeping. Abort
+        // rolls growth back and cannot establish the same retained capacity.
+        transaction.restore_savepoint(&savepoint)?;
+        drop(savepoint);
+        transaction.commit()?;
+        Ok(high_water)
     }
 
     /// The owner invokes this only for an explicitly canceled, unapplied intention.
@@ -372,6 +540,7 @@ impl Database {
         {
             let mut meta = transaction.open_table(tables::META)?;
             meta.remove(DESCRIPTOR)?;
+            meta.remove(DESCRIPTOR_HASH)?;
             meta.insert(PHASE, READY)?;
         }
         transaction.commit()?;
@@ -412,6 +581,20 @@ fn install(
             );
             put!(tables::META, 2);
         }
+        Table::CapturedInput => {
+            let bytes = value.context("captured inputs cannot be tombstones")?;
+            ensure!(
+                bytes.len() <= crate::current::MAX_INPUT_METADATA_BYTES,
+                "oversized captured input"
+            );
+            let input: crate::current::CapturedInput = serde_json::from_slice(bytes)?;
+            ensure!(
+                input.artifact.path.as_bytes() == key && input.bytes()? == bytes,
+                "captured input identity/encoding mismatch"
+            );
+            // Replay authority only. The owner verifies retained objects before
+            // the same atomic head commit; no source is read during recovery.
+        }
     }
     Ok(())
 }
@@ -422,6 +605,40 @@ pub fn identity(pending: &Prepared) -> Result<Sha256Digest> {
         b"airk-kv-prepared/1",
         &[&serde_json::to_vec(pending)?],
     ))
+}
+
+fn stage_application(
+    transaction: &redb::WriteTransaction,
+    expected: &Prepared,
+    verify: impl FnOnce(&redb::WriteTransaction, &CurrentHead) -> Result<()>,
+) -> Result<()> {
+    verify_operations(transaction, expected)?;
+    {
+        let rows = transaction.open_table(tables::PENDING)?;
+        for row in rows.iter()? {
+            let (key, value) = row?;
+            let key = key.value();
+            let value = value.value();
+            install(
+                transaction,
+                Table::try_from(key[0])?,
+                &key[1..],
+                (value[0] == 1).then_some(&value[1..]),
+            )?;
+        }
+    }
+    verify(transaction, &expected.target)?;
+    {
+        let mut meta = transaction.open_table(tables::META)?;
+        meta.insert(HEAD, expected.target.canonical_bytes()?.as_slice())?;
+        meta.insert(PHASE, READY)?;
+        meta.remove(DESCRIPTOR)?;
+        meta.remove(DESCRIPTOR_HASH)?;
+    }
+    transaction
+        .open_table(tables::PENDING)?
+        .retain(|_, _| false)?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -486,6 +703,28 @@ mod tests {
         assert_eq!(old.head()?, base);
         assert_eq!(database.snapshot()?.head()?, target()?);
         assert!(database.pending_publication()?.is_none());
+        assert_eq!(
+            database.apply(&prepared, |_, _| Ok(()))?,
+            target()?.token()?,
+            "recovery after an installed target is idempotent"
+        );
+        Ok(())
+    }
+    #[test]
+    fn descriptor_digest_tampering_blocks_recovery_before_head_change() -> Result<()> {
+        let file = tempfile::NamedTempFile::new()?;
+        let database = Database::open(file.reopen()?, 16 << 20, true)?;
+        let base = head()?;
+        database.initialize_head(&base)?;
+        let prepared = database.prepare(base.token()?, target()?, &[])?;
+        let transaction = database.write()?;
+        transaction
+            .open_table(tables::META)?
+            .insert(DESCRIPTOR_HASH, [0xA5; 32].as_slice())?;
+        transaction.commit()?;
+        assert!(database.pending_publication().is_err());
+        assert!(database.mark_applying(&prepared).is_err());
+        assert_eq!(database.snapshot()?.head()?, base);
         Ok(())
     }
     #[test]

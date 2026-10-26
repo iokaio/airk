@@ -391,27 +391,24 @@ impl Queue {
             .root_limit_bytes
             .saturating_sub(status.used_bytes)
             .saturating_sub(status.reserved_bytes);
-        let growth = (16u64 << 20).min(CAPACITY.saturating_sub(existing));
-        let allocation = growth.saturating_add(65536).min(free);
-        let allowed = existing
-            .checked_add(allocation)
-            .and_then(|n| n.checked_sub(65536))
-            .map_or(0, |n| n / 4096 * 4096)
-            .min(CAPACITY);
+        let allocation = (16u64 << 20)
+            .min(CAPACITY.saturating_sub(existing))
+            .saturating_add(65536)
+            .min(free);
         ensure!(
-            allowed >= existing.max(65536),
+            allocation >= 65536,
             "root quota cannot reserve scheduler database growth"
         );
         let reservation = quota.reserve_root(allocation)?;
-        reservation.charge(allocation)?;
         if existing == 0 {
-            crate::ledger::create(&path, KIND, allowed, MAXIMUM, State::empty())?;
+            crate::ledger::create(&path, KIND, CAPACITY, MAXIMUM, &reservation, State::empty())?;
         }
         crate::ledger::write_with(
             &path,
             KIND,
-            allowed,
+            CAPACITY,
             MAXIMUM,
+            &reservation,
             |state: &mut State, transaction| {
                 state.validate()?;
                 let result = mutate(state, transaction)?;

@@ -145,7 +145,7 @@ impl Kernel {
         }
         // Establish and validate the managed directory; release the writer before hashing.
         {
-            let _lock = self.store.lock()?;
+            let _lock = self.lock_current_writer()?;
             ensure!(
                 !self.root.starts_with(self.data_root.canonicalize()?),
                 "data directory must not contain the workspace root"
@@ -230,7 +230,7 @@ impl Kernel {
                 .count();
         }
         // A concurrent publication invalidates comparisons, never promotes stale counts.
-        let _lock = self.store.lock()?;
+        let _lock = self.lock_current_writer()?;
         let latest = self.load_optional()?;
         if latest.as_ref().map_or(0, |snapshot| snapshot.generation) != generation
             || latest.is_some() != report.indexed

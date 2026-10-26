@@ -40,7 +40,6 @@ tempfile.workspace = true
 sha2.workspace = true
 
 [dev-dependencies]
-rusqlite.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true

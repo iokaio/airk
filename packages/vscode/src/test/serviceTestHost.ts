@@ -13,14 +13,14 @@ import { ServiceWorkspace } from '../serviceWorkspace';
 import * as native from '../native';
 import * as cliInstall from '../cliInstall';
 
-export async function serviceTestHost(test:TestContext,options:{trusted?:boolean;roots?:number;registered?:boolean;automatic?:boolean;upgrade?:boolean}={}){
+export async function serviceTestHost(test:TestContext,options:{trusted?:boolean;roots?:number;registered?:boolean;automatic?:boolean;upgrade?:boolean;cutover?:boolean}={}){
     const root=await fs.mkdtemp(path.join(os.tmpdir(),'airk-default-service-'));
     const values=new Map<string,unknown>(),settings=new Map<string,unknown>(),commands=new Map<string,(...args:unknown[])=>Promise<unknown>>();
     const writes:any[]=[],calls:string[]=[],warnings:string[]=[],clipboard:string[]=[],panels:any[]=[],events:any[]=[],notices:{message:string;actions:string[]}[]=[],progressRuns:{title:string;messages:string[]}[]=[];
     const storage={keys:()=>[...values.keys()],get:<T>(key:string,fallback?:T)=>(values.has(key)?values.get(key):fallback) as T|undefined,update:async(key:string,value:unknown)=>{if(value===undefined)values.delete(key);else values.set(key,structuredClone(value));}};
     const install=path.join(root,'installation'),control=path.join(install,'control'),data=path.join(root,'data');await fs.mkdir(data);
     const binding={installDir:install,controlDir:control,executable:path.join(install,'main'),launcher:path.join(install,'airk-launcher'),
-        runtimeSha256:'ab'.repeat(32),version:'1.4.0',lifecycle:'on-demand' as const,verificationBasis:'trusted_distribution'};
+        runtimeSha256:'ab'.repeat(32),version:options.cutover?'1.4.4':'1.4.0',lifecycle:'on-demand' as const,verificationBasis:'trusted_distribution'};
     const registrations=new Map<string,any>(),jobs=new Map<string,any>(),plans=new Map<string,any>();
     const folders:any[]=[];for(let i=0;i<(options.roots??1);i++){
         const source=path.join(root,`source-${i}`);await fs.mkdir(source);folders.push({name:`Source ${i}`,uri:{scheme:'file',fsPath:await fs.realpath(source)}});
@@ -96,16 +96,16 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
         state.discovered++;assert.equal(this.options.installDir,install);
         return {bundle:{main:path.join(root,'bundle-main'),helper:path.join(root,'bundle-helper'),source:root,digest:binding.runtimeSha256,version:'1.4.0',platform:'fixture'},
             installDir:install,installed:true,location:{user_paths:{data}},inspection:{selection:{active:binding.runtimeSha256},approval:{manifest_sha256:binding.runtimeSha256,version:binding.version,verification_basis:'trusted_distribution'},
-            executable:binding.executable,launcher:binding.launcher,control_dir:control,registry_namespace:'34'.repeat(16),lifecycle:{explicitly_stopped:state.stopped}}};
+            executable:binding.executable,launcher:binding.launcher,control_dir:control,registry_namespace:'34'.repeat(16),lifecycle:{explicitly_stopped:state.stopped,fresh_setup:options.cutover&&binding.version==='1.4.5'?{request_namespace:'56'.repeat(16)}:null}}};
     });
     test.mock.method(RuntimeHost.prototype,'ensure',async(explicit?:boolean)=>{state.ensured++;assert.notEqual(explicit,true);if(state.stopped)throw new ServiceError('service_explicitly_stopped');if(state.down)throw new ServiceError('service_unavailable');return binding;});
     test.mock.method(RuntimeHost.prototype,'client',()=>new ServiceClient(transport));
     test.mock.method(RuntimeHost.prototype,'retirePrevious',async()=>{calls.push('previous-runtime-retired');});
     test.mock.method(RuntimeHost.prototype,'reviewTransition',async(current:typeof binding,action:'upgrade'|'rollback'|'resume')=>{
         assert.equal(current.runtimeSha256,binding.runtimeSha256);assert.equal(action,'upgrade');calls.push('upgrade-reviewed');
-        return {action,installDir:install,controlDir:control,observedActive:binding.runtimeSha256,expectedActive:binding.runtimeSha256,target:binding.runtimeSha256,version:'1.4.1'};
+        return {action,installDir:install,controlDir:control,observedActive:binding.runtimeSha256,expectedActive:binding.runtimeSha256,target:binding.runtimeSha256,version:options.cutover?'1.4.5':'1.4.1'};
     });
-    test.mock.method(RuntimeHost.prototype,'transition',async()=>{calls.push('upgrade-applied');binding.version='1.4.1';return {};});
+    test.mock.method(RuntimeHost.prototype,'transition',async()=>{calls.push('upgrade-applied');binding.version=options.cutover?'1.4.5':'1.4.1';if(options.cutover)registrations.clear();return {};});
     test.mock.method(RuntimeHost.prototype,'reviewProject',review);
     test.mock.method(RuntimeHost.prototype,'registerProject',register);
     test.mock.method(cliInstall,'installLauncherCli',async()=>[]);
@@ -116,7 +116,7 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
     const clear=()=>{for(const name of modules)delete require.cache[require.resolve(name)];};clear();
     loader._load=function(request:string,...args:any[]){return request==='vscode'?stub:original.call(this,request,...args);};
     let extension:any;
-    try{extension=require('../extension');const context:any={extensionPath:root,extension:{packageJSON:{version:options.upgrade?'1.4.1':'1.4.0'}},globalState:storage,
+    try{extension=require('../extension');const context:any={extensionPath:root,extension:{packageJSON:{version:options.cutover?'1.4.5':options.upgrade?'1.4.1':'1.4.0'}},globalState:storage,
         globalStorageUri:{fsPath:path.join(root,'editor-storage')},subscriptions:[],environmentVariableCollection:{persistent:false,prepend(){}}};
         const api=await extension.activate(context);
         return {root,folders,binding,registrations,values,settings,commands,writes,calls,warnings,clipboard,panels,state,stub,api,providers:events,notices,progressRuns,

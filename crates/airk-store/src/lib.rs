@@ -1,18 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Derived state only. Source workspaces remain authoritative.
-use airk_core::identity::{PublicationReceipt, RevisionToken, Sha256Digest};
-use airk_core::{SCHEMA_VERSION, Snapshot, SnapshotStore};
+use airk_core::{Snapshot, SnapshotStore};
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File, OpenOptions},
-    io::{BufReader, Read, Write},
+    io::{Read, Write},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 pub mod blobs;
 pub mod capacity;
-pub mod catalog_experiment;
 pub mod checkpoints;
 pub mod compression;
 pub mod current;
@@ -24,7 +22,6 @@ mod ledger;
 pub mod maintenance;
 mod managed_collection;
 pub mod model_objects;
-mod normalized;
 pub mod quota;
 pub mod relocation;
 pub mod reset;
@@ -33,48 +30,18 @@ pub mod retention;
 pub mod roots;
 pub mod scheduler;
 pub mod service;
-mod sqlite;
 pub mod usage;
 pub mod vector_cache;
 pub mod vector_policy;
 pub mod vector_registry;
-mod verified_cache;
 
 #[derive(Clone, Debug)]
 pub struct FileStore {
     directory: PathBuf,
     shared_model_runtime: Option<PathBuf>,
     shared_model_default: Option<airk_core::model_objects::ModelObjectSet>,
+    current_engine: current::kv::owner::Cache,
 }
-
-/// Small metadata pin for disk retrieval, committed with the corresponding revision.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PersistentRevision {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub token: Option<RevisionToken>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub manifest_sha256: Option<String>,
-    #[serde(default)]
-    pub storage_format: u32,
-    #[serde(default)]
-    pub roots: std::collections::BTreeMap<String, String>,
-    #[serde(default)]
-    pub inventory_sha256: Option<String>,
-    pub revision: String,
-    pub root: String,
-    pub collection: String,
-    pub generation: u64,
-    pub files: usize,
-    pub chunks: usize,
-    pub source_bytes: usize,
-    pub extractor_version: String,
-    pub semantic_producer: Option<String>,
-    pub imported_facts: usize,
-    pub imported_relationships: usize,
-}
-
-pub const ROOT_POINTER_VERSION: u32 = 5;
-pub const IMMUTABLE_CATALOG_VERSION: u32 = 3;
 
 pub enum UsageSourceSizes {
     Available(Vec<airk_core::usage::SourceContextSize>),
@@ -84,29 +51,12 @@ pub enum UsageSourceSizes {
 }
 
 /// Logical reads of authenticated bytes, not physical device I/O. Lookup time
-/// includes binding/lease/SQL work and excludes the separately timed verifier.
+/// includes binding/lease work and excludes the separately timed verifier.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct UsageReadMetrics {
     pub verification_bytes: u64,
     pub verification_us: u64,
     pub lookup_us: u64,
-}
-
-#[derive(Clone, Debug)]
-pub enum CommittedRevision {
-    Legacy(PersistentRevision),
-    V2 {
-        header: PersistentRevision,
-        receipt: PublicationReceipt,
-    },
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ExpectedHead {
-    Empty,
-    /// Digest of exact legacy root payload/header bytes, never a reserialized Snapshot.
-    Legacy(Sha256Digest),
-    V2(RevisionToken),
 }
 
 impl FileStore {
@@ -115,6 +65,7 @@ impl FileStore {
             directory: directory.into(),
             shared_model_runtime: None,
             shared_model_default: None,
+            current_engine: Default::default(),
         }
     }
     pub fn with_service_models(
@@ -183,103 +134,6 @@ impl FileStore {
     pub fn managed_collection_directory(&self) -> Result<&Path> {
         Ok(self.managed_path()?.logical)
     }
-    pub fn expected_head(&self) -> Result<ExpectedHead> {
-        let _lifecycle = self.lifecycle(false)?;
-        sqlite::expected_head(&self.directory)
-    }
-    pub fn committed_revision(&self) -> Result<Option<CommittedRevision>> {
-        self.persistent_revision()?
-            .map(|header| {
-                if let Some(token) = header.token {
-                    let receipt = self.receipt(&token)?.context("committed receipt missing")?;
-                    Ok(CommittedRevision::V2 { header, receipt })
-                } else {
-                    Ok(CommittedRevision::Legacy(header))
-                }
-            })
-            .transpose()
-    }
-    pub fn receipt(&self, token: &RevisionToken) -> Result<Option<PublicationReceipt>> {
-        let _lifecycle = self.lifecycle(false)?;
-        self.ensure_index_ready()?;
-        sqlite::receipt(&self.directory, token)
-    }
-    /// Reject a token contradicting a retained receipt; absence is not ancestry proof.
-    pub fn validate_revision_token(&self, token: &RevisionToken) -> Result<()> {
-        let _lifecycle = self.lifecycle(false)?;
-        let current = self
-            .persistent_revision()?
-            .and_then(|header| header.token)
-            .context("revision tokens require a v2 collection")?;
-        token.validate_against(&current)?;
-        sqlite::validate_retained_token(&self.directory, token)
-    }
-    #[allow(clippy::too_many_arguments)]
-    pub fn prepare_catalog_v2(
-        &self,
-        directory: &Path,
-        inventory: &airk_core::publication::InventoryV2,
-        lineage: &airk_core::changes::LineageEnvelope,
-        token: &RevisionToken,
-        source: &dyn airk_core::ArtifactSource,
-        reservation: Option<&quota::Reservation>,
-        maximum: u64,
-    ) -> Result<()> {
-        self.prepare_catalog_v2_reusing(
-            directory,
-            inventory,
-            lineage,
-            token,
-            source,
-            reservation,
-            maximum,
-            None,
-        )
-    }
-    /// Reuse native catalog rows only from an authenticated, still-pinned base.
-    #[allow(clippy::too_many_arguments)]
-    pub fn prepare_catalog_v2_reusing(
-        &self,
-        directory: &Path,
-        inventory: &airk_core::publication::InventoryV2,
-        lineage: &airk_core::changes::LineageEnvelope,
-        token: &RevisionToken,
-        source: &dyn airk_core::ArtifactSource,
-        reservation: Option<&quota::Reservation>,
-        maximum: u64,
-        previous: Option<&blobs::Catalog>,
-    ) -> Result<()> {
-        // Unlike legacy builds, the final v2 manifest follows catalog checksums.
-        // Reserve its full bound plus the lineage callback write before page admission.
-        let pending = (131_072u64 + quota::PREPARED_PUBLICATION_MAX)
-            .checked_add(serde_json::to_vec(lineage)?.len() as u64)
-            .context("v2 metadata allowance overflow")?;
-        let maximum = maximum.saturating_sub(pending) / 4096 * 4096;
-        ensure!(
-            maximum >= 16_384,
-            "v2 catalog admission cannot preserve final manifest/lineage allowance"
-        );
-        sqlite::save_catalog_v2(
-            directory,
-            inventory,
-            lineage,
-            token,
-            source,
-            reservation,
-            maximum,
-            self.directory(),
-            previous,
-        )
-    }
-    pub fn publish_catalog_v2(
-        &self,
-        inventory: &airk_core::publication::InventoryV2,
-        receipt: &PublicationReceipt,
-        expected: &ExpectedHead,
-        reservation: &quota::Reservation,
-    ) -> Result<()> {
-        sqlite::publish_catalog_v2(&self.directory, inventory, receipt, expected, reservation)
-    }
     pub(crate) fn lifecycle(&self, create: bool) -> Result<Option<Arc<File>>> {
         let Ok(managed) = self.managed_path() else {
             return Ok(None);
@@ -299,68 +153,6 @@ impl FileStore {
         };
         quota::ensure_current_root(root)?;
         Ok(Some(Arc::new(lease)))
-    }
-    pub fn persistent_revision(&self) -> Result<Option<PersistentRevision>> {
-        let _lifecycle = self.lifecycle(false)?;
-        self.ensure_index_ready()?;
-        if !self.directory.join("index.sqlite3").exists() {
-            return Ok(None);
-        }
-        sqlite::persistent_revision(&self.directory)
-    }
-    pub fn save_with_components(&self, snapshot: &Snapshot, revision: &str) -> Result<()> {
-        ensure!(
-            revision.len() == 64 && revision.bytes().all(|c| c.is_ascii_hexdigit()),
-            "invalid persistent revision identity"
-        );
-        sqlite::save(&self.directory, snapshot, Some(revision))
-    }
-    pub fn prepare_catalog(
-        &self,
-        directory: &Path,
-        snapshot: &Snapshot,
-        revision: &str,
-        source: &dyn airk_core::ArtifactSource,
-        reservation: Option<&quota::Reservation>,
-        maximum: u64,
-    ) -> Result<()> {
-        sqlite::save_catalog(directory, snapshot, revision, source, reservation, maximum)
-    }
-    /// Admit the private catalog from remaining reserved bytes, leaving the
-    /// active pointer's main-file, WAL and shared-memory growth uncharged until
-    /// publication. Call after all other generation components have been written,
-    /// while holding the collection writer lock.
-    /// Observed last-generation size is a planning hint, not a bound on future input.
-    pub fn active_generation_bytes(&self) -> Result<Option<u64>> {
-        let Some(head) = self.persistent_revision()? else {
-            return Ok(None);
-        };
-        let Some(token) = head.token else {
-            return Ok(None);
-        };
-        Ok(Some(
-            directory_usage(
-                &self
-                    .directory
-                    .join("generations")
-                    .join(token.revision.to_string()),
-            )?
-            .0,
-        ))
-    }
-    pub fn catalog_budget(&self, reservation: &quota::Reservation) -> Result<u64> {
-        let (_, pointer_bytes) = sqlite::pointer_budget(&self.directory)?;
-        let available = reservation.remaining();
-        let physical = capacity::probe(&self.directory)?.available_growth_bytes;
-        sqlite::catalog_page_budget(available, physical, pointer_bytes)
-    }
-    pub fn publish_catalog(
-        &self,
-        snapshot: &Snapshot,
-        revision: &str,
-        reservation: Option<&quota::Reservation>,
-    ) -> Result<()> {
-        sqlite::publish_catalog(&self.directory, snapshot, revision, reservation)
     }
     /// OS-backed exclusivity releases after process death. Legacy lock markers
     /// still fail closed until an operator establishes that their writer exited.
@@ -408,7 +200,17 @@ impl FileStore {
             .truncate(false)
             .open(locks.join(name))?;
         advisory.try_lock().context("index writer locked")?;
-        fs::create_dir_all(&self.directory)?;
+        let bound_slot = match self.managed_path() {
+            Ok(managed) if managed.namespace == "collections-1.4" && managed.slot.is_some() => {
+                service::collection::has_container_metadata(managed.logical)?
+            }
+            _ => false,
+        };
+        // Bound slots are created only by authenticated container setup/builds.
+        // A stale handle after retirement must not recreate its old directory.
+        if !bound_slot {
+            fs::create_dir_all(&self.directory)?;
+        }
         ensure!(
             !fs::symlink_metadata(&self.directory)?
                 .file_type()
@@ -441,57 +243,20 @@ impl FileStore {
             .context("write collection writer marker; another writer may be active")?;
         let guard = WriterLock {
             path,
-            _file: advisory,
+            _file: Arc::new(advisory),
             _lifecycle: lifecycle,
-            object_captures: std::sync::atomic::AtomicUsize::new(0),
+            object_captures: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         };
         Ok(guard)
     }
 }
 
-impl SnapshotStore for FileStore {
-    fn load(&self) -> Result<Option<Snapshot>> {
-        let _lifecycle = self.lifecycle(false)?;
-        self.ensure_index_ready()?;
-        if self.directory.join("index.sqlite3").exists() {
-            if self
-                .persistent_revision()?
-                .is_some_and(|h| matches!(h.storage_format, 1 | 2))
-            {
-                return self.catalog()?.map(|c| c.materialize()).transpose();
-            }
-            return sqlite::load(&self.directory);
-        }
-        let path = self.directory.join("snapshot.json");
-        let file = match File::open(&path) {
-            Ok(file) => file,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(error.into()),
-        };
-        ensure!(
-            file.metadata()?.len() <= 536_870_912,
-            "snapshot exceeds 512 MiB limit"
-        );
-        let snapshot: Snapshot = serde_json::from_reader(BufReader::new(file))
-            .context("invalid snapshot; rebuild from source")?;
-        ensure!(
-            snapshot.schema_version == SCHEMA_VERSION,
-            "unsupported snapshot schema; rebuild with a compatible binary"
-        );
-        Ok(Some(snapshot))
-    }
-
-    fn save(&self, snapshot: &Snapshot) -> Result<()> {
-        let _lifecycle = self.lifecycle(true)?;
-        sqlite::save(&self.directory, snapshot, None)
-    }
-}
-
+#[derive(Clone)]
 pub struct WriterLock {
     path: PathBuf,
-    _file: File,
+    _file: Arc<File>,
     _lifecycle: Option<Arc<File>>,
-    object_captures: std::sync::atomic::AtomicUsize,
+    object_captures: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 /// Keeps unpublished captured objects and prior scan reuse inputs alive across
@@ -701,6 +466,9 @@ pub fn remove_collection(data_root: &Path, id: &str) -> Result<CollectionUsage> 
 }
 impl Drop for WriterLock {
     fn drop(&mut self) {
+        if Arc::strong_count(&self._file) != 1 {
+            return;
+        }
         let _ = fs::remove_file(&self.path);
         // A concurrent fork can temporarily inherit this open file description
         // until exec. Release logical ownership explicitly rather than letting

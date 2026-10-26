@@ -69,6 +69,8 @@ pub struct Kernel {
     store: FileStore,
     service_collection: Option<airk_store::service::collection::Collection>,
     service_selection: Option<Arc<airk_store::service::collection::Selection>>,
+    service_candidate: bool,
+    service_active_store: Arc<std::sync::Mutex<Option<FileStore>>>,
     service_freshness: Option<Arc<service_freshness::Cache>>,
 }
 
@@ -138,6 +140,21 @@ pub struct Status {
     pub semantic_producer: Option<String>,
     pub imported_facts: usize,
     pub imported_relationships: usize,
+    pub storage_sizes: StorageSizes,
+}
+
+/// Bounded logical lengths sampled from this collection's durable redb files.
+/// `None` means the corresponding file is not present; these are not allocated
+/// disk block counts and do not include private staging or other collections.
+#[derive(Serialize)]
+pub struct StorageSizes {
+    pub current_index_file: Option<String>,
+    pub current_index_bytes: Option<u64>,
+    pub current_index_admitted_bytes: Option<u64>,
+    pub current_index_unused_admitted_bytes: Option<u64>,
+    pub usage_ledger_bytes: Option<u64>,
+    pub total_bytes: u64,
+    pub sampled_unix_ms: u64,
 }
 
 #[derive(Serialize)]
@@ -305,6 +322,8 @@ impl Kernel {
             store,
             service_collection,
             service_selection: None,
+            service_candidate: false,
+            service_active_store: Arc::new(std::sync::Mutex::new(None)),
             service_freshness: None,
         };
         if recover {
@@ -434,6 +453,9 @@ impl Kernel {
     }
 
     pub fn initialize(&self) -> Result<Status> {
+        if let Some(selected) = self.active_service_view()? {
+            return selected.initialize();
+        }
         self.initialize_current()
     }
 
@@ -447,14 +469,23 @@ impl Kernel {
     }
 
     fn index_with_mode(&self, full: bool) -> Result<IndexReport> {
+        if let Some(selected) = self.active_service_view()? {
+            return selected.index_with_mode(full);
+        }
         self.index_current(full, false)
     }
 
     pub fn status(&self) -> Result<Status> {
+        if let Some(selected) = self.active_service_view()? {
+            return selected.status();
+        }
         self.current_status()
     }
 
     pub fn search(&self, query: &SearchQuery) -> Result<SearchResponse> {
+        if let Some(selected) = self.active_service_view()? {
+            return selected.search(query);
+        }
         self.current_search(query, current::CurrentSearchMode::Lexical)
     }
 
@@ -467,6 +498,9 @@ impl Kernel {
     }
 
     fn vector_search(&self, query: &SearchQuery, hybrid: bool) -> Result<SearchResponse> {
+        if let Some(selected) = self.active_service_view()? {
+            return selected.vector_search(query, hybrid);
+        }
         ensure!(
             self.vectors_enabled()?,
             "vector search is disabled for this collection"
@@ -700,7 +734,7 @@ impl Kernel {
         version: &str,
         build_inputs: &[String],
     ) -> Result<airk_core::AnalysisManifest> {
-        let _lock = self.store.lock()?;
+        let _lock = self.lock_current_writer()?;
         let snapshot = self.load()?;
         ensure!(
             snapshot.roots.is_empty(),
@@ -717,7 +751,7 @@ impl Kernel {
     }
 
     pub fn import_scip(&self, index: &Path, manifest: &Path) -> Result<Status> {
-        let writer = self.store.lock()?;
+        let writer = self.lock_current_writer()?;
         let baseline = self.load()?;
         let source = airk_store::blobs::RetainedSource {
             store: &self.store,

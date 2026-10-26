@@ -45,13 +45,7 @@ pub fn validate_binding(directory: &Path, root: &str, collection: &str) -> Resul
         store.current_read(&scope)?;
         return Ok(());
     }
-    use airk_core::SnapshotStore;
-    let snapshot = store.load()?.context("usage collection binding missing")?;
-    ensure!(
-        snapshot.root == root && snapshot.collection == collection,
-        "usage collection/root binding mismatch"
-    );
-    Ok(())
+    anyhow::bail!("usage requires fresh format-150 collection setup")
 }
 /// Retired SQL comparison snapshots are unavailable without reading live sources.
 pub fn comparison_snapshot(
@@ -126,7 +120,8 @@ fn reserve_ledger(
     best_effort: bool,
 ) -> Result<crate::quota::Reservation> {
     let current = fs::metadata(directory.join("usage.airk")).map_or(0, |metadata| metadata.len());
-    // Charge admitted file growth before the redb write; no sidecar journal exists.
+    // Reserve the configured remaining ledger budget. The redb backend charges
+    // each newly admitted high-water extent before extending the file.
     let bytes = policy
         .max_collection_bytes
         .saturating_sub(current)
@@ -154,10 +149,11 @@ fn reserve_ledger(
                 Err(error) => return Err(error),
             }
         };
-        reservation.charge(bytes)?;
         Ok(reservation)
     } else {
-        reserve_write(directory, bytes)
+        let store = crate::FileStore::new(directory);
+        let collection = store.collection_id()?;
+        crate::quota::Quota::for_store(&store)?.reserve(collection, bytes)
     }
 }
 
@@ -179,11 +175,7 @@ fn managed(directory: &Path) -> Result<()> {
         "linked collection usage state"
     );
     ensure!(
-        service
-            || directory.join("current.airk").is_file()
-            || directory.join("current.sqlite3").is_file()
-            || directory.join("index.sqlite3").is_file()
-            || directory.join("snapshot.json").is_file(),
+        service || directory.join("current.airk").is_file(),
         "collection no longer exists"
     );
     for name in ["usage.airk", "usage-policy.json"] {

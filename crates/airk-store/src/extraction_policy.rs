@@ -76,6 +76,7 @@ impl FileStore {
                 == self.managed_path()?.logical.canonicalize()?,
             "foreign extraction policy quota"
         );
+        crate::maintenance::check_writer(self, writer, quota)?;
         self.extraction_policy_bytes(owner_root)?;
         let policy = StoredPolicy {
             version: 1,

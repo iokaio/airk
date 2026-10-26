@@ -63,7 +63,7 @@ pub struct StorageSummary {
     pub collection_limit_bytes: u64,
     pub root_available_bytes: u64,
     pub physical_available_growth_bytes: u64,
-    /// Existing charged bytes plus a fresh SQLite/WAL allowance. Changed source
+    /// Existing charged bytes plus a fresh quota-admitted native database allowance. Changed source
     /// growth is unknown; this estimate is not a reservation or admission promise.
     pub replacement_estimate_bytes: u64,
 }

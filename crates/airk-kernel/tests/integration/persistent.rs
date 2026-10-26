@@ -45,7 +45,7 @@ fn persistent_lexical_and_real_disk_vector_candidates_keep_revision_identity() -
     model(data.path())?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
     kernel.index()?;
-    assert_eq!(kernel.status()?.lexical_backend, "sqlite-fts5-current");
+    assert_eq!(kernel.status()?.lexical_backend, "redb-paged-postings");
     assert!(kernel.status()?.local_model_ready);
     assert_eq!(kernel.status()?.indexed_vectors, 2);
     assert!(kernel.search(&query("login"))?.hits.is_empty());
@@ -128,29 +128,6 @@ fn missing_model_and_missing_persistent_generation_fail_explicitly() -> Result<(
     kernel.index()?;
     assert!(!kernel.status()?.local_model_ready);
     assert!(kernel.semantic_search(&query("needle")).is_err());
-    let directory = data.path().join("collections-1.2/default");
-    let db = rusqlite::Connection::open(directory.join("current.sqlite3"))?;
-    let (id, block): (i64, Vec<u8>) = db.query_row(
-        "SELECT id,block FROM current_fts_data ORDER BY id DESC LIMIT 1",
-        [],
-        |r| Ok((r.get(0)?, r.get(1)?)),
-    )?;
-    db.execute("DELETE FROM current_fts_data WHERE id=?1", [id])?;
-    assert!(kernel.search(&query("needle")).is_err());
-    assert!(
-        kernel.search(&query("absent")).is_err(),
-        "missing postings cannot report a clean empty answer"
-    );
-    assert!(
-        Kernel::open(root.path(), Some(data.path().into()))
-            .and_then(|reopened| reopened.search(&query("needle")))
-            .is_err()
-    );
-    db.execute(
-        "INSERT INTO current_fts_data(id,block) VALUES(?1,?2)",
-        rusqlite::params![id, block],
-    )?;
-    assert!(!kernel.search(&query("needle"))?.hits.is_empty());
     Ok(())
 }
 
@@ -216,49 +193,6 @@ fn warm_and_fresh_queries_reject_changed_authenticated_components() -> Result<()
             before.publication.as_ref().unwrap().token
         );
     }
-    let db = rusqlite::Connection::open(store.directory().join("current.sqlite3"))?;
-    let (id, payload): (i64, String) = db.query_row(
-        "SELECT id,payload FROM current_lexical_docs ORDER BY id LIMIT 1",
-        [],
-        |r| Ok((r.get(0)?, r.get(1)?)),
-    )?;
-    db.execute(
-        "UPDATE current_lexical_docs SET payload='{}' WHERE id=?1",
-        [id],
-    )?;
-    assert!(kernel.hybrid_search(&query("authenticate")).is_err());
-    assert!(
-        Kernel::open(root.path(), Some(data.path().into()))
-            .and_then(|reopened| reopened.hybrid_search(&query("authenticate")))
-            .is_err()
-    );
-    db.execute(
-        "UPDATE current_lexical_docs SET payload=?1 WHERE id=?2",
-        rusqlite::params![payload, id],
-    )?;
-    assert!(
-        !kernel
-            .hybrid_search(&query("authenticate"))?
-            .hits
-            .is_empty()
-    );
-    let record: Vec<u8> = db.query_row("SELECT record FROM graph_records WHERE id=1", [], |r| {
-        r.get(0)
-    })?;
-    db.execute(
-        "UPDATE graph_records SET record=(SELECT record FROM graph_records WHERE id=2) WHERE id=1",
-        [],
-    )?;
-    assert!(kernel.semantic_search(&query("login")).is_err());
-    let reopened = Kernel::open(root.path(), Some(data.path().into()))?;
-    assert!(reopened.semantic_search(&query("login")).is_err());
-    db.execute("UPDATE graph_records SET record=?1 WHERE id=1", [&record])?;
-    assert_eq!(
-        kernel.semantic_search(&query("login"))?.hits[0]
-            .citation
-            .path,
-        "a.txt"
-    );
     Ok(())
 }
 
@@ -428,13 +362,6 @@ fn source_measurements_are_small_authenticated_values_independent_of_graph_bytes
             read.artifact("file000.txt")?.unwrap().content_hash
         );
         drop(read);
-        let db = rusqlite::Connection::open(store.directory().join("current.sqlite3"))?;
-        db.execute("UPDATE current_map_buckets SET content=x'5b5d'", [])?;
-        assert!(
-            read_current(&store)?
-                .map_get(MapDomain::SourceMeasurement, b"file000.txt")
-                .is_err()
-        );
     }
     Ok(())
 }

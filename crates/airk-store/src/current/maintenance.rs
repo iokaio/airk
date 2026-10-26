@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Complete ownership proof before bounded current-object reclamation.
 use super::{
-    CurrentRead, CurrentToken, CurrentWriter, TransactionPhase, map::MapDomain,
-    metadata::FileMetadataRef, postings::Lookup,
+    CurrentRead, CurrentToken, map::MapDomain, metadata::FileMetadataRef, postings::Lookup,
 };
 use crate::FileStore;
 use airk_core::identity::Sha256Digest;
@@ -10,9 +9,9 @@ use anyhow::{Context, Result, ensure};
 use std::{collections::BTreeSet, path::PathBuf};
 
 pub struct ReclamationPlan {
-    token: CurrentToken,
-    collection: PathBuf,
-    retained: BTreeSet<PathBuf>,
+    pub(crate) token: CurrentToken,
+    pub(crate) collection: PathBuf,
+    pub(crate) retained: BTreeSet<PathBuf>,
 }
 
 #[derive(Clone, Debug, Default, serde::Serialize)]
@@ -116,102 +115,79 @@ impl CurrentRead {
     }
 }
 
-impl CurrentWriter<'_> {
-    pub fn reclaim_objects(&mut self, plan: &ReclamationPlan) -> Result<ReclamationReport> {
-        ensure!(
-            self.phase()? == TransactionPhase::Ready
-                && self.pending()?.is_none()
-                && self.head()?.token()? == plan.token,
-            "current reclamation proof expired or publication is pending"
-        );
-        let collection = self.collection_directory();
-        ensure!(
-            collection.canonicalize()? == plan.collection,
-            "foreign current reclamation plan"
-        );
-        // A current-head proof does not include the writer's next captured
-        // batch or its prior reuse inputs. Defer until that owner releases them.
-        if self.has_object_captures() {
-            return Ok(ReclamationReport {
-                pending: true,
-                ..Default::default()
-            });
+pub(crate) fn reclaim_files(
+    collection: &std::path::Path,
+    plan: &ReclamationPlan,
+) -> Result<ReclamationReport> {
+    ensure!(
+        collection.canonicalize()? == plan.collection,
+        "foreign current reclamation plan"
+    );
+    let mut candidates = Vec::new();
+    let mut count = 0;
+    for name in [
+        "objects/artifacts",
+        "objects/sources",
+        "objects/models",
+        "objects/embedding-packs",
+        "current-metadata",
+        "current-resources",
+    ] {
+        let directory = collection.join(name);
+        if !directory.try_exists()? {
+            continue;
         }
-        // A WAL snapshot protects SQL pages, not external retained files. The
-        // request's shared OS lease survives commits and disconnect; only actual
-        // release/process exit permits this exclusion and subsequent deletion.
-        if !self.reclaim_exclusive()? {
-            return Ok(ReclamationReport {
-                pending: true,
-                ..Default::default()
-            });
+        for ancestor in directory.ancestors().take_while(|p| *p != collection) {
+            let metadata = std::fs::symlink_metadata(ancestor)?;
+            ensure!(
+                metadata.is_dir() && !metadata.file_type().is_symlink(),
+                "linked current object directory"
+            );
         }
-        let mut candidates = Vec::new();
-        let mut count = 0;
-        for name in [
-            "objects/artifacts",
-            "objects/sources",
-            "objects/models",
-            "objects/embedding-packs",
-            "current-metadata",
-            "current-resources",
-        ] {
-            let directory = collection.join(name);
-            if !directory.try_exists()? {
+        for entry in std::fs::read_dir(&directory)? {
+            count += 1;
+            ensure!(
+                count <= 1_000_000,
+                "current reclamation entry budget exceeded"
+            );
+            let entry = entry?;
+            let metadata = std::fs::symlink_metadata(entry.path())?;
+            ensure!(
+                metadata.is_file() && !metadata.file_type().is_symlink(),
+                "nonregular current object"
+            );
+            let file = entry.file_name();
+            let file = file.to_str().context("non-UTF-8 current object")?;
+            let digest = if name.starts_with("current-") {
+                file.strip_suffix(".json").unwrap_or("")
+            } else {
+                file
+            };
+            if digest.parse::<Sha256Digest>().is_err() {
                 continue;
             }
-            for ancestor in directory.ancestors().take_while(|p| *p != collection) {
-                let metadata = std::fs::symlink_metadata(ancestor)?;
-                ensure!(
-                    metadata.is_dir() && !metadata.file_type().is_symlink(),
-                    "linked current object directory"
-                );
-            }
-            for entry in std::fs::read_dir(&directory)? {
-                count += 1;
-                ensure!(
-                    count <= 1_000_000,
-                    "current reclamation entry budget exceeded"
-                );
-                let entry = entry?;
-                let metadata = std::fs::symlink_metadata(entry.path())?;
-                ensure!(
-                    metadata.is_file() && !metadata.file_type().is_symlink(),
-                    "nonregular current object"
-                );
-                let file = entry.file_name();
-                let file = file.to_str().context("non-UTF-8 current object")?;
-                let digest = if name.starts_with("current-") {
-                    file.strip_suffix(".json").unwrap_or("")
-                } else {
-                    file
-                };
-                if digest.parse::<Sha256Digest>().is_err() {
-                    continue;
-                }
-                let relative = PathBuf::from(name).join(file);
-                if !plan.retained.contains(&relative) {
-                    candidates.push((entry.path(), metadata.len()));
-                }
+            let relative = PathBuf::from(name).join(file);
+            if !plan.retained.contains(&relative) {
+                candidates.push((entry.path(), metadata.len()));
             }
         }
-        // No deletion before the complete directory/link and ownership checks.
-        let mut report = ReclamationReport {
-            pending: candidates.len() > 4096,
-            ..Default::default()
-        };
-        for (path, bytes) in candidates.into_iter().take(4096) {
-            ensure!(
-                path.canonicalize()?.starts_with(&plan.collection),
-                "current reclamation escaped collection"
-            );
-            std::fs::remove_file(path)?;
-            report.removed_files += 1;
-            report.removed_bytes = report
-                .removed_bytes
-                .checked_add(bytes)
-                .context("current reclamation byte overflow")?;
-        }
-        Ok(report)
     }
+    // No deletion before the complete directory/link and ownership checks.
+    let mut report = ReclamationReport {
+        pending: candidates.len() > 4096,
+        ..Default::default()
+    };
+    for (path, bytes) in candidates.into_iter().take(4096) {
+        ensure!(
+            path.canonicalize()?.starts_with(&plan.collection),
+            "current reclamation escaped collection"
+        );
+        std::fs::remove_file(path)?;
+        report.removed_files += 1;
+        report.removed_bytes = report
+            .removed_bytes
+            .checked_add(bytes)
+            .context("current reclamation byte overflow")?;
+    }
+    Ok(report)
 }

@@ -55,7 +55,7 @@ fn initialize(store: &FileStore, root: &str, slot: Incarnation) -> Result<Curren
         specification: Sha256Digest::from_bytes([5; 32]),
         record_bytes: 16,
     })?;
-    let lexical = LexicalManifest::empty()?;
+    let lexical = LexicalManifest::empty(&scope)?;
     let head = CurrentHead {
         version: 2,
         scope: scope.clone(),
@@ -67,9 +67,8 @@ fn initialize(store: &FileStore, root: &str, slot: Incarnation) -> Result<Curren
     };
     let quota = Quota::open_service(store.managed_path()?.root)?;
     let writer = store.lock()?;
-    let mut current = store.current_write(&writer, &quota, &scope, 8 << 20)?;
-    current.initialize(head.clone())?;
-    current.install_initial_lexical_manifest(&head.token()?, &lexical.canonical_bytes()?)?;
+    let current = store.bootstrap_redb(&writer, &quota, &head, 8 << 20)?;
+    assert_eq!(current.snapshot()?.head()?, head);
     head.token()
 }
 struct ChildGuard(Child);
@@ -188,7 +187,7 @@ fn derived_cleanup_requires_inactive_fenced_approval_preserves_settings_and_resu
             .delete_derived_turn(&lease, job.id, engine)
             .is_err()
     );
-    assert!(selected.directory().join("current.sqlite3").is_file());
+    assert!(selected.directory().join("current.airk").is_file());
     let report = collection.delete_derived_turn(&lease, job.id, preview.guard)?;
     assert!(!report.complete);
     registry.complete_job(&lease, job.id, JobOutcome::Canceled)?;
@@ -224,7 +223,7 @@ fn derived_cleanup_requires_inactive_fenced_approval_preserves_settings_and_resu
         fs::read(retained.directory().join("vector-policy.json"))?,
         policy
     );
-    assert!(!retained.directory().join("current.sqlite3").try_exists()?);
+    assert!(!retained.directory().join("current.airk").try_exists()?);
     registry.record_configuration_result(&lease, job.id, &serde_json::to_value(&report)?)?;
     // Captured completion and the barrier recover together after owner death.
     drop(lease);
@@ -299,8 +298,12 @@ fn manifest_process_death_selects_complete_old_or_new_and_pins_retirement() -> R
         let root = source.to_str().context("non-UTF-8 fixture")?;
         let collection =
             Collection::initialize(&data, root, "fixture", Incarnation::from_bytes([1; 16]))?;
+        let old_token = initialize(
+            &collection.selected_store()?,
+            root,
+            Incarnation::from_bytes([1; 16]),
+        )?;
         let old = collection.select()?;
-        let old_token = initialize(&old.store, root, Incarnation::from_bytes([1; 16]))?;
         let ready = fixture.path().join("ready");
         let mut child = ChildGuard(
             Command::new(std::env::current_exe()?)
@@ -383,6 +386,56 @@ fn foreign_selection_and_unknown_retirement_files_fail_without_deletion() -> Res
     fs::write(&unknown, b"Preserve this unrelated note.")?;
     assert!(collection.retire().is_err());
     assert_eq!(fs::read(unknown)?, b"Preserve this unrelated note.");
-    assert!(old.directory().join("current.sqlite3").is_file());
+    assert!(old.directory().join("current.airk").is_file());
+    Ok(())
+}
+
+#[test]
+fn handoff_fences_old_writers_while_committed_readers_remain_live() -> Result<()> {
+    let fixture = tempfile::tempdir()?;
+    let data = fixture.path().join("data");
+    fs::create_dir(&data)?;
+    let collection = Collection::initialize(
+        &data,
+        "/original-root",
+        "fixture",
+        Incarnation::from_bytes([1; 16]),
+    )?;
+    let initial = initialize(
+        &collection.selected_store()?,
+        "/original-root",
+        Incarnation::from_bytes([1; 16]),
+    )?;
+    let old = collection.select()?;
+    let scope = old
+        .store
+        .current_scope("/original-root", "fixture")?
+        .unwrap();
+    let read = old.store.current_read(&scope)?;
+    let mut next = collection.begin_replacement(
+        Incarnation::from_bytes([2; 16]),
+        Sha256Digest::from_bytes([4; 32]),
+    )?;
+    initialize(
+        &next.store(),
+        "/original-root",
+        Incarnation::from_bytes([2; 16]),
+    )?;
+    let settings = settings_digest(&old.store, "/original-root")?;
+    let token = next.commit_observed(Some(initial), settings, &mut |_| {
+        assert!(
+            old.store.lock().is_err(),
+            "handoff allowed an old publication to race its validation"
+        );
+        assert_eq!(read.token()?, initial);
+        Ok(())
+    })?;
+    assert_ne!(token.incarnation, initial.incarnation);
+    assert_eq!(read.token()?, initial);
+    drop(next);
+    assert_eq!(collection.retire()?.removed_directories, 0);
+    drop(read);
+    drop(old);
+    assert_eq!(collection.retire()?.removed_directories, 1);
     Ok(())
 }

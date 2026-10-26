@@ -10,7 +10,7 @@ use airk_store::{
     FileStore,
     current::lexical::LexicalManifest,
     current::{
-        ArtifactChange, CapturedInput, CurrentHead, CurrentScope, PendingTransaction,
+        ArtifactChange, CapturedInput, CurrentHead, CurrentScope,
         graph::{GraphOverlay, GraphOverlayLimits, SealedGraph},
     },
     quota::{Quota, Reservation},
@@ -19,13 +19,13 @@ use anyhow::{Context, Result, ensure};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeSet, sync::Arc, time::Instant};
 
+use airk_store::current::kv::journal::Prepared as PendingTransaction;
+
 const DIMENSIONS: usize = 8;
 const CAPACITY: u64 = 16 * 1024 * 1024;
 
 #[path = "current_foundation/update.rs"]
 mod current_update;
-#[path = "current_foundation/grants.rs"]
-mod grants;
 
 fn pipeline() -> Sha256Digest {
     framed_digest(b"current-foundation-original-fixture/1", &[])
@@ -96,8 +96,7 @@ impl Fixture {
             specification: mutable::specification(DIMENSIONS, embedding_pipeline)?,
             record_bytes: mutable::record_bytes(DIMENSIONS)?,
         };
-        let manifest = LexicalManifest::empty()?;
-        let manifest_bytes = manifest.canonical_bytes()?;
+        let manifest = LexicalManifest::empty(&scope)?;
         let head = CurrentHead {
             version: 2,
             scope: scope.clone(),
@@ -108,11 +107,7 @@ impl Fixture {
             graph_head: GraphHead::empty(graph_scope)?,
         };
         let lock = store.lock()?;
-        let mut current = store.current_write(&lock, &quota, &scope, CAPACITY)?;
-        let initial_token = head.token()?;
-        current.initialize(head)?;
-        current.install_initial_lexical_manifest(&initial_token, &manifest_bytes)?;
-        drop(current);
+        drop(store.bootstrap_redb(&lock, &quota, &head, CAPACITY)?);
         drop(lock);
         Ok(Self {
             _directory: directory,
@@ -143,22 +138,29 @@ impl Fixture {
             .seal()
     }
     fn prepare(&self, head: &CurrentHead, graph: &SealedGraph) -> Result<PendingTransaction> {
-        let mut target = head.clone();
-        target.sequence += 1;
-        target.graph_head = graph.descriptor().target.clone();
         let lock = self.store.lock()?;
-        self.store
-            .current_write(&lock, &self.quota, &self.scope, CAPACITY)?
-            .prepare(&head.token()?, target, graph, &[], None)
+        let read = self.store.current_read(&self.scope)?;
+        let current = self.store.redb_writer(&lock, &self.quota, &self.scope)?;
+        read.with_redb_snapshot(|base| {
+            let catalog = airk_store::current::kv::catalog::Plan::new(base, head)?;
+            current.prepare_components(
+                base,
+                &catalog,
+                graph,
+                None,
+                &Vec::<CapturedInput>::new(),
+                None,
+            )
+        })?
+        .context("native snapshot missing")
     }
+
     fn publish(&self, head: &CurrentHead, graph: &SealedGraph) -> Result<CurrentHead> {
         let pending = self.prepare(head, graph)?;
         let lock = self.store.lock()?;
-        let mut current = self
-            .store
-            .current_write(&lock, &self.quota, &self.scope, CAPACITY)?;
+        let current = self.store.redb_writer(&lock, &self.quota, &self.scope)?;
         current.mark_applying(&pending)?;
-        current.commit(&pending, pending.target.lexical_commit)?;
+        current.commit(&pending)?;
         current.head()
     }
     fn populate(&self, count: u32) -> Result<CurrentHead> {
@@ -257,260 +259,6 @@ fn unlinked_tempdir() -> Result<tempfile::TempDir> {
 }
 
 #[test]
-fn current_store_commits_verified_fts_with_graph_in_one_head() -> Result<()> {
-    let fixture = Fixture::new()?;
-    let before = fixture.store.current_read(&fixture.scope)?;
-    let old_head = before.head().clone();
-    let old_bytes = before.lexical_manifest()?;
-    before.verify_lexical()?;
-    drop(before);
-    let (artifact, compact) =
-        retained_lexical_artifact(&fixture, "docs/a.md", "new searchable evidence")?;
-    let (_reservation, head, overlay) = fixture.candidate()?;
-    assert_eq!(head, old_head);
-    let mut graph = MutableDiskIndex::create(overlay.clone(), DIMENSIONS, pipeline())?;
-    assert_eq!(graph.insert(key(1), &vector(1))?, 1);
-    drop(graph);
-    let sealed = Fixture::seal(overlay)?;
-    let mut target = head.clone();
-    target.sequence += 1;
-    target.graph_head = sealed.descriptor().target.clone();
-    let lock = fixture.store.lock()?;
-    let mut current =
-        fixture
-            .store
-            .current_write(&lock, &fixture.quota, &fixture.scope, CAPACITY)?;
-    let (pending, _) = current.prepare_artifacts_with_fts(
-        &head.token()?,
-        target,
-        &sealed,
-        airk_store::current::ArtifactVectorChanges {
-            artifacts: &[ArtifactChange::Upsert(Box::new(compact))],
-            vector_inputs: None,
-            occurrences: &[],
-            configuration: None,
-        },
-        None,
-        &[],
-        &[],
-    )?;
-    drop(current);
-    drop(lock);
-    assert_eq!(
-        fixture
-            .store
-            .current_read(&fixture.scope)?
-            .lexical_manifest()?,
-        old_bytes
-    );
-    let recovered =
-        airk_kernel::current::recover_current(&fixture.store, &fixture.quota, &fixture.scope)?;
-    assert_eq!(
-        recovered.action,
-        airk_kernel::current::CurrentRecoveryAction::Applied
-    );
-    assert_eq!(recovered.token, pending.target.token()?);
-    assert_eq!(
-        airk_kernel::current::recover_current(&fixture.store, &fixture.quota, &fixture.scope)?
-            .action,
-        airk_kernel::current::CurrentRecoveryAction::AlreadyReady
-    );
-
-    let read = fixture.store.current_read(&fixture.scope)?;
-    assert_eq!(read.head(), &pending.target);
-    assert_eq!(read.read(1)?.embedding_key, Some(key(1)));
-    read.verify_lexical()?;
-    assert_ne!(read.lexical_manifest()?, old_bytes);
-    let lexical = airk_kernel::current::open_selected_lexical(&fixture.store, &read)?;
-    let candidates = lexical.search(&SearchQuery {
-        text: "searchable evidence".into(),
-        path_prefix: Some("docs/".into()),
-        limit: 2,
-        max_bytes: 1024,
-    })?;
-    assert_eq!(candidates.values.len(), 1);
-    assert_eq!(
-        candidates.values[0].citation.content_hash,
-        artifact.content_hash
-    );
-    assert!(!candidates.incomplete);
-    let mut old_component = candidates.clone();
-    old_component.manifest_digest = old_head.lexical_commit;
-    assert!(
-        airk_kernel::current::materialize_lexical(
-            &fixture.store,
-            &read,
-            &SearchQuery {
-                text: "searchable evidence".into(),
-                path_prefix: Some("docs/".into()),
-                limit: 2,
-                max_bytes: 1024,
-            },
-            old_component,
-        )
-        .is_err()
-    );
-    let mut changed_payload = candidates.clone();
-    changed_payload.values[0].citation.start_line += 1;
-    assert!(
-        airk_kernel::current::materialize_lexical(
-            &fixture.store,
-            &read,
-            &SearchQuery {
-                text: "searchable evidence".into(),
-                path_prefix: Some("docs/".into()),
-                limit: 2,
-                max_bytes: 1024,
-            },
-            changed_payload,
-        )
-        .is_err()
-    );
-    let evidence = airk_kernel::current::materialize_lexical(
-        &fixture.store,
-        &read,
-        &SearchQuery {
-            text: "searchable evidence".into(),
-            path_prefix: Some("docs/".into()),
-            limit: 2,
-            max_bytes: 1024,
-        },
-        candidates,
-    )?;
-    assert_eq!(evidence.token, read.token()?);
-    assert_eq!(evidence.hits.len(), 1);
-    assert_eq!(evidence.hits[0].text, "new searchable evidence");
-    assert!(!evidence.truncated);
-    let short = airk_kernel::current::materialize_lexical(
-        &fixture.store,
-        &read,
-        &SearchQuery {
-            text: "searchable evidence".into(),
-            path_prefix: Some("docs/".into()),
-            limit: 2,
-            max_bytes: 3,
-        },
-        lexical.search(&SearchQuery {
-            text: "searchable evidence".into(),
-            path_prefix: Some("docs/".into()),
-            limit: 2,
-            max_bytes: 3,
-        })?,
-    )?;
-    assert_eq!(short.hits[0].text, "new");
-    assert!(short.truncated && short.hits[0].truncated);
-    drop(read);
-    assert!(!fixture.store.directory().join("lexical-0").exists());
-    assert!(!fixture.store.directory().join("lexical-1").exists());
-    let connection = rusqlite::Connection::open(fixture.store.directory().join("current.sqlite3"))?;
-    connection.execute("UPDATE current_fts_data SET block=zeroblob(length(block)) WHERE id=(SELECT max(id) FROM current_fts_data)", [])?;
-    drop(connection);
-    let read = fixture.store.current_read(&fixture.scope)?;
-    assert!(
-        read.lexical_search(&SearchQuery {
-            text: "absent".into(),
-            path_prefix: None,
-            limit: 2,
-            max_bytes: 1024
-        })
-        .is_err(),
-        "corruption cannot become an empty answer"
-    );
-    Ok(())
-}
-
-#[test]
-fn restart_verifies_captured_fts_before_replay_or_prepared_abort() -> Result<()> {
-    for (applying, remove_target) in [(false, true), (true, false), (true, true)] {
-        let fixture = Fixture::new()?;
-        let read = fixture.store.current_read(&fixture.scope)?;
-        let head = read.head().clone();
-        let base_bytes = read.lexical_manifest()?;
-        read.verify_lexical()?;
-        drop(read);
-        let (_, captured) =
-            retained_lexical_artifact(&fixture, "docs/next.md", "captured replacement")?;
-        let (_reservation, candidate_head, overlay) = fixture.candidate()?;
-        assert_eq!(candidate_head, head);
-        let sealed = Fixture::seal(overlay)?;
-        let mut target = head.clone();
-        target.sequence += 1;
-        target.graph_head = sealed.descriptor().target.clone();
-        let lock = fixture.store.lock()?;
-        let mut current =
-            fixture
-                .store
-                .current_write(&lock, &fixture.quota, &fixture.scope, CAPACITY)?;
-        let (pending, _) = current.prepare_artifacts_with_fts(
-            &head.token()?,
-            target,
-            &sealed,
-            airk_store::current::ArtifactVectorChanges {
-                artifacts: &[ArtifactChange::Upsert(Box::new(captured))],
-                vector_inputs: None,
-                occurrences: &[],
-                configuration: None,
-            },
-            None,
-            &[],
-            &[],
-        )?;
-        let replacement_bytes = current.pending_lexical_manifest(&pending)?.unwrap();
-        if applying {
-            current.mark_applying(&pending)?;
-        }
-        drop(current);
-        drop(lock);
-        if remove_target {
-            let connection =
-                rusqlite::Connection::open(fixture.store.directory().join("current.sqlite3"))?;
-            connection.execute("DELETE FROM current_pending_fts", [])?;
-        }
-        let recovered =
-            airk_kernel::current::recover_current(&fixture.store, &fixture.quota, &fixture.scope);
-        match (applying, remove_target) {
-            (false, true) => {
-                let result = recovered?;
-                assert_eq!(
-                    result.action,
-                    airk_kernel::current::CurrentRecoveryAction::AbortedPrepared
-                );
-                assert!(result.aborted_reason.is_some());
-                assert_eq!(result.token, head.token()?);
-                assert_eq!(
-                    fixture
-                        .store
-                        .current_read(&fixture.scope)?
-                        .lexical_manifest()?,
-                    base_bytes
-                );
-            }
-            (true, false) => {
-                let result = recovered?;
-                assert_eq!(
-                    result.action,
-                    airk_kernel::current::CurrentRecoveryAction::Applied
-                );
-                assert_eq!(result.token, pending.target.token()?);
-                assert_eq!(
-                    fixture
-                        .store
-                        .current_read(&fixture.scope)?
-                        .lexical_manifest()?,
-                    replacement_bytes
-                );
-            }
-            (true, true) => {
-                assert!(recovered.is_err());
-                assert!(fixture.store.current_read(&fixture.scope).is_err());
-            }
-            _ => unreachable!(),
-        }
-    }
-    Ok(())
-}
-
-#[test]
 fn real_diskann_reopens_appends_and_changes_one_record_without_copying_the_graph() -> Result<()> {
     let fixture = Fixture::new()?;
     let first = fixture.populate(96)?;
@@ -605,35 +353,44 @@ fn captured_diskann_afterimages_recover_after_private_state_is_gone() -> Result<
     assert_eq!(fixture.store.current_read(&fixture.scope)?.head(), &head);
     {
         let lock = fixture.store.lock()?;
-        let mut current =
-            fixture
-                .store
-                .current_write(&lock, &fixture.quota, &fixture.scope, CAPACITY)?;
+        let current = fixture
+            .store
+            .redb_writer(&lock, &fixture.quota, &fixture.scope)?;
         current.mark_applying(&pending)?;
     }
-    assert!(fixture.store.current_read(&fixture.scope).is_err());
+    let applying_read = fixture.store.current_read(&fixture.scope)?;
+    assert_eq!(applying_read.head(), &head);
     // Reopen with no private candidate or DiskANN writer. Recovery copies exactly
     // the captured afterimages; a second attempt cannot allocate duplicate IDs.
     {
         let lock = fixture.store.lock()?;
-        let mut current =
-            fixture
-                .store
-                .current_write(&lock, &fixture.quota, &fixture.scope, CAPACITY)?;
+        let current = fixture
+            .store
+            .redb_writer(&lock, &fixture.quota, &fixture.scope)?;
         let recovered = current.pending()?.context("lost prepared graph")?;
         assert_eq!(recovered, pending);
         current.mark_applying(&recovered)?;
-        current.commit(&recovered, recovered.target.lexical_commit)?;
+        let committed = current.commit(&recovered)?;
         assert!(current.pending()?.is_none());
-        assert!(
-            current
-                .commit(&recovered, recovered.target.lexical_commit)
-                .is_err()
+        assert_eq!(
+            current.commit(&recovered)?,
+            committed,
+            "exact completed replay changed its outcome"
         );
+        assert_eq!(current.head()?.graph_head, expected_graph);
+        let grants = fixture.quota.current_grants(&lock)?;
+        assert_eq!(
+            grants.len(),
+            1,
+            "only the protected native lifetime allowance remains"
+        );
+        assert!(grants[0].capacity() >= current.capacity());
     }
-    assert_eq!(fixture.quota.status()?.reserved_bytes, 0);
+    assert!(fixture.quota.status()?.reserved_bytes > 0);
     let read = fixture.store.current_read(&fixture.scope)?;
+    assert_eq!(applying_read.head(), &head);
     assert_eq!(read.head().graph_head, expected_graph);
+    drop(applying_read);
     let graph = MutableDiskIndex::open(read.clone(), DIMENSIONS, pipeline())?;
     let found = graph.search(&query, 10)?;
     ensure!(

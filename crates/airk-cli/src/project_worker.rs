@@ -283,6 +283,7 @@ fn execute(
         }
         JobKind::Recover => WorkPhase::Recovering,
         JobKind::Maintain => WorkPhase::Retiring,
+        JobKind::Compact => WorkPhase::Retiring,
     });
     if kind == JobKind::Recover {
         return Ok(JobOutcome::Succeeded {
@@ -291,6 +292,16 @@ fn execute(
     }
     if kind == JobKind::Maintain {
         return Ok(JobOutcome::Succeeded { revision: None });
+    }
+    if kind == JobKind::Compact {
+        let report = kernel.compact_current_storage()?;
+        return Ok(JobOutcome::Succeeded {
+            revision: Some(airk_core::identity::RevisionToken {
+                incarnation: report.token.incarnation,
+                generation: report.token.sequence,
+                revision: report.token.digest,
+            }),
+        });
     }
     if kind == JobKind::Vectors {
         let selected = retry_semantic_turn(
@@ -348,7 +359,8 @@ fn execute(
         | JobKind::Maintain
         | JobKind::Inspect
         | JobKind::PlanInspect
-        | JobKind::Repair => {
+        | JobKind::Repair
+        | JobKind::Compact => {
             unreachable!("handled outside ordinary execution")
         }
         JobKind::Rebuild => {
@@ -413,6 +425,13 @@ pub async fn run() -> Result<()> {
         &init.runtime,
         registry.incarnation()?,
     )?;
+    let collection = airk_store::service::collection::Collection::initialize(
+        Path::new(&registration.data_root),
+        &registration.root,
+        &registration.collection,
+        airk_kernel::service_broker::new_instance_id()?,
+    )?;
+    collection.reset_preceding_storage(&lease)?;
     #[cfg(unix)]
     crate::unix_guardian::install(
         &init.runtime,
@@ -567,6 +586,32 @@ pub async fn run() -> Result<()> {
                                 observed.guard_digest()? == approved.expected.guard_digest()?,
                                 PlanError::Stale
                             );
+                            if approved.operation == RepairOperation::Compact {
+                                let report = kernel.compact_current_storage_expected(
+                                    approved.expected.publication,
+                                )?;
+                                registry.record_compaction_receipt(
+                                    &job_lease,
+                                    job.id,
+                                    airk_core::service_maintenance::CompactionReceipt {
+                                        token: airk_core::identity::RevisionToken {
+                                            incarnation: report.token.incarnation,
+                                            generation: report.token.sequence,
+                                            revision: report.token.digest,
+                                        },
+                                        bytes_before: report.bytes_before,
+                                        bytes_after: report.bytes_after,
+                                        bytes_reclaimed: report.bytes_reclaimed,
+                                    },
+                                )?;
+                                return Ok(JobOutcome::Succeeded {
+                                    revision: Some(airk_core::identity::RevisionToken {
+                                        incarnation: report.token.incarnation,
+                                        generation: report.token.sequence,
+                                        revision: report.token.digest,
+                                    }),
+                                });
+                            }
                             if matches!(
                                 approved.operation,
                                 RepairOperation::Reconcile | RepairOperation::Rebuild

@@ -121,11 +121,11 @@ fn preserved(backend: &Fake) -> Result<()> {
 fn review_is_read_only_removal_is_scoped_and_completed_replay_never_changes_a_later_registration()
 -> Result<()> {
     let (_owner, control, backend) = fixture()?;
-    let before = fs::read(control.join("service-1.4.sqlite3"))?;
+    let before = fs::read(control.join("service-1.4.airk"))?;
     let review = inspect(&Journal::saved(&control)?, &backend)?;
     let approval = review.approval.context("approval missing")?;
     assert!(!exists(&control.join("legacy-retirement-1.4"))?);
-    assert_eq!(fs::read(control.join("service-1.4.sqlite3"))?, before);
+    assert_eq!(fs::read(control.join("service-1.4.airk"))?, before);
     assert_eq!(backend.disable_calls.get(), 0);
     preserved(&backend)?;
     let result = remove(&control, &backend, approval)?;

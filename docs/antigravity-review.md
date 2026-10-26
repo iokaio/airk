@@ -134,12 +134,12 @@ AIRK collects zero remote telemetry. Local usage recording ([`usage.rs`](../crat
 
 ### SQLite Windows Path & URI Encoding
 SQLite under Windows frequently encounters URI parser quirks when dealing with extended path prefixes (`\\?\`) and UNC drives.
-* [`open_immutable_catalog`](../crates/airk-store/src/sqlite.rs#L156-L169) percent-encodes every byte of the native path into the `file:` URI. This bypasses SQLite's URI parser pitfalls without mangling Windows extended paths.
+* [`open_immutable_catalog`](https://github.com/iokaio/airk/blob/25dfeb56f4a87e3c8f598371859e1d42e3ff3c10/crates/airk-store/src/sqlite.rs#L156-L169) percent-encodes every byte of the native path into the `file:` URI. This bypasses SQLite's URI parser pitfalls without mangling Windows extended paths.
 * [`managed_data_path`](../crates/airk-kernel/src/lib.rs#L64-L96) resolves ancestors to locate the canonical `\\?\` extended prefix without mutating disk on read-only open calls.
 
 ### Concurrency, Leases, and Retirement
-* **WAL Mode & Busy Handling**: All SQLite databases use WAL mode with explicit busy timeouts (2s) and query deadlines (250ms progress handler) in [`connect_root_once`](../crates/airk-store/src/sqlite.rs#L209-L234).
-* **Protocol Negotiation**: [`retry_wal_protocol`](../crates/airk-store/src/sqlite.rs#L185-L203) retries reads encountering `SQLITE_PROTOCOL` during concurrent reader connection churn without risking ambiguous mutation replays.
+* **WAL Mode & Busy Handling**: All SQLite databases use WAL mode with explicit busy timeouts (2s) and query deadlines (250ms progress handler) in [`connect_root_once`](https://github.com/iokaio/airk/blob/25dfeb56f4a87e3c8f598371859e1d42e3ff3c10/crates/airk-store/src/sqlite.rs#L209-L234).
+* **Protocol Negotiation**: [`retry_wal_protocol`](https://github.com/iokaio/airk/blob/25dfeb56f4a87e3c8f598371859e1d42e3ff3c10/crates/airk-store/src/sqlite.rs#L185-L203) retries reads encountering `SQLITE_PROTOCOL` during concurrent reader connection churn without risking ambiguous mutation replays.
 * **Two-Phase Generation Retirement**: In [`maintenance.rs`](../crates/airk-store/src/maintenance.rs), retired index generations transition through durable SQLite-backed intent stages (`Detached` -> `PhysicalRemovalComplete` -> `IntentComplete`). Interruptions at any boundary are recoverable and idempotent.
 * **Reader Leases**: Active search queries and catalog readers hold shared OS file locks on generation lease files, ensuring running MCP workers are never stripped of files during background garbage collection.
 
@@ -163,7 +163,7 @@ SQLite under Windows frequently encounters URI parser quirks when dealing with e
 While the codebase is exceptionally robust, the following minor areas are surfaced for consideration:
 
 ### 1. Defensive Path Unwraps in Maintenance Routines
-* **Location**: [`maintenance.rs`](../crates/airk-store/src/maintenance.rs#L508-L511), [`maintenance_legacy.rs`](../crates/airk-store/src/maintenance_legacy.rs#L204).
+* **Location**: [`maintenance.rs`](../crates/airk-store/src/maintenance.rs#L508-L511), [`maintenance_legacy.rs`](https://github.com/iokaio/airk/blob/25dfeb56f4a87e3c8f598371859e1d42e3ff3c10/crates/airk-store/src/maintenance_legacy.rs#L204).
 * **Observation**: Several helper routines call `.parent().unwrap()` or `path.file_name().unwrap().to_str().unwrap()`.
 * **Detail**: Although paths processed in these functions are constructed from valid internal generation directories, calling `.to_str().unwrap()` on unknown disk entries could theoretically panic if a legacy directory contains non-UTF-8 characters.
 * **Recommendation**: Replace `.to_str().unwrap()` with `.to_string_lossy()` or return `.context("invalid path entry")?` to preserve the zero-panic guarantee on disk anomalies.

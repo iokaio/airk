@@ -42,6 +42,24 @@ class StorageEngineGate(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "old_engine"):
             storage.inspect_manifest(manifest, "fixture/Cargo.toml")
 
+    def test_dead_source_adapters_and_python_oracles_are_rejected(self):
+        for name, payload in (("crates/retired.rs", "use rusqlite::Connection;"),
+                              ("crates/hidden.rs", 'db.execute_batch("SELECT 1")'),
+                              ("scripts/oracle.py", "import sqlite3")):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                root=self.root(directory,["redb"])
+                target=root/name
+                target.parent.mkdir(parents=True,exist_ok=True)
+                target.write_text(payload,encoding="utf-8")
+                with self.assertRaisesRegex(ValueError,"Retired SQLite code"):
+                    storage.inspect_sources(root)
+
+    def test_cleanup_filenames_and_generic_sql_language_fixtures_are_allowed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=self.root(directory,["redb"])
+            (root/"crates/cleanup.rs").write_text('let old = "current.sqlite3"; let syntax = "SELECT value FROM fixture";',encoding="utf-8")
+            self.assertEqual(storage.inspect_sources(root),1)
+
     def test_redb_graph_requires_no_network_or_feature_filtering(self):
         with tempfile.TemporaryDirectory() as directory:
             root = self.root(directory, ["redb"])

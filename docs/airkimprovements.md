@@ -47,7 +47,7 @@ Live SHA-256 values matched AIRK citations for the inspected retrieval, kernel, 
 |---|---|
 | [persistent.rs](https://github.com/iokaio/airk/blob/f9aa5168829dc8794d241644fb8483715c2dd58a/crates/airk-retrieval/src/persistent.rs), read lines 1146–1291 | Source `0f1f18f255e05ed68ea86aaf5320482317d39a88544af590fbfaebb6cf71344e`; validator `d2f27c0732091665688f42106e1f6097512c8e2d655ff17418062dd8176d5b6e` |
 | [kernel lib.rs](../crates/airk-kernel/src/lib.rs), read lines 661–824 | Source `9d185281f08c5ac8b3c05f4857e29eb3bfba1e2950ccaf4a44783699379b034c`; validator `1959dfdcce9fd662d5a7e297aa0e6cc28817395e36b39dfc7cf5880bc8443476` |
-| [sqlite.rs](../crates/airk-store/src/sqlite.rs), read lines 288–363 | Source `fd12c33153fb9411de58343a38db9d9ee44880190b1c0b48792834dca7bb34d5`; validator `20776cf1866c9f9002945b6e705776d87690a6be4111c19f94dd6c92ca4320a3` |
+| [sqlite.rs](https://github.com/iokaio/airk/blob/25dfeb56f4a87e3c8f598371859e1d42e3ff3c10/crates/airk-store/src/sqlite.rs), read lines 288–363 | Source `fd12c33153fb9411de58343a38db9d9ee44880190b1c0b48792834dca7bb34d5`; validator `20776cf1866c9f9002945b6e705776d87690a6be4111c19f94dd6c92ca4320a3` |
 
 Line numbers below describe this working tree and may move after implementation. All corruption experiments used newly generated fictional fixtures in isolated temporary directories, with usage recording disabled to isolate retrieval behavior; existing workspace/index data was not modified.
 
@@ -111,7 +111,7 @@ Experiment: hard-link a temporary `.profile` to a separate temporary text file a
 
 ### F06 — P2: Keep usage I/O off async MCP executor threads
 
-**Code-backed improvement.** MCP handlers move retrieval into `spawn_blocking`, but [usage-span setup](../crates/airk-mcp/src/lib.rs#L351) runs before that dispatch and [render](../crates/airk-mcp/src/lib.rs#L809) calls `finish_usage` synchronously afterward. [Usage setup/finalization](../crates/airk-kernel/src/usage.rs#L169) opens state, validates binding, calculates baselines, and writes SQLite. The [baseline path](../crates/airk-store/src/sqlite.rs#L1785) can authenticate a generation before reading compact size rows.
+**Code-backed improvement.** MCP handlers move retrieval into `spawn_blocking`, but [usage-span setup](../crates/airk-mcp/src/lib.rs#L351) runs before that dispatch and [render](../crates/airk-mcp/src/lib.rs#L809) calls `finish_usage` synchronously afterward. [Usage setup/finalization](../crates/airk-kernel/src/usage.rs#L169) opens state, validates binding, calculates baselines, and writes SQLite. The [baseline path](https://github.com/iokaio/airk/blob/25dfeb56f4a87e3c8f598371859e1d42e3ff3c10/crates/airk-store/src/sqlite.rs#L1785) can authenticate a generation before reading compact size rows.
 
 **Impact:** slow storage and usage-lock contention can occupy runtime threads and delay unrelated protocol requests. `spawn_blocking` around retrieval alone does not isolate the whole blocking operation. This review did not measure executor starvation under sustained load.
 
@@ -121,7 +121,7 @@ Experiment: hard-link a temporary `.profile` to a separate temporary text file a
 
 ### F07 — P2: Measure and reduce repeated integrity-verification work safely
 
-**Code-backed improvement.** [Exact-fact transactions](../crates/airk-store/src/sqlite.rs#L292) call `verify_v2_for_query`. [That verifier](../crates/airk-store/src/blobs.rs#L568) rehashes component bytes even on a semantic-validation cache hit. [Usage size lookup](../crates/airk-store/src/sqlite.rs#L1840) invokes the same verification again. Model-bearing generations are excluded from the [semantic-validation cache](../crates/airk-store/src/verified_cache.rs#L35), retaining additional full validation work.
+**Code-backed improvement.** [Exact-fact transactions](https://github.com/iokaio/airk/blob/25dfeb56f4a87e3c8f598371859e1d42e3ff3c10/crates/airk-store/src/sqlite.rs#L292) call `verify_v2_for_query`. [That verifier](../crates/airk-store/src/blobs.rs#L568) rehashes component bytes even on a semantic-validation cache hit. [Usage size lookup](https://github.com/iokaio/airk/blob/25dfeb56f4a87e3c8f598371859e1d42e3ff3c10/crates/airk-store/src/sqlite.rs#L1840) invokes the same verification again. Model-bearing generations are excluded from the [semantic-validation cache](https://github.com/iokaio/airk/blob/25dfeb56f4a87e3c8f598371859e1d42e3ff3c10/crates/airk-store/src/verified_cache.rs#L35), retaining additional full validation work.
 
 **Impact:** a small result can require work proportional to generation/model size, potentially more than once per outer request. The 250 ms SQL progress deadline starts after verification and does not bound those reads. Compact source-size rows improve baseline payload work but do not remove component authentication costs.
 
@@ -157,7 +157,7 @@ Experiment: hard-link a temporary `.profile` to a separate temporary text file a
 
 ### F11 — P3: Split large modules along existing responsibilities
 
-**Maintainability improvement.** The reviewed tree has 250 Rust files, 37 extension TypeScript files, and 53 Python scripts/tests. Large modules include [SQLite storage](../crates/airk-store/src/sqlite.rs) at 2,640 lines, [history](../crates/airk-store/src/history.rs) at 2,271, [maintenance](../crates/airk-store/src/maintenance.rs) at 1,972, and the [extension controller](../packages/vscode/src/extension.ts) at 1,123. Line count is a navigation signal, not proof of defects.
+**Maintainability improvement.** The reviewed tree has 250 Rust files, 37 extension TypeScript files, and 53 Python scripts/tests. Large modules include [SQLite storage](https://github.com/iokaio/airk/blob/25dfeb56f4a87e3c8f598371859e1d42e3ff3c10/crates/airk-store/src/sqlite.rs) at 2,640 lines, [history](../crates/airk-store/src/history.rs) at 2,271, [maintenance](../crates/airk-store/src/maintenance.rs) at 1,972, and the [extension controller](../packages/vscode/src/extension.ts) at 1,123. Line count is a navigation signal, not proof of defects.
 
 **Implementation:** extract SQLite publication, query, and usage-size operations into private modules; separate extension collection lifecycle, setup, and dashboard commands. Consolidate repeated request validation/dispatch only where doing so preserves tool-specific contracts. Keep public APIs stable during the split and do not add crates without an independent dependency purpose.
 

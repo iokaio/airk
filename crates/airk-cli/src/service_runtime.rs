@@ -127,8 +127,21 @@ pub async fn serve_with_idle(root: &Path, idle_grace: Option<Duration>) -> Resul
     crate::runtime_install::validate_control_root(root)?;
     local_ipc::prepare_root(root)?;
     let _ownership = Arc::new(airk_store::service::ServiceLease::acquire(root)?);
-    crate::runtime_install::record_control_root(&_ownership)?;
+    // The old owner must release its service/worker/helper locks before this
+    // metadata-authenticated reset can remove any fixed derived database image.
     if root.join("service-1.4.sqlite3").try_exists()?
+        || root.join("service-1.4.fresh-setup.json").try_exists()?
+    {
+        let namespace = airk_store::service::registry::fresh_setup_namespaces(root)?
+            .map(|(_, next)| next)
+            .unwrap_or(new_instance_id()?);
+        if !root.join("service-1.4.airk").try_exists()? {
+            airk_store::service::registry::reset_owned_sqlite(root, &_ownership, namespace)?;
+        }
+        airk_store::service::registry::ServiceRegistry::open(root, new_instance_id()?)?;
+    }
+    crate::runtime_install::record_control_root(&_ownership)?;
+    if root.join("service-1.4.airk").try_exists()?
         && let Ok(registry) =
             airk_store::service::registry::ServiceRegistry::open(root, new_instance_id()?)
     {

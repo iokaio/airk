@@ -10,6 +10,21 @@ use std::{
 };
 
 const RECORDS: TableDefinition<&str, &[u8]> = TableDefinition::new("ledger");
+pub(crate) const MAX_FILE_BYTES: u64 = 16 << 40;
+type GrowthAdmitter = dyn Fn(u64, u64) -> io::Result<u64> + Send + Sync;
+#[derive(Clone)]
+enum AdmissionPressure {
+    Quota(crate::quota::QuotaPressure),
+    Physical(crate::capacity::StoragePressure),
+}
+impl AdmissionPressure {
+    fn attach(self, error: anyhow::Error) -> anyhow::Error {
+        match self {
+            Self::Quota(pressure) => error.context(pressure),
+            Self::Physical(pressure) => error.context(pressure),
+        }
+    }
+}
 
 fn validate_file(path: &Path, capacity: u64) -> Result<()> {
     let metadata = fs::symlink_metadata(path)?;
@@ -103,19 +118,125 @@ pub(crate) fn read_with<T: DeserializeOwned, R>(
     inspect(state, &transaction)
 }
 
+type Admission<'a> = (
+    Option<&'a crate::quota::Reservation>,
+    Option<(&'a crate::quota::Quota, &'a Path)>,
+);
 fn update<T: Serialize + DeserializeOwned, R>(
     file: std::fs::File,
     kind: &str,
     capacity: u64,
     maximum: usize,
+    admission: Admission<'_>,
     initial: Option<T>,
     mutate: impl FnOnce(&mut T, &redb::WriteTransaction) -> Result<R>,
 ) -> Result<R> {
+    let (reservation, root_quota) = admission;
     let mut builder = redb::Builder::new();
     builder.set_cache_size(1 << 20);
     let recovery_file = file.try_clone()?;
-    let database =
-        builder.create_with_backend(crate::current::kv::AirkBackend::new(file, capacity)?)?;
+    let file_length = file.metadata()?.len();
+    let initial_capacity = file_length.max(65536);
+    ensure!(
+        initial_capacity <= capacity,
+        "ledger file exceeds admitted capacity"
+    );
+    let growth_pressure = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let high_water = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(initial_capacity));
+    let growth_holds = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let admitter: Option<std::sync::Arc<GrowthAdmitter>> = if reservation.is_some()
+        || root_quota.is_some()
+    {
+        let reservation = reservation.cloned();
+        let root_quota = root_quota.map(|(quota, path)| (quota.clone(), path.to_path_buf()));
+        let holds = growth_holds.clone();
+        let pressure_witness = growth_pressure.clone();
+        let admitted_witness = high_water.clone();
+        Some(std::sync::Arc::new(move |end, admitted| {
+            let required = end.saturating_sub(admitted);
+            const GRANULE: u64 = 64 << 10;
+            let rounded = required
+                .checked_add(GRANULE - 1)
+                .map(|value| value / GRANULE * GRANULE)
+                .unwrap_or(required);
+            let admission = (|| -> Result<u64> {
+                if let Some((quota, path)) = &root_quota {
+                    let grant = quota.reserve_root_available(
+                        rounded.min(capacity.saturating_sub(admitted)).max(required),
+                    )?;
+                    let charge = grant.limit();
+                    if charge < required {
+                        return Err(crate::quota::QuotaPressure {
+                            scope: crate::quota::PressureScope::Root,
+                            required_bytes: required,
+                            available_bytes: charge,
+                            protected_bytes: None,
+                        }
+                        .into());
+                    }
+                    grant.charge(charge)?;
+                    grant.bind_root_file_growth(path, admitted)?;
+                    holds
+                        .lock()
+                        .map_err(|_| anyhow::anyhow!("ledger growth grants poisoned"))?
+                        .push(grant);
+                    Ok(charge)
+                } else {
+                    let reservation = reservation.as_ref().context("ledger admission missing")?;
+                    let charge = rounded
+                        .min(reservation.remaining())
+                        .min(capacity.saturating_sub(admitted))
+                        .max(required);
+                    reservation.charge(charge)?;
+                    Ok(charge)
+                }
+            })();
+            admission
+                .map(|charge| {
+                    let next = admitted.saturating_add(charge);
+                    admitted_witness.fetch_max(next, std::sync::atomic::Ordering::Release);
+                    next
+                })
+                .map_err(|error| {
+                    if let Some(pressure) = error.downcast_ref::<crate::quota::QuotaPressure>() {
+                        if let Ok(mut witness) = pressure_witness.lock() {
+                            *witness = Some(AdmissionPressure::Quota(pressure.clone()));
+                        }
+                        std::io::Error::other(crate::current::kv::ReservationGrowthDenied(
+                            pressure.clone(),
+                        ))
+                    } else if let Some(pressure) =
+                        error.downcast_ref::<crate::capacity::StoragePressure>()
+                    {
+                        if let Ok(mut witness) = pressure_witness.lock() {
+                            *witness = Some(AdmissionPressure::Physical(pressure.clone()));
+                        }
+                        std::io::Error::other(error)
+                    } else {
+                        std::io::Error::other(error)
+                    }
+                })
+        }))
+    } else {
+        None
+    };
+    let backend = crate::current::kv::AirkBackend::new_growing(
+        file,
+        initial_capacity,
+        capacity,
+        admitter.clone(),
+    )?;
+    let database = builder.create_with_backend(backend).map_err(|error| {
+        let error = anyhow::Error::new(error);
+        match growth_pressure
+            .lock()
+            .ok()
+            .and_then(|pressure| pressure.clone())
+        {
+            Some(pressure) => pressure.attach(error),
+            None => error,
+        }
+    })?;
     let outcome = (|| -> Result<R> {
         let mut transaction = database.begin_write()?;
         transaction.set_durability(Durability::Immediate)?;
@@ -158,12 +279,26 @@ fn update<T: Serialize + DeserializeOwned, R>(
     })();
     drop(database);
     if let Err(error) = outcome {
+        let error = if let Ok(mut pressure) = growth_pressure.lock()
+            && let Some(pressure) = pressure.take()
+        {
+            pressure.attach(error)
+        } else {
+            error
+        };
         // redb marks the open image as requiring repair after an I/O failure.
         // Reconcile under the same caller-held lifecycle lock and admission so
         // retained read-only opens are usable after rejected growth.
-        let recovery = builder.create_with_backend(crate::current::kv::AirkBackend::new(
+        let recovered_length = recovery_file
+            .metadata()?
+            .len()
+            .max(high_water.load(std::sync::atomic::Ordering::Acquire))
+            .max(65536);
+        let recovery = builder.create_with_backend(crate::current::kv::AirkBackend::new_growing(
             recovery_file,
+            recovered_length,
             capacity,
+            admitter,
         )?);
         return match recovery {
             Ok(recovered) => {
@@ -183,13 +318,20 @@ pub(crate) fn write<T: Serialize + DeserializeOwned, R>(
     kind: &str,
     capacity: u64,
     maximum: usize,
+    reservation: &crate::quota::Reservation,
     mutate: impl FnOnce(&mut T) -> Result<R>,
 ) -> Result<R> {
     validate_file(path, capacity)?;
     let file = OpenOptions::new().read(true).write(true).open(path)?;
-    update(file, kind, capacity, maximum, None, |state, _| {
-        mutate(state)
-    })
+    update(
+        file,
+        kind,
+        capacity,
+        maximum,
+        (Some(reservation), None),
+        None,
+        |state, _| mutate(state),
+    )
 }
 
 pub(crate) fn write_with<T: Serialize + DeserializeOwned, R>(
@@ -197,11 +339,62 @@ pub(crate) fn write_with<T: Serialize + DeserializeOwned, R>(
     kind: &str,
     capacity: u64,
     maximum: usize,
+    reservation: &crate::quota::Reservation,
     mutate: impl FnOnce(&mut T, &redb::WriteTransaction) -> Result<R>,
 ) -> Result<R> {
     validate_file(path, capacity)?;
     let file = OpenOptions::new().read(true).write(true).open(path)?;
-    update(file, kind, capacity, maximum, None, mutate)
+    update(
+        file,
+        kind,
+        capacity,
+        maximum,
+        (Some(reservation), None),
+        None,
+        mutate,
+    )
+}
+
+/// Shared metadata files admit each physical extension directly against root
+/// quota. Their decoded record budget is independent of allocator/CoW overhead.
+pub(crate) fn write_root_growing<T: Serialize + DeserializeOwned, R>(
+    path: &Path,
+    kind: &str,
+    maximum: usize,
+    quota: &crate::quota::Quota,
+    mutate: impl FnOnce(&mut T) -> Result<R>,
+) -> Result<R> {
+    let capacity = MAX_FILE_BYTES;
+    validate_file(path, capacity)?;
+    let file = OpenOptions::new().read(true).write(true).open(path)?;
+    update(
+        file,
+        kind,
+        capacity,
+        maximum,
+        (None, Some((quota, path))),
+        None,
+        |state, _| mutate(state),
+    )
+}
+
+pub(crate) fn create_root_growing<T: Serialize + DeserializeOwned>(
+    path: &Path,
+    kind: &str,
+    maximum: usize,
+    quota: &crate::quota::Quota,
+    state: T,
+) -> Result<()> {
+    let seed = quota.reserve_root(65536)?;
+    create_admitted(
+        path,
+        kind,
+        MAX_FILE_BYTES,
+        maximum,
+        &seed,
+        Some(quota),
+        state,
+    )
 }
 
 pub(crate) fn create<T: Serialize + DeserializeOwned>(
@@ -209,6 +402,18 @@ pub(crate) fn create<T: Serialize + DeserializeOwned>(
     kind: &str,
     capacity: u64,
     maximum: usize,
+    reservation: &crate::quota::Reservation,
+    state: T,
+) -> Result<()> {
+    create_admitted(path, kind, capacity, maximum, reservation, None, state)
+}
+fn create_admitted<T: Serialize + DeserializeOwned>(
+    path: &Path,
+    kind: &str,
+    capacity: u64,
+    maximum: usize,
+    reservation: &crate::quota::Reservation,
+    root_quota: Option<&crate::quota::Quota>,
     state: T,
 ) -> Result<()> {
     ensure!(!path.try_exists()?, "ledger already exists");
@@ -221,6 +426,10 @@ pub(crate) fn create<T: Serialize + DeserializeOwned>(
         empty.len() as u64 <= capacity,
         "empty ledger exceeds admitted capacity"
     );
+    if root_quota.is_some() {
+        reservation.bind_root_file_growth(temporary.path(), 0)?;
+    }
+    reservation.charge((empty.len() as u64).max(65536).min(capacity))?;
     temporary.as_file_mut().write_all(empty)?;
     temporary.as_file().sync_all()?;
     update(
@@ -228,6 +437,14 @@ pub(crate) fn create<T: Serialize + DeserializeOwned>(
         kind,
         capacity,
         maximum,
+        (
+            if root_quota.is_none() {
+                Some(reservation)
+            } else {
+                None
+            },
+            root_quota.map(|quota| (quota, temporary.path())),
+        ),
         Some(state),
         |_, _| Ok(()),
     )?;
@@ -239,7 +456,131 @@ pub(crate) fn create<T: Serialize + DeserializeOwned>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::quota::Quota;
     use std::collections::BTreeMap;
+    #[test]
+    fn physical_headroom_failure_keeps_its_typed_code_across_redb_recovery() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let quota = Quota::open(root.path())?;
+        let path = root.path().join("headroom.airk");
+        create_root_growing(
+            &path,
+            "headroom-fixture/1",
+            1 << 20,
+            &quota,
+            Vec::<String>::new(),
+        )?;
+        let mock = crate::capacity::test_growth_headroom(root.path(), 4096)?;
+        let denied = write_root_growing(
+            &path,
+            "headroom-fixture/1",
+            1 << 20,
+            &quota,
+            |state: &mut Vec<String>| {
+                let mut seed = 9u32;
+                let text = (0..262144)
+                    .map(|_| {
+                        seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                        char::from(b'a' + ((seed >> 24) % 26) as u8)
+                    })
+                    .collect::<String>();
+                state.push(text);
+                Ok(())
+            },
+        );
+        let error = denied.expect_err("mocked physical headroom must reject real growth");
+        assert_eq!(
+            crate::capacity::storage_pressure_code(&error),
+            Some("physical_storage_headroom"),
+            "{error:#}"
+        );
+        assert!(
+            error
+                .downcast_ref::<crate::capacity::StoragePressure>()
+                .is_some()
+        );
+        drop(mock);
+        let retained: Vec<String> = read(&path, "headroom-fixture/1", MAX_FILE_BYTES, 1 << 20)?;
+        assert!(retained.is_empty());
+        Ok(())
+    }
+    #[test]
+    fn root_ledger_growth_retries_preserve_state_under_actual_root_limits() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let quota = Quota::open(directory.path())?;
+        let mut policy = quota.policy()?;
+        policy.root_bytes = 5 << 20;
+        quota.configure(policy)?;
+        let path = directory.path().join("growing-root.airk");
+        create_root_growing(
+            &path,
+            "root-growth-fixture/1",
+            4 << 20,
+            &quota,
+            Vec::<String>::new(),
+        )?;
+        let mut seed = 7u32;
+        for count in [16, 40, 72] {
+            let mut values = Vec::new();
+            for _ in 0..count {
+                let mut value = String::with_capacity(32768);
+                for _ in 0..32768 {
+                    seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                    value.push(char::from(b'a' + ((seed >> 24) % 26) as u8));
+                }
+                values.push(value);
+            }
+            let attempt = write_root_growing(
+                &path,
+                "root-growth-fixture/1",
+                4 << 20,
+                &quota,
+                |state: &mut Vec<String>| {
+                    *state = values.clone();
+                    Ok(())
+                },
+            );
+            if let Err(error) = attempt {
+                let pressure = error
+                    .downcast_ref::<crate::quota::QuotaPressure>()
+                    .context("expected typed root admission failure")?;
+                assert!(matches!(pressure.scope, crate::quota::PressureScope::Root));
+                let retained: Vec<String> =
+                    read(&path, "root-growth-fixture/1", MAX_FILE_BYTES, 4 << 20)?;
+                assert_eq!(
+                    retained.len(),
+                    match count {
+                        16 => 0,
+                        40 => 16,
+                        _ => 40,
+                    }
+                );
+                let mut policy = quota.policy()?;
+                policy.root_bytes += pressure
+                    .required_bytes
+                    .saturating_sub(pressure.available_bytes)
+                    + 65536;
+                quota.configure(policy)?;
+                write_root_growing(
+                    &path,
+                    "root-growth-fixture/1",
+                    4 << 20,
+                    &quota,
+                    |state: &mut Vec<String>| {
+                        *state = values;
+                        Ok(())
+                    },
+                )?;
+            }
+            let saved: Vec<String> = read(&path, "root-growth-fixture/1", MAX_FILE_BYTES, 4 << 20)?;
+            assert_eq!(saved.len(), count);
+            let status = quota.status()?;
+            assert_eq!(status.reserved_bytes, 0);
+            assert!(status.used_bytes <= status.root_limit_bytes);
+        }
+        assert!(fs::metadata(&path)?.len() > 2 << 20);
+        Ok(())
+    }
     #[test]
     fn failed_update_preserves_committed_state_and_read_is_scoped() -> Result<()> {
         let directory = tempfile::tempdir()?;
@@ -249,19 +590,72 @@ mod tests {
             "fixture/1",
             1 << 20,
             65536,
+            &Quota::open(directory.path())?.reserve_root(1 << 20)?,
             BTreeMap::from([("value".to_string(), 7u64)]),
         )?;
-        let result: Result<()> =
-            write::<BTreeMap<String, u64>, _>(&path, "fixture/1", 1 << 20, 65536, |state| {
+        let reservation = Quota::open(directory.path())?.reserve_root(1 << 20)?;
+        let result: Result<()> = write::<BTreeMap<String, u64>, _>(
+            &path,
+            "fixture/1",
+            1 << 20,
+            65536,
+            &reservation,
+            |state| {
                 state.insert("value".into(), 8);
                 anyhow::bail!("fixture abort")
-            });
+            },
+        );
         assert!(result.is_err());
         assert_eq!(
             read::<BTreeMap<String, u64>>(&path, "fixture/1", 1 << 20, 65536)?["value"],
             7
         );
         assert!(read::<BTreeMap<String, u64>>(&path, "foreign/1", 1 << 20, 65536).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn ledger_growth_charges_actual_high_water_within_root_reservation() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let quota = Quota::open(directory.path())?;
+        let reservation = quota.reserve_root(1 << 20)?;
+        let path = directory.path().join("fixture.airk");
+        create(
+            &path,
+            "growing-fixture/1",
+            1 << 20,
+            1 << 20,
+            &reservation,
+            BTreeMap::<String, String>::new(),
+        )?;
+        let before = fs::metadata(&path)?.len();
+        let large = (0..80)
+            .map(|index| {
+                let mut value = String::with_capacity(2048);
+                let mut seed = index as u32 + 1;
+                for _ in 0..1024 {
+                    seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                    value.push(char::from(b'a' + ((seed >> 24) % 26) as u8));
+                }
+                (index.to_string(), value)
+            })
+            .collect::<BTreeMap<_, _>>();
+        write(
+            &path,
+            "growing-fixture/1",
+            1 << 20,
+            1 << 20,
+            &reservation,
+            |state: &mut BTreeMap<String, String>| {
+                *state = large;
+                Ok(())
+            },
+        )?;
+        let after = fs::metadata(&path)?.len();
+        assert!(after > before);
+        assert!(after <= 1 << 20);
+        assert!(reservation.charged() >= after - before);
+        assert!(reservation.charged() < reservation.limit());
         Ok(())
     }
 }

@@ -72,7 +72,7 @@ impl CurrentGrant {
     }
 
     /// Requires the caller's exclusive current gate and a settled/absent pending
-    /// transaction. No active SQLite transaction or connection mutex may be held here.
+    /// transaction. No active database transaction or handle mutex may be held here.
     pub fn release(self, writer: &crate::WriterLock) -> Result<()> {
         validate_writer(&self.quota, writer, &self.record.scope.collection)?;
         let _lock = self.quota.lock()?;
@@ -113,12 +113,12 @@ impl Quota {
         )?;
         ensure!(
             record.scope == *scope && record.bytes >= minimum,
-            "missing or insufficient service WAL recovery allowance"
+            "missing or insufficient native storage recovery allowance"
         );
         Ok(record.bytes)
     }
     /// Call under lifecycle -> collection writer -> exclusive current gate. The
-    /// ledger lock is released before callers start any SQLite transaction.
+    /// ledger lock is released before callers start any native database transaction.
     pub fn reserve_current(
         &self,
         writer: &crate::WriterLock,
@@ -325,9 +325,11 @@ pub(super) fn records(
     Ok(read_records(quota, cleanup, deadline)?
         .into_iter()
         .map(|record| LiveRecord {
+            current_scope: Some(record.scope.clone()),
             record: Record {
                 collection: record.scope.collection,
                 bytes: record.bytes,
+                backing: None,
             },
         })
         .collect())

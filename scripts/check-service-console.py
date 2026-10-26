@@ -1,13 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 """Exercise installed console lifecycle and crash recovery in one owned offline fixture; never build a VSIX."""
 import argparse
-from contextlib import closing
 import hashlib
 import importlib.util
 import json
 import os
 from pathlib import Path
-import sqlite3
 import subprocess
 import tempfile
 import time
@@ -124,11 +122,9 @@ def main():
             command.stdin.close()
             deadline = time.monotonic() + 60
             while True:
-                try:
-                    with closing(sqlite3.connect((control / "service-1.4.sqlite3").as_uri() + "?mode=ro", uri=True, timeout=0.05)) as connection:
-                        row = connection.execute("SELECT phase FROM service_lifecycle WHERE phase='starting'").fetchone()
-                except sqlite3.OperationalError:
-                    row = None
+                observed = subprocess.run([str(binary), "runtime", "inspect", "--install-dir", str(install)],
+                    capture_output=True, encoding="utf-8", env=environment, timeout=10, creationflags=flags)
+                row = observed.returncode == 0 and (json.loads(observed.stdout).get("lifecycle", {}).get("pending") or {}).get("phase") == "starting"
                 if row:
                     command.kill()
                     command.wait(timeout=10)

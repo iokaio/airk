@@ -106,3 +106,17 @@ test('automatic reopen keeps a user-selected replacement index location and manu
         assert.ok(f.writes.some(value=>value.configure_watch?.enabled===false));
     }finally{await f.close();}
 });
+
+test('1.4.4 activation repeats selected registration and full indexing once after native storage reset',async context=>{
+    const f=await serviceTestHost(context,{automatic:true,cutover:true});
+    try{
+        assert.ok(f.calls.includes('upgrade-applied'));assert.equal(f.binding.version,'1.4.5');
+        assert.equal(f.registrations.size,1);
+        const selected=[...f.registrations.values()][0];
+        assert.equal(selected.data_root,require('node:path').join(f.root,'data'));assert.equal(selected.collection,'Source-0');
+        assert.deepEqual(f.writes.filter(value=>value.enqueue).map(value=>value.enqueue.kind),['model_setup','index']);
+        assert.ok(f.progressRuns.some(run=>run.messages.some(value=>value.includes('fresh registration and full indexing'))));
+        const count=f.writes.length;await f.refreshFolders();assert.equal(f.writes.length,count);
+        assert.equal((await f.api.getServerDefinitions()).length,1);
+    }finally{await f.close();}
+});
