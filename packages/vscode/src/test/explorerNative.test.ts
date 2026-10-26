@@ -4,6 +4,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { test } from 'node:test';
 import { EvidenceClient } from '../explorerEvidence';
+import { liveCheck, sourceFile } from '../explorerSource';
 import { probeMcp } from '../native';
 import { record } from '../serviceClient';
 import { NativeServiceFixture } from './nativeServiceFixture';
@@ -33,6 +34,13 @@ test('the Explorer evidence session reads one pinned publication through the ver
         const passage = await client.call('airk_read_file', { path: 'session.ts', start_line: 1, end_line: 1 }, { timeout: 60000 });
         assert.equal(passage.publication, token);
         await assert.rejects(client.call('airk_read_file', { path: '../outside.ts', start_line: 1, end_line: 1 }, { timeout: 60000 }));
+        // The live check reproduces AIRK's content_hash from the saved bytes at AIRK's own source location.
+        const info = (await client.call('airk_file_info', { path: 'session.ts' }, { timeout: 60000 })).payload;
+        const source = info.source as Record<string, string>;
+        const file = await sourceFile(source.root, source.relative_path);
+        assert.equal(await liveCheck(file, String(hits[0].citation.content_hash), false), 'matches_index');
+        await fs.appendFile(file, '// edited\n');
+        assert.equal(await liveCheck(file, String(hits[0].citation.content_hash), false), 'changed_since_index');
     } finally {
         client?.dispose();
         await fixture.dispose();

@@ -7,7 +7,9 @@ import { EvidenceClient, EvidenceFailure } from './explorerEvidence';
 import { FEATURES } from './explorerFeatures';
 import { ExplorerPanel } from './explorerPanel';
 import { formatRoute, parseRoute } from './explorerRoutes';
+import { passageView, RefRegistry, searchArgs, searchView } from './explorerSearch';
 import { headline, statusSummary } from './explorerStatus';
+import { openSource } from './explorerWorkspaceIO';
 import { LaunchSpec } from './model';
 
 /** The narrow surface of the service extension that the Explorer may use. */
@@ -36,6 +38,7 @@ export class ExplorerController implements vscode.Disposable {
     private readonly panel: ExplorerPanel;
     private readonly listeners: vscode.Disposable[] = [];
     private readonly snapshotListeners = new Set<ExplorerSnapshotListener>();
+    private readonly refs = new RefRegistry();
     private evidence?: EvidenceClient;
     private selected?: string;
     private status?: StatusSummary;
@@ -123,6 +126,7 @@ export class ExplorerController implements vscode.Disposable {
         this.selected = project;
         this.evidence?.dispose(); this.evidence = undefined;
         this.status = undefined; this.statusFor = undefined;
+        this.refs.clear();
     }
 
     private specsChanged(): void {
@@ -141,6 +145,11 @@ export class ExplorerController implements vscode.Disposable {
         const row = this.control.projects().find(entry => entry.project === this.selected);
         if (this.panel.open && row?.publication && this.status?.publication && row.publication !== this.status.publication) { void this.loadStatus(); }
         this.publish();
+    }
+
+    private requireProject(): string {
+        if (!this.selected) { throw new EvidenceFailure(explorerError('NO_PROJECT')); }
+        return this.selected;
     }
 
     /** The evidence session for the selected project, created lazily. */
@@ -199,6 +208,35 @@ export class ExplorerController implements vscode.Disposable {
             }
             case 'status.refresh': await Promise.all([this.loadStatus(), this.control.refresh()]); return;
             case 'manage.refresh': await this.control.refresh(); return;
+            case 'search.run': {
+                const typed = message as WebviewMessageOf<'search.run'>;
+                const project = this.requireProject();
+                const result = await this.session().call('airk_search', searchArgs(typed), { supersede: 'search', timeout: 30000 });
+                const status = this.statusFor === project ? this.status : undefined;
+                return searchView(project, typed, result.payload, result.publication, this.refs,
+                    { ...(status?.semantic ? { semantic: status.semantic } : {}), ...(status?.vectorsEnabled !== undefined ? { vectorsEnabled: status.vectorsEnabled } : {}) });
+            }
+            case 'evidence.expand': {
+                const typed = message as WebviewMessageOf<'evidence.expand'>;
+                const project = this.requireProject();
+                const ref = this.refs.get(typed.ref, project);
+                const result = await this.session().call('airk_read_file', { path: ref.path, start_line: Math.max(1, ref.startLine - typed.before),
+                    end_line: ref.endLine + typed.after, max_bytes: 32768 }, { timeout: 30000 });
+                return passageView(project, result.payload, result.publication, this.refs);
+            }
+            case 'source.open': {
+                const typed = message as WebviewMessageOf<'source.open'>;
+                const project = this.requireProject();
+                const ref = this.refs.get(typed.ref, project);
+                // The location on disk comes from AIRK's own file record, never from the webview.
+                const info = (await this.session().call('airk_file_info', { path: ref.path }, { timeout: 30000 })).payload;
+                const source = info.source as Record<string, unknown> | undefined;
+                if (!source || typeof source.root !== 'string' || typeof source.relative_path !== 'string') {
+                    throw new EvidenceFailure(explorerError('TOOL_ERROR', 'AIRK did not report a source location for this file.'));
+                }
+                return openSource({ root: source.root, relative: source.relative_path, contentHash: ref.contentHash, startLine: ref.startLine,
+                    ...(typeof info.line_basis === 'string' ? { lineBasis: info.line_basis } : {}) });
+            }
             default: throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED', `${message.type} is not available in this build.`));
         }
     }
