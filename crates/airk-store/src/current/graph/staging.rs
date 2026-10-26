@@ -1,19 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
-use super::{GraphOverlayLimits, State, digest, merkle, sql};
+use super::{GraphOverlayLimits, State, digest, merkle, private, sql};
+use crate::quota::{PrivateKv, PrivateTable};
 use airk_core::{graph_storage::*, identity::Sha256Digest};
 use anyhow::{Result, ensure};
-use rusqlite::{Connection, params};
 
 pub(super) fn seal(
     base: &GraphHead,
     limits: GraphOverlayLimits,
     state: &mut State,
 ) -> Result<GraphDeltaDescriptor> {
-    let stored = u64::from(state.database.connection().query_row(
-        "SELECT COUNT(*) FROM dirty_records",
-        [],
-        |row| row.get::<_, u32>(0),
-    )?);
+    let stored = state.database.len(PrivateTable::Records)?;
     ensure!(
         stored == state.statistics.dirty_records && stored <= limits.maximum_dirty_records,
         "private graph row count changed"
@@ -29,7 +25,7 @@ pub(super) fn seal(
     let mut counts = base.counts();
     let mut cursor = None;
     loop {
-        let page = sql::record_page(state.database.connection(), &base.scope, cursor)?;
+        let page = private::record_page(&state.database, &base.scope, cursor)?;
         if page.is_empty() {
             break;
         }
@@ -47,28 +43,15 @@ pub(super) fn seal(
                 None => sql::Proof::empty(base, id)?,
             };
             update_counts(&mut counts, base, id, proof.record.as_ref(), &record)?;
-            let connection = state.database.connection();
+            let connection = &state.database;
             root = merkle::update_path(
                 &base.scope,
                 id,
                 proof.record.as_ref(),
                 &record,
                 (&proof.siblings, root),
-                |height, index| sql::node(connection, "dirty_nodes", height, index),
-                |node| {
-                    connection
-                        .execute(
-                            "INSERT INTO dirty_nodes(height,idx,digest) VALUES(?1,?2,?3)
-                        ON CONFLICT(height,idx) DO UPDATE SET digest=excluded.digest",
-                            params![
-                                node.height,
-                                i64::from(node.index),
-                                node.digest.as_bytes().as_slice()
-                            ],
-                        )
-                        .map_err(|error| state.database.write_error(error.into()))?;
-                    Ok(())
-                },
+                |height, index| private::node(connection, height, index),
+                |node| private::put_node(connection, node),
             )?;
             cursor = Some(id);
             state.statistics.sealed_records += 1;
@@ -86,11 +69,7 @@ pub(super) fn seal(
     };
     target.validate()?;
     let zero = Sha256Digest::from_bytes([0; 32]);
-    let node_count = u64::from(state.database.connection().query_row(
-        "SELECT COUNT(*) FROM dirty_nodes",
-        [],
-        |row| row.get::<_, u32>(0),
-    )?);
+    let node_count = state.database.len(PrivateTable::Nodes)?;
     state.statistics.merkle_afterimages = node_count;
     let mut descriptor = GraphDeltaDescriptor {
         version: GRAPH_STORAGE_VERSION,
@@ -104,14 +83,12 @@ pub(super) fn seal(
     };
     digest::descriptor_bounds(&descriptor)?;
     let mut records = digest::Stream::new(true, &descriptor.base, &descriptor.target)?;
-    raw_records(
-        state.database.connection(),
-        &descriptor,
-        &mut |id, record| records.record(&base.scope, id, record),
-    )?;
+    raw_records(&state.database, &descriptor, &mut |id, record| {
+        records.record(&base.scope, id, record)
+    })?;
     descriptor.records_digest = records.finish();
     let mut nodes = digest::Stream::new(false, &descriptor.base, &descriptor.target)?;
-    raw_nodes(state.database.connection(), &mut |node| nodes.node(node))?;
+    raw_nodes(&state.database, &mut |node| nodes.node(node))?;
     descriptor.nodes_digest = nodes.finish();
     Ok(descriptor)
 }
@@ -148,14 +125,14 @@ pub(super) fn update_counts(
 }
 
 fn raw_records(
-    connection: &Connection,
+    connection: &PrivateKv,
     descriptor: &GraphDeltaDescriptor,
     visitor: &mut dyn FnMut(u32, &GraphRecord) -> Result<()>,
 ) -> Result<()> {
     let mut cursor = None;
     let mut count = 0;
     loop {
-        let page = sql::record_page(connection, &descriptor.target.scope, cursor)?;
+        let page = private::record_page(connection, &descriptor.target.scope, cursor)?;
         if page.is_empty() {
             break;
         }
@@ -176,12 +153,12 @@ fn raw_records(
     Ok(())
 }
 fn raw_nodes(
-    connection: &Connection,
+    connection: &PrivateKv,
     visitor: &mut dyn FnMut(GraphMerkleNode) -> Result<()>,
 ) -> Result<()> {
     let mut cursor = None;
     loop {
-        let page = sql::node_page(connection, cursor)?;
+        let page = private::node_page(connection, cursor)?;
         if page.is_empty() {
             break;
         }
@@ -193,7 +170,7 @@ fn raw_nodes(
     Ok(())
 }
 pub(super) fn visit_records(
-    connection: &Connection,
+    connection: &PrivateKv,
     descriptor: &GraphDeltaDescriptor,
     visitor: &mut dyn FnMut(u32, &GraphRecord) -> Result<()>,
 ) -> Result<()> {
@@ -212,7 +189,7 @@ pub(super) fn visit_records(
     Ok(())
 }
 pub(super) fn visit_nodes(
-    connection: &Connection,
+    connection: &PrivateKv,
     descriptor: &GraphDeltaDescriptor,
     visitor: &mut dyn FnMut(GraphMerkleNode) -> Result<()>,
 ) -> Result<()> {

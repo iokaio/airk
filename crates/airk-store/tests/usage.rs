@@ -215,15 +215,15 @@ fn shared_quota_rejects_usage_growth_but_clear_reclaims_when_full() -> anyhow::R
         default_collection_bytes: status.used_bytes,
         collections: Default::default(),
     })?;
-    let before = std::fs::read(directory.join("usage.sqlite3"))?;
+    let before = std::fs::read(directory.join("usage.airk"))?;
     assert!(store.record(&observation(&scope, 2)).is_err());
     // Identity-only opens are read-only even when storage is full; mutations still fail.
     let reopened =
         UsageStore::open_best_effort(&directory, &scope, &UsagePolicy::default())?.unwrap();
     assert!(reopened.record(&observation(&scope, 2)).is_err());
-    assert_eq!(std::fs::read(directory.join("usage.sqlite3"))?, before);
+    assert_eq!(std::fs::read(directory.join("usage.airk"))?, before);
     usage::clear(&directory)?;
-    assert!(!directory.join("usage.sqlite3").exists());
+    assert!(!directory.join("usage.airk").exists());
     assert!(quota.status()?.used_bytes < status.used_bytes);
     assert!(FileStore::new(&directory).load()?.is_some());
     Ok(())
@@ -261,17 +261,9 @@ fn ordinary_activity_prunes_expired_supplemental_rows() -> anyhow::Result<()> {
         },
     )?;
     store.record(&observation(&scope, 1))?;
-    let db = rusqlite::Connection::open(directory.join("usage.sqlite3"))?;
-    assert_eq!(
-        db.query_row("SELECT COUNT(*) FROM supplemental_daily", [], |row| row
-            .get::<_, i64>(0))?,
-        0
-    );
-    assert_eq!(
-        db.query_row("SELECT COUNT(*) FROM supplemental_seen", [], |row| row
-            .get::<_, i64>(0))?,
-        0
-    );
+    let state = ledger_state(&directory)?;
+    assert_eq!(state["supplemental_daily"].as_object().unwrap().len(), 0);
+    assert_eq!(state["supplemental_seen"].as_object().unwrap().len(), 0);
     Ok(())
 }
 
@@ -393,7 +385,7 @@ fn disabled_never_creates_usage_files_and_foreign_roots_fail_closed() -> anyhow:
         ..Default::default()
     };
     assert!(UsageStore::open(&directory, &scope, &disabled)?.is_none());
-    assert!(!directory.join("usage.sqlite3").exists());
+    assert!(!directory.join("usage.airk").exists());
     assert!(!directory.join("usage.lock").exists());
     let store = UsageStore::open(&directory, &scope, &UsagePolicy::default())?.unwrap();
     let mut other = scope.clone();
@@ -508,17 +500,18 @@ fn diagnostic_opt_in_is_bounded_and_disable_takes_effect_on_existing_workers() -
     usage::configure(&directory, &policy)?;
     let store = UsageStore::open(&directory, &scope, &policy)?.unwrap();
     store.record(&observation(&scope, 1))?;
-    let db = rusqlite::Connection::open(directory.join("usage.sqlite3"))?;
     assert_eq!(
-        db.query_row("SELECT COUNT(*) FROM diagnostics", [], |r| r
-            .get::<_, i64>(0))?,
+        ledger_state(&directory)?["diagnostics"]
+            .as_object()
+            .unwrap()
+            .len(),
         1
     );
     policy.mode = RecordingMode::Disabled;
     usage::configure(&directory, &policy)?;
     store.record(&observation(&scope, 2))?;
     assert_eq!(
-        db.query_row("SELECT COUNT(*) FROM seen", [], |r| r.get::<_, i64>(0))?,
+        ledger_state(&directory)?["seen"].as_object().unwrap().len(),
         1
     );
     Ok(())
@@ -571,7 +564,10 @@ fn page_and_root_quotas_fail_closed_without_partial_commits() -> anyhow::Result<
         report.buckets.iter().map(|b| b.calls).sum::<u64>(),
         committed
     );
-    assert!(report.health.database_bytes <= limited.max_collection_bytes / 2);
+    // redb has no rollback sidecar: the whole admitted cap bounds its one file.
+    assert!(report.health.database_bytes <= limited.max_collection_bytes);
+    assert!(!directory.join("usage.airk-journal").exists());
+    assert!(!directory.join("usage.airk-wal").exists());
     assert!(FileStore::new(&directory).load()?.is_some());
     let other_dir = root.path().join("collections-1.2/other");
     let mut snapshot = Snapshot::empty("other-fixture".into());
@@ -586,6 +582,17 @@ fn page_and_root_quotas_fail_closed_without_partial_commits() -> anyhow::Result<
         ..Default::default()
     };
     assert!(UsageStore::open(&other_dir, &other_scope, &root_limit).is_err());
-    assert!(!other_dir.join("usage.sqlite3").exists());
+    assert!(!other_dir.join("usage.airk").exists());
     Ok(())
+}
+
+fn ledger_state(directory: &std::path::Path) -> anyhow::Result<serde_json::Value> {
+    use redb::ReadableDatabase;
+    let database = redb::Builder::new().open_read_only(directory.join("usage.airk"))?;
+    let transaction = database.begin_read()?;
+    let table = transaction.open_table(redb::TableDefinition::<&str, &[u8]>::new("ledger"))?;
+    let value = table.get("state")?.unwrap();
+    Ok(serde_json::from_slice(
+        &lz4_flex::decompress_size_prepended(value.value())?,
+    )?)
 }

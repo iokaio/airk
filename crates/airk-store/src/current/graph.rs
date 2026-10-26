@@ -4,16 +4,17 @@
 //! is opened here and no current reader survives sealing.
 mod digest;
 mod journal;
+pub mod kv;
 mod merkle;
+mod private;
 mod sql;
 mod staging;
 #[cfg(test)]
 mod tests;
 
-use crate::quota::{PrivateDatabase, Reservation};
+use crate::quota::{PrivateKv, PrivateTable, Reservation};
 use airk_core::graph_storage::*;
 use anyhow::{Context, Result, ensure};
-use rusqlite::params;
 use serde::Serialize;
 use std::{
     collections::{BTreeMap, VecDeque},
@@ -32,6 +33,53 @@ const MAX_DIRTY_RECORDS: u64 = 1_000_000;
 const PAGE_ROWS: usize = 64;
 const MAX_BASE_PROOFS: usize = 256;
 const MAX_BASE_PROOF_CACHE_BYTES: usize = 8 * 1024 * 1024;
+
+pub(crate) trait GraphStorage {
+    fn graph_record(&self, scope: &GraphScope, id: u32) -> Result<Option<GraphRecord>>;
+    fn graph_node(
+        &self,
+        height: u8,
+        index: u32,
+    ) -> Result<Option<airk_core::identity::Sha256Digest>>;
+}
+
+impl<T: GraphStorage + ?Sized> GraphStorage for &T {
+    fn graph_record(&self, scope: &GraphScope, id: u32) -> Result<Option<GraphRecord>> {
+        (**self).graph_record(scope, id)
+    }
+    fn graph_node(
+        &self,
+        height: u8,
+        index: u32,
+    ) -> Result<Option<airk_core::identity::Sha256Digest>> {
+        (**self).graph_node(height, index)
+    }
+}
+
+impl GraphStorage for rusqlite::Connection {
+    fn graph_record(&self, scope: &GraphScope, id: u32) -> Result<Option<GraphRecord>> {
+        sql::stored_record(self, scope, id)
+    }
+    fn graph_node(
+        &self,
+        height: u8,
+        index: u32,
+    ) -> Result<Option<airk_core::identity::Sha256Digest>> {
+        sql::node(self, "graph_merkle", height, index)
+    }
+}
+impl GraphStorage for rusqlite::Transaction<'_> {
+    fn graph_record(&self, scope: &GraphScope, id: u32) -> Result<Option<GraphRecord>> {
+        GraphStorage::graph_record(&**self, scope, id)
+    }
+    fn graph_node(
+        &self,
+        height: u8,
+        index: u32,
+    ) -> Result<Option<airk_core::identity::Sha256Digest>> {
+        GraphStorage::graph_node(&**self, height, index)
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 pub struct GraphOverlayLimits {
@@ -84,7 +132,7 @@ pub struct GraphStatistics {
     pub private_page_bytes: u64,
 }
 struct State {
-    database: PrivateDatabase,
+    database: PrivateKv,
     base: Option<Arc<super::CurrentRead>>,
     counts: GraphCounts,
     statistics: GraphStatistics,
@@ -126,16 +174,12 @@ impl GraphOverlay {
         // One reservation can publish several progressive batches. Each sealed
         // overlay remains private until that batch's journal has consumed it.
         let ordinal = NEXT_OVERLAY.fetch_add(1, Ordering::Relaxed);
-        let database = reservation.open_private_sqlite(
+        let database = reservation.open_private_kv(
             reservation
                 .staging_directory()?
-                .join(format!("current-graph-overlay-{ordinal}.sqlite3")),
+                .join(format!("current-graph-overlay-{ordinal}.airk")),
             limits.maximum_bytes,
         )?;
-        database
-            .connection()
-            .execute_batch(sql::OVERLAY_SCHEMA)
-            .map_err(|error| database.write_error(error.into()))?;
         Ok(Self {
             limits,
             state: Mutex::new(State {
@@ -207,9 +251,7 @@ impl GraphOverlay {
             "graph ID outside candidate allocation"
         );
         self.record_read(state, u64::from(self.base_head.scope.record_bytes) + 32);
-        if let Some(record) =
-            sql::dirty_record(state.database.connection(), &self.base_head.scope, id)?
-        {
+        if let Some(record) = private::dirty_record(&state.database, &self.base_head.scope, id)? {
             state.statistics.dirty_reads += 1;
             return Ok(record);
         }
@@ -219,23 +261,15 @@ impl GraphOverlay {
     }
     fn write_inner(&self, state: &mut State, id: u32, record: &GraphRecord) -> Result<()> {
         record.validate(&self.base_head.scope, id)?;
-        let exists: bool = state.database.connection().query_row(
-            "SELECT EXISTS(SELECT 1 FROM dirty_records WHERE id=?1)",
-            [i64::from(id)],
-            |row| row.get(0),
-        )?;
+        let exists = state
+            .database
+            .get(PrivateTable::Records, &id.to_be_bytes())?
+            .is_some();
         ensure!(
             exists || state.statistics.dirty_records < self.limits.maximum_dirty_records,
             "graph overlay dirty-record limit exceeded"
         );
-        let checksum = leaf_hash(&self.base_head.scope, id, record)?;
-        state.database.connection().execute(
-            "INSERT INTO dirty_records(id,embedding_key,live,record,checksum) VALUES(?1,?2,?3,?4,?5)
-             ON CONFLICT(id) DO UPDATE SET embedding_key=excluded.embedding_key,live=excluded.live,
-             record=excluded.record,checksum=excluded.checksum",
-            params![i64::from(id), record.embedding_key.map(|key| key.as_bytes().to_vec()),
-                i64::from(record.live), &record.bytes, checksum.as_bytes().as_slice()])
-            .map_err(|error| state.database.write_error(error.into()))?;
+        private::put_record(&state.database, &self.base_head.scope, id, record)?;
         state.statistics.write_operations += 1;
         state.statistics.dirty_records += u64::from(!exists);
         Ok(())
@@ -243,7 +277,7 @@ impl GraphOverlay {
     pub fn statistics(&self) -> Result<GraphStatistics> {
         self.with_state(|state| {
             let mut statistics = state.statistics.clone();
-            statistics.private_page_bytes = sql::page_bytes(state.database.connection())?;
+            statistics.private_page_bytes = state.database.bytes()?;
             Ok(statistics)
         })
     }
@@ -258,12 +292,8 @@ impl GraphOverlay {
         let result = staging::seal(&self.base_head, self.limits, &mut state);
         state.base.take();
         let descriptor = result?;
-        state
-            .database
-            .connection()
-            .execute_batch("COMMIT;")
-            .map_err(|error| state.database.write_error(error.into()))?;
-        state.statistics.private_page_bytes = sql::page_bytes(state.database.connection())?;
+        state.database.seal()?;
+        state.statistics.private_page_bytes = state.database.bytes()?;
         Ok(SealedGraph {
             database: state.database,
             descriptor,
@@ -330,7 +360,7 @@ impl GraphRecordOverlay for GraphOverlay {
 }
 
 pub struct SealedGraph {
-    database: PrivateDatabase,
+    database: PrivateKv,
     descriptor: GraphDeltaDescriptor,
     statistics: GraphStatistics,
 }
@@ -367,9 +397,9 @@ impl PreparedGraphDelta for SealedGraph {
         &self,
         visitor: &mut dyn FnMut(u32, &GraphRecord) -> Result<()>,
     ) -> Result<()> {
-        staging::visit_records(self.database.connection(), &self.descriptor, visitor)
+        staging::visit_records(&self.database, &self.descriptor, visitor)
     }
     fn visit_nodes(&self, visitor: &mut dyn FnMut(GraphMerkleNode) -> Result<()>) -> Result<()> {
-        staging::visit_nodes(self.database.connection(), &self.descriptor, visitor)
+        staging::visit_nodes(&self.database, &self.descriptor, visitor)
     }
 }

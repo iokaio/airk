@@ -4,7 +4,7 @@ resolver = "2"
 members = ["crates/*"]
 
 [workspace.package]
-version = "1.4.4"
+version = "1.4.5"
 edition = "2024"
 rust-version = "1.98"
 license = "Apache-2.0"
@@ -33,6 +33,7 @@ scip = "=0.10.0"
 protobuf = "=3.7.2"
 url = "2"
 sha2 = "0.10"
+redb = "=4.4.0"
 lz4_flex = { version = "=0.13.1", default-features = false, features = ["std", "safe-encode", "safe-decode"] }
 getrandom = "=0.3.4"
 tempfile = "3"

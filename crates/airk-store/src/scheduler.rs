@@ -1,13 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Durable, bounded per-data-root indexing intents with monotonic event watermarks.
+//! Durable redb indexing intents with isolated worker ownership and bounded reports.
 use anyhow::{Context, Result, ensure};
-use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
-use serde::Serialize;
+use redb::{ReadableTable, TableDefinition};
+use serde::{Deserialize, Serialize};
 use std::{
+    collections::{BTreeMap, BTreeSet},
     fs::{self, File, OpenOptions},
     path::{Path, PathBuf},
-    time::Duration,
+    time::{Duration, Instant},
 };
+const FILE: &str = "scheduler.airk";
+const KIND: &str = "airk-scheduler/2";
+const CAPACITY: u64 = 128 << 20;
+const MAXIMUM: usize = 128 << 20;
+const REPORTS: TableDefinition<u64, &[u8]> = TableDefinition::new("scheduler_reports");
 
 #[derive(Clone, Debug, Serialize)]
 pub struct ScheduledJob {
@@ -48,21 +54,255 @@ pub struct WorkerLock {
     _lifecycle: File,
 }
 
-struct QueueConnection {
-    connection: Connection,
-    _reservation: Option<crate::quota::Reservation>,
-    _lifecycle: File,
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Row {
+    collection: String,
+    root: String,
+    revision: u64,
+    completed: u64,
+    running: u64,
+    paused: bool,
+    blocked: bool,
+    full_revision: u64,
+    manual_revision: u64,
+    first_pending: u64,
+    last_event: u64,
+    last_completed: u64,
+    error: Option<String>,
+    report: Option<u64>,
+    scan_started: u64,
+    scan_completed: u64,
+    scan_error: Option<String>,
+    hints: BTreeMap<String, u64>,
+    inventory_revision: u64,
+    debounced_revision: u64,
+    inventory_completed: u64,
 }
-impl std::ops::Deref for QueueConnection {
-    type Target = Connection;
-    fn deref(&self) -> &Connection {
-        &self.connection
+impl Row {
+    fn new(collection: &str, root: &str) -> Self {
+        Self {
+            collection: collection.into(),
+            root: root.into(),
+            revision: 0,
+            completed: 0,
+            running: 0,
+            paused: false,
+            blocked: false,
+            full_revision: 0,
+            manual_revision: 0,
+            first_pending: 0,
+            last_event: 0,
+            last_completed: 0,
+            error: None,
+            report: None,
+            scan_started: 0,
+            scan_completed: 0,
+            scan_error: None,
+            hints: BTreeMap::new(),
+            inventory_revision: 0,
+            debounced_revision: 0,
+            inventory_completed: 0,
+        }
+    }
+    fn snapshot(&self, report: Option<String>) -> Result<ScheduledJob> {
+        crate::validate_collection(&self.collection)?;
+        ensure!(
+            self.root.len() <= 32768
+                && self.completed <= self.revision
+                && self.running <= self.revision
+                && self.hints.len() <= 1024
+                && self.hints.values().all(|v| *v <= self.revision),
+            "invalid scheduler binding/revision/hints"
+        );
+        if !self.hints.is_empty() {
+            validate_paths(&self.hints.keys().cloned().collect::<Vec<_>>())?;
+        }
+        for value in [
+            self.revision,
+            self.completed,
+            self.running,
+            self.full_revision,
+            self.manual_revision,
+            self.first_pending,
+            self.last_event,
+            self.last_completed,
+            self.scan_started,
+            self.scan_completed,
+            self.inventory_revision,
+            self.debounced_revision,
+            self.inventory_completed,
+        ] {
+            i64::try_from(value)?;
+        }
+        let paths: Vec<_> = self
+            .hints
+            .iter()
+            .filter(|(_, rev)| **rev > self.completed)
+            .map(|(path, _)| path.clone())
+            .collect();
+        Ok(ScheduledJob {
+            collection: self.collection.clone(),
+            root: self.root.clone(),
+            requested_revision: self.revision,
+            completed_revision: self.completed,
+            running_revision: self.running,
+            paused: self.paused,
+            blocked: self.blocked,
+            full: self.full_revision > self.completed,
+            manual: self.manual_revision > self.completed,
+            first_pending_unix_ms: self.first_pending,
+            last_event_unix_ms: self.last_event,
+            last_completed_unix_ms: self.last_completed,
+            error: self.error.clone(),
+            last_report: report,
+            scan_started_unix_ms: self.scan_started,
+            scan_completed_unix_ms: self.scan_completed,
+            scan_error: self.scan_error.clone(),
+            inventory_completed_unix_ms: self.inventory_completed,
+            paths: if paths.is_empty() || self.inventory_revision > self.completed {
+                None
+            } else {
+                Some(paths)
+            },
+            debounced: self.debounced_revision >= self.revision && self.revision > self.completed,
+            recent_paths: self
+                .hints
+                .iter()
+                .filter(|(_, rev)| **rev == self.completed)
+                .map(|(path, _)| path.clone())
+                .collect(),
+        })
     }
 }
-impl std::ops::DerefMut for QueueConnection {
-    fn deref_mut(&mut self) -> &mut Connection {
-        &mut self.connection
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Report {
+    id: u64,
+    collection: String,
+    root: String,
+    first_revision: u64,
+    revision: u64,
+    bytes: usize,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct State {
+    version: u32,
+    jobs: BTreeMap<String, Row>,
+    reports: Vec<Report>,
+    report_sequence: u64,
+}
+impl State {
+    fn empty() -> Self {
+        Self {
+            version: 2,
+            jobs: BTreeMap::new(),
+            reports: Vec::new(),
+            report_sequence: 0,
+        }
     }
+    fn validate(&self) -> Result<()> {
+        ensure!(
+            self.version == 2 && self.jobs.len() <= 1024 && self.reports.len() <= 128,
+            "scheduler format/count bound exceeded"
+        );
+        for (collection, row) in &self.jobs {
+            ensure!(
+                *collection == row.collection,
+                "scheduler collection key mismatch"
+            );
+            row.snapshot(None)?;
+        }
+        let mut prior = 0;
+        let mut total = 0usize;
+        for report in &self.reports {
+            ensure!(
+                report.id > prior
+                    && report.id <= self.report_sequence
+                    && report.first_revision <= report.revision
+                    && report.bytes <= 8 << 20,
+                "invalid scheduler report identity"
+            );
+            prior = report.id;
+            total = total
+                .checked_add(report.bytes)
+                .context("report bytes overflow")?;
+        }
+        ensure!(
+            total <= 16 << 20,
+            "scheduler report history byte budget exceeded"
+        );
+        Ok(())
+    }
+    fn row(&mut self, collection: &str, root: &str) -> Result<&mut Row> {
+        if !self.jobs.contains_key(collection) {
+            ensure!(
+                self.jobs.len() < 1024,
+                "scheduler registration limit reached"
+            );
+            self.jobs
+                .insert(collection.into(), Row::new(collection, root));
+        }
+        let row = self
+            .jobs
+            .get_mut(collection)
+            .context("scheduler row missing")?;
+        ensure!(
+            row.root == root,
+            "scheduled collection belongs to another root"
+        );
+        Ok(row)
+    }
+}
+fn report_bytes(bytes: &[u8]) -> Result<String> {
+    ensure!(
+        bytes.len() <= 8 << 20,
+        "scheduler report exceeds 8 MiB budget"
+    );
+    Ok(std::str::from_utf8(bytes)?.into())
+}
+fn read_report(transaction: &redb::ReadTransaction, id: Option<u64>) -> Result<Option<String>> {
+    id.map(|id| {
+        let table = transaction.open_table(REPORTS)?;
+        let value = table.get(id)?.context("scheduler report missing")?;
+        report_bytes(value.value())
+    })
+    .transpose()
+}
+fn write_report(transaction: &redb::WriteTransaction, id: Option<u64>) -> Result<Option<String>> {
+    id.map(|id| {
+        let table = transaction.open_table(REPORTS)?;
+        let value = table.get(id)?.context("scheduler report missing")?;
+        report_bytes(value.value())
+    })
+    .transpose()
+}
+fn gc(
+    state: &State,
+    transaction: &redb::WriteTransaction,
+    candidates: impl IntoIterator<Item = u64>,
+) -> Result<()> {
+    let pinned: BTreeSet<_> = state
+        .jobs
+        .values()
+        .filter_map(|row| row.report)
+        .chain(state.reports.iter().map(|report| report.id))
+        .collect();
+    let mut table = transaction.open_table(REPORTS)?;
+    for id in candidates {
+        if !pinned.contains(&id) {
+            table.remove(id)?;
+        }
+    }
+    Ok(())
+}
+fn brief(error: &str) -> String {
+    let mut end = error.len().min(4096);
+    while !error.is_char_boundary(end) {
+        end -= 1;
+    }
+    error[..end].into()
 }
 
 impl Queue {
@@ -71,182 +311,140 @@ impl Queue {
             directory: directory.into(),
         }
     }
-    fn open(&self) -> Result<QueueConnection> {
+    fn guard(&self) -> Result<(File, File)> {
         crate::quota::ensure_current_root(&self.directory)?;
-        fs::create_dir_all(&self.directory)?;
         let lifecycle = crate::quota::lifecycle_lease(&self.directory, false)?;
         crate::quota::ensure_current_root(&self.directory)?;
-        let path = self.directory.join("scheduler-1.2.sqlite3");
-        let existing = match fs::symlink_metadata(&path) {
-            Ok(metadata) => {
-                ensure!(
-                    metadata.is_file() && !metadata.file_type().is_symlink(),
-                    "invalid scheduler database path"
-                );
-                metadata.len()
+        let path = self.directory.join("scheduler-kv.lock");
+        if let Ok(metadata) = fs::symlink_metadata(&path) {
+            ensure!(
+                metadata.is_file() && !metadata.file_type().is_symlink(),
+                "linked scheduler metadata lock"
+            );
+        }
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(path)?;
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            match file.try_lock() {
+                Ok(()) => break,
+                Err(std::fs::TryLockError::WouldBlock) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(2))
+                }
+                Err(error) => return Err(error.into()),
             }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => 0,
-            Err(error) => return Err(error.into()),
-        };
-        const MAX_DATABASE: u64 = 128 * 1024 * 1024;
+        }
+        Ok((file, lifecycle))
+    }
+    fn read<R>(
+        &self,
+        inspect: impl FnOnce(State, &redb::ReadTransaction) -> Result<R>,
+    ) -> Result<R> {
+        let _guard = self.guard()?;
+        crate::ledger::read_with(
+            &self.directory.join(FILE),
+            KIND,
+            CAPACITY,
+            MAXIMUM,
+            |state: State, transaction| {
+                state.validate()?;
+                inspect(state, transaction)
+            },
+        )
+    }
+    fn exists(&self) -> Result<bool> {
+        crate::quota::ensure_current_root(&self.directory)?;
+        if self.directory.join(FILE).try_exists()? {
+            return Ok(true);
+        }
         ensure!(
-            existing <= MAX_DATABASE,
-            "scheduler database exceeds 128 MiB"
+            !self.directory.join("scheduler-1.2.sqlite3").try_exists()?,
+            "existing scheduler requires upgrade import; queued work preserved"
         );
+        Ok(false)
+    }
+    fn write<R>(
+        &self,
+        mutate: impl FnOnce(&mut State, &redb::WriteTransaction) -> Result<R>,
+    ) -> Result<R> {
+        crate::quota::ensure_current_root(&self.directory)?;
+        fs::create_dir_all(&self.directory)?;
+        let _guard = self.guard()?;
+        let path = self.directory.join(FILE);
+        let existing = if path.try_exists()? {
+            fs::metadata(&path)?.len()
+        } else {
+            ensure!(
+                !self.directory.join("scheduler-1.2.sqlite3").try_exists()?,
+                "existing scheduler requires upgrade import; queued work preserved"
+            );
+            0
+        };
+        ensure!(existing <= CAPACITY, "scheduler database exceeds 128 MiB");
         let quota = crate::quota::Quota::open(&self.directory)?;
-        let capacity = quota.status()?;
-        let free = capacity
+        let status = quota.status()?;
+        let free = status
             .root_limit_bytes
-            .saturating_sub(capacity.used_bytes)
-            .saturating_sub(capacity.reserved_bytes);
-        let target = (existing + 16 * 1024 * 1024).min(MAX_DATABASE);
-        // Reserve new pages plus a full rollback journal and sector/page framing.
-        // No cache spill or on-disk temporary tables may bypass this allocation.
-        let allocation = (3 * target - existing + 65_536).min(free);
-        let allowed = allocation
-            .checked_add(existing)
-            .and_then(|bytes| bytes.checked_sub(65_536))
-            .map_or(0, |bytes| (bytes / 3 / 4096) * 4096)
-            .min(MAX_DATABASE);
+            .saturating_sub(status.used_bytes)
+            .saturating_sub(status.reserved_bytes);
+        let growth = (16u64 << 20).min(CAPACITY.saturating_sub(existing));
+        let allocation = growth.saturating_add(65536).min(free);
+        let allowed = existing
+            .checked_add(allocation)
+            .and_then(|n| n.checked_sub(65536))
+            .map_or(0, |n| n / 4096 * 4096)
+            .min(CAPACITY);
         ensure!(
-            allowed >= existing.max(16_384),
-            "root quota cannot reserve scheduler database and rollback journal"
+            allowed >= existing.max(65536),
+            "root quota cannot reserve scheduler database growth"
         );
         let reservation = quota.reserve_root(allocation)?;
         reservation.charge(allocation)?;
-        let mut db = Connection::open(path)?;
-        db.busy_timeout(Duration::from_secs(2))?;
-        let page_size =
-            u64::try_from(db.pragma_query_value(None, "page_size", |row| row.get::<_, i64>(0))?)?;
-        let journal: String = db.pragma_query_value(None, "journal_mode", |row| row.get(0))?;
-        ensure!(
-            page_size == 4096 && journal.eq_ignore_ascii_case("delete"),
-            "unsupported scheduler page size or journal mode"
-        );
-        let pages = allowed / 4096;
-        let actual = u64::try_from(db.query_row(
-            &format!("PRAGMA max_page_count={pages}"),
-            [],
-            |row| row.get::<_, i64>(0),
-        )?)?;
-        ensure!(
-            actual <= pages,
-            "scheduler grew beyond its storage reservation"
-        );
-        db.execute_batch("PRAGMA synchronous=FULL; PRAGMA temp_store=MEMORY; PRAGMA cache_spill=OFF; PRAGMA journal_size_limit=0;
-            CREATE TABLE IF NOT EXISTS jobs (
-                collection TEXT PRIMARY KEY, root TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 0,
-                completed INTEGER NOT NULL DEFAULT 0, running INTEGER NOT NULL DEFAULT 0,
-                paused INTEGER NOT NULL DEFAULT 0, blocked INTEGER NOT NULL DEFAULT 0,
-                full_revision INTEGER NOT NULL DEFAULT 0, manual_revision INTEGER NOT NULL DEFAULT 0,
-                first_pending INTEGER NOT NULL DEFAULT 0, last_event INTEGER NOT NULL DEFAULT 0,
-                last_completed INTEGER NOT NULL DEFAULT 0, error TEXT, report TEXT,
-                scan_started INTEGER NOT NULL DEFAULT 0, scan_completed INTEGER NOT NULL DEFAULT 0, scan_error TEXT);
-            CREATE TABLE IF NOT EXISTS completed_reports (
-                id INTEGER PRIMARY KEY, collection TEXT NOT NULL, root TEXT NOT NULL,
-                first_revision INTEGER NOT NULL, revision INTEGER NOT NULL, report TEXT NOT NULL,
-                UNIQUE(collection,root,revision));")?;
-        // Upgrade earlier queue state without losing pending revisions or pause.
-        let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let columns = tx
-            .prepare("PRAGMA table_info(jobs)")?
-            .query_map([], |row| row.get::<_, String>(1))?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        for (name, declaration) in [
-            ("scan_started", "INTEGER NOT NULL DEFAULT 0"),
-            ("scan_completed", "INTEGER NOT NULL DEFAULT 0"),
-            ("scan_error", "TEXT"),
-            ("path_hints", "TEXT NOT NULL DEFAULT '{}'"),
-            ("inventory_revision", "INTEGER NOT NULL DEFAULT 0"),
-            ("debounced_revision", "INTEGER NOT NULL DEFAULT 0"),
-            ("inventory_completed", "INTEGER NOT NULL DEFAULT 0"),
-        ] {
-            if !columns.iter().any(|column| column == name) {
-                tx.execute_batch(&format!("ALTER TABLE jobs ADD COLUMN {name} {declaration}"))?;
-            }
+        if existing == 0 {
+            crate::ledger::create(&path, KIND, allowed, MAXIMUM, State::empty())?;
         }
-        tx.commit()?;
-        Ok(QueueConnection {
-            connection: db,
-            _reservation: Some(reservation),
-            _lifecycle: lifecycle,
-        })
+        crate::ledger::write_with(
+            &path,
+            KIND,
+            allowed,
+            MAXIMUM,
+            |state: &mut State, transaction| {
+                state.validate()?;
+                let result = mutate(state, transaction)?;
+                state.validate()?;
+                Ok(result)
+            },
+        )
     }
-
-    fn open_read(&self) -> Result<QueueConnection> {
-        crate::quota::ensure_current_root(&self.directory)?;
-        let lifecycle = crate::quota::lifecycle_lease(&self.directory, false)?;
-        crate::quota::ensure_current_root(&self.directory)?;
-        let path = self.directory.join("scheduler-1.2.sqlite3");
-        let metadata = fs::symlink_metadata(&path)?;
-        ensure!(
-            metadata.is_file()
-                && !metadata.file_type().is_symlink()
-                && metadata.len() <= 128 * 1024 * 1024,
-            "invalid or oversized scheduler database"
-        );
-        let db = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-        db.busy_timeout(Duration::from_secs(2))?;
-        Ok(QueueConnection {
-            connection: db,
-            _reservation: None,
-            _lifecycle: lifecycle,
-        })
-    }
-
     pub fn status(&self, collection: &str, root: &str) -> Result<Option<ScheduledJob>> {
         crate::validate_collection(collection)?;
-        crate::quota::ensure_current_root(&self.directory)?;
-        if !self.directory.join("scheduler-1.2.sqlite3").exists() {
+        if !self.exists()? {
             return Ok(None);
         }
-        let db = self.open_read()?;
-        let job = db
-            .query_row(
-                "SELECT * FROM jobs WHERE collection=?1",
-                [collection],
-                decode,
-            )
-            .optional()?;
-        if let Some(job) = &job {
-            ensure!(
-                job.root == root,
-                "scheduled collection belongs to another root"
-            );
-        }
-        Ok(job)
+        self.read(|state, transaction| {
+            state
+                .jobs
+                .get(collection)
+                .map(|row| {
+                    ensure!(
+                        row.root == root,
+                        "scheduled collection belongs to another root"
+                    );
+                    row.snapshot(read_report(transaction, row.report)?)
+                })
+                .transpose()
+        })
     }
-
-    /// Read only registered bindings; never discover or register arbitrary roots.
     pub fn list(&self) -> Result<Vec<ScheduledJob>> {
-        crate::quota::ensure_current_root(&self.directory)?;
-        if !self.directory.join("scheduler-1.2.sqlite3").exists() {
+        if !self.exists()? {
             return Ok(Vec::new());
         }
-        let db = self.open_read()?;
-        // Event routing needs bindings and policy, never retained index reports.
-        // The legacy-width projection also works before a writer upgrades scans.
-        let jobs = db
-            .prepare(
-                "SELECT collection,root,revision,completed,running,paused,blocked,
-            full_revision,manual_revision,first_pending,last_event,last_completed,error,NULL
-            FROM jobs ORDER BY collection LIMIT 1025",
-            )?
-            .query_map([], decode)?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        ensure!(jobs.len() <= 1024, "scheduler registration limit exceeded");
-        for job in &jobs {
-            crate::validate_collection(&job.collection)?;
-            ensure!(
-                job.root.len() <= 32768,
-                "scheduler root exceeds path budget"
-            );
-        }
-        Ok(jobs)
+        self.read(|state, _| state.jobs.values().map(|row| row.snapshot(None)).collect())
     }
-
-    /// Event requests increment revisions. Explicit clicks can join the current
-    /// pending pass; a newly requested full rebuild never joins an incremental pass.
     pub fn enqueue(
         &self,
         collection: &str,
@@ -258,7 +456,6 @@ impl Queue {
     ) -> Result<ScheduledJob> {
         self.enqueue_selected(collection, root, full, manual, coalesce, now, None, false)
     }
-
     #[allow(clippy::too_many_arguments)]
     pub fn enqueue_selected(
         &self,
@@ -272,6 +469,8 @@ impl Queue {
         debounced: bool,
     ) -> Result<ScheduledJob> {
         crate::validate_collection(collection)?;
+        ensure!(root.len() <= 32768, "scheduler root exceeds path budget");
+        i64::try_from(now)?;
         let normalized = paths.map(|paths| {
             paths
                 .iter()
@@ -283,139 +482,81 @@ impl Queue {
             validate_paths(paths)?;
             ensure!(!full, "full rebuild cannot use path hints");
         }
-        ensure!(root.len() <= 32768, "scheduler root exceeds path budget");
-        let mut db = self.open()?;
-        let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let prior = tx
-            .query_row(
-                "SELECT * FROM jobs WHERE collection=?1",
-                [collection],
-                decode,
-            )
-            .optional()?;
-        if let Some(prior) = &prior {
-            ensure!(
-                prior.root == root,
-                "scheduled collection belongs to another root"
-            );
-        } else {
-            let count: i64 = tx.query_row("SELECT COUNT(*) FROM jobs", [], |row| row.get(0))?;
-            ensure!(count < 1024, "scheduler registration limit reached");
-            tx.execute(
-                "INSERT INTO jobs(collection,root) VALUES(?1,?2)",
-                params![collection, root],
-            )?;
-        }
-        let keep = prior.as_ref().is_some_and(|job| {
-            coalesce
-                && job.requested_revision > job.completed_revision
-                && (manual || job.running_revision == 0)
-                && (paths.is_none() || job.running_revision == 0)
+        self.write(|state, transaction| {
+            let row = state.row(collection, root)?;
+            let prior = row.snapshot(None)?;
+            let keep = coalesce
+                && prior.requested_revision > prior.completed_revision
+                && (manual || prior.running_revision == 0)
+                && (paths.is_none() || prior.running_revision == 0)
                 && !(paths.is_none()
-                    && job.paths.is_some()
-                    && job.running_revision == job.requested_revision)
-                && (!full || job.full)
-        });
-        let revision = if keep {
-            prior.as_ref().expect("pending job").requested_revision
-        } else {
-            prior
-                .as_ref()
-                .map_or(0, |job| job.requested_revision)
-                .checked_add(1)
-                .context("scheduler revision overflow")?
-        };
-        let mut hints: std::collections::BTreeMap<String, u64> = tx
-            .query_row(
-                "SELECT path_hints FROM jobs WHERE collection=?1",
-                [collection],
-                |row| row.get::<_, String>(0),
-            )
-            .map(|bytes| serde_json::from_str(&bytes))??;
-        hints.retain(|_, rev| *rev > prior.as_ref().map_or(0, |job| job.completed_revision));
-        if let Some(paths) = paths {
-            for path in paths {
-                hints.insert(path.clone(), revision);
+                    && prior.paths.is_some()
+                    && prior.running_revision == prior.requested_revision)
+                && (!full || prior.full);
+            let revision = if keep {
+                row.revision
+            } else {
+                row.revision
+                    .checked_add(1)
+                    .context("scheduler revision overflow")?
+            };
+            i64::try_from(revision)?;
+            row.hints.retain(|_, rev| *rev > row.completed);
+            if let Some(paths) = paths {
+                for path in paths {
+                    row.hints.insert(path.clone(), revision);
+                }
+            } else {
+                row.hints.clear();
             }
-        } else {
-            hints.clear();
-        }
-        // Overflow safely promotes to a complete reconciliation rather than losing events.
-        let hints_bytes = serde_json::to_string(&hints)?;
-        let use_paths = paths.is_some()
-            && hints.len() <= 1024
-            && hints_bytes.len() <= 1 << 20
-            && prior.as_ref().is_none_or(|job| {
-                job.requested_revision <= job.completed_revision || job.paths.is_some()
-            });
-        let hints_bytes = if use_paths { hints_bytes } else { "{}".into() };
-        let revision = i64::try_from(revision)?;
-        let now = i64::try_from(now)?;
-        tx.execute(
-            "UPDATE jobs SET revision=?2, blocked=0, error=NULL,
-            first_pending=CASE WHEN completed=revision THEN ?3 ELSE first_pending END,
-            last_event=CASE WHEN ?6 THEN last_event ELSE ?3 END,
-            full_revision=CASE WHEN ?4 THEN ?2 ELSE full_revision END,
-            manual_revision=CASE WHEN ?5 THEN ?2 ELSE manual_revision END,
-            path_hints=?7, inventory_revision=CASE WHEN ?8 THEN inventory_revision ELSE ?2 END,
-            debounced_revision=CASE WHEN ?9 THEN ?2 ELSE 0 END WHERE collection=?1",
-            params![
-                collection,
-                revision,
-                now,
-                full,
-                manual,
-                keep,
-                hints_bytes,
-                use_paths,
-                debounced
-            ],
-        )?;
-        let job = tx.query_row(
-            "SELECT * FROM jobs WHERE collection=?1",
-            [collection],
-            decode,
-        )?;
-        tx.commit()?;
-        Ok(job)
+            let use_paths = paths.is_some()
+                && row.hints.len() <= 1024
+                && serde_json::to_vec(&row.hints)?.len() <= 1 << 20
+                && (prior.requested_revision <= prior.completed_revision || prior.paths.is_some());
+            if !use_paths {
+                row.hints.clear();
+                row.inventory_revision = revision;
+            }
+            if row.completed == row.revision {
+                row.first_pending = now;
+            }
+            row.revision = revision;
+            row.blocked = false;
+            row.error = None;
+            if !keep {
+                row.last_event = now;
+            }
+            if full {
+                row.full_revision = revision;
+            }
+            if manual {
+                row.manual_revision = revision;
+            }
+            row.debounced_revision = if debounced { revision } else { 0 };
+            row.snapshot(write_report(transaction, row.report)?)
+        })
     }
-
     pub fn pause(
         &self,
         collection: &str,
         root: &str,
         paused: bool,
     ) -> Result<Option<ScheduledJob>> {
-        let prior = self.status(collection, root)?;
-        let mut db = self.open()?;
-        let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        if prior.is_none() {
-            let count: i64 = tx.query_row("SELECT COUNT(*) FROM jobs", [], |row| row.get(0))?;
-            ensure!(count < 1024, "scheduler registration limit reached");
-            tx.execute(
-                "INSERT OR IGNORE INTO jobs(collection,root) VALUES(?1,?2)",
-                params![collection, root],
-            )?;
-        }
-        let existing: String = tx.query_row(
-            "SELECT root FROM jobs WHERE collection=?1",
-            [collection],
-            |row| row.get(0),
-        )?;
-        ensure!(
-            existing == root,
-            "scheduled collection belongs to another root"
-        );
-        // A new Pause action revokes pending manual admission too. A later
-        // explicit manual request can override the persisted automatic pause.
-        // Keep its revision queued so Resume rediscovers unfinished source work.
-        tx.execute("UPDATE jobs SET paused=?2, manual_revision=CASE WHEN ?2 THEN completed ELSE manual_revision END, blocked=CASE WHEN ?2 THEN blocked ELSE 0 END, error=CASE WHEN ?2 THEN error ELSE NULL END WHERE collection=?1 AND root=?3", params![collection, paused, root])?;
-        tx.commit()?;
-        self.status(collection, root)
+        crate::validate_collection(collection)?;
+        ensure!(root.len() <= 32768, "scheduler root exceeds path budget");
+        self.write(|state, transaction| {
+            let row = state.row(collection, root)?;
+            row.paused = paused;
+            if paused {
+                row.manual_revision = row.completed;
+            } else {
+                row.blocked = false;
+                row.error = None;
+            }
+            Ok(Some(row.snapshot(write_report(transaction, row.report)?)?))
+        })
     }
 
-    /// Stable advisory lock file is never unlinked, preventing lock-inode races.
-    /// The operating system releases ownership when the worker exits or crashes.
     pub fn worker_lock(&self, collection: &str) -> Result<Option<WorkerLock>> {
         crate::validate_collection(collection)?;
         crate::quota::ensure_current_root(&self.directory)?;
@@ -470,28 +611,22 @@ impl Queue {
         }
     }
 
-    /// Caller must hold worker_lock for the entire claim/index/finish operation.
     pub fn claim(&self, lock: &WorkerLock, now: u64) -> Result<Option<ScheduledJob>> {
         ensure!(
             lock.directory == self.directory,
             "scheduler worker belongs to another data root"
         );
-        let mut db = self.open()?;
-        let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        // Only this collection's OS lock proves its running claim abandoned.
-        tx.execute(
-            "UPDATE jobs SET running=0 WHERE collection=?1 AND running<>0",
-            [&lock.collection],
-        )?;
-        let mut query = tx.prepare(
-            "SELECT * FROM jobs WHERE collection=?1 AND revision>completed AND blocked=0",
-        )?;
-        let jobs: Vec<ScheduledJob> = query
-            .query_map([&lock.collection], decode)?
-            .collect::<rusqlite::Result<_>>()?;
-        drop(query);
-        let selected = jobs.into_iter().find(|job| {
-            job.manual
+        i64::try_from(now)?;
+        self.write(|state, transaction| {
+            let Some(row) = state.jobs.get_mut(&lock.collection) else {
+                return Ok(None);
+            };
+            row.running = 0;
+            if row.revision <= row.completed || row.blocked {
+                return Ok(None);
+            }
+            let job = row.snapshot(write_report(transaction, row.report)?)?;
+            let eligible = job.manual
                 || (!job.paused && job.debounced)
                 || (!job.paused
                     && (job.last_event_unix_ms > now
@@ -501,18 +636,14 @@ impl Queue {
                                 .last_event_unix_ms
                                 .saturating_add(2000)
                                 .min(job.first_pending_unix_ms.saturating_add(30000))
-                                .max(job.last_completed_unix_ms.saturating_add(5000))))
-        });
-        if let Some(job) = &selected {
-            tx.execute(
-                "UPDATE jobs SET running=revision WHERE collection=?1",
-                [&job.collection],
-            )?;
-        }
-        tx.commit()?;
-        Ok(selected)
+                                .max(job.last_completed_unix_ms.saturating_add(5000))));
+            if !eligible {
+                return Ok(None);
+            }
+            row.running = row.revision;
+            Ok(Some(job))
+        })
     }
-
     pub fn finish(
         &self,
         lock: &WorkerLock,
@@ -524,21 +655,16 @@ impl Queue {
             lock.directory == self.directory && lock.collection == job.collection,
             "scheduler worker belongs to another data root"
         );
+        i64::try_from(now)?;
         let (completed, error, encoded) = match report {
             Ok(report) => {
                 ensure!(
-                    report.len() <= 8 * 1024 * 1024,
+                    report.len() <= 8 << 20,
                     "scheduler report exceeds 8 MiB budget"
                 );
                 (true, None, Some(report))
             }
-            Err(error) => {
-                let mut end = error.len().min(4096);
-                while !error.is_char_boundary(end) {
-                    end -= 1;
-                }
-                (false, Some(error[..end].to_string()), None)
-            }
+            Err(error) => (false, Some(brief(error)), None),
         };
         let inventory_complete = encoded
             .and_then(|bytes| serde_json::from_str::<serde_json::Value>(bytes).ok())
@@ -548,96 +674,153 @@ impl Queue {
                     .and_then(serde_json::Value::as_bool)
                     == Some(false)
             });
-        let mut db = self.open()?;
-        let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let changed = tx.execute("UPDATE jobs SET completed=CASE WHEN ?4 THEN ?2 ELSE completed END,
-            running=0, blocked=NOT ?4, error=?5, report=CASE WHEN ?4 THEN ?6 ELSE report END,
-            first_pending=CASE WHEN ?4 AND revision>?2 THEN last_event ELSE first_pending END,
-            last_completed=CASE WHEN ?4 THEN ?3 ELSE last_completed END,
-            inventory_completed=CASE WHEN ?8 THEN ?3 ELSE inventory_completed END WHERE collection=?1 AND running=?2 AND root=?7",
-            params![job.collection, i64::try_from(job.requested_revision)?, i64::try_from(now)?, completed, error, encoded, job.root, inventory_complete])?;
-        ensure!(changed == 1, "scheduler claim changed before completion");
-        if let Some(report) = encoded {
-            tx.execute("INSERT INTO completed_reports(collection,root,first_revision,revision,report) VALUES(?1,?2,?3,?4,?5)",
-                params![job.collection,job.root,i64::try_from(job.completed_revision + 1)?,i64::try_from(job.requested_revision)?,report])?;
-            // Four recent passes per binding, at most 16 MiB / 128 records
-            // globally. The queue's existing latest report remains available.
-            tx.execute("DELETE FROM completed_reports WHERE collection=?1 AND root=?2 AND id NOT IN (SELECT id FROM completed_reports WHERE collection=?1 AND root=?2 ORDER BY id DESC LIMIT 4)", params![job.collection,job.root])?;
-            tx.execute_batch("DELETE FROM completed_reports WHERE id IN (
-                SELECT id FROM (SELECT id,SUM(length(CAST(report AS BLOB))) OVER (ORDER BY id DESC) AS bytes,ROW_NUMBER() OVER (ORDER BY id DESC) AS position FROM completed_reports)
-                WHERE bytes>16777216 OR position>128);")?;
-        }
-        tx.commit()?;
-        Ok(())
+        self.write(|state, transaction| {
+            let row = state
+                .jobs
+                .get_mut(&job.collection)
+                .context("scheduler claim missing")?;
+            ensure!(
+                row.running == job.requested_revision && row.root == job.root,
+                "scheduler claim changed before completion"
+            );
+            row.running = 0;
+            row.blocked = !completed;
+            row.error = error;
+            if completed {
+                row.completed = job.requested_revision;
+                row.last_completed = now;
+                if row.revision > job.requested_revision {
+                    row.first_pending = row.last_event;
+                }
+            }
+            if inventory_complete {
+                row.inventory_completed = now;
+            }
+            if let Some(encoded) = encoded {
+                let old = row.report;
+                state.report_sequence = state
+                    .report_sequence
+                    .checked_add(1)
+                    .context("scheduler report sequence overflow")?;
+                let id = state.report_sequence;
+                row.report = Some(id);
+                transaction
+                    .open_table(REPORTS)?
+                    .insert(id, encoded.as_bytes())?;
+                state.reports.push(Report {
+                    id,
+                    collection: job.collection.clone(),
+                    root: job.root.clone(),
+                    first_revision: job
+                        .completed_revision
+                        .checked_add(1)
+                        .context("report revision overflow")?,
+                    revision: job.requested_revision,
+                    bytes: encoded.len(),
+                });
+                let keep: BTreeSet<_> = state
+                    .reports
+                    .iter()
+                    .rev()
+                    .filter(|report| report.collection == job.collection && report.root == job.root)
+                    .take(4)
+                    .map(|report| report.id)
+                    .collect();
+                let mut removed: Vec<_> = old.into_iter().collect();
+                state.reports.retain(|report| {
+                    let preserve = report.collection != job.collection
+                        || report.root != job.root
+                        || keep.contains(&report.id);
+                    if !preserve {
+                        removed.push(report.id);
+                    }
+                    preserve
+                });
+                let mut bytes = 0usize;
+                let mut position = 0usize;
+                let mut preserve = BTreeSet::new();
+                for report in state.reports.iter().rev() {
+                    bytes = bytes
+                        .checked_add(report.bytes)
+                        .context("report history bytes overflow")?;
+                    position += 1;
+                    if bytes <= 16 << 20 && position <= 128 {
+                        preserve.insert(report.id);
+                    } else {
+                        removed.push(report.id);
+                    }
+                }
+                state.reports.retain(|report| preserve.contains(&report.id));
+                gc(state, transaction, removed)?;
+            }
+            Ok(())
+        })
     }
-
-    /// Return the pass that actually satisfied this intent, including coalesced
-    /// revisions. None means its bounded report history has expired (or predates it).
     pub fn completed_report(
         &self,
         collection: &str,
         root: &str,
         revision: u64,
     ) -> Result<Option<String>> {
-        let db = self.open_read()?;
-        let present: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='completed_reports')", [], |row| row.get(0))?;
-        if !present {
-            return Ok(None);
-        }
-        Ok(db.query_row("SELECT report FROM completed_reports WHERE collection=?1 AND root=?2 AND first_revision<=?3 AND revision>=?3 ORDER BY revision LIMIT 1",
-            params![collection,root,i64::try_from(revision)?], |row| row.get(0)).optional()?)
+        i64::try_from(revision)?;
+        self.read(|state, transaction| {
+            let id = state
+                .reports
+                .iter()
+                .filter(|report| {
+                    report.collection == collection
+                        && report.root == root
+                        && report.first_revision <= revision
+                        && report.revision >= revision
+                })
+                .min_by_key(|report| report.revision)
+                .map(|report| report.id);
+            read_report(transaction, id)
+        })
     }
-
-    /// Release a claim blocked by a live collection writer without treating
-    /// contention as an indexing failure or completing the queued revision.
     pub fn defer(&self, lock: &WorkerLock, job: &ScheduledJob) -> Result<()> {
         ensure!(
             lock.directory == self.directory && lock.collection == job.collection,
             "scheduler worker belongs to another data root"
         );
-        let changed = self.open()?.execute(
-            "UPDATE jobs SET running=0 WHERE collection=?1 AND root=?2 AND running=?3",
-            params![
-                job.collection,
-                job.root,
-                i64::try_from(job.requested_revision)?
-            ],
-        )?;
-        ensure!(changed == 1, "scheduler claim changed before deferral");
-        Ok(())
+        self.write(|state, _| {
+            let row = state
+                .jobs
+                .get_mut(&job.collection)
+                .context("scheduler claim missing")?;
+            ensure!(
+                row.root == job.root && row.running == job.requested_revision,
+                "scheduler claim changed before deferral"
+            );
+            row.running = 0;
+            Ok(())
+        })
     }
-
-    /// Stop automatic semantic retries after a failed attempt. A new explicit
-    /// request or Resume clears this block without losing committed evidence.
     pub fn block_semantic(&self, lock: &WorkerLock, job: &ScheduledJob, error: &str) -> Result<()> {
         ensure!(
             lock.directory == self.directory && lock.collection == job.collection,
             "scheduler worker belongs to another data root"
         );
-        let mut end = error.len().min(4096);
-        while !error.is_char_boundary(end) {
-            end -= 1;
-        }
-        let changed = self.open()?.execute(
-            "UPDATE jobs SET blocked=1,error=?3 WHERE collection=?1 AND root=?2 AND running=0 AND revision=completed",
-            params![job.collection, job.root, &error[..end]],
-        )?;
-        ensure!(
-            changed == 1,
-            "semantic scheduler binding changed before failure"
-        );
-        Ok(())
+        self.write(|state, _| {
+            let row = state
+                .jobs
+                .get_mut(&job.collection)
+                .context("semantic scheduler binding missing")?;
+            ensure!(
+                row.root == job.root && row.running == 0 && row.revision == row.completed,
+                "semantic scheduler binding changed before failure"
+            );
+            row.blocked = true;
+            row.error = Some(brief(error));
+            Ok(())
+        })
     }
-
     pub fn forget(&self, collection: &str, root: &str) -> Result<()> {
         let lock = self
             .worker_lock(collection)?
             .context("this collection is already indexing; cannot forget collection")?;
         self.forget_locked(&lock, collection, root)
     }
-
-    /// Select a registered idle collection for bounded periodic reconciliation.
-    /// Record the start before scanning so crashes do not produce a tight retry loop.
     pub fn claim_scan(
         &self,
         lock: &WorkerLock,
@@ -648,26 +831,25 @@ impl Queue {
             lock.directory == self.directory,
             "scheduler worker belongs to another data root"
         );
-        let mut db = self.open()?;
-        let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let job = tx
-            .query_row(
-                "SELECT * FROM jobs WHERE collection=?3 AND paused=0 AND blocked=0 AND revision=completed
-            AND (scan_started=0 OR scan_started<=?1 OR scan_started>?2) ORDER BY scan_started,collection LIMIT 1",
-                params![i64::try_from(now.saturating_sub(interval_ms))?, i64::try_from(now)?, &lock.collection],
-                decode,
-            )
-            .optional()?;
-        if let Some(job) = &job {
-            tx.execute(
-                "UPDATE jobs SET scan_started=?2 WHERE collection=?1",
-                params![job.collection, i64::try_from(now)?],
-            )?;
-        }
-        tx.commit()?;
-        Ok(job)
+        i64::try_from(now)?;
+        self.write(|state, transaction| {
+            let Some(row) = state.jobs.get_mut(&lock.collection) else {
+                return Ok(None);
+            };
+            if row.paused
+                || row.blocked
+                || row.revision != row.completed
+                || !(row.scan_started == 0
+                    || row.scan_started <= now.saturating_sub(interval_ms)
+                    || row.scan_started > now)
+            {
+                return Ok(None);
+            }
+            let job = row.snapshot(write_report(transaction, row.report)?)?;
+            row.scan_started = now;
+            Ok(Some(job))
+        })
     }
-
     pub fn finish_scan(
         &self,
         lock: &WorkerLock,
@@ -679,120 +861,62 @@ impl Queue {
             lock.directory == self.directory && lock.collection == job.collection,
             "scheduler worker belongs to another data root"
         );
-        let error = error.map(|error| error.chars().take(1000).collect::<String>());
-        self.open()?.execute(
-            "UPDATE jobs SET scan_completed=?2,scan_error=?3 WHERE collection=?1 AND root=?4",
-            params![job.collection, i64::try_from(now)?, error, job.root],
-        )?;
-        Ok(())
+        i64::try_from(now)?;
+        self.write(|state, _| {
+            if let Some(row) = state.jobs.get_mut(&job.collection)
+                && row.root == job.root
+            {
+                row.scan_completed = now;
+                row.scan_error = error.map(|error| error.chars().take(1000).collect());
+            }
+            Ok(())
+        })
     }
     pub fn forget_locked(&self, lock: &WorkerLock, collection: &str, root: &str) -> Result<()> {
         ensure!(
             lock.directory == self.directory && lock.collection == collection,
             "scheduler worker belongs to another data root"
         );
-        self.status(collection, root)?;
-        let mut db = self.open()?;
-        let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        tx.execute(
-            "DELETE FROM completed_reports WHERE collection=?1 AND root=?2",
-            params![collection, root],
-        )?;
-        tx.execute(
-            "DELETE FROM jobs WHERE collection=?1 AND root=?2",
-            params![collection, root],
-        )?;
-        tx.commit()?;
-        Ok(())
+        self.write(|state, transaction| {
+            if let Some(row) = state.jobs.get(collection) {
+                ensure!(
+                    row.root == root,
+                    "scheduled collection belongs to another root"
+                );
+            }
+            let mut removed = Vec::new();
+            if let Some(row) = state.jobs.remove(collection) {
+                removed.extend(row.report);
+            }
+            state.reports.retain(|report| {
+                if report.collection == collection && report.root == root {
+                    removed.push(report.id);
+                    false
+                } else {
+                    true
+                }
+            });
+            if !removed.is_empty() {
+                gc(state, transaction, removed)?;
+            }
+            Ok(())
+        })
     }
-
     pub fn data_dir(&self) -> &Path {
         &self.directory
     }
-
-    /// Observe queued source work without materializing reports for other roots.
     pub fn has_pending_source(&self) -> Result<bool> {
-        if !self.directory.join("scheduler-1.2.sqlite3").exists() {
+        if !self.exists()? {
             return Ok(false);
         }
-        Ok(self.open_read()?.query_row(
-            "SELECT EXISTS(SELECT 1 FROM jobs WHERE revision>completed AND blocked=0 AND (paused=0 OR manual_revision>completed))",
-            [], |row| row.get(0),
-        )?)
+        self.read(|state, _| {
+            Ok(state.jobs.values().any(|row| {
+                row.revision > row.completed
+                    && !row.blocked
+                    && (!row.paused || row.manual_revision > row.completed)
+            }))
+        })
     }
-}
-
-fn decode(row: &rusqlite::Row<'_>) -> rusqlite::Result<ScheduledJob> {
-    let revision = nonnegative(row, 2)?;
-    let completed = nonnegative(row, 3)?;
-    // A read-only status request must work before the next writer upgrades an
-    // older queue. Partial or otherwise malformed schemas still fail closed.
-    let legacy = row.as_ref().column_count() == 14;
-    let selected = row.as_ref().column_count() >= 20;
-    let (paths, recent_paths) = if selected {
-        let encoded: String = row.get(17)?;
-        let parsed = (|| -> Result<(Option<Vec<String>>, Vec<String>)> {
-            ensure!(
-                encoded.len() <= 1 << 20,
-                "scheduler path hints exceed byte limit"
-            );
-            let hints: std::collections::BTreeMap<String, u64> = serde_json::from_str(&encoded)?;
-            ensure!(
-                hints.len() <= 1024 && hints.values().all(|value| *value <= revision),
-                "invalid scheduler hint revisions"
-            );
-            if !hints.is_empty() {
-                validate_paths(&hints.keys().cloned().collect::<Vec<_>>())?;
-            }
-            let recent = hints
-                .iter()
-                .filter(|(_, value)| **value == completed)
-                .map(|(path, _)| path.clone())
-                .collect();
-            let paths: Vec<_> = hints
-                .into_iter()
-                .filter(|(_, revision)| *revision > completed)
-                .map(|(path, _)| path)
-                .collect();
-            if paths.is_empty() || nonnegative(row, 18)? > completed {
-                return Ok((None, recent));
-            }
-            validate_paths(&paths)?;
-            Ok((Some(paths), recent))
-        })();
-        parsed.map_err(|error| {
-            rusqlite::Error::FromSqlConversionFailure(17, rusqlite::types::Type::Text, error.into())
-        })?
-    } else {
-        (None, Vec::new())
-    };
-    Ok(ScheduledJob {
-        collection: row.get(0)?,
-        root: row.get(1)?,
-        requested_revision: revision,
-        completed_revision: completed,
-        running_revision: nonnegative(row, 4)?,
-        paused: row.get(5)?,
-        blocked: row.get(6)?,
-        full: nonnegative(row, 7)? > completed,
-        manual: nonnegative(row, 8)? > completed,
-        first_pending_unix_ms: nonnegative(row, 9)?,
-        last_event_unix_ms: nonnegative(row, 10)?,
-        last_completed_unix_ms: nonnegative(row, 11)?,
-        error: row.get(12)?,
-        last_report: row.get(13)?,
-        scan_started_unix_ms: if legacy { 0 } else { nonnegative(row, 14)? },
-        scan_completed_unix_ms: if legacy { 0 } else { nonnegative(row, 15)? },
-        inventory_completed_unix_ms: if row.as_ref().column_count() >= 21 {
-            nonnegative(row, 20)?
-        } else {
-            0
-        },
-        scan_error: if legacy { None } else { row.get(16)? },
-        paths,
-        debounced: selected && nonnegative(row, 19)? >= revision && revision > completed,
-        recent_paths,
-    })
 }
 
 fn validate_paths(paths: &[String]) -> Result<()> {
@@ -811,14 +935,4 @@ fn validate_paths(paths: &[String]) -> Result<()> {
         "invalid scheduler path hint"
     );
     Ok(())
-}
-
-fn nonnegative(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<u64> {
-    u64::try_from(row.get::<_, i64>(index)?).map_err(|error| {
-        rusqlite::Error::FromSqlConversionFailure(
-            index,
-            rusqlite::types::Type::Integer,
-            Box::new(error),
-        )
-    })
 }

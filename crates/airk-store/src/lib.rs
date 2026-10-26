@@ -20,6 +20,7 @@ mod durability;
 pub mod extraction_policy;
 pub mod history;
 pub mod history_policy;
+mod ledger;
 pub mod maintenance;
 mod managed_collection;
 pub mod model_objects;

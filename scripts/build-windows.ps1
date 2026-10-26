@@ -24,6 +24,7 @@ Push-Location $airkRoot
 $airkPreviousBinary = $env:AIRK_TEST_BINARY
 try {
     Start-Transcript -LiteralPath (Join-Path $airkOutput 'build.log') | Out-Null
+    Invoke-AirkTool $airkPython @('scripts/check-storage-engine.py')
     Invoke-AirkTool rustup @('show')
     Invoke-AirkTool node @('--version')
     Invoke-AirkTool npm.cmd @('ci', '--ignore-scripts', '--no-audit', '--no-fund', '--prefix', 'packages/vscode')

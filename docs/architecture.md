@@ -1,5 +1,7 @@
 # Architecture
 
+The branch targets 1.4.5 and the [accepted redb cutover](storagekv/storagekv-design.md). The new backend/catalog/journal primitives are not yet selected by production collection access; current SQLite behavior below remains the implemented baseline. Usage and scheduler ledgers and private graph/vector staging now use redb; production collection and service-registry conversion and non-destructive ledger upgrade imports remain incomplete. All stores must complete the cutover before packaging. See [development status](release-1.4.5.md).
+
 Extension installation updates recognized existing workspace agent connection fields after native registration supplies the stable-launcher binding. Codex TOML, Claude Code JSON and Copilot JSON edits use guarded editor saves, preserve policies and never execute old commands or edit user-wide configuration.
 
 The MCP frontend serves bundled `airk_help` without a worker/evidence query. Native CLI supplies a lazy public-command catalog generated from its parser; MCP supplies topic guidance and its own schemas. Scoped status work observations use existing instance-fenced metadata RPCs; store supplies a bounded read-only FIFO queue observation. Progress/watcher/worker samples remain distinct from kernel publication readiness. No management action or agent reasoning is added to MCP.

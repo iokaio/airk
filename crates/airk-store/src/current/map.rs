@@ -8,6 +8,34 @@ use rusqlite::{Connection, OptionalExtension, params};
 use std::collections::BTreeMap;
 
 const HEIGHT: u8 = 16;
+pub(crate) trait MapStorage {
+    fn bucket_bytes(&self, prefix: u16) -> Result<Option<Vec<u8>>>;
+    fn node_bytes(&self, height: u8, index: u16) -> Result<Option<Vec<u8>>>;
+}
+impl MapStorage for Connection {
+    fn bucket_bytes(&self, prefix: u16) -> Result<Option<Vec<u8>>> {
+        let row: Option<Option<Vec<u8>>> = self.query_row(
+            "SELECT CASE WHEN typeof(content)='blob' AND length(content)<=524288 THEN content END FROM current_map_buckets WHERE prefix=?1",
+            [i64::from(prefix)], |row| row.get(0)).optional()?;
+        row.map(|value| value.context("invalid current map bucket bytes"))
+            .transpose()
+    }
+    fn node_bytes(&self, height: u8, index: u16) -> Result<Option<Vec<u8>>> {
+        let row: Option<Option<Vec<u8>>> = self.query_row(
+            "SELECT CASE WHEN typeof(digest)='blob' AND length(digest)=32 THEN digest END FROM current_map_nodes WHERE height=?1 AND idx=?2",
+            params![i64::from(height), i64::from(index)], |row| row.get(0)).optional()?;
+        row.map(|value| value.context("invalid current map node digest"))
+            .transpose()
+    }
+}
+impl MapStorage for rusqlite::Transaction<'_> {
+    fn bucket_bytes(&self, prefix: u16) -> Result<Option<Vec<u8>>> {
+        MapStorage::bucket_bytes(&**self, prefix)
+    }
+    fn node_bytes(&self, height: u8, index: u16) -> Result<Option<Vec<u8>>> {
+        MapStorage::node_bytes(&**self, height, index)
+    }
+}
 pub const MAX_BUCKET_BYTES: usize = 512 * 1024;
 pub const MAX_VALUE_BYTES: usize = 256 * 1024;
 pub const MAX_BUCKET_ENTRIES: usize = 128;
@@ -246,20 +274,11 @@ pub(crate) fn create(connection: &Connection) -> Result<()> {
     Ok(())
 }
 fn bucket(
-    connection: &Connection,
+    connection: &dyn MapStorage,
     scope: &CurrentScope,
     prefix: u16,
 ) -> Result<(Vec<Entry>, Sha256Digest)> {
-    let row: Option<Option<Vec<u8>>> = connection.query_row(
-        "SELECT CASE WHEN typeof(content)='blob' AND length(content)<=524288 THEN content END FROM current_map_buckets WHERE prefix=?1",
-        [i64::from(prefix)],
-        |row| row.get(0),
-    ).optional()?;
-    let bytes = match row {
-        Some(None) => anyhow::bail!("invalid current map bucket bytes"),
-        Some(Some(bytes)) => Some(bytes),
-        None => None,
-    };
+    let bytes = connection.bucket_bytes(prefix)?;
     match bytes {
         Some(bytes) => {
             let entries = decode(prefix, &bytes)?;
@@ -269,7 +288,7 @@ fn bucket(
     }
 }
 fn node(
-    connection: &Connection,
+    connection: &dyn MapStorage,
     scope: &CurrentScope,
     height: u8,
     index: u16,
@@ -278,22 +297,17 @@ fn node(
         height <= HEIGHT && u32::from(index) < (1u32 << (HEIGHT - height)),
         "invalid map node coordinate"
     );
-    let row: Option<Option<Vec<u8>>> = connection.query_row(
-        "SELECT CASE WHEN typeof(digest)='blob' AND length(digest)=32 THEN digest END FROM current_map_nodes WHERE height=?1 AND idx=?2",
-        params![i64::from(height), i64::from(index)],
-        |row| row.get(0),
-    ).optional()?;
-    let value = match row {
-        Some(None) => anyhow::bail!("invalid current map node digest"),
-        Some(Some(bytes)) => Some(bytes),
-        None => None,
-    };
+    let value = connection.node_bytes(height, index)?;
+    ensure!(
+        value.as_ref().is_none_or(|bytes| bytes.len() == 32),
+        "invalid current map node digest"
+    );
     Ok(value
         .map(|bytes| Sha256Digest::from_bytes(bytes.try_into().expect("length checked")))
         .unwrap_or_else(|| empty(scope, height)))
 }
 fn proof(
-    connection: &Connection,
+    connection: &dyn MapStorage,
     scope: &CurrentScope,
     root: Sha256Digest,
     key: Sha256Digest,
@@ -319,7 +333,7 @@ fn proof(
     Ok(entries)
 }
 pub(crate) fn get(
-    connection: &Connection,
+    connection: &dyn MapStorage,
     scope: &CurrentScope,
     root: Sha256Digest,
     key: Sha256Digest,
@@ -432,7 +446,7 @@ pub(crate) fn put(
 /// readable. The final SQL transaction must replay the same ordered mutations
 /// with `put` and require equality with `root()` before publishing the head.
 pub(crate) struct MapPlan<'a> {
-    connection: &'a Connection,
+    connection: &'a dyn MapStorage,
     scope: &'a CurrentScope,
     base_root: Sha256Digest,
     root: Sha256Digest,
@@ -444,7 +458,7 @@ pub(crate) struct MapPlan<'a> {
 
 impl<'a> MapPlan<'a> {
     pub fn new(
-        connection: &'a Connection,
+        connection: &'a dyn MapStorage,
         scope: &'a CurrentScope,
         root: Sha256Digest,
     ) -> Result<Self> {
@@ -463,6 +477,29 @@ impl<'a> MapPlan<'a> {
 
     pub fn root(&self) -> Result<Sha256Digest> {
         ensure!(!self.poisoned, "current map plan is poisoned");
+        Ok(self.root)
+    }
+
+    pub(crate) fn write_kv(&self, transaction: &redb::WriteTransaction) -> Result<Sha256Digest> {
+        use super::kv::tables;
+        ensure!(!self.poisoned, "current map plan is poisoned");
+        let mut buckets = transaction.open_table(tables::MAP_BUCKET)?;
+        for (&prefix, entries) in &self.buckets {
+            if entries.is_empty() {
+                buckets.remove(prefix)?;
+            } else {
+                buckets.insert(prefix, encode(prefix, entries)?.as_slice())?;
+            }
+        }
+        let mut nodes = transaction.open_table(tables::MAP_NODE)?;
+        for (&(height, index), digest) in &self.nodes {
+            let key = (u32::from(height) << 16) | u32::from(index);
+            if *digest == empty(self.scope, height) {
+                nodes.remove(key)?;
+            } else {
+                nodes.insert(key, digest.as_bytes().as_slice())?;
+            }
+        }
         Ok(self.root)
     }
 
@@ -638,7 +675,7 @@ impl MapVisitLimits {
 /// Traverses the authenticated tree, so omission of an entire occupied bucket
 /// cannot silently shorten an enumeration. The caller owns the SQL read lease.
 pub(crate) fn visit_all(
-    connection: &Connection,
+    connection: &dyn MapStorage,
     scope: &CurrentScope,
     root: Sha256Digest,
     limits: MapVisitLimits,

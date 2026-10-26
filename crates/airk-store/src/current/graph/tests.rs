@@ -256,17 +256,17 @@ fn invalid_mutation_quota_limits_and_explicit_poison_prevent_sealing() -> Result
     assert!(overlay.seal().is_err());
     let reservation = quota.reserve("graph-fixture", 16 * 1024)?;
     assert!(GraphOverlay::empty(&reservation, scope(), limits()).is_err());
-    let reservation = quota.reserve("graph-fixture", 32 * 1024)?;
+    let reservation = quota.reserve("graph-fixture", 64 * 1024)?;
     let overlay = GraphOverlay::empty(
         &reservation,
         scope(),
         GraphOverlayLimits {
-            maximum_bytes: 16 * 1024,
+            maximum_bytes: 64 * 1024,
             ..limits()
         },
     )?;
     let exhausted = (0..512).any(|id| overlay.append(id, record(id)).is_err());
-    assert!(exhausted, "private SQLite page limit was not enforced");
+    assert!(exhausted, "private redb capacity was not enforced");
     assert!(overlay.seal().is_err());
     Ok(())
 }
@@ -323,24 +323,29 @@ fn corrupt_private_rows_and_sealed_afterimages_are_rejected() -> Result<()> {
     let quota = Quota::open(directory.path())?;
     let reservation = quota.reserve("graph-fixture", 2 * 1024 * 1024)?;
     let overlay = candidate(&reservation, 2)?;
-    overlay
-        .state
-        .lock()
-        .unwrap()
-        .database
-        .connection()
-        .execute(
-            "UPDATE dirty_records SET record=zeroblob(32) WHERE id=1",
-            [],
-        )?;
+    {
+        use redb::ReadableTable;
+        let state = overlay.state.lock().unwrap();
+        let mut table = state
+            .database
+            .transaction()
+            .open_table(PrivateTable::Records.definition())?;
+        let key = 1u32.to_be_bytes();
+        let mut bytes = table.get(key.as_slice())?.unwrap().value().to_vec();
+        *bytes.last_mut().unwrap() ^= 1;
+        table.insert(key.as_slice(), bytes.as_slice())?;
+    }
     assert!(overlay.read(1).is_err());
     assert!(overlay.seal().is_err());
     let reservation = quota.reserve("graph-fixture", 2 * 1024 * 1024)?;
     let sealed = candidate(&reservation, 2)?.seal()?;
-    sealed.database.connection().execute(
-        "UPDATE dirty_nodes SET digest=zeroblob(32) WHERE height=32",
-        [],
-    )?;
+    {
+        let transaction = sealed.database.database().begin_write()?;
+        let mut table = transaction.open_table(PrivateTable::Nodes.definition())?;
+        table.insert([32, 0, 0, 0, 0].as_slice(), [0u8; 32].as_slice())?;
+        drop(table);
+        transaction.commit()?;
+    }
     assert!(sealed.visit_nodes(&mut |_| Ok(())).is_err());
     let mut database = connection()?;
     {

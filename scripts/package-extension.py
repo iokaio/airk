@@ -9,6 +9,7 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
 import zipfile
 import xml.etree.ElementTree as ET
 
@@ -141,6 +142,8 @@ def main():
     parser.add_argument("--channel", choices=("preview", "stable"), default="stable")
     parser.add_argument("--stage-only", action="store_true", help="Verify an allowlisted development stage without creating a VSIX")
     args = parser.parse_args()
+    # Local candidates obey the same complete-cutover gate as release packages.
+    subprocess.run([sys.executable, str(ROOT / "scripts/check-storage-engine.py")], cwd=ROOT, check=True)
     native = (args.native_dir or ROOT / "artifacts" / "native" / args.target / "publish").resolve()
     output = (args.output or ROOT / "artifacts" / "extension" / args.target).resolve()
     artifacts = (ROOT / "artifacts").resolve()

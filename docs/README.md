@@ -1,5 +1,7 @@
 # AIRK documentation
 
+**1.4.5 development:** the [accepted redb implementation plan](storagekv/storagekv-design.md) requires a full SQLite-free branch cutover before any VSIX build. See [development status](release-1.4.5.md); no 1.4.5 VSIX has been built.
+
 1.4.4 scales WAL/shared-memory allowances with admitted database capacity, preserves preceding-budget reads during recovery, and sizes growth using logical SQLite pages. See the [release record](release-1.4.4.md) and [reliability review, including Turso and other embedded engines](storage-reliability.md).
 
 Installation and upgrades now display a VS Code progress notification with the current stage: version and payload checks, staging, native activation, agent connection updates, workspace setup and cleanup. Progress uses actual stages without an invented percentage. A connected-client preflight pauses the upgrade with a visible Retry Update action; success and failure remain explicit. VS Code owns the earlier VSIX installation UI, before AIRK can activate.
@@ -8,7 +10,7 @@ Installation now shows a completion notification with MCP Servers, Reload Window
 
 Trusted VSIX installation and **Install or Repair CLI** refresh recognized existing workspace AIRK connections in Codex (`.codex/config.toml`), Claude Code (`.mcp.json`) and GitHub Copilot (`.vscode/mcp.json`) to the installed stable launcher and registered service arguments. Other servers, environment and tool policies remain intact; missing entries do not enable an agent. Foreign/custom launches, unsupported TOML, unsaved edits and unsafe files remain for manual review with a visible warning. Restart connected agents after installation. Targeted Windows installation is covered by the local installer harness; broader platform qualification remains pending.
 
-The current branch is synchronized at **1.4.4**. 1.4.2 scales Balanced admission to one quarter of detected RAM (2–32 GiB), protects capacity for up to four project query workers, and raises Balanced source pacing to 64 MiB/s per job within a 256 MiB/s shared ceiling. Native watching supports 8,192 directories per project and 32,768 shared, with bounded incremental traversal and specific limit diagnostics. Existing manual resource overrides and storage quotas are preserved. These are admission policies, not hard OS memory or disk-I/O limits. Follow the [versioning process](versioning.md) from local candidates through CI and publication. Its checks run on Windows x64; earlier installed-editor and Linux receipts do not qualify this follow-up.
+The current branch is synchronized at **1.4.5**; its redb cutover is incomplete. The preceding candidate was **1.4.4**. 1.4.2 scales Balanced admission to one quarter of detected RAM (2–32 GiB), protects capacity for up to four project query workers, and raises Balanced source pacing to 64 MiB/s per job within a 256 MiB/s shared ceiling. Native watching supports 8,192 directories per project and 32,768 shared, with bounded incremental traversal and specific limit diagnostics. Existing manual resource overrides and storage quotas are preserved. These are admission policies, not hard OS memory or disk-I/O limits. Follow the [versioning process](versioning.md) from local candidates through CI and publication. Its checks run on Windows x64; earlier installed-editor and Linux receipts do not qualify this follow-up.
 
 The [MCP contract](mcp.md) also covers `airk_help` (35 usage topics, native parser-generated CLI help and current tool schemas) and `airk_status.work` (scoped progress/jobs, bounded queues, watcher status and matched waits). All 16 tools remain read-only.
 
@@ -22,13 +24,16 @@ Trusted VSIX activation now installs the native runtime and the `airk` terminal 
 
 The **1.4.4 release candidate** corrects WAL admission and logical database sizing. Earlier 1.4.0/1.4.1/1.4.2 qualification remains historical. Start with the [current release record](release-1.4.4.md), [service plan](airkservice-architecture.md), [completion checklist](service-implementation-checklist.md), [project setup](service-project-setup.md) and [client adapters](service-client-adapters.md). Native Mac and the complete installed-platform/signing/policy matrix remain unqualified.
 
-The 1.3.x/1.2.x release records and former direct-helper/window-scheduler guides are historical references. They do not describe the 1.4 default lifecycle or authorize opening legacy stores through the service. Native and extension source/lockfile versions are synchronized at 1.4.4; publication is a separate action.
+The 1.3.x/1.2.x release records and former direct-helper/window-scheduler guides are historical references. They do not describe the 1.4 default lifecycle or authorize opening legacy stores through the service. Native and extension source/lockfile versions are synchronized at 1.4.5; publication is a separate action.
 
 The [Windows build/editor guide](windows-local-build.md) describes pair builds, stage-only acceptance without a VSIX, and real native registration/usage/response-mode checks in isolated editor profiles.
 
 - [Architecture and code boundaries](architecture.md)
+- [Follow-up TODOs, including independent feature checkouts and Git worktrees](TODO.md)
 - [AIRK 1.4.0 local service architecture and implementation plan](airkservice-architecture.md)
-- [Current 1.4.4 release candidate](release-1.4.4.md)
+- [1.4.5 redb development status](release-1.4.5.md)
+- [Accepted redb implementation plan](storagekv/storagekv-design.md)
+- [Historical 1.4.4 release candidate](release-1.4.4.md)
 - [Historical 1.4.3 storage-recovery candidate](release-1.4.3.md)
 - [Storage reliability and embedded engine review](storage-reliability.md)
 - [Historical 1.4.2 resource-policy candidate](release-1.4.2.md)

@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
 use airk_store::{quota::Quota, scheduler::Queue};
-use rusqlite::Connection;
 use std::fs;
 
 #[test]
@@ -271,7 +270,7 @@ fn full_quota_rejects_queue_writes_but_preserves_readable_pending_work() -> anyh
     let mut policy = quota.policy()?;
     policy.root_bytes = quota.status()?.used_bytes;
     quota.configure(policy)?;
-    let before = fs::read(directory.path().join("scheduler-1.2.sqlite3"))?;
+    let before = fs::read(directory.path().join("scheduler.airk"))?;
     assert!(
         queue
             .enqueue("fixture", "workspace", true, true, false, 2)
@@ -280,30 +279,45 @@ fn full_quota_rejects_queue_writes_but_preserves_readable_pending_work() -> anyh
     let pending = queue.status("fixture", "workspace")?.expect("pending work");
     assert_eq!(pending.requested_revision, 1);
     assert!(!pending.full);
-    assert_eq!(
-        fs::read(directory.path().join("scheduler-1.2.sqlite3"))?,
-        before
-    );
+    assert_eq!(fs::read(directory.path().join("scheduler.airk"))?, before);
     assert_eq!(quota.status()?.active_reservations, 0);
     Ok(())
 }
 
 #[test]
-fn legacy_status_is_read_only_and_corrupt_negative_revisions_are_rejected() -> anyhow::Result<()> {
+fn status_is_read_only_and_corrupt_negative_revisions_are_rejected() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
-    let path = directory.path().join("scheduler-1.2.sqlite3");
-    let database = Connection::open(&path)?;
-    database.execute_batch("CREATE TABLE jobs(collection TEXT PRIMARY KEY, root TEXT, revision INTEGER, completed INTEGER, running INTEGER, paused INTEGER, blocked INTEGER, full_revision INTEGER, manual_revision INTEGER, first_pending INTEGER, last_event INTEGER, last_completed INTEGER, error TEXT, report TEXT);
-        INSERT INTO jobs VALUES('fixture','workspace',3,1,0,0,0,0,3,10,20,0,NULL,NULL);")?;
-    drop(database);
-    let before = fs::read(&path)?;
+    let path = directory.path().join("scheduler.airk");
     let queue = Queue::new(directory.path());
-    let status = queue.status("fixture", "workspace")?.expect("legacy queue");
+    queue.enqueue("fixture", "workspace", false, true, false, 10)?;
+    let worker = queue.worker_lock("fixture")?.unwrap();
+    let first = queue.claim(&worker, 10)?.unwrap();
+    queue.finish(&worker, &first, 11, Ok("{}"))?;
+    queue.enqueue("fixture", "workspace", false, true, false, 20)?;
+    queue.enqueue("fixture", "workspace", false, true, false, 30)?;
+    let before = fs::read(&path)?;
+    let status = queue.status("fixture", "workspace")?.expect("queue");
     assert_eq!(status.requested_revision, 3);
+    assert_eq!(status.completed_revision, 1);
     assert_eq!(status.scan_started_unix_ms, 0);
     assert_eq!(fs::read(&path)?, before);
-    assert!(!directory.path().join(".quota-1.2").exists());
-    Connection::open(path)?.execute("UPDATE jobs SET revision=-1", [])?;
+    let database = redb::Database::open(&path)?;
+    let transaction = database.begin_write()?;
+    {
+        use redb::ReadableTable;
+        let mut records =
+            transaction.open_table(redb::TableDefinition::<&str, &[u8]>::new("ledger"))?;
+        let mut state: serde_json::Value = serde_json::from_slice(
+            &lz4_flex::decompress_size_prepended(records.get("state")?.unwrap().value())?,
+        )?;
+        state["jobs"]["fixture"]["revision"] = serde_json::json!(-1);
+        records.insert(
+            "state",
+            lz4_flex::compress_prepend_size(&serde_json::to_vec(&state)?).as_slice(),
+        )?;
+    }
+    transaction.commit()?;
+    drop(database);
     assert!(queue.status("fixture", "workspace").is_err());
     Ok(())
 }

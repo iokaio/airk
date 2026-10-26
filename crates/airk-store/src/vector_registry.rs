@@ -1,35 +1,34 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Disposable exact-input graph lookup, owned by one publication reservation.
 //!
-//! DiskANN remains the vector engine. This private SQLite table only remembers
+//! DiskANN remains the vector engine. This private redb store only remembers
 //! which inputs this build has already evaluated; it is never a published index
 //! or a reusable cache. Closing the reservation removes it, including after a
 //! crashed owner. A single uncommitted transaction avoids per-input commits.
-use crate::quota::{PressureScope, PrivateDatabase, QuotaPressure, Reservation};
+use crate::quota::{PressureScope, PrivateKv, PrivateTable, QuotaPressure, Reservation};
 use airk_core::{
     identity::{Sha256Digest, framed_digest},
     vector_selection::{PreparedVectorNode, VectorNodeRegistry},
 };
 use anyhow::{Context, Result, ensure};
-use rusqlite::{OptionalExtension, params};
 use serde::Serialize;
 use std::sync::Mutex;
 
-pub const MIN_REGISTRY_BYTES: u64 = 16 * 1024;
+pub const MIN_REGISTRY_BYTES: u64 = 64 * 1024;
 pub const MAX_REGISTRY_BYTES: u64 = 128 * 1024 * 1024;
 pub const MAX_REGISTRY_ROWS: u64 = 1_000_000;
-const FILE_NAME: &str = "vector-registry.sqlite3";
+const FILE_NAME: &str = "vector-registry.airk";
 
 #[derive(Clone, Copy, Debug, Serialize)]
 pub struct VectorRegistryStatistics {
     pub rows: u64,
-    /// Allocated SQLite pages, including dirty pages; not physical device I/O.
+    /// Private file bytes, not physical device I/O.
     pub bytes: u64,
     pub maximum_bytes: u64,
 }
 
 struct State {
-    database: PrivateDatabase,
+    database: PrivateKv,
     rows: u64,
     failed: bool,
 }
@@ -74,19 +73,7 @@ impl VectorRegistry {
             b"private-vector-registry-scope/1",
             &[path.to_str().context("non-UTF-8 registry path")?.as_bytes()],
         );
-        let database = reservation.open_private_sqlite(path, maximum_bytes)?;
-        database
-            .connection()
-            .execute_batch(
-                "CREATE TABLE inputs (
-                    key BLOB PRIMARY KEY CHECK(typeof(key)='blob' AND length(key)=32),
-                    graph_id INTEGER UNIQUE CHECK(graph_id IS NULL OR
-                        (typeof(graph_id)='integer' AND graph_id BETWEEN 1 AND 4294967295)),
-                    checksum BLOB NOT NULL CHECK(typeof(checksum)='blob' AND length(checksum)=32)
-                ) WITHOUT ROWID;
-                BEGIN IMMEDIATE;",
-            )
-            .map_err(|error| database.write_error(error.into()))?;
+        let database = reservation.open_private_kv(path, maximum_bytes)?;
         Ok(Self {
             state: Mutex::new(State {
                 database,
@@ -126,19 +113,15 @@ impl VectorRegistry {
     }
 
     fn read(&self, state: &State, key: Sha256Digest) -> Result<Option<PreparedVectorNode>> {
-        let stored = state
-            .database
-            .connection()
-            .prepare_cached("SELECT graph_id,checksum FROM inputs WHERE key=?1")?
-            .query_row([key.as_bytes().as_slice()], |row| {
-                Ok((row.get::<_, Option<i64>>(0)?, row.get::<_, [u8; 32]>(1)?))
-            })
-            .optional()?;
-        let Some((graph_id, checksum)) = stored else {
+        let stored = state.database.get(PrivateTable::Registry, key.as_bytes())?;
+        let Some(bytes) = stored else {
             return Ok(None);
         };
+        ensure!(bytes.len() == 36, "invalid vector registry record length");
+        let graph_id = u32::from_be_bytes(bytes[..4].try_into()?);
+        let checksum: [u8; 32] = bytes[4..].try_into()?;
         let node = PreparedVectorNode {
-            graph_id: graph_id.map(u32::try_from).transpose()?,
+            graph_id: (graph_id != 0).then_some(graph_id),
         };
         ensure!(
             node.graph_id != Some(0),
@@ -153,12 +136,7 @@ impl VectorRegistry {
 
     pub fn statistics(&self) -> Result<VectorRegistryStatistics> {
         self.with_state(|state| {
-            let pages: u32 =
-                state
-                    .database
-                    .connection()
-                    .pragma_query_value(None, "page_count", |row| row.get(0))?;
-            let bytes = u64::from(pages) * 4096;
+            let bytes = state.database.bytes()?;
             ensure!(
                 bytes <= self.maximum_bytes,
                 "vector registry exceeded page bound"
@@ -192,18 +170,23 @@ impl VectorNodeRegistry for VectorRegistry {
                 "vector registry row budget exceeded"
             );
             let checksum = self.checksum(key, node);
+            if let Some(id) = node.graph_id {
+                ensure!(
+                    state
+                        .database
+                        .get(PrivateTable::GraphIds, &id.to_be_bytes())?
+                        .is_none(),
+                    "vector graph ID already belongs to another input"
+                );
+                state
+                    .database
+                    .put(PrivateTable::GraphIds, &id.to_be_bytes(), key.as_bytes())?;
+            }
+            let mut bytes = node.graph_id.unwrap_or(0).to_be_bytes().to_vec();
+            bytes.extend_from_slice(checksum.as_bytes());
             state
                 .database
-                .connection()
-                .execute(
-                    "INSERT INTO inputs(key,graph_id,checksum) VALUES(?1,?2,?3)",
-                    params![
-                        key.as_bytes().as_slice(),
-                        node.graph_id.map(i64::from),
-                        checksum.as_bytes().as_slice(),
-                    ],
-                )
-                .map_err(|error| state.database.write_error(error.into()))?;
+                .put(PrivateTable::Registry, key.as_bytes(), &bytes)?;
             state.rows += 1;
             Ok(())
         })
@@ -284,15 +267,7 @@ mod tests {
         let error = (0..1000)
             .find_map(|value| registry.remember(key(value), empty).err())
             .context("tiny page cap should be exhausted")?;
-        assert!(
-            error.downcast_ref::<QuotaPressure>().is_some()
-                || matches!(
-                    error.downcast_ref::<rusqlite::Error>(),
-                    Some(rusqlite::Error::SqliteFailure(failure, _))
-                        if failure.code == rusqlite::ErrorCode::DiskFull
-                ),
-            "{error:#}"
-        );
+        assert!(error.downcast_ref::<QuotaPressure>().is_some(), "{error:#}");
         assert!(registry.lookup(key(0)).is_err());
         assert!(
             fs::metadata(reservation.staging_directory()?.join(FILE_NAME))?.len()
@@ -318,21 +293,16 @@ mod tests {
             registry.remember(key(1), PreparedVectorNode { graph_id: Some(1) })?;
             {
                 let state = registry.state.lock().unwrap();
-                let connection = state.database.connection();
+                let mut rows = state
+                    .database
+                    .transaction()
+                    .open_table(PrivateTable::Registry.definition())?;
+                let mut bytes = 1u32.to_be_bytes().to_vec();
+                bytes.extend_from_slice(&[0; 32]);
                 if oversized {
-                    // Replace the private table using the owning connection to
-                    // simulate corrupt storage bypassing its normal constraints.
-                    connection.execute_batch("DROP TABLE inputs; CREATE TABLE inputs(key BLOB,graph_id INTEGER,checksum BLOB);")?;
-                    connection.execute(
-                        "INSERT INTO inputs VALUES(?1,1,zeroblob(65536))",
-                        [key(1).as_bytes().as_slice()],
-                    )?;
-                } else {
-                    connection.execute(
-                        "UPDATE inputs SET checksum=zeroblob(32) WHERE key=?1",
-                        [key(1).as_bytes().as_slice()],
-                    )?;
+                    bytes.resize(4096, 0);
                 }
+                rows.insert(key(1).as_bytes().as_slice(), bytes.as_slice())?;
             }
             assert!(registry.lookup(key(1)).is_err());
             assert!(registry.lookup(key(2)).is_err());
@@ -371,35 +341,40 @@ mod tests {
     }
 
     #[test]
-    fn transaction_stays_private_and_cache_page_escape_is_blocked() -> Result<()> {
+    fn uncommitted_registry_is_private_and_independent_openers_are_excluded() -> Result<()> {
+        use redb::ReadableDatabase;
         let root = tempfile::tempdir()?;
         let quota = Quota::open(root.path())?;
         let reservation = quota.reserve("fixture", 128 * 1024)?;
         let registry = VectorRegistry::new(&reservation, 128 * 1024)?;
         registry.remember(key(1), PreparedVectorNode { graph_id: Some(1) })?;
         let state = registry.state.lock().unwrap();
-        let connection = state.database.connection();
-        assert!(!connection.is_autocommit());
-        let cache: i64 = connection.pragma_query_value(None, "cache_size", |row| row.get(0))?;
-        assert_eq!(cache, -16384);
         assert!(
-            connection
-                .execute_batch("PRAGMA max_page_count=1000000")
+            state
+                .database
+                .database()
+                .begin_read()?
+                .open_table(PrivateTable::Registry.definition())
                 .is_err()
         );
-        assert!(
-            connection
-                .execute_batch("ATTACH ':memory:' AS escaped")
-                .is_err()
-        );
-        let other = rusqlite::Connection::open(reservation.staging_directory()?.join(FILE_NAME))?;
-        other.busy_timeout(std::time::Duration::ZERO)?;
-        assert!(other.execute("DELETE FROM inputs", []).is_err());
-        assert_eq!(
-            other.query_row("SELECT COUNT(*) FROM inputs", [], |row| row
-                .get::<_, i64>(0))?,
-            0
-        );
+        let path = reservation.staging_directory()?.join(FILE_NAME);
+        let backend = crate::current::kv::AirkBackend::new(
+            std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&path)?,
+            128 * 1024,
+        )?;
+        assert!(redb::Builder::new().create_with_backend(backend).is_err());
+        let observer = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)?;
+        assert!(matches!(
+            observer.try_lock_shared(),
+            Err(std::fs::TryLockError::WouldBlock)
+        ));
+        assert_eq!(registry.read(&state, key(1))?.unwrap().graph_id, Some(1));
         Ok(())
     }
 

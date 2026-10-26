@@ -20,6 +20,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod private_kv;
+pub(crate) use private_kv::{PrivateKv, PrivateTable};
+
 const POLICY_MAX: u64 = 65_536;
 const RECORD_MAX: u64 = 1024;
 const MAX_RESERVATIONS: usize = 1024;

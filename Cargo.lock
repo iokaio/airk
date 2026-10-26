@@ -53,7 +53,7 @@ dependencies = [
 
 [[package]]
 name = "airk-cli"
-version = "1.4.4"
+version = "1.4.5"
 dependencies = [
  "airk-core",
  "airk-kernel",
@@ -76,7 +76,7 @@ dependencies = [
 
 [[package]]
 name = "airk-core"
-version = "1.4.4"
+version = "1.4.5"
 dependencies = [
  "anyhow",
  "serde",
@@ -86,7 +86,7 @@ dependencies = [
 
 [[package]]
 name = "airk-ingest"
-version = "1.4.4"
+version = "1.4.5"
 dependencies = [
  "airk-core",
  "airk-process",
@@ -168,7 +168,7 @@ dependencies = [
 
 [[package]]
 name = "airk-kernel"
-version = "1.4.4"
+version = "1.4.5"
 dependencies = [
  "airk-core",
  "airk-ingest",
@@ -192,7 +192,7 @@ dependencies = [
 
 [[package]]
 name = "airk-mcp"
-version = "1.4.4"
+version = "1.4.5"
 dependencies = [
  "airk-core",
  "airk-kernel",
@@ -206,7 +206,7 @@ dependencies = [
 
 [[package]]
 name = "airk-process"
-version = "1.4.4"
+version = "1.4.5"
 dependencies = [
  "anyhow",
  "libc",
@@ -216,7 +216,7 @@ dependencies = [
 
 [[package]]
 name = "airk-retrieval"
-version = "1.4.4"
+version = "1.4.5"
 dependencies = [
  "airk-core",
  "anyhow",
@@ -233,12 +233,14 @@ dependencies = [
 
 [[package]]
 name = "airk-store"
-version = "1.4.4"
+version = "1.4.5"
 dependencies = [
  "airk-core",
  "anyhow",
+ "getrandom 0.3.4",
  "libc",
  "lz4_flex",
+ "redb",
  "rusqlite",
  "serde",
  "serde_json",
@@ -2283,6 +2285,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "redb"
+version = "4.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "39178e0a867f9e3eaa6292a4ab1dd3613f2519c5b564341e1e7b29b270736cc4"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "redox_syscall"
 version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2602,7 +2613,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
