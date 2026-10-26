@@ -2,6 +2,7 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { createHash } from 'node:crypto';
+import { createReadStream } from 'node:fs';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -169,73 +170,70 @@ test('native semantic work stays independent of helper stop and resumes through 
     }finally{await fixture.dispose();}
 });
 
-// Keep ordinary adapter tests on AIRK_TEST_BINARY; only this test needs an old helper.
-// AIRK_TEST_UPGRADE_BINARY remains supported for earlier qualification commands.
+// Both inputs must be complete, independently identified native runtime pairs.
+// The old standalone helper/independent-namespace scenario predates the service.
 const previousHelperBinary = process.env.AIRK_TEST_PREVIOUS_BINARY || process.env.AIRK_TEST_BINARY;
 const upgradedHelperBinary = process.env.AIRK_TEST_PREVIOUS_BINARY ? process.env.AIRK_TEST_BINARY : process.env.AIRK_TEST_UPGRADE_BINARY;
-const previousToolCount = process.env.AIRK_TEST_PREVIOUS_TOOL_COUNT === '14' ? 14
-    : process.env.AIRK_TEST_PREVIOUS_TOOL_COUNT === '15' ? 15 : 16;
-test('cached old helper survives extension replacement and a changed trusted helper uses a new path',
-    { skip: !previousHelperBinary || !upgradedHelperBinary }, async () => {
-    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'airk-helper-upgrade-'));
-    try {
-        const oldBinary = path.resolve(previousHelperBinary!);
-        const newBinary = path.resolve(upgradedHelperBinary!);
-        const oldBytes = await fs.readFile(oldBinary), newBytes = await fs.readFile(newBinary);
-        const oldDigest = createHash('sha256').update(oldBytes).digest('hex');
-        const newDigest = createHash('sha256').update(newBytes).digest('hex');
-        assert.notEqual(oldDigest, newDigest, 'Supply two real helpers with different digests for this upgrade boundary');
-        const oldVersion = (await runText(oldBinary, ['--version'])).trim().match(/^airk (\S+)$/)?.[1];
-        const newVersion = (await runText(newBinary, ['--version'])).trim().match(/^airk (\S+)$/)?.[1];
-        assert.ok(oldVersion); assert.ok(newVersion); // Versions come from actual binaries, never fabricated manifests.
-        const extension = path.join(directory, 'extension'), storage = path.join(directory, 'storage');
-        const executable = process.platform === 'win32' ? 'airk.exe' : 'airk';
-        const installFixture = async (bytes: Buffer, digest: string, version: string) => {
-            const native = path.join(extension, 'native'); await fs.mkdir(native, { recursive: true });
-            await fs.writeFile(path.join(native, executable), bytes);
-            await fs.writeFile(path.join(native, 'manifest.json'), JSON.stringify({ version,
-                vsix_target: `${process.platform}-${process.arch}`, payload: { [executable]: digest } }));
-        };
-        await installFixture(oldBytes, oldDigest, oldVersion);
-        const oldCached = await prepareHelper(extension, storage, oldVersion);
-        const root = path.join(directory, 'workspace'); await fs.mkdir(root);
-        await fs.writeFile(path.join(root, 'fixture.rs'), 'fn helper_upgrade_fixture() {}\n');
-        const oldAgent: LaunchSpec = { command: oldCached, root, dataDir: path.join(directory, 'state'), collection: 'upgrade-fixture', name: 'Old agent configuration' };
-        await runJson(oldAgent, 'index');
-        await fs.rename(extension, path.join(directory, 'replaced-extension'));
-        assert.equal((await runText(oldCached, ['--version'])).trim(), `airk ${oldVersion}`);
-        assert.equal((await probeMcp(oldAgent, previousToolCount)).tools.length, previousToolCount);
-        await installFixture(newBytes, newDigest, newVersion);
-        const newCached = await prepareHelper(extension, storage, newVersion);
-        assert.notEqual(newCached, oldCached);
-        assert.equal(await prepareHelper(extension, storage, newVersion), newCached);
-        assert.equal(createHash('sha256').update(await fs.readFile(oldCached)).digest('hex'), oldDigest);
-        assert.equal((await runText(newCached, ['--version'])).trim(), `airk ${newVersion}`);
-        assert.equal((await probeMcp(oldAgent, previousToolCount)).tools.length, previousToolCount, 'Existing agent command still works after replacement');
-        const newAgent = { ...oldAgent, command: newCached };
-        const readArguments = ['fixture.rs', '--start-line', '1', '--end-line', '1'];
-        const oldRead = await runJson<{ hits: { text: string }[] }>(oldAgent, 'read', readArguments);
-        assert.ok(oldRead.hits.some(hit => hit.text.includes('helper_upgrade_fixture')));
+async function payloadDigest(filename:string):Promise<string>{
+    const digest=createHash('sha256');
+    for await(const bytes of createReadStream(filename))digest.update(bytes);
+    return digest.digest('hex');
+}
 
-        // 1.2 builds an independent current-index namespace and leaves the old
-        // helper's derived collection untouched.
-        await runJson(newAgent, 'index', ['--full']);
-        assert.equal((await probeMcp(newAgent)).tools.length, 16);
-        await assert.rejects(runJson(newAgent, 'collections', ['history', 'set', '--json', JSON.stringify({
-            version: 1, enabled: true, recent: 3, hourly_hours: 24,
-            max_packages: 12, max_bytes: 268435456, quota_basis_points: 1000
-        })]), /unsupported/i);
-        const beforeOldAttempt = await runJson<{ read: { publication: { token: unknown } }; hits: { text: string }[] }>(newAgent, 'read', readArguments);
-        assert.ok(beforeOldAttempt.hits.some(hit => hit.text.includes('helper_upgrade_fixture')));
-        const retainedOldRead = await runJson<{ hits: { text: string }[] }>(oldAgent, 'read', readArguments);
-        assert.deepEqual(retainedOldRead.hits, oldRead.hits, 'The old namespace stays independently readable');
-        const afterOldAttempt = await runJson<{ read: { publication: { token: unknown } } }>(newAgent, 'read', readArguments);
-        assert.deepEqual(afterOldAttempt.read.publication.token, beforeOldAttempt.read.publication.token);
-        assert.equal(await fs.readFile(path.join(root, 'fixture.rs'), 'utf8'), 'fn helper_upgrade_fixture() {}\n');
-        assert.equal(createHash('sha256').update(await fs.readFile(oldCached)).digest('hex'), oldDigest);
-        assert.equal((await runText(oldCached, ['--version'])).trim(), `airk ${oldVersion}`,
-            'The new namespace does not replace or disable the cached old executable');
-    } finally { await removeFixture(directory, 'airk-helper-upgrade-'); }
+test('native pre-cutover upgrade requires fresh registration and indexing while preserving sources',
+    { skip: !previousHelperBinary || !upgradedHelperBinary }, async () => {
+    const oldBinary=path.resolve(previousHelperBinary!),newBinary=path.resolve(upgradedHelperBinary!);
+    assert.match((await runText(oldBinary,['--version'])).trim(),/^airk 1\.4\.4$/,
+        'Supply the complete qualified 1.4.4 native pair as the pre-cutover fixture');
+    const oldDigest=await payloadDigest(oldBinary),newDigest=await payloadDigest(newBinary);
+    assert.notEqual(oldDigest,newDigest);
+    const fixture=await NativeServiceFixture.create(oldBinary,'1.4.4');
+    try{
+        const oldSpec=await fixture.register('cutover');
+        const quota=path.join(fixture.owner,'cutover-quota.json');
+        await fs.writeFile(quota,JSON.stringify({root_bytes:512*1024**2,default_collection_bytes:128*1024**2,collections:{}}));
+        await fixture.configure(oldSpec,{operation:'quota_policy',path:quota});
+        await fixture.configure(oldSpec,{operation:'vectors',enabled:false});
+        await fixture.configure(oldSpec,{operation:'usage',mode:'disabled'});
+        const source=path.join(oldSpec.root,'fixture.rs'),text='pub fn upgrade_fixture_marker() {}\n';
+        await fs.writeFile(source,text);
+        const unrelated=path.join(oldSpec.dataDir,'unrelated-note.txt');
+        await fs.writeFile(unrelated,'Preserve unrelated fixture bytes.');
+        await fixture.job(oldSpec);
+        const oldStatus=await fixture.publishedStatus(oldSpec),oldToken=record(oldStatus.publication).token;
+        assert.equal(oldStatus.files,1);
+        const stale=await fixture.client!.prepareJob(oldSpec.service!.project,'index');
+        const oldControl=fixture.control;
+        await fixture.upgrade(newBinary);
+        assert.equal(fixture.control,oldControl,'The private installation/control location stays stable');
+        const epoch=await fixture.client!.rpc('request_epoch','request_epoch');
+        assert.notEqual(epoch.namespace,stale.key.namespace,'The request namespace must be fresh');
+        const spec=await fixture.register('cutover',oldSpec.root);
+        assert.equal(spec.dataDir,oldSpec.dataDir,'Preserve the selected data location');
+        const refused=await fixture.client!.transport.request({enqueue:stale});
+        assert.equal(refused.status,'failure');
+        assert.equal(refused.code,'KeyExpired','Reject the old request key explicitly');
+        await fixture.configure(spec,{operation:'vectors',enabled:false});
+        await fixture.job(spec);
+        const status=await fixture.publishedStatus(spec);
+        assert.equal(status.files,1);assert.notEqual(record(status.publication).token,oldToken);
+        assert.equal(record(status.storage_sizes).current_index_file,'current.airk');
+        const found=await fixture.tool(spec,'airk_search',{query:'upgrade_fixture_marker',mode:'lexical'});
+        assert.ok(Array.isArray(found.hits)&&found.hits.some(value=>record(record(value).citation).path==='fixture.rs'));
+        async function refuseOldFiles(directory:string):Promise<void>{
+            for(const entry of await fs.readdir(directory,{withFileTypes:true})){
+                assert.ok(!entry.isSymbolicLink(),'Unexpected alias in owned fixture data');
+                if(entry.isDirectory())await refuseOldFiles(path.join(directory,entry.name));
+                else assert.ok(!/\.sqlite3(?:-(?:wal|shm|journal))?$/.test(entry.name),'Old database file survived fresh setup');
+            }
+        }
+        await refuseOldFiles(spec.dataDir);
+        await assert.rejects(fs.stat(path.join(fixture.control,'service-1.4.sqlite3')),{code:'ENOENT'});
+        assert.equal(await fs.readFile(source,'utf8'),text);
+        assert.equal(await fs.readFile(unrelated,'utf8'),'Preserve unrelated fixture bytes.');
+        assert.equal(await payloadDigest(oldBinary),oldDigest,'The supplied historical runtime remains unchanged');
+        assert.equal(await payloadDigest(newBinary),newDigest);
+    }finally{await fixture.dispose();}
 });
 
 test('bundled helper rejects mismatched platforms and tampered bytes before execution', async () => {

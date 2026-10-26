@@ -102,8 +102,10 @@ pub(crate) fn search_current_with_snippets(
     _charge: Charge,
     snippet_bytes: Option<usize>,
 ) -> Result<CurrentSearchEvidence> {
+    let mut profile = super::profile_start();
     query.validate()?;
     let read = store.current_read(scope)?;
+    super::profile_tick("search.admission", &mut profile);
     if let Some(expected) = expected {
         read.require_token(expected)?;
     }
@@ -138,6 +140,7 @@ pub(crate) fn search_current_with_snippets(
     } else {
         mode
     };
+    super::profile_tick("search.readiness", &mut profile);
     let mut branches = Vec::new();
     if matches!(mode, CurrentSearchMode::Lexical | CurrentSearchMode::Hybrid) {
         let lexical = open_selected_lexical(store, &read)?;
@@ -148,6 +151,7 @@ pub(crate) fn search_current_with_snippets(
             query.limit
         };
         let candidates = lexical.search(&selection)?;
+        super::profile_tick("search.lexical_candidates", &mut profile);
         ensure!(
             candidates.manifest_digest == read.head().lexical_commit,
             "current lexical candidate manifest mismatch"
@@ -168,6 +172,7 @@ pub(crate) fn search_current_with_snippets(
             selection.limit = BRANCH_CANDIDATES;
         }
         branches.push(vector_candidates(store, &read, &selection)?);
+        super::profile_tick("search.vector_candidates", &mut profile);
     }
     let mut incomplete = branches.iter().any(|branch| branch.incomplete)
         || discovery_readiness.state != airk_core::readiness::DiscoveryState::Ready;
@@ -219,6 +224,7 @@ pub(crate) fn search_current_with_snippets(
         incomplete |= hit.truncated;
         hits.push(hit);
     }
+    super::profile_tick("search.materialize", &mut profile);
     Ok(CurrentSearchEvidence {
         token: read.token()?,
         collection: scope.collection.clone(),

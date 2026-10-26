@@ -37,21 +37,33 @@ pub fn verify(
     head: &CurrentHead,
     limits: &mut Verification,
 ) -> Result<()> {
+    let mut profile = super::profile_start();
     head.validate()?;
-    map::visit_all(
-        transaction,
-        &head.scope,
-        head.artifact_root,
-        limits.catalog,
-        &mut |_, _| Ok(()),
-    )?;
+    {
+        let buckets = transaction.open_table(tables::MAP_BUCKET)?;
+        let nodes = transaction.open_table(tables::MAP_NODE)?;
+        map::visit_all(
+            &catalog::MapTables {
+                buckets: &buckets,
+                nodes: &nodes,
+            },
+            &head.scope,
+            head.artifact_root,
+            limits.catalog,
+            &mut |_, _| Ok(()),
+        )?;
+    }
+    super::profile_tick("verify.catalog", &mut profile);
     graph::kv::verify_write(transaction, &head.graph_head, limits.graph_records)?;
+    super::profile_tick("verify.graph", &mut profile);
     let meta = transaction.open_table(tables::META)?;
     let bytes = meta.get(2)?.context("lexical manifest missing")?;
     let manifest = Manifest::decode(bytes.value(), head.lexical_commit, &head.scope)?;
     drop(bytes);
     drop(meta);
-    Index::new(&head.scope)?.verify(transaction, &manifest, &mut limits.lexical)
+    Index::new(&head.scope)?.verify(transaction, &manifest, &mut limits.lexical)?;
+    super::profile_tick("verify.lexical", &mut profile);
+    Ok(())
 }
 fn target(
     base: &Snapshot,

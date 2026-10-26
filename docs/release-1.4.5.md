@@ -36,6 +36,20 @@ Only the vector-query case meets the accepted 10% p95 ceiling. The gate has not 
 
 Follow-up profiling finds comparable lexical worker timings through persistent MCP. Client admission/metadata work and repeated publication verification/planning remain optimization targets. Exact state-only no-op ledger elision and reuse of map table handles are under test; initialization and typed-table writes must still commit, and all authentication, replay, quota and durability checks remain required. Final qualification must be repeated against the finished implementation.
 
+## October 26 local performance checkpoint
+
+The owner requested a local DCO checkpoint with no push. The first quiet comparison above remains a failed gate; no optimized seven-repetition comparison has passed yet. Development timings are opt-in and contain static stage labels/durations, not indexed source content.
+
+Implemented performance work preserves the format and proof bytes: immutable scope/empty hashes and snapshot-bound map table handles are reused; each complete lexical verification gets a fresh bounded decoded-page cache with unchanged traversal budgets; unchanged posting membership and forward roots avoid redundant rewrites; retained document IDs are authenticated before direct replacement and only removed trailing IDs are deleted. State-only ledger updates may abort when the exact bounded encoding is unchanged; typed-table updates and initial creation still commit. Registry read reuse checks exact compressed bytes, file identity, current ownership and namespace fences. Cache retention is disabled when its bounded root registry is full. Idle claims and below-threshold receipt pruning use a fenced read preflight and recheck eligibility on the actual write path.
+
+Current evidence: the store suite passed 191 tests before the last narrow idle/direct-replacement changes. Their focused runs pass 35 native registry tests and 46 KV tests, including byte preservation, changed citations, missing/corrupt old documents, old/current snapshots and funded replay. Workspace all-target/all-feature Clippy passes against the latest checkpoint. Formatting, whitespace, version agreement and the SQLite guard pass (411 packages, 571 executable sources), with all six guard regressions. Extension mock tests pass 238 of 244, with six native/platform skips. Shared Python fixture path handling now resolves control/source/data paths before changing child working directories; its 15 contracts and three pool contracts pass.
+
+An earlier Windows concurrent-publication test returned AccessDenied; the contextual rerun and subsequent five-test publication/handoff run pass. Its cause is not claimed fixed. Distinct metadata sync/replace/parent-sync contexts are present for the planned final concurrency stress run.
+
+The obsolete standalone 1.2 helper-upgrade test is replaced with a full-pair managed cutover fixture requiring an identified 1.4.4 baseline, a fresh request namespace, stale-key refusal, re-registration/full indexing and preserved source/unrelated bytes. It compiles, but its first actual run refused the historical baseline's unlisted empty benchmark parent directories before setup completed. Cleanup then conservatively refused an unselected incomplete installation. Both fixture recovery and actual managed-cutover qualification remain pending; mock tests do not substitute for that result. The misplaced benchmark control subtree itself is removed and both original baseline executable SHA-256 digests remain unchanged.
+
+Final workspace/native/container/performance qualification remains pending. No VSIX has been built, installed or published; explicit owner approval is still required before VSIX creation.
+
 ## Archived October 25 development checkpoint
 
 The following record predates the completed source cutover above. Its incomplete status and earlier test counts describe that checkpoint only.

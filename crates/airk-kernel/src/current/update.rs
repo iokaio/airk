@@ -430,6 +430,7 @@ impl CurrentUpdater<'_> {
         mut semantic_work: Option<&mut super::enrichment::SemanticWork>,
         observer: &mut dyn FnMut(CurrentUpdateStage),
     ) -> Result<CurrentUpdateResult> {
+        let mut profile = super::profile_start();
         crate::service_execution::progress_phase(airk_core::service_progress::WorkPhase::Preparing);
         ensure!(
             (!changes.is_empty()
@@ -856,6 +857,7 @@ impl CurrentUpdater<'_> {
         } else {
             sealed
         };
+        super::profile_tick("update.graph_plan", &mut profile);
         let (mut committed, lexical_work) = {
             let owned = self.store.redb_read(self.scope)?;
             let base_snapshot = owned.snapshot();
@@ -890,6 +892,7 @@ impl CurrentUpdater<'_> {
                 },
             )?;
 
+            super::profile_tick("update.catalog_plan", &mut profile);
             let mut lexical_work = airk_store::current::lexical::LexicalWork {
                 changed_artifacts: changes.len(),
                 added_documents: 0,
@@ -926,6 +929,7 @@ impl CurrentUpdater<'_> {
                 Some(plan.seal(&mut budget)?)
             };
 
+            super::profile_tick("update.lexical_plan", &mut profile);
             let writer = self
                 .store
                 .redb_writer(self.writer, self.quota, self.scope)?;
@@ -940,6 +944,7 @@ impl CurrentUpdater<'_> {
             crate::service_execution::progress_prepared(
                 semantic_inputs.map_or(changes.len(), |inputs| inputs.len()) as u64,
             );
+            super::profile_tick("update.prepare", &mut profile);
             observer(CurrentUpdateStage::Prepared);
             crate::service_execution::progress_phase(
                 airk_core::service_progress::WorkPhase::Publishing,
@@ -947,6 +952,7 @@ impl CurrentUpdater<'_> {
             writer
                 .mark_applying(&pending)
                 .context("mark redb current journal applying")?;
+            super::profile_tick("update.mark_applying", &mut profile);
             observer(CurrentUpdateStage::Applying);
             let token = writer
                 .commit(&pending)
@@ -954,6 +960,7 @@ impl CurrentUpdater<'_> {
             crate::service_execution::progress_committed(
                 semantic_inputs.map_or(changes.len(), |inputs| inputs.len()) as u64,
             );
+            super::profile_tick("update.commit", &mut profile);
             observer(CurrentUpdateStage::Committed);
             drop(writer);
             drop(owned);

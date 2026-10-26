@@ -302,6 +302,7 @@ def main():
     parser.add_argument("--repetitions",type=int,default=5)
     parser.add_argument("--query-samples",type=int,default=8)
     args=parser.parse_args()
+    args.output = args.output.resolve()
     if args.output.exists(): parser.error("Choose a fresh isolated output directory")
     if args.repetitions<3 or args.query_samples<4: parser.error("At least three repetitions and four samples are required")
     baseline,current=identity(args.baseline_runtime.resolve()),identity(args.runtime.resolve())

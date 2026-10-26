@@ -58,28 +58,42 @@ export function publishedStatusPending(status:RecordValue,collection:string,proj
 export class NativeServiceFixture {
     client?:ServiceClient;
     control='';launcher='';
-    private constructor(readonly binary:string,readonly owner:string,readonly install:string){}
-    static async create(binary:string):Promise<NativeServiceFixture>{
+    private constructor(public binary:string,readonly owner:string,readonly install:string){}
+    static async create(binary:string,previousVersion?:string):Promise<NativeServiceFixture>{
         const owner=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'airk-native-')));
         const fixture=new NativeServiceFixture(path.resolve(binary),owner,path.join(owner,'i'));
         try{
-            const source=nativePayloadDirectory(fixture.binary),bytes=await fs.readFile(path.join(source,'airk-install.json'));
-            const manifest=JSON.parse(bytes.toString());
-            const extension=JSON.parse(await fs.readFile(path.resolve(__dirname,'../../package.json'),'utf8'));
-            assert.equal(manifest.version,extension.version);
-            await fixture.run(['runtime','managed','--source',source,'--install-dir',fixture.install,
-                '--state-dir',path.join(owner,'s'),'--approved-sha256',createHash('sha256').update(bytes).digest('hex'),
-                '--verification-basis','organization-digest','--lifecycle','user-on-demand'],180000);
-            const prepared=await fixture.run(['runtime','prepare-client','--install-dir',fixture.install],180000);
-            const inspected=await fixture.run(['runtime','inspect','--install-dir',fixture.install]);
-            assert.equal(inspected.launcher,prepared.launcher);assert.equal(record(inspected.managed_policy).lifecycle,'user_on_demand');
-            fixture.control=String(inspected.control_dir);fixture.launcher=String(prepared.launcher);
-            fixture.client=new ServiceClient(new NativeControlTransport(fixture.binary,['service','console','--runtime-dir',fixture.control],60000));
+            await fixture.activate(previousVersion);
             return fixture;
         }catch(error){
             try{await fixture.dispose();}catch(cleanup){throw new AggregateError([error,cleanup],'Native fixture setup and cleanup failed');}
             throw error;
         }
+    }
+    private async activate(previousVersion?:string):Promise<void>{
+        const source=nativePayloadDirectory(this.binary),bytes=await fs.readFile(path.join(source,'airk-install.json'));
+        const manifest=JSON.parse(bytes.toString());
+        const extension=JSON.parse(await fs.readFile(path.resolve(__dirname,'../../package.json'),'utf8'));
+        assert.equal(manifest.version,previousVersion??extension.version);
+        await this.run(['runtime','managed','--source',source,'--install-dir',this.install,
+            '--state-dir',path.join(this.owner,'s'),'--approved-sha256',createHash('sha256').update(bytes).digest('hex'),
+            '--verification-basis','organization-digest','--lifecycle','user-on-demand'],180000);
+        const prepared=await this.run(['runtime','prepare-client','--install-dir',this.install],180000);
+        const inspected=await this.run(['runtime','inspect','--install-dir',this.install]);
+        assert.equal(inspected.launcher,prepared.launcher);assert.equal(record(inspected.managed_policy).lifecycle,'user_on_demand');
+        this.control=String(inspected.control_dir);this.launcher=String(prepared.launcher);
+        this.client=new ServiceClient(new NativeControlTransport(this.binary,['service','console','--runtime-dir',this.control],60000));
+    }
+    async upgrade(binary:string):Promise<void>{
+        const next=path.resolve(binary);
+        const extension=JSON.parse(await fs.readFile(path.resolve(__dirname,'../../package.json'),'utf8'));
+        const manifest=JSON.parse(await fs.readFile(path.join(nativePayloadDirectory(next),'airk-install.json'),'utf8'));
+        assert.equal(manifest.version,extension.version);
+        assert.equal((await runText(next,['--version'],path.dirname(next),120000)).trim(),`airk ${extension.version}`);
+        this.client?.transport.dispose();this.client=undefined;
+        // Cleanup must use the current adapter even if activation is interrupted.
+        this.binary=next;
+        await this.activate();
     }
     async run(args:string[],timeout=120000,input?:string):Promise<RecordValue>{
         const phase=args[0]==='runtime'?`runtime ${args[1]}`:args.includes('prepare-registration')?'prepare-registration':'prepare-storage';

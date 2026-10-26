@@ -612,7 +612,9 @@ fn stage_application(
     expected: &Prepared,
     verify: impl FnOnce(&redb::WriteTransaction, &CurrentHead) -> Result<()>,
 ) -> Result<()> {
+    let mut profile = super::profile_start();
     verify_operations(transaction, expected)?;
+    super::profile_tick("apply.verify_journal", &mut profile);
     {
         let rows = transaction.open_table(tables::PENDING)?;
         for row in rows.iter()? {
@@ -627,7 +629,9 @@ fn stage_application(
             )?;
         }
     }
+    super::profile_tick("apply.install", &mut profile);
     verify(transaction, &expected.target)?;
+    super::profile_tick("apply.verify_target", &mut profile);
     {
         let mut meta = transaction.open_table(tables::META)?;
         meta.insert(HEAD, expected.target.canonical_bytes()?.as_slice())?;
@@ -638,6 +642,7 @@ fn stage_application(
     transaction
         .open_table(tables::PENDING)?
         .retain(|_, _| false)?;
+    super::profile_tick("apply.clear_journal", &mut profile);
     Ok(())
 }
 

@@ -43,11 +43,11 @@ pub(crate) struct RedbRead<'a> {
 impl map::MapStorage for RedbRead<'_> {
     fn bucket_bytes(&self, prefix: u16) -> Result<Option<Vec<u8>>> {
         self.reader.live()?;
-        map::MapStorage::bucket_bytes(self.transaction, prefix)
+        map::MapStorage::bucket_bytes(self.reader.storage.snapshot(), prefix)
     }
     fn node_bytes(&self, height: u8, index: u16) -> Result<Option<Vec<u8>>> {
         self.reader.live()?;
-        map::MapStorage::node_bytes(self.transaction, height, index)
+        map::MapStorage::node_bytes(self.reader.storage.snapshot(), height, index)
     }
 }
 impl graph::GraphStorage for RedbRead<'_> {

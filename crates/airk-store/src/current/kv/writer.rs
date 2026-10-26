@@ -288,7 +288,8 @@ impl RedbWriter<'_> {
                     },
                     || Ok(std::fs::metadata(self.store.directory().join("current.airk"))?.len()),
                 )
-                .map_err(|error| engine.map_growth_error(error))?;
+                .map_err(|error| engine.map_growth_error(error))
+                .context("probe native replay capacity")?;
             owner::admit_replay(
                 &self.store,
                 self.writer,
@@ -297,12 +298,14 @@ impl RedbWriter<'_> {
                 engine,
                 pending,
                 high_water,
-            )?;
+            )
+            .context("persist native replay admission")?;
         }
         after_admission()?;
         engine
             .mark_applying(pending)
             .map_err(|error| engine.map_growth_error(error))
+            .context("persist native Applying marker")
     }
 
     /// Applies authenticated catalog, graph and lexical afterimages in the

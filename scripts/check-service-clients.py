@@ -193,10 +193,12 @@ class Fixture:
         self.binary = self.runtime / ("airk.exe" if os.name == "nt" else "airk")
         if not self.binary.is_file():
             self.binary = self.runtime / "AIRK.app/Contents/MacOS/airk"
-        self.control = owner / "control"
+        # Child commands run from the runtime directory, not the caller's cwd.
+        # Bind every fixture path before crossing that process boundary.
+        self.control = self.owner / "control"
         self.projects = {}
         self.environment = {**os.environ, "AIRK_MCP_RESPONSE_MODE": "full"}
-        self.log = (owner / "service.stderr").open("wb")
+        self.log = (self.owner / "service.stderr").open("wb")
         self.child = None
         self.command_timeout = command_timeout
         self.job_timeout = job_timeout
@@ -256,6 +258,7 @@ class Fixture:
         return value
 
     def register(self, name, root, data):
+        root, data = Path(root).resolve(), Path(data).resolve()
         prepared = json.loads(self.run("--root", root, "--data-dir", data, "--collection", name,
                                        "service", "prepare-registration").stdout)
         observed = self.rpc({"register": {"project": prepared}})

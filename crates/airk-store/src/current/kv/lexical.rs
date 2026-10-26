@@ -189,6 +189,7 @@ pub struct Index<'a> {
     terms: Tree,
     paths: Tree,
     documents: Tree,
+    cache: Option<std::sync::Arc<std::sync::Mutex<directory::ReadCache>>>,
 }
 fn term_id(term: &str) -> Sha256Digest {
     // Preserve the old long-term alias identity, followed by one fixed-width
@@ -214,6 +215,17 @@ impl<'a> Index<'a> {
     /// Complete cross-table verification for a candidate before its head is
     /// installed. Query proofs remain proportional to the evidence traversed.
     pub fn verify(
+        &self,
+        storage: &impl ReadLexical,
+        manifest: &Manifest,
+        budget: &mut Budget,
+    ) -> Result<()> {
+        // A fresh cache proves every page before reuse and cannot survive this
+        // immutable walk or mask a later verification's changed/missing data.
+        Self::with_cache(self.scope, Some(directory::ReadCache::shared()))?
+            .verify_inner(storage, manifest, budget)
+    }
+    fn verify_inner(
         &self,
         storage: &impl ReadLexical,
         manifest: &Manifest,
@@ -340,11 +352,18 @@ impl<'a> Index<'a> {
         )
     }
     pub fn new(scope: &'a CurrentScope) -> Result<Self> {
+        Self::with_cache(scope, None)
+    }
+    fn with_cache(
+        scope: &'a CurrentScope,
+        cache: Option<std::sync::Arc<std::sync::Mutex<directory::ReadCache>>>,
+    ) -> Result<Self> {
         Ok(Self {
             scope,
-            terms: Tree::new(scope, b"terms/1")?,
-            paths: Tree::new(scope, b"paths/1")?,
-            documents: Tree::new(scope, b"documents/1")?,
+            terms: Tree::new(scope, b"terms/1")?.with_read_cache(cache.clone()),
+            paths: Tree::new(scope, b"paths/1")?.with_read_cache(cache.clone()),
+            documents: Tree::new(scope, b"documents/1")?.with_read_cache(cache.clone()),
+            cache,
         })
     }
     fn validate(&self, manifest: &Manifest) -> Result<()> {
@@ -358,7 +377,7 @@ impl<'a> Index<'a> {
     fn forward(&self, number: u32) -> Result<Tree> {
         let mut domain = b"forward/1/".to_vec();
         domain.extend_from_slice(&number.to_be_bytes());
-        Tree::new(self.scope, &domain)
+        Ok(Tree::new(self.scope, &domain)?.with_read_cache(self.cache.clone()))
     }
     fn path(
         &self,
@@ -442,23 +461,31 @@ impl<'a> Index<'a> {
                     Ok(())
                 },
             )?;
-            forward.clear(tx, previous.forward.as_ref(), budget)?;
             for local in 0..previous.chunks {
                 let id = (u64::from(number) << 16) | u64::from(local);
                 self.document(tx, &next, id, budget)?;
-                next.documents = self.documents.put(
-                    tx,
-                    next.documents.as_ref(),
-                    &id.to_be_bytes(),
-                    None,
-                    budget,
-                )?;
-                tx.put_document(id, None)?;
+                // Retained IDs are replaced below after authenticating their old
+                // evidence. Remove only IDs absent from the new artifact.
+                if artifact.is_none_or(|artifact| local as usize >= artifact.chunks.len()) {
+                    next.documents = self.documents.put(
+                        tx,
+                        next.documents.as_ref(),
+                        &id.to_be_bytes(),
+                        None,
+                        budget,
+                    )?;
+                    tx.put_document(id, None)?;
+                }
             }
         }
-        next.paths = self
-            .paths
-            .put(tx, next.paths.as_ref(), path.as_bytes(), None, budget)?;
+        if artifact.is_none() {
+            if let Some(previous) = &previous {
+                forward.clear(tx, previous.forward.as_ref(), budget)?;
+            }
+            next.paths = self
+                .paths
+                .put(tx, next.paths.as_ref(), path.as_bytes(), None, budget)?;
+        }
         if let Some(artifact) = artifact {
             ensure!(
                 artifact.path == path && artifact.chunks.len() <= MAX_PATH_DOCUMENTS,
@@ -515,13 +542,21 @@ impl<'a> Index<'a> {
                     new_terms.entry(term).or_default().push(id);
                 }
             }
-            let root = forward.build(
-                tx,
-                new_terms
-                    .keys()
-                    .map(|term| (term.as_bytes().to_vec(), Vec::new())),
-                budget,
-            )?;
+            let root = match &previous {
+                Some(previous) if old_terms.iter().eq(new_terms.keys()) => previous.forward.clone(),
+                _ => {
+                    if let Some(previous) = &previous {
+                        forward.clear(tx, previous.forward.as_ref(), budget)?;
+                    }
+                    forward.build(
+                        tx,
+                        new_terms
+                            .keys()
+                            .map(|term| (term.as_bytes().to_vec(), Vec::new())),
+                        budget,
+                    )?
+                }
+            };
             let bytes = serde_json::to_vec(&Path {
                 number,
                 chunks: artifact.chunks.len() as u16,
@@ -542,7 +577,7 @@ impl<'a> Index<'a> {
                 !old_terms.contains(&term) || existing.is_some(),
                 "forward term missing"
             );
-            let mut header = existing.unwrap_or_default();
+            let mut header = existing.clone().unwrap_or_default();
             let ids = new_terms.get(&term).map(Vec::as_slice).unwrap_or(&[]);
             let removed = Postings::new(self.scope, term)?.replace_range(
                 tx,
@@ -560,6 +595,9 @@ impl<'a> Index<'a> {
                 );
             } else {
                 ensure!(removed.is_empty(), "posting missing from forward list");
+            }
+            if existing.as_ref() == Some(&header) {
+                continue;
             }
             let bytes = if header.count == 0 {
                 None
@@ -894,6 +932,92 @@ mod tests {
         Ok(())
     }
     #[test]
+    fn replacement_reuses_unchanged_forward_and_authenticates_retained_documents() -> Result<()> {
+        let scope = scope();
+        let index = Index::new(&scope)?;
+        let file = tempfile::NamedTempFile::new()?;
+        let db = Database::open(file.reopen()?, 32 << 20, true)?;
+        let mut manifest = Manifest::empty(&scope)?;
+        let tx = db.write()?;
+        index.replace(
+            &tx,
+            &mut manifest,
+            "a.rs",
+            Some(&artifact("a.rs", &["shared word", "shared word"])),
+            &mut write_budget(),
+        )?;
+        tx.commit()?;
+        let old = db.snapshot()?;
+        let old_manifest = manifest.clone();
+        let original = index
+            .path(old.transaction(), &manifest, "a.rs", &mut write_budget())?
+            .unwrap();
+        let mut replacement = artifact("a.rs", &["word shared"]);
+        replacement.content_hash = Sha256Digest::from_bytes([9; 32]).to_string();
+        let tx = db.write()?;
+        index.replace(
+            &tx,
+            &mut manifest,
+            "a.rs",
+            Some(&replacement),
+            &mut write_budget(),
+        )?;
+        tx.commit()?;
+        let current = db.snapshot()?;
+        let replaced = index
+            .path(
+                current.transaction(),
+                &manifest,
+                "a.rs",
+                &mut write_budget(),
+            )?
+            .unwrap();
+        assert_eq!(replaced.number, original.number);
+        assert_eq!(
+            replaced.forward, original.forward,
+            "unchanged terms rebuilt the forward tree"
+        );
+        assert_eq!(replaced.chunks, 1);
+        assert!(
+            current
+                .transaction()
+                .open_table(tables::LEX_DOCUMENT)?
+                .get(1)?
+                .is_none(),
+            "trailing document survived replacement"
+        );
+        assert_eq!(
+            index
+                .document(current.transaction(), &manifest, 0, &mut write_budget())?
+                .citation
+                .content_hash,
+            replacement.content_hash
+        );
+        index.verify(current.transaction(), &manifest, &mut write_budget())?;
+        index.verify(old.transaction(), &old_manifest, &mut write_budget())?;
+        let tx = db.write()?;
+        tx.open_table(tables::LEX_DOCUMENT)?
+            .insert(0, b"{}".as_slice())?;
+        tx.commit()?;
+        let tx = db.write()?;
+        assert!(
+            index
+                .replace(
+                    &tx,
+                    &mut manifest,
+                    "a.rs",
+                    Some(&replacement),
+                    &mut write_budget()
+                )
+                .is_err(),
+            "direct replacement hid corrupt old evidence"
+        );
+        tx.abort()?;
+        index.verify(current.transaction(), &manifest, &mut write_budget())?;
+        Ok(())
+    }
+
+    #[test]
     fn forged_citations_missing_pages_and_query_exhaustion_fail_without_partial_results()
     -> Result<()> {
         let scope = scope();
@@ -991,6 +1115,44 @@ mod tests {
                 )
                 .is_err()
         );
+        Ok(())
+    }
+    #[test]
+    fn repeated_verification_rechecks_missing_pages_and_preserves_old_snapshot() -> Result<()> {
+        let scope = scope();
+        let index = Index::new(&scope)?;
+        let file = tempfile::NamedTempFile::new()?;
+        let db = Database::open(file.reopen()?, 32 << 20, true)?;
+        let mut manifest = Manifest::empty(&scope)?;
+        let tx = db.write()?;
+        index.replace(
+            &tx,
+            &mut manifest,
+            "a.rs",
+            Some(&artifact("a.rs", &["original shared word"])),
+            &mut write_budget(),
+        )?;
+        tx.commit()?;
+        let old = db.snapshot()?;
+        index.verify(old.transaction(), &manifest, &mut write_budget())?;
+        let tx = db.write()?;
+        tx.open_table(tables::LEX_DIRECTORY)?.remove(
+            manifest
+                .documents
+                .as_ref()
+                .unwrap()
+                .digest
+                .as_bytes()
+                .as_slice(),
+        )?;
+        tx.commit()?;
+        assert!(
+            index
+                .verify(db.snapshot()?.transaction(), &manifest, &mut write_budget())
+                .is_err(),
+            "previous verification cache concealed a missing page"
+        );
+        index.verify(old.transaction(), &manifest, &mut write_budget())?;
         Ok(())
     }
     #[test]

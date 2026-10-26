@@ -32,6 +32,51 @@ fn fixture() -> Result<(
     Ok((base, registry, registration, lease))
 }
 #[test]
+fn idle_claim_preflight_preserves_fences_and_observes_later_work() -> Result<()> {
+    let (_base, mut registry, project, mut lease) = fixture()?;
+    let before = registry.read(|state| Ok(state.revision))?;
+    assert!(registry.claim_job(&lease)?.is_none());
+    assert!(!registry.prune_job_receipts(None)?);
+    assert_eq!(registry.read(|state| Ok(state.revision))?, before);
+    let epoch = lease.epoch;
+    lease.epoch = Some(epoch.unwrap() + 1);
+    assert!(
+        registry.claim_job(&lease).is_err(),
+        "idle polling ignored a stale worker"
+    );
+    lease.epoch = epoch;
+    let job = registry.enqueue_internal(project.binding, nonce(2), JobKind::Index, nonce(3))?;
+    registry.pause(project.binding, true)?;
+    assert!(registry.claim_job_id(&lease, job.id)?.is_none());
+    assert_eq!(registry.job(job.id)?.state, JobState::Pending);
+    registry.pause(project.binding, false)?;
+    assert!(
+        registry
+            .claim_job_id(&lease, Sha256Digest::from_bytes([97; 32]))?
+            .is_none()
+    );
+    assert_eq!(
+        registry
+            .claim_job(&lease)?
+            .context("later job was lost")?
+            .id,
+        job.id
+    );
+    assert!(
+        registry.claim_job(&lease)?.is_none(),
+        "running work allowed a duplicate claim"
+    );
+    registry.complete_job(&lease, job.id, JobOutcome::Succeeded { revision: None })?;
+    let mut saved = NativeServiceRegistry::open_saved(&registry.root)?;
+    assert!(
+        saved.claim_job(&lease).is_err(),
+        "read-only handle bypassed mutation fence"
+    );
+    assert!(saved.prune_job_receipts(None).is_err());
+    Ok(())
+}
+
+#[test]
 fn continuations_debit_atomically_and_late_cancellation_preserves_committed_success() -> Result<()>
 {
     let (_base, mut registry, project, lease) = fixture()?;

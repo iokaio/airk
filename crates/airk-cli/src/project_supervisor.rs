@@ -120,7 +120,13 @@ impl ChildWorker {
             })
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null());
+            .stderr(
+                if cfg!(debug_assertions) && std::env::var_os("AIRK_STORAGE_PROFILE").is_some() {
+                    Stdio::inherit()
+                } else {
+                    Stdio::null()
+                },
+            );
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;

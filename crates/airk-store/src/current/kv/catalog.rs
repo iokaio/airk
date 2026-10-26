@@ -98,7 +98,7 @@ impl<'a> Plan<'a> {
         );
         crate::current::journal::verify_model(request.store, request.model)?;
         let planned = crate::current::planning::artifacts(crate::current::planning::Context {
-            storage: base.transaction(),
+            storage: base,
             store: request.store,
             scope: &head.scope,
             base: head,
@@ -124,7 +124,7 @@ impl<'a> Plan<'a> {
     pub fn new(base: &'a super::Snapshot, head: &'a crate::current::CurrentHead) -> Result<Self> {
         ensure!(base.head()? == *head, "catalog planning base mismatch");
         Ok(Self {
-            plan: map::MapPlan::new(base.transaction(), &head.scope, head.artifact_root)?,
+            plan: map::MapPlan::new(base, &head.scope, head.artifact_root)?,
             head,
             changes: Default::default(),
         })
@@ -172,6 +172,65 @@ impl<'a> Plan<'a> {
     }
 }
 
+/// Reuse the same transaction's typed table handles for a complete proof walk.
+pub(crate) struct MapTables<'a, B, N> {
+    pub buckets: &'a B,
+    pub nodes: &'a N,
+}
+impl<B: ReadableTable<u16, &'static [u8]>, N: ReadableTable<u32, &'static [u8]>> map::MapStorage
+    for MapTables<'_, B, N>
+{
+    fn bucket_bytes(&self, prefix: u16) -> Result<Option<Vec<u8>>> {
+        self.buckets
+            .get(prefix)?
+            .map(|value| {
+                ensure!(
+                    value.value().len() <= map::MAX_BUCKET_BYTES,
+                    "oversized redb map bucket"
+                );
+                Ok(value.value().to_vec())
+            })
+            .transpose()
+    }
+    fn node_bytes(&self, height: u8, index: u16) -> Result<Option<Vec<u8>>> {
+        let key = (u32::from(height) << 16) | u32::from(index);
+        self.nodes
+            .get(key)?
+            .map(|value| {
+                ensure!(value.value().len() == 32, "invalid redb map node length");
+                Ok(value.value().to_vec())
+            })
+            .transpose()
+    }
+}
+impl map::MapStorage for super::Snapshot {
+    fn bucket_bytes(&self, prefix: u16) -> Result<Option<Vec<u8>>> {
+        MapTables {
+            buckets: &self.map_buckets,
+            nodes: &self.map_nodes,
+        }
+        .bucket_bytes(prefix)
+    }
+    fn node_bytes(&self, height: u8, index: u16) -> Result<Option<Vec<u8>>> {
+        MapTables {
+            buckets: &self.map_buckets,
+            nodes: &self.map_nodes,
+        }
+        .node_bytes(height, index)
+    }
+}
+impl crate::current::graph::GraphStorage for super::Snapshot {
+    fn graph_record(
+        &self,
+        scope: &airk_core::graph_storage::GraphScope,
+        id: u32,
+    ) -> Result<Option<airk_core::graph_storage::GraphRecord>> {
+        crate::current::graph::GraphStorage::graph_record(self.transaction(), scope, id)
+    }
+    fn graph_node(&self, height: u8, index: u32) -> Result<Option<Sha256Digest>> {
+        crate::current::graph::GraphStorage::graph_node(self.transaction(), height, index)
+    }
+}
 macro_rules! map_storage {
     ($transaction:ty) => {
         impl map::MapStorage for $transaction {

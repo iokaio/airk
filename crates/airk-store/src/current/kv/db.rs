@@ -39,6 +39,8 @@ pub struct Database {
 }
 pub struct Snapshot {
     transaction: redb::ReadTransaction,
+    pub(super) map_buckets: redb::ReadOnlyTable<u16, &'static [u8]>,
+    pub(super) map_nodes: redb::ReadOnlyTable<u32, &'static [u8]>,
     _database: Arc<redb::Database>,
 }
 impl Database {
@@ -207,8 +209,11 @@ impl Database {
         Ok(result)
     }
     pub fn snapshot(&self) -> Result<Snapshot> {
+        let transaction = self.inner.begin_read()?;
         Ok(Snapshot {
-            transaction: self.inner.begin_read()?,
+            map_buckets: transaction.open_table(tables::MAP_BUCKET)?,
+            map_nodes: transaction.open_table(tables::MAP_NODE)?,
+            transaction,
             _database: self.inner.clone(),
         })
     }

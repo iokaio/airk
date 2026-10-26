@@ -70,6 +70,7 @@ impl<'a> Plan<'a> {
         budget: &mut Budget,
     ) -> Result<()> {
         ensure!(!self.failed.get(), "lexical plan is poisoned");
+        let mut profile = super::profile_start();
         let mut next = self.manifest.clone();
         let result = Index::new(&self.scope)?.replace(self, &mut next, path, artifact, budget);
         if result.is_err() {
@@ -77,6 +78,7 @@ impl<'a> Plan<'a> {
         }
         result?;
         self.manifest = next;
+        super::profile_tick("lexical.replace", &mut profile);
         Ok(())
     }
     pub fn manifest(&self) -> &Manifest {
@@ -149,9 +151,12 @@ impl<'a> Plan<'a> {
     }
     pub fn seal(mut self, budget: &mut Budget) -> Result<Sealed> {
         ensure!(!self.failed.get(), "poisoned lexical plan cannot seal");
+        let mut profile = super::profile_start();
         self.manifest.canonical_bytes()?;
         Index::new(&self.scope)?.verify(&self, &self.manifest, budget)?;
+        super::profile_tick("lexical.seal_verify", &mut profile);
         self.storage.seal()?;
+        super::profile_tick("lexical.seal_commit", &mut profile);
         Ok(Sealed {
             storage: self.storage,
             manifest: self.manifest,

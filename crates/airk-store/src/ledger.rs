@@ -73,10 +73,18 @@ fn encode<T: Serialize>(state: &T, maximum: usize) -> Result<Vec<u8>> {
     serde_json::to_writer(&mut output, state)?;
     Ok(lz4_flex::compress_prepend_size(&output.bytes))
 }
-fn decode<T: DeserializeOwned>(bytes: &[u8], maximum: usize) -> Result<T> {
+fn validate_encoding(bytes: &[u8], maximum: usize) -> Result<()> {
     ensure!(bytes.len() >= 4, "truncated ledger payload");
     let size = u32::from_le_bytes(bytes[..4].try_into()?) as usize;
     ensure!(size <= maximum, "ledger decoded byte budget exceeded");
+    ensure!(
+        bytes.len() <= maximum.saturating_add(maximum / 255).saturating_add(20),
+        "ledger encoded byte budget exceeded"
+    );
+    Ok(())
+}
+pub(crate) fn decode<T: DeserializeOwned>(bytes: &[u8], maximum: usize) -> Result<T> {
+    validate_encoding(bytes, maximum)?;
     Ok(serde_json::from_slice(
         &lz4_flex::decompress_size_prepended(bytes)?,
     )?)
@@ -96,31 +104,49 @@ pub(crate) fn read_with<T: DeserializeOwned, R>(
     maximum: usize,
     inspect: impl FnOnce(T, &redb::ReadTransaction) -> Result<R>,
 ) -> Result<R> {
+    read_encoded_with(path, kind, capacity, maximum, |encoded, transaction| {
+        let state = decode(encoded, maximum)?;
+        inspect(state, transaction)
+    })
+}
+/// The caller may reuse a validated decoded value only when these exact,
+/// bounded bytes and the independently checked file identity are unchanged.
+pub(crate) fn read_encoded_with<R>(
+    path: &Path,
+    kind: &str,
+    capacity: u64,
+    maximum: usize,
+    inspect: impl FnOnce(&[u8], &redb::ReadTransaction) -> Result<R>,
+) -> Result<R> {
+    let mut profile = crate::current::kv::profile_start();
     validate_file(path, capacity)?;
     let mut builder = redb::Builder::new();
     builder.set_cache_size(1 << 20);
     let database = builder.open_read_only(path)?;
+    crate::current::kv::profile_tick("ledger.read_open", &mut profile);
     let transaction = database.begin_read()?;
     let records = transaction.open_table(RECORDS)?;
     ensure!(
         records
             .get("kind")?
-            .is_some_and(|v| v.value() == kind.as_bytes()),
+            .is_some_and(|value| value.value() == kind.as_bytes()),
         "incompatible ledger kind"
     );
-    let state = decode(
-        records
-            .get("state")?
-            .context("ledger state missing")?
-            .value(),
-        maximum,
-    )?;
-    inspect(state, &transaction)
+    let row = records.get("state")?.context("ledger state missing")?;
+    validate_encoding(row.value(), maximum)?;
+    crate::current::kv::profile_tick("ledger.read_body", &mut profile);
+    inspect(row.value(), &transaction)
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MutationMode {
+    StateOnly,
+    TypedTables,
+}
 type Admission<'a> = (
     Option<&'a crate::quota::Reservation>,
     Option<(&'a crate::quota::Quota, &'a Path)>,
+    MutationMode,
 );
 fn update<T: Serialize + DeserializeOwned, R>(
     file: std::fs::File,
@@ -131,7 +157,7 @@ fn update<T: Serialize + DeserializeOwned, R>(
     initial: Option<T>,
     mutate: impl FnOnce(&mut T, &redb::WriteTransaction) -> Result<R>,
 ) -> Result<R> {
-    let (reservation, root_quota) = admission;
+    let (reservation, root_quota, mode) = admission;
     let mut builder = redb::Builder::new();
     builder.set_cache_size(1 << 20);
     let recovery_file = file.try_clone()?;
@@ -220,6 +246,7 @@ fn update<T: Serialize + DeserializeOwned, R>(
     } else {
         None
     };
+    let mut profile = crate::current::kv::profile_start();
     let backend = crate::current::kv::AirkBackend::new_growing(
         file,
         initial_capacity,
@@ -237,11 +264,14 @@ fn update<T: Serialize + DeserializeOwned, R>(
             None => error,
         }
     })?;
+    crate::current::kv::profile_tick("ledger.write_open", &mut profile);
     let outcome = (|| -> Result<R> {
         let mut transaction = database.begin_write()?;
         transaction.set_durability(Durability::Immediate)?;
         transaction.set_two_phase_commit(true);
         let result;
+        let mut previous = None;
+        let unchanged;
         {
             let mut records = transaction.open_table(RECORDS)?;
             let mut state = if let Some(state) = initial {
@@ -258,26 +288,38 @@ fn update<T: Serialize + DeserializeOwned, R>(
                         .is_some_and(|v| v.value() == kind.as_bytes()),
                     "incompatible ledger kind"
                 );
-                decode(
-                    records
-                        .get("state")?
-                        .context("ledger state missing")?
-                        .value(),
-                    maximum,
-                )?
+                let row = records.get("state")?.context("ledger state missing")?;
+                if mode == MutationMode::StateOnly {
+                    previous = Some(row.value().to_vec());
+                }
+                decode(row.value(), maximum)?
             };
+            crate::current::kv::profile_tick("ledger.write_decode", &mut profile);
             result = mutate(&mut state, &transaction)?;
+            crate::current::kv::profile_tick("ledger.write_mutate", &mut profile);
             let encoded = encode(&state, maximum)?;
+            crate::current::kv::profile_tick("ledger.write_encode", &mut profile);
             ensure!(
                 encoded.len() as u64 <= capacity,
                 "ledger payload exceeds admitted capacity"
             );
-            records.insert("state", encoded.as_slice())?;
+            unchanged = previous.as_deref() == Some(encoded.as_slice());
+            if !unchanged {
+                records.insert("state", encoded.as_slice())?;
+            }
         }
-        transaction.commit()?;
+        // Only state-only closures cannot have changed another typed table.
+        // Comparing the exact stored encoding retains all validation and bounds.
+        if unchanged {
+            transaction.abort()?;
+        } else {
+            transaction.commit()?;
+        }
+        crate::current::kv::profile_tick("ledger.write_commit", &mut profile);
         Ok(result)
     })();
     drop(database);
+    crate::current::kv::profile_tick("ledger.write_close", &mut profile);
     if let Err(error) = outcome {
         let error = if let Ok(mut pressure) = growth_pressure.lock()
             && let Some(pressure) = pressure.take()
@@ -328,7 +370,7 @@ pub(crate) fn write<T: Serialize + DeserializeOwned, R>(
         kind,
         capacity,
         maximum,
-        (Some(reservation), None),
+        (Some(reservation), None, MutationMode::StateOnly),
         None,
         |state, _| mutate(state),
     )
@@ -349,7 +391,7 @@ pub(crate) fn write_with<T: Serialize + DeserializeOwned, R>(
         kind,
         capacity,
         maximum,
-        (Some(reservation), None),
+        (Some(reservation), None, MutationMode::TypedTables),
         None,
         mutate,
     )
@@ -372,7 +414,7 @@ pub(crate) fn write_root_growing<T: Serialize + DeserializeOwned, R>(
         kind,
         capacity,
         maximum,
-        (None, Some((quota, path))),
+        (None, Some((quota, path)), MutationMode::StateOnly),
         None,
         |state, _| mutate(state),
     )
@@ -444,6 +486,7 @@ fn create_admitted<T: Serialize + DeserializeOwned>(
                 None
             },
             root_quota.map(|quota| (quota, temporary.path())),
+            MutationMode::StateOnly,
         ),
         Some(state),
         |_, _| Ok(()),
@@ -458,6 +501,45 @@ mod tests {
     use super::*;
     use crate::quota::Quota;
     use std::collections::BTreeMap;
+    #[test]
+    fn unchanged_state_does_not_discard_typed_table_mutations() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let quota = Quota::open(root.path())?;
+        let reservation = quota.reserve_root(4 << 20)?;
+        let path = root.path().join("typed-row.airk");
+        create(
+            &path,
+            "typed-row/1",
+            4 << 20,
+            1 << 20,
+            &reservation,
+            Vec::<String>::new(),
+        )?;
+        const ROWS: TableDefinition<u64, u64> = TableDefinition::new("typed_rows");
+        write_with(
+            &path,
+            "typed-row/1",
+            4 << 20,
+            1 << 20,
+            &reservation,
+            |state: &mut Vec<String>, transaction| {
+                assert!(state.is_empty());
+                transaction.open_table(ROWS)?.insert(7, 9)?;
+                Ok(())
+            },
+        )?;
+        read_with(
+            &path,
+            "typed-row/1",
+            4 << 20,
+            1 << 20,
+            |state: Vec<String>, transaction| {
+                assert!(state.is_empty());
+                assert_eq!(transaction.open_table(ROWS)?.get(7)?.unwrap().value(), 9);
+                Ok(())
+            },
+        )
+    }
     #[test]
     fn physical_headroom_failure_keeps_its_typed_code_across_redb_recovery() -> Result<()> {
         let root = tempfile::tempdir()?;

@@ -225,7 +225,7 @@ fn persist<T: Serialize>(path: &Path, value: &T, maximum: usize) -> Result<()> {
     let mut file =
         tempfile::NamedTempFile::new_in(path.parent().context("receipt parent missing")?)?;
     file.write_all(&bytes)?;
-    crate::durability::persist_synced(file, path)
+    crate::durability::persist_synced(file, path).context("replace native ownership receipt")
 }
 fn validate(store: &FileStore, scope: &CurrentScope, capacity: u64) -> Result<()> {
     scope.validate()?;
@@ -885,12 +885,17 @@ impl FileStore {
     /// Pins both the engine snapshot and the external object/reclamation gate.
     /// The native project worker owns admission; collection I/O stays out of the broker.
     pub fn redb_read(&self, scope: &CurrentScope) -> Result<OwnedSnapshot> {
+        let mut profile = super::profile_start();
         self.ensure_index_ready()?;
         let gate = Gate::shared(self)?;
         let slot = slot(self)?;
+        super::profile_tick("read.gate", &mut profile);
         let quota = Quota::for_store(self)?;
+        super::profile_tick("read.quota", &mut profile);
         let database = existing(self, scope, &quota, &slot)?;
+        super::profile_tick("read.engine", &mut profile);
         let snapshot = database.snapshot()?;
+        super::profile_tick("read.snapshot", &mut profile);
         ensure!(
             snapshot.head()?.scope == *scope,
             "redb request scope changed"

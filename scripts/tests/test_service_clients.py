@@ -17,6 +17,30 @@ SPEC.loader.exec_module(CLIENTS)
 
 
 class ServiceClientTests(unittest.TestCase):
+    def test_relative_fixture_paths_keep_the_callers_location(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            caller = Path(temporary).resolve()
+            runtime, owner = caller / "runtime", caller / "owner"
+            for directory in (runtime, owner, caller / "source", caller / "data"):
+                directory.mkdir()
+            (runtime / ("airk.exe" if CLIENTS.os.name == "nt" else "airk")).write_bytes(b"fictional payload")
+            with contextlib.chdir(caller):
+                fixture = CLIENTS.Fixture(Path("runtime"), Path("owner"))
+                try:
+                    self.assertEqual(fixture.control, owner / "control")
+                    self.assertEqual(Path(fixture.log.name), owner / "service.stderr")
+                    prepared = {"binding": "fixture", "root": str(caller / "source"),
+                                "data_root": str(caller / "data"), "collection": "fixture"}
+                    reply = subprocess.CompletedProcess([], 0, json.dumps(prepared), "")
+                    with patch.object(fixture, "run", return_value=reply) as run, \
+                            patch.object(fixture, "rpc", return_value={"project": {"registration": prepared}}):
+                        fixture.register("fixture", Path("source"), Path("data"))
+                        self.assertEqual(run.call_args.args[:4],
+                                         ("--root", caller / "source", "--data-dir", caller / "data"))
+                    self.assertFalse((runtime / "owner").exists())
+                finally:
+                    fixture.close()
+
     def test_runtime_receipts_stay_outside_the_mac_bundle(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()

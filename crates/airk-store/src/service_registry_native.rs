@@ -13,6 +13,7 @@ use std::{
     collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex, OnceLock, Weak},
     time::Duration,
 };
 
@@ -252,8 +253,95 @@ impl State {
     }
 }
 
+/// One immutable, fully validated state per live canonical registry root.
+/// Every hit still reopens/checks redb, hashes the exact bounded body, validates
+/// the owned file identity and checks the handle's owner/namespace fence.
+#[derive(Default)]
+struct StateCache {
+    entry: Mutex<Option<CachedState>>,
+    disabled: bool,
+}
+struct CachedState {
+    digest: Sha256Digest,
+    identity: String,
+    state: Arc<State>,
+}
+impl StateCache {
+    fn clear(&self) {
+        if let Ok(mut entry) = self.entry.lock() {
+            *entry = None;
+        }
+    }
+    fn load(&self, identity: &str, bytes: &[u8]) -> Result<Arc<State>> {
+        let mut profile = crate::current::kv::profile_start();
+        let digest = framed_digest(
+            b"airk-native-service-state-cache/1",
+            &[KIND.as_bytes(), identity.as_bytes(), bytes],
+        );
+        {
+            let mut entry = self
+                .entry
+                .lock()
+                .map_err(|_| anyhow::anyhow!("service state cache poisoned"))?;
+            if let Some(saved) = &*entry
+                && saved.digest == digest
+                && saved.identity == identity
+            {
+                crate::current::kv::profile_tick("registry.cache_hit", &mut profile);
+                return Ok(saved.state.clone());
+            }
+            // Drop the old image before decoding a replacement; the cache has
+            // no read transaction, object lease or open file to retain.
+            *entry = None;
+        }
+        let state: State = crate::ledger::decode(bytes, STATE_BYTES)?;
+        crate::current::kv::profile_tick("registry.cache_decode", &mut profile);
+        state.validate()?;
+        crate::current::kv::profile_tick("registry.cache_validate", &mut profile);
+        let state = Arc::new(state);
+        // Larger states remain bounded by STATE_BYTES but need not be retained
+        // for this optional memory optimization.
+        if !self.disabled && u32::from_le_bytes(bytes[..4].try_into()?) <= 4 << 20 {
+            *self
+                .entry
+                .lock()
+                .map_err(|_| anyhow::anyhow!("service state cache poisoned"))? =
+                Some(CachedState {
+                    digest,
+                    identity: identity.to_owned(),
+                    state: state.clone(),
+                });
+        }
+        Ok(state)
+    }
+}
+type StateCaches = BTreeMap<PathBuf, Weak<StateCache>>;
+fn cache_for_root(caches: &mut StateCaches, root: &Path, maximum: usize) -> Arc<StateCache> {
+    caches.retain(|_, cache| cache.strong_count() > 0);
+    if let Some(cache) = caches.get(root).and_then(Weak::upgrade) {
+        return cache;
+    }
+    let retained = caches.len() < maximum;
+    let cache = Arc::new(StateCache {
+        disabled: !retained,
+        ..Default::default()
+    });
+    if retained {
+        caches.insert(root.to_owned(), Arc::downgrade(&cache));
+    }
+    cache
+}
+fn state_cache(root: &Path) -> Result<Arc<StateCache>> {
+    static CACHES: OnceLock<Mutex<StateCaches>> = OnceLock::new();
+    let mut caches = CACHES
+        .get_or_init(Default::default)
+        .lock()
+        .map_err(|_| anyhow::anyhow!("service state cache registry poisoned"))?;
+    Ok(cache_for_root(&mut caches, root, 64))
+}
 pub struct NativeServiceRegistry {
     root: PathBuf,
+    cache: Arc<StateCache>,
     incarnation: Incarnation,
     request_namespace: Incarnation,
     read_only: bool,
@@ -493,15 +581,41 @@ fn private_paths(state: &mut State, runtime: &Path) -> Result<Vec<PathBuf>> {
     Ok(state.private_paths.iter().map(PathBuf::from).collect())
 }
 
-fn with_read<R>(root: &Path, inspect: impl FnOnce(&State) -> Result<R>) -> Result<R> {
-    let _guard = crate::service::acquire_file_for(
-        root,
-        "service-1.4.registry.lock",
-        Duration::from_secs(2),
-    )?;
-    let state: State = crate::ledger::read(&path(root), KIND, CAPACITY, STATE_BYTES)?;
-    state.validate()?;
-    inspect(&state)
+fn with_read_cached<R>(
+    root: &Path,
+    cache: &StateCache,
+    inspect: impl FnOnce(&State) -> Result<R>,
+) -> Result<R> {
+    let mut profile = crate::current::kv::profile_start();
+    let outcome = (|| {
+        let _guard = crate::service::acquire_file_for(
+            root,
+            "service-1.4.registry.lock",
+            Duration::from_secs(2),
+        )?;
+        crate::current::kv::profile_tick("registry.read_lock", &mut profile);
+        let file = path(root);
+        let metadata = fs::symlink_metadata(&file)?;
+        crate::managed_collection::reject_file_aliases(&file, &metadata)?;
+        let identity = crate::managed_collection::file_identity(&file, &metadata)?;
+        let result =
+            crate::ledger::read_encoded_with(&file, KIND, CAPACITY, STATE_BYTES, |encoded, _| {
+                let state = cache.load(&identity, encoded)?;
+                crate::current::kv::profile_tick("registry.read_validated", &mut profile);
+                inspect(&state)
+            })?;
+        let after = fs::symlink_metadata(&file)?;
+        crate::managed_collection::reject_file_aliases(&file, &after)?;
+        ensure!(
+            crate::managed_collection::file_identity(&file, &after)? == identity,
+            "service registry file changed during read"
+        );
+        Ok(result)
+    })();
+    if outcome.is_err() {
+        cache.clear();
+    }
+    outcome
 }
 fn with_write<R>(root: &Path, operation: impl FnOnce(&mut State) -> Result<R>) -> Result<R> {
     let _guard = crate::service::acquire_file_for(
@@ -516,14 +630,57 @@ fn with_write<R>(root: &Path, operation: impl FnOnce(&mut State) -> Result<R>) -
         STATE_BYTES,
         &quota,
         |state: &mut State| {
+            let mut profile = crate::current::kv::profile_start();
             state.validate()?;
+            crate::current::kv::profile_tick("registry.write_validate_before", &mut profile);
             let prior = native_events::Baseline::capture(state);
             let result = operation(state)?;
             native_events::record_changes(prior, state)?;
+            crate::current::kv::profile_tick("registry.write_mutate", &mut profile);
             state.validate()?;
+            crate::current::kv::profile_tick("registry.write_validate_after", &mut profile);
             Ok(result)
         },
     )
+}
+
+fn receipt_pressure(state: &State) -> bool {
+    state.accepted_requests.len() >= 4096 || state.jobs.len() >= 1024
+}
+
+fn claimable_job(
+    state: &State,
+    lease: &ProjectLease,
+    selected: Option<Sha256Digest>,
+) -> Result<Option<Sha256Digest>> {
+    let epoch = lease.epoch.ok_or(JobError::StaleWorker)?;
+    let project = state
+        .projects
+        .get(&lease.binding.to_string())
+        .filter(|entry| entry.registered != lease.derived)
+        .context(JobError::StaleWorker)?;
+    ensure!(project.epoch == epoch, JobError::StaleWorker);
+    if state
+        .jobs
+        .values()
+        .any(|job| job.record.project == lease.binding && job.record.state == JobState::Running)
+    {
+        return Ok(None);
+    }
+    let paused = project.paused;
+    Ok(state
+        .jobs
+        .values()
+        .filter(|job| {
+            job.record.project == lease.binding
+                && job.record.state == JobState::Pending
+                && selected.is_none_or(|id| job.record.id == id)
+                && (!paused || native_configuration::runs_while_paused(job))
+                && native_configuration::derived(job) == lease.derived
+                && native_maintenance::eligible(state, job)
+        })
+        .min_by_key(|job| job.sequence)
+        .map(|job| job.record.id))
 }
 
 fn enqueue_record(
@@ -755,17 +912,34 @@ impl NativeServiceRegistry {
         Ok(())
     }
     fn read<R>(&self, inspect: impl FnOnce(&State) -> Result<R>) -> Result<R> {
-        with_read(&self.root, |state| {
+        with_read_cached(&self.root, &self.cache, |state| {
             self.check_identity(state)?;
             inspect(state)
         })
     }
+    #[track_caller]
     fn write<R>(&self, operation: impl FnOnce(&mut State) -> Result<R>) -> Result<R> {
+        let caller = std::panic::Location::caller();
+        let mut profile = crate::current::kv::profile_start();
         ensure!(!self.read_only, "saved service registry is read-only");
-        with_write(&self.root, |state| {
+        let outcome = with_write(&self.root, |state| {
             self.check_identity(state)?;
             operation(state)
-        })
+        });
+        if outcome.is_err() {
+            self.cache.clear();
+        }
+        if profile.is_some() {
+            let component = Path::new(caller.file())
+                .file_stem()
+                .unwrap()
+                .to_string_lossy();
+            crate::current::kv::profile_tick(
+                &format!("registry.write.{component}.{}", caller.line()),
+                &mut profile,
+            );
+        }
+        outcome
     }
 
     /// Opens only the fresh redb namespace. Legacy state requires an ownership
@@ -829,8 +1003,10 @@ impl NativeServiceRegistry {
             owner.complete(&root)?;
         }
         let request_namespace = saved_request_namespace(&root)?;
+        let cache = state_cache(&root)?;
         Ok(Self {
             root,
+            cache,
             incarnation: registry_incarnation,
             request_namespace,
             read_only: false,
@@ -846,16 +1022,17 @@ impl NativeServiceRegistry {
             owner.ready && owner.format == 2,
             "native registry is incomplete"
         );
-        let incarnation = with_read(&root, |state| {
+        let cache = state_cache(&root)?;
+        let (incarnation, request_namespace) = with_read_cached(&root, &cache, |state| {
             ensure!(
                 state.incarnation == owner.incarnation,
                 "native service registry ownership mismatch"
             );
-            Ok(state.incarnation)
+            Ok((state.incarnation, state.request_namespace))
         })?;
-        let request_namespace = saved_request_namespace(&root)?;
         Ok(Self {
             root,
+            cache,
             incarnation,
             request_namespace,
             read_only: true,
@@ -896,8 +1073,12 @@ impl NativeServiceRegistry {
         Ok(())
     }
     fn prune_job_receipts(&self, protected: Option<Sha256Digest>) -> Result<bool> {
+        ensure!(!self.read_only, "saved service registry is read-only");
+        if !self.read(|state| Ok(receipt_pressure(state)))? {
+            return Ok(false);
+        }
         self.write(|state| {
-            if state.accepted_requests.len() >= 4096 || state.jobs.len() >= 1024 {
+            if receipt_pressure(state) {
                 let mut retired = state
                     .jobs
                     .values()
@@ -1033,33 +1214,15 @@ impl NativeServiceRegistry {
         ensure!(!self.read_only, "saved service registry is read-only");
         ensure!(lease.root == self.root, JobError::StaleWorker);
         let epoch = lease.epoch.ok_or(JobError::StaleWorker)?;
+        // This observation has no effects. A later arrival is picked up by the next
+        // poll; the write path rechecks the same fencing and eligibility predicate.
+        if self.read(|state| Ok(claimable_job(state, lease, selected)?.is_none()))? {
+            return Ok(None);
+        }
         self.write(|state| {
-            let project = state
-                .projects
-                .get(&lease.binding.to_string())
-                .filter(|entry| entry.registered != lease.derived)
-                .context(JobError::StaleWorker)?;
-            ensure!(project.epoch == epoch, JobError::StaleWorker);
-            if state.jobs.values().any(|job| {
-                job.record.project == lease.binding && job.record.state == JobState::Running
-            }) {
+            let Some(id) = claimable_job(state, lease, selected)? else {
                 return Ok(None);
-            }
-            let paused = project.paused;
-            let id = state
-                .jobs
-                .values()
-                .filter(|job| {
-                    job.record.project == lease.binding
-                        && job.record.state == JobState::Pending
-                        && selected.is_none_or(|id| job.record.id == id)
-                        && (!paused || native_configuration::runs_while_paused(job))
-                        && native_configuration::derived(job) == lease.derived
-                        && native_maintenance::eligible(state, job)
-                })
-                .min_by_key(|job| job.sequence)
-                .map(|job| job.record.id);
-            let Some(id) = id else { return Ok(None) };
+            };
             let record = &mut state.jobs.get_mut(&id.to_string()).unwrap().record;
             ensure!(record.attempts < 3, JobError::Capacity);
             record.state = JobState::Running;
@@ -1646,6 +1809,107 @@ mod tests {
         )
     }
 
+    #[test]
+    fn cache_capacity_fallback_never_retains_untracked_state() -> Result<()> {
+        let mut caches = StateCaches::new();
+        let first = cache_for_root(&mut caches, Path::new("first"), 1);
+        let state = State::empty(Incarnation::from_bytes([85; 16]));
+        let encoded = lz4_flex::compress_prepend_size(&serde_json::to_vec(&state)?);
+        first.load("owned-file", &encoded)?;
+        assert!(first.entry.lock().unwrap().is_some());
+        let existing = cache_for_root(&mut caches, Path::new("first"), 1);
+        assert!(Arc::ptr_eq(&first, &existing));
+        for _ in 0..3 {
+            let fallback = cache_for_root(&mut caches, Path::new("second"), 1);
+            assert_eq!(
+                fallback.load("owned-file", &encoded)?.request_namespace,
+                state.request_namespace
+            );
+            assert!(
+                fallback.entry.lock().unwrap().is_none(),
+                "capacity fallback retained an untracked state"
+            );
+        }
+        assert_eq!(caches.len(), 1);
+        assert!(
+            first.entry.lock().unwrap().is_some(),
+            "capacity fallback evicted an existing root"
+        );
+        drop(first);
+        drop(existing);
+        let admitted = cache_for_root(&mut caches, Path::new("second"), 1);
+        admitted.load("owned-file", &encoded)?;
+        assert!(admitted.entry.lock().unwrap().is_some());
+        Ok(())
+    }
+    #[test]
+    fn validated_state_cache_checks_exact_bytes_and_namespace_after_timestamp_restoration()
+    -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let registry = NativeServiceRegistry::open(root.path(), Incarnation::from_bytes([83; 16]))?;
+        let (namespace, epoch) = registry.saved_request_epoch()?;
+        assert_eq!(registry.saved_request_epoch()?, (namespace, epoch));
+        let file = path(root.path());
+        let modified = fs::metadata(&file)?.modified()?;
+        let quota = crate::quota::Quota::open(root.path())?;
+        crate::ledger::write_root_growing(
+            &file,
+            KIND,
+            STATE_BYTES,
+            &quota,
+            |state: &mut State| {
+                state.request_epoch += 1;
+                state.bump()?;
+                Ok(())
+            },
+        )?;
+        fs::File::options()
+            .write(true)
+            .open(&file)?
+            .set_times(fs::FileTimes::new().set_modified(modified))?;
+        assert_eq!(
+            registry.saved_request_epoch()?,
+            (namespace, epoch + 1),
+            "cache trusted a restored timestamp instead of exact state bytes"
+        );
+        crate::ledger::write_root_growing(
+            &file,
+            KIND,
+            STATE_BYTES,
+            &quota,
+            |state: &mut State| {
+                state.version = 99;
+                Ok(())
+            },
+        )?;
+        assert!(
+            registry.saved_request_epoch().is_err(),
+            "cached validation hid changed invalid state"
+        );
+        assert!(registry.saved_request_epoch().is_err());
+        crate::ledger::write_root_growing(
+            &file,
+            KIND,
+            STATE_BYTES,
+            &quota,
+            |state: &mut State| {
+                state.version = 1;
+                state.request_namespace = Incarnation::from_bytes([84; 16]);
+                state.bump()?;
+                Ok(())
+            },
+        )?;
+        assert!(
+            registry.saved_request_epoch().is_err(),
+            "old handle crossed the namespace fence through the cache"
+        );
+        let fresh = NativeServiceRegistry::open_saved(root.path())?;
+        assert_eq!(
+            fresh.saved_request_epoch()?,
+            (Incarnation::from_bytes([84; 16]), epoch + 1)
+        );
+        Ok(())
+    }
     #[test]
     fn redb_registry_registers_pages_pauses_and_fences_after_reopen() -> Result<()> {
         let root = tempfile::tempdir()?;

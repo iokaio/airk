@@ -117,43 +117,8 @@ fn plain(path: &Path) -> Result<fs::Metadata> {
     Ok(metadata)
 }
 pub(crate) fn identity(path: &Path, metadata: &fs::Metadata) -> Result<String> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        let _ = path;
-        Ok(format!("{}:{}", metadata.dev(), metadata.ino()))
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::io::AsRawHandle;
-        use windows_sys::Win32::Storage::FileSystem::{
-            BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
-        };
-        let _ = metadata;
-        let file = File::options()
-            .read(true)
-            .custom_flags(0x02000000)
-            .open(path)?;
-        let mut info = std::mem::MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::uninit();
-        // SAFETY: valid owned handle and live correctly sized output storage.
-        ensure!(
-            unsafe { GetFileInformationByHandle(file.as_raw_handle().cast(), info.as_mut_ptr()) }
-                != 0,
-            "legacy file identity unavailable"
-        );
-        let info = unsafe { info.assume_init() };
-        Ok(format!(
-            "{}:{}:{}:{}:{}",
-            info.dwVolumeSerialNumber,
-            info.nFileIndexHigh,
-            info.nFileIndexLow,
-            info.ftCreationTime.dwHighDateTime,
-            info.ftCreationTime.dwLowDateTime
-        ))
-    }
+    crate::managed_collection::file_identity(path, metadata)
 }
-#[cfg(windows)]
-use std::os::windows::fs::OpenOptionsExt;
 pub(crate) fn witness(path: &Path) -> Result<Witness> {
     let metadata = plain(path)?;
     ensure!(metadata.is_file(), "legacy retirement file changed type");

@@ -29,6 +29,7 @@ impl Root {
     }
 }
 pub type Entry = (Vec<u8>, Vec<u8>);
+#[derive(Clone)]
 enum Page {
     Leaf(Vec<Entry>),
     Branch(Vec<Root>),
@@ -38,6 +39,93 @@ enum Page {
 /// The scope and domain are part of every page digest, preventing substitutions.
 pub struct Tree {
     domain: Sha256Digest,
+    cache: Option<std::sync::Arc<std::sync::Mutex<ReadCache>>>,
+}
+/// Fresh for one immutable verification walk; never retained across mutations.
+#[derive(Default)]
+pub(crate) struct ReadCache {
+    pages: std::collections::BTreeMap<Sha256Digest, CachedPage>,
+    bytes: usize,
+    clock: u64,
+}
+struct CachedPage {
+    domain: Sha256Digest,
+    root: Root,
+    page: Page,
+    encoded: usize,
+    bytes: usize,
+    stamp: u64,
+}
+impl ReadCache {
+    const BYTES: usize = 8 << 20;
+    const PAGES: usize = 256;
+    pub(crate) fn shared() -> std::sync::Arc<std::sync::Mutex<Self>> {
+        std::sync::Arc::new(std::sync::Mutex::new(Self::default()))
+    }
+    fn get(&mut self, domain: Sha256Digest, root: &Root) -> Result<Option<(Page, usize)>> {
+        self.clock = self.clock.saturating_add(1);
+        let Some(entry) = self.pages.get_mut(&root.digest) else {
+            return Ok(None);
+        };
+        ensure!(
+            entry.domain == domain && entry.root == *root,
+            "cached directory domain/reference mismatch"
+        );
+        entry.stamp = self.clock;
+        Ok(Some((entry.page.clone(), entry.encoded)))
+    }
+    fn insert(&mut self, domain: Sha256Digest, root: &Root, page: &Page, encoded: usize) {
+        let contents = match page {
+            Page::Leaf(values) => {
+                values.capacity() * std::mem::size_of::<Entry>()
+                    + values
+                        .iter()
+                        .map(|(key, value)| key.capacity() + value.capacity())
+                        .sum::<usize>()
+            }
+            Page::Branch(values) => {
+                values.capacity() * std::mem::size_of::<Root>()
+                    + values
+                        .iter()
+                        .map(|value| value.first.capacity() + value.last.capacity())
+                        .sum::<usize>()
+            }
+        };
+        // Include decoded vectors, root keys, tree-node/entry overhead, and an
+        // extra encoded-page allowance; the cache cannot grow with the corpus.
+        let bytes = contents + root.first.capacity() + root.last.capacity() + encoded + 4096;
+        if bytes > Self::BYTES {
+            return;
+        }
+        while self.pages.len() >= Self::PAGES || self.bytes + bytes > Self::BYTES {
+            let Some(oldest) = self
+                .pages
+                .iter()
+                .min_by_key(|(_, entry)| entry.stamp)
+                .map(|(key, _)| *key)
+            else {
+                break;
+            };
+            if let Some(entry) = self.pages.remove(&oldest) {
+                self.bytes -= entry.bytes;
+            }
+        }
+        self.clock = self.clock.saturating_add(1);
+        if let Some(previous) = self.pages.insert(
+            root.digest,
+            CachedPage {
+                domain,
+                root: root.clone(),
+                page: page.clone(),
+                encoded,
+                bytes,
+                stamp: self.clock,
+            },
+        ) {
+            self.bytes -= previous.bytes;
+        }
+        self.bytes += bytes;
+    }
 }
 pub trait ReadPages {
     /// Enforce the encoded page bound before copying bytes from the engine.
@@ -266,6 +354,10 @@ impl Tree {
         entries: impl IntoIterator<Item = Entry>,
         budget: &mut Budget,
     ) -> Result<Option<Root>> {
+        ensure!(
+            self.cache.is_none(),
+            "verification directory cache cannot mutate"
+        );
         let mut leaf = Vec::new();
         let mut levels: Vec<Vec<Root>> = Vec::new();
         let mut previous: Option<Vec<u8>> = None;
@@ -335,6 +427,7 @@ impl Tree {
             "invalid directory domain"
         );
         Ok(Self {
+            cache: None,
             domain: framed_digest(
                 b"airk-lexical-directory-domain/1",
                 &[
@@ -345,6 +438,13 @@ impl Tree {
                 ],
             ),
         })
+    }
+    pub(crate) fn with_read_cache(
+        mut self,
+        cache: Option<std::sync::Arc<std::sync::Mutex<ReadCache>>>,
+    ) -> Self {
+        self.cache = cache;
+        self
     }
     pub fn empty_digest(&self) -> Sha256Digest {
         framed_digest(b"airk-lexical-directory-empty/1", &[self.domain.as_bytes()])
@@ -380,6 +480,15 @@ impl Tree {
     fn read(&self, storage: &impl ReadPages, root: &Root, budget: &mut Budget) -> Result<Page> {
         root_valid(root)?;
         budget.page()?;
+        if let Some(cache) = &self.cache
+            && let Some((page, encoded)) = cache
+                .lock()
+                .map_err(|_| anyhow::anyhow!("directory cache poisoned"))?
+                .get(self.domain, root)?
+        {
+            budget.bytes -= encoded as u64;
+            return Ok(page);
+        }
         let encoded = storage.read_page(root.digest)?;
         ensure!(
             encoded.len() <= MAX_PAGE_BYTES,
@@ -391,9 +500,19 @@ impl Tree {
             self.describe(&page, &encoded)? == *root,
             "directory digest/range/count mismatch"
         );
+        if let Some(cache) = &self.cache {
+            cache
+                .lock()
+                .map_err(|_| anyhow::anyhow!("directory cache poisoned"))?
+                .insert(self.domain, root, &page, encoded.len());
+        }
         Ok(page)
     }
     fn save(&self, storage: &impl WritePages, page: Page) -> Result<Root> {
+        ensure!(
+            self.cache.is_none(),
+            "verification directory cache cannot mutate"
+        );
         let encoded = encode(&page)?;
         ensure!(encoded.len() <= MAX_PAGE_BYTES, "directory page overflow");
         let root = self.describe(&page, &encoded)?;
@@ -556,6 +675,10 @@ impl Tree {
         value: Option<&[u8]>,
         budget: &mut Budget,
     ) -> Result<Option<Root>> {
+        ensure!(
+            self.cache.is_none(),
+            "verification directory cache cannot mutate"
+        );
         key(key_bytes)?;
         ensure!(
             value.is_none_or(|v| v.len() <= MAX_VALUE_BYTES),
@@ -587,6 +710,10 @@ impl Tree {
         root: Option<&Root>,
         budget: &mut Budget,
     ) -> Result<()> {
+        ensure!(
+            self.cache.is_none(),
+            "verification directory cache cannot mutate"
+        );
         if let Some(root) = root {
             if let Page::Branch(children) = self.read(storage, root, budget)? {
                 for child in children {
@@ -754,6 +881,103 @@ mod tests {
             },
             domain,
         )
+    }
+    #[test]
+    fn verification_cache_preserves_proof_domains_and_work_budgets() -> Result<()> {
+        struct Counted<'a> {
+            storage: &'a Memory,
+            reads: std::cell::Cell<usize>,
+        }
+        impl ReadPages for Counted<'_> {
+            fn read_page(&self, digest: Sha256Digest) -> Result<Vec<u8>> {
+                self.reads.set(self.reads.get() + 1);
+                self.storage.read_page(digest)
+            }
+        }
+        let memory = Memory::default();
+        let original = tree(b"cache")?;
+        let mut budget = Budget::query();
+        let root = original
+            .put(&memory, None, b"key", Some(b"value"), &mut budget)?
+            .unwrap();
+        let encoded = memory.read_page(root.digest)?.len() as u64;
+        let shared = ReadCache::shared();
+        let cached = tree(b"cache")?.with_read_cache(Some(shared.clone()));
+        let counted = Counted {
+            storage: &memory,
+            reads: std::cell::Cell::new(0),
+        };
+        let before = (budget.pages, budget.bytes);
+        for _ in 0..2 {
+            assert_eq!(
+                cached.get(&counted, Some(&root), b"key", &mut budget)?,
+                Some(b"value".to_vec())
+            );
+        }
+        assert_eq!(counted.reads.get(), 1);
+        assert_eq!(
+            (budget.pages, budget.bytes),
+            (before.0 - 2, before.1 - encoded * 2)
+        );
+        let mut forged = root.clone();
+        forged.count += 1;
+        assert!(
+            cached
+                .get(&counted, Some(&forged), b"key", &mut budget)
+                .is_err()
+        );
+        assert!(
+            tree(b"foreign")?
+                .with_read_cache(Some(shared))
+                .get(&counted, Some(&root), b"key", &mut budget)
+                .is_err()
+        );
+        let mut exhausted = Budget {
+            pages: 0,
+            bytes: 1 << 20,
+            entries: 100,
+        };
+        assert!(
+            cached
+                .get(&counted, Some(&root), b"key", &mut exhausted)
+                .unwrap_err()
+                .is::<Exhausted>()
+        );
+        assert!(
+            cached
+                .put(&memory, Some(&root), b"key", None, &mut budget)
+                .is_err()
+        );
+        assert!(cached.clear(&memory, Some(&root), &mut budget).is_err());
+        assert_eq!(
+            original.get(&memory, Some(&root), b"key", &mut budget)?,
+            Some(b"value".to_vec())
+        );
+        Ok(())
+    }
+    #[test]
+    fn verification_cache_bounds_decoded_pages_and_references() -> Result<()> {
+        let memory = Memory::default();
+        let original = tree(b"bounded-cache")?;
+        let shared = ReadCache::shared();
+        let cached = tree(b"bounded-cache")?.with_read_cache(Some(shared.clone()));
+        let value = vec![b'x'; MAX_VALUE_BYTES];
+        let mut budget = Budget::query();
+        for number in 0..600u32 {
+            let key = number.to_be_bytes();
+            let root = original.put(&memory, None, &key, Some(&value), &mut budget)?;
+            assert_eq!(
+                cached.get(&memory, root.as_ref(), &key, &mut budget)?,
+                Some(value.clone())
+            );
+            let cache = shared.lock().unwrap();
+            assert!(cache.bytes <= ReadCache::BYTES && cache.pages.len() <= ReadCache::PAGES);
+        }
+        assert!(
+            shared.lock().unwrap().pages.len() < ReadCache::PAGES,
+            "byte bound must evict before the page count bound"
+        );
+        Ok(())
     }
     #[test]
     fn bulk_build_and_transactional_page_retirement_preserve_pinned_reads() -> Result<()> {

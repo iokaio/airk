@@ -187,6 +187,10 @@ Implement real OS locks: redb's default unsupported backend lock methods are ins
 
 Cache budgets belong to worker/incarnation admission. A 64 MiB active-handle cache is a measurement candidate; multiple projects and replacement handles must fit machine policy. Bound overlays, decoding buffers and snapshots separately.
 
+## Current local qualification
+
+October 26: the first identified debug comparison fails the accepted 10% p95 ceiling for lexical queries and publication. Guard-preserving optimizations and the final merged CI contracts are being tested; no optimized complete comparison is recorded as passing. See [checkpoint evidence and remaining gates](../release-1.4.5.md). Native managed-upgrade and final workspace/container/artifact qualification remain pending. The completed `origin/feat/airksvc` tip `66c2a2a` is merged locally as `eec82b4`; the owner still requires explicit approval before any VSIX build.
+
 ## Implementation proposal
 
 Use the gated phases below. Capture SQLite baseline outputs as bounded original fixture/golden results during development, then remove the executable SQLite oracle and all SQLite dependencies before packaging. No feature, test-only dependency, build dependency, executable SQL oracle, migration/legacy reader, native payload or fallback may retain SQLite code. Preserve historical documentation as identifiable records. Do not build any VSIX until the entire branch cutover is complete, even for an intermediate local test.

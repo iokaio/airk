@@ -126,14 +126,33 @@ pub fn empty_root(scope: &CurrentScope) -> Result<Sha256Digest> {
     scope.validate()?;
     Ok(empty(scope, HEIGHT))
 }
-fn leaf(scope: &CurrentScope, prefix: u16, bytes: &[u8]) -> Sha256Digest {
+// Scope and empty-subtree digests are immutable throughout one proof/plan.
+struct Hashes {
+    scope: Sha256Digest,
+    empty: [Sha256Digest; HEIGHT as usize + 1],
+}
+impl Hashes {
+    fn new(scope: &CurrentScope) -> Self {
+        let scope = scope_digest(scope);
+        Self {
+            scope,
+            empty: std::array::from_fn(|height| {
+                framed_digest(
+                    b"current-keyed-map-empty/1",
+                    &[scope.as_bytes(), &[height as u8]],
+                )
+            }),
+        }
+    }
+}
+fn leaf(hashes: &Hashes, prefix: u16, bytes: &[u8]) -> Sha256Digest {
     framed_digest(
         b"current-keyed-map-bucket/1",
-        &[scope_digest(scope).as_bytes(), &prefix.to_be_bytes(), bytes],
+        &[hashes.scope.as_bytes(), &prefix.to_be_bytes(), bytes],
     )
 }
 fn branch(
-    scope: &CurrentScope,
+    hashes: &Hashes,
     height: u8,
     index: u16,
     left: Sha256Digest,
@@ -143,13 +162,15 @@ fn branch(
         (1..=HEIGHT).contains(&height) && u32::from(index) < (1u32 << (HEIGHT - height)),
         "invalid map branch coordinate"
     );
-    if left == empty(scope, height - 1) && right == empty(scope, height - 1) {
-        Ok(empty(scope, height))
+    if left == hashes.empty[usize::from(height - 1)]
+        && right == hashes.empty[usize::from(height - 1)]
+    {
+        Ok(hashes.empty[usize::from(height)])
     } else {
         Ok(framed_digest(
             b"current-keyed-map-branch/1",
             &[
-                scope_digest(scope).as_bytes(),
+                hashes.scope.as_bytes(),
                 &[height],
                 &index.to_be_bytes(),
                 left.as_bytes(),
@@ -240,21 +261,21 @@ fn encode(prefix: u16, entries: &[Entry]) -> Result<Vec<u8>> {
 
 fn bucket(
     connection: &dyn MapStorage,
-    scope: &CurrentScope,
+    hashes: &Hashes,
     prefix: u16,
 ) -> Result<(Vec<Entry>, Sha256Digest)> {
     let bytes = connection.bucket_bytes(prefix)?;
     match bytes {
         Some(bytes) => {
             let entries = decode(prefix, &bytes)?;
-            Ok((entries, leaf(scope, prefix, &bytes)))
+            Ok((entries, leaf(hashes, prefix, &bytes)))
         }
-        None => Ok((Vec::new(), empty(scope, 0))),
+        None => Ok((Vec::new(), hashes.empty[0])),
     }
 }
 fn node(
     connection: &dyn MapStorage,
-    scope: &CurrentScope,
+    hashes: &Hashes,
     height: u8,
     index: u16,
 ) -> Result<Sha256Digest> {
@@ -269,7 +290,7 @@ fn node(
     );
     Ok(value
         .map(|bytes| Sha256Digest::from_bytes(bytes.try_into().expect("length checked")))
-        .unwrap_or_else(|| empty(scope, height)))
+        .unwrap_or_else(|| hashes.empty[usize::from(height)]))
 }
 fn proof(
     connection: &dyn MapStorage,
@@ -278,18 +299,19 @@ fn proof(
     key: Sha256Digest,
 ) -> Result<Vec<Entry>> {
     scope.validate()?;
+    let hashes = Hashes::new(scope);
     let prefix = prefix(key);
-    let (entries, mut digest) = bucket(connection, scope, prefix)?;
+    let (entries, mut digest) = bucket(connection, &hashes, prefix)?;
     let mut index = prefix;
     for height in 0..HEIGHT {
-        let sibling = node(connection, scope, height, index ^ 1)?;
+        let sibling = node(connection, &hashes, height, index ^ 1)?;
         let (left, right) = if index & 1 == 0 {
             (digest, sibling)
         } else {
             (sibling, digest)
         };
         index >>= 1;
-        digest = branch(scope, height + 1, index, left, right)?;
+        digest = branch(&hashes, height + 1, index, left, right)?;
     }
     ensure!(
         digest == root,
@@ -313,6 +335,7 @@ pub(crate) fn get(
 pub(crate) struct MapPlan<'a> {
     connection: &'a dyn MapStorage,
     scope: &'a CurrentScope,
+    hashes: Hashes,
     base_root: Sha256Digest,
     root: Sha256Digest,
     buckets: BTreeMap<u16, Vec<Entry>>,
@@ -331,6 +354,7 @@ impl<'a> MapPlan<'a> {
         Ok(Self {
             connection,
             scope,
+            hashes: Hashes::new(scope),
             base_root: root,
             root,
             buckets: BTreeMap::new(),
@@ -359,7 +383,7 @@ impl<'a> MapPlan<'a> {
         let mut nodes = transaction.open_table(tables::MAP_NODE)?;
         for (&(height, index), digest) in &self.nodes {
             let key = (u32::from(height) << 16) | u32::from(index);
-            if *digest == empty(self.scope, height) {
+            if *digest == self.hashes.empty[usize::from(height)] {
                 nodes.remove(key)?;
             } else {
                 nodes.insert(key, digest.as_bytes().as_slice())?;
@@ -389,7 +413,8 @@ impl<'a> MapPlan<'a> {
             visitor(&Operation {
                 table: Table::MapNode,
                 key: key.to_be_bytes().to_vec(),
-                value: (*digest != empty(self.scope, height)).then(|| digest.as_bytes().to_vec()),
+                value: (*digest != self.hashes.empty[usize::from(height)])
+                    .then(|| digest.as_bytes().to_vec()),
             })?;
         }
         Ok(())
@@ -424,18 +449,18 @@ impl<'a> MapPlan<'a> {
     fn node(&self, height: u8, index: u16) -> Result<Sha256Digest> {
         match self.nodes.get(&(height, index)) {
             Some(digest) => Ok(*digest),
-            None => node(self.connection, self.scope, height, index),
+            None => node(self.connection, &self.hashes, height, index),
         }
     }
 
     fn bucket(&self, prefix: u16) -> Result<(Vec<Entry>, Sha256Digest)> {
         match self.buckets.get(&prefix) {
-            Some(entries) if entries.is_empty() => Ok((Vec::new(), empty(self.scope, 0))),
+            Some(entries) if entries.is_empty() => Ok((Vec::new(), self.hashes.empty[0])),
             Some(entries) => {
                 let bytes = encode(prefix, entries)?;
-                Ok((entries.clone(), leaf(self.scope, prefix, &bytes)))
+                Ok((entries.clone(), leaf(&self.hashes, prefix, &bytes)))
             }
-            None => bucket(self.connection, self.scope, prefix),
+            None => bucket(self.connection, &self.hashes, prefix),
         }
     }
 
@@ -451,7 +476,7 @@ impl<'a> MapPlan<'a> {
                 (sibling, digest)
             };
             index >>= 1;
-            digest = branch(self.scope, height + 1, index, left, right)?;
+            digest = branch(&self.hashes, height + 1, index, left, right)?;
         }
         ensure!(digest == self.root, "planned current map proof mismatch");
         Ok(entries)
@@ -508,9 +533,9 @@ impl<'a> MapPlan<'a> {
             "current map plan byte bound exceeded"
         );
         let mut digest = if entries.is_empty() {
-            empty(self.scope, 0)
+            self.hashes.empty[0]
         } else {
-            leaf(self.scope, prefix, &encode(prefix, &entries)?)
+            leaf(&self.hashes, prefix, &encode(prefix, &entries)?)
         };
         self.buckets.insert(prefix, entries);
         self.nodes.insert((0, prefix), digest);
@@ -523,7 +548,7 @@ impl<'a> MapPlan<'a> {
                 (sibling, digest)
             };
             index >>= 1;
-            digest = branch(self.scope, height + 1, index, left, right)?;
+            digest = branch(&self.hashes, height + 1, index, left, right)?;
             if height + 1 < HEIGHT {
                 self.nodes.insert((height + 1, index), digest);
             }
@@ -565,7 +590,7 @@ impl MapVisitLimits {
     }
 }
 /// Traverses the authenticated tree, so omission of an entire occupied bucket
-/// cannot silently shorten an enumeration. The caller owns the SQL read lease.
+/// cannot silently shorten an enumeration. The caller owns the committed read snapshot.
 pub(crate) fn visit_all(
     connection: &dyn MapStorage,
     scope: &CurrentScope,
@@ -574,6 +599,7 @@ pub(crate) fn visit_all(
     visitor: &mut dyn FnMut(Sha256Digest, &[u8]) -> Result<()>,
 ) -> Result<()> {
     scope.validate()?;
+    let hashes = Hashes::new(scope);
     limits.validate()?;
     let mut stack = vec![(HEIGHT, 0u16, root)];
     let mut nodes = 0usize;
@@ -585,11 +611,11 @@ pub(crate) fn visit_all(
             nodes <= limits.nodes,
             "current map visit node budget exceeded"
         );
-        if expected == empty(scope, height) {
+        if expected == hashes.empty[usize::from(height)] {
             continue;
         }
         if height == 0 {
-            let (contents, digest) = bucket(connection, scope, index)?;
+            let (contents, digest) = bucket(connection, &hashes, index)?;
             ensure!(
                 digest == expected && !contents.is_empty(),
                 "current map bucket proof mismatch"
@@ -609,10 +635,10 @@ pub(crate) fn visit_all(
             let child_height = height - 1;
             let left_index = index.checked_mul(2).context("map coordinate overflow")?;
             let right_index = left_index + 1;
-            let left = node(connection, scope, child_height, left_index)?;
-            let right = node(connection, scope, child_height, right_index)?;
+            let left = node(connection, &hashes, child_height, left_index)?;
+            let right = node(connection, &hashes, child_height, right_index)?;
             ensure!(
-                branch(scope, height, index, left, right)? == expected,
+                branch(&hashes, height, index, left, right)? == expected,
                 "current map branch proof mismatch"
             );
             stack.push((child_height, right_index, right));

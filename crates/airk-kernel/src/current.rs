@@ -122,7 +122,7 @@ pub struct CurrentLexicalEvidence {
     pub truncated: bool,
 }
 
-/// Verify every selected FTS5 candidate against the authenticated current
+/// Verify every selected native lexical candidate against the authenticated current
 /// catalog, its immutable retained extraction and original source bytes. The
 /// caller must hold this read handle and its collection gate for the full call.
 pub fn materialize_lexical(
@@ -215,4 +215,19 @@ pub fn materialize_lexical(
         hits,
         truncated,
     })
+}
+
+// Opt-in development timings contain stage names and durations only.
+pub(crate) fn profile_start() -> Option<std::time::Instant> {
+    (cfg!(debug_assertions) && std::env::var_os("AIRK_STORAGE_PROFILE").is_some())
+        .then(std::time::Instant::now)
+}
+pub(crate) fn profile_tick(stage: &str, start: &mut Option<std::time::Instant>) {
+    if let Some(start) = start {
+        eprintln!(
+            "airk-storage-profile: {stage} {:.3}ms",
+            start.elapsed().as_secs_f64() * 1000.0
+        );
+        *start = std::time::Instant::now();
+    }
 }

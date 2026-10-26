@@ -340,6 +340,16 @@ impl Postings {
             .checked_sub(removed.len() as u64)
             .and_then(|n| n.checked_add(documents.len() as u64))
             .context("posting replacement count overflow")?;
+        if removed.as_slice() == documents {
+            ensure!(
+                header.root.is_some() == (header.count > 0),
+                "posting replacement root/count mismatch"
+            );
+            // Authenticate boundary neighbors and ordering, while retaining
+            // byte-identical blocks when membership is unchanged.
+            self.coalesce(storage, &mut next, start, end, budget, false)?;
+            return Ok(removed);
+        }
         for k in old_keys {
             self.remove_block(storage, &mut next, &k, budget)?;
         }
@@ -348,7 +358,7 @@ impl Postings {
         if !retained.is_empty() {
             self.install(storage, &mut next, &retained, budget)?;
         }
-        self.coalesce(storage, &mut next, start, end, budget)?;
+        self.coalesce(storage, &mut next, start, end, budget, true)?;
         ensure!(
             next.root.is_some() == (next.count > 0),
             "posting replacement root/count mismatch"
@@ -363,6 +373,7 @@ impl Postings {
         start: u64,
         end: u64,
         budget: &mut Budget,
+        rewrite: bool,
     ) -> Result<()> {
         let mut left = self.tree.floor(
             storage,
@@ -396,7 +407,7 @@ impl Postings {
                 "overlapping neighboring posting blocks"
             );
             let underfilled = a.len() <= MAX_BLOCK_KEYS / 2 || b.len() <= MAX_BLOCK_KEYS / 2;
-            if underfilled && a.len() + b.len() <= MAX_BLOCK_KEYS {
+            if rewrite && underfilled && a.len() + b.len() <= MAX_BLOCK_KEYS {
                 a.extend(b);
                 let combined = encode(&a)?;
                 if combined.len() <= MAX_BLOCK_BYTES {
@@ -592,6 +603,63 @@ mod tests {
         tx.commit()?;
         let old = db.snapshot()?;
         let old_header = header.clone();
+        let tx = db.write()?;
+        type Rows = Vec<(Vec<u8>, Vec<u8>)>;
+        let capture = || -> Result<Vec<Rows>> {
+            let mut rows = Vec::new();
+            for definition in [tables::LEX_BLOCK, tables::LEX_DIRECTORY] {
+                let table = tx.open_table(definition)?;
+                rows.push(
+                    table
+                        .iter()?
+                        .map(|row| {
+                            let (key, value) = row?;
+                            Ok((key.value().to_vec(), value.value().to_vec()))
+                        })
+                        .collect::<Result<Vec<_>>>()?,
+                );
+            }
+            Ok(rows)
+        };
+        let before = capture()?;
+        assert_eq!(
+            postings.replace_range(&tx, &mut header, 0, 1 << 16, &first, &mut budget)?,
+            first
+        );
+        assert_eq!(header, old_header);
+        assert_eq!(
+            capture()?,
+            before,
+            "unchanged membership rewrote a block/directory"
+        );
+        tx.abort()?;
+        let neighbor = postings
+            .tree
+            .ceiling(
+                old.transaction(),
+                header.root.as_ref(),
+                &(1u64 << 16).to_be_bytes(),
+                &mut budget,
+            )?
+            .unwrap()
+            .0;
+        for missing in [0u64.to_be_bytes().to_vec(), neighbor] {
+            let tx = db.write()?;
+            let mut unchanged = header.clone();
+            assert!(
+                tx.open_table(tables::LEX_BLOCK)?
+                    .remove(postings.block_key(&missing)?.as_slice())?
+                    .is_some()
+            );
+            assert!(
+                postings
+                    .replace_range(&tx, &mut unchanged, 0, 1 << 16, &first, &mut budget)
+                    .is_err(),
+                "unchanged range hid a missing affected/neighbor block"
+            );
+            assert_eq!(unchanged, old_header);
+            tx.abort()?;
+        }
         let tx = db.write()?;
         assert_eq!(
             postings

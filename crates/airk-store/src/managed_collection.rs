@@ -84,6 +84,43 @@ pub(crate) fn reject_file_aliases(path: &Path, metadata: &std::fs::Metadata) -> 
     Ok(())
 }
 
+pub(crate) fn file_identity(path: &Path, metadata: &std::fs::Metadata) -> Result<String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let _ = path;
+        Ok(format!("{}:{}", metadata.dev(), metadata.ino()))
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::{fs::OpenOptionsExt, io::AsRawHandle};
+        use windows_sys::Win32::Storage::FileSystem::{
+            BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
+        };
+        let _ = metadata;
+        let file = std::fs::File::options()
+            .read(true)
+            .custom_flags(0x02000000)
+            .open(path)?;
+        let mut info = std::mem::MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::uninit();
+        // SAFETY: valid owned handle and live correctly sized output storage.
+        ensure!(
+            unsafe { GetFileInformationByHandle(file.as_raw_handle().cast(), info.as_mut_ptr()) }
+                != 0,
+            "managed file identity unavailable"
+        );
+        let info = unsafe { info.assume_init() };
+        Ok(format!(
+            "{}:{}:{}:{}:{}",
+            info.dwVolumeSerialNumber,
+            info.nFileIndexHigh,
+            info.nFileIndexLow,
+            info.ftCreationTime.dwHighDateTime,
+            info.ftCreationTime.dwLowDateTime
+        ))
+    }
+}
+
 impl<'a> ManagedPath<'a> {
     pub fn parse(directory: &'a Path) -> Result<Self> {
         let parent = directory

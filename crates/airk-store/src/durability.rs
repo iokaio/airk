@@ -4,9 +4,13 @@ use anyhow::{Context, Result};
 use std::path::Path;
 
 pub(crate) fn persist_synced(temporary: tempfile::NamedTempFile, path: &Path) -> Result<()> {
-    temporary.as_file().sync_all()?;
-    replace(temporary, path)?;
+    temporary
+        .as_file()
+        .sync_all()
+        .context("sync metadata temporary file")?;
+    replace(temporary, path).context("replace metadata directory entry")?;
     crate::maintenance::sync_parent(path.parent().context("metadata path has no parent")?)
+        .context("sync metadata parent directory")
 }
 
 #[cfg(not(windows))]
