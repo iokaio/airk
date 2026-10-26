@@ -235,7 +235,7 @@ fn validated_inventory(root: &Path, identity: &str) -> Result<InstallManifest> {
     let intent = root.join(format!("retire-{identity}.json"));
     if !present(&intent)? {
         let (main, _, _) = owned_inventory(root, identity)?;
-        let directory = main.parent().context("runtime parent missing")?;
+        let directory = runtime_pair::payload_root(&main)?;
         let bytes = read_bounded(&directory.join("airk-install.json"), MAX_MANIFEST)?;
         let mut temporary = tempfile::NamedTempFile::new_in(root)?;
         temporary.write_all(&bytes)?;

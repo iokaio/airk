@@ -205,7 +205,19 @@ impl Service {
             if job.outcome.is_some() {
                 return job;
             }
-            assert!(Instant::now() < until, "native job timed out: {job:?}");
+            if Instant::now() >= until {
+                let resources = self.request(Method::Resources);
+                let worker = self.request(Method::Worker {
+                    project: self.project.binding,
+                });
+                let source = self.request(Method::SourceStatus);
+                panic!(
+                    "native job timed out: {job:?}; resources: {}; worker: {}; source: {}",
+                    serde_json::to_string(&resources).unwrap(),
+                    serde_json::to_string(&worker).unwrap(),
+                    serde_json::to_string(&source).unwrap()
+                );
+            }
             std::thread::sleep(Duration::from_millis(25));
         }
     }

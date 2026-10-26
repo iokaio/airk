@@ -187,3 +187,5 @@ The real controller workload passed on debug pair `target/airksvc-runtime-stage3
 The trusted console now [reviews runtime upgrades and rollback](service-runtime-transitions.md), fences the captured selection natively and resumes exact saved activations. Different-version pins remain installed with read-only diagnostics; reconnect does not silently replace them. Installer/lifecycle inspection no longer migrates the registry. Default adapters and final platform/editor qualification remain open.
 
 Windows staging creates each owned payload directory with an explicit current-user owner and protected owner-only ACL. Exclusive creation rejects an existing stage, and resumed directories must still satisfy the same ownership checks; inherited Administrators ownership is not accepted.
+
+On macOS, installed-runtime topology validation and retirement read inventory at the outer payload root, above `AIRK.app`, rather than beside the nested executable. Retirement still authenticates the captured manifest and preserves unknown or modified files.

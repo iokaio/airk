@@ -1551,7 +1551,7 @@ fn supervised_jobs_and_direct_queries_preserve_grants_and_stop_on_service_loss()
         );
         probe_stdio_bridge(&root, project.binding)?;
         let pinned = airk_kernel::Kernel::open_service_collection_for_diagnostics(
-            &source,
+            Path::new(&project.root),
             Some(data.clone()),
             "fixture",
         )?
