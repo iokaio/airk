@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
-import { execFile, ExecFileException, spawn } from 'node:child_process';
+import { execFile, ExecFileException } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import { McpSessionError, McpStdioSession } from './mcpStdioSession';
 import { LaunchSpec, launchArgs } from './model';
 
 export interface IndexProgress {
@@ -216,65 +217,31 @@ export async function joinScheduledIndex<T>(initialArgs: string[],
 }
 
 /** Real bounded stdio initialization/tool-list/status probe, independent of any coding agent. */
-export function probeMcp(spec: LaunchSpec, expectedTools: 14 | 15 | 16 = 16, clientVersion = 'development'): Promise<{ tools: string[]; status: unknown }> {
-    return new Promise((resolve, reject) => {
-        const child = spawn(spec.command, launchArgs(spec), { cwd: spec.service?path.dirname(spec.command):spec.root, env: { ...process.env, AIRK_CLIENT: 'vscode' }, windowsHide: true, stdio: 'pipe' });
-        let buffer = '', stderr = '', total = 0, done = false;
-        const requests = new Map<number, { resolve(value: any): void; reject(error: Error): void }>();
-        const finish = (error?: Error, result?: { tools: string[]; status: unknown }) => {
-            if (done) { return; } done = true; clearTimeout(timer);
-            child.stdin.end(); child.kill();
-            for (const request of requests.values()) { request.reject(error ?? new Error('Probe finished.')); }
-            requests.clear();
-            if (error) { reject(error); } else { resolve(result!); }
-        };
-        const timer = setTimeout(() => finish(new Error('AIRK MCP probe timed out.')), spec.service?90000:15000);
-        child.on('error', error => finish(error));
-        child.on('exit', code => { if (!done) { finish(new Error(`AIRK MCP exited (${code}): ${stderr}`)); } });
-        child.stdin.on('error', error => finish(error));
-        child.stdout.setEncoding('utf8');
-        child.stderr.on('data', bytes => { stderr = (stderr + bytes.toString()).slice(-4096); });
-        child.stdout.on('data', bytes => {
-            total += Buffer.byteLength(bytes);
-            if (total > 1024 * 1024) { finish(new Error('AIRK MCP probe response exceeded budget.')); return; }
-            buffer += bytes.toString();
-            let end: number;
-            while ((end = buffer.indexOf('\n')) >= 0) {
-                const line = buffer.slice(0, end); buffer = buffer.slice(end + 1);
-                try {
-                    const message = JSON.parse(line);
-                    const request = requests.get(message.id);
-                    if (request) {
-                        requests.delete(message.id);
-                        if (message.error) { request.reject(new Error(JSON.stringify(message.error))); }
-                        else { request.resolve(message.result); }
-                    }
-                } catch { finish(new Error('AIRK MCP emitted invalid JSON.')); return; }
-            }
-        });
-        const request = (id: number, method: string, params: unknown): Promise<any> => new Promise((resolveRequest, rejectRequest) => {
-            requests.set(id, { resolve: resolveRequest, reject: rejectRequest });
-            child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n');
-        });
-        void (async () => {
-            await request(1, 'initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'airk-extension-check', version: clientVersion } });
-            child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
-            const listed = await request(2, 'tools/list', {});
-            const tools: string[] = listed.tools.map((tool: { name: string }) => tool.name);
-            const required = ['airk_status', 'airk_symbols', 'airk_code_facts', 'airk_relationships', ...(expectedTools >= 15 ? ['airk_changes'] : []), ...(expectedTools >= 16 ? ['airk_help'] : [])];
-            if (tools.length !== expectedTools || !required.every(name => tools.includes(name))) { throw new Error(`AIRK MCP tool inventory differs from the expected ${expectedTools} tools.`); }
-            const status = await request(3, 'tools/call', { name: 'airk_status', arguments: {} });
-            if (status.isError) {
-                const message = status.content?.map((part: { text?: string }) => part.text ?? '').join('\n') ?? '';
-                if (!message.includes('workspace is not indexed')) { throw new Error(`AIRK MCP status failed: ${message.slice(0, 300)}`); }
-                finish(undefined, { tools, status: { state: 'not_indexed' } }); return;
-            }
-            if(expectedTools>=16){
-                const text=status.content?.find((part:any)=>part.type==='text')?.text;
-                const payload=JSON.parse(text??'null');
-                if(payload?.index_state==='unavailable')status.state='index_unavailable';
-            }
-            finish(undefined, { tools, status });
-        })().catch(error => finish(error instanceof Error ? error : new Error(String(error))));
-    });
+export async function probeMcp(spec: LaunchSpec, expectedTools: 14 | 15 | 16 = 16, clientVersion = 'development'): Promise<{ tools: string[]; status: unknown }> {
+    const deadline = Date.now() + (spec.service ? 90000 : 15000);
+    const remaining = () => Math.max(1, deadline - Date.now());
+    let session: McpStdioSession | undefined;
+    try {
+        session = (await McpStdioSession.open({ command: spec.command, args: launchArgs(spec), cwd: spec.service ? path.dirname(spec.command) : spec.root,
+            env: { AIRK_CLIENT: 'vscode' }, clientName: 'airk-extension-check', clientVersion }, remaining())).session;
+        const listed = await session.request('tools/list', {}, remaining());
+        const tools: string[] = listed.tools.map((tool: { name: string }) => tool.name);
+        const required = ['airk_status', 'airk_symbols', 'airk_code_facts', 'airk_relationships', ...(expectedTools >= 15 ? ['airk_changes'] : []), ...(expectedTools >= 16 ? ['airk_help'] : [])];
+        if (tools.length !== expectedTools || !required.every(name => tools.includes(name))) { throw new Error(`AIRK MCP tool inventory differs from the expected ${expectedTools} tools.`); }
+        const status = await session.request('tools/call', { name: 'airk_status', arguments: {} }, remaining());
+        if (status.isError) {
+            const message = status.content?.map((part: { text?: string }) => part.text ?? '').join('\n') ?? '';
+            if (!message.includes('workspace is not indexed')) { throw new Error(`AIRK MCP status failed: ${message.slice(0, 300)}`); }
+            return { tools, status: { state: 'not_indexed' } };
+        }
+        if(expectedTools>=16){
+            const text=status.content?.find((part:any)=>part.type==='text')?.text;
+            const payload=JSON.parse(text??'null');
+            if(payload?.index_state==='unavailable')status.state='index_unavailable';
+        }
+        return { tools, status };
+    } catch (error) {
+        if (error instanceof McpSessionError && error.code === 'timeout') { throw new Error('AIRK MCP probe timed out.'); }
+        throw error;
+    } finally { session?.close(); }
 }

@@ -19,7 +19,8 @@ TARGETS = {"x86_64-pc-windows-msvc": "win32-x64", "x86_64-unknown-linux-gnu": "l
 MODULES = ("extension.js", "serviceExtension.js", "serviceDashboard.js", "serviceWorkspace.js", "model.js", "native.js", "cliInstall.js",
            "usagePanel.js", "usageReport.js", "report.js",
            "agentConnections.js", "agentConfig.js", "agentMigration.js", "agentSetup.js", "serviceBootstrap.js", "serviceClient.js",
-           "serviceConsole.js", "serviceConsoleController.js", "serviceConsoleView.js", "serviceIntents.js")
+           "serviceConsole.js", "serviceConsoleController.js", "serviceConsoleView.js", "serviceIntents.js",
+           "mcpStdioSession.js")
 # esbuild outputs; referenced by URI or path from host modules, never require()d.
 BUNDLES = ("explorerWebview.js", "explorerWebview.css")
 # Host-only implementations that must never ship a second bundled copy.
