@@ -933,11 +933,7 @@ pub fn verify_runtime(root: &Path, identity: &str) -> Result<(PathBuf, Approval)
         return policy.verify();
     }
     let (main, approval, inventory) = owned_inventory(root, identity)?;
-    managed::verify_topology(
-        main.parent().context("runtime parent missing")?,
-        &inventory,
-        true,
-    )?;
+    managed::verify_topology(runtime_pair::payload_root(&main)?, &inventory, true)?;
     Ok((main, approval))
 }
 

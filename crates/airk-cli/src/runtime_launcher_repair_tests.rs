@@ -3,7 +3,7 @@ use super::*;
 
 fn fixture() -> Result<(tempfile::TempDir, PathBuf, String)> {
     let owner = tempfile::tempdir()?;
-    let root = owner.path().join("installation");
+    let root = owner.path().canonicalize()?.join("installation");
     local_ipc::prepare_root(&root)?;
     local_ipc::prepare_root(&root.join("runtimes"))?;
     let directory = root.join("fixture");

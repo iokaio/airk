@@ -50,3 +50,8 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std", "sig
 lto = "thin"
 strip = "symbols"
 codegen-units = 1
+
+# Integration fixtures authenticate full native images and model assets. Keep
+# their hashing representative of release builds without extending deadlines.
+[profile.dev.package.sha2]
+opt-level = 3

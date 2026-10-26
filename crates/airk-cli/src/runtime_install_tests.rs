@@ -50,7 +50,7 @@ fn write_manifest(root: &Path, manifest: &InstallManifest) -> Result<String> {
 #[test]
 fn startup_circuit_retains_failed_attempts_across_reopen_and_backwards_clock() -> Result<()> {
     let owner = tempfile::tempdir()?;
-    let root = owner.path().join("install");
+    let root = owner.path().canonicalize()?.join("install");
     local_ipc::prepare_root(&root)?;
     let identity = "a".repeat(64);
     startup_attempt(&root, &identity, 10_000)?;
@@ -67,7 +67,7 @@ fn startup_circuit_retains_failed_attempts_across_reopen_and_backwards_clock() -
 
 pub(super) fn unselected_fixture() -> Result<(tempfile::TempDir, PathBuf, String)> {
     let owner = tempfile::tempdir()?;
-    let root = owner.path().join("install");
+    let root = owner.path().canonicalize()?.join("install");
     local_ipc::prepare_root(&root)?;
     layout::initialize(&root, Some(&root), RuntimeChannel::Stable)?;
     local_ipc::prepare_root(&root.join("runtimes"))?;
@@ -201,7 +201,7 @@ async fn uninstall_before_first_activation_preserves_live_owners_then_removes_on
 async fn uninstall_empty_initialized_layout_without_a_runtime_directory_is_idempotent() -> Result<()>
 {
     let owner = tempfile::tempdir()?;
-    let root = owner.path().join("install");
+    let root = owner.path().canonicalize()?.join("install");
     local_ipc::prepare_root(&root)?;
     layout::initialize(&root, Some(&root), RuntimeChannel::Stable)?;
     for _ in 0..2 {
@@ -234,7 +234,7 @@ fn native_self_test_binds_actual_version_capabilities_and_bounded_completion() -
 fn runtime_removal_preserves_unknown_or_changed_files_and_resumes_partial_owned_deletion()
 -> Result<()> {
     let owner = tempfile::tempdir()?;
-    let root = owner.path().join("install");
+    let root = owner.path().canonicalize()?.join("install");
     local_ipc::prepare_root(&root)?;
     local_ipc::prepare_root(&root.join("runtimes"))?;
     let staging = root.join("fixture");
@@ -328,10 +328,10 @@ fn approved_offline_inventory_rejects_wrong_identity_tampering_aliases_and_escap
 #[test]
 fn failed_native_self_test_preserves_selection_and_never_publishes_staging() -> Result<()> {
     let owner = tempfile::tempdir()?;
-    let source = owner.path().join("source");
+    let source = owner.path().canonicalize()?.join("source");
     fs::create_dir(&source)?;
     let approved = fixture(&source)?;
-    let root = owner.path().join("install");
+    let root = owner.path().canonicalize()?.join("install");
     local_ipc::prepare_root(&root)?;
     layout::initialize(&root, Some(&root), RuntimeChannel::Stable)?;
     fs::write(root.join("selected.json"), b"Prior selection fixture.")?;

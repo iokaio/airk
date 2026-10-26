@@ -14,6 +14,7 @@ fn private_stage_directory_creation_is_exclusive_and_owner_verified() -> Result<
 }
 
 fn fixture(root: &Path) -> Result<(PathBuf, PathBuf, String, StageIntent, InstallManifest)> {
+    let root = root.canonicalize()?;
     let install = root.join("install");
     local_ipc::prepare_root(&install)?;
     local_ipc::prepare_root(&install.join("runtimes"))?;
@@ -61,7 +62,7 @@ fn owned_partial_stage_resumes_without_replacing_completed_files_or_source_bytes
     fs::copy(source.join("LICENSE"), directory.join("LICENSE"))?;
     let resumed = StageIntent::read(&root, &identity)?.0;
     let approval = copy(&source, &root, &resumed, &inventory, |main| {
-        manifest(main.parent().unwrap(), &identity)?;
+        manifest(runtime_pair::payload_root(main)?, &identity)?;
         Ok(())
     })?;
     assert_eq!(approval, intent.approval);
@@ -262,7 +263,7 @@ fn process_death_before_promotion_retains_a_resumable_complete_owned_copy() -> R
     assert!(!root.join("runtimes").join(&identity).exists());
     let (resumed, _) = StageIntent::read(&root, &identity)?;
     copy(&source, &root, &resumed, &inventory, |main| {
-        manifest(main.parent().unwrap(), &identity)?;
+        manifest(runtime_pair::payload_root(main)?, &identity)?;
         Ok(())
     })?;
     assert!(root.join("runtimes").join(&identity).exists());

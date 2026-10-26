@@ -12,6 +12,7 @@ fn copied_lightweight_main_exposes_catalog_without_installing_or_falling_back_to
     let root = tempfile::tempdir()?;
     let data = root.path().join("missing-state");
     let binary = owner.path().join(airk_cli::runtime_install::main_name());
+    fs::create_dir_all(binary.parent().unwrap())?;
     fs::copy(env!("CARGO_BIN_EXE_airk"), &binary)?;
     let report = Command::new(&binary)
         .arg("--root")
