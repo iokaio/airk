@@ -76,6 +76,6 @@ export class ExplorerControl {
     retain(): { dispose(): void } { return this.source.retain(); }
     onDidChange(listener: () => void): { dispose(): void } { return this.source.onDidChangeState(() => listener()); }
     refresh(): Promise<void> { return this.source.run('refresh'); }
-    /** Journaled native index job for one project on the current page. */
-    index(project: string): Promise<void> { return this.source.run('index', { project }); }
+    /** Any console action; the console's own allowlist and page scoping validate it again. */
+    run(action: string, fields: Record<string, unknown> = {}): Promise<void> { return this.source.run(action, fields); }
 }

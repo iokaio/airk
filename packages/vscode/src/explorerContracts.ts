@@ -71,6 +71,8 @@ export interface ExplorerViewState {
     readonly controlMessage?: string;
     /** More registered projects exist beyond the cached page shown. */
     readonly moreProjects?: boolean;
+    /** Present while a Management tab is open; built from the shared console state. */
+    readonly management?: ManagementView;
 }
 
 /** One search hit. `ref` is an opaque host-issued handle; the webview never sends paths back. */
@@ -196,6 +198,73 @@ export interface ChangesView {
     readonly coverage: readonly string[];
 }
 
+// ---- Management (shared Service Console controller, organized into tabs).
+/** A labeled observation; values are already formatted text. Unknown stays "Not observed". */
+export type FactRow = readonly [string, string];
+export interface ManagedProject {
+    readonly summary: ProjectSummary;
+    readonly rows: readonly FactRow[];
+    readonly activity: readonly FactRow[];
+    readonly selected: boolean;
+    readonly jobId?: string;
+    readonly jobState?: string;
+    readonly pendingJobId?: string;
+    readonly configurationResult: boolean;
+    readonly canDeleteDerived: boolean;
+    readonly uncertainConfiguration: boolean;
+}
+export interface PlanItemView { readonly project: string; readonly phase: string; readonly action: string; readonly availability: string; readonly estimate: string; readonly source: string; readonly fallback: string; readonly result: string; readonly cleanup: string }
+export interface PlanView {
+    readonly rows: readonly FactRow[];
+    readonly items: readonly PlanItemView[];
+    readonly morePages: boolean;
+    readonly paused: boolean;
+    /** True only when every preview page was read and the plan is ready: approval is allowed. */
+    readonly approvable: boolean;
+}
+export interface PendingIntentView { readonly id: string; readonly title: string; readonly unknown: boolean; readonly lifecycle: boolean; readonly forceAvailable: boolean }
+export interface ManagementView {
+    readonly busy: boolean;
+    readonly connected: boolean;
+    readonly trusted: boolean;
+    readonly authority: string;
+    readonly lifecycle?: string;
+    readonly responseMode: string;
+    readonly message?: string;
+    readonly service: readonly FactRow[];
+    readonly runtime: readonly FactRow[];
+    readonly resources: readonly FactRow[];
+    readonly inference: readonly FactRow[];
+    /** Which lifecycle and runtime actions the console would currently accept. */
+    readonly enabled: Readonly<Record<string, boolean>>;
+    readonly projects: readonly ManagedProject[];
+    readonly inactive: boolean;
+    readonly morePages: boolean;
+    readonly pageNote: string;
+    readonly selectedCount: number;
+    readonly plan?: PlanView;
+    readonly pending: readonly PendingIntentView[];
+    readonly events: readonly string[];
+    readonly processEvents: readonly string[];
+    readonly historyOmitted: boolean;
+    readonly legacy?: { readonly rows: readonly FactRow[]; readonly canRemove: boolean; readonly reviewed: boolean; readonly receipts: readonly { id: string; phase: string; service: string }[] };
+    readonly preview?: string;
+    readonly includePaths: boolean;
+}
+
+/** Console action names the Explorer may send; identical to the console's own allowlist (tested). */
+export const MANAGE_ACTIONS = [
+    'reviewLegacyStartup', 'legacyStartupReceipts', 'removeLegacyStartup', 'copyLegacyStartup', 'registeredProjects', 'inactiveProjects', 'registerWorkspace',
+    'refresh', 'connect', 'start', 'stop', 'restart', 'repairRuntime', 'upgradeRuntime', 'rollbackRuntime', 'resumeActivation', 'logs', 'resources',
+    'responseMode', 'recoverLifecycle', 'abandonLifecycle', 'startEmbedding', 'stopEmbedding', 'forceEmbedding', 'firstPage', 'nextPage', 'morePlan',
+    'refreshPlan', 'pausePlan', 'resumePlan', 'cancelPlan', 'approvePlan', 'previewReport', 'copyReport',
+    'previewCleanup', 'deleteDerived', 'inspect', 'index', 'pause', 'resume', 'restartProject', 'watch', 'modelSetup', 'configureProject', 'copyConfiguration',
+    'select', 'repair', 'resumeLegacyStartup', 'retryJob', 'cancelJob', 'retryIntent', 'forgetIntent', 'forceIntent',
+] as const;
+/** Existing AIRK commands that Management may open; each keeps its own dialogs and confirmations. */
+export const MANAGE_COMMANDS = ['airk.setupAgent', 'airk.verifyMcp', 'airk.manageVscodeMcp', 'airk.installCli', 'airk.openTools', 'airk.chooseStorage',
+    'airk.indexMode', 'airk.usage', 'airk.logs'] as const;
+
 /** One Explorer help topic, compiled from src/explorerHelp at build time and versioned with the VSIX. */
 export interface HelpTopic {
     readonly id: string;
@@ -264,7 +333,6 @@ export const WEBVIEW_MESSAGES = {
     },
     'evidence.expand': { ref: REF, before: { kind: 'int', min: 0, max: 100 }, after: { kind: 'int', min: 0, max: 100 } },
     'source.open': { ref: REF },
-    'manage.index': { project: PROJECT },
     'code.symbols': { name: { kind: 'string', max: 256, optional: true }, pathPrefix: { kind: 'string', max: 1024, optional: true }, limit: { kind: 'int', min: 1, max: 100 } },
     'code.facts': { name: { kind: 'string', min: 1, max: 512 }, pathPrefix: { kind: 'string', max: 1024, optional: true }, limit: { kind: 'int', min: 1, max: 100 } },
     'code.references': { name: { kind: 'string', min: 1, max: 256 }, pathPrefix: { kind: 'string', max: 1024, optional: true }, limit: { kind: 'int', min: 1, max: 100 } },
@@ -280,6 +348,18 @@ export const WEBVIEW_MESSAGES = {
         name: { kind: 'string', max: 256, optional: true }, pathPrefix: { kind: 'string', max: 1024, optional: true }, limit: { kind: 'int', min: 1, max: 100 },
     },
     'manage.refresh': {},
+    'manage.action': {
+        action: { kind: 'enum', values: MANAGE_ACTIONS },
+        project: { ...PROJECT, optional: true },
+        id: { kind: 'string', min: 32, max: 64, pattern: /^[0-9a-f]{32}(?:[0-9a-f]{32})?$/, optional: true },
+        scope: { kind: 'enum', values: ['one', 'selected', 'all'], optional: true },
+        operation: { kind: 'enum', values: ['auto', 'verify', 'recover', 'reconcile', 'vectors', 'rebuild'], optional: true },
+        selected: { kind: 'bool', optional: true },
+        includePaths: { kind: 'bool', optional: true },
+        allowFallback: { kind: 'bool', optional: true },
+    },
+    'manage.command': { command: { kind: 'enum', values: MANAGE_COMMANDS } },
+    'manage.observe': { open: { kind: 'bool' } },
 } as const satisfies Record<string, Record<string, FieldSpec>>;
 
 export type WebviewMessageType = keyof typeof WEBVIEW_MESSAGES;

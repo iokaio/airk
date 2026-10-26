@@ -181,3 +181,7 @@ button.link { display: block; width: 100%; text-align: left; background: transpa
 button.link.current { background: var(--vscode-list-activeSelectionBackground); color: var(--vscode-list-activeSelectionForeground); }
 .markdown h2 { font-size: 1.15rem; } .markdown h3 { font-size: 1rem; margin-top: 0.8rem; }
 @media (max-width: 760px) { .help { grid-template-columns: 1fr; } }
+
+.manage .card { margin-bottom: var(--airk-gap); }
+.manage h2 .muted { font-weight: normal; font-size: 0.85em; }
+ol.log { margin: 0; padding-left: 1.2rem; max-height: 16rem; overflow: auto; }

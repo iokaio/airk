@@ -48,7 +48,7 @@ test('control actions run through the shared console controller', async () => {
     let retained = 0;
     const control = new ExplorerControl({ controller: { state: state() }, run: async (action, fields) => { runs.push([action, fields]); },
         retain: () => { retained++; return { dispose() { retained--; } }; }, onDidChangeState: () => ({ dispose() {} }) }, '1.5.0');
-    await control.index(project);
+    await control.run('index', { project });
     await control.refresh();
     assert.deepEqual(runs, [['index', { project }], ['refresh', undefined]]);
     const handle = control.retain();
