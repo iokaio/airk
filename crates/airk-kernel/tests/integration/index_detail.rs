@@ -163,11 +163,40 @@ fn current_fact_reads_preserve_old_snapshot_through_publication() -> Result<()> 
     let request = read_current(&store)?;
     let response = request.native_facts_page(&store, &facts(), false, &Default::default())?;
     assert_eq!(response.facts.len(), 1);
+    let old_artifact = request.artifact("sample.rs")?.unwrap();
+    let retained = old_artifact.retained.as_ref().unwrap();
+    let old_objects = [
+        store.directory().join("objects/artifacts").join(
+            retained
+                .payload_encoding
+                .as_ref()
+                .map_or(retained.object.as_str(), |value| {
+                    value.stored_digest.as_str()
+                }),
+        ),
+        store.directory().join("objects/sources").join(
+            retained
+                .source_encoding
+                .as_ref()
+                .map_or(old_artifact.content_hash.as_str(), |value| {
+                    value.stored_digest.as_str()
+                }),
+        ),
+    ];
+    assert!(old_objects.iter().all(|path| path.is_file()));
     fs::write(
         root.path().join("sample.rs"),
         "pub fn after_publication() {}\n",
     )?;
     kernel.index()?;
+    let published = kernel.status()?.publication.unwrap().token;
+    let deferred = kernel.maintain_current()?;
+    assert!(deferred.pending, "maintenance lost the live old request");
+    assert!(old_objects.iter().all(|path| path.is_file()));
+    assert_eq!(
+        store.read_retained_source(&old_artifact)?,
+        b"pub fn before_publication() {}\n"
+    );
     assert_eq!(
         request
             .native_facts_page(&store, &facts(), false, &Default::default())?
@@ -176,8 +205,17 @@ fn current_fact_reads_preserve_old_snapshot_through_publication() -> Result<()> 
         "before_publication"
     );
     drop(request);
+    let reclaimed = kernel.maintain_current()?;
+    assert!(!reclaimed.pending);
+    assert!(reclaimed.removed_files >= old_objects.len());
+    assert!(old_objects.iter().all(|path| !path.exists()));
+    assert_eq!(kernel.status()?.publication.unwrap().token, published);
     kernel.index()?;
     assert_eq!(kernel.facts(&facts())?.facts[0].name, "after_publication");
-    assert_eq!(kernel.maintain_current()?.removed_files, 0);
+    assert_eq!(kernel.status()?.publication.unwrap().token, published);
+    assert_eq!(
+        fs::read_to_string(root.path().join("sample.rs"))?,
+        "pub fn after_publication() {}\n"
+    );
     Ok(())
 }

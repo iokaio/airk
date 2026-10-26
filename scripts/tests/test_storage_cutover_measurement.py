@@ -45,6 +45,18 @@ class CutoverMeasurement(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "Incomplete native process memory"):
                 sampler.finish()
 
+    def test_confirmed_exited_client_is_not_a_live_missing_observation(self):
+        rows = {-1: {"parent": os.getpid(), "name": "airk", "rss": 100},
+                -2: {"parent": os.getpid(), "name": "airk", "rss": None,
+                     "exited_before_rss": True}}
+        with tempfile.TemporaryDirectory() as directory:
+            sampler = measurement.ResourceSampler(Path(directory))
+            with patch.object(measurement, "process_snapshot", return_value=rows):
+                sampler.sample()
+            self.assertEqual(sampler.missing_rss, 0)
+            self.assertEqual(sampler.peak_processes, 1)
+            self.assertEqual(sampler.peak_rss, 100)
+
 
 if __name__ == "__main__":
     unittest.main()

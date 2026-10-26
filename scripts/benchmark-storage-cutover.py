@@ -18,6 +18,7 @@ import threading
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
+COMPARISON_QUOTA = {"root_bytes": 512 * 1024**2, "default_collection_bytes": 128 * 1024**2, "collections": {}}
 
 def module(name, filename):
     spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name(filename))
@@ -38,7 +39,7 @@ def identity(runtime):
     if digest(runtime/names[0])!=pair["airk_sha256"] or digest(runtime/names[1])!=pair["embed_sha256"]:
         raise ValueError("Runtime pair executable hash mismatch")
     return {"runtime": str(runtime), "version": pair["version"], "profile": build["profile"],
-            "source": build["source"], "executables": {name: {"sha256": digest(runtime/name),
+            "source": build["source"], "rustc": build["rustc"], "executables": {name: {"sha256": digest(runtime/name),
                 "bytes": (runtime/name).stat().st_size} for name in names}}
 
 def distribution(values):
@@ -61,8 +62,8 @@ def corpus(source, revision):
         directory=source/("selected" if number<8 else "other")
         directory.mkdir(exist_ok=True)
         (directory/f"fixture_{number:02}.rs").write_text(
-            f"// CommonNeedle original synthetic source {fixture_token(number)} revision {revision}\n"+
-            "\n".join(f"pub fn rare_{number:02}_{item}(value: usize) -> usize {{ value + {item+revision} }}" for item in range(8))+"\n",
+            f"// CommonNeedle original synthetic source revision {revision}\n"+
+            "\n".join(f'pub fn rare_{number:02}_{item}(value: usize) -> usize {{ let _marker = "{fixture_token(number*8+item)}"; value + {item+revision} }}' for item in range(8))+"\n",
             encoding="utf-8")
 
 def process_snapshot():
@@ -89,6 +90,7 @@ def process_snapshot():
         kernel.OpenProcess.restype = wintypes.HANDLE
         kernel.CloseHandle.argtypes = [wintypes.HANDLE]
         kernel.K32GetProcessMemoryInfo.argtypes = [wintypes.HANDLE, ctypes.POINTER(Memory), wintypes.DWORD]
+        kernel.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
         snapshot = kernel.CreateToolhelp32Snapshot(2, 0)
         if snapshot == ctypes.c_void_p(-1).value:
             raise ctypes.WinError(ctypes.get_last_error())
@@ -110,8 +112,16 @@ def process_snapshot():
                     memory = Memory(); memory.size = ctypes.sizeof(memory)
                     if kernel.K32GetProcessMemoryInfo(handle, ctypes.byref(memory), memory.size):
                         rows[pid]["rss"] = memory.rss
+                    else:
+                        exit_code = wintypes.DWORD()
+                        if kernel.GetExitCodeProcess(handle, ctypes.byref(exit_code)) and exit_code.value != 259:
+                            rows[pid]["exited_before_rss"] = True
                 finally:
                     kernel.CloseHandle(handle)
+            elif ctypes.get_last_error() == 87:
+                # A short-lived client can disappear after the ancestry snapshot.
+                # Access-denied and other failures remain missing observations.
+                rows[pid]["exited_before_rss"] = True
         return rows
     if Path("/proc/self/stat").exists():
         rows = {}
@@ -155,7 +165,8 @@ class ResourceSampler:
         rows = process_snapshot()
         descendants = descendant_ids(rows, os.getpid())
         owned = [row for pid, row in rows.items() if pid in descendants
-                 and row["name"].lower() in ("airk", "airk.exe", "airk-embed", "airk-embed.exe")]
+                 and row["name"].lower() in ("airk", "airk.exe", "airk-embed", "airk-embed.exe")
+                 and not row.get("exited_before_rss", False)]
         self.samples += 1
         self.peak_processes = max(self.peak_processes, len(owned))
         self.missing_rss += sum(row["rss"] is None for row in owned)
@@ -193,7 +204,6 @@ def run_one(runtime, output, repetitions, samples):
     output.mkdir()
     source=output/"source";data=output/"data";owner=output/"owner"
     for directory in (source,data,owner): directory.mkdir()
-    corpus(source,0)
     fixture=clients.Fixture(runtime,owner,job_timeout=600)
     measurements={name:[] for name in ("initial_32_file_publication","warm_common","warm_rare","warm_prefix","replace_32_file_publication","delete_publication","warm_vector","replace_32_file_semantic_publication")}
     signatures={}
@@ -202,8 +212,15 @@ def run_one(runtime, output, repetitions, samples):
     try:
         fixture.start();fixture.register("cutover",source,data)
         fixture.rpc({"configure_watch":{"project":fixture.projects["cutover"]["binding"],"enabled":False}})
+        quota = owner/"comparison-quota.json"
+        quota.write_text(json.dumps(COMPARISON_QUOTA),encoding="utf-8")
+        fixture.configure("cutover",{"operation":"quota_policy","path":str(quota.resolve())})
         fixture.configure("cutover",{"operation":"vectors","enabled":False})
         fixture.configure("cutover",{"operation":"usage","mode":"disabled"})
+        # Finish configuration-triggered empty scans before creating measured sources.
+        fixture.wait(fixture.enqueue("cutover","index"))
+        assert fixture.tool("cutover","airk_status",{"response_mode":"full"})["files"] == 0
+        corpus(source,0)
         begin=time.perf_counter_ns();fixture.wait(fixture.enqueue("cutover","index"))
         measurements["initial_32_file_publication"].append((time.perf_counter_ns()-begin)/1e6)
         cases={"warm_common":{"query":"CommonNeedle","mode":"lexical","limit":100,"max_bytes":65536,"response_mode":"full"},
@@ -232,8 +249,8 @@ def run_one(runtime, output, repetitions, samples):
             signatures={name:evidence(fixture.tool("cutover","airk_search",arguments)) for name,arguments in cases.items()}
         model=output/"model";model.mkdir()
         # Distinct source directions avoid tied top-k results hiding a ranking difference.
-        vocabulary=json.dumps({fixture_token(number):[math.cos(number*.04), math.sin(number*.04)]
-                               for number in range(32)}).encode()
+        vocabulary=json.dumps({fixture_token(number):[math.cos(number*.004), math.sin(number*.004)]
+                               for number in range(32*8)}).encode()
         (model/"vocabulary.json").write_bytes(vocabulary)
         (model/"model.json").write_text(json.dumps({"schema":1,"name":"original storage comparison fixture","license":"Apache-2.0","dimensions":2,"sha256":hashlib.sha256(vocabulary).hexdigest()}),encoding="utf-8")
         fixture.configure("cutover",{"operation":"vectors","enabled":True})
@@ -306,9 +323,11 @@ def main():
         "fixture":"32 original generated Rust files,8 functions/file; lexical-only then identical original2-dimensional offline model; usage disabled",
         "cache_conditions":"Sequential versions; warm OS caches, no cache flush; first-query observations reported separately",
         "measurement_scope":"Native client process startup+direct worker roundtrip; publication enqueue through observed job completion with 50ms bounded poll",
-        "repetitions":args.repetitions,"query_samples_per_repetition":args.query_samples,"results":results,
+        "repetitions":args.repetitions,"query_samples_per_repetition":args.query_samples,
+        "quota_policy":COMPARISON_QUOTA,"results":results,
         "comparisons":comparisons,"gate_passed":all(comparisons[name]["within_10_percent"] for name in gate_names),
-        "limits":["No native power-loss injection","First publication has one sample/version","100ms resource sampling may miss short-lived peaks",
+        "limits":["Identified debug-build comparison, not an isolated storage-engine speedup; receipts do not attest per-package overrides or RUSTFLAGS; baseline SHA2 override is unverified; candidate uses the incoming CI SHA2 opt-level=3 setting",
+                  "No native power-loss injection","First publication has one sample/version","100ms resource sampling may miss short-lived peaks",
                   "DiskANN native/model/retained-reader and process recovery qualification are separate required checks"]}
     (args.output/"report.json").write_text(json.dumps(report,indent=2)+"\n",encoding="utf-8")
     print(json.dumps({"gate_passed":report["gate_passed"],"comparisons":comparisons},indent=2))
