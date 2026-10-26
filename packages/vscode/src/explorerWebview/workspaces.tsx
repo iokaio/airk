@@ -2,6 +2,7 @@
 import { JSX } from 'preact';
 import { ExplorerViewState } from '../explorerContracts';
 import { Route, routeKey, WORKSPACES } from '../explorerRoutes';
+import { OutlineScreen, ReferencesScreen, SymbolsScreen } from './code';
 import { ProjectsScreen } from './manage';
 import { SearchScreen } from './search';
 
@@ -11,6 +12,9 @@ export interface ScreenProps { route: Route; state: ExplorerViewState; go(route:
 export const SCREENS: Record<string, (props: ScreenProps) => JSX.Element> = {
     'search/query': SearchScreen,
     'manage/projects': ProjectsScreen,
+    'code/symbols': SymbolsScreen,
+    'code/references': ReferencesScreen,
+    'code/outline': OutlineScreen,
 };
 
 export function WorkspaceView(props: ScreenProps) {

@@ -4,6 +4,8 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { test } from 'node:test';
 import { EvidenceClient } from '../explorerEvidence';
+import { continueFacts, FactHandles, runFacts } from '../explorerFacts';
+import { RefRegistry } from '../explorerSearch';
 import { liveCheck, sourceFile } from '../explorerSource';
 import { probeMcp } from '../native';
 import { record } from '../serviceClient';
@@ -41,6 +43,41 @@ test('the Explorer evidence session reads one pinned publication through the ver
         assert.equal(await liveCheck(file, String(hits[0].citation.content_hash), false), 'matches_index');
         await fs.appendFile(file, '// edited\n');
         assert.equal(await liveCheck(file, String(hits[0].citation.content_hash), false), 'changed_since_index');
+    } finally {
+        client?.dispose();
+        await fixture.dispose();
+    }
+});
+
+test('Explorer code and document views read real symbol ids, candidate edges and paged facts', { skip: !process.env.AIRK_TEST_BINARY, timeout: 300000 }, async () => {
+    const fixture = await NativeServiceFixture.create(process.env.AIRK_TEST_BINARY!);
+    let client: EvidenceClient | undefined;
+    try {
+        const spec = await fixture.register('explorer-code');
+        await fs.mkdir(path.join(spec.root, 'src'), { recursive: true });
+        await fs.writeFile(path.join(spec.root, 'src', 'token.ts'), 'export function verifyToken(token: string): boolean {\n  return token.length > 3;\n}\n');
+        await fs.writeFile(path.join(spec.root, 'src', 'session.ts'), "import { verifyToken } from './token';\n\nexport function refreshSession(token: string) {\n  return verifyToken(token);\n}\n");
+        await fs.writeFile(path.join(spec.root, 'requirements.md'), '# Requirements\n\n## REQ-AUTH-7 Session renewal\n\nThe system shall renew sessions before expiry.\n');
+        await fixture.configure(spec, { operation: 'vectors', enabled: false });
+        await fixture.job(spec);
+        await fixture.publishedStatus(spec);
+        client = new EvidenceClient(spec, 'native-test', { timeout: 60000 });
+        const handles = new FactHandles(new RefRegistry());
+        const project = spec.service!.project;
+        const facts = await runFacts(client, handles, project, { tool: 'airk_code_facts', limit: 10, args: { name: 'refreshSession', limit: 10 } });
+        assert.equal(facts.items.length, 1);
+        assert.ok(facts.items[0].symbolRef, 'the native symbol id becomes a handle');
+        const symbol = handles.symbols.get(facts.items[0].symbolRef!, project);
+        const edges = await runFacts(client, handles, project, { tool: 'airk_relationships', limit: 20, args: { symbol: symbol.symbolId, direction: 'outgoing', limit: 20 } });
+        assert.ok(edges.items.some(edge => edge.kind === 'call' && edge.resolution === 'syntax_candidate' && /verifyToken/.test(edge.name)), JSON.stringify(edges.items));
+        const references = await runFacts(client, handles, project, { tool: 'airk_references', limit: 10, args: { name: 'verifyToken', limit: 10 } });
+        assert.ok(references.items.length >= 2 && references.items.every(item => item.evidenceClass === 'E1'));
+        const requirements = await runFacts(client, handles, project, { tool: 'airk_document_facts', limit: 10, args: { kind: 'requirement', limit: 10 } });
+        assert.equal(requirements.items[0].path, 'requirements.md');
+        const page = await runFacts(client, handles, project, { tool: 'airk_list_files', limit: 1, args: { limit: 1 } });
+        assert.ok(page.more, 'list_files returns a continuation cursor');
+        const next = await continueFacts(client, handles, project, page.more!);
+        assert.equal(next.publication, page.publication);
     } finally {
         client?.dispose();
         await fixture.dispose();

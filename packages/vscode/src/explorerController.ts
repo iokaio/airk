@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import * as nodePath from 'node:path';
 import * as vscode from 'vscode';
 import { ExplorerViewState, HostMessage, MESSAGE_VERSION, StatusSummary, WebviewMessage, WebviewMessageOf } from './explorerContracts';
 import { ControlSource, ExplorerControl } from './explorerControl';
@@ -7,8 +8,10 @@ import { EvidenceClient, EvidenceFailure } from './explorerEvidence';
 import { FEATURES } from './explorerFeatures';
 import { ExplorerPanel } from './explorerPanel';
 import { formatRoute, parseRoute } from './explorerRoutes';
+import { continueFacts, FactHandles, runFacts, scoped } from './explorerFacts';
 import { passageView, RefRegistry, searchArgs, searchView } from './explorerSearch';
 import { headline, statusSummary } from './explorerStatus';
+import { displayPath } from './explorerSource';
 import { openSource } from './explorerWorkspaceIO';
 import { LaunchSpec } from './model';
 
@@ -39,6 +42,7 @@ export class ExplorerController implements vscode.Disposable {
     private readonly listeners: vscode.Disposable[] = [];
     private readonly snapshotListeners = new Set<ExplorerSnapshotListener>();
     private readonly refs = new RefRegistry();
+    private readonly facts = new FactHandles(this.refs);
     private evidence?: EvidenceClient;
     private selected?: string;
     private status?: StatusSummary;
@@ -128,7 +132,7 @@ export class ExplorerController implements vscode.Disposable {
         this.selected = project;
         this.evidence?.dispose(); this.evidence = undefined;
         this.status = undefined; this.statusFor = undefined;
-        this.refs.clear();
+        this.refs.clear(); this.facts.clear();
     }
 
     private specsChanged(): void {
@@ -147,6 +151,16 @@ export class ExplorerController implements vscode.Disposable {
         const row = this.control.projects().find(entry => entry.project === this.selected);
         if (this.panel.open && row?.publication && this.status?.publication && row.publication !== this.status.publication) { void this.loadStatus(); }
         this.publish();
+    }
+
+    /** The active editor's file as a collection-relative path within the selected project's root. */
+    private activeRelativePath(): string | undefined {
+        const editor = vscode.window.activeTextEditor;
+        const spec = this.host.specs().find(entry => entry.service?.project === this.selected);
+        if (!editor || editor.document.uri.scheme !== 'file' || !spec) { return undefined; }
+        const relative = nodePath.relative(displayPath(spec.root), editor.document.uri.fsPath);
+        if (!relative || relative.startsWith('..') || nodePath.isAbsolute(relative)) { return undefined; }
+        return relative.split(nodePath.sep).join('/');
     }
 
     private requireProject(): string {
@@ -246,6 +260,37 @@ export class ExplorerController implements vscode.Disposable {
                 }
                 return openSource({ root: source.root, relative: source.relative_path, contentHash: ref.contentHash, startLine: ref.startLine,
                     ...(typeof info.line_basis === 'string' ? { lineBasis: info.line_basis } : {}) });
+            }
+            case 'code.symbols': {
+                const typed = message as WebviewMessageOf<'code.symbols'>, project = this.requireProject();
+                return runFacts(this.session(), this.facts, project, { tool: 'airk_symbols', limit: typed.limit,
+                    args: scoped({ limit: typed.limit, max_bytes: 16384, ...(typed.name?.trim() ? { name: typed.name.trim() } : {}) }, typed.pathPrefix) });
+            }
+            case 'code.facts': {
+                const typed = message as WebviewMessageOf<'code.facts'>, project = this.requireProject();
+                return runFacts(this.session(), this.facts, project, { tool: 'airk_code_facts', limit: typed.limit,
+                    args: scoped({ name: typed.name.trim(), limit: typed.limit, max_bytes: 32768 }, typed.pathPrefix) });
+            }
+            case 'code.references': {
+                const typed = message as WebviewMessageOf<'code.references'>, project = this.requireProject();
+                return runFacts(this.session(), this.facts, project, { tool: 'airk_references', limit: typed.limit,
+                    args: scoped({ name: typed.name.trim(), limit: typed.limit, max_bytes: 16384 }, typed.pathPrefix) });
+            }
+            case 'code.relationships': {
+                const typed = message as WebviewMessageOf<'code.relationships'>, project = this.requireProject();
+                const symbol = this.facts.symbols.get(typed.symbol, project);
+                return runFacts(this.session(), this.facts, project, { tool: 'airk_relationships', limit: typed.limit,
+                    args: { symbol: symbol.symbolId, direction: typed.direction, hops: typed.hops, limit: typed.limit, max_bytes: 16384 } });
+            }
+            case 'code.outline': {
+                const typed = message as WebviewMessageOf<'code.outline'>, project = this.requireProject();
+                const path = typed.ref ? this.refs.get(typed.ref, project).path : this.activeRelativePath();
+                if (!path) { throw new EvidenceFailure(explorerError('INVALID_MESSAGE', 'Open a file from the selected project, or choose a result, to see its outline.')); }
+                return runFacts(this.session(), this.facts, project, { tool: 'airk_outline', limit: 100, args: { path, limit: 100, max_bytes: 32768 } });
+            }
+            case 'list.more': {
+                const typed = message as WebviewMessageOf<'list.more'>;
+                return continueFacts(this.session(), this.facts, this.requireProject(), typed.more);
             }
             default: throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED', `${(message as WebviewMessage).type} is not available in this build.`));
         }
