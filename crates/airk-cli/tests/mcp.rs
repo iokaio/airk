@@ -77,44 +77,10 @@ impl Session {
         let until = std::time::Instant::now() + Duration::from_secs(5);
         loop {
             let reply = self.call(id, name, arguments.clone())?;
-            if reply["result"]["isError"] != true {
-                return Ok(reply);
-            }
-            let hint = reply["result"]["content"][0]["text"]
-                .as_str()
-                .and_then(|text| serde_json::from_str::<Value>(text).ok());
-            let Some(hint) = hint.filter(|hint| {
-                (matches!(
-                    hint["error"]["code"].as_str(),
-                    Some("direct_query_admission" | "direct_query_setup")
-                ) && hint["error"]["reason"] == "busy")
-                    || (hint["status"] == "retry"
-                        && hint["retryable"] == true
-                        && hint["action"] == "repeat_same_request"
-                        && matches!(
-                            hint["code"].as_str(),
-                            Some("publication_busy" | "selection_busy")
-                        ))
-            }) else {
+            let Some(retry) = common::read_retry::within(&reply["result"], until) else {
                 return Ok(reply);
             };
-            let delay = if hint["status"] == "retry" {
-                hint["retry_after_ms"].as_u64().unwrap()
-            } else {
-                assert_eq!(hint["error"]["query_submitted"], false);
-                assert_eq!(hint["error"]["retryable"], true);
-                assert_eq!(
-                    hint["error"]["fresh_brokerage_required"],
-                    hint["error"]["code"] == "direct_query_setup"
-                );
-                hint["error"]["retry_after_ms"].as_u64().unwrap()
-            };
-            assert!((1..=1000).contains(&delay));
-            anyhow::ensure!(
-                std::time::Instant::now() < until,
-                "read admission never became available"
-            );
-            std::thread::sleep(Duration::from_millis(delay));
+            std::thread::sleep(retry.delay);
         }
     }
 }
@@ -155,7 +121,7 @@ fn default_terse_stdio_supports_full_and_requested_status_without_changing_revis
             json!({"query":"response_fixture","mode":"lexical","include_status":true}),
         ),
     ] {
-        let response = session.call(id, "airk_search", args)?;
+        let response = session.read_retry(id, "airk_search", args)?;
         anyhow::ensure!(response["result"]["isError"] != true, "{response}");
         let mut value = serde_json::from_str::<Value>(
             response["result"]["content"][0]["text"].as_str().unwrap(),
@@ -182,7 +148,7 @@ fn default_terse_stdio_supports_full_and_requested_status_without_changing_revis
                     std::time::Instant::now() < deadline,
                     "freshness observations never settled: {value}"
                 );
-                let response = session.call(
+                let response = session.read_retry(
                     next_id,
                     "airk_search",
                     json!({"query":"response_fixture","mode":"lexical"}),
@@ -261,10 +227,10 @@ fn default_search_uses_vectors_and_live_mcp_connections_observe_panel_opt_out() 
             reply["result"]["content"][0]["text"].as_str().unwrap(),
         )?)
     };
-    let first = evidence(session.call(2, "airk_search", json!({"query":"login"}))?)?;
+    let first = evidence(session.read_retry(2, "airk_search", json!({"query":"login"}))?)?;
     assert_eq!(first["hits"][0]["citation"]["path"], "auth.txt");
     service.configure(airk_cli::service_configuration::Draft::Vectors { enabled: false });
-    let disabled = evidence(session.call(3, "airk_search", json!({"query":"login"}))?)?;
+    let disabled = evidence(session.read_retry(3, "airk_search", json!({"query":"login"}))?)?;
     assert_eq!(disabled["hits"], json!([]));
     // Native source turns may publish after the policy job; the live session
     // must observe opt-out without relying on a race against that publication.
@@ -280,7 +246,7 @@ fn default_search_uses_vectors_and_live_mcp_connections_observe_panel_opt_out() 
     cli(&["index"])?;
     service.wait_semantic(1)?;
     assert_eq!(
-        evidence(session.call(5, "airk_search", json!({"query":"login"}))?)?["hits"][0]["citation"]
+        evidence(session.read_retry(5, "airk_search", json!({"query":"login"}))?)?["hits"][0]["citation"]
             ["path"],
         "auth.txt"
     );
@@ -355,7 +321,8 @@ fn durable_key_reads_match_cli_and_mcp_and_reject_filter_combinations() -> anyho
         ),
     ] {
         let mut expected = cli(&[command, option, key, "--compact", "false", "--limit", "10"])?;
-        let result = session.call(id, tool, json!({(field):key,"compact":false,"limit":10}))?;
+        let result =
+            session.read_retry(id, tool, json!({(field):key,"compact":false,"limit":10}))?;
         assert_ne!(result["result"]["isError"], true, "{result}");
         let mut actual: Value = serde_json::from_str(
             result["result"]["content"][0]["text"]
@@ -363,11 +330,7 @@ fn durable_key_reads_match_cli_and_mcp_and_reject_filter_combinations() -> anyho
                 .expect("tool payload"),
         )?;
         for response in [&mut expected, &mut actual] {
-            response.as_object_mut().unwrap().remove("request_id");
-            // MCP adds independently observed status around the same evidence.
-            for field in ["freshness", "discovery_readiness", "semantic_readiness"] {
-                response.as_object_mut().unwrap().remove(field);
-            }
+            common::read_retry::evidence_for_comparison(response)?;
         }
         assert_eq!(actual, expected);
         assert!(!actual["items"].as_array().unwrap().is_empty());
@@ -418,27 +381,22 @@ fn changes_cli_and_mcp_share_results_and_conditional_validators() -> anyhow::Res
         )?)
     };
     let mut expected = cli(&["changes", "--path", "aurora.py"])?;
-    let mut actual = payload(session.call(
+    let mut actual = payload(session.read_retry(
         2,
         "airk_changes",
         json!({"selectors":[{"kind":"path","path":"aurora.py"}]}),
     )?)?;
     for value in [&mut expected, &mut actual] {
-        value.as_object_mut().unwrap().remove("request_id");
-        value["freshness"]
-            .as_object_mut()
-            .unwrap()
-            .remove("observed_unix_ms");
-    }
-    for value in [&mut expected, &mut actual] {
-        for field in ["discovery_readiness", "semantic_readiness"] {
-            value.as_object_mut().unwrap().remove(field);
-        }
+        assert!(
+            value.get("freshness").is_some(),
+            "changes omitted freshness"
+        );
+        common::read_retry::evidence_for_comparison(value)?;
     }
     assert_eq!(actual, expected);
     let info = cli(&["info", "aurora.py"])?;
     let validator = info["read"]["validator"].as_str().expect("validator");
-    let unchanged = payload(session.call(
+    let unchanged = payload(session.read_retry(
         3,
         "airk_file_info",
         json!({"path":"aurora.py","if_evidence":validator}),
@@ -511,7 +469,7 @@ fn concurrent_mcp_agents_share_one_index_and_refresh_after_publication() -> anyh
     // Queries do not acquire or wait for the collection's exclusive writer lock.
     // Activate the native worker first; startup recovery has its own writer gate.
     for agent in &mut agents {
-        let ready = evidence(agent.call(
+        let ready = evidence(agent.read_retry(
             90,
             "airk_search",
             json!({"query":"authenticate", "mode":"lexical"}),
@@ -567,8 +525,7 @@ fn concurrent_mcp_agents_share_one_index_and_refresh_after_publication() -> anyh
                         )?;
                         if result["result"]["isError"] == true {
                             assert!(
-                                result.to_string().contains("busy")
-                                    || result.to_string().contains("active readers"),
+                                common::read_retry::classify(&result["result"]).is_some(),
                                 "{result}"
                             );
                             continue;
@@ -611,7 +568,7 @@ fn concurrent_mcp_agents_share_one_index_and_refresh_after_publication() -> anyh
     assert_eq!(published["generation"], old_generation + 1);
     let mut shared_hash = None;
     for agent in &mut agents {
-        let payload = evidence(agent.call(
+        let payload = evidence(agent.read_retry(
             100,
             "airk_search",
             json!({"query":"authenticate", "mode":"lexical"}),
@@ -768,20 +725,8 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
         if name != "airk_status" {
             // Status includes changing quota/usage observations.
             let mut expected = payload.clone();
-            expected.as_object_mut().unwrap().remove("request_id");
-            direct.as_object_mut().unwrap().remove("request_id");
             for value in [&mut direct, &mut expected] {
-                if let Some(freshness) = value.as_object_mut().unwrap().remove("freshness") {
-                    // Scheduler observations are independently cached per call;
-                    // they can become unavailable without changing indexed evidence.
-                    let freshness: airk_core::changes::FreshnessObservation =
-                        serde_json::from_value(freshness)?;
-                    assert!(freshness.observed_unix_ms > 0);
-                    assert!(!freshness.live_source_verified);
-                    if freshness.state == airk_core::changes::FreshnessState::Unavailable {
-                        assert!(freshness.error.is_some());
-                    }
-                }
+                common::read_retry::evidence_for_comparison(value)?;
             }
             assert_eq!(direct, expected, "CLI/MCP result mismatch for {name}");
         }
@@ -832,7 +777,7 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
         json!({"name":"authenticate","unsupported":true}),
     )?;
     assert!(unknown.get("error").is_some() || unknown["result"]["isError"] == true);
-    let requirements = session.call(
+    let requirements = session.read_retry(
         30,
         "airk_document_facts",
         json!({"kind":"requirement","path_prefix":"requirements","compact":false}),

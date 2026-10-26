@@ -133,11 +133,12 @@ fn cli_and_mcp_recover_captured_updates_after_process_exit_and_expire_old_tokens
                 session.send(json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"recovery-fixture","version":"1"}}}))?;
                 session.receive(1)?;
                 session.send(json!({"jsonrpc":"2.0","method":"notifications/initialized"}))?;
-                let result = session.call(
-                    2,
-                    "airk_read_file",
-                    json!({"path":"captured.txt","start_line":1,"end_line":1}),
-                )?;
+                let arguments = json!({"path":"captured.txt","start_line":1,"end_line":1});
+                let result = if boundary.starts_with("cold-") {
+                    session.call(2, "airk_read_file", arguments)?
+                } else {
+                    session.read_retry(2, "airk_read_file", arguments)?
+                };
                 if boundary.starts_with("cold-") {
                     ensure!(
                         result["result"]["isError"] == true

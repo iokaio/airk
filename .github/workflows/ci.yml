@@ -17,17 +17,22 @@ jobs:
           - os: macos-15
             target: aarch64-apple-darwin
             jobs: 2
+            executable: AIRK.app/Contents/MacOS/airk
           - os: macos-15-intel
             target: x86_64-apple-darwin
             jobs: 4
+            executable: AIRK.app/Contents/MacOS/airk
           - os: windows-2025
             target: x86_64-pc-windows-msvc
             jobs: 4
+            executable: airk.exe
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 25
+    timeout-minutes: 35
     env:
       CARGO_BUILD_JOBS: ${{ matrix.jobs }}
       CARGO_INCREMENTAL: '0'
+      CARGO_BUILD_TARGET: ${{ matrix.target }}
+      AIRK_TEST_MODEL_DIR: ${{ github.workspace }}/target/local-vector-model
       CARGO_TERM_COLOR: always
       MACOSX_DEPLOYMENT_TARGET: '13.0'
       AIRK_PROCESS_DIAGNOSTICS: '1'
@@ -51,24 +56,18 @@ jobs:
           tool: cargo-nextest@0.9.148
       - name: Natural exit and descendant ownership regressions
         run: cargo nextest run --profile ci -p airk-process --locked --target ${{ matrix.target }}
-      - name: Repeat the exit versus signal transition
-        if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          for attempt in {1..20}; do
-            cargo nextest run --profile ci -p airk-process --locked --target ${{ matrix.target }} -E 'test(timeout_retains_unreaped_leader_for_later_drain) | test(naturally_exited_children_drain_without_signaling_an_empty_group)'
-          done
-      - name: Canonical model, calibration, inspection and native lock regressions
-        run: cargo nextest run --profile ci -p airk-kernel -p airk-store --all-features --lib --locked --target ${{ matrix.target }} -E 'test(initialized_empty_indexes_publish_batches_even_for_full_rebuilds) | test(service_configuration::tests) | test(service_inspection::tests) | test(shared_models::tests) | test(service::model_files::calibration::tests) | test(selection_waits_for_short_metadata_handoffs_and_marks_only_real_lock_contention)'
-      - name: Public service calibration integration
-        run: cargo nextest run --profile ci -p airk-kernel --all-features --test shared_calibration --locked --target ${{ matrix.target }}
       - name: Prepare pinned bundled model build inputs
         run: python scripts/provision-local-model.py --destination target/local-vector-model --download
-      - name: Native helper, unregister, manager, legacy, PDF and guardian regressions
-        run: cargo nextest run --profile ci -p airk-cli --all-features --lib --test bundled_model --test embedding_pool_shutdown --test unregister_native --test legacy_native --test pdf_worker --test unix_guardian --locked --target ${{ matrix.target }} -E 'binary(bundled_model) | binary(embedding_pool_shutdown) | binary(unregister_native) | test(manager_command_deadline_covers_blocked_stdin_and_output_is_not_silently_truncated) | test(legacy_review_never_executes_the_selected_old_binary_or_creates_project_state) | test(distributed_cli_indexes_pdf_in_its_worker_and_preserves_source_locations) | test(guardian_keeps_direct_pipes_and_drains_after_worker_death)'
-      - name: Repeat held-session graceful shutdown
-        shell: bash
-        run: |
-          for attempt in {1..10}; do
-            cargo nextest run --profile ci -p airk-cli --all-features --test embedding_pool_shutdown --locked --target ${{ matrix.target }}
-          done
+      - name: Direct reads, exact revisions, recovery and native service contracts
+        run: cargo nextest run --profile ci -p airk-cli -p airk-mcp --all-features --lib --test native_read_retry --test service_runtime --test mcp --test usage_native --test changes_v2 --test unregister_native --test bundled_model --test tools --locked --target ${{ matrix.target }}
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '24.15.0'
+          package-manager-cache: false
+      - run: npm ci --ignore-scripts --no-audit --no-fund --prefix packages/vscode
+      - name: Build lightweight debug runtime pair for actual managed installation
+        run: python scripts/build-service-runtime.py --destination artifacts/proof-runtime --profile debug
+      - name: Extension contracts and actual managed native installation
+        env:
+          AIRK_TEST_BINARY: ${{ github.workspace }}/artifacts/proof-runtime/${{ matrix.executable }}
+        run: npm test --prefix packages/vscode

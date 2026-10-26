@@ -7,6 +7,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import {LaunchSpec,launchArgs} from '../model';
 import {runText} from '../native';
+import {readNative} from './nativeReadRetry';
 import {NativeControlTransport,RecordValue,ServiceClient,record,JobKind,ServiceError} from '../serviceClient';
 
 export function nativePayloadDirectory(binary:string):string {
@@ -59,8 +60,8 @@ export class NativeServiceFixture {
     }
     async tool(spec:LaunchSpec,name:string,args:RecordValue={}):Promise<RecordValue>{
         process.stderr.write(`[native fixture] tool ${name}\n`);
-        const envelope=record(JSON.parse(await runText(spec.command,[...launchArgs(spec,'tools'),'call',name,'--args',
-            JSON.stringify({response_mode:'full',...args})],path.dirname(spec.command),120000)));
+        const envelope=record(await readNative(spec.command,[...launchArgs(spec,'tools'),'call',name,'--args',
+            JSON.stringify({response_mode:'full',...args})],path.dirname(spec.command)));
         assert.notEqual(envelope.isError,true);assert.ok(Array.isArray(envelope.content));
         return record(JSON.parse(String(record(envelope.content[0]).text)));
     }

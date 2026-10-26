@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Owned native-service fixtures; no installed runtime or user state is touched.
 #![allow(dead_code)]
+pub mod read_retry;
 use airk_core::service::{
     ControlMethod as Method, ControlResponse as Response, JobKind, JobOutcome, JobRecord,
     ProjectRegistration, RequestKey,
@@ -344,6 +345,10 @@ impl Service {
                                 .clone(),
                         )
                         .await?;
+                    if let Some(retry) = read_retry::within(&envelope, deadline) {
+                        tokio::time::sleep(retry.delay).await;
+                        continue;
+                    }
                     anyhow::ensure!(envelope["isError"] != true, "{envelope}");
                     let status: serde_json::Value =
                         serde_json::from_str(envelope["content"][0]["text"].as_str().unwrap())?;
@@ -559,37 +564,7 @@ pub fn call(
                 )
             );
         let delay = if read {
-            serde_json::from_slice::<serde_json::Value>(&output.stdout)
-                .ok()
-                .filter(|envelope| envelope["isError"] == true)
-                .and_then(|envelope| {
-                    serde_json::from_str::<serde_json::Value>(
-                        envelope["content"][0]["text"].as_str()?,
-                    )
-                    .ok()
-                })
-                .filter(|hint| {
-                    (hint["status"] == "retry"
-                        && hint["retryable"] == true
-                        && hint["action"] == "repeat_same_request"
-                        && matches!(
-                            hint["code"].as_str(),
-                            Some("publication_busy" | "selection_busy")
-                        ))
-                        || (matches!(
-                            hint["error"]["code"].as_str(),
-                            Some("direct_query_admission" | "direct_query_setup")
-                        ) && hint["error"]["reason"] == "busy"
-                            && hint["error"]["query_submitted"] == false
-                            && hint["error"]["retryable"] == true)
-                })
-                .and_then(|hint| {
-                    hint["retry_after_ms"]
-                        .as_u64()
-                        .or_else(|| hint["error"]["retry_after_ms"].as_u64())
-                })
-                .filter(|delay| (1..=1000).contains(delay))
-                .map(Duration::from_millis)
+            read_retry::from_output(&output, deadline).map(|retry| retry.delay)
         } else {
             None
         };

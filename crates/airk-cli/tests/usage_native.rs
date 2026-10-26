@@ -31,6 +31,15 @@ fn direct_usage_counts_outer_clients_once_and_exact_clear_replay_preserves_later
             30,
         ))
     };
+    // Count actual outer calls. A rejected read is another call, so this accounting
+    // fixture excludes concurrent writers instead of silently retrying a query.
+    let collection = airk_store::service::collection::Collection::existing(
+        data.path(),
+        &service.project.root,
+        "usage",
+    )?;
+    let store = collection.selected_store()?;
+    let writer = hold_writer(&store)?;
     let before = report()?;
     assert!(
         before["report"]["clients"]["native_scheduler"]
@@ -45,18 +54,7 @@ fn direct_usage_counts_outer_clients_once_and_exact_clear_replay_preserves_later
         indexed, 1,
         "native work must be counted once across source turns and waiting clients"
     );
-    common::call(
-        root.path(),
-        data.path(),
-        "usage",
-        &[
-            "tools",
-            "call",
-            "airk_search",
-            "--args",
-            r#"{"query":"polar_fixture","mode":"lexical"}"#,
-        ],
-    )?;
+    single_search(root.path(), data.path())?;
     executor.block_on(async {
         let mut connection = airk_cli::project_client::Connection::connect_as(
             &service.control,
@@ -80,6 +78,7 @@ fn direct_usage_counts_outer_clients_once_and_exact_clear_replay_preserves_later
     );
     assert_eq!(after["report"]["clients"]["cli"], 1);
     assert_eq!(after["report"]["clients"]["codex"], 1);
+    drop(writer);
     let output = common::command(root.path(), data.path(), "usage")
         .args(["usage", "clear"])
         .output()?;
@@ -133,18 +132,9 @@ fn direct_usage_counts_outer_clients_once_and_exact_clear_replay_preserves_later
     };
     service.wait(first.id);
     // Simulate acceptance whose acknowledgement was lost before journal removal.
-    common::call(
-        root.path(),
-        data.path(),
-        "usage",
-        &[
-            "tools",
-            "call",
-            "airk_search",
-            "--args",
-            r#"{"query":"polar_fixture","mode":"lexical"}"#,
-        ],
-    )?;
+    let writer = hold_writer(&store)?;
+    single_search(root.path(), data.path())?;
+    drop(writer);
     let repeated = common::native_command()
         .args(["service", "requests", "--runtime-dir"])
         .arg(&service.control)
@@ -164,4 +154,43 @@ fn direct_usage_counts_outer_clients_once_and_exact_clear_replay_preserves_later
         original
     );
     Ok(())
+}
+
+fn single_search(root: &std::path::Path, data: &std::path::Path) -> Result<()> {
+    let output = common::command(root, data, "usage")
+        .args([
+            "tools",
+            "call",
+            "airk_search",
+            "--args",
+            r#"{"query":"polar_fixture","mode":"lexical"}"#,
+        ])
+        .output()?;
+    ensure!(
+        output.status.success(),
+        "single measured read failed: {} {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let reply: Value = serde_json::from_slice(&output.stdout)?;
+    ensure!(reply["isError"] != true, "{reply}");
+    Ok(())
+}
+
+fn hold_writer(store: &airk_store::FileStore) -> Result<airk_store::WriterLock> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        match store.lock() {
+            Ok(writer) => return Ok(writer),
+            Err(error)
+                if error
+                    .downcast_ref::<std::fs::TryLockError>()
+                    .is_some_and(|cause| matches!(cause, std::fs::TryLockError::WouldBlock))
+                    && std::time::Instant::now() < deadline =>
+            {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            Err(error) => return Err(error),
+        }
+    }
 }

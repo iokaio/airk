@@ -125,10 +125,12 @@ fn tool_calls_preserve_evidence_scope_errors_and_argument_budgets() {
     service.wait(serde_json::from_value(accepted["job"]["id"].clone()).unwrap());
     let query = state.path().join("query with spaces.json");
     let mut status = evidence(
-        command(root.path(), state.path())
-            .args(["tools", "call", "airk_status"])
-            .output()
-            .unwrap(),
+        common::read_retry::output(command(root.path(), state.path()).args([
+            "tools",
+            "call",
+            "airk_status",
+        ]))
+        .unwrap(),
     );
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
     while status["runtime"]["index_worker"]["process"]["executable_sha256"].is_null() {
@@ -138,10 +140,12 @@ fn tool_calls_preserve_evidence_scope_errors_and_argument_budgets() {
         );
         std::thread::sleep(std::time::Duration::from_millis(100));
         status = evidence(
-            command(root.path(), state.path())
-                .args(["tools", "call", "airk_status"])
-                .output()
-                .unwrap(),
+            common::read_retry::output(command(root.path(), state.path()).args([
+                "tools",
+                "call",
+                "airk_status",
+            ]))
+            .unwrap(),
         );
     }
     let runtime = &status["runtime"];
@@ -180,26 +184,25 @@ fn tool_calls_preserve_evidence_scope_errors_and_argument_budgets() {
     )
     .unwrap();
     let found = evidence(
-        command(root.path(), state.path())
-            .args(["tools", "call", "airk_search", "--args-file"])
-            .arg(&query)
-            .output()
-            .unwrap(),
+        common::read_retry::output(
+            command(root.path(), state.path())
+                .args(["tools", "call", "airk_search", "--args-file"])
+                .arg(&query),
+        )
+        .unwrap(),
     );
     assert_eq!(found["collection"], "tools-test");
     assert_eq!(found["hits"][0]["citation"]["path"], "README.md");
     let read = json!({"path":"README.md","start_line":1,"end_line":2,"revision":found["publication"]["token"]});
     let read = evidence(
-        command(root.path(), state.path())
-            .args([
-                "tools",
-                "call",
-                "airk_read_file",
-                "--args",
-                &read.to_string(),
-            ])
-            .output()
-            .unwrap(),
+        common::read_retry::output(command(root.path(), state.path()).args([
+            "tools",
+            "call",
+            "airk_read_file",
+            "--args",
+            &read.to_string(),
+        ]))
+        .unwrap(),
     );
     assert_eq!(read["publication"], found["publication"]);
     assert_eq!(
