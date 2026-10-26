@@ -123,6 +123,9 @@ pub enum ClientFamily {
     Kilo,
     AmazonQ,
     Windsurf,
+    /// The AIRK Explorer's own evidence session in the VS Code extension. Kept last so
+    /// existing variant ordering, and therefore report key order, is unchanged.
+    Explorer,
 }
 
 impl ClientFamily {
@@ -143,6 +146,7 @@ impl ClientFamily {
             "kilo" => Self::Kilo,
             "amazon-q" => Self::AmazonQ,
             "windsurf" => Self::Windsurf,
+            "airk-explorer" => Self::Explorer,
             _ => Self::Unknown,
         }
     }
@@ -1766,5 +1770,38 @@ impl PriceScenario {
         let mut output = self.clone();
         output.input_price_per_million = rate.clone();
         output.input_equivalent(tokens, false)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ClientFamily;
+
+    #[test]
+    fn explorer_label_maps_to_its_own_family_without_changing_others() {
+        assert_eq!(
+            ClientFamily::from_label("airk-explorer"),
+            ClientFamily::Explorer
+        );
+        assert_eq!(
+            ClientFamily::from_label("AIRK-Explorer"),
+            ClientFamily::Explorer
+        );
+        // Only the exact reserved label is accepted; a bare word stays unknown.
+        assert_eq!(ClientFamily::from_label("explorer"), ClientFamily::Unknown);
+        assert_eq!(ClientFamily::from_label("vscode"), ClientFamily::Vscode);
+        assert_eq!(
+            ClientFamily::from_label("claude-code"),
+            ClientFamily::ClaudeCode
+        );
+        assert_eq!(
+            serde_json::to_value(ClientFamily::Explorer).unwrap(),
+            "explorer"
+        );
+        assert_eq!(
+            serde_json::from_value::<ClientFamily>(serde_json::json!("explorer")).unwrap(),
+            ClientFamily::Explorer
+        );
+        assert!(ClientFamily::Windsurf < ClientFamily::Explorer);
     }
 }
