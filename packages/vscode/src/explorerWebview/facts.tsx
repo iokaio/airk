@@ -39,7 +39,7 @@ export function OpenButton(props: { ref_: string }) {
 }
 
 /** Generic cited fact list with honest counts and cursor continuation where AIRK provides one. */
-export function FactList(props: { list: FactListView; empty: string; actions?: (item: FactItemView) => ComponentChildren }) {
+export function FactList(props: { list: FactListView; empty: string; actions?: (item: FactItemView) => ComponentChildren; inspect?: (ref: string) => void }) {
     const [list, setList] = useState(props.list);
     const [error, setError] = useState<string>();
     const [loading, setLoading] = useState(false);
@@ -70,6 +70,7 @@ export function FactList(props: { list: FactListView; empty: string; actions?: (
                             {item.resolution && <span class="tag" title="Written targets are not resolved bindings">{item.resolution.replaceAll('_', ' ')}</span>}
                             <span class="spacer" />
                             {props.actions?.(item)}
+                            {item.ref && props.inspect && <button type="button" class="ghost" onClick={() => props.inspect!(item.ref!)}>Inspect</button>}
                             {item.ref && <OpenButton ref_={item.ref} />}
                         </div>
                         <div class="fact-name"><strong>{item.name || '(unnamed)'}</strong>{item.signature && item.signature !== item.name && <code class="sig"> {item.signature}</code>}</div>

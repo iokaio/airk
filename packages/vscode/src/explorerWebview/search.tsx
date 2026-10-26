@@ -101,6 +101,7 @@ export function SearchScreen(props: ScreenProps) {
                                         {hit.truncated && <span class="tag">truncated</span>}
                                         <span class="spacer" />
                                         <button type="button" class="ghost" onClick={() => { void expand(hit.ref); }}>Expand</button>
+                                        <button type="button" class="ghost" onClick={() => props.inspect(hit.ref)}>Inspect</button>
                                         <button type="button" onClick={() => { void open(hit.ref); }}>Open source</button>
                                     </div>
                                     <pre class="excerpt">{passage ? passage.text : hit.text}</pre>

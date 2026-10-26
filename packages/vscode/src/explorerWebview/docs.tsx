@@ -10,7 +10,7 @@ const KINDS: [string, string][] = [['any', 'All'], ['requirement', 'Requirements
     ['table_row', 'Table rows'], ['table_cell', 'Table cells']];
 type Kind = 'any' | 'requirement' | 'decision' | 'design' | 'architecture' | 'feature' | 'acceptance' | 'date' | 'section' | 'table_row' | 'table_cell';
 
-export function DocumentFactsScreen(_props: ScreenProps) {
+export function DocumentFactsScreen(props: ScreenProps) {
     const [kind, setKind] = useState<Kind>('requirement');
     const [name, setName] = useState('');
     const [prefix, setPrefix] = useState('');
@@ -32,7 +32,7 @@ export function DocumentFactsScreen(_props: ScreenProps) {
             </form>
             <p class="muted">Facts come from Markdown, PDF, Word, Excel and PowerPoint extraction with their original locations. They are candidates found by document cues, not verified requirements or live code behavior.</p>
             {result.error && <p class="callout" role="alert">{result.error}</p>}
-            {result.value && <FactList list={result.value} empty="No indexed document fact of this kind matched." />}
+            {result.value && <FactList list={result.value} inspect={props.inspect} empty="No indexed document fact of this kind matched." />}
         </div>
     );
 }

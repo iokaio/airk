@@ -4,10 +4,21 @@ import { ExplorerViewState } from '../explorerContracts';
 import { Route, routeKey, WORKSPACES } from '../explorerRoutes';
 import { OutlineScreen, ReferencesScreen, SymbolsScreen } from './code';
 import { DocumentFactsScreen } from './docs';
+import { ChangesScreen, CheckerScreen, InspectorScreen } from './evidence';
 import { ProjectsScreen } from './manage';
 import { SearchScreen } from './search';
 
-export interface ScreenProps { route: Route; state: ExplorerViewState; go(route: Route): void; incoming?: { query: string; serial: number } }
+export interface ScreenProps {
+    route: Route;
+    state: ExplorerViewState;
+    go(route: Route): void;
+    incoming?: { query: string; serial: number };
+    /** Open Evidence › Inspector for a host-issued citation handle. */
+    inspect(ref: string): void;
+    inspectRef?: string;
+    /** Publication tokens observed in this session, newest first (Changes baselines). */
+    publications: readonly { token: string; observedAt: number }[];
+}
 
 /** Screens backed by real AIRK operations, keyed by route. Everything else is labeled, never simulated. */
 export const SCREENS: Record<string, (props: ScreenProps) => JSX.Element> = {
@@ -17,6 +28,9 @@ export const SCREENS: Record<string, (props: ScreenProps) => JSX.Element> = {
     'code/references': ReferencesScreen,
     'code/outline': OutlineScreen,
     'docs/facts': DocumentFactsScreen,
+    'evidence/inspector': InspectorScreen,
+    'evidence/checker': CheckerScreen,
+    'evidence/changes': ChangesScreen,
 };
 
 export function WorkspaceView(props: ScreenProps) {

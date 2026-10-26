@@ -39,7 +39,7 @@ function SymbolActions(props: { item: FactItemView }) {
     );
 }
 
-export function SymbolsScreen(_props: ScreenProps) {
+export function SymbolsScreen(props: ScreenProps) {
     const [name, setName] = useState('');
     const [prefix, setPrefix] = useState('');
     const [exact, setExact] = useState(true);
@@ -57,12 +57,12 @@ export function SymbolsScreen(_props: ScreenProps) {
             </form>
             <p class="muted">Names are exact native definitions. A written call is not a resolved cross-file binding; relationships are candidates.</p>
             {result.error && <p class="callout" role="alert">{result.error}</p>}
-            {result.value && <FactList list={result.value} empty="No indexed definition has that exact name." actions={item => <SymbolActions item={item} />} />}
+            {result.value && <FactList list={result.value} inspect={props.inspect} empty="No indexed definition has that exact name." actions={item => <SymbolActions item={item} />} />}
         </div>
     );
 }
 
-export function ReferencesScreen(_props: ScreenProps) {
+export function ReferencesScreen(props: ScreenProps) {
     const [name, setName] = useState('');
     const [prefix, setPrefix] = useState('');
     const result = useAsync<FactListView>();
@@ -75,12 +75,12 @@ export function ReferencesScreen(_props: ScreenProps) {
             </form>
             <p class="muted">Textual occurrences include comments, strings and definitions. They are not resolved references and not calls.</p>
             {result.error && <p class="callout" role="alert">{result.error}</p>}
-            {result.value && <FactList list={result.value} empty="No indexed occurrence of that identifier." />}
+            {result.value && <FactList list={result.value} inspect={props.inspect} empty="No indexed occurrence of that identifier." />}
         </div>
     );
 }
 
-export function OutlineScreen(_props: ScreenProps) {
+export function OutlineScreen(props: ScreenProps) {
     const result = useAsync<FactListView>();
     const load = () => result.run(() => request<FactListView>('code.outline', {}));
     useEffect(() => { void load(); }, []);
@@ -91,7 +91,7 @@ export function OutlineScreen(_props: ScreenProps) {
                 <button type="button" class="ghost" disabled={result.busy} onClick={() => { void load(); }}>Refresh for active file</button>
             </div>
             {result.error && <p class="callout" role="alert">{result.error}</p>}
-            {result.value && <FactList list={result.value} empty="The index holds no outline facts for this file." actions={item => <SymbolActions item={item} />} />}
+            {result.value && <FactList list={result.value} inspect={props.inspect} empty="The index holds no outline facts for this file." actions={item => <SymbolActions item={item} />} />}
         </div>
     );
 }
