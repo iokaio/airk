@@ -176,8 +176,12 @@ jobs:
       - name: Prepare pinned bundled model build inputs
         run: python scripts/provision-local-model.py --destination target/local-vector-model --download
       - name: Verify native child ownership before workspace qualification
+        env:
+          AIRK_PROCESS_DIAGNOSTICS: '1'
         run: cargo nextest run --profile ci -p airk-process --locked --target ${{ matrix.target }}
       - name: Verify bounded manager and worker cleanup before workspace qualification
+        env:
+          AIRK_PROCESS_DIAGNOSTICS: '1'
         run: cargo nextest run --profile ci -p airk-cli --lib --test legacy_native --test pdf_worker --test unix_guardian -E 'test(manager_command_deadline_covers_blocked_stdin_and_output_is_not_silently_truncated) | test(legacy_review_never_executes_the_selected_old_binary_or_creates_project_state) | test(distributed_cli_indexes_pdf_in_its_worker_and_preserves_source_locations) | test(guardian_keeps_direct_pipes_and_drains_after_worker_death)' --locked --target ${{ matrix.target }}
       - name: Clippy for this native platform
         run: python scripts/ci-metrics.py run --name clippy -- cargo clippy --workspace --all-targets --all-features --locked --target ${{ matrix.target }} -- -D warnings

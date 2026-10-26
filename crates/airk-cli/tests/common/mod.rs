@@ -7,6 +7,7 @@ use airk_core::service::{
 };
 use std::{
     collections::HashMap,
+    io::{BufRead, BufReader},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{Arc, Mutex, OnceLock, Weak},
@@ -15,6 +16,12 @@ use std::{
 
 type Scope = (PathBuf, PathBuf, String);
 static FIXTURES: OnceLock<Mutex<HashMap<Scope, Weak<Service>>>> = OnceLock::new();
+
+fn diagnostic(stage: &str) {
+    if std::env::var_os("AIRK_PROCESS_DIAGNOSTICS").is_some() {
+        eprintln!("airk-service fixture: {stage}");
+    }
+}
 
 pub struct Service {
     child: Mutex<Child>,
@@ -76,6 +83,7 @@ impl Service {
         let control = owner.path().join("control");
         let project = airk_kernel::service_projects::registration(root, data, collection).unwrap();
         let log = std::fs::File::create(owner.path().join("stderr")).unwrap();
+        let diagnostics = std::env::var_os("AIRK_PROCESS_DIAGNOSTICS").is_some();
         let mut command = native_command();
         if helper {
             #[cfg(feature = "embedding-worker")]
@@ -109,15 +117,29 @@ impl Service {
             #[cfg(not(feature = "embedding-worker"))]
             panic!("helper fixture requires embedding-worker feature");
         }
-        let child = command
+        diagnostic("service process starting");
+        command
             .arg("serve")
             .arg("--runtime-dir")
             .arg(&control)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(log)
-            .spawn()
-            .unwrap();
+            .stderr(if diagnostics {
+                Stdio::piped()
+            } else {
+                Stdio::from(log)
+            });
+        let mut child = command.spawn().unwrap();
+        if diagnostics && let Some(stderr) = child.stderr.take() {
+            std::thread::spawn(move || {
+                for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+                    if line.starts_with("airk-process:") {
+                        eprintln!("airk-service child: {line}");
+                    }
+                }
+            });
+        }
+        diagnostic("service process started; probing health");
         // Install the guard immediately so failed assertions still reap the owned child.
         let service = Arc::new(Self {
             child: Mutex::new(child),
@@ -130,7 +152,12 @@ impl Service {
             .enable_all()
             .build()
             .unwrap();
+        let mut health_probe_logged = false;
         loop {
+            if !health_probe_logged {
+                diagnostic("first health request started");
+                health_probe_logged = true;
+            }
             if matches!(
                 runtime.block_on(airk_cli::service_runtime::request(
                     &service.control,
@@ -138,6 +165,7 @@ impl Service {
                 )),
                 Ok(Response::Health { .. })
             ) {
+                diagnostic("health request returned ready");
                 break;
             }
             assert!(
@@ -151,9 +179,11 @@ impl Service {
             );
             std::thread::sleep(Duration::from_millis(25));
         }
+        diagnostic("registration request started");
         let registered = service.request(Method::Register {
             project: service.project.clone(),
         });
+        diagnostic("registration request returned");
         assert!(
             matches!(&registered, Response::Registered { project } if project.registration == service.project)
                 || matches!(&registered, Response::Failure { code } if code == "registry_response_unknown_retry_with_key"),
@@ -494,8 +524,18 @@ pub fn call(
     args: &[&str],
 ) -> anyhow::Result<serde_json::Value> {
     let deadline = Instant::now() + Duration::from_secs(60);
+    let mut invocation_started = false;
+    let mut invocation_returned = false;
     let output = loop {
+        if !invocation_started {
+            diagnostic("first native CLI invocation started");
+            invocation_started = true;
+        }
         let output = command(root, data, collection).args(args).output()?;
+        if !invocation_returned {
+            diagnostic("native CLI invocation returned");
+            invocation_returned = true;
+        }
         // Evidence commands are read-only. A typed rejection repeats these exact
         // arguments (including revision/cursor); never retry an accepted mutation.
         let read = args.starts_with(&["tools", "call"])

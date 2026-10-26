@@ -57,6 +57,11 @@ pub trait ProviderSpawner: Send + Sync {
     fn spawn(&self, command: &Command, limits: Option<ProviderLimits>) -> io::Result<GroupChild>;
 }
 static PROVIDER_SPAWNER: OnceLock<Arc<dyn ProviderSpawner>> = OnceLock::new();
+fn diagnostic(stage: &str) {
+    if cfg!(debug_assertions) && std::env::var_os("AIRK_PROCESS_DIAGNOSTICS").is_some() {
+        eprintln!("airk-process: {stage}");
+    }
+}
 pub fn install_provider_spawner(spawner: Arc<dyn ProviderSpawner>) -> io::Result<()> {
     PROVIDER_SPAWNER
         .set(spawner)
@@ -112,12 +117,14 @@ impl GroupChild {
         }
     }
     pub fn spawn(command: &mut Command) -> io::Result<Self> {
+        diagnostic("spawn: checking child wait ownership");
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         return Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "native process-group observation unavailable",
         ));
         require_waitable_children()?;
+        diagnostic("spawn: child wait ownership accepted");
         #[cfg(target_os = "linux")]
         {
             use std::os::fd::{FromRawFd, OwnedFd};
@@ -128,7 +135,9 @@ impl GroupChild {
             drop(unsafe { OwnedFd::from_raw_fd(fd as i32) });
         }
         command.process_group(0);
+        diagnostic("spawn: starting owned process group");
         let mut child = command.spawn()?;
+        diagnostic("spawn: owned process group started");
         Ok(Self {
             stdin: child.stdin.take().map(pipe_file),
             stdout: child.stdout.take().map(pipe_file),
@@ -151,7 +160,11 @@ impl GroupChild {
         if let Some(owner) = self.remote.as_mut() {
             return owner.try_wait();
         }
-        peek(self.id())
+        let status = peek(self.id())?;
+        if status.is_some() {
+            diagnostic("wait: owned leader has a terminal status");
+        }
+        Ok(status)
     }
     pub fn kill(&mut self) -> io::Result<()> {
         if self.reaped.is_some() {
@@ -180,6 +193,7 @@ impl GroupChild {
         Ok(())
     }
     pub fn terminate_and_wait(&mut self, timeout: Duration) -> io::Result<ExitStatus> {
+        diagnostic("drain: termination observation started");
         if let Some(status) = self.reaped {
             return Ok(status);
         }
@@ -198,6 +212,7 @@ impl GroupChild {
                 // hold working memory or pipes. Only now release its PID.
                 let status = self.child.as_mut().expect("owned child missing").wait()?;
                 self.reaped = Some(status);
+                diagnostic("drain: group empty and leader reaped");
                 return Ok(status);
             }
             if Instant::now() >= deadline {
@@ -221,10 +236,32 @@ impl GroupChild {
         }
     }
     pub fn drain(&mut self) {
-        while self.terminate_and_wait(Duration::from_secs(2)).is_err() {
-            // Unknown native state retains this owner and its capacity. Neither
-            // an expired wait nor a successful kill syscall proves process exit.
-            std::thread::sleep(Duration::from_millis(100));
+        diagnostic("drain: owner cleanup started");
+        let mut reported = false;
+        loop {
+            match self.terminate_and_wait(Duration::from_secs(2)) {
+                Ok(_) => {
+                    diagnostic("drain: owner cleanup completed");
+                    return;
+                }
+                Err(error) => {
+                    // Preserve ownership on unknown native state. The opt-in
+                    // diagnostic records only the first bounded observation
+                    // error; it never changes retry, kill, or release behavior.
+                    if !reported
+                        && cfg!(debug_assertions)
+                        && std::env::var_os("AIRK_PROCESS_DIAGNOSTICS").is_some()
+                    {
+                        eprintln!(
+                            "airk-process: first drain retry retains ownership: kind={:?}, errno={:?}: {error}",
+                            error.kind(),
+                            error.raw_os_error()
+                        );
+                        reported = true;
+                    }
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+            }
         }
     }
 }

@@ -124,6 +124,9 @@ fn legacy_review_never_executes_the_selected_old_binary_or_creates_project_state
         &executable,
         b"This is deliberately not executable; never launch it.",
     )?;
+    if std::env::var_os("AIRK_PROCESS_DIAGNOSTICS").is_some() {
+        eprintln!("airk legacy fixture: review CLI invocation started");
+    }
     let output = common::native_command()
         .args(["service", "legacy", "review", "--runtime-dir"])
         .arg(&service.control)
@@ -134,6 +137,9 @@ fn legacy_review_never_executes_the_selected_old_binary_or_creates_project_state
         .args(["--collection", "old-review", "--executable"])
         .arg(&executable)
         .output()?;
+    if std::env::var_os("AIRK_PROCESS_DIAGNOSTICS").is_some() {
+        eprintln!("airk legacy fixture: review CLI invocation returned");
+    }
     ensure!(
         output.status.success(),
         "legacy native review failed: {}",
