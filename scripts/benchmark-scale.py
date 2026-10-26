@@ -67,7 +67,7 @@ def native_runner(fixture, root, state, directory, prefix, measurements, timeout
             metrics["accepted_job"] = receipt["id"]
             metrics["completion_wall_ms"] = round((time.monotonic() - started) * 1000, 3)
             if args[0] == "index":
-                value = {"job": receipt, "status": fixture.tool(prefix, "airk_status", {"response_mode": "full"}),
+                value = {"job": receipt, "status": fixture.published_status(prefix),
                          "usage": json.loads(fixture.run(*fixture.arguments(prefix), "usage", "report").stdout)}
             else:
                 value = fixture.rpc({"configuration_result": {"id": receipt["id"]}})["result"]

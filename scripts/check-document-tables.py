@@ -57,7 +57,7 @@ def main():
                 return fixture.configure("tables", {"operation": "detail", "level": command[3]})
             if command == ("index",):
                 fixture.job("tables", "index")
-                return fixture.tool("tables", "airk_status")
+                return fixture.published_status("tables")
             if command == ("usage", "report"):
                 return json.loads(fixture.run(*fixture.arguments("tables"), "usage", "report").stdout)
             if command[0] == "facts":

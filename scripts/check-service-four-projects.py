@@ -53,7 +53,7 @@ def qualify(runtime, files):
             with ThreadPoolExecutor(max_workers=4) as pool:
                 # Every simultaneous session must receive all sixteen tools.
                 list(pool.map(fixture.stdio, names))
-            statuses = [fixture.tool(name, "airk_status") for name in names]
+            statuses = [fixture.published_status(name, deadline) for name in names]
             for number, (name, status) in enumerate(zip(names, statuses)):
                 assert status["files"] == files and status["collection"] == name, status
                 foreign = fixture.tool(name, "airk_search", {"query": markers[(number + 1) % 4], "mode": "lexical"})
@@ -61,7 +61,7 @@ def qualify(runtime, files):
                 fixture.rpc({"configure_watch": {"project": fixture.projects[name]["binding"], "enabled": True}})
             deadline = time.monotonic() + 120
             while True:
-                statuses = [fixture.tool(name, "airk_status") for name in names]
+                statuses = [fixture.published_status(name, deadline) for name in names]
                 watches = [status["work"]["watch"] for status in statuses]
                 if all(watch["backend"] == "native" and watch["native_roots"] == 1 and watch["failure"] is None for watch in watches):
                     break

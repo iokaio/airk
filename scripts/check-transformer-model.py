@@ -32,13 +32,16 @@ def main():
         originals = {path: hashlib.sha256(path.read_bytes()).hexdigest() for path in root.iterdir()}
         fixture = clients.Fixture(binary.parent, base)
         assert fixture.binary == binary
-        def tool(name, arguments=None):
+        def tool(name, arguments=None, deadline=None):
+            if name == "airk_status":
+                return fixture.published_status("transformer", deadline)
             return fixture.tool("transformer", name, {"response_mode": "full", **(arguments or {})})
         def ready():
             deadline = time.monotonic() + 300
             while True:
-                status = tool("airk_status")
-                readiness = status["semantic_readiness"]
+                status = tool("airk_status", deadline=deadline)
+                readiness = clients.semantic_readiness(status)
+                assert readiness["state"] != "failed", "Semantic work explicitly failed"
                 if readiness["state"] == "ready" and readiness["completed_artifacts"] == 2:
                     assert status["indexed_vectors"] == 2 and "diskann" in status["vector_backend"]
                     return status

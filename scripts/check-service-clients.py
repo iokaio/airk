@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Exercise an exact native service pair in private, disposable project scopes."""
 import argparse
+from contextlib import contextmanager
+import errno
 import hashlib
 import json
 import os
@@ -11,6 +13,7 @@ import tempfile
 import threading
 import time
 import uuid
+import sys
 
 TOOLS = {"airk_" + name for name in (
     "capabilities", "changes", "code_facts", "context", "document_facts", "file_info", "help", "imports",
@@ -19,26 +22,32 @@ TOOLS = {"airk_" + name for name in (
 
 def tool_value(envelope):
     assert isinstance(envelope, dict) and isinstance(envelope.get("content"), list), envelope
-    assert len(envelope["content"]) == 1 and envelope["content"][0].get("type") == "text", envelope
+    assert len(envelope["content"]) == 1 and envelope["content"][0].get("type") == "text", "Invalid native text envelope"
     value = json.loads(envelope["content"][0]["text"])
     assert isinstance(value, dict), value
     return value
 
 
 def unsubmitted_busy(envelope):
-    if envelope.get("isError") is not True:
+    if not isinstance(envelope, dict) or envelope.get("isError") is not True:
         return False
     try:
         error = tool_value(envelope)["error"]
-        return (error.get("code") in ("direct_query_admission", "direct_query_setup") and error.get("reason") == "busy"
-                and error.get("query_submitted") is False)
-    except (AssertionError, KeyError, TypeError, ValueError):
+        if not isinstance(error, dict):
+            return False
+        code = error.get("code")
+        return (code in ("direct_query_admission", "direct_query_setup") and error.get("reason") == "busy"
+                and error.get("query_submitted") is False and error.get("retryable") is True
+                and error.get("fresh_brokerage_required") is (code == "direct_query_setup"))
+    except (AssertionError, AttributeError, IndexError, KeyError, TypeError, ValueError):
         return False
 
 
 def read_retry_delay(envelope):
+    if not isinstance(envelope, dict):
+        return None
     if unsubmitted_busy(envelope):
-        delay = tool_value(envelope)["error"].get("retry_after_ms", 25)
+        delay = tool_value(envelope)["error"].get("retry_after_ms")
         return delay / 1000 if type(delay) is int and 1 <= delay <= 1000 else None
     if envelope.get("isError") is not True:
         return None
@@ -50,9 +59,122 @@ def read_retry_delay(envelope):
                 and hint.get("code") in ("publication_busy", "selection_busy")
                 and type(delay) is int and 1 <= delay <= 1000):
             return delay / 1000
-    except (AssertionError, KeyError, TypeError, ValueError):
+    except (AssertionError, AttributeError, IndexError, KeyError, TypeError, ValueError):
         pass
     return None
+
+
+class ObservationTimeout(AssertionError):
+    pass
+
+
+def remaining(deadline, ceiling):
+    budget = min(ceiling, deadline - time.monotonic())
+    if budget <= 0:
+        raise ObservationTimeout("Native observation deadline exhausted")
+    return budget
+
+
+def read_envelope(read, deadline, attempts=41, admission_only=False):
+    """Only complete typed rejection authorizes exact read replay; never transport errors."""
+    for attempt in range(attempts):
+        remaining(deadline, 120)
+        envelope = read(deadline)
+        remaining(deadline, 120)
+        assert isinstance(envelope, dict), "Native read returned no object"
+        delay = read_retry_delay(envelope)
+        if admission_only and not unsubmitted_busy(envelope):
+            delay = None
+        if delay is None or attempt + 1 == attempts or time.monotonic() + delay >= deadline:
+            if envelope.get("isError") is True:
+                # Contract codes only; arbitrary error text can contain source paths.
+                code = "unknown"
+                try:
+                    value = tool_value(envelope)
+                    candidate = value.get("code") if value.get("status") == "retry" else value.get("error", {}).get("code")
+                    if candidate in ("publication_busy", "selection_busy", "direct_query_admission", "direct_query_setup"):
+                        code = candidate
+                except (AssertionError, AttributeError, KeyError, TypeError, ValueError):
+                    pass
+                raise AssertionError(f"Native read rejected; no further safe replay within budget: code={code}")
+            return envelope, attempt
+        time.sleep(delay)
+    raise AssertionError("Native read attempt budget exhausted")
+
+
+def status_summary(value):
+    """Content-free diagnostics: never print source/error messages or process paths."""
+    obj = lambda item: item if isinstance(item, dict) else {}
+    work, runtime = obj(value.get("work")), obj(value.get("runtime"))
+    worker, service = obj(work.get("worker")), obj(runtime.get("service"))
+    state, code = value.get("index_state"), obj(value.get("index_error")).get("code")
+    flag = lambda item: item if type(item) is bool else None
+    return {"index_state": state if state in ("available", "unavailable") else "invalid",
+            "code": code if code in ("index_status_unavailable", "index_worker_unavailable") else "unknown",
+            "service_responsive": flag(service.get("responsive")), "service_accepting": flag(service.get("accepting")),
+            "service_observation_available": bool(service) and "service_error" in runtime and runtime["service_error"] is None,
+            "worker_observed": worker.get("identity") is not None,
+            "automatic_start_blocked": flag(worker.get("automatic_start_blocked")),
+            "metadata_samples_complete": work.get("failed_observations") == []}
+
+
+def publication_pending(value, collection, project):
+    """Validate observations, not retry hints. Unavailable can conceal a permanent cause."""
+    assert isinstance(value, dict), "Native status is not an object"
+    summary = status_summary(value)
+    if value.get("index_state") == "available":
+        assert (value.get("collection") == collection and isinstance(value.get("publication"), dict)
+                and value["publication"].get("collection") == collection
+                and isinstance(value["publication"].get("token"), str) and value["publication"]["token"]
+                and type(value.get("files")) is int and value["files"] >= 0), summary
+        return False
+    error = value.get("index_error")
+    assert (value.get("index_state") == "unavailable" and isinstance(error, dict)
+            and isinstance(error.get("message"), str)
+            and all(key in value and value[key] is None for key in ("publication", "files", "chunks"))), summary
+    runtime, work = value.get("runtime"), value.get("work")
+    assert isinstance(runtime, dict) and isinstance(work, dict), summary
+    service, worker = runtime.get("service"), work.get("worker")
+    assert isinstance(service, dict) and isinstance(worker, dict), summary
+    if error.get("code") == "index_status_unavailable":
+        assert value.get("collection") == collection, summary
+    else:
+        assert error.get("code") == "index_worker_unavailable" and value.get("project") == project, summary
+        assert work.get("serving_worker_unavailable") is True, summary
+        assert isinstance(runtime.get("index_worker"), dict) and runtime["index_worker"].get("process") is None, summary
+    assert ("service_error" in runtime and runtime["service_error"] is None and service.get("responsive") is True
+            and service.get("accepting") is True and work.get("basis") == "instance_bound_service_metadata"
+            and work.get("failed_observations") == [] and worker.get("automatic_start_blocked") is False), summary
+    identity = worker.get("identity")
+    assert identity is None or (isinstance(identity, dict) and identity.get("project") == project
+                                and isinstance(service.get("instance"), str) and identity.get("service") == service["instance"]), summary
+    return True
+
+
+def semantic_readiness(status):
+    readiness = status.get("semantic_readiness")
+    assert (isinstance(readiness, dict) and readiness.get("state") in ("disabled", "pending", "partial", "ready", "failed")
+            and type(readiness.get("completed_artifacts")) is int and readiness["completed_artifacts"] >= 0), "Invalid semantic readiness observation"
+    return readiness
+
+
+def observe_publication(read, collection, project, deadline):
+    last = None
+    announced = False
+    while time.monotonic() < deadline:
+        try:
+            value = read(deadline)
+            remaining(deadline, 120)
+        except (ObservationTimeout, subprocess.TimeoutExpired, queue.Empty):
+            raise ObservationTimeout(f"Publication observation deadline exhausted; cause remains unknown: {last}") from None
+        if not publication_pending(value, collection, project):
+            return value
+        last = status_summary(value)
+        if not announced:
+            print("Waiting for a publication observation: " + json.dumps(last), file=sys.stderr, flush=True)
+            announced = True
+        time.sleep(min(0.025, max(0, deadline - time.monotonic())))
+    raise ObservationTimeout(f"Publication observation deadline exhausted; cause remains unknown: {last}")
 
 
 def runtime_root(directory):
@@ -67,6 +189,7 @@ def runtime_root(directory):
 class Fixture:
     def __init__(self, runtime, owner, command_timeout=120, job_timeout=180):
         self.runtime = runtime_root(runtime)
+        self.owner = owner.resolve(strict=True)
         self.binary = self.runtime / ("airk.exe" if os.name == "nt" else "airk")
         if not self.binary.is_file():
             self.binary = self.runtime / "AIRK.app/Contents/MacOS/airk"
@@ -89,9 +212,9 @@ class Fixture:
     def __exit__(self, *_):
         self.close()
 
-    def run(self, *args, input=None, check=True):
+    def run(self, *args, input=None, check=True, timeout=None):
         result = subprocess.run([str(self.binary), *map(str, args)], input=input, capture_output=True,
-                                text=True, encoding="utf-8", timeout=self.command_timeout, cwd=self.runtime, env=self.environment,
+                                text=True, encoding="utf-8", timeout=min(self.command_timeout, timeout) if timeout is not None else self.command_timeout, cwd=self.runtime, env=self.environment,
                                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
         if check and result.returncode:
             raise AssertionError(f"Native client failed ({result.returncode}): {result.stderr[-4096:]} {result.stdout[-4096:]}")
@@ -148,18 +271,72 @@ class Fixture:
         return self.query(project, "tools", "call", tool, "--args",
                           json.dumps(arguments or {"response_mode": "full"}))
 
-    def query(self, project, *arguments):
-        deadline = time.monotonic() + 90
-        for attempt in range(41):
-            result = self.run(*self.arguments(project), *arguments, check=False)
+    def published_status(self, project, deadline=None):
+        deadline = min(deadline if deadline is not None else float("inf"), time.monotonic() + 90)
+        registration = self.projects[project]
+        return observe_publication(lambda until: self.query(project, "tools", "call", "airk_status", "--args",
+                                                           '{"response_mode":"full"}', deadline=until),
+                                   registration["collection"], registration["binding"], deadline)
+
+    @contextmanager
+    def hold_publication(self, project):
+        """Fixture-only writer exclusion for exact single-attempt usage measurements.
+
+        Match FileStore::lock's advisory file, not its legacy writer.lock marker.
+        No index data or marker bytes are written. Never use outside this owned fixture.
+        """
+        registered = self.projects[project]
+        data = Path(registered["data_root"]).resolve(strict=True)
+        assert any(parent.samefile(self.owner) for parent in data.parents), "Measurement storage is outside the owned fixture"
+        lock = data / "collections-1.4" / ".writer-locks" / registered["collection"]
+        assert lock.is_file() and lock.resolve(strict=True) == lock, "Unexpected fixture writer-lock topology"
+        for component in (lock, *lock.parents):
+            assert not component.is_symlink() and not getattr(component.lstat(), "st_file_attributes", 0) & 0x400, "Linked fixture writer-lock path"
+            if component.samefile(self.owner):
+                break
+        with lock.open("r+b") as stream:
+            if os.name == "nt":
+                import msvcrt
+                def acquire():
+                    stream.seek(0)
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+                def release():
+                    stream.seek(0)
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                def acquire():
+                    fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                def release():
+                    fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+            deadline = time.monotonic() + 5
+            while True:
+                try:
+                    acquire()
+                    break
+                except OSError as error:
+                    if error.errno not in (errno.EACCES, errno.EAGAIN) or time.monotonic() >= deadline:
+                        raise
+                    time.sleep(min(0.005, remaining(deadline, 5)))
+            try:
+                yield
+            finally:
+                release()
+
+    def query(self, project, *arguments, deadline=None, retry=True, admission_only=False):
+        deadline = min(deadline if deadline is not None else float("inf"), time.monotonic() + 90)
+        assert (arguments[:2] == ("tools", "call") and len(arguments) >= 3 and arguments[2] in TOOLS
+                or arguments and arguments[0] in ("status", "search", "files", "read", "info", "outline", "symbol",
+                                                  "imports", "facts", "refs", "context", "changes", "code-facts", "relationships")), "Expected a read-only fixture query"
+        exact = (*self.arguments(project), *arguments)
+        def read(until):
+            result = self.run(*exact, check=False, timeout=remaining(until, 90))
+            assert result.returncode in (0, 1), f"Native read process failed: exit {result.returncode}"
             envelope = json.loads(result.stdout)
-            delay = read_retry_delay(envelope)
-            if delay is None or attempt == 40 or time.monotonic() + delay >= deadline:
-                assert result.returncode == 0 and not envelope.get("isError"), (result.stderr, envelope)
-                return tool_value(envelope)
-            # Exact read arguments/revision survive; unknown outcomes never replay.
-            time.sleep(delay)
-        raise AssertionError("Native query admission exhausted")
+            assert result.returncode == 0 or read_retry_delay(envelope) is not None, "Native read failed without a typed rejection"
+            return envelope
+        envelope, _ = read_envelope(read, deadline, 41 if retry or admission_only else 1, admission_only)
+        return tool_value(envelope)
 
     def wait(self, receipt, expected="succeeded"):
         deadline = time.monotonic() + self.job_timeout
@@ -216,10 +393,12 @@ class Fixture:
         def send(value):
             child.stdin.write(json.dumps(value) + "\n")
             child.stdin.flush()
-        def receive(identifier):
+        def receive(identifier, deadline=None):
+            deadline = min(deadline if deadline is not None else float("inf"), time.monotonic() + 60)
             for _ in range(16):
-                value = json.loads(responses.get(timeout=60))
+                value = json.loads(responses.get(timeout=remaining(deadline, 60)))
                 if value.get("id") == identifier:
+                    assert "error" not in value, "Native stdio protocol error"
                     return value
             raise AssertionError("Matching stdio response missing")
         try:
@@ -232,10 +411,12 @@ class Fixture:
             catalog = receive(2)["result"]["tools"]
             assert len(catalog) == len(TOOLS) and {item["name"] for item in catalog} == TOOLS
             assert all(item["annotations"]["readOnlyHint"] for item in catalog)
-            send({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
-                "name": "airk_search", "arguments": {"query": "polaronlymarker", "mode": "lexical", "response_mode": "full"}}})
-            result = receive(3)["result"]
-            assert not result.get("isError"), result
+            request = {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
+                "name": "airk_search", "arguments": {"query": "polaronlymarker", "mode": "lexical", "response_mode": "full"}}}
+            def read(until):
+                send(request)
+                return receive(3, until)["result"]
+            result, _ = read_envelope(read, time.monotonic() + 60)
             assert json.loads(result["content"][0]["text"])["hits"]
         finally:
             child.stdin.close()
@@ -295,9 +476,10 @@ def qualify(runtime, files, model):
                 fixture.job("project-a", "index")
                 deadline = time.monotonic() + 180
                 while True:
-                    status = fixture.tool("project-a", "airk_status")
-                    readiness = status["semantic_readiness"]
-                    if readiness["completed_artifacts"] == files:
+                    status = fixture.published_status("project-a", deadline)
+                    readiness = semantic_readiness(status)
+                    assert readiness["state"] != "failed", "Semantic work explicitly failed"
+                    if readiness["state"] == "ready" and readiness["completed_artifacts"] == files:
                         break
                     assert time.monotonic() < deadline, readiness
                     time.sleep(0.1)

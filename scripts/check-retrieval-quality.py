@@ -98,13 +98,14 @@ class Session:
         self.process.stdin.write(json.dumps(value).encode() + b"\n")
         self.process.stdin.flush()
 
-    def request(self, method, arguments):
+    def request(self, method, arguments, deadline=None):
+        deadline = min(deadline if deadline is not None else float("inf"), time.monotonic() + 120)
+        clients.remaining(deadline, 120)
         self.sequence += 1
         self.send({"jsonrpc": "2.0", "id": self.sequence, "method": method, "params": arguments})
-        deadline = time.monotonic() + 120
         while True:
             try:
-                message = self.messages.get(timeout=max(0.001, deadline - time.monotonic()))
+                message = self.messages.get(timeout=clients.remaining(deadline, 120))
             except queue.Empty as error:
                 raise TimeoutError("MCP qualification deadline") from error
             if isinstance(message, BaseException):
@@ -123,18 +124,8 @@ class Session:
         arguments.update(limit=5, max_bytes=65536, response_mode="full")
         start = time.perf_counter_ns()
         retry_deadline = time.monotonic() + 15
-        for attempt in range(601):
-            result = self.request("tools/call", {"name": "airk_search", "arguments": arguments})
-            if not result.get("isError"):
-                break
-            try:
-                rejection = json.loads(result["content"][0]["text"])["error"]
-            except (ValueError, KeyError, TypeError):
-                raise RuntimeError(str(result["content"]))
-            if (attempt == 600 or time.monotonic() >= retry_deadline or rejection.get("code") != "direct_query_admission"
-                    or rejection.get("reason") != "busy" or rejection.get("query_submitted") is not False):
-                raise RuntimeError(str(result["content"]))
-            time.sleep(0.025)
+        params = {"name": "airk_search", "arguments": arguments}
+        result, attempt = clients.read_envelope(lambda until: self.request("tools/call", params, until), retry_deadline, 601)
         elapsed = (time.perf_counter_ns() - start) / 1_000_000
         if result.get("isError"):
             raise RuntimeError(str(result["content"]))
@@ -218,8 +209,9 @@ def fixture(binary, base, count, trials, metrics_module, detail="balanced"):
         service.job("qualification", "index")
         deadline = time.monotonic() + 300
         while True:
-            status = service.tool("qualification", "airk_status")
-            readiness = status["semantic_readiness"]
+            status = service.published_status("qualification", deadline)
+            readiness = clients.semantic_readiness(status)
+            assert readiness["state"] != "failed", "Semantic work explicitly failed"
             if readiness["state"] == "ready" and readiness["completed_artifacts"] == count + 8:
                 break
             assert time.monotonic() < deadline, readiness

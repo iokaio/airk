@@ -1,6 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Only explicit native read-rejection receipts permit qualification retry."""
 import importlib.util
+import contextlib
+import copy
+import io
 import json
 from pathlib import Path
 import subprocess
@@ -49,7 +52,7 @@ class ServiceClientTests(unittest.TestCase):
     def test_only_an_explicit_unsubmitted_receipt_retries(self):
         fixture = CLIENTS.Fixture.__new__(CLIENTS.Fixture)
         fixture.arguments = lambda _: []
-        busy = self.envelope({"error": {"code": "direct_query_admission", "reason": "busy", "query_submitted": False}}, True)
+        busy = self.envelope({"error": {"code": "direct_query_admission", "reason": "busy", "query_submitted": False, "retryable": True, "fresh_brokerage_required": False, "retry_after_ms": 25}}, True)
         accepted = self.envelope({"request_id": "accepted", "hits": []})
         replies = [subprocess.CompletedProcess([], 1, json.dumps(busy), "busy"),
                    subprocess.CompletedProcess([], 0, json.dumps(accepted), "")]
@@ -68,7 +71,8 @@ class ServiceClientTests(unittest.TestCase):
                    subprocess.CompletedProcess([], 0, json.dumps(self.envelope({"items": []})), "")]
         with patch.object(fixture, "run", side_effect=replies) as run, patch.object(CLIENTS.time, "sleep"):
             self.assertEqual(fixture.query("fixture", *args), {"items": []})
-            self.assertEqual(run.call_args_list[0], run.call_args_list[1])
+            self.assertEqual(run.call_args_list[0].args, run.call_args_list[1].args)
+            self.assertLessEqual(run.call_args_list[1].kwargs["timeout"], run.call_args_list[0].kwargs["timeout"])
         for key, value in (("code", "unknown"), ("retryable", False), ("action", "refresh_revision"),
                            ("retry_after_ms", 0), ("retry_after_ms", True), ("retry_after_ms", 1001)):
             self.assertIsNone(CLIENTS.read_retry_delay(self.envelope({**hint, key: value}, True)))
@@ -78,6 +82,173 @@ class ServiceClientTests(unittest.TestCase):
                  "retryable": True, "fresh_brokerage_required": True, "retry_after_ms": 100}
         self.assertEqual(CLIENTS.read_retry_delay(self.envelope({"error": error}, True)), 0.1)
         self.assertIsNone(CLIENTS.read_retry_delay(self.envelope({"error": {**error, "query_submitted": True}}, True)))
+
+
+    def available(self):
+        return {"index_state": "available", "collection": "fixture", "files": 1,
+                "publication": {"collection": "fixture", "token": "unchanged-token"},
+                "semantic_readiness": {"state": "ready", "completed_artifacts": 1}}
+
+    def unavailable(self, code="index_worker_unavailable"):
+        return {"index_state": "unavailable", "project": "project", "collection": "fixture",
+                "publication": None, "files": None, "chunks": None,
+                "index_error": {"code": code, "message": "private-source-message-must-not-be-logged"},
+                "runtime": {"service_error": None, "service": {"responsive": True, "accepting": True, "instance": "owner"},
+                            "index_worker": {"process": None}},
+                "work": {"basis": "instance_bound_service_metadata", "serving_worker_unavailable": True,
+                         "failed_observations": [], "worker": {"identity": None, "automatic_start_blocked": False}}}
+
+    def fixture(self):
+        fixture = CLIENTS.Fixture.__new__(CLIENTS.Fixture)
+        fixture.arguments = lambda _: ["--service-project", "project"]
+        fixture.projects = {"fixture": {"collection": "fixture", "binding": "project"}}
+        fixture.command_timeout = 120
+        fixture.binary, fixture.runtime, fixture.environment = Path("fixture-native"), Path.cwd(), {}
+        return fixture
+
+    def test_unavailable_observation_requires_scoped_snapshot_and_propagates_remaining_transport_budget(self):
+        for code in ("index_status_unavailable", "index_worker_unavailable"):
+            with self.subTest(code=code):
+                fixture, clock, calls = self.fixture(), [0.0], []
+                values = [self.unavailable(code), self.available()]
+                def run(command, **kwargs):
+                    calls.append((command, kwargs["timeout"]))
+                    clock[0] += 0.3
+                    return subprocess.CompletedProcess(command, 0, json.dumps(self.envelope(values.pop(0))), "")
+                def sleep(seconds):
+                    clock[0] += seconds
+                diagnostics = io.StringIO()
+                with patch.object(CLIENTS.subprocess, "run", side_effect=run), patch.object(CLIENTS.time, "monotonic", side_effect=lambda: clock[0]), \
+                        patch.object(CLIENTS.time, "sleep", side_effect=sleep), contextlib.redirect_stderr(diagnostics):
+                    result = fixture.published_status("fixture", deadline=1.0)
+                self.assertEqual(result["publication"]["token"], "unchanged-token")
+                self.assertEqual(calls[0][0], calls[1][0])
+                self.assertAlmostEqual(calls[0][1], 1.0)
+                self.assertAlmostEqual(calls[1][1], 0.675)
+                self.assertNotIn("private-source", diagnostics.getvalue())
+
+    def test_opaque_unavailable_expires_without_claiming_transience_or_leaking_messages(self):
+        fixture, clock, calls = self.fixture(), [0.0], []
+        def run(command, **kwargs):
+            calls.append(kwargs["timeout"])
+            clock[0] += kwargs["timeout"]
+            return subprocess.CompletedProcess(command, 0, json.dumps(self.envelope(self.unavailable("index_status_unavailable"))), "")
+        with patch.object(CLIENTS.subprocess, "run", side_effect=run), patch.object(CLIENTS.time, "monotonic", side_effect=lambda: clock[0]):
+            with self.assertRaisesRegex(AssertionError, "deadline") as error:
+                fixture.published_status("fixture", deadline=0.5)
+        self.assertEqual(calls, [0.5])
+        self.assertNotIn("private-source", str(error.exception))
+
+    def test_available_observation_after_deadline_is_rejected(self):
+        clock = [0.0]
+        def late(_):
+            clock[0] = 1.0
+            return self.available()
+        with patch.object(CLIENTS.time, "monotonic", side_effect=lambda: clock[0]):
+            with self.assertRaisesRegex(CLIENTS.ObservationTimeout, "deadline"):
+                CLIENTS.observe_publication(late, "fixture", "project", 1.0)
+
+    def test_malformed_foreign_or_explicitly_unhealthy_status_never_becomes_success(self):
+        for code in ("index_status_unavailable", "index_worker_unavailable"):
+            original = self.unavailable(code)
+            changes = [("collection", "foreign") if code == "index_status_unavailable" else ("project", "foreign"),
+                       ("runtime", []), ("work", "malformed"), ("files", 0),
+                       ("index_error", {"code": "unknown", "message": "private-source"})]
+            values = [{**copy.deepcopy(original), key: value} for key, value in changes]
+            for path, changed in ((["runtime", "service"], None), (["runtime", "service", "responsive"], False),
+                                  (["work", "worker", "automatic_start_blocked"], True),
+                                  (["work", "failed_observations"], ["unknown"]), (["work", "worker", "identity"], "bad"),
+                                  (["work", "worker", "identity"], {"project": "foreign", "service": "owner"})):
+                value = copy.deepcopy(original)
+                parent = value
+                for key in path[:-1]:
+                    parent = parent[key]
+                parent[path[-1]] = changed
+                values.append(value)
+            for value in values:
+                with self.subTest(code=code, value_type=type(value)), self.assertRaises(AssertionError) as error:
+                    CLIENTS.publication_pending(value, "fixture", "project")
+                self.assertNotIn("private-source", str(error.exception))
+        for changed in ({"token": ""}, {"collection": "foreign"}):
+            value = self.available()
+            value["publication"].update(changed)
+            with self.assertRaises(AssertionError):
+                CLIENTS.publication_pending(value, "fixture", "project")
+        self.assertFalse(CLIENTS.status_summary({})["service_observation_available"])
+
+    def test_raw_status_is_not_replaced_with_a_publication_and_nonordinary_exit_never_replays(self):
+        fixture = self.fixture()
+        unavailable = self.unavailable()
+        with patch.object(fixture, "run", return_value=subprocess.CompletedProcess([], 0, json.dumps(self.envelope(unavailable)), "")) as run:
+            self.assertEqual(fixture.tool("fixture", "airk_status"), unavailable)
+            run.assert_called_once()
+        hint = self.envelope({"status": "retry", "code": "publication_busy", "retryable": True,
+                              "action": "repeat_same_request", "retry_after_ms": 25}, True)
+        for code in (-9, 7):
+            with patch.object(fixture, "run", return_value=subprocess.CompletedProcess([], code, json.dumps(hint), "")) as run:
+                with self.assertRaises(AssertionError):
+                    fixture.query("fixture", "search", "exact")
+                run.assert_called_once()
+        with patch.object(fixture, "run") as run:
+            with self.assertRaises(AssertionError):
+                fixture.query("fixture", "index")
+            run.assert_not_called()
+
+    def test_admission_contract_rejects_missing_fields_and_single_attempt_measurements_do_not_replay(self):
+        error = {"code": "direct_query_admission", "reason": "busy", "query_submitted": False,
+                 "retryable": True, "fresh_brokerage_required": False, "retry_after_ms": 25}
+        for key in error:
+            changed = {name: value for name, value in error.items() if name != key}
+            self.assertIsNone(CLIENTS.read_retry_delay(self.envelope({"error": changed}, True)))
+        for delay in (True, 0, 1001, "25"):
+            self.assertIsNone(CLIENTS.read_retry_delay(self.envelope({"error": {**error, "retry_after_ms": delay}}, True)))
+        fixture = self.fixture()
+        with patch.object(fixture, "run", return_value=subprocess.CompletedProcess([], 1, json.dumps(self.envelope({"error": error}, True)), "")) as run:
+            with self.assertRaises(AssertionError):
+                fixture.query("fixture", "search", "exact", retry=False)
+            run.assert_called_once()
+
+    def test_accounting_waits_only_before_query_submission(self):
+        fixture = self.fixture()
+        admission = self.envelope({"error": {"code": "direct_query_admission", "reason": "busy", "query_submitted": False,
+            "retryable": True, "fresh_brokerage_required": False, "retry_after_ms": 25}}, True)
+        accepted = self.envelope({"hits": [1]})
+        replies = [subprocess.CompletedProcess([], 1, json.dumps(admission), ""), subprocess.CompletedProcess([], 0, json.dumps(accepted), "")]
+        with patch.object(fixture, "run", side_effect=replies) as run, patch.object(CLIENTS.time, "sleep"):
+            self.assertEqual(fixture.query("fixture", "search", "exact", retry=False, admission_only=True), {"hits": [1]})
+            self.assertEqual(run.call_count, 2)
+        publication = self.envelope({"status": "retry", "code": "publication_busy", "retryable": True,
+                                    "action": "repeat_same_request", "retry_after_ms": 25}, True)
+        with patch.object(fixture, "run", return_value=subprocess.CompletedProcess([], 1, json.dumps(publication), "")) as run:
+            with self.assertRaisesRegex(AssertionError, "publication_busy"):
+                fixture.query("fixture", "search", "exact", retry=False, admission_only=True)
+            run.assert_called_once()
+
+    def test_semantic_observations_reject_missing_or_unknown_fields(self):
+        for value in ({}, {"semantic_readiness": {"state": "unknown", "completed_artifacts": 1}},
+                      {"semantic_readiness": {"state": "ready", "completed_artifacts": True}}):
+            with self.assertRaises(AssertionError):
+                CLIENTS.semantic_readiness(value)
+        self.assertEqual(CLIENTS.semantic_readiness({"semantic_readiness": {"state": "failed", "completed_artifacts": 0}})["state"], "failed")
+
+    def test_measurement_guard_owns_existing_advisory_lock_without_changing_bytes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            owner = Path(directory).resolve()
+            data = owner / "data"
+            lock = data / "collections-1.4/.writer-locks/fixture"
+            lock.parent.mkdir(parents=True)
+            lock.write_bytes(b"")
+            fixture = self.fixture()
+            fixture.owner = owner
+            fixture.projects["fixture"]["data_root"] = str(data)
+            with fixture.hold_publication("fixture"):
+                with patch.object(CLIENTS.time, "monotonic", side_effect=[0, 6]), self.assertRaises(OSError):
+                    with fixture.hold_publication("fixture"):
+                        self.fail("Second writer acquired the held native advisory range")
+            with fixture.hold_publication("fixture"):
+                pass
+            self.assertEqual(lock.read_bytes(), b"")
+            self.assertFalse((data / "collections-1.4/fixture/writer.lock").exists())
 
 
 if __name__ == "__main__":

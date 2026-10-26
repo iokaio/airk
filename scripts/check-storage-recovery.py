@@ -53,7 +53,7 @@ def qualify(previous, current):
             new.projects = projects
             recovered = new.wait(new.enqueue("pressure", "recover"))
             new.wait(new.enqueue("pressure", "index"))
-            status = new.tool("pressure", "airk_status")
+            status = new.published_status("pressure")
             assert status["files"] == 128, status
             hit = new.tool("pressure", "airk_symbols", {"name": "polar_case_127_63"})
             assert hit.get("items") or hit.get("hits"), hit

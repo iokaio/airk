@@ -6,7 +6,7 @@ No private source or provider traffic is used. Includes process startup/serializ
 """
 import argparse
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import ExitStack
+from contextlib import ExitStack, nullcontext
 import hashlib
 import importlib.util
 import json
@@ -49,21 +49,21 @@ def main():
         fixture.configure("usage-benchmark", {"operation": "usage", "mode": "aggregates_only"})
         command = [str(binary), *fixture.arguments("usage-benchmark")]
 
-        def run(arguments):
+        def run(arguments, writer_held=False):
             env = dict(fixture.environment)
             env.pop("AIRK_USAGE_MODE", None)
-            start = time.perf_counter_ns()
-            deadline = time.monotonic() + 90
-            while True:
-                result = subprocess.run(command + arguments, env=env, capture_output=True, timeout=120)
-                value = json.loads(result.stdout) if result.stdout else {}
-                delay = clients.read_retry_delay(value) if arguments[0] == "search" else None
-                if delay is None or time.monotonic() + delay >= deadline:
-                    break
-                time.sleep(delay)
-            duration = (time.perf_counter_ns() - start) / 1_000_000
-            if result.returncode:
-                raise RuntimeError(f"synthetic native client failed: {result.stderr[-4096:].decode(errors='replace')} {result.stdout[-4096:].decode(errors='replace')}")
+            # Exact accounting measures one submitted call; do not hide rejection retries.
+            guard = fixture.hold_publication("usage-benchmark") if arguments[0] == "search" and not writer_held else nullcontext()
+            with guard:
+                start = time.perf_counter_ns()
+                if arguments[0] == "search":
+                    value = fixture.query("usage-benchmark", *arguments, retry=False, admission_only=True)
+                else:
+                    result = subprocess.run(command + arguments, env=env, capture_output=True, timeout=120)
+                    value = json.loads(result.stdout) if result.stdout else {}
+                    if result.returncode or value.get("isError"):
+                        raise RuntimeError(f"Synthetic native client failed: exit {result.returncode}")
+                duration = (time.perf_counter_ns() - start) / 1_000_000
             if "job" in value:
                 fixture.wait(value)
             return duration, value
@@ -82,8 +82,8 @@ def main():
                 durations[mode].append(elapsed)
         before = run(["usage", "report"])[1]
         run(["usage", "configure", "--mode", "aggregates_only"])
-        with ThreadPoolExecutor(max_workers=args.workers) as pool:
-            concurrent = list(pool.map(lambda _: run(["search", "telemetry", "--mode", "lexical"])[0], range(args.trials)))
+        with fixture.hold_publication("usage-benchmark"), ThreadPoolExecutor(max_workers=args.workers) as pool:
+            concurrent = list(pool.map(lambda _: run(["search", "telemetry", "--mode", "lexical"], writer_held=True)[0], range(args.trials)))
         after = run(["usage", "report"])[1]
 
         def stats(values):
@@ -103,7 +103,7 @@ def main():
                   "concurrent_recorded": recorded_after - recorded_before,
                   "concurrent_unrecorded": args.trials - (recorded_after - recorded_before),
                   "ledger_bytes": after["health"]["database_bytes"],
-                  "notice": "Synthetic local process-per-call test including startup, serialization and explicit read-rejection retries. Not persistent MCP latency, provider savings, physical disk I/O or cross-platform qualification. Unrecorded counts are independently known from this harness only."}
+                  "notice": "Synthetic local process-per-call test including startup and serialization. Each measured query is submitted once with concurrent publication excluded by the fixture writer lock; lock acquisition is outside the measured interval, while bounded explicitly unsubmitted admission waits are included. Not persistent MCP latency, provider savings, physical disk I/O or cross-platform qualification. Unrecorded counts are independently known from this harness only."}
         args.output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
         print(json.dumps(result, indent=2))
         if args.require_complete and (result["serial_unrecorded"] != 0 or result["concurrent_unrecorded"] != 0):

@@ -150,3 +150,84 @@ fn publication_retries_keep_exact_cursor_revision_and_retained_bytes() -> Result
     );
     Ok(())
 }
+
+#[test]
+fn publication_observations_require_scope_health_and_complete_snapshots() -> Result<()> {
+    let available = json!({"index_state":"available","collection":"fixture","publication":{"collection":"fixture","token":"revision"},"files":1});
+    assert!(!read_retry::publication_pending(
+        &available, "fixture", "project"
+    )?);
+    for code in ["index_worker_unavailable", "index_status_unavailable"] {
+        let value = json!({"index_state":"unavailable","collection":"fixture","project":"project",
+            "publication":null,"files":null,"chunks":null,"index_error":{"code":code,"message":"PRIVATE_SENTINEL"},
+            "runtime":{"service_error":null,"service":{"responsive":true,"accepting":true},"index_worker":{"process":null}},
+            "work":{"basis":"instance_bound_service_metadata","serving_worker_unavailable":true,"failed_observations":[],
+                "worker":{"automatic_start_blocked":false,"identity":null}}});
+        assert!(read_retry::publication_pending(
+            &value, "fixture", "project"
+        )?);
+        for pointer in [
+            "/runtime/service/responsive",
+            "/runtime/service/accepting",
+            "/work/worker/automatic_start_blocked",
+        ] {
+            let mut invalid = value.clone();
+            let field = invalid.pointer_mut(pointer).unwrap();
+            *field = json!(!field.as_bool().unwrap());
+            let error = read_retry::publication_pending(&invalid, "fixture", "project")
+                .unwrap_err()
+                .to_string();
+            assert!(!error.contains("PRIVATE_SENTINEL"));
+        }
+        assert!(read_retry::publication_pending(&value, "foreign", "foreign").is_err());
+    }
+    for invalid in [
+        json!({}),
+        json!({"index_state":"available","collection":"fixture","publication":{"collection":"foreign","token":"revision"},"files":1}),
+    ] {
+        assert!(read_retry::publication_pending(&invalid, "fixture", "project").is_err());
+    }
+    Ok(())
+}
+
+#[test]
+fn bounded_cli_read_never_starts_after_the_observation_deadline() -> Result<()> {
+    let command = std::process::Command::new("nonexistent-must-not-spawn");
+    assert_eq!(
+        read_retry::once_until(&command, Instant::now())
+            .unwrap_err()
+            .kind(),
+        std::io::ErrorKind::TimedOut
+    );
+    let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_airk"));
+    command.arg("--version");
+    assert!(
+        read_retry::once_until(&command, Instant::now() + Duration::from_secs(10))?
+            .status
+            .success()
+    );
+    Ok(())
+}
+
+#[test]
+fn bounded_cli_timeout_child() {
+    if std::env::var_os("AIRK_TEST_BOUNDED_READ_CHILD").is_some() {
+        std::thread::sleep(Duration::from_secs(30));
+    }
+}
+
+#[test]
+fn bounded_cli_timeout_terminates_its_owned_leaf_client() -> Result<()> {
+    let mut command = std::process::Command::new(std::env::current_exe()?);
+    command
+        .args(["--exact", "bounded_cli_timeout_child", "--nocapture"])
+        .env("AIRK_TEST_BOUNDED_READ_CHILD", "1");
+    let started = Instant::now();
+    let error = read_retry::once_until(&command, started + Duration::from_secs(1)).unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "timeout failed to reap the owned client"
+    );
+    Ok(())
+}

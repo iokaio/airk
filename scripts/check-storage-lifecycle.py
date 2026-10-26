@@ -41,7 +41,7 @@ def main():
             return json.loads(fixture.run(*fixture.arguments(name), "settings", view).stdout)
 
         def status():
-            return fixture.tool(name, "airk_status", {"response_mode": "full"})
+            return fixture.published_status(name)
 
         def configure(draft, expected="succeeded"):
             job = fixture.configure(name, draft, expected)

@@ -41,6 +41,8 @@ def run_campaign(binary, base, attempts, full_disk):
         fixture.job("faults", "index")
 
         def tool(name, **arguments):
+            if name == "airk_status":
+                return fixture.published_status("faults")
             return fixture.tool("faults", name, {"response_mode": "full", **arguments})
 
         cases = []

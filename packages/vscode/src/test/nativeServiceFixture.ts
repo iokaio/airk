@@ -15,28 +15,43 @@ export function nativePayloadDirectory(binary:string):string {
     return path.basename(directory)==='MacOS'&&path.basename(contents)==='Contents'&&path.basename(app)==='AIRK.app'?path.dirname(app):directory;
 }
 
-/** A diagnostic observation cannot substitute for a scoped publication snapshot. */
+/** Only bounded diagnostic facts are logged; error messages can include private paths. */
+export function statusObservationSummary(status:RecordValue):RecordValue {
+    const object=(value:unknown):RecordValue=>value!==null&&typeof value==='object'&&!Array.isArray(value)?value as RecordValue:{};
+    const runtime=object(status.runtime),work=object(status.work),service=object(runtime.service),worker=object(work.worker);
+    const code=object(status.index_error).code;
+    return {index_state:['available','unavailable'].includes(String(status.index_state))?status.index_state:'invalid',
+        code:['index_status_unavailable','index_worker_unavailable'].includes(String(code))?code:'unknown',
+        service_responsive:typeof service.responsive==='boolean'?service.responsive:null,service_accepting:typeof service.accepting==='boolean'?service.accepting:null,
+        service_observation_available:runtime.service_error===null&&Object.keys(service).length>0,
+        automatic_start_blocked:typeof worker.automatic_start_blocked==='boolean'?worker.automatic_start_blocked:null,
+        metadata_samples_complete:Array.isArray(work.failed_observations)&&work.failed_observations.length===0};
+}
+
+/** Unavailable observations can conceal a permanent cause; they are not typed retry hints. */
 export function publishedStatusPending(status:RecordValue,collection:string,project:string):boolean {
+    const detail=JSON.stringify(statusObservationSummary(status));
     if(status.index_state==='available'){
-        assert.equal(status.collection,collection);
-        assert.equal(typeof record(status.publication).token,'string');
-        assert.ok(Number.isSafeInteger(status.files)&&Number(status.files)>=0);
+        const publication=record(status.publication);
+        assert.ok(status.collection===collection&&publication.collection===collection
+            &&typeof publication.token==='string'&&publication.token.length>0
+            &&Number.isSafeInteger(status.files)&&Number(status.files)>=0,detail);
         return false;
     }
-    assert.equal(status.index_state,'unavailable');
-    assert.equal(status.publication,null);assert.equal(status.files,null);assert.equal(status.chunks,null);
-    const observation=record(status.index_error);
-    assert.equal(typeof observation.message,'string');
-    if(observation.code==='index_status_unavailable')assert.equal(status.collection,collection);
+    assert.ok(status.index_state==='unavailable'&&status.publication===null&&status.files===null&&status.chunks===null,detail);
+    const observation=record(status.index_error),runtime=record(status.runtime),work=record(status.work);
+    const worker=record(work.worker),service=record(runtime.service);
+    assert.ok(typeof observation.message==='string',detail);
+    if(observation.code==='index_status_unavailable')assert.ok(status.collection===collection,detail);
     else{
-        assert.equal(observation.code,'index_worker_unavailable');assert.equal(status.project,project);
-        const runtime=record(status.runtime),work=record(status.work),worker=record(work.worker),service=record(runtime.service);
-        assert.equal(runtime.service_error,null);assert.equal(service.responsive,true);assert.equal(service.accepting,true);
-        assert.equal(work.basis,'instance_bound_service_metadata');assert.equal(work.serving_worker_unavailable,true);
-        assert.deepEqual(work.failed_observations,[]);assert.equal(worker.automatic_start_blocked,false);
-        assert.equal(record(runtime.index_worker).process,null);
-        if(worker.identity!==null){const identity=record(worker.identity);assert.equal(identity.project,project);assert.equal(identity.service,service.instance);}
+        assert.ok(observation.code==='index_worker_unavailable'&&status.project===project,detail);
+        assert.ok(work.serving_worker_unavailable===true&&record(runtime.index_worker).process===null,detail);
     }
+    assert.ok(runtime.service_error===null&&service.responsive===true&&service.accepting===true
+        &&work.basis==='instance_bound_service_metadata'&&worker.automatic_start_blocked===false
+        &&Array.isArray(work.failed_observations)&&work.failed_observations.length===0,detail);
+    if(worker.identity!==null){const identity=record(worker.identity);
+        assert.ok(identity.project===project&&typeof service.instance==='string'&&identity.service===service.instance,detail);}
     return true;
 }
 
@@ -94,8 +109,9 @@ export class NativeServiceFixture {
         let unavailable:RecordValue|undefined;
         while(performance.now()<deadline){
             const status=await this.tool(spec,'airk_status',{},deadline);
+            assert.ok(performance.now()<deadline,'Published status observation deadline exhausted');
             if(!publishedStatusPending(status,spec.collection,spec.service!.project))return status;
-            const observation=record(status.index_error);
+            const observation=statusObservationSummary(status);
             if(unavailable===undefined)process.stderr.write(`[native fixture] waiting for published status: ${JSON.stringify(observation)}\n`);
             unavailable=observation;
             await new Promise(resolve=>setTimeout(resolve,25));
@@ -147,6 +163,8 @@ export class NativeServiceFixture {
         const deadline=performance.now()+180000;
         while(performance.now()<deadline){
             const status=await this.publishedStatus(spec,deadline),readiness=record(status.semantic_readiness);
+            assert.ok(['disabled','pending','partial','ready','failed'].includes(String(readiness.state)),'Invalid semantic state');
+            assert.notEqual(readiness.state,'failed','Semantic work explicitly failed');
             if(readiness.state==='ready'&&readiness.completed_artifacts===files)return status;
             await new Promise(resolve=>setTimeout(resolve,50));
         }
