@@ -51,7 +51,7 @@ pub(crate) struct ReadCache {
 struct CachedPage {
     domain: Sha256Digest,
     root: Root,
-    page: Page,
+    page: std::sync::Arc<Page>,
     encoded: usize,
     bytes: usize,
     stamp: u64,
@@ -62,7 +62,11 @@ impl ReadCache {
     pub(crate) fn shared() -> std::sync::Arc<std::sync::Mutex<Self>> {
         std::sync::Arc::new(std::sync::Mutex::new(Self::default()))
     }
-    fn get(&mut self, domain: Sha256Digest, root: &Root) -> Result<Option<(Page, usize)>> {
+    fn get(
+        &mut self,
+        domain: Sha256Digest,
+        root: &Root,
+    ) -> Result<Option<(std::sync::Arc<Page>, usize)>> {
         self.clock = self.clock.saturating_add(1);
         let Some(entry) = self.pages.get_mut(&root.digest) else {
             return Ok(None);
@@ -74,8 +78,14 @@ impl ReadCache {
         entry.stamp = self.clock;
         Ok(Some((entry.page.clone(), entry.encoded)))
     }
-    fn insert(&mut self, domain: Sha256Digest, root: &Root, page: &Page, encoded: usize) {
-        let contents = match page {
+    fn insert(
+        &mut self,
+        domain: Sha256Digest,
+        root: &Root,
+        page: &std::sync::Arc<Page>,
+        encoded: usize,
+    ) {
+        let contents = match page.as_ref() {
             Page::Leaf(values) => {
                 values.capacity() * std::mem::size_of::<Entry>()
                     + values
@@ -477,7 +487,12 @@ impl Tree {
             height,
         })
     }
-    fn read(&self, storage: &impl ReadPages, root: &Root, budget: &mut Budget) -> Result<Page> {
+    fn read(
+        &self,
+        storage: &impl ReadPages,
+        root: &Root,
+        budget: &mut Budget,
+    ) -> Result<std::sync::Arc<Page>> {
         root_valid(root)?;
         budget.page()?;
         if let Some(cache) = &self.cache
@@ -500,6 +515,7 @@ impl Tree {
             self.describe(&page, &encoded)? == *root,
             "directory digest/range/count mismatch"
         );
+        let page = std::sync::Arc::new(page);
         if let Some(cache) = &self.cache {
             cache
                 .lock()
@@ -507,6 +523,19 @@ impl Tree {
                 .insert(self.domain, root, &page, encoded.len());
         }
         Ok(page)
+    }
+    fn read_owned(
+        &self,
+        storage: &impl ReadPages,
+        root: &Root,
+        budget: &mut Budget,
+    ) -> Result<Page> {
+        ensure!(
+            self.cache.is_none(),
+            "verification directory cache cannot mutate"
+        );
+        std::sync::Arc::try_unwrap(self.read(storage, root, budget)?)
+            .map_err(|_| anyhow::anyhow!("mutable directory page unexpectedly shared"))
     }
     fn save(&self, storage: &impl WritePages, page: Page) -> Result<Root> {
         ensure!(
@@ -531,7 +560,7 @@ impl Tree {
             return Ok(None);
         };
         loop {
-            match self.read(storage, &root, budget)? {
+            match self.read(storage, &root, budget)?.as_ref() {
                 Page::Leaf(entries) => {
                     budget.entry()?;
                     return Ok(entries
@@ -563,7 +592,7 @@ impl Tree {
             return Ok(None);
         };
         loop {
-            match self.read(storage, &root, budget)? {
+            match self.read(storage, &root, budget)?.as_ref() {
                 Page::Leaf(entries) => {
                     budget.entry()?;
                     let end = entries.partition_point(|e| e.0.as_slice() <= target);
@@ -591,7 +620,7 @@ impl Tree {
             return Ok(None);
         };
         loop {
-            match self.read(storage, &root, budget)? {
+            match self.read(storage, &root, budget)?.as_ref() {
                 Page::Leaf(entries) => {
                     budget.entry()?;
                     let i = entries.partition_point(|e| e.0.as_slice() < target);
@@ -646,12 +675,12 @@ impl Tree {
         budget: &mut Budget,
         visitor: &mut impl FnMut(&[u8], &[u8], &mut Budget) -> Result<()>,
     ) -> Result<()> {
-        match self.read(storage, root, budget)? {
+        match self.read(storage, root, budget)?.as_ref() {
             Page::Leaf(entries) => {
                 for (k, v) in entries {
                     if k.as_slice() >= start && end.is_none_or(|e| k.as_slice() < e) {
                         budget.entry()?;
-                        visitor(&k, &v, budget)?;
+                        visitor(k, v, budget)?;
                     }
                 }
             }
@@ -660,7 +689,7 @@ impl Tree {
                     if child.last.as_slice() >= start
                         && end.is_none_or(|e| child.first.as_slice() < e)
                     {
-                        self.visit_page(storage, &child, start, end, budget, visitor)?;
+                        self.visit_page(storage, child, start, end, budget, visitor)?;
                     }
                 }
             }
@@ -694,7 +723,7 @@ impl Tree {
             if r.height == 0 {
                 break;
             }
-            match self.read(storage, r, budget)? {
+            match self.read_owned(storage, r, budget)? {
                 Page::Branch(mut children) if children.len() == 1 => {
                     storage.retire_page(r.digest)?;
                     root = children.pop();
@@ -715,7 +744,7 @@ impl Tree {
             "verification directory cache cannot mutate"
         );
         if let Some(root) = root {
-            if let Page::Branch(children) = self.read(storage, root, budget)? {
+            if let Page::Branch(children) = self.read_owned(storage, root, budget)? {
                 for child in children {
                     self.clear(storage, Some(&child), budget)?;
                 }
@@ -749,7 +778,7 @@ impl Tree {
         budget: &mut Budget,
     ) -> Result<Vec<Root>> {
         let page = match root {
-            Some(root) => self.read(storage, root, budget)?,
+            Some(root) => self.read_owned(storage, root, budget)?,
             None => Page::Leaf(vec![]),
         };
         let page = match page {
@@ -780,8 +809,8 @@ impl Tree {
                 // pages. Coalesce only if both count and encoded bytes fit.
                 let mut j = i.saturating_sub(1);
                 while j + 1 < children.len() && j <= i {
-                    let left = self.read(storage, &children[j], budget)?;
-                    let right = self.read(storage, &children[j + 1], budget)?;
+                    let left = self.read_owned(storage, &children[j], budget)?;
+                    let right = self.read_owned(storage, &children[j + 1], budget)?;
                     let merged = match (left, right) {
                         (Page::Leaf(mut a), Page::Leaf(b))
                             if a.len() <= FANOUT / 2 || b.len() <= FANOUT / 2 =>
@@ -919,6 +948,13 @@ mod tests {
             (budget.pages, budget.bytes),
             (before.0 - 2, before.1 - encoded * 2)
         );
+        let first = cached.read(&counted, &root, &mut budget)?;
+        let second = cached.read(&counted, &root, &mut budget)?;
+        assert!(
+            std::sync::Arc::ptr_eq(&first, &second),
+            "immutable cache hit copied a decoded page"
+        );
+        assert_eq!(counted.reads.get(), 1);
         let mut forged = root.clone();
         forged.count += 1;
         assert!(

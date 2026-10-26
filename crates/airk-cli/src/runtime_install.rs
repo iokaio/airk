@@ -1285,17 +1285,29 @@ fn saved_payload_identity(directory: &Path, identity: &str) -> Result<(Approval,
     Ok((approval, hash.clone()))
 }
 
+fn ownership_busy(error: &anyhow::Error) -> bool {
+    matches!(
+        error.downcast_ref::<std::fs::TryLockError>(),
+        Some(std::fs::TryLockError::WouldBlock)
+    )
+}
+
 async fn wait_quiescent(root: &Path) -> Result<()> {
+    wait_quiescent_with_context(root, "service owners have not released after stop").await
+}
+
+async fn wait_quiescent_with_context(root: &Path, timeout_message: &str) -> Result<()> {
     let until = tokio::time::Instant::now() + Duration::from_secs(45);
     loop {
-        if let Ok(guard) = quiescent(root) {
-            drop(guard);
-            return Ok(());
+        match quiescent(root) {
+            Ok(guard) => {
+                drop(guard);
+                return Ok(());
+            }
+            Err(error) if ownership_busy(&error) => {}
+            Err(error) => return Err(error).context("verify service owner exclusion"),
         }
-        ensure!(
-            tokio::time::Instant::now() < until,
-            "service owners have not released after stop"
-        );
+        ensure!(tokio::time::Instant::now() < until, "{timeout_message}");
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }
@@ -1325,7 +1337,15 @@ async fn drain_identity(root: &Path, approval: &Approval, expected_sha256: &str)
         return Ok(());
     }
     local_ipc::prepare_root(&control)?;
-    if airk_store::service::ServiceLease::acquire(&control).is_err() {
+    let occupied = match airk_store::service::ServiceLease::acquire(&control) {
+        Ok(lease) => {
+            drop(lease);
+            false
+        }
+        Err(error) if ownership_busy(&error) => true,
+        Err(error) => return Err(error).context("check service ownership before drain"),
+    };
+    if occupied {
         // Authenticate exact executable identity before requesting shutdown.
         let observed = health(root, approval, expected_sha256).await?;
         ensure!(
@@ -1342,18 +1362,11 @@ async fn drain_identity(root: &Path, approval: &Approval, expected_sha256: &str)
             "service refused drain"
         );
     }
-    let until = tokio::time::Instant::now() + Duration::from_secs(45);
-    loop {
-        if let Ok(guard) = quiescent(root) {
-            drop(guard);
-            return Ok(());
-        }
-        ensure!(
-            tokio::time::Instant::now() < until,
-            "service has not released ownership; runtime selection preserved"
-        );
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
+    wait_quiescent_with_context(
+        root,
+        "service has not released ownership; runtime selection preserved",
+    )
+    .await
 }
 
 struct Quiescence {
@@ -1368,15 +1381,7 @@ fn quiescent(root: &Path) -> Result<Quiescence> {
     local_ipc::prepare_root(&control)?;
     let service = airk_store::service::ServiceLease::acquire(&control)?;
     layout::record_control(&service)?;
-    let registry = airk_store::service::registry::ServiceRegistry::open(
-        &control,
-        airk_kernel::service_broker::new_instance_id()?,
-    )?;
-    let projects = registry
-        .bindings()?
-        .into_iter()
-        .map(|binding| airk_store::service::ProjectLease::acquire(&control, binding))
-        .collect::<Result<Vec<_>>>()?;
+    let projects = service.exclude_project_workers()?;
     let embedding = airk_store::service::EmbeddingLease::acquire(&control)?;
     Ok(Quiescence {
         _service: service,

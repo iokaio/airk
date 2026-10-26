@@ -272,6 +272,25 @@ impl StateCache {
             *entry = None;
         }
     }
+    // Only the validated native writer can publish this proof, after the ledger
+    // has durably accepted exactly these bounded bytes. No database handle is kept.
+    fn publish_validated(&self, identity: &str, bytes: &[u8], state: &State) {
+        if self.disabled || u32::from_le_bytes(bytes[..4].try_into().unwrap()) > 4 << 20 {
+            self.clear();
+            return;
+        }
+        let digest = framed_digest(
+            b"airk-native-service-state-cache/1",
+            &[KIND.as_bytes(), identity.as_bytes(), bytes],
+        );
+        if let Ok(mut entry) = self.entry.lock() {
+            *entry = Some(CachedState {
+                digest,
+                identity: identity.into(),
+                state: Arc::new(state.clone()),
+            });
+        }
+    }
     fn load(&self, identity: &str, bytes: &[u8]) -> Result<Arc<State>> {
         let mut profile = crate::current::kv::profile_start();
         let digest = framed_digest(
@@ -432,25 +451,7 @@ pub fn reset_owned_sqlite(
     ensure!(!path(&root).try_exists()?, "fresh registry already exists");
     let _watch = crate::service::SourceWatchLease::acquire(&root)?;
     let _embedding = crate::service::EmbeddingLease::acquire(&root)?;
-    let mut workers = Vec::new();
-    // Worker lock inodes are permanent. The held service lease prevents a new
-    // compliant old service from creating/admitting another worker during reset.
-    for (count, entry) in fs::read_dir(&root)?.enumerate() {
-        ensure!(
-            count < 16384,
-            "service reset directory exceeds entry budget"
-        );
-        let entry = entry?;
-        let name = entry.file_name();
-        let Some(name) = name.to_str() else { continue };
-        if let Some(binding) = name
-            .strip_prefix("worker-1.4-")
-            .and_then(|name| name.strip_suffix(".lock"))
-        {
-            let _: ProjectBinding = binding.parse().context("invalid old worker lock name")?;
-            workers.push(crate::service::acquire_file(&root, name)?);
-        }
-    }
+    let _workers = lease.exclude_project_workers()?;
     let owner = super::owner(&root, true, incarnation)?;
     ensure!(
         matches!(owner.format, 1 | 2),
@@ -556,7 +557,7 @@ pub fn reset_owned_sqlite(
     write_receipt(&root, "service-1.4.owner.json", &replacement)?;
     // Retain the completed receipt: deleting it would make a crash between the
     // final file removal and namespace initialization indistinguishable.
-    drop(workers);
+    drop(_workers);
     Ok(present)
 }
 
@@ -617,22 +618,30 @@ fn with_read_cached<R>(
     }
     outcome
 }
-fn with_write<R>(root: &Path, operation: impl FnOnce(&mut State) -> Result<R>) -> Result<R> {
+fn with_write<R>(
+    root: &Path,
+    cache: &StateCache,
+    operation: impl FnOnce(&mut State) -> Result<R>,
+) -> Result<R> {
     let _guard = crate::service::acquire_file_for(
         root,
         "service-1.4.registry.lock",
         Duration::from_secs(2),
     )?;
+    let file = path(root);
+    let before = fs::symlink_metadata(&file)?;
+    crate::managed_collection::reject_file_aliases(&file, &before)?;
+    let identity = crate::managed_collection::file_identity(&file, &before)?;
     let quota = crate::quota::Quota::open(root)?;
-    crate::ledger::write_root_growing(
-        &path(root),
+    let result = crate::ledger::write_root_observed(
+        &file,
         KIND,
         STATE_BYTES,
         &quota,
+        &|encoded| Ok((*cache.load(&identity, encoded)?).clone()),
+        &|state, encoded| cache.publish_validated(&identity, encoded, state),
         |state: &mut State| {
             let mut profile = crate::current::kv::profile_start();
-            state.validate()?;
-            crate::current::kv::profile_tick("registry.write_validate_before", &mut profile);
             let prior = native_events::Baseline::capture(state);
             let result = operation(state)?;
             native_events::record_changes(prior, state)?;
@@ -641,7 +650,14 @@ fn with_write<R>(root: &Path, operation: impl FnOnce(&mut State) -> Result<R>) -
             crate::current::kv::profile_tick("registry.write_validate_after", &mut profile);
             Ok(result)
         },
-    )
+    )?;
+    let after = fs::symlink_metadata(&file)?;
+    crate::managed_collection::reject_file_aliases(&file, &after)?;
+    ensure!(
+        crate::managed_collection::file_identity(&file, &after)? == identity,
+        "service registry file changed during write"
+    );
+    Ok(result)
 }
 
 fn receipt_pressure(state: &State) -> bool {
@@ -922,7 +938,7 @@ impl NativeServiceRegistry {
         let caller = std::panic::Location::caller();
         let mut profile = crate::current::kv::profile_start();
         ensure!(!self.read_only, "saved service registry is read-only");
-        let outcome = with_write(&self.root, |state| {
+        let outcome = with_write(&self.root, &self.cache, |state| {
             self.check_identity(state)?;
             operation(state)
         });
@@ -1810,6 +1826,42 @@ mod tests {
     }
 
     #[test]
+    fn write_cache_publishes_durable_validated_state_and_discards_failed_changes() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let source = tempfile::tempdir()?;
+        let mut registry =
+            NativeServiceRegistry::open(root.path(), Incarnation::from_bytes([86; 16]))?;
+        let project = registration(source.path(), &root.path().with_extension("airk-data"))?;
+        registry.register(&project)?;
+        registry.pause(project.binding, true)?;
+        let cached = registry
+            .cache
+            .entry
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .state
+            .clone();
+        assert!(cached.projects[&project.binding.to_string()].paused);
+        assert!(
+            registry
+                .write(|state| {
+                    state.version = 99;
+                    Ok(())
+                })
+                .is_err()
+        );
+        assert!(
+            registry.cache.entry.lock().unwrap().is_none(),
+            "failed mutation published a cache entry"
+        );
+        assert!(registry.get(project.binding)?.paused);
+        assert_eq!(registry.read(|state| Ok(state.version))?, 1);
+        Ok(())
+    }
+
+    #[test]
     fn cache_capacity_fallback_never_retains_untracked_state() -> Result<()> {
         let mut caches = StateCaches::new();
         let first = cache_for_root(&mut caches, Path::new("first"), 1);
@@ -1887,6 +1939,15 @@ mod tests {
             "cached validation hid changed invalid state"
         );
         assert!(registry.saved_request_epoch().is_err());
+        assert!(
+            registry
+                .write(|state| {
+                    state.version = 1;
+                    Ok(())
+                })
+                .is_err(),
+            "write cache accepted changed invalid prior bytes"
+        );
         crate::ledger::write_root_growing(
             &file,
             KIND,

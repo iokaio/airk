@@ -189,7 +189,7 @@ Cache budgets belong to worker/incarnation admission. A 64 MiB active-handle cac
 
 ## Current local qualification
 
-October 26: the first identified debug comparison fails the accepted 10% p95 ceiling for lexical queries and publication. Guard-preserving optimizations and the final merged CI contracts are being tested; no optimized complete comparison is recorded as passing. See [checkpoint evidence and remaining gates](../release-1.4.5.md). Native managed-upgrade and final workspace/container/artifact qualification remain pending. The completed `origin/feat/airksvc` tip `66c2a2a` is merged locally as `eec82b4`; the owner still requires explicit approval before any VSIX build.
+October 26: the first identified debug comparison fails the accepted 10% p95 ceiling for lexical queries and publication. Guard-preserving optimizations and the final merged CI contracts are being tested; no optimized complete comparison is recorded as passing. See [checkpoint evidence and remaining gates](../release-1.4.5.md). The actual owned staged 1.4.4-to-1.4.5 upgrade passes after fixing metadata-only worker exclusion; final full workspace/container/artifact qualification remains pending. The completed `origin/feat/airksvc` tip `66c2a2a` is merged locally as `eec82b4`, and `origin/main` at `1eed6e2` is integrated as `6790e9d`. The full optimized debug comparison also fails the unchanged performance gate (lexical ratios 1.186–1.241, replacement 1.374, deletion 1.835, semantic replacement 1.297; vector queries pass at 1.053). Further measured fixes are in progress. The owner still requires explicit approval before any VSIX build.
 
 ## Implementation proposal
 

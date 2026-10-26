@@ -54,6 +54,16 @@ def evidence(result):
     return [{"path": hit["citation"]["path"], "location": hit["citation"].get("location"),
              "text_sha256": hashlib.sha256(hit["text"].encode()).hexdigest()} for hit in result["hits"]]
 
+
+def restart_identity(result):
+    publication = result.get("publication")
+    if not isinstance(publication, dict) or not isinstance(publication.get("token"), str) or not publication["token"]:
+        raise AssertionError("Restart comparison requires an exact publication token")
+    return {"publication": publication, "generation": result["generation"], "collection": result["collection"],
+            "truncated": result["truncated"], "hits": [{"citation": hit["citation"],
+                "text_sha256": hashlib.sha256(hit["text"].encode()).hexdigest(),
+                "truncated": hit["truncated"]} for hit in result["hits"]]}
+
 def fixture_token(number):
     return "fixture" + chr(ord("a") + number // 26) + chr(ord("a") + number % 26)
 
@@ -259,7 +269,8 @@ def run_one(runtime, output, repetitions, samples):
             deadline=time.monotonic()+600
             while True:
                 readiness=fixture.tool("cutover","airk_status",{"response_mode":"full"})["semantic_readiness"]
-                if readiness["selected_artifacts"]==32 and readiness["completed_artifacts"]==32:return
+                if readiness["state"]=="failed":raise AssertionError(f"Semantic publication failed: {readiness}")
+                if readiness["state"]=="ready" and readiness["selected_artifacts"]==32 and readiness["completed_artifacts"]==32:return
                 if time.monotonic()>deadline:raise AssertionError(f"Semantic publication did not complete: {readiness}")
                 time.sleep(.05)
         fixture.wait(fixture.enqueue("cutover","index"));semantic_ready()
@@ -278,17 +289,23 @@ def run_one(runtime, output, repetitions, samples):
         fixture.wait(fixture.enqueue("cutover","inspect"))
         inspection=fixture.rpc({"inspection":{"project":fixture.projects["cutover"]["binding"]}})
         status=fixture.tool("cutover","airk_status",{"response_mode":"full"})
-        # Shutdown/restart this fixture only, then verify exact retained evidence.
+        retained={name:restart_identity(fixture.tool("cutover","airk_search",arguments)) for name,arguments in cases.items()}
+        # Compare exact identity within each runtime; cross-format comparison
+        # above intentionally uses content/location equivalence instead.
         fixture.close();fixture.log=(owner/"service-reopen.stderr").open("wb");fixture.child=None
         begin=time.perf_counter_ns();fixture.start()
-        reopened={name:evidence(fixture.tool("cutover","airk_search",arguments)) for name,arguments in cases.items()}
+        reopened={name:restart_identity(fixture.tool("cutover","airk_search",arguments)) for name,arguments in cases.items()}
         recovery_ms=(time.perf_counter_ns()-begin)/1e6
-        if reopened!=signatures: raise AssertionError("Restart changed retained evidence")
+        if reopened!=retained: raise AssertionError("Restart changed exact publication or ordered retained evidence")
+        reopened_status=fixture.tool("cutover","airk_status",{"response_mode":"full"})
+        if reopened_status["publication"]!=status["publication"]:raise AssertionError("Restart changed the committed publication")
         sampler.finish()
         return {"identity":identity(runtime),"latency":{name:distribution(values) for name,values in measurements.items()},
                 "first_query_ms":cold,"last_evidence":signatures,"inspection":inspection,
                 "storage_sizes":status.get("storage_sizes"),"logical_data_bytes":scale.logical_bytes(data),
                 "sampled_resources":sampler.result(),
+                "restart_identity_verified":True,
+                "restart_identity_scope":"Exact publication envelope/generation and ordered full citations/text digests; search does not expose internal document IDs",
                 "restart_and_evidence_ms":recovery_ms,"source_digest":scale.source_digest(source)}
     finally:
         sampler.stop.set(); sampler.thread.join()

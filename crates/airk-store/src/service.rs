@@ -155,6 +155,35 @@ impl ServiceLease {
     pub fn root(&self) -> &Path {
         &self.root
     }
+    /// Excludes every permanent project-worker lock while this service lease
+    /// prevents a compliant owner from admitting another worker. This does not
+    /// open registry data and therefore also supports an owned storage cutover.
+    pub fn exclude_project_workers(&self) -> Result<Vec<ProjectLease>> {
+        let mut projects = Vec::new();
+        for (count, entry) in fs::read_dir(&self.root)?.enumerate() {
+            ensure!(
+                count < 16384,
+                "service directory exceeds worker exclusion entry budget"
+            );
+            let entry = entry?;
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else { continue };
+            if let Some(binding) = name
+                .strip_prefix("worker-1.4-")
+                .and_then(|name| name.strip_suffix(".lock"))
+            {
+                let binding: airk_core::service::ProjectBinding = binding
+                    .parse()
+                    .context("invalid worker ownership lock name")?;
+                ensure!(
+                    format!("worker-1.4-{binding}.lock") == name,
+                    "noncanonical worker ownership lock name"
+                );
+                projects.push(ProjectLease::acquire(&self.root, binding)?);
+            }
+        }
+        Ok(projects)
+    }
     /// Native adapter must first establish an owner-only runtime directory.
     pub fn acquire(root: &Path) -> Result<Self> {
         let root = root.canonicalize()?;
@@ -212,6 +241,26 @@ mod tests {
             assert!(acquire_file(owner.path(), name).is_err());
             drop(replacement);
         }
+        Ok(())
+    }
+
+    #[test]
+    fn project_exclusion_refuses_noncanonical_and_aliased_lock_entries() -> Result<()> {
+        let owner = tempfile::tempdir()?;
+        let lease = ServiceLease::acquire(owner.path())?;
+        let binding = airk_core::identity::Sha256Digest::from_bytes([171; 32]);
+        let upper = owner.path().join(format!(
+            "worker-1.4-{}.lock",
+            binding.to_string().to_uppercase()
+        ));
+        fs::write(&upper, [])?;
+        assert!(lease.exclude_project_workers().is_err());
+        fs::remove_file(upper)?;
+        let lock = owner.path().join(format!("worker-1.4-{binding}.lock"));
+        fs::write(&lock, [])?;
+        fs::hard_link(&lock, owner.path().join("foreign-alias"))?;
+        assert!(lease.exclude_project_workers().is_err());
+        assert!(lock.exists() && owner.path().join("foreign-alias").exists());
         Ok(())
     }
 

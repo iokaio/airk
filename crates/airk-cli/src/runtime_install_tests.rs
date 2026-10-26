@@ -430,3 +430,79 @@ async fn damaged_payload_cannot_authorize_stopping_an_unowned_login_job() -> Res
     assert!(!directory.join("LICENSE").exists());
     Ok(())
 }
+
+#[tokio::test]
+async fn quiescence_excludes_permanent_workers_without_opening_legacy_registry() -> Result<()> {
+    let (_owner, root, _) = unselected_fixture()?;
+    let control = layout::control(&root)?;
+    local_ipc::prepare_root(&control)?;
+    let registry = airk_store::service::registry::ServiceRegistry::open(
+        &control,
+        airk_kernel::service_broker::new_instance_id()?,
+    )?;
+    drop(registry);
+    fs::remove_file(control.join("service-1.4.airk"))?;
+    let legacy = control.join("service-1.4.sqlite3");
+    let bytes = b"Original inert legacy image; no database reader is needed.";
+    fs::write(&legacy, bytes)?;
+    let owner_bytes = fs::read(control.join("service-1.4.owner.json"))?;
+    let binding = airk_core::identity::Sha256Digest::from_bytes([93; 32]);
+    let worker = airk_store::service::ProjectLease::acquire(&control, binding)?;
+    let error = quiescent(&root)
+        .err()
+        .context("orphan worker was not excluded")?;
+    assert!(ownership_busy(&error));
+    drop(worker);
+    let helper = airk_store::service::EmbeddingLease::acquire(&control)?;
+    assert!(quiescent(&root).is_err());
+    drop(helper);
+    let watcher = airk_store::service::SourceWatchLease::acquire(&control)?;
+    assert!(quiescent(&root).is_err());
+    drop(watcher);
+    let guard = quiescent(&root)?;
+    assert!(airk_store::service::ProjectLease::acquire(&control, binding).is_err());
+    assert!(airk_store::service::ServiceLease::acquire(&control).is_err());
+    drop(guard);
+    wait_quiescent(&root).await?;
+    assert_eq!(fs::read(&legacy)?, bytes);
+    assert_eq!(
+        fs::read(control.join("service-1.4.owner.json"))?,
+        owner_bytes
+    );
+    assert!(!control.join("service-1.4.airk").exists());
+    let _worker = airk_store::service::ProjectLease::acquire(&control, binding)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn quiescence_reports_invalid_ownership_immediately_instead_of_waiting_for_drain()
+-> Result<()> {
+    let (_owner, root, _) = unselected_fixture()?;
+    drop(quiescent(&root)?);
+    let control = layout::control(&root)?;
+    let malformed = control.join("worker-1.4-invalid.lock");
+    fs::write(&malformed, [])?;
+    let error = tokio::time::timeout(Duration::from_secs(2), wait_quiescent(&root))
+        .await?
+        .err()
+        .context("invalid ownership was accepted")?;
+    assert!(!ownership_busy(&error));
+    assert!(format!("{error:#}").contains("invalid worker ownership lock name"));
+    let approval = Approval {
+        schema: 1,
+        manifest_sha256: "a".repeat(64),
+        version: env!("CARGO_PKG_VERSION").into(),
+        verification_basis: VerificationBasis::OrganizationDigest,
+    };
+    let error = tokio::time::timeout(
+        Duration::from_secs(2),
+        drain_identity(&root, &approval, &"b".repeat(64)),
+    )
+    .await?
+    .err()
+    .context("drain ignored invalid ownership")?;
+    assert!(!ownership_busy(&error));
+    assert!(format!("{error:#}").contains("invalid worker ownership lock name"));
+    assert_eq!(fs::read(malformed)?, b"");
+    Ok(())
+}

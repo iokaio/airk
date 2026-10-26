@@ -402,12 +402,23 @@ fn existing_with_admitter(
     slot: &Arc<Slot>,
     admitter: Option<Arc<super::CapacityAdmitter>>,
 ) -> Result<Arc<Database>> {
-    let owner = header(store, scope)?;
+    existing_with_admitter_observed(store, scope, quota, slot, admitter, || Ok(()))
+}
+fn existing_with_admitter_observed(
+    store: &FileStore,
+    scope: &CurrentScope,
+    quota: &Quota,
+    slot: &Arc<Slot>,
+    admitter: Option<Arc<super::CapacityAdmitter>>,
+    after_owner: impl FnOnce() -> Result<()>,
+) -> Result<Arc<Database>> {
+    let mut owner = header(store, scope)?;
     ensure!(
         receipt(store, &owner)?.complete,
         "redb initialization requires its owning writer"
     );
     quota.verify_current_allowance(&grant_scope(scope), allowance(owner.capacity)?)?;
+    after_owner()?;
     let mut cached = slot
         .database
         .lock()
@@ -426,8 +437,21 @@ fn existing_with_admitter(
         }
     }
     if let Some(entry) = &*cached {
+        let observed_capacity = entry.database.capacity();
+        if observed_capacity > owner.capacity {
+            // Automatic growth persists its grant and header before publishing
+            // this high-water. It may have advanced after our first observation.
+            // Refresh once against the captured value; later admitted growth
+            // must not turn this read into a false integrity failure.
+            owner = header(store, scope)?;
+            ensure!(
+                receipt(store, &owner)?.complete,
+                "redb initialization requires its owning writer"
+            );
+            quota.verify_current_allowance(&grant_scope(scope), allowance(owner.capacity)?)?;
+        }
         ensure!(
-            entry.scope == *scope && entry.database.capacity() <= owner.capacity,
+            entry.scope == *scope && observed_capacity <= owner.capacity,
             "cached redb ownership/capacity changed"
         );
         entry.database.admit_capacity(owner.capacity);
@@ -1232,6 +1256,46 @@ mod tests {
             .unwrap();
         let actual = fs::metadata(store.directory().join(DATABASE))?.len();
         assert_eq!(status.reserved_bytes, grant.capacity() - actual);
+        Ok(())
+    }
+    #[test]
+    fn read_open_preserves_evidence_when_growth_races_the_owner_observation() -> Result<()> {
+        let (_directory, store, quota, head) = fixture()?;
+        let writer = store.lock()?;
+        drop(store.bootstrap_redb(&writer, &quota, &head, 2 << 20)?);
+        let native = store.redb_writer(&writer, &quota, &head.scope)?;
+        let before = native.capacity();
+        let slot = slot(&store)?;
+        let database =
+            existing_with_admitter_observed(&store, &head.scope, &quota, &slot, None, || {
+                native.test_write_meta(100, &vec![7; 4 << 20])
+            })?;
+        assert!(database.capacity() > before);
+        let read = database.snapshot()?;
+        assert_eq!(read.head()?, head);
+        let meta = read.transaction().open_table(super::super::tables::META)?;
+        assert_eq!(meta.get(100)?.unwrap().value().len(), 4 << 20);
+        Ok(())
+    }
+    #[test]
+    fn read_open_still_refuses_a_rolled_back_capacity_receipt() -> Result<()> {
+        let (_directory, store, quota, head) = fixture()?;
+        let writer = store.lock()?;
+        drop(store.bootstrap_redb(&writer, &quota, &head, 2 << 20)?);
+        let native = store.redb_writer(&writer, &quota, &head.scope)?;
+        let before = native.capacity();
+        native.test_write_meta(100, &vec![7; 4 << 20])?;
+        let admitted = header(&store, &head.scope)?;
+        assert!(admitted.capacity > before);
+        let mut stale = admitted.clone();
+        stale.capacity = before;
+        persist(&store.directory().join(OWNER), &stale, 65536)?;
+        let refused = store.redb_read(&head.scope);
+        let capacity = native.capacity();
+        persist(&store.directory().join(OWNER), &admitted, 65536)?;
+        assert!(refused.is_err());
+        assert_eq!(capacity, admitted.capacity);
+        assert_eq!(store.redb_read(&head.scope)?.snapshot().head()?, head);
         Ok(())
     }
     #[test]

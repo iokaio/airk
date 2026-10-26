@@ -94,6 +94,9 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
         } => ControlResponse::Console {
             page: console_page(registry, after, revision, limit, now_ms)?,
         },
+        ControlMethod::Project { project } => ControlResponse::Registered {
+            project: registry.get(project)?,
+        },
         ControlMethod::Projects {
             after,
             revision,
@@ -516,6 +519,44 @@ mod tests {
     use airk_core::{
         identity::Incarnation, service::ProjectRegistration, service_console::MAX_PAGE_BYTES,
     };
+    #[test]
+    fn single_project_lookup_uses_readonly_registry_and_rejects_unknown_bindings() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let mut registry = ServiceRegistry::open(root.path(), Incarnation::from_bytes([91; 16]))?;
+        let project = ProjectRegistration::new(
+            "/lookup-source".into(),
+            "/lookup-data".into(),
+            "fixture".into(),
+        )?;
+        registry.register(&project)?;
+        registry.pause(project.binding, true)?;
+        let epoch = registry.saved_request_epoch()?;
+        drop(registry);
+        let mut saved = ServiceRegistry::open_saved(root.path())?;
+        let ControlResponse::Registered { project: observed } = execute(
+            &mut saved,
+            ControlMethod::Project {
+                project: project.binding,
+            },
+        )?
+        else {
+            anyhow::bail!("single project lookup returned another response");
+        };
+        assert_eq!(observed.registration, project);
+        assert!(observed.paused);
+        assert_eq!(saved.saved_request_epoch()?, epoch);
+        assert!(
+            execute(
+                &mut saved,
+                ControlMethod::Project {
+                    project: airk_core::identity::Sha256Digest::from_bytes([92; 32])
+                }
+            )
+            .is_err()
+        );
+        Ok(())
+    }
+
     #[test]
     fn timed_out_metadata_keeps_ownership_and_exact_key_before_and_after_commit() -> Result<()> {
         use airk_core::service::{JobKind, RequestKey};

@@ -1259,21 +1259,27 @@ fn enqueue_planned(state: &mut State, link: Link, now_ms: u64) -> Result<()> {
     };
     Ok(())
 }
+fn advancing(plan: &Plan) -> bool {
+    !plan.paused
+        && matches!(
+            plan.phase,
+            PlanPhase::Planning | PlanPhase::Running | PlanPhase::Canceling
+        )
+}
 impl NativeServiceRegistry {
     pub fn advance_maintenance_plans(&mut self, now_ms: u64) -> Result<bool> {
         self.prune_job_receipts(None)?;
+        // Observing no active plan has no effects. Plans arriving afterward are
+        // handled by the next turn; the write path selects again under its lock.
+        if !self.read(|state| Ok(state.maintenance.plans.values().any(advancing)))? {
+            return Ok(false);
+        }
         self.write(|state| {
             let mut plans: Vec<_> = state
                 .maintenance
                 .plans
                 .iter()
-                .filter(|(_, plan)| {
-                    !plan.paused
-                        && matches!(
-                            plan.phase,
-                            PlanPhase::Planning | PlanPhase::Running | PlanPhase::Canceling
-                        )
-                })
+                .filter(|(_, plan)| advancing(plan))
                 .map(|(id, plan)| (plan.sequence, id.clone()))
                 .collect();
             plans.sort_unstable();

@@ -28,6 +28,10 @@ pub enum ControlMethod {
         revision: Option<u64>,
         limit: usize,
     },
+    /// Read one registration without exposing or decoding the shared ledger in a client.
+    Project {
+        project: ProjectBinding,
+    },
     RequestEpoch,
     PlanCreate {
         caller: Incarnation,

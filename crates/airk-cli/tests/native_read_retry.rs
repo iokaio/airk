@@ -231,3 +231,73 @@ fn bounded_cli_timeout_terminates_its_owned_leaf_client() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn frontend_single_project_lookup_preserves_paused_offline_registration_and_rejects_unknown()
+-> Result<()> {
+    let fixture = tempfile::tempdir()?;
+    let source = fixture.path().join("source");
+    let offline = fixture.path().join("offline");
+    let data = fixture.path().join("data");
+    fs::create_dir(&source)?;
+    fs::create_dir(&data)?;
+    fs::write(
+        source.join("original.txt"),
+        b"Original lookup fixture source.",
+    )?;
+    let service = common::Service::start(&source, &data, "single-lookup");
+    service.configure(airk_cli::service_configuration::Draft::Vectors { enabled: false });
+    service.job(JobKind::Index);
+    ensure!(
+        matches!(service.request(ControlMethod::Pause { project: service.project.binding, paused: true }), ControlResponse::Registered { project } if project.paused),
+        "pause was not persisted"
+    );
+    fs::rename(&source, &offline)?;
+    let ControlResponse::Registered { project: observed } =
+        service.request(ControlMethod::Project {
+            project: service.project.binding,
+        })
+    else {
+        anyhow::bail!("single project metadata unavailable");
+    };
+    assert_eq!(observed.registration, service.project);
+    assert!(observed.paused);
+    let mut command = common::native_command();
+    command
+        .arg("--service-runtime-dir")
+        .arg(&service.control)
+        .arg("--service-project")
+        .arg(service.project.binding.to_string())
+        .args([
+            "tools",
+            "call",
+            "airk_status",
+            "--args",
+            r#"{"response_mode":"full"}"#,
+        ]);
+    let output = read_retry::once_until(&command, Instant::now() + Duration::from_secs(30))?;
+    ensure!(
+        output.status.success(),
+        "frontend status failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let status = body(serde_json::from_slice(&output.stdout)?)?;
+    assert_eq!(status["index_state"], "available");
+    assert_eq!(status["files"], 1);
+    let mut unknown = common::native_command();
+    unknown
+        .arg("--service-runtime-dir")
+        .arg(&service.control)
+        .arg("--service-project")
+        .arg(airk_core::identity::Sha256Digest::from_bytes([98; 32]).to_string())
+        .args(["tools", "call", "airk_status"]);
+    let output = read_retry::once_until(&unknown, Instant::now() + Duration::from_secs(30))?;
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("service project lookup failed"));
+    assert_eq!(
+        fs::read(offline.join("original.txt"))?,
+        b"Original lookup fixture source."
+    );
+    fs::rename(offline, source)?;
+    Ok(())
+}

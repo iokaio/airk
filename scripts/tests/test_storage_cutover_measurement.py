@@ -14,6 +14,24 @@ SPEC.loader.exec_module(measurement)
 
 
 class CutoverMeasurement(unittest.TestCase):
+    def test_restart_identity_detects_revision_and_citation_changes_hidden_by_content_projection(self):
+        import copy
+        result = {"publication": {"token": "original-token"}, "generation": 7, "collection": "fixture",
+                  "truncated": False, "hits": [{"citation": {"path": "a.rs", "location": {"Lines": {"start": 1, "end": 1}},
+                      "content_hash": "original-source-hash"}, "text": "original fixture", "truncated": False}]}
+        original = measurement.restart_identity(result)
+        for field in ("token", "content_hash"):
+            changed = copy.deepcopy(result)
+            if field == "token":
+                changed["publication"]["token"] = "different-token"
+            else:
+                changed["hits"][0]["citation"][field] = "different-source-hash"
+            self.assertEqual(measurement.evidence(result), measurement.evidence(changed))
+            self.assertNotEqual(original, measurement.restart_identity(changed))
+        result.pop("publication")
+        with self.assertRaisesRegex(AssertionError, "exact publication token"):
+            measurement.restart_identity(result)
+
     def test_only_fixture_native_descendants_contribute_to_peak_rss(self):
         parent = os.getpid()
         rows = {parent: {"parent": 0, "name": "python", "rss": 9000},

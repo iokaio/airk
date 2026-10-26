@@ -1,6 +1,6 @@
 # Offline service installation and lifecycle
 
-The current local candidate is **1.4.2**; see [its release record](release-1.4.2.md). Prior 1.4.0/1.4.1 build and qualification records below retain their original scope.
+The current branch is **1.4.5**, with final local qualification in progress; see [its release record](release-1.4.5.md). The redb cutover requires fresh registration and full indexing. Ownership-checked cleanup removes recognized old database files without importing their contents. Prior build and qualification records below retain their original scope.
 
 For Windows on-demand installations, activation now checks whether the owned stable launcher can be replaced before publishing an activation intent or draining the working service. A connected client that holds the launcher blocks the update at this preflight boundary. The extension shows MCP Servers, Retry Update and Show Details, and keeps the preceding service running. After clients disconnect, Retry Update performs the fenced activation and cleanup. The native owner drain polls every 100 ms with a 45-second deadline after shutdown acknowledgment; executable verification and control/setup work are additional steps. External MCP clients are not killed by this drain. Verified OS-managed login services retain their existing owned stop/maintenance path because that manager can itself hold the launcher; that platform/lifecycle matrix remains separately qualified.
 
@@ -10,7 +10,7 @@ Trusted VSIX installation and **Install or Repair CLI** refresh recognized exist
 
 VSIX CLI installation removes obsolete extension-managed terminal executables and calls `runtime retire-previous --install-dir <installation> --expected-active <selected-digest>` after successful replacement activation. This removes the previous owned native payload and clears rollback, with durable interrupted-cleanup recovery and active-selection fencing. Locked or unknown files defer cleanup explicitly. The selected runtime, sources, indexes and settings remain intact; managed provider payloads are excluded. See [installation cleanup](service-console.md).
 
-This is the development installation contract for the [1.4 service plan](airkservice-architecture.md). The extension and public CLI now use native service defaults at version 1.4.2. These commands do not establish signed distribution, macOS notarization or installed-platform qualification.
+This is the development installation contract for the [1.4 service plan](airkservice-architecture.md). The extension and public CLI use native service defaults at version 1.4.5. These commands do not establish signed distribution, macOS notarization or installed-platform qualification.
 
 The CLI owns OS lifecycle adapters. Kernel owns collection and admission policy; it no longer invokes Task Scheduler, systemd or launchd. The public 1.4 CLI retires the root scheduler's commands; existing 1.3 processes/configuration remain for explicit review. Shared-service login definitions use separate `airksvc-…` identities and ownership receipts, so they cannot overwrite old `airk-…` scheduler definitions.
 

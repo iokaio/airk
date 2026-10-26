@@ -9,6 +9,35 @@ use airk_core::{
 };
 
 #[test]
+fn idle_plan_preflight_observes_later_plans_and_preserves_pause_and_readonly_fences() -> Result<()>
+{
+    let root = tempfile::tempdir()?;
+    let mut registry = ServiceRegistry::open(root.path(), Incarnation::from_bytes([1; 16]))?;
+    let project = register(&mut registry, 1)?;
+    let revision = registry.read(|state| Ok(state.revision))?;
+    assert!(!registry.advance_maintenance_plans(1000)?);
+    assert_eq!(registry.read(|state| Ok(state.revision))?, revision);
+    let plan = request(
+        &mut registry,
+        RepairSelection::All,
+        RepairOperation::Verify,
+        2,
+    )?;
+    registry.pause_maintenance_plan(plan.id, true, 1050)?;
+    assert!(!registry.advance_maintenance_plans(1100)?);
+    assert!(registry.next_pending_job(project)?.is_none());
+    registry.pause_maintenance_plan(plan.id, false, 1150)?;
+    assert!(registry.advance_maintenance_plans(1200)?);
+    assert_eq!(
+        registry.next_pending_job(project)?.unwrap().kind,
+        JobKind::PlanInspect
+    );
+    let mut saved = ServiceRegistry::open_saved(root.path())?;
+    assert!(saved.advance_maintenance_plans(1300).is_err());
+    Ok(())
+}
+
+#[test]
 fn dispatch_turns_are_bounded_and_independent_plans_do_not_share_jobs() -> Result<()> {
     let root = tempfile::tempdir()?;
     let mut registry = ServiceRegistry::open(root.path(), Incarnation::from_bytes([1; 16]))?;

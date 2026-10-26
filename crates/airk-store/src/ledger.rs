@@ -148,13 +148,35 @@ type Admission<'a> = (
     Option<(&'a crate::quota::Quota, &'a Path)>,
     MutationMode,
 );
+type StateDecoder<'a, T> = &'a dyn Fn(&[u8]) -> Result<T>;
+type StateObserver<'a, T> = &'a dyn Fn(&T, &[u8]);
+struct StateInput<'a, T> {
+    initial: Option<T>,
+    decoder: Option<StateDecoder<'a, T>>,
+    observer: Option<StateObserver<'a, T>>,
+}
+impl<T> StateInput<'_, T> {
+    fn stored() -> Self {
+        Self {
+            initial: None,
+            decoder: None,
+            observer: None,
+        }
+    }
+    fn initial(state: T) -> Self {
+        Self {
+            initial: Some(state),
+            ..Self::stored()
+        }
+    }
+}
 fn update<T: Serialize + DeserializeOwned, R>(
     file: std::fs::File,
     kind: &str,
     capacity: u64,
     maximum: usize,
     admission: Admission<'_>,
-    initial: Option<T>,
+    input: StateInput<'_, T>,
     mutate: impl FnOnce(&mut T, &redb::WriteTransaction) -> Result<R>,
 ) -> Result<R> {
     let (reservation, root_quota, mode) = admission;
@@ -272,9 +294,10 @@ fn update<T: Serialize + DeserializeOwned, R>(
         let result;
         let mut previous = None;
         let unchanged;
+        let mut observed = None;
         {
             let mut records = transaction.open_table(RECORDS)?;
-            let mut state = if let Some(state) = initial {
+            let mut state = if let Some(state) = input.initial {
                 ensure!(
                     records.is_empty()?,
                     "ledger initialization would replace existing state"
@@ -292,7 +315,11 @@ fn update<T: Serialize + DeserializeOwned, R>(
                 if mode == MutationMode::StateOnly {
                     previous = Some(row.value().to_vec());
                 }
-                decode(row.value(), maximum)?
+                validate_encoding(row.value(), maximum)?;
+                match input.decoder {
+                    Some(decode) => decode(row.value())?,
+                    None => decode(row.value(), maximum)?,
+                }
             };
             crate::current::kv::profile_tick("ledger.write_decode", &mut profile);
             result = mutate(&mut state, &transaction)?;
@@ -307,6 +334,9 @@ fn update<T: Serialize + DeserializeOwned, R>(
             if !unchanged {
                 records.insert("state", encoded.as_slice())?;
             }
+            if input.observer.is_some() {
+                observed = Some((state, encoded));
+            }
         }
         // Only state-only closures cannot have changed another typed table.
         // Comparing the exact stored encoding retains all validation and bounds.
@@ -316,6 +346,11 @@ fn update<T: Serialize + DeserializeOwned, R>(
             transaction.commit()?;
         }
         crate::current::kv::profile_tick("ledger.write_commit", &mut profile);
+        // The observer cannot affect durability: it runs only after successful
+        // commit, or an exact no-op whose previous bytes were already durable.
+        if let (Some(observe), Some((state, encoded))) = (input.observer, observed) {
+            observe(&state, &encoded);
+        }
         Ok(result)
     })();
     drop(database);
@@ -371,7 +406,7 @@ pub(crate) fn write<T: Serialize + DeserializeOwned, R>(
         capacity,
         maximum,
         (Some(reservation), None, MutationMode::StateOnly),
-        None,
+        StateInput::stored(),
         |state, _| mutate(state),
     )
 }
@@ -392,7 +427,7 @@ pub(crate) fn write_with<T: Serialize + DeserializeOwned, R>(
         capacity,
         maximum,
         (Some(reservation), None, MutationMode::TypedTables),
-        None,
+        StateInput::stored(),
         mutate,
     )
 }
@@ -415,7 +450,35 @@ pub(crate) fn write_root_growing<T: Serialize + DeserializeOwned, R>(
         capacity,
         maximum,
         (None, Some((quota, path)), MutationMode::StateOnly),
-        None,
+        StateInput::stored(),
+        |state, _| mutate(state),
+    )
+}
+
+/// State-only validated codecs still receive checked kind/encoding bounds.
+/// The caller validates the changed state; observation happens after durability.
+pub(crate) fn write_root_observed<T: Serialize + DeserializeOwned, R>(
+    path: &Path,
+    kind: &str,
+    maximum: usize,
+    quota: &crate::quota::Quota,
+    decoder: StateDecoder<'_, T>,
+    observer: StateObserver<'_, T>,
+    mutate: impl FnOnce(&mut T) -> Result<R>,
+) -> Result<R> {
+    validate_file(path, MAX_FILE_BYTES)?;
+    let file = OpenOptions::new().read(true).write(true).open(path)?;
+    update(
+        file,
+        kind,
+        MAX_FILE_BYTES,
+        maximum,
+        (None, Some((quota, path)), MutationMode::StateOnly),
+        StateInput {
+            initial: None,
+            decoder: Some(decoder),
+            observer: Some(observer),
+        },
         |state, _| mutate(state),
     )
 }
@@ -488,7 +551,7 @@ fn create_admitted<T: Serialize + DeserializeOwned>(
             root_quota.map(|quota| (quota, temporary.path())),
             MutationMode::StateOnly,
         ),
-        Some(state),
+        StateInput::initial(state),
         |_, _| Ok(()),
     )?;
     temporary.as_file().sync_all()?;
@@ -540,6 +603,107 @@ mod tests {
             },
         )
     }
+    #[test]
+    fn observed_state_is_published_only_after_success_and_never_after_refused_mutation()
+    -> Result<()> {
+        use std::cell::{Cell, RefCell};
+        let root = tempfile::tempdir()?;
+        let quota = Quota::open(root.path())?;
+        let path = root.path().join("observed.airk");
+        create_root_growing(&path, "observed/1", 128, &quota, Vec::<String>::new())?;
+        let decoded = Cell::new(0);
+        let observed = RefCell::new(Vec::<Vec<String>>::new());
+        let decoder = |bytes: &[u8]| {
+            decoded.set(decoded.get() + 1);
+            decode::<Vec<String>>(bytes, 128)
+        };
+        let observer = |state: &Vec<String>, bytes: &[u8]| {
+            assert_eq!(&decode::<Vec<String>>(bytes, 128).unwrap(), state);
+            observed.borrow_mut().push(state.clone());
+        };
+        write_root_observed(
+            &path,
+            "observed/1",
+            128,
+            &quota,
+            &decoder,
+            &observer,
+            |state| {
+                state.push("accepted".into());
+                Ok(())
+            },
+        )?;
+        assert_eq!(observed.borrow().as_slice(), &[vec!["accepted".to_owned()]]);
+        assert_eq!(
+            read::<Vec<String>>(&path, "observed/1", MAX_FILE_BYTES, 128)?,
+            observed.borrow()[0]
+        );
+        assert!(
+            write_root_observed(
+                &path,
+                "observed/1",
+                128,
+                &quota,
+                &decoder,
+                &observer,
+                |state| -> Result<()> {
+                    state.push("rejected".into());
+                    anyhow::bail!("explicit fixture refusal")
+                }
+            )
+            .is_err()
+        );
+        assert!(
+            write_root_observed(
+                &path,
+                "observed/1",
+                128,
+                &quota,
+                &decoder,
+                &observer,
+                |state| {
+                    state.push("x".repeat(1024));
+                    Ok(())
+                }
+            )
+            .is_err()
+        );
+        assert_eq!(observed.borrow().len(), 1);
+        assert_eq!(
+            read::<Vec<String>>(&path, "observed/1", MAX_FILE_BYTES, 128)?,
+            vec!["accepted"]
+        );
+        let prior = decoded.get();
+        assert!(
+            write_root_observed(
+                &path,
+                "foreign-kind/1",
+                128,
+                &quota,
+                &decoder,
+                &observer,
+                |_| Ok(())
+            )
+            .is_err()
+        );
+        assert_eq!(
+            decoded.get(),
+            prior,
+            "custom decoder bypassed kind checking"
+        );
+        write_root_observed(
+            &path,
+            "observed/1",
+            128,
+            &quota,
+            &decoder,
+            &observer,
+            |_| Ok(()),
+        )?;
+        assert_eq!(observed.borrow().len(), 2);
+        Ok(())
+    }
+
     #[test]
     fn physical_headroom_failure_keeps_its_typed_code_across_redb_recovery() -> Result<()> {
         let root = tempfile::tempdir()?;
