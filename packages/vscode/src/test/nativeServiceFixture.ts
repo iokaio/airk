@@ -58,12 +58,34 @@ export class NativeServiceFixture {
         return {command:this.launcher,root:String(registration.root),dataDir:String(registration.data_root),collection:name,name,
             service:{installDir:this.install,project}};
     }
-    async tool(spec:LaunchSpec,name:string,args:RecordValue={}):Promise<RecordValue>{
+    async tool(spec:LaunchSpec,name:string,args:RecordValue={},deadline?:number):Promise<RecordValue>{
         process.stderr.write(`[native fixture] tool ${name}\n`);
         const envelope=record(await readNative(spec.command,[...launchArgs(spec,'tools'),'call',name,'--args',
-            JSON.stringify({response_mode:'full',...args})],path.dirname(spec.command)));
+            JSON.stringify({response_mode:'full',...args})],path.dirname(spec.command),deadline));
         assert.notEqual(envelope.isError,true);assert.ok(Array.isArray(envelope.content));
         return record(JSON.parse(String(record(envelope.content[0]).text)));
+    }
+    async publishedStatus(spec:LaunchSpec,deadline=performance.now()+120000):Promise<RecordValue>{
+        let unavailable:RecordValue|undefined;
+        while(performance.now()<deadline){
+            const status=await this.tool(spec,'airk_status',{},deadline);
+            if(status.index_state==='available'){
+                assert.equal(typeof record(status.publication).token,'string');
+                assert.ok(Number.isSafeInteger(status.files)&&Number(status.files)>=0);
+                return status;
+            }
+            // Status is also a diagnostic read. Unavailable observations are not
+            // publication snapshots, and do not authorize any index/configuration work.
+            assert.equal(status.index_state,'unavailable');
+            assert.equal(status.publication,null);assert.equal(status.files,null);
+            const observation=record(status.index_error);
+            assert.equal(observation.code,'index_status_unavailable');
+            assert.equal(typeof observation.message,'string');
+            if(unavailable===undefined)process.stderr.write(`[native fixture] waiting for published status: ${JSON.stringify(observation)}\n`);
+            unavailable=observation;
+            await new Promise(resolve=>setTimeout(resolve,25));
+        }
+        throw new Error(`Published status remained unavailable: ${JSON.stringify(unavailable)}`);
     }
     async settings(spec:LaunchSpec,view:string):Promise<RecordValue>{
         return record(JSON.parse(await runText(spec.command,[...launchArgs(spec,'settings'),view],path.dirname(spec.command),120000)));
@@ -107,9 +129,9 @@ export class NativeServiceFixture {
         const job=await this.waitJob(String(record(accepted.job).id));assert.equal(job.state,'succeeded',JSON.stringify(job));return job;
     }
     async ready(spec:LaunchSpec,files:number):Promise<RecordValue>{
-        const deadline=Date.now()+180000;
-        while(Date.now()<deadline){
-            const status=await this.tool(spec,'airk_status'),readiness=record(status.semantic_readiness);
+        const deadline=performance.now()+180000;
+        while(performance.now()<deadline){
+            const status=await this.publishedStatus(spec,deadline),readiness=record(status.semantic_readiness);
             if(readiness.state==='ready'&&readiness.completed_artifacts===files)return status;
             await new Promise(resolve=>setTimeout(resolve,50));
         }

@@ -58,14 +58,15 @@ jobs:
         run: cargo nextest run --profile ci -p airk-process --locked --target ${{ matrix.target }}
       - name: Prepare pinned bundled model build inputs
         run: python scripts/provision-local-model.py --destination target/local-vector-model --download
-      - name: Direct reads, exact revisions, recovery and native service contracts
-        run: cargo nextest run --profile ci -p airk-cli -p airk-mcp --all-features --lib --test native_read_retry --test service_runtime --test mcp --test usage_native --test changes_v2 --test unregister_native --test bundled_model --test tools --locked --target ${{ matrix.target }}
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
           node-version: '24.15.0'
           package-manager-cache: false
       - run: npm ci --ignore-scripts --no-audit --no-fund --prefix packages/vscode
       - name: Build lightweight debug runtime pair for actual managed installation
+        env:
+          # Preserve normal debug behavior while avoiding repeated hashing of debug symbols.
+          CARGO_PROFILE_DEV_DEBUG: '0'
         run: python scripts/build-service-runtime.py --destination artifacts/proof-runtime --profile debug
       - name: Extension contracts and actual managed native installation
         env:

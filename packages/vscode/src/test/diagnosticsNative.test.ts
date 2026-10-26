@@ -19,7 +19,7 @@ test('native console inspections and guarded repair preserve paused, missing and
         await fixture.configure(a,{operation:'vectors',enabled:false});
         await fixture.configure(b,{operation:'vectors',enabled:false});
         await fixture.job(a);await fixture.job(b);
-        const first=await fixture.tool(a,'airk_status'),other=await fixture.tool(b,'airk_status');
+        const first=await fixture.publishedStatus(a),other=await fixture.publishedStatus(b);
         await fixture.client!.rpc({pause:{project:a.service!.project,paused:true}});
         await fixture.job(a,'inspect');
         const inspection=await fixture.client!.rpc({inspection:{project:a.service!.project}},'inspection');
@@ -28,7 +28,7 @@ test('native console inspections and guarded repair preserve paused, missing and
         assert.ok(!JSON.stringify(inspection).includes('pub fn native_diagnostic_probe'));
         await fixture.client!.rpc({pause:{project:a.service!.project,paused:false}});
         await fixture.repair(a,'verify');
-        assert.deepEqual((await fixture.tool(a,'airk_status')).publication,first.publication);
+        assert.deepEqual((await fixture.publishedStatus(a)).publication,first.publication);
         const offline=path.join(fixture.owner,'offline-a');await fs.rename(a.root,offline);
         try{
             const retained=await fixture.tool(a,'airk_read_file',{path:'original.rs',start_line:1,end_line:1});
@@ -39,12 +39,12 @@ test('native console inspections and guarded repair preserve paused, missing and
             await fixture.job(a,'inspect');
             const missing=await fixture.client!.rpc({inspection:{project:a.service!.project}},'inspection');
             assert.equal(record(record(missing.observation).snapshot).source_state,'unavailable');
-            assert.deepEqual((await fixture.tool(a,'airk_status')).publication,first.publication);
+            assert.deepEqual((await fixture.publishedStatus(a)).publication,first.publication);
         }finally{await fs.rename(offline,a.root);}
         await fixture.repair(a,'rebuild');
-        const rebuilt=await fixture.tool(a,'airk_status');
+        const rebuilt=await fixture.publishedStatus(a);
         assert.notEqual(record(rebuilt.publication).incarnation,record(first.publication).incarnation);
-        assert.deepEqual((await fixture.tool(b,'airk_status')).publication,other.publication);
+        assert.deepEqual((await fixture.publishedStatus(b)).publication,other.publication);
         const retained=await fixture.tool(a,'airk_read_file',{path:'original.rs',start_line:1,end_line:1});
         assert.ok(Array.isArray(retained.hits));assert.equal(record(retained.hits[0]).text,original);
         assert.equal(await fs.readFile(path.join(a.root,'original.rs'),'utf8'),original);

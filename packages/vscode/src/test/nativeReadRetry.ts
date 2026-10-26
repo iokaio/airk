@@ -23,10 +23,12 @@ export function readRetryDelay(envelope:unknown):number|undefined {
     return Number.isInteger(delay)&&Number(delay)>=1&&Number(delay)<=1000?Number(delay):undefined;
 }
 
-export async function readNative(command:string,args:readonly string[],cwd:string):Promise<unknown>{
-    const deadline=performance.now()+120000;
+export async function readNative(command:string,args:readonly string[],cwd:string,until?:number):Promise<unknown>{
+    const deadline=Math.min(until??Infinity,performance.now()+120000);
     while(true){
-        const started=performance.now(),timeout=Math.max(1,Math.ceil(deadline-started));
+        const started=performance.now();
+        if(started>=deadline)throw new Error('Native fixture read exceeded its original observation budget');
+        const timeout=Math.max(1,Math.ceil(deadline-started));
         const result=await new Promise<{envelope:unknown;delay?:number}>((resolve,reject)=>{
             execFile(command,[...args],{cwd,timeout,maxBuffer:1024*1024,windowsHide:true,encoding:'utf8'},(error,stdout,stderr)=>{
                 let envelope:unknown;try{envelope=JSON.parse(stdout);}catch{ /* Report the actual process failure below. */ }
