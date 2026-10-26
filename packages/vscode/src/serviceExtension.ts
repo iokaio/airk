@@ -14,7 +14,8 @@ import { ServiceWorkspace } from './serviceWorkspace';
 import { McpVerification } from './sidebar';
 import { installLauncherCli } from './cliInstall';
 import { openUsagePanel } from './usagePanel';
-import { renderServiceDashboard } from './serviceDashboard';
+import { ExplorerSidebar } from './explorerSidebar';
+import type { ExplorerController, ExplorerHost } from './explorerController';
 import { migrateLocalAgents } from './agentMigration';
 import { readJsonConfig } from './agentConfig';
 
@@ -42,6 +43,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     private installationWarnings=false;
     private installationFailed=false;
     private installProgress?:vscode.Progress<{message?:string}>;
+    private explorer?:Promise<ExplorerController>;
 
     private reportInstall(message:string):void{
         this.installProgress?.report({message});this.output.appendLine(message);
@@ -66,7 +68,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         this.workspace=new ServiceWorkspace(context.globalState,{reviewProject:(...args)=>this.runtime().reviewProject(...args),
             registerProject:(...args)=>this.runtime().registerProject(...args)},()=>vscode.workspace.isTrusted&&!this.disposed);
         this.console=new ServiceConsole(context,runtime,{register:()=>this.registerWorkspace(),currentProjects:()=>this.currentProjects()});
-        this.status.text='AIRK';this.status.command='airk.menu';this.status.show();
+        this.status.text='AIRK';this.status.command='airk.explorer.open';this.status.show();
     }
     private runtime():RuntimeHost{
         if(!this.host){const generation=this.generation;
@@ -386,8 +388,27 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         item.command={command:'airk.serviceConnect',title:'Open Service Console'};return item;
     }
     getChildren():LaunchSpec[]{return this.specs;}
+    /** The AIRK Explorer is loaded on first use; it shares this extension's console and registrations. */
+    explorerController():Promise<ExplorerController>{
+        this.explorer??=import('./explorerController').then(({ExplorerController})=>{
+            if(this.disposed)throw new ServiceError('runtime_client_no_longer_authorized');
+            return new ExplorerController(this.explorerHost());
+        });
+        return this.explorer;
+    }
+    private explorerHost():ExplorerHost{
+        return {extensionUri:this.context.extensionUri,version:this.context.extension.packageJSON.version,
+            trusted:()=>vscode.workspace.isTrusted&&!this.disposed,specs:()=>this.specs,
+            activeProject:()=>{
+                const active=vscode.window.activeTextEditor&&vscode.workspace.getWorkspaceFolder(vscode.window.activeTextEditor.document.uri);
+                const root=active&&this.roots.find(root=>same(root.opened,active.uri.fsPath));
+                return root?this.specs.find(spec=>same(spec.root,root.canonical))?.service?.project:undefined;
+            },
+            onDidChangeSpecs:this.treeChanges.event,control:this.console,log:line=>this.output.appendLine(line),
+            setStatusBar:(text,tooltip)=>{if(!this.disposed){this.status.text=text;this.status.tooltip=tooltip;}}};
+    }
     reset():void{this.generation++;this.host=undefined;this.specs=[];this.binding=undefined;this.checks.clear();this.console.reset();void this.refresh();}
-    dispose():void{if(this.disposed)return;this.disposed=true;this.generation++;this.console.dispose();this.status.dispose();this.definitions.dispose();this.treeChanges.dispose();this.output.dispose();}
+    dispose():void{if(this.disposed)return;this.disposed=true;this.generation++;void this.explorer?.then(explorer=>explorer.dispose(),()=>undefined);this.console.dispose();this.status.dispose();this.definitions.dispose();this.treeChanges.dispose();this.output.dispose();}
 }
 
 let active:ServiceExtension|undefined;
@@ -395,14 +416,16 @@ export function deactivate():void{active?.dispose();active=undefined;}
 /** Activated by the final 1.4 adapter cutover, after native/package contract checks. */
 export async function activate(context:vscode.ExtensionContext):Promise<{getServerDefinitions():Promise<vscode.McpStdioServerDefinition[]>}>{
     const controller=new ServiceExtension(context);active=controller;context.subscriptions.push(controller);
-    context.subscriptions.push(vscode.window.registerWebviewViewProvider('airk.service',controller.console),
-        vscode.window.registerWebviewViewProvider('airk.dashboard',{resolveWebviewView(view){
-            view.webview.options={enableCommandUris:['airk.index','airk.serviceConnect','airk.setupAgent','airk.installCli','airk.chooseStorage','airk.indexMode','airk.manageVscodeMcp'],localResourceRoots:[]};
-            const render=()=>{view.webview.html=renderServiceDashboard(vscode.workspace.isTrusted,
-                (vscode.workspace.workspaceFolders??[]).filter(folder=>['file','vscode-remote'].includes(folder.uri.scheme)).length,controller.getChildren().length);};
-            render();const listener=controller.onDidChangeTreeData(render);
-            context.subscriptions.push(listener,view.onDidDispose(()=>listener.dispose()));
-        }}),
+    const explorerOpen=(route?:unknown)=>controller.explorerController().then(explorer=>explorer.open(typeof route==='string'?route:undefined));
+    const sidebar=new ExplorerSidebar({
+        commandUris:['airk.index','airk.serviceConnect','airk.setupAgent','airk.installCli','airk.chooseStorage','airk.indexMode','airk.manageVscodeMcp'],
+        folders:()=>(vscode.workspace.workspaceFolders??[]).filter(folder=>['file','vscode-remote'].includes(folder.uri.scheme)).length,
+        attach:async listener=>(await controller.explorerController()).onSnapshot(listener),
+        open:()=>{void explorerOpen().catch(error=>controller.output.appendLine(String(error)));},
+        search:query=>{void controller.explorerController().then(explorer=>explorer.search(query),error=>controller.output.appendLine(String(error)));},
+    });
+    context.subscriptions.push(vscode.window.registerWebviewViewProvider('airk.service',controller.console),sidebar,
+        vscode.window.registerWebviewViewProvider('airk.dashboard',sidebar),
         vscode.window.createTreeView('airk.collectionsView',{treeDataProvider:controller}));
     const safe=(action:(...args:unknown[])=>unknown|Promise<unknown>)=>async(...args:unknown[])=>{try{return await action(...args);}catch(error){controller.output.appendLine(String(error));
         void vscode.window.showErrorMessage(`AIRK: ${error instanceof Error?error.message:String(error)}`);throw error;}};
@@ -423,6 +446,11 @@ export async function activate(context:vscode.ExtensionContext):Promise<{getServ
     commands.retryUpdate=()=>controller.retryUpdate();
     commands.openTools=()=>controller.openTools();
     commands.usage=()=>controller.usage();
+    commands['explorer.open']=route=>explorerOpen(route);
+    commands['explorer.search']=async query=>{
+        const text=typeof query==='string'?query:await vscode.window.showInputBox({title:'AIRK: Search indexed evidence',prompt:'All words must appear (lexical) unless the project uses vector or hybrid search.'});
+        if(text?.trim())(await controller.explorerController()).search(text);
+    };
     for(const [name,action] of Object.entries(commands))context.subscriptions.push(vscode.commands.registerCommand(`airk.${name}`,safe(action)));
     if(vscode.lm?.registerMcpServerDefinitionProvider)context.subscriptions.push(vscode.lm.registerMcpServerDefinitionProvider('airk.collections',{
         onDidChangeMcpServerDefinitions:controller.definitions.event,provideMcpServerDefinitions:()=>controller.provideDefinitions(),resolveMcpServerDefinition:value=>controller.resolveDefinition(value)}));

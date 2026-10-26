@@ -1,5 +1,11 @@
 # Native VS Code extension
 
+## AIRK Explorer (in development for 1.5.0)
+
+**AIRK: Open Explorer** opens the AIRK Explorer in an editor tab. The AIRK activity bar's **Status & Search** view shows the selected project's live status, a quick search box and the Open Explorer button; until a project is registered it shows the setup guidance. The status bar item shows one word for the worst current condition and opens the Explorer.
+
+The Explorer reads evidence through its own stdio MCP session over the same verified launcher agents use, identified as the `airk-explorer` client so usage reports keep it separate from coding agents. Management actions run through the existing Service Console controller, so journaled requests, confirmations and paging are unchanged. Screens that are designed but not yet built are labeled and show no sample data. See the [Explorer design](explorer/AIRK_Explorer_Final_Design.md).
+
 **Open AIRK Tools** on each dashboard collection, or **AIRK: Open AIRK Tools** in the Command Palette, opens an interactive console in the Terminal panel. It launches the verified bundled helper directly with that collection's root and storage. Enter `list`, `help airk_search`, `call airk_status`, or `exit`. [Direct MCP tool access](mcp.md#call-tools-without-a-coding-agent) documents JSON/file arguments and standalone equivalents. Trust is required; the console does not trigger indexing. Existing consoles close when their collection bindings change or the extension shuts down.
 
 An independent thin native-helper extension is implemented under [packages/vscode](../packages/vscode). It wraps the Rust kernel and bundles the native helper in platform-specific VSIX packages. The 1.2 line uses the stable release channel; the checked-in candidate version is 1.3.2. New collections default to Agent Lean; existing saved or published detail remains in effect. See [1.3.0 candidate changes](release-1.3.0.md), [1.2.4 diagnosis and recovery](release-1.2.4.md) and [1.2.3 defaults](release-1.2.3.md). Local and ordinary CI candidates contain unsigned helpers; the separate GitHub release workflow signs Windows/macOS downloads. [Windows local build/review instructions](windows-local-build.md) provide the single PowerShell command and an isolated editor test.

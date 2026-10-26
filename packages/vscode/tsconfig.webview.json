@@ -19,6 +19,7 @@
     "src/explorerContracts.ts",
     "src/explorerRoutes.ts",
     "src/explorerFeatures.ts",
-    "src/explorerErrors.ts"
+    "src/explorerErrors.ts",
+    "src/explorerStatus.ts"
   ]
 }
