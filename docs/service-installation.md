@@ -188,4 +188,4 @@ The trusted console now [reviews runtime upgrades and rollback](service-runtime-
 
 Windows staging creates each owned payload directory with an explicit current-user owner and protected owner-only ACL. Exclusive creation rejects an existing stage, and resumed directories must still satisfy the same ownership checks; inherited Administrators ownership is not accepted.
 
-On macOS, installed-runtime topology validation and retirement read inventory at the outer payload root, above `AIRK.app`, rather than beside the nested executable. Retirement still authenticates the captured manifest and preserves unknown or modified files.
+On macOS, installed-runtime topology validation and retirement read inventory at the outer payload root, above `AIRK.app`, rather than beside the nested executable. The post-execution self-test reads its bounded pair receipt from that same outer root and checks the returned native version against it. Retirement still authenticates the captured manifest and preserves unknown or modified files.

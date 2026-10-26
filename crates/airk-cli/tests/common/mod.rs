@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Owned native-service fixtures; no installed runtime or user state is touched.
 #![allow(dead_code)]
+pub mod read_retry;
 use airk_core::service::{
     ControlMethod as Method, ControlResponse as Response, JobKind, JobOutcome, JobRecord,
     ProjectRegistration, RequestKey,
@@ -344,6 +345,10 @@ impl Service {
                                 .clone(),
                         )
                         .await?;
+                    if let Some(retry) = read_retry::within(&envelope, deadline) {
+                        tokio::time::sleep(retry.delay).await;
+                        continue;
+                    }
                     anyhow::ensure!(envelope["isError"] != true, "{envelope}");
                     let status: serde_json::Value =
                         serde_json::from_str(envelope["content"][0]["text"].as_str().unwrap())?;
@@ -523,7 +528,81 @@ pub fn call(
     collection: &str,
     args: &[&str],
 ) -> anyhow::Result<serde_json::Value> {
+    call_until(
+        root,
+        data,
+        collection,
+        args,
+        Instant::now() + Duration::from_secs(60),
+    )
+}
+
+pub fn published_status(
+    root: &Path,
+    data: &Path,
+    collection: &str,
+) -> anyhow::Result<serde_json::Value> {
+    let project = airk_kernel::service_projects::registration(root, data, collection)?
+        .binding
+        .to_string();
     let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        let value = call_until(root, data, collection, &["status"], deadline)?;
+        if value["index_state"] == "available" {
+            anyhow::ensure!(
+                value["collection"] == collection
+                    && value["publication"]["token"].is_string()
+                    && value["files"].is_u64(),
+                "available status omitted its scoped publication/count: {value}"
+            );
+            return Ok(value);
+        }
+        anyhow::ensure!(
+            value["index_state"] == "unavailable"
+                && value["publication"].is_null()
+                && value["files"].is_null()
+                && value["chunks"].is_null()
+                && value["index_error"]["message"].is_string(),
+            "invalid status observation: {value}"
+        );
+        let scoped = match value["index_error"]["code"].as_str() {
+            Some("index_status_unavailable") => value["collection"] == collection,
+            Some("index_worker_unavailable") => {
+                let runtime = &value["runtime"];
+                let work = &value["work"];
+                let identity = &work["worker"]["identity"];
+                value["project"] == project
+                    && runtime["service_error"].is_null()
+                    && runtime["service"]["responsive"] == true
+                    && runtime["service"]["accepting"] == true
+                    && runtime["index_worker"]["process"].is_null()
+                    && work["basis"] == "instance_bound_service_metadata"
+                    && work["serving_worker_unavailable"] == true
+                    && work["failed_observations"] == serde_json::json!([])
+                    && work["worker"]["automatic_start_blocked"] == false
+                    && (identity.is_null()
+                        || (identity["project"] == project
+                            && identity["service"] == runtime["service"]["instance"]))
+            }
+            _ => false,
+        };
+        anyhow::ensure!(scoped, "unhealthy or foreign status observation: {value}");
+        anyhow::ensure!(
+            Instant::now() + Duration::from_millis(25) < deadline,
+            "published status remained unavailable: {}",
+            value["index_error"]
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
+fn call_until(
+    root: &Path,
+    data: &Path,
+    collection: &str,
+    args: &[&str],
+    deadline: Instant,
+) -> anyhow::Result<serde_json::Value> {
     let mut invocation_started = false;
     let mut invocation_returned = false;
     let output = loop {
@@ -559,37 +638,7 @@ pub fn call(
                 )
             );
         let delay = if read {
-            serde_json::from_slice::<serde_json::Value>(&output.stdout)
-                .ok()
-                .filter(|envelope| envelope["isError"] == true)
-                .and_then(|envelope| {
-                    serde_json::from_str::<serde_json::Value>(
-                        envelope["content"][0]["text"].as_str()?,
-                    )
-                    .ok()
-                })
-                .filter(|hint| {
-                    (hint["status"] == "retry"
-                        && hint["retryable"] == true
-                        && hint["action"] == "repeat_same_request"
-                        && matches!(
-                            hint["code"].as_str(),
-                            Some("publication_busy" | "selection_busy")
-                        ))
-                        || (matches!(
-                            hint["error"]["code"].as_str(),
-                            Some("direct_query_admission" | "direct_query_setup")
-                        ) && hint["error"]["reason"] == "busy"
-                            && hint["error"]["query_submitted"] == false
-                            && hint["error"]["retryable"] == true)
-                })
-                .and_then(|hint| {
-                    hint["retry_after_ms"]
-                        .as_u64()
-                        .or_else(|| hint["error"]["retry_after_ms"].as_u64())
-                })
-                .filter(|delay| (1..=1000).contains(delay))
-                .map(Duration::from_millis)
+            read_retry::from_output(&output, deadline).map(|retry| retry.delay)
         } else {
             None
         };

@@ -3,6 +3,7 @@
 mod common;
 use airk_core::service::{ControlMethod as Method, ControlResponse as Response, JobKind};
 use anyhow::{Context, Result, ensure};
+use common::read_retry::ReadRetry;
 use serde_json::{Value, json};
 use std::{
     fs,
@@ -79,7 +80,7 @@ fn paused_unregister_drains_idle_clients_preserves_settings_and_other_projects_a
             let mut connection =
                 airk_cli::project_client::Connection::connect(&service.control, project).await?;
             let reply = connection
-                .call(
+                .read_retry(
                     "airk_status".into(),
                     json!({"response_mode":"full"}).as_object().unwrap().clone(),
                 )

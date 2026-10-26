@@ -29,6 +29,7 @@ ENV AIRK_BUNDLED_MODEL_DIR=/build/model-assets
 COPY third_party/licenses ./third_party/licenses
 
 FROM source AS test
+ARG AIRK_QUALIFICATION=false
 RUN --mount=type=cache,id=airk-cargo-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=airk-cargo-git,target=/usr/local/cargo/git \
     --mount=type=cache,id=airk-linux-target,target=/build/target \
@@ -40,12 +41,16 @@ RUN --mount=type=cache,id=airk-cargo-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=airk-cargo-git,target=/usr/local/cargo/git \
     --mount=type=cache,id=airk-linux-target,target=/build/target \
     cargo fetch --locked \
-    && python3 scripts/ci-metrics.py run --name test-compile -- cargo nextest run --profile ci --workspace --all-features --locked --offline --no-run \
-    && python3 scripts/ci-metrics.py run --name test-execution -- cargo nextest run --profile ci --workspace --all-features --locked --offline \
-    && python3 scripts/ci-metrics.py run --name doctests -- cargo test --doc --workspace --locked --offline \
-    && python3 scripts/ci-metrics.py summary \
     && mkdir -p /build/ci-report \
-    && cp target/nextest/ci/junit.xml artifacts/ci/timings.jsonl /build/ci-report/
+    && case "$AIRK_QUALIFICATION" in \
+      true) python3 scripts/ci-metrics.py run --name test-compile -- cargo nextest run --profile ci --workspace --all-features --locked --offline --no-run \
+        && python3 scripts/ci-metrics.py run --name test-execution -- cargo nextest run --profile ci --workspace --all-features --locked --offline --ignore-default-filter \
+        && python3 scripts/ci-metrics.py run --name doctests -- cargo test --doc --workspace --locked --offline \
+        && python3 scripts/ci-metrics.py summary \
+        && cp target/nextest/ci/junit.xml artifacts/ci/timings.jsonl /build/ci-report/ ;; \
+      false) printf '%s\n' 'Container workspace qualification not requested; image smoke runs separately.' > /build/ci-report/scope.txt ;; \
+      *) exit 1 ;; \
+    esac
 
 FROM test AS build
 RUN --mount=type=cache,id=airk-cargo-registry,target=/usr/local/cargo/registry \

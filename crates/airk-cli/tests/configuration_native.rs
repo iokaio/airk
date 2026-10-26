@@ -23,7 +23,7 @@ fn shared_quota_configuration_rejects_a_stale_project_preview_and_preserves_lega
     let service = common::Service::start(source.path(), data.path(), "quota-a");
     service.configure(airk_cli::service_configuration::Draft::Vectors { enabled: false });
     service.job(JobKind::Index);
-    let before = common::call(source.path(), data.path(), "quota-a", &["status"])?;
+    let before = common::published_status(source.path(), data.path(), "quota-a")?;
     let initial = common::call(
         source.path(),
         data.path(),
@@ -125,7 +125,7 @@ fn shared_quota_configuration_rejects_a_stale_project_preview_and_preserves_lega
         b
     );
     assert_eq!(
-        common::call(source.path(), data.path(), "quota-a", &["status"])?["publication"],
+        common::published_status(source.path(), data.path(), "quota-a")?["publication"],
         before["publication"]
     );
     assert_eq!(

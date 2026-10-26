@@ -199,11 +199,17 @@ impl AirkServer {
             let _permit = permit;
             let kernel = match kernel.refresh_service_snapshot() {
                 Ok(kernel) => kernel,
-                Err(_) => {
+                Err(failure) => {
                     if let Some((runtime, work)) = diagnostics && (runtime.is_some() || work.is_some()) {
                         let status = crate::unavailable_status(&kernel, runtime, work, "AIRK collection selection is busy or unavailable; retry against the current revision");
                         let span = kernel.usage_span(operation, client);
                         return crate::render(&kernel, span, Ok(status), &responses, mode, true, operation);
+                    }
+                    // Selection pins the same publication gate as retrieval.
+                    // Preserve its typed safe-to-repeat rejection at either boundary;
+                    // other selection failures retain the path-free generic reply.
+                    if airk_kernel::retrieval_retry::read_retry_hint(&failure).is_some() {
+                        return crate::response::error_result(&failure);
                     }
                     return error("AIRK collection selection is busy or unavailable; retry against the current revision");
                 },

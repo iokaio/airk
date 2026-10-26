@@ -38,7 +38,7 @@ test('reviewing new storage changes only the active workspace binding and preser
         runtimeSha256:'ab'.repeat(32),version:'1.4.0',lifecycle:'on-demand',verificationBasis:'trusted_distribution'};
     let selected='cd'.repeat(32);
     const workspace=new ServiceWorkspace({keys:()=>[...values.keys()],get:<T>(key:string)=>values.get(key) as T|undefined,update:async(key,value)=>{values.set(key,value);}},
-        {reviewProject:async(_binding,root,data_root,collection)=>({...binding,binding:selected,root,data_root,collection}),registerProject:async(_binding,review)=>review},()=>true);
+        {reviewProject:async(_binding,root,data_root,collection)=>({...binding,binding:selected,root:await fs.realpath(root),data_root,collection}),registerProject:async(_binding,review)=>review},()=>true);
     try{
         await workspace.register(binding,source,path.join(root,'data-a'),'fixture',async()=>true);
         selected='ef'.repeat(32);await workspace.register(binding,source,path.join(root,'data-b'),'fixture',async()=>true);

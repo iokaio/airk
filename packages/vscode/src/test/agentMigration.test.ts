@@ -64,7 +64,9 @@ test('Windows native namespaced roots match ordinary agent paths', {skip:process
 });
 
 test('workspace migration skips missing files, refuses linked directories and reports failed saves',async context=>{
-    const root=await fs.mkdtemp(path.join(os.tmpdir(),'airk-agent-migration-'));
+    // Native registration returns the physical source identity, including on Macs
+    // whose temporary directory is reached through /var rather than /private/var.
+    const root=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'airk-agent-migration-')));
     context.after(()=>fs.rm(root,{recursive:true,force:true}));
     const local={...spec,root},old={...entry,args:entry.args.map(value=>value===spec.root?root:value)};
     await fs.mkdir(path.join(root,'.codex'));await fs.mkdir(path.join(root,'.vscode'));
