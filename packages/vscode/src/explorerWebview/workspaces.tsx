@@ -2,6 +2,7 @@
 import { JSX } from 'preact';
 import { ExplorerViewState } from '../explorerContracts';
 import { Route, routeKey, WORKSPACES } from '../explorerRoutes';
+import { ProjectsScreen } from './manage';
 import { SearchScreen } from './search';
 
 export interface ScreenProps { route: Route; state: ExplorerViewState; go(route: Route): void; incoming?: { query: string; serial: number } }
@@ -9,6 +10,7 @@ export interface ScreenProps { route: Route; state: ExplorerViewState; go(route:
 /** Screens backed by real AIRK operations, keyed by route. Everything else is labeled, never simulated. */
 export const SCREENS: Record<string, (props: ScreenProps) => JSX.Element> = {
     'search/query': SearchScreen,
+    'manage/projects': ProjectsScreen,
 };
 
 export function WorkspaceView(props: ScreenProps) {

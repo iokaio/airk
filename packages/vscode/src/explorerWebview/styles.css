@@ -153,3 +153,10 @@ select, input, textarea {
 .path { overflow-wrap: anywhere; }
 .excerpt { margin: 0.4rem 0 0; padding: 0.5rem; max-height: 18rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere;
   background: var(--vscode-textCodeBlock-background, transparent); border-radius: 2px; font-family: var(--vscode-editor-font-family); }
+
+.table-wrap { overflow-x: auto; }
+table.grid { border-collapse: collapse; width: 100%; }
+table.grid th, table.grid td { border-bottom: 1px solid var(--airk-border); padding: 0.35rem 0.5rem; text-align: left; vertical-align: top; }
+table.grid thead th { color: var(--airk-muted); font-weight: 600; white-space: nowrap; }
+table.grid tr.selected { background: var(--vscode-list-inactiveSelectionBackground); }
+table.grid td.actions { white-space: nowrap; }

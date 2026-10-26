@@ -67,6 +67,10 @@ export interface ExplorerViewState {
     readonly status?: StatusSummary;
     readonly features: Readonly<Record<string, Availability>>;
     readonly notice?: ExplorerError;
+    /** Last outcome code from the shared control plane (native ServiceError codes pass through). */
+    readonly controlMessage?: string;
+    /** More registered projects exist beyond the cached page shown. */
+    readonly moreProjects?: boolean;
 }
 
 /** One search hit. `ref` is an opaque host-issued handle; the webview never sends paths back. */

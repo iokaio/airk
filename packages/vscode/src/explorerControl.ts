@@ -72,6 +72,7 @@ export class ExplorerControl {
     connection(): ConnectionState { return connectionOf(this.state, this.extensionVersion); }
     observedAt(): number | undefined { return this.state.page?.observed_unix_ms; }
     message(): string | undefined { return this.state.message; }
+    morePages(): boolean { return !this.state.inactiveProjects && !!this.state.page?.after; }
     retain(): { dispose(): void } { return this.source.retain(); }
     onDidChange(listener: () => void): { dispose(): void } { return this.source.onDidChangeState(() => listener()); }
     refresh(): Promise<void> { return this.source.run('refresh'); }
