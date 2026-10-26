@@ -205,14 +205,20 @@ impl GroupChild {
         let deadline = Instant::now()
             .checked_add(timeout)
             .ok_or_else(|| io::Error::other("group drain deadline overflow"))?;
-        self.kill()?;
+        if let Some(status) = self.reap_if_drained(deadline)? {
+            return Ok(status);
+        }
+        if let Err(signal_error) = self.kill() {
+            // The leader or its last member may exit after the initial check
+            // but before the group signal. Only a fresh terminal-leader and
+            // empty-group proof permits treating that race as drained.
+            match self.reap_if_drained(deadline) {
+                Ok(Some(status)) => return Ok(status),
+                Ok(None) | Err(_) => return Err(signal_error),
+            }
+        }
         loop {
-            if peek(self.id())?.is_some() && !has_live_members(self.id(), deadline)? {
-                // The leader is already waitable and no group member can still
-                // hold working memory or pipes. Only now release its PID.
-                let status = self.child.as_mut().expect("owned child missing").wait()?;
-                self.reaped = Some(status);
-                diagnostic("drain: group empty and leader reaped");
+            if let Some(status) = self.reap_if_drained(deadline)? {
                 return Ok(status);
             }
             if Instant::now() >= deadline {
@@ -223,6 +229,17 @@ impl GroupChild {
             }
             std::thread::sleep(Duration::from_millis(5));
         }
+    }
+    fn reap_if_drained(&mut self, deadline: Instant) -> io::Result<Option<ExitStatus>> {
+        if peek(self.id())?.is_none() || has_live_members(self.id(), deadline)? {
+            return Ok(None);
+        }
+        // The leader is waitable and no group member can still hold working
+        // memory or pipes. Only now release its PID.
+        let status = self.child.as_mut().expect("owned child missing").wait()?;
+        self.reaped = Some(status);
+        diagnostic("drain: group empty and leader reaped");
+        Ok(Some(status))
     }
     pub fn wait(&mut self) -> io::Result<ExitStatus> {
         if let Some(status) = self.reaped {
@@ -459,9 +476,38 @@ fn has_live_members(_: u32, _: Instant) -> io::Result<bool> {
     ))
 }
 
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn naturally_exited_children_drain_without_signaling_an_empty_group() -> io::Result<()> {
+        for (code, expected_success) in [(0, true), (7, false)] {
+            let mut command = Command::new("/bin/sh");
+            command.args(["-c", if code == 0 { "exit 0" } else { "exit 7" }]);
+            let mut child = GroupChild::spawn(&mut command)?;
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let observed = loop {
+                if let Some(status) = child.try_wait()? {
+                    break status;
+                }
+                if Instant::now() >= deadline {
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "natural-exit fixture did not become waitable",
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            };
+            let reaped = child.terminate_and_wait(Duration::from_secs(5))?;
+            assert_eq!(reaped, observed);
+            assert_eq!(reaped.success(), expected_success);
+            assert_eq!(reaped.code(), Some(code));
+        }
+        Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
     #[test]
     fn native_group_observations_distinguish_live_exited_and_killed_children() -> io::Result<()> {
         for killed in [false, true] {

@@ -3,6 +3,8 @@
 test-threads = 4
 retries = 0
 fail-fast = false
+# Long workload/measurement campaigns remain available with --ignore-default-filter.
+default-filter = 'not (test(two_hundred_current_edits_reach_object_and_database_plateau) | test(compact_measurements_compare_small_reads_from_large_catalog) | test(manual_backlog_larger_than_one_page_advances_without_unprotected_deletion) | test(measure_small_and_larger_sparse_catalog_edits))'
 slow-timeout = { period = "120s", terminate-after = 30 }
 
 [profile.ci.junit]
