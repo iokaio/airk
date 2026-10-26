@@ -9,7 +9,7 @@ try {
     if ((Get-FileHash AGENTS.md).Hash -ne (Get-FileHash CLAUDE.md).Hash) { throw 'AGENTS.md and CLAUDE.md differ' }
     foreach ($airkFile in $airkFiles) {
         if (-not (Test-Path -LiteralPath $airkFile -PathType Leaf)) { continue }
-        if ($airkFile -match '\.(rs|toml|py|ps1|ya?ml|ts|js|cjs|mjs)$') {
+        if ($airkFile -match '\.(rs|toml|py|ps1|ya?ml|ts|tsx|js|cjs|mjs|css)$') {
             $airkFirstLine = Get-Content -LiteralPath $airkFile -TotalCount 1
             if ($airkFirstLine -notmatch 'SPDX-License-Identifier: Apache-2.0') { throw "Missing SPDX: $airkFile" }
         }
