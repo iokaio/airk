@@ -20,6 +20,11 @@ MODULES = ("extension.js", "serviceExtension.js", "serviceDashboard.js", "servic
            "usagePanel.js", "usageReport.js", "report.js",
            "agentConnections.js", "agentConfig.js", "agentMigration.js", "agentSetup.js", "serviceBootstrap.js", "serviceClient.js",
            "serviceConsole.js", "serviceConsoleController.js", "serviceConsoleView.js", "serviceIntents.js")
+# esbuild outputs; referenced by URI or path from host modules, never require()d.
+BUNDLES = ("explorerWebview.js", "explorerWebview.css")
+# Host-only implementations that must never ship a second bundled copy.
+HOST_MARKERS = ("class ServiceClient", "class NativeControlTransport", "class IntentJournal", "function probeMcp",
+                "class ServiceConsoleController", "class RuntimeHost")
 JSONC_FILES = ("package.json", "LICENSE.md", "lib/umd/main.js", "lib/umd/impl/edit.js",
                "lib/umd/impl/format.js", "lib/umd/impl/parser.js", "lib/umd/impl/scanner.js",
                "lib/umd/impl/string-intern.js")
@@ -62,6 +67,41 @@ def stage_runtime_modules(compiled, destination):
         modules[name] = data
     destination.mkdir(parents=True, exist_ok=True)
     for name, data in modules.items():
+        (destination / name).write_bytes(data)
+
+
+def stage_bundles(compiled, destination, preact_version):
+    """Stage reviewed esbuild bundles after checking they are self-contained.
+
+    Bundles carry their third-party notice in a leading banner and may not load
+    local modules, the VS Code API or a copy of a host-owned implementation.
+    """
+    bundles = {}
+    for name in BUNDLES:
+        source = compiled / name
+        if source.is_symlink() or not source.is_file() or source.stat().st_size > 4_194_304:
+            raise ValueError("Invalid or oversized bundle: " + name)
+        with source.open("rb") as stream:
+            data = stream.read(4_194_305)
+        if len(data) > 4_194_304:
+            raise ValueError("Oversized bundle: " + name)
+        text = data.decode("utf-8")
+        if name.endswith(".js"):
+            if re.search(r'''\b(?:require|import)\s*\(\s*["']\.''', text):
+                raise ValueError("Bundle loads a local module: " + name)
+            if re.search(r'''\b(?:require|import)\s*\(\s*["']vscode["']''', text):
+                raise ValueError("Bundle loads the VS Code API: " + name)
+            marker = next((value for value in HOST_MARKERS if value in text), None)
+            if marker:
+                raise ValueError("Bundle contains host implementation " + marker + ": " + name)
+        if name == "explorerWebview.js":
+            if re.search(r"\brequire\s*\(", text):
+                raise ValueError("Webview bundle must not require modules")
+            if not text.startswith("/*! AIRK Explorer webview. Includes Preact " + preact_version + " (MIT).\n"):
+                raise ValueError("Webview bundle lacks the pinned Preact notice")
+        bundles[name] = data
+    destination.mkdir(parents=True, exist_ok=True)
+    for name, data in bundles.items():
         (destination / name).write_bytes(data)
 
 
@@ -202,6 +242,7 @@ def main():
     (stage / "native" / "manifest.json").write_text(json.dumps(wrapper, indent=2) + "\n", encoding="utf-8")
     shutil.copyfile(native / "manifest.json", stage / "native" / "candidate.json")
     stage_runtime_modules(EXTENSION / "out", stage / "out")
+    stage_bundles(EXTENSION / "out", stage / "out", package["devDependencies"]["preact"])
     stage_jsonc_parser(EXTENSION / "node_modules" / "jsonc-parser", stage / "node_modules" / "jsonc-parser")
     for key in ("scripts", "devDependencies"):
         package.pop(key, None)

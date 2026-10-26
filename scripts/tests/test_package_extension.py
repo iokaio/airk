@@ -31,7 +31,7 @@ class VsixContracts(unittest.TestCase):
                     "license": "Apache-2.0", "files": manifest["files"], "dependencies": manifest["dependencies"]}), encoding="utf-8")
                 (root / "README.md").write_text("AIRK packaging fixture", encoding="utf-8")
                 (root / "LICENSE").write_text("Fixture legal file", encoding="utf-8")
-                for name in ("out/fixture.js", "native/airk.exe", "images/fixture.png", "images/fixture.svg", "NOTICE", "THIRD_PARTY_NOTICES.md"):
+                for name in ("out/fixture.js", "out/fixture.css", "native/airk.exe", "images/fixture.png", "images/fixture.svg", "NOTICE", "THIRD_PARTY_NOTICES.md"):
                     file = root / name
                     file.parent.mkdir(parents=True, exist_ok=True)
                     file.write_bytes(b"public packaging fixture")
@@ -94,6 +94,56 @@ class VsixContracts(unittest.TestCase):
             stage = Path(directory) / "out"
             package.stage_runtime_modules(package.EXTENSION / "out", stage)
             self.assertEqual({p.name for p in stage.iterdir()}, set(package.MODULES))
+
+    def test_bundles_are_self_contained_and_carry_the_preact_notice(self):
+        banner = "/*! AIRK Explorer webview. Includes Preact 10.0.0 (MIT).\nPermission is hereby granted\n*/\n"
+        with tempfile.TemporaryDirectory() as directory:
+            compiled = Path(directory) / "compiled"
+            compiled.mkdir()
+            (compiled / "explorerWebview.js").write_bytes((banner + "(()=>{document.body;})();\n").encode("utf-8"))
+            (compiled / "explorerWebview.css").write_bytes(b"body{margin:0}\n")
+            stage = Path(directory) / "stage"
+            package.stage_bundles(compiled, stage, "10.0.0")
+            self.assertEqual({p.name for p in stage.iterdir()}, set(package.BUNDLES))
+            rejected = {
+                'require("./serviceClient");': "local module",
+                'import("./serviceClient");': "local module",
+                'require("vscode");': "VS Code API",
+                "class ServiceClient {}": "host implementation",
+                "class IntentJournal {}": "host implementation",
+                'require("node:fs");': "must not require",
+            }
+            for body, message in rejected.items():
+                (compiled / "explorerWebview.js").write_bytes((banner + body).encode("utf-8"))
+                target = Path(directory) / "rejected"
+                with self.assertRaisesRegex(ValueError, message):
+                    package.stage_bundles(compiled, target, "10.0.0")
+                self.assertFalse(target.exists(), "Validate every bundle before staging any")
+            (compiled / "explorerWebview.js").write_bytes(banner.encode("utf-8"))
+            with self.assertRaisesRegex(ValueError, "pinned Preact notice"):
+                package.stage_bundles(compiled, Path(directory) / "wrong-version", "10.0.1")
+            (compiled / "explorerWebview.css").unlink()
+            with self.assertRaisesRegex(ValueError, "Invalid or oversized bundle"):
+                package.stage_bundles(compiled, Path(directory) / "missing", "10.0.0")
+
+    @unittest.skipUnless((package.EXTENSION / "out" / "explorerWebview.js").is_file(), "compiled webview unavailable")
+    def test_actual_bundles_stage_with_the_pinned_preact_notice(self):
+        manifest = json.loads((package.EXTENSION / "package.json").read_text(encoding="utf-8"))
+        with tempfile.TemporaryDirectory() as directory:
+            stage = Path(directory) / "out"
+            package.stage_bundles(package.EXTENSION / "out", stage, manifest["devDependencies"]["preact"])
+            self.assertIn("Permission is hereby granted", (stage / "explorerWebview.js").read_text(encoding="utf-8"))
+
+    def test_lock_pins_esbuild_binaries_for_release_targets(self):
+        lock = json.loads((package.EXTENSION / "package-lock.json").read_text(encoding="utf-8"))["packages"]
+        manifest = json.loads((package.EXTENSION / "package.json").read_text(encoding="utf-8"))
+        version = manifest["devDependencies"]["esbuild"]
+        self.assertEqual(lock["node_modules/esbuild"]["version"], version)
+        for platform in package.TARGETS.values():
+            entry = lock.get("node_modules/@esbuild/" + platform)
+            self.assertIsNotNone(entry, "lockfile lacks the esbuild binary for " + platform)
+            self.assertEqual(entry["version"], version)
+            self.assertTrue(entry.get("optional"))
 
     def test_platform_identity_payload_tampering_and_permission_checks(self):
         with tempfile.TemporaryDirectory() as directory:
