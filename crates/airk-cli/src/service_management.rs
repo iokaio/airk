@@ -375,6 +375,7 @@ impl Management {
                     Ok(registry)
                 });
                 let _ = ready.send(());
+                source.changed();
                 let mut next_tick = std::time::Instant::now();
                 let mut metadata_failed = false;
                 loop {

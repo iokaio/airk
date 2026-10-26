@@ -148,3 +148,5 @@ The trusted console now [reviews runtime upgrades and rollback](service-runtime-
 The CLI/native adapter owns [reviewed project registration](service-project-setup.md), canonical planned paths and reserved storage creation; the registry owns serialized source/private-state isolation. Extension bindings select the installed launcher and direct brokered MCP frontend without opening a local Kernel.
 
 The CLI owns the bounded [client request journal and direct frontend adapter](service-client-adapters.md). Metadata is saved under the already source-isolated control root, while retrieval uses the shared direct-project client. The extension activation delegates watching/indexing to native ownership and retains reviewed opaque workspace selections.
+
+Native startup gates source coordination on completion of the metadata owner’s first registry bootstrap attempt. CLI owns this sequencing and its cached failure observations; no new dependency or source access enters core/store. A failed bootstrap still permits independent service health, and dropping an unreleased source coordinator does not initialize registry state.

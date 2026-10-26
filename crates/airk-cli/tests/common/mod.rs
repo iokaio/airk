@@ -151,12 +151,15 @@ impl Service {
             );
             std::thread::sleep(Duration::from_millis(25));
         }
-        assert!(matches!(
-            service.request(Method::Register {
-                project: service.project.clone()
-            }),
-            Response::Registered { .. }
-        ));
+        let registered = service.request(Method::Register {
+            project: service.project.clone(),
+        });
+        assert!(
+            matches!(&registered, Response::Registered { .. }),
+            "fixture registration failed: {}; stderr: {}",
+            serde_json::to_string(&registered).unwrap(),
+            std::fs::read_to_string(service.owner.path().join("stderr")).unwrap_or_default()
+        );
         FIXTURES
             .get_or_init(Default::default)
             .lock()
