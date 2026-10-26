@@ -18,22 +18,26 @@ export interface EvidenceRef {
 }
 
 /** Bounded, insertion-ordered handle registry; the oldest handles expire first. */
-export class RefRegistry {
-    private readonly entries = new Map<string, EvidenceRef>();
+export class HandleRegistry<T extends { readonly project: string }> {
+    private readonly entries = new Map<string, T>();
     private counter = 0;
-    constructor(private readonly limit = 2000) {}
-    add(ref: EvidenceRef): string {
-        const id = `h${(++this.counter).toString(36)}`;
-        this.entries.set(id, ref);
+    constructor(private readonly prefix: string, private readonly limit = 2000) {}
+    add(value: T): string {
+        const id = `${this.prefix}${(++this.counter).toString(36)}`;
+        this.entries.set(id, value);
         while (this.entries.size > this.limit) { this.entries.delete(this.entries.keys().next().value!); }
         return id;
     }
-    get(id: string, project: string | undefined): EvidenceRef {
-        const ref = this.entries.get(id);
-        if (!ref || ref.project !== project) { throw new EvidenceFailure(explorerError('UNKNOWN_REFERENCE')); }
-        return ref;
+    get(id: string, project: string | undefined): T {
+        const value = this.entries.get(id);
+        if (!value || value.project !== project) { throw new EvidenceFailure(explorerError('UNKNOWN_REFERENCE')); }
+        return value;
     }
     clear(): void { this.entries.clear(); }
+}
+/** Handles to cited locations ("h…"). */
+export class RefRegistry extends HandleRegistry<EvidenceRef> {
+    constructor(limit = 2000) { super('h', limit); }
 }
 
 /** A collection-relative path prefix: no absolute roots, drive letters, parent segments or control characters. */

@@ -108,6 +108,41 @@ export interface PassageView {
 }
 export interface OpenSourceResult { readonly live: LiveCheck; readonly opened: boolean; readonly message: string }
 
+/** Who produced a fact and what that producer covers (verbatim from AIRK). */
+export interface ProvenanceView { readonly producer: string; readonly basis?: string; readonly coverage?: string }
+/** One structural or document fact with its cited location. Handles are opaque and host-issued. */
+export interface FactItemView {
+    readonly ref?: string;
+    readonly path: string;
+    readonly startLine?: number;
+    readonly endLine?: number;
+    readonly kind: string;
+    readonly name: string;
+    readonly signature?: string;
+    readonly qualifiedName?: string;
+    /** Handle for a native symbol id; pass it back to inspect relationships. */
+    readonly symbolRef?: string;
+    readonly evidenceClass: EvidenceClass;
+    readonly basis?: string;
+    readonly producer?: string;
+    readonly resolution?: string;
+    readonly target?: string;
+    readonly heading?: readonly string[];
+    readonly detail?: string;
+}
+export interface FactListView {
+    readonly tool: string;
+    readonly items: readonly FactItemView[];
+    readonly returned: number;
+    readonly limit: number;
+    readonly truncated: boolean;
+    readonly publication?: string;
+    /** Continuation handle when AIRK returned a cursor; absent for tools without cursors. */
+    readonly more?: string;
+    readonly provenance: readonly ProvenanceView[];
+    readonly notes: readonly string[];
+}
+
 // ---- Webview → host messages. Each field is validated strictly; unknown keys are rejected.
 type FieldSpec =
     | { readonly kind: 'string'; readonly max: number; readonly min?: number; readonly pattern?: RegExp; readonly optional?: boolean }
@@ -134,6 +169,12 @@ export const WEBVIEW_MESSAGES = {
     'evidence.expand': { ref: REF, before: { kind: 'int', min: 0, max: 100 }, after: { kind: 'int', min: 0, max: 100 } },
     'source.open': { ref: REF },
     'manage.index': { project: PROJECT },
+    'code.symbols': { name: { kind: 'string', max: 256, optional: true }, pathPrefix: { kind: 'string', max: 1024, optional: true }, limit: { kind: 'int', min: 1, max: 100 } },
+    'code.facts': { name: { kind: 'string', min: 1, max: 512 }, pathPrefix: { kind: 'string', max: 1024, optional: true }, limit: { kind: 'int', min: 1, max: 100 } },
+    'code.references': { name: { kind: 'string', min: 1, max: 256 }, pathPrefix: { kind: 'string', max: 1024, optional: true }, limit: { kind: 'int', min: 1, max: 100 } },
+    'code.relationships': { symbol: REF, direction: { kind: 'enum', values: ['incoming', 'outgoing'] }, hops: { kind: 'int', min: 1, max: 3 }, limit: { kind: 'int', min: 1, max: 100 } },
+    'code.outline': { ref: { ...REF, optional: true } },
+    'list.more': { more: REF },
     'manage.refresh': {},
 } as const satisfies Record<string, Record<string, FieldSpec>>;
 

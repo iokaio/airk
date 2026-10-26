@@ -160,3 +160,9 @@ table.grid th, table.grid td { border-bottom: 1px solid var(--airk-border); padd
 table.grid thead th { color: var(--airk-muted); font-weight: 600; white-space: nowrap; }
 table.grid tr.selected { background: var(--vscode-list-inactiveSelectionBackground); }
 table.grid td.actions { white-space: nowrap; }
+
+.inline-form { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; margin: 0.4rem 0; }
+.nested { margin-top: 0.5rem; padding-left: 0.75rem; border-left: 2px solid var(--airk-border); width: 100%; }
+.fact-name { margin-top: 0.25rem; overflow-wrap: anywhere; }
+.sig { color: var(--airk-muted); }
+details summary { cursor: pointer; color: var(--airk-muted); }
