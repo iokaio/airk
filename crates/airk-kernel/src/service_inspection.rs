@@ -171,7 +171,7 @@ mod tests {
     #[test]
     fn inspection_guards_bind_settings_and_revision_without_capturing_sources_or_installing_models()
     -> Result<()> {
-        let owner = tempfile::tempdir()?;
+        let owner = crate::unlinked_tempdir()?;
         let source = owner.path().join("source");
         let data = owner.path().join("data");
         std::fs::create_dir(&source)?;

@@ -8,8 +8,8 @@ concurrency:
   group: macos-natural-exit-proof-${{ github.ref }}
   cancel-in-progress: true
 jobs:
-  macos-proof:
-    name: Mac regression proof / ${{ matrix.target }}
+  native-proof:
+    name: Native regression proof / ${{ matrix.target }}
     strategy:
       fail-fast: false
       matrix:
@@ -19,6 +19,9 @@ jobs:
             jobs: 2
           - os: macos-15-intel
             target: x86_64-apple-darwin
+            jobs: 4
+          - os: windows-2025
+            target: x86_64-pc-windows-msvc
             jobs: 4
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
@@ -33,6 +36,9 @@ jobs:
         with:
           persist-credentials: false
       - run: rustup show
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.11'
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
         timeout-minutes: 8
         with:
@@ -46,9 +52,23 @@ jobs:
       - name: Natural exit and descendant ownership regressions
         run: cargo nextest run --profile ci -p airk-process --locked --target ${{ matrix.target }}
       - name: Repeat the exit versus signal transition
+        if: runner.os == 'macOS'
+        shell: bash
         run: |
           for attempt in {1..20}; do
             cargo nextest run --profile ci -p airk-process --locked --target ${{ matrix.target }} -E 'test(timeout_retains_unreaped_leader_for_later_drain) | test(naturally_exited_children_drain_without_signaling_an_empty_group)'
           done
-      - name: Previously hanging manager, legacy, PDF and guardian cases
-        run: cargo nextest run --profile ci -p airk-cli --lib --test legacy_native --test pdf_worker --test unix_guardian -E 'test(manager_command_deadline_covers_blocked_stdin_and_output_is_not_silently_truncated) | test(legacy_review_never_executes_the_selected_old_binary_or_creates_project_state) | test(distributed_cli_indexes_pdf_in_its_worker_and_preserves_source_locations) | test(guardian_keeps_direct_pipes_and_drains_after_worker_death)' --locked --target ${{ matrix.target }}
+      - name: Canonical model, calibration, inspection and native lock regressions
+        run: cargo nextest run --profile ci -p airk-kernel -p airk-store --all-features --lib --locked --target ${{ matrix.target }} -E 'test(initialized_empty_indexes_publish_batches_even_for_full_rebuilds) | test(service_configuration::tests) | test(service_inspection::tests) | test(shared_models::tests) | test(service::model_files::calibration::tests) | test(selection_waits_for_short_metadata_handoffs_and_marks_only_real_lock_contention)'
+      - name: Public service calibration integration
+        run: cargo nextest run --profile ci -p airk-kernel --all-features --test shared_calibration --locked --target ${{ matrix.target }}
+      - name: Prepare pinned bundled model build inputs
+        run: python scripts/provision-local-model.py --destination target/local-vector-model --download
+      - name: Native helper, unregister, manager, legacy, PDF and guardian regressions
+        run: cargo nextest run --profile ci -p airk-cli --all-features --lib --test bundled_model --test embedding_pool_shutdown --test unregister_native --test legacy_native --test pdf_worker --test unix_guardian --locked --target ${{ matrix.target }} -E 'binary(bundled_model) | binary(embedding_pool_shutdown) | binary(unregister_native) | test(manager_command_deadline_covers_blocked_stdin_and_output_is_not_silently_truncated) | test(legacy_review_never_executes_the_selected_old_binary_or_creates_project_state) | test(distributed_cli_indexes_pdf_in_its_worker_and_preserves_source_locations) | test(guardian_keeps_direct_pipes_and_drains_after_worker_death)'
+      - name: Repeat held-session graceful shutdown
+        shell: bash
+        run: |
+          for attempt in {1..10}; do
+            cargo nextest run --profile ci -p airk-cli --all-features --test embedding_pool_shutdown --locked --target ${{ matrix.target }}
+          done

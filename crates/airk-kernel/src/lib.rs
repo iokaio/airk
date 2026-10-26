@@ -60,6 +60,13 @@ use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+#[cfg(test)]
+fn unlinked_tempdir() -> Result<tempfile::TempDir> {
+    // Strict model/registration fixtures use the same physical paths that
+    // native client preparation supplies, including on macOS's /var alias.
+    Ok(tempfile::tempdir_in(std::env::temp_dir().canonicalize()?)?)
+}
+
 #[derive(Clone)]
 pub struct Kernel {
     progress: Option<ProgressObserver>,

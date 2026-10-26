@@ -102,7 +102,7 @@ fn opted_out_native_indexing_serves_lexical_evidence_without_starting_inference(
 
 #[cfg(feature = "embedding-worker")]
 #[test]
-fn graceful_helper_stop_closes_idle_project_sessions_before_the_control_deadline() -> Result<()> {
+fn graceful_service_helper_stop_preserves_lexical_project_reads() -> Result<()> {
     use airk_core::service::{ControlMethod as Method, ControlResponse as Response, JobKind};
     use sha2::{Digest, Sha256};
     use std::time::{Duration, Instant};
@@ -132,15 +132,16 @@ fn graceful_helper_stop_closes_idle_project_sessions_before_the_control_deadline
             Response::EmbeddingStatus {
                 available: true,
                 worker: Some(worker),
-                sessions,
+                loads,
                 ..
-            } if sessions > 0 => break worker,
-            // Helper status samples are cached independently of publication
-            // readiness. Require the idle session within the original budget.
+            } if loads > 0 => break worker,
+            // Publication proves completed inference, not a retained model
+            // session: RemoteModel closes that session when its job ends.
+            // The separate pool-shutdown fixture owns an explicit idle session.
             Response::EmbeddingStatus {
                 available: true,
                 worker: Some(_),
-                sessions: 0,
+                loads: 0,
                 ..
             } if Instant::now() < until => {
                 std::thread::sleep(Duration::from_millis(25));

@@ -590,7 +590,7 @@ fn applying_missing_capture_never_reconstructs_from_changed_live_source() -> Res
 fn model_data_directory() -> Result<tempfile::TempDir> {
     // macOS temporary paths can contain the /var symlink. Model admission
     // requires physical ancestors, as do the current_runtime test fixtures.
-    Ok(tempfile::Builder::new().tempdir_in(std::env::temp_dir().canonicalize()?)?)
+    crate::unlinked_tempdir()
 }
 
 fn write_static_test_model(directory: &std::path::Path) -> Result<()> {
@@ -959,7 +959,7 @@ fn initialized_empty_indexes_publish_batches_even_for_full_rebuilds() -> Result<
     use std::sync::Mutex;
     for (full, change_configuration) in [(false, 0), (true, 0), (true, 1), (true, 2)] {
         let root = tempfile::tempdir()?;
-        let data = tempfile::tempdir()?;
+        let data = model_data_directory()?;
         for index in 0..35 {
             std::fs::write(
                 root.path().join(format!("file_{index:02}.txt")),
