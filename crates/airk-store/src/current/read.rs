@@ -38,7 +38,6 @@ pub struct CurrentRead {
 }
 pub(crate) struct RedbRead<'a> {
     reader: &'a CurrentRead,
-    transaction: &'a redb::ReadTransaction,
 }
 impl map::MapStorage for RedbRead<'_> {
     fn bucket_bytes(&self, prefix: u16) -> Result<Option<Vec<u8>>> {
@@ -53,7 +52,7 @@ impl map::MapStorage for RedbRead<'_> {
 impl graph::GraphStorage for RedbRead<'_> {
     fn graph_record(&self, scope: &GraphScope, id: u32) -> Result<Option<GraphRecord>> {
         self.reader.live()?;
-        graph::GraphStorage::graph_record(self.transaction, scope, id)
+        graph::GraphStorage::graph_record(self.reader.storage.snapshot(), scope, id)
     }
     fn graph_node(
         &self,
@@ -61,13 +60,13 @@ impl graph::GraphStorage for RedbRead<'_> {
         index: u32,
     ) -> Result<Option<airk_core::identity::Sha256Digest>> {
         self.reader.live()?;
-        graph::GraphStorage::graph_node(self.transaction, height, index)
+        graph::GraphStorage::graph_node(self.reader.storage.snapshot(), height, index)
     }
 }
 impl super::kv::directory::ReadPages for RedbRead<'_> {
     fn read_page(&self, digest: airk_core::identity::Sha256Digest) -> Result<Vec<u8>> {
         self.reader.live()?;
-        super::kv::directory::ReadPages::read_page(self.transaction, digest)
+        super::kv::directory::ReadPages::read_page(self.reader.storage.snapshot(), digest)
     }
 }
 impl super::kv::posting::ReadPostings for RedbRead<'_> {
@@ -77,13 +76,13 @@ impl super::kv::posting::ReadPostings for RedbRead<'_> {
         budget: &mut super::kv::directory::Budget,
     ) -> Result<Vec<u8>> {
         self.reader.live()?;
-        super::kv::posting::ReadPostings::read_block(self.transaction, key, budget)
+        super::kv::posting::ReadPostings::read_block(self.reader.storage.snapshot(), key, budget)
     }
 }
 impl super::kv::lexical::ReadLexical for RedbRead<'_> {
     fn document(&self, id: u64, budget: &mut super::kv::directory::Budget) -> Result<Vec<u8>> {
         self.reader.live()?;
-        super::kv::lexical::ReadLexical::document(self.transaction, id, budget)
+        super::kv::lexical::ReadLexical::document(self.reader.storage.snapshot(), id, budget)
     }
 }
 
@@ -299,13 +298,7 @@ impl CurrentRead {
     ) -> Result<Option<T>> {
         self.live()?;
         let snapshot = self.storage.snapshot();
-        let result = f(
-            snapshot,
-            &RedbRead {
-                reader: self,
-                transaction: snapshot.transaction(),
-            },
-        )?;
+        let result = f(snapshot, &RedbRead { reader: self })?;
         self.live()?;
         Ok(Some(result))
     }
@@ -319,10 +312,7 @@ impl CurrentRead {
     }
     fn with_map<T>(&self, f: impl FnOnce(&dyn map::MapStorage) -> Result<T>) -> Result<T> {
         self.live()?;
-        let result = f(&RedbRead {
-            reader: self,
-            transaction: self.storage.snapshot().transaction(),
-        })?;
+        let result = f(&RedbRead { reader: self })?;
         self.live()?;
         Ok(result)
     }
@@ -331,10 +321,7 @@ impl CurrentRead {
         f: impl FnOnce(&dyn graph::GraphStorage) -> Result<T>,
     ) -> Result<T> {
         self.live()?;
-        let result = f(&RedbRead {
-            reader: self,
-            transaction: self.storage.snapshot().transaction(),
-        })?;
+        let result = f(&RedbRead { reader: self })?;
         self.live()?;
         Ok(result)
     }

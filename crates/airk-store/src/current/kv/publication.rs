@@ -61,7 +61,20 @@ pub fn verify(
     let manifest = Manifest::decode(bytes.value(), head.lexical_commit, &head.scope)?;
     drop(bytes);
     drop(meta);
-    Index::new(&head.scope)?.verify(transaction, &manifest, &mut limits.lexical)?;
+    {
+        let directory = transaction.open_table(tables::LEX_DIRECTORY)?;
+        let documents = transaction.open_table(tables::LEX_DOCUMENT)?;
+        let blocks = transaction.open_table(tables::LEX_BLOCK)?;
+        Index::new(&head.scope)?.verify(
+            &super::lexical::ReadTables {
+                directory: &directory,
+                documents: &documents,
+                blocks: &blocks,
+            },
+            &manifest,
+            &mut limits.lexical,
+        )?;
+    }
     super::profile_tick("verify.lexical", &mut profile);
     Ok(())
 }
@@ -279,7 +292,7 @@ impl Snapshot {
         work: &mut QueryWork<'_>,
     ) -> Result<crate::current::lexical::CurrentLexicalCandidates> {
         let head = self.head()?;
-        Index::new(&head.scope)?.search(self.transaction(), &self.lexical_manifest()?, query, work)
+        Index::new(&head.scope)?.search(self, &self.lexical_manifest()?, query, work)
     }
 }
 

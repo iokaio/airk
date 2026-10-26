@@ -225,10 +225,18 @@ impl crate::current::graph::GraphStorage for super::Snapshot {
         scope: &airk_core::graph_storage::GraphScope,
         id: u32,
     ) -> Result<Option<airk_core::graph_storage::GraphRecord>> {
-        crate::current::graph::GraphStorage::graph_record(self.transaction(), scope, id)
+        crate::current::graph::kv::ReadTables {
+            records: &self.graph_records,
+            nodes: &self.graph_nodes,
+        }
+        .graph_record(scope, id)
     }
     fn graph_node(&self, height: u8, index: u32) -> Result<Option<Sha256Digest>> {
-        crate::current::graph::GraphStorage::graph_node(self.transaction(), height, index)
+        crate::current::graph::kv::ReadTables {
+            records: &self.graph_records,
+            nodes: &self.graph_nodes,
+        }
+        .graph_node(height, index)
     }
 }
 macro_rules! map_storage {

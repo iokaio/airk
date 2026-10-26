@@ -1,8 +1,12 @@
 # AIRK 1.4.5 redb cutover and local qualification
 
-October 26, 2026. Source cutover is implemented; final local checks are in progress. No installable 1.4.5 VSIX has been built, installed or published.
+October 26, 2026. Locally preserved experiment: source cutover, Windows/Linux qualification and all seven release-profile performance gates pass to the limits recorded below. **Assistant recommendation: retain SQLite; owner decision pending.** Packaging and push are on hold. No 1.4.5 native archive or installable VSIX has been packaged, installed or published.
 
-The owner has now approved the complete remaining qualification and local Windows VSIX build, and a normal branch push after the required tests and performance gate pass. Earlier no-push and pending-approval statements below describe their dated checkpoints. Normal editor installation and publication are not authorized.
+The owner previously approved complete qualification, a local Windows VSIX build and a normal branch push after the required tests and performance gate passed. The owner then asked whether the benefits justify continuing. Further packaging and push are on hold pending that decision; abandonment has not been accepted. The assistant recommends retaining SQLite, for the measured reasons below. Earlier approval, pending-check and no-push statements describe their dated checkpoints. Normal editor installation and publication are not authorized.
+
+## Historical development checkpoints
+
+The following sequence records intermediate evidence and superseded pending work. The final release comparison and qualification sections below describe the latest local result.
 
 All production, private staging, service, usage and scheduler databases use redb 4.4.0. SQLite code/dependencies and executable SQL comparison oracles have been removed. Frozen compatibility data retains its original provenance. The packaging gate rejects retired APIs/imports as well as every direct/transitive/dev/build/target/WASM dependency, including packaging with `SkipChecks`.
 
@@ -116,7 +120,48 @@ Quiet debug comparison `artifacts/local/redb-1.4.5-comparison-5/report.json` use
 
 The official [1.4.4 release](https://github.com/iokaio/airk/releases/tag/v1.4.4) became available during qualification. Its Windows archive has SHA-256 `01f9c7929dd5d7c90a4617352a16b53a01bb283329527637b04938fc2521cc5d`; release/native manifests bind it to commit `3c64111b445821cf8db36e2545042c1ee1cb6fcc` and source fingerprint `2c12276e161cf04ee52765086159cbc21e595c7386c705507392ec30db901000` (664 files). All 764 allowlisted payload files, executable hashes and the release-profile build receipt verify. The old runtime remains in an isolated owned temporary directory outside the 1.4.5 source tree.
 
-Matched release builds will now be compared with the same original sources/model/quotas, seven repetitions, twelve query samples and unchanged <=10% p95 ceiling. This measures the shipping build profile separately from the failed debug campaigns. Neither result is an isolated storage-engine benchmark. A dev-only redb optimization experiment was abandoned before measurement when the official release baseline became available; final build settings retain only the existing SHA2 development override.
+The final matched release comparison uses the same original sources/model/quotas, seven repetitions, twelve query samples and unchanged <=10% p95 ceiling. This measures the shipping build profile separately from the failed debug campaigns. Neither result is an isolated storage-engine benchmark. Both timed release pairs reside on the same C: temporary volume, with the 1.4.5 copy verified against all 749 allowlisted artifact files; both fixture data/source trees reside on D:. A dev-only redb optimization experiment was abandoned before measurement when the official release baseline became available; final build settings retain only the existing SHA2 development override.
+
+## Release-pair and Linux qualification
+
+The Windows release pair at ignored `artifacts/local/redb-1.4.5-release-qualified/runtime` binds 650 source inputs to `f06ea71d0cef74bc749702a8e5f2bf6d976f85445172c24a15f957c0600425b9`. Its main executable SHA-256 is `b7830f5f7bcaa32fed06f72865e06d63b2eb7e6a9fcc92ed878975f177e8d7bf`; its helper is `43234d8713eb4dc0b04376855f31f012d052ccfaff505abdd1658af08ecf1535`. Release settings are unchanged and match the official baseline's checked-in thin-LTO/stripped/one-codegen-unit policy.
+
+This exact pair passes the two-project, sixteen-tool native client check with the real offline model and source-byte preservation; the transformer qualification covers real helper inference, DiskANN retrieval, default/vector/hybrid behavior, opt-out/re-enable and invalid-model rollback. Native storage lifecycle passes aliases, exact citations, quota refusal, maintenance and source-safe cleanup/re-registration. The actual owned staged upgrade from the official 1.4.4 release passes in 69.6 seconds, including namespace/key invalidation, fresh registration/indexing/search and preserved source/unrelated bytes. Four further extension native scenarios pass against this pair: console repair with paused/offline/isolated projects, semantic helper lifecycle, approved rebuilds/limits and MCP before the first publication without inference. These fixtures use isolated owned state and native uninstall; they do not install the normal editor profile.
+
+Linux container qualification completes all 1,222 executed tests across 49 binaries with 17 skips, using `--ignore-default-filter`, followed by successful default-feature workspace doctests. Test compilation takes 207.3 seconds, execution 587.2 seconds and doctests 20.3 seconds. The test-image digest is `278874210b9488f7a9cd3f6ad121634666c93eddaa5f6052900aafb7962d7fc6`; JUnit/timing receipts are retained under ignored `target/linux-storagekv-qualification`. The only subsequent native-input edit removes an extra Cargo.toml EOF blank line; native Rust code and build settings are identical. The release runtime image also builds successfully (digest `9d454fcd63f213885ed5181b3ce0681cc535a56c8fd25f886f82138607b6cf80`). Its isolated smoke passes two-collection MCP/isolation, offline read-only runtime, persistent restart, paired helper/notices and retired-writer refusal; its uniquely owned container and volume are removed.
+
+Final Windows formatting and all-target/all-feature Clippy pass. The first full Windows workspace attempt fails during compilation because the host disk fills (linker/LLVM filesystem errors); it is not a passing test campaign. Its original logs remain retained. Removing only the validated workspace-generated incremental cache restores about 79 GB of free space, and the full unfiltered workspace/default-doctest retry passes with incremental compilation disabled: 1,206 tests pass with 16 explicit ignores, including all 202 store tests, the 200-edit retention plateau and large-catalog workload. All-feature and separate default-feature doctest commands exit zero. The three ignored offline-model component cases pass separately in 68.75 seconds. The full Python suite passes 180 tests with four platform skips, and four measurement/resource-identity regressions pass. The extension mock suite passes 238 of 244 tests with six native skips; the five applicable native scenarios pass separately against the final release pair as described above. This is separate-run evidence, not a claim that one full extension invocation executed every native case. The source/dependency guard passes for 411 packages and 573 executable sources; versions agree at 1.4.5. Installable-artifact qualification remains unperformed and on hold.
+
+## Final release comparison and recommendation
+
+The quiet release comparison in ignored `artifacts/local/redb-1.4.5-release-comparison-1/report.json` exits zero and passes all seven nonregression gates. `target/storage-release-comparison-1.log` retains the run output. Both pairs use Rust 1.98/MSVC release builds; no build or test campaign runs concurrently. The corpus contains 32 original Rust files with eight functions each and the same original 256-token, two-dimensional offline model. Usage and watching are disabled; root/collection quotas remain 512/128 MiB. Each query has 84 observations across seven repetitions; repeated publication cases have seven observations each.
+
+| Repeated case | 1.4.4 p95 ms | 1.4.5 p95 ms | Current/baseline | <=10% gate |
+| --- | ---: | ---: | ---: | --- |
+| Common lexical query | 179.7943 | 177.8189 | 0.9890 | Pass |
+| Rare lexical query | 162.9514 | 164.5568 | 1.0099 | Pass |
+| Prefix lexical query | 166.6841 | 167.7159 | 1.0062 | Pass |
+| Replace 32 files | 2250.8046 | 1904.5151 | 0.8461 | Pass |
+| Delete publication | 1234.1378 | 1088.1440 | 0.8817 | Pass |
+| Vector query | 286.3021 | 246.7413 | 0.8618 | Pass |
+| Semantic replacement | 3868.8724 | 3542.5323 | 0.9156 | Pass |
+
+Initial publication is 2597.9057 versus 2294.0778 ms, but has only one observation per version and is excluded from the repeated gate. Restart plus evidence checking is 1042.1681 versus 1136.1125 ms, also one observation per version. Cross-format source/content/location equivalence passes. Each runtime separately preserves its exact publication envelope/generation and ordered full citations/text digests across restart; internal document IDs are not public evidence. No live-process RSS samples are missing.
+
+| Resource observation | 1.4.4 | 1.4.5 | Change |
+| --- | ---: | ---: | ---: |
+| Peak simultaneous sampled native RSS, bytes | 92,590,080 | 133,255,168 | +43.9% |
+| Peak sampled logical data length, bytes | 7,524,678 | 14,855,128 | +97.4% |
+| Final logical data length, bytes | 7,353,838 | 14,283,777 | +94.2% |
+| Combined main/helper executable size, bytes | 295,350,784 | 296,046,080 | +0.24% |
+
+The official baseline main/helper SHA-256 identities are `c5d489826a9066954896426aa40430dbce49d8f5070acc4dbe0a0a42e74813bc` and `84658195c84a8458aa6c7dbbd55bc037c6598a6bb73886658a8c9b65a5b11106`. The candidate is the exact qualified pair identified above; its install-manifest SHA-256 is `e8eac0fe9e1ae303d4a1d176f65f829c8b13e9f940355c5e7ea5bacce6ed99ea`. Runtime receipts retain their actual source-content fingerprints and are not relabeled to a later documentation commit. The timed candidate copy is verified against all 749 allowlisted artifact files before execution on the same volume as the baseline. Private reports, source fixtures and runtimes remain ignored local evidence.
+
+These are end-to-end client-startup/direct-worker measurements, including publication completion polling at 50 ms, on a small synthetic corpus. The versions run sequentially with warm OS caches, not flushed caches. Source revisions differ; checked-in release profiles agree, while external RUSTFLAGS are not attested. RSS samples cover fixture-owned descendants at 100 ms and can miss short peaks or count shared pages in multiple processes. Logical file lengths are not allocated disk usage. Neither this release result nor the failed debug reports establish an isolated redb-engine speedup or a large-corpus result. The unchanged release gate passes; the latest debug gate still fails two cases.
+
+**Assistant recommendation: retain SQLite; owner decision pending.** Lexical latency is essentially unchanged; the measured publication/vector gains are 8–15%, accompanied by 44% more peak sampled native RSS and 97% more peak logical data. Executable size does not improve. Removing SQLite and WAL/SHM files is a real structural change, but snapshots, quota admission and compaction are not unique to redb. In the assistant's assessment, these results do not justify maintaining AIRK's new authenticated lexical engine and requiring fresh setup/full indexing. This is a recommendation, not an accepted owner decision to abandon or revert the work. Preserve the experiment locally while the owner decides; do not package or push it meanwhile.
+
+No native archive or installable 1.4.5 VSIX was packaged, and no installed-editor acceptance harness was run. Native macOS/architectures, signing/notarization, oldest supported operating systems, hardware power-loss behavior and the complete installed-editor matrix remain unqualified. Linux container and Windows native fixture results do not imply those broader results. The first disk-exhausted Windows campaign remains a failure followed by a passing full retry; failed debug measurements remain retained. No branch push, publication, normal editor installation or sibling-workspace change occurred.
 
 ## Archived October 25 development checkpoint
 

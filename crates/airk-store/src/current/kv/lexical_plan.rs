@@ -175,7 +175,7 @@ impl ReadPages for Plan<'_> {
                 .context("lexical page retired in plan")?
                 .to_vec());
         }
-        self.base.transaction().read_page(digest)
+        self.base.read_page(digest)
     }
 }
 impl WritePages for Plan<'_> {
@@ -204,7 +204,7 @@ impl ReadLexical for Plan<'_> {
             budget.bytes -= bytes.len() as u64;
             return Ok(bytes.to_vec());
         }
-        self.base.transaction().document(id, budget)
+        self.base.document(id, budget)
     }
 }
 impl WriteLexical for Plan<'_> {
@@ -221,7 +221,7 @@ impl super::posting::ReadPostings for Plan<'_> {
             budget.bytes -= bytes.len() as u64;
             return Ok(bytes.to_vec());
         }
-        super::posting::ReadPostings::read_block(self.base.transaction(), key, budget)
+        super::posting::ReadPostings::read_block(self.base, key, budget)
     }
 }
 impl super::posting::WritePostings for Plan<'_> {

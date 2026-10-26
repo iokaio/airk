@@ -143,6 +143,98 @@ impl Manifest {
 pub trait ReadLexical: super::posting::ReadPostings {
     fn document(&self, id: u64, budget: &mut Budget) -> Result<Vec<u8>>;
 }
+/// All handles belong to one immutable view of the same transaction. The
+/// wrapper owns no transaction/selection lease and retains every proof budget.
+pub(crate) struct ReadTables<'a, D, R, B> {
+    pub directory: &'a D,
+    pub documents: &'a R,
+    pub blocks: &'a B,
+}
+impl<D, R, B> directory::ReadPages for ReadTables<'_, D, R, B>
+where
+    D: ReadableTable<&'static [u8], &'static [u8]>,
+{
+    fn read_page(&self, digest: Sha256Digest) -> Result<Vec<u8>> {
+        let row = self
+            .directory
+            .get(digest.as_bytes().as_slice())?
+            .context("authenticated directory page missing")?;
+        ensure!(
+            row.value().len() <= directory::MAX_PAGE_BYTES,
+            "oversized directory page"
+        );
+        Ok(row.value().to_vec())
+    }
+}
+impl<D, R, B> super::posting::ReadPostings for ReadTables<'_, D, R, B>
+where
+    D: ReadableTable<&'static [u8], &'static [u8]>,
+    B: ReadableTable<&'static [u8], &'static [u8]>,
+{
+    fn read_block(&self, key: &[u8; 40], budget: &mut Budget) -> Result<Vec<u8>> {
+        budget.page()?;
+        let row = self
+            .blocks
+            .get(key.as_slice())?
+            .context("authenticated posting block missing")?;
+        ensure!(
+            row.value().len() <= super::posting::MAX_BLOCK_BYTES,
+            "oversized posting block"
+        );
+        budget.bytes -= row.value().len() as u64;
+        Ok(row.value().to_vec())
+    }
+}
+impl<D, R, B> ReadLexical for ReadTables<'_, D, R, B>
+where
+    D: ReadableTable<&'static [u8], &'static [u8]>,
+    R: ReadableTable<u64, &'static [u8]>,
+    B: ReadableTable<&'static [u8], &'static [u8]>,
+{
+    fn document(&self, id: u64, budget: &mut Budget) -> Result<Vec<u8>> {
+        ensure!(
+            budget.bytes >= MAX_DOCUMENT_BYTES as u64,
+            directory::Exhausted("document byte")
+        );
+        let row = self
+            .documents
+            .get(id)?
+            .context("lexical document missing")?;
+        ensure!(
+            row.value().len() <= MAX_DOCUMENT_BYTES,
+            "oversized lexical document"
+        );
+        budget.bytes -= row.value().len() as u64;
+        Ok(row.value().to_vec())
+    }
+}
+type ByteTable = redb::ReadOnlyTable<&'static [u8], &'static [u8]>;
+type SnapshotTables<'a> =
+    ReadTables<'a, ByteTable, redb::ReadOnlyTable<u64, &'static [u8]>, ByteTable>;
+impl super::Snapshot {
+    fn lexical_tables(&self) -> SnapshotTables<'_> {
+        ReadTables {
+            directory: &self.lexical_directory,
+            documents: &self.lexical_documents,
+            blocks: &self.lexical_blocks,
+        }
+    }
+}
+impl directory::ReadPages for super::Snapshot {
+    fn read_page(&self, digest: Sha256Digest) -> Result<Vec<u8>> {
+        directory::ReadPages::read_page(&self.lexical_tables(), digest)
+    }
+}
+impl super::posting::ReadPostings for super::Snapshot {
+    fn read_block(&self, key: &[u8; 40], budget: &mut Budget) -> Result<Vec<u8>> {
+        super::posting::ReadPostings::read_block(&self.lexical_tables(), key, budget)
+    }
+}
+impl ReadLexical for super::Snapshot {
+    fn document(&self, id: u64, budget: &mut Budget) -> Result<Vec<u8>> {
+        self.lexical_tables().document(id, budget)
+    }
+}
 pub trait WriteLexical: ReadLexical + super::posting::WritePostings {
     fn put_document(&self, id: u64, bytes: Option<&[u8]>) -> Result<()>;
 }

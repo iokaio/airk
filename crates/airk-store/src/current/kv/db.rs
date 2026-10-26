@@ -41,6 +41,11 @@ pub struct Snapshot {
     transaction: redb::ReadTransaction,
     pub(super) map_buckets: redb::ReadOnlyTable<u16, &'static [u8]>,
     pub(super) map_nodes: redb::ReadOnlyTable<u32, &'static [u8]>,
+    pub(super) graph_records: redb::ReadOnlyTable<u32, &'static [u8]>,
+    pub(super) graph_nodes: redb::ReadOnlyTable<u64, &'static [u8]>,
+    pub(super) lexical_directory: redb::ReadOnlyTable<&'static [u8], &'static [u8]>,
+    pub(super) lexical_documents: redb::ReadOnlyTable<u64, &'static [u8]>,
+    pub(super) lexical_blocks: redb::ReadOnlyTable<&'static [u8], &'static [u8]>,
     _database: Arc<redb::Database>,
 }
 impl Database {
@@ -213,6 +218,11 @@ impl Database {
         Ok(Snapshot {
             map_buckets: transaction.open_table(tables::MAP_BUCKET)?,
             map_nodes: transaction.open_table(tables::MAP_NODE)?,
+            graph_records: transaction.open_table(tables::GRAPH_RECORD)?,
+            graph_nodes: transaction.open_table(tables::GRAPH_NODE)?,
+            lexical_directory: transaction.open_table(tables::LEX_DIRECTORY)?,
+            lexical_documents: transaction.open_table(tables::LEX_DOCUMENT)?,
+            lexical_blocks: transaction.open_table(tables::LEX_BLOCK)?,
             transaction,
             _database: self.inner.clone(),
         })

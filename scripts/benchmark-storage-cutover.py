@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Compare independently identified format-140/150 debug pairs in isolated original fixtures.
+"""Compare identified format-140/150 pairs with matching profiles in original fixtures.
 
 Measures native client end-to-end latency, including client startup and bounded
 job polling. OS caches are warm and are not flushed. No private database is read.
@@ -337,14 +337,20 @@ def main():
         before=results[0]["latency"][name]["p95_ms"];after=results[1]["latency"][name]["p95_ms"]
         comparisons[name]={"baseline_p95_ms":before,"current_p95_ms":after,"ratio":after/before,"within_10_percent":after<=before*1.1}
     gate_names=["warm_common","warm_rare","warm_prefix","replace_32_file_publication","delete_publication","warm_vector","replace_32_file_semantic_publication"]
+    profile_limit = (
+        "Identified debug-build comparison, not an isolated storage-engine speedup; receipts do not attest per-package overrides or RUSTFLAGS; baseline SHA2 override is unverified; candidate uses the incoming CI SHA2 opt-level=3 setting"
+        if baseline["profile"] == "debug" else
+        "Identified matching release-profile process-level comparison, not an isolated storage-engine speedup; source revisions and executable identities are retained; receipts do not attest external RUSTFLAGS"
+    )
     report={"schema":"airk-storage-cutover-benchmark/1","machine":scale.machine_environment(args.output),
+        "build_profile":baseline["profile"],
         "fixture":"32 original generated Rust files,8 functions/file; lexical-only then identical original2-dimensional offline model; usage disabled",
         "cache_conditions":"Sequential versions; warm OS caches, no cache flush; first-query observations reported separately",
         "measurement_scope":"Native client process startup+direct worker roundtrip; publication enqueue through observed job completion with 50ms bounded poll",
         "repetitions":args.repetitions,"query_samples_per_repetition":args.query_samples,
         "quota_policy":COMPARISON_QUOTA,"results":results,
         "comparisons":comparisons,"gate_passed":all(comparisons[name]["within_10_percent"] for name in gate_names),
-        "limits":["Identified debug-build comparison, not an isolated storage-engine speedup; receipts do not attest per-package overrides or RUSTFLAGS; baseline SHA2 override is unverified; candidate uses the incoming CI SHA2 opt-level=3 setting",
+        "limits":[profile_limit,
                   "No native power-loss injection","First publication has one sample/version","100ms resource sampling may miss short-lived peaks",
                   "DiskANN native/model/retained-reader and process recovery qualification are separate required checks"]}
     (args.output/"report.json").write_text(json.dumps(report,indent=2)+"\n",encoding="utf-8")

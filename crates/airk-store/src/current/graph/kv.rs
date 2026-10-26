@@ -153,6 +153,29 @@ pub fn visit_operations(
     );
     Ok(())
 }
+pub(crate) struct ReadTables<'a, R, N> {
+    pub records: &'a R,
+    pub nodes: &'a N,
+}
+impl<R: ReadableTable<u32, &'static [u8]>, N: ReadableTable<u64, &'static [u8]>> GraphStorage
+    for ReadTables<'_, R, N>
+{
+    fn graph_record(&self, scope: &GraphScope, id: u32) -> Result<Option<GraphRecord>> {
+        self.records
+            .get(id)?
+            .map(|value| decode(scope, id, value.value()))
+            .transpose()
+    }
+    fn graph_node(&self, height: u8, index: u32) -> Result<Option<Sha256Digest>> {
+        self.nodes
+            .get(coordinate(height, index)?)?
+            .map(|value| {
+                ensure!(value.value().len() == 32, "invalid redb graph node length");
+                Ok(Sha256Digest::from_bytes(value.value().try_into()?))
+            })
+            .transpose()
+    }
+}
 macro_rules! graph_storage {
     ($transaction:ty) => {
         impl GraphStorage for $transaction {
@@ -276,18 +299,36 @@ pub fn verify_all(
     head: &GraphHead,
     maximum_records: u64,
 ) -> Result<()> {
-    let records = transaction.open_table(tables::GRAPH_RECORD)?.len()?;
-    verify_storage(transaction, head, maximum_records, records)?;
-    verify_node_rows(&transaction.open_table(tables::GRAPH_NODE)?, head)
+    let records = transaction.open_table(tables::GRAPH_RECORD)?;
+    let nodes = transaction.open_table(tables::GRAPH_NODE)?;
+    verify_storage(
+        &ReadTables {
+            records: &records,
+            nodes: &nodes,
+        },
+        head,
+        maximum_records,
+        records.len()?,
+    )?;
+    verify_node_rows(&nodes, head)
 }
 pub fn verify_write(
     transaction: &redb::WriteTransaction,
     head: &GraphHead,
     maximum_records: u64,
 ) -> Result<()> {
-    let records = transaction.open_table(tables::GRAPH_RECORD)?.len()?;
-    verify_storage(transaction, head, maximum_records, records)?;
-    verify_node_rows(&transaction.open_table(tables::GRAPH_NODE)?, head)
+    let records = transaction.open_table(tables::GRAPH_RECORD)?;
+    let nodes = transaction.open_table(tables::GRAPH_NODE)?;
+    verify_storage(
+        &ReadTables {
+            records: &records,
+            nodes: &nodes,
+        },
+        head,
+        maximum_records,
+        records.len()?,
+    )?;
+    verify_node_rows(&nodes, head)
 }
 fn verify_storage(
     transaction: &dyn GraphStorage,
@@ -410,6 +451,12 @@ mod tests {
         for id in 0..12 {
             assert_eq!(
                 read(snapshot.transaction(), &head, id)?.bytes,
+                vec![id as u8; 32]
+            );
+        }
+        for id in 0..12 {
+            assert_eq!(
+                proof::read_record(&snapshot, &head, id)?.bytes,
                 vec![id as u8; 32]
             );
         }
