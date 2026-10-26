@@ -1,8 +1,8 @@
 # AIRK 1.4.5 redb cutover and local qualification
 
-October 26, 2026. Locally preserved experiment: source cutover, Windows/Linux qualification and all seven release-profile performance gates pass to the limits recorded below. **Assistant recommendation: retain SQLite; owner decision pending.** Packaging and push are on hold. No 1.4.5 native archive or installable VSIX has been packaged, installed or published.
+October 26, 2026. **Abandoned experiment: retain SQLite.** The owner accepted abandonment after the source cutover, Windows/Linux qualification and all seven release-profile performance gates passed to the limits recorded below. The gains do not justify the resource and maintenance costs. See the [experiment and decision record](redb-experiment.md). No 1.4.5 native archive or installable VSIX was packaged, installed or published.
 
-The owner previously approved complete qualification, a local Windows VSIX build and a normal branch push after the required tests and performance gate passed. The owner then asked whether the benefits justify continuing. Further packaging and push are on hold pending that decision; abandonment has not been accepted. The assistant recommends retaining SQLite, for the measured reasons below. Earlier approval, pending-check and no-push statements describe their dated checkpoints. Normal editor installation and publication are not authorized.
+The owner authorized documenting the decision, committing remaining changes and pushing this experimental branch for preservation only. No further implementation, packaging, installation, release publication or merge to main is part of that instruction. Source versions remain 1.4.5 in this preserved branch. Earlier approval, pending-check, undecided-adoption and no-push statements below describe historical checkpoints, not the final decision.
 
 ## Historical development checkpoints
 
