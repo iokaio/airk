@@ -128,10 +128,22 @@ fn exited_leader_keeps_pid_reserved_until_descendants_are_dead() {
     }
     for _ in 0..3 {
         assert!(child.try_wait().unwrap().unwrap().success());
+        // A zombie group leader's getpgid result is not portable across Unix
+        // hosts. Live descendants are the authoritative evidence that the
+        // original private group still exists for this owner.
+        #[cfg(target_os = "linux")]
         assert_eq!(
             unsafe { libc::getpgid(group as libc::pid_t) },
             group as libc::pid_t
         );
+        #[cfg(target_os = "macos")]
+        for pid in &pids {
+            assert_eq!(
+                unsafe { libc::getpgid(*pid) },
+                group as libc::pid_t,
+                "live descendant escaped its owned process group"
+            );
+        }
     }
     let mut output = Vec::new();
     child
@@ -186,7 +198,23 @@ fn timeout_retains_unreaped_leader_for_later_drain() {
     let mut child = GroupChild::spawn(&mut fixture("sleep")).unwrap();
     let pid = child.id() as libc::pid_t;
     assert!(child.terminate_and_wait(Duration::ZERO).is_err());
-    assert_eq!(unsafe { libc::getpgid(pid) }, pid);
+    // A zero-duration drain can return while the child is live or after it
+    // becomes an unreaped zombie. The wait observation proves ownership in
+    // the latter case; getpgid on a zombie is not portable across Unix hosts.
+    let until = Instant::now() + Duration::from_secs(2);
+    loop {
+        if child.try_wait().unwrap().is_some() {
+            break;
+        }
+        if unsafe { libc::getpgid(pid) } == pid {
+            break;
+        }
+        assert!(
+            Instant::now() < until,
+            "live owned child lost its process group"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
     child.terminate_and_wait(Duration::from_secs(5)).unwrap();
     assert_eq!(
         child.kill().unwrap_err().kind(),
