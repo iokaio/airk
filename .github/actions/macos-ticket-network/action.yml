@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: Apache-2.0
+name: Apple ticket requests over TCP
+description: Apply the hosted Mac ticket-service network workaround for the current job.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        # Temporary hosted-runner workaround: https://github.com/actions/runner-images/issues/14924
+        # -E takes an enable reference, including when PF is already enabled.
+        echo "block return out quick proto udp from any to any port 443" | sudo pfctl -f -
+        sudo pfctl -E

@@ -234,14 +234,9 @@ jobs:
       - name: Clear Azure login
         if: always() && runner.os == 'Windows' && steps.azure.outcome == 'success'
         run: az logout
-      - name: Use TCP for Apple ticket requests on Intel runners
-        if: runner.os == 'macOS' && matrix.target == 'x86_64-apple-darwin'
-        shell: bash
-        run: |
-          # Temporary hosted-runner workaround: https://github.com/actions/runner-images/issues/14924
-          # -E takes an enable reference, including when PF is already enabled.
-          echo "block return out quick proto udp from any to any port 443" | sudo pfctl -f -
-          sudo pfctl -E
+      - name: Use TCP for Apple ticket requests on Mac runners
+        if: runner.os == 'macOS'
+        uses: ./.github/actions/macos-ticket-network
       - name: Sign and notarize Mac helper in an isolated keychain
         if: runner.os == 'macOS'
         env:
