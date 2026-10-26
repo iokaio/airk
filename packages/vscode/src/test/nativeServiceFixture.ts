@@ -23,7 +23,9 @@ export class NativeServiceFixture {
         const fixture=new NativeServiceFixture(path.resolve(binary),owner,path.join(owner,'i'));
         try{
             const source=nativePayloadDirectory(fixture.binary),bytes=await fs.readFile(path.join(source,'airk-install.json'));
-            const manifest=JSON.parse(bytes.toString());assert.equal(manifest.version,'1.4.0');
+            const manifest=JSON.parse(bytes.toString());
+            const extension=JSON.parse(await fs.readFile(path.resolve(__dirname,'../../package.json'),'utf8'));
+            assert.equal(manifest.version,extension.version);
             await fixture.run(['runtime','managed','--source',source,'--install-dir',fixture.install,
                 '--state-dir',path.join(owner,'s'),'--approved-sha256',createHash('sha256').update(bytes).digest('hex'),
                 '--verification-basis','organization-digest','--lifecycle','user-on-demand'],180000);
