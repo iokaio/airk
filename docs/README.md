@@ -35,6 +35,7 @@ The 1.3.x/1.2.x release records and former direct-helper/window-scheduler guides
 The [Windows build/editor guide](windows-local-build.md) describes pair builds, stage-only acceptance without a VSIX, and real native registration/usage/response-mode checks in isolated editor profiles.
 
 - [Architecture and code boundaries](architecture.md)
+- [AIRK Explorer design inputs and approved 1.5.0 design](explorer/README.md): the planned workbench that replaces the Service Console, plus the separate Explorer Assistance MCP server. In development; not shipped.
 - [AIRK 1.4.0 local service architecture and implementation plan](airkservice-architecture.md)
 - [Current 1.4.4 release record](release-1.4.4.md)
 - [Historical 1.4.3 storage-recovery candidate](release-1.4.3.md)
