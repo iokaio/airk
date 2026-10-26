@@ -14,6 +14,10 @@ store-failure-output = false
 max-threads = 2
 
 [[profile.ci.overrides]]
+filter = 'package(airk-process)'
+slow-timeout = { period = "10s", terminate-after = 3 }
+
+[[profile.ci.overrides]]
 filter = 'test(two_hundred_real_edits)'
 priority = 100
 test-group = "storage-heavy"

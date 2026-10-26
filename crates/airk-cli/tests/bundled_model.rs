@@ -134,9 +134,16 @@ fn graceful_helper_stop_closes_idle_project_sessions_before_the_control_deadline
                 worker: Some(worker),
                 sessions,
                 ..
-            } => {
-                assert!(sessions > 0, "the helper must retain an idle model session");
-                break worker;
+            } if sessions > 0 => break worker,
+            // Helper status samples are cached independently of publication
+            // readiness. Require the idle session within the original budget.
+            Response::EmbeddingStatus {
+                available: true,
+                worker: Some(_),
+                sessions: 0,
+                ..
+            } if Instant::now() < until => {
+                std::thread::sleep(Duration::from_millis(25));
             }
             Response::Failure { code }
                 if code == "embedding_observation_busy" && Instant::now() < until =>

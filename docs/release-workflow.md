@@ -100,7 +100,7 @@ The new required check names become available when a PR runs these workflow chan
 
 ## Build manually
 
-Open **Actions → Extension release → Run workflow**. Enter the exact checked-in version (for this change, `1.3.2`), select `stable` (the default), and leave `publish` false. Promotion requires `main`; use the CI workflow to build and review feature-branch candidates.
+Open **Actions → Extension release → Run workflow**. Enter the exact checked-in version (`1.4.4`), select `stable` (the default), and leave `publish` false. Promotion requires `main`; use the CI workflow to build and review feature-branch candidates.
 
 The [release workflow](../.github/workflows/extension-release.yml) authenticates a successful main [CI workflow](../.github/workflows/ci.yml) containing native tests, actual-helper extension tests, packaging checks and container validation. It rebuilds only the small TypeScript/VSIX layer for the selected channel using those tested native packages. Candidate artifacts expire after seven days; `candidate_run_id` selects an explicit successful manual CI rebuild when needed.
 
@@ -109,12 +109,12 @@ After reviewing a successful rehearsal, publish its exact VSIX files by supplyin
 For example, substitute the reviewed rehearsal's actual run ID:
 
 ~~~console
-gh workflow run extension-release.yml --ref main -f version=1.3.2 -f channel=stable -f publish=true -f rehearsal_run_id=123456789
+gh workflow run extension-release.yml --ref main -f version=1.4.4 -f channel=stable -f publish=true -f rehearsal_run_id=123456789
 ~~~
 
 Only successful, non-publishing rehearsals qualify: preflight and all four packaging jobs must succeed, while publication and identity-only jobs must be skipped. Artifact upload times must belong to those successful jobs in the selected attempt. Preflight records the attempt, artifact IDs and server digests; publication rechecks that record before and after downloading. Rerunning the rehearsal, expired/missing artifacts, another commit, or a mismatched package version/channel stops publication without silently repackaging. Create and review a new rehearsal if needed. Leaving **rehearsal_run_id** empty preserves the existing build-and-publish path. Supplying it for a non-publishing or identity-only run is rejected.
 
-Ordinary CI, local packaging and release dispatchers default to stable packages. Preview packaging remains an explicit option for a distinct future preview version; do not publish the same version in both channels. The source version/display name are never silently edited by a publishing job; review them before selecting a channel. See the [1.3.2 release notes](release-1.3.2.md) and [1.2 qualification record](indexingenhancements.md#final-12-qualification).
+Ordinary CI, local packaging and release dispatchers default to stable packages. Preview packaging remains an explicit option for a distinct future preview version; do not publish the same version in both channels. The source version/display name are never silently edited by a publishing job; review them before selecting a channel. See the [1.4.4 release notes](release-1.4.4.md); the [1.2 qualification record](indexingenhancements.md#final-12-qualification) remains historical.
 
 ## Configure publication once
 

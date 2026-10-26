@@ -175,6 +175,8 @@ jobs:
         run: node -e "const p=require('./packages/vscode/package.json'); const v=process.env.AIRK_EXPECTED_VERSION; if(v && p.version!==v) throw Error('Requested version differs from package.json')"
       - name: Prepare pinned bundled model build inputs
         run: python scripts/provision-local-model.py --destination target/local-vector-model --download
+      - name: Verify native child ownership before workspace qualification
+        run: cargo nextest run --profile ci -p airk-process --locked --target ${{ matrix.target }}
       - name: Clippy for this native platform
         run: python scripts/ci-metrics.py run --name clippy -- cargo clippy --workspace --all-targets --all-features --locked --target ${{ matrix.target }} -- -D warnings
       - name: Compile workspace tests

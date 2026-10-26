@@ -480,7 +480,8 @@ fn concurrent_mcp_agents_share_one_index_and_refresh_after_publication() -> anyh
     let new_text = "def authenticate():\n    return 'revisiontwo'\n";
     fs::write(root.path().join("auth.py"), old_text)?;
     let index = || -> anyhow::Result<Value> {
-        common::call(root.path(), state.path(), "project-a", &["index"])?;
+        // Index admission retains one exact request key across bounded metadata replies.
+        _service.job(airk_core::service::JobKind::Index);
         common::call(root.path(), state.path(), "project-a", &["status"])
     };
     let old_generation = index()?["generation"].as_u64().expect("generation");

@@ -200,9 +200,41 @@ impl Service {
     pub fn request(&self, method: Method) -> Response {
         rpc(&self.control, method)
     }
+    // Fixture setup may outlive one bounded metadata response. Only these
+    // read-only operations and receipt-keyed mutations may be repeated, with
+    // the complete original request retained across every attempt. Tests of
+    // failure responses keep using request() directly.
+    pub fn metadata(&self, method: Method, until: Instant) -> Response {
+        assert!(matches!(
+            &method,
+            Method::RequestEpoch
+                | Method::Job { .. }
+                | Method::Plan { .. }
+                | Method::Enqueue { .. }
+                | Method::ConfigureProject { .. }
+                | Method::PlanCreate { .. }
+        ));
+        loop {
+            let response = self.request(method.clone());
+            if matches!(&response, Response::Failure { code } if matches!(code.as_str(), "registry_busy" | "registry_response_unknown_retry_with_key"))
+                && Instant::now() < until
+            {
+                std::thread::sleep(Duration::from_millis(25));
+                continue;
+            }
+            return response;
+        }
+    }
     pub fn key(&self) -> RequestKey {
-        let Response::RequestEpoch { namespace, epoch } = self.request(Method::RequestEpoch) else {
-            panic!("request epoch unavailable")
+        let response = self.metadata(
+            Method::RequestEpoch,
+            Instant::now() + Duration::from_secs(60),
+        );
+        let Response::RequestEpoch { namespace, epoch } = response else {
+            panic!(
+                "request epoch unavailable: {}",
+                serde_json::to_string(&response).unwrap()
+            )
         };
         RequestKey {
             namespace,
@@ -221,8 +253,12 @@ impl Service {
     pub fn wait_outcome(&self, id: airk_core::identity::Sha256Digest) -> JobRecord {
         let until = Instant::now() + Duration::from_secs(90);
         loop {
-            let Response::Job { job } = self.request(Method::Job { id }) else {
-                panic!("job receipt unavailable")
+            let response = self.metadata(Method::Job { id }, until);
+            let Response::Job { job } = response else {
+                panic!(
+                    "job receipt unavailable: {}",
+                    serde_json::to_string(&response).unwrap()
+                )
             };
             if job.outcome.is_some() {
                 return job;
@@ -244,13 +280,18 @@ impl Service {
         }
     }
     pub fn job(&self, kind: JobKind) -> JobRecord {
-        let Response::Job { job } = self.request(Method::Enqueue {
+        let request = Method::Enqueue {
             project: self.project.binding,
             caller: airk_kernel::service_broker::new_instance_id().unwrap(),
             key: self.key(),
             kind,
-        }) else {
-            panic!("job not accepted")
+        };
+        let response = self.metadata(request, Instant::now() + Duration::from_secs(60));
+        let Response::Job { job } = response else {
+            panic!(
+                "job not accepted: {}",
+                serde_json::to_string(&response).unwrap()
+            )
         };
         self.wait(job.id)
     }
@@ -302,32 +343,42 @@ impl Service {
                 draft,
             ))
             .unwrap();
-        let Response::Job { job } = self.request(Method::ConfigureProject {
+        let request = Method::ConfigureProject {
             project: self.project.binding,
             caller: airk_kernel::service_broker::new_instance_id().unwrap(),
             key: self.key(),
             request: Box::new(request),
-        }) else {
-            panic!("configuration not accepted")
+        };
+        let response = self.metadata(request, Instant::now() + Duration::from_secs(60));
+        let Response::Job { job } = response else {
+            panic!(
+                "configuration not accepted: {}",
+                serde_json::to_string(&response).unwrap()
+            )
         };
         self.wait(job.id);
     }
 
     pub fn repair(&self, operation: airk_core::service_maintenance::RepairOperation) {
         use airk_core::service_maintenance::{PlanPhase, RepairRequest, RepairSelection};
-        let Response::Plan { plan } = self.request(Method::PlanCreate {
+        let request = Method::PlanCreate {
             caller: airk_kernel::service_broker::new_instance_id().unwrap(),
             key: self.key(),
             request: RepairRequest {
                 selection: RepairSelection::Selected(vec![self.project.binding]),
                 operation,
             },
-        }) else {
-            panic!("repair preview not accepted")
+        };
+        let response = self.metadata(request, Instant::now() + Duration::from_secs(60));
+        let Response::Plan { plan } = response else {
+            panic!(
+                "repair preview not accepted: {}",
+                serde_json::to_string(&response).unwrap()
+            )
         };
         let until = Instant::now() + Duration::from_secs(90);
         let preview = loop {
-            let Response::Plan { plan } = self.request(Method::Plan { id: plan.id }) else {
+            let Response::Plan { plan } = self.metadata(Method::Plan { id: plan.id }, until) else {
                 panic!("preview lost")
             };
             if plan.phase == PlanPhase::Ready {
@@ -345,7 +396,8 @@ impl Service {
             Response::Plan { .. }
         ));
         loop {
-            let Response::Plan { plan } = self.request(Method::Plan { id: preview.id }) else {
+            let Response::Plan { plan } = self.metadata(Method::Plan { id: preview.id }, until)
+            else {
                 panic!("repair receipt lost")
             };
             if plan.phase == PlanPhase::Finished {

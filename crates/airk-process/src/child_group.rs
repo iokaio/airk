@@ -260,7 +260,12 @@ fn peek(pid: u32) -> io::Result<Option<ExitStatus>> {
         libc::CLD_EXITED if (0..=255).contains(&status) => status << 8,
         libc::CLD_KILLED if (1..=127).contains(&status) => status,
         libc::CLD_DUMPED if (1..=127).contains(&status) => status | 0x80,
-        _ => return Err(io::Error::other("unsupported child exit observation")),
+        _ => {
+            return Err(io::Error::other(format!(
+                "unsupported child exit observation: code {}, status {status}",
+                info.si_code
+            )));
+        }
     };
     Ok(Some(ExitStatus::from_raw(raw)))
 }
@@ -351,8 +356,14 @@ fn has_live_members(group: u32, deadline: Instant) -> io::Result<bool> {
             std::mem::size_of_val(&pids) as libc::c_int,
         )
     };
-    if count < 0 || count == 0 && unsafe { *libc::__error() } != 0 {
-        return Err(io::Error::last_os_error());
+    let error = io::Error::last_os_error();
+    #[cfg(test)]
+    eprintln!(
+        "group {group}: proc_listpgrppids count={count}, errno={}",
+        error.raw_os_error().unwrap_or(0)
+    );
+    if count < 0 || count == 0 && error.raw_os_error() != Some(0) {
+        return Err(error);
     }
     if count as usize >= pids.len() {
         return Err(io::Error::other(
@@ -379,14 +390,23 @@ fn has_live_members(group: u32, deadline: Instant) -> io::Result<bool> {
                 std::mem::size_of_val(&info) as libc::c_int,
             )
         };
+        let error = io::Error::last_os_error();
+        #[cfg(test)]
+        eprintln!(
+            "group {group}, pid {pid}: proc_pidinfo bytes={bytes}, errno={}, observed_pid={}, observed_group={}, state={}",
+            error.raw_os_error().unwrap_or(0),
+            info.pbi_pid,
+            info.pbi_pgid,
+            info.pbi_status
+        );
         if bytes as usize != std::mem::size_of_val(&info) {
-            let error = io::Error::last_os_error();
             if error.raw_os_error() == Some(libc::ESRCH) {
                 continue;
             }
-            return Err(io::Error::other(
-                "native process-state observation unavailable",
-            ));
+            return Err(io::Error::other(format!(
+                "native process-state observation unavailable: {bytes}/{} bytes: {error}",
+                std::mem::size_of_val(&info)
+            )));
         }
         if info.pbi_pid == pid as u32 && info.pbi_pgid == group && info.pbi_status != libc::SZOMB {
             return Ok(true);
@@ -400,4 +420,59 @@ fn has_live_members(_: u32, _: Instant) -> io::Result<bool> {
         io::ErrorKind::Unsupported,
         "native process-group observation unavailable",
     ))
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::*;
+    #[test]
+    fn native_group_observations_distinguish_live_exited_and_killed_children() -> io::Result<()> {
+        for killed in [false, true] {
+            let mut command = Command::new("/bin/sh");
+            command.args([
+                "-c",
+                if killed {
+                    "exec /bin/sleep 30"
+                } else {
+                    "exit 7"
+                },
+            ]);
+            command.process_group(0);
+            let mut child = command.spawn()?;
+            let pid = child.id();
+            eprintln!("spawned owned fixture {pid}, killed={killed}");
+            let observation = (|| {
+                if killed {
+                    if !has_live_members(pid, Instant::now() + Duration::from_secs(5))? {
+                        return Err(io::Error::other("running fixture was not observed"));
+                    }
+                    child.kill()?;
+                }
+                let deadline = Instant::now() + Duration::from_secs(5);
+                let status = loop {
+                    if let Some(status) = peek(pid)? {
+                        break status;
+                    }
+                    if Instant::now() >= deadline {
+                        return Err(io::Error::other("fixture did not become waitable"));
+                    }
+                    std::thread::sleep(Duration::from_millis(5));
+                };
+                eprintln!("owned fixture {pid}: unreaped terminal status {status}");
+                let live = has_live_members(pid, deadline)?;
+                eprintln!("owned fixture {pid}: remaining live members={live}");
+                Ok((status, live))
+            })();
+            // This leaf has no descendants. Reap through std even when the
+            // observation fails, so the regression reports the native error
+            // instead of getting trapped in GroupChild's ownership-preserving Drop.
+            let _ = child.kill();
+            let reaped = child.wait()?;
+            let (observed, live) = observation?;
+            assert_eq!(observed, reaped);
+            assert!(!live, "terminal fixture was still classified as live");
+            assert_eq!(reaped.code(), if killed { None } else { Some(7) });
+        }
+        Ok(())
+    }
 }

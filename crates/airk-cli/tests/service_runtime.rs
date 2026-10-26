@@ -2629,6 +2629,17 @@ fn identity_bound_project_restart_preserves_other_workers_and_unavailable_source
     wait_ready(&runtime)?;
     tokio::runtime::Builder::new_current_thread().enable_all().build()?.block_on(async {
         let request = |method| airk_cli::service_runtime::request(&runtime,method);
+        // This scenario requires two simultaneous resident workers. A small
+        // host's default Balanced policy intentionally admits only one.
+        let configured = request(Method::ConfigureResources {
+            configuration: airk_core::service_resources::ResourceConfiguration {
+                memory_bytes: Some(4 << 30),
+                extraction_threads: Some(1),
+                ..Default::default()
+            },
+        }).await?;
+        ensure!(matches!(&configured, Response::Resources { observation, configuration_error: false, .. }
+            if observation.resident_limit >= 2), "two-worker fixture admission unavailable: {}", serde_json::to_string(&configured)?);
         let Response::RequestEpoch { namespace, epoch } = request(Method::RequestEpoch).await? else { anyhow::bail!("epoch missing") };
         for project in &projects {
             request(Method::Register { project: project.clone() }).await?;
@@ -2647,7 +2658,8 @@ fn identity_bound_project_restart_preserves_other_workers_and_unavailable_source
         }
         let mut identities = Vec::new();
         for project in &projects {
-            let Response::Connection { grant, .. } = request(Method::Connect { project: project.binding }).await? else { anyhow::bail!("worker not connected") };
+            let response = request(Method::Connect { project: project.binding }).await?;
+            let Response::Connection { grant, .. } = response else { anyhow::bail!("worker not connected: {}", serde_json::to_string(&response)?) };
             identities.push(grant.identity);
         }
         let mut unaffected = airk_cli::project_client::Connection::connect(&runtime,projects[1].binding).await?;
