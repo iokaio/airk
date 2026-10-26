@@ -36,6 +36,9 @@ test('the Explorer evidence session reads one pinned publication through the ver
         const passage = await client.call('airk_read_file', { path: 'session.ts', start_line: 1, end_line: 1 }, { timeout: 60000 });
         assert.equal(passage.publication, token);
         await assert.rejects(client.call('airk_read_file', { path: '../outside.ts', start_line: 1, end_line: 1 }, { timeout: 60000 }));
+        const help = await client.call('airk_help', { topic: 'search', max_bytes: 8192 }, { timeout: 60000 });
+        assert.equal(help.payload.topic, 'search');
+        assert.match(String(help.payload.content), /Lexical search/);
         // The live check reproduces AIRK's content_hash from the saved bytes at AIRK's own source location.
         const info = (await client.call('airk_file_info', { path: 'session.ts' }, { timeout: 60000 })).payload;
         const source = info.source as Record<string, string>;

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import * as nodePath from 'node:path';
 import * as vscode from 'vscode';
-import { ExplorerViewState, HostMessage, MESSAGE_VERSION, StatusSummary, WebviewMessage, WebviewMessageOf } from './explorerContracts';
+import { EngineHelpView, ExplorerViewState, HostMessage, MESSAGE_VERSION, StatusSummary, WebviewMessage, WebviewMessageOf } from './explorerContracts';
 import { ControlSource, ExplorerControl } from './explorerControl';
 import { explorerError, ExplorerError } from './explorerErrors';
 import { EvidenceClient, EvidenceFailure } from './explorerEvidence';
@@ -308,6 +308,12 @@ export class ExplorerController implements vscode.Disposable {
                 this.requireProject();
                 return changesSince(this.session(), typed.since, typed.limit);
             }
+            case 'help.engine': {
+                const typed = message as WebviewMessageOf<'help.engine'>;
+                this.requireProject();
+                const result = await this.session().call('airk_help', { ...(typed.topic ? { topic: typed.topic } : {}), max_bytes: 16384 }, { timeout: 30000 });
+                return engineHelp(result.payload);
+            }
             case 'list.more': {
                 const typed = message as WebviewMessageOf<'list.more'>;
                 return continueFacts(this.session(), this.facts, this.requireProject(), typed.more);
@@ -325,6 +331,17 @@ export class ExplorerController implements vscode.Disposable {
         for (const listener of this.listeners.splice(0)) { listener.dispose(); }
         this.snapshotListeners.clear();
     }
+}
+
+/** airk_help reply → Explorer view; the guidance text is shown verbatim as text. */
+function engineHelp(payload: Record<string, unknown>): EngineHelpView {
+    const topics = (Array.isArray(payload.topics) ? payload.topics : []).flatMap(raw => {
+        const entry = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {};
+        return typeof entry.id === 'string' ? [{ id: entry.id.slice(0, 64), title: typeof entry.title === 'string' ? entry.title.slice(0, 160) : entry.id.slice(0, 64) }] : [];
+    });
+    return { topic: typeof payload.topic === 'string' ? payload.topic : 'overview', title: typeof payload.title === 'string' ? payload.title.slice(0, 200) : 'AIRK help',
+        content: typeof payload.content === 'string' ? payload.content.slice(0, 32768) : '', ...(typeof payload.version === 'string' ? { version: payload.version } : {}),
+        topics, truncated: payload.truncated === true || payload.next_line != null };
 }
 
 /** True when an open editor holds unsaved edits for this file. */

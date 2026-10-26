@@ -196,6 +196,23 @@ export interface ChangesView {
     readonly coverage: readonly string[];
 }
 
+/** One Explorer help topic, compiled from src/explorerHelp at build time and versioned with the VSIX. */
+export interface HelpTopic {
+    readonly id: string;
+    readonly title: string;
+    readonly route?: string;
+    readonly area: string;
+    /** From the feature manifest at build time: never claims a screen that is not shipped. */
+    readonly applicability: 'implemented' | 'prototype_only' | 'unsupported' | 'disabled';
+    readonly aliases: readonly string[];
+    /** airk_help topic ids for engine-level detail (served by AIRK Retrieval, not proxied). */
+    readonly relatedAirkHelp: readonly string[];
+    readonly body: string;
+}
+export interface HelpCatalog { readonly catalogVersion: 1; readonly extensionVersion: string; readonly topics: readonly HelpTopic[] }
+/** airk_help reply as shown in the Explorer. */
+export interface EngineHelpView { readonly topic: string; readonly title: string; readonly content: string; readonly version?: string; readonly topics: readonly { id: string; title: string }[]; readonly truncated: boolean }
+
 /** A citation parsed from free text, e.g. "src/a.ts:12", "src/a.ts:12-20", "src/a.ts#L12-L20". */
 export interface ParsedCitation { readonly text: string; readonly path: string; readonly startLine: number; readonly endLine: number; readonly absolute: boolean }
 const CITATION = /(?<![\w@.\\/-])((?:[A-Za-z]:[\\/]|\/)?(?:[\w@.-]+[\\/])*[\w@.-]+\.[A-Za-z0-9]+)(?::(\d{1,7})(?:\s*[-–]\s*(\d{1,7}))?|#L(\d{1,7})(?:-L?(\d{1,7}))?)/g;
@@ -254,6 +271,7 @@ export const WEBVIEW_MESSAGES = {
     'code.relationships': { symbol: REF, direction: { kind: 'enum', values: ['incoming', 'outgoing'] }, hops: { kind: 'int', min: 1, max: 3 }, limit: { kind: 'int', min: 1, max: 100 } },
     'code.outline': { ref: { ...REF, optional: true } },
     'list.more': { more: REF },
+    'help.engine': { topic: { kind: 'string', min: 1, max: 64, pattern: /^[a-z][a-z0-9-]*$/, optional: true } },
     'evidence.inspect': { ref: REF },
     'evidence.check': { text: { kind: 'string', min: 1, max: 65536 } },
     'evidence.changes': { since: { kind: 'string', min: 9, max: 256, pattern: /^airk-r1:[0-9A-Za-z:_-]+$/ }, limit: { kind: 'int', min: 1, max: 100 } },

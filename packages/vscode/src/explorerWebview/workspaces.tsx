@@ -5,6 +5,7 @@ import { Route, routeKey, WORKSPACES } from '../explorerRoutes';
 import { OutlineScreen, ReferencesScreen, SymbolsScreen } from './code';
 import { DocumentFactsScreen } from './docs';
 import { ChangesScreen, CheckerScreen, InspectorScreen } from './evidence';
+import { HelpScreen } from './help';
 import { ProjectsScreen } from './manage';
 import { SearchScreen } from './search';
 
@@ -31,6 +32,7 @@ export const SCREENS: Record<string, (props: ScreenProps) => JSX.Element> = {
     'evidence/inspector': InspectorScreen,
     'evidence/checker': CheckerScreen,
     'evidence/changes': ChangesScreen,
+    'help': HelpScreen,
 };
 
 export function WorkspaceView(props: ScreenProps) {
